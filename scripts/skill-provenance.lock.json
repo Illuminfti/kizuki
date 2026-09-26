@@ -1,0 +1,641 @@
+{
+  "schema": "kizuki.skill-provenance/v1",
+  "digest": "sha256",
+  "notice": "Content-addressed inventory of adopted skill files. This checker never installs, fetches, or repairs.",
+  "copiedUpstream": [],
+  "excluded": [
+    "semantic-algos"
+  ],
+  "entries": [
+    {
+      "id": "api-contract-design",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/api-contract-design/SKILL.md",
+      "sha256": "eae3d8ee7a262a801ae25eeea92a79ef62ffbe1cdea5c615a42f6b3ad71e0383",
+      "hosts": [
+        {
+          "path": ".claude/skills/api-contract-design/SKILL.md",
+          "kind": "pointer",
+          "sha256": "eb0ebc6120eb4e812ca4de710dd610069e8763dba4181e938303dc12b4bc467a",
+          "target": ".agents/skills/api-contract-design/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "architecture-design",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/architecture-design/SKILL.md",
+      "sha256": "e144cd53a35f6ad2cff98f794509308f038dac92a5d58b3bab50aed727217041",
+      "hosts": [
+        {
+          "path": ".claude/skills/architecture-design/SKILL.md",
+          "kind": "pointer",
+          "sha256": "cba241d74fef39a03c4df54dd5bd255c72b73423545eeaf18c3b5efb4d42c0e3",
+          "target": ".agents/skills/architecture-design/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "backup-restore",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/backup-restore/SKILL.md",
+      "sha256": "910021aa0cba0d019927da06e22f1adc75ab5c4f2502c70c71913062816d8cea",
+      "hosts": [
+        {
+          "path": ".claude/skills/backup-restore/SKILL.md",
+          "kind": "pointer",
+          "sha256": "9da5b107946afadb94f2e56f23e3f3c3306ff6b26f3bcd2fa5bd339c7188076b",
+          "target": ".agents/skills/backup-restore/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "cli-terminal-ux",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/cli-terminal-ux/SKILL.md",
+      "sha256": "399bde1953a7bf631dcbd70ac52ac2790151ea18bb2fe7883e2e09fd530d49bd",
+      "hosts": [
+        {
+          "path": ".claude/skills/cli-terminal-ux/SKILL.md",
+          "kind": "pointer",
+          "sha256": "01461ca32505431966b58279abb3054ff50e461c363bfdedf88e499420141fbb",
+          "target": ".agents/skills/cli-terminal-ux/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "concurrency-race-analysis",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/concurrency-race-analysis/SKILL.md",
+      "sha256": "67647e03fc2557124dc35bcd536e0d09e969a62280b039c16c271734614dd77b",
+      "hosts": [
+        {
+          "path": ".claude/skills/concurrency-race-analysis/SKILL.md",
+          "kind": "pointer",
+          "sha256": "651f74c5ffd51e9e9e20259921e4697f183849b872693eaae18a2795de542f9a",
+          "target": ".agents/skills/concurrency-race-analysis/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "connector-work",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/connector-work/SKILL.md",
+      "sha256": "e8cd731a05dacb3e182751b76877afb0e4392a936a5b74cf428c5c7dd96e4e7c",
+      "hosts": [
+        {
+          "path": ".claude/skills/connector-work/SKILL.md",
+          "kind": "pointer",
+          "sha256": "e12568f0738125bcfd83d0e71344751dfc99a8c02284356e3a0f91270d0a928f",
+          "target": ".agents/skills/connector-work/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "dependency-evaluation",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/dependency-evaluation/SKILL.md",
+      "sha256": "abd38cc2b017f583a93abe2173a9d44e2ff2d346614356173ab04e4f9408479d",
+      "hosts": [
+        {
+          "path": ".claude/skills/dependency-evaluation/SKILL.md",
+          "kind": "pointer",
+          "sha256": "1e923b0b8dd69b97390a1be733463db66b3ebaee85e01a392e3fa06bbf2b9161",
+          "target": ".agents/skills/dependency-evaluation/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "diagnose-failure",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/diagnose-failure/SKILL.md",
+      "sha256": "6dd98988070aa3042aa16586357fa7eef6aee922dfc7c84bdbd767a29d52f948",
+      "hosts": [
+        {
+          "path": ".claude/skills/diagnose-failure/SKILL.md",
+          "kind": "pointer",
+          "sha256": "e235985c8eecbb6601106f7fabd75bc1cc767a323a4c91868ca8e16862a23c02",
+          "target": ".agents/skills/diagnose-failure/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "documentation-accuracy",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/documentation-accuracy/SKILL.md",
+      "sha256": "72d2ac01fe9fd3b5e47eaa05153f4dffe07f60e3230a6ae4c76c137ac80c8fe7",
+      "hosts": [
+        {
+          "path": ".claude/skills/documentation-accuracy/SKILL.md",
+          "kind": "pointer",
+          "sha256": "76a62c84b11cf33ff283f7a44c72ef3f789f0183ab5630a2db48e2477440ee9b",
+          "target": ".agents/skills/documentation-accuracy/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "elegance-review",
+      "role": "house-overlay",
+      "license": "MIT",
+      "notice": "Kizuki house overlay. Covered by the repository LICENSE. Host copies must match this canonical file. No upstream file is copied.",
+      "canonical": ".agents/skills/elegance-review/SKILL.md",
+      "sha256": "44b51b7c027b59e2c5c21e1cd3854ab3360759bcaf2660de29776d9484108ff7",
+      "hosts": [
+        {
+          "path": ".claude/skills/elegance-review/SKILL.md",
+          "kind": "copy",
+          "sha256": "44b51b7c027b59e2c5c21e1cd3854ab3360759bcaf2660de29776d9484108ff7",
+          "target": ".agents/skills/elegance-review/SKILL.md"
+        },
+        {
+          "path": ".cursor/skills/elegance-review/SKILL.md",
+          "kind": "copy",
+          "sha256": "44b51b7c027b59e2c5c21e1cd3854ab3360759bcaf2660de29776d9484108ff7",
+          "target": ".agents/skills/elegance-review/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "epistemic-integrity",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/epistemic-integrity/SKILL.md",
+      "sha256": "affacbb8db35c6bf5250c34f836df938409514bb88439b2c0fe5279c7f34fa52",
+      "hosts": [
+        {
+          "path": ".claude/skills/epistemic-integrity/SKILL.md",
+          "kind": "pointer",
+          "sha256": "ac7b393d7a97974c0a89d704497cfc002061892359712a35ba97946c0055e212",
+          "target": ".agents/skills/epistemic-integrity/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "handoff-work",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/handoff-work/SKILL.md",
+      "sha256": "72c189143093fb6e8fcbf1d86cefeccedf782f79a440814260cc7bc1fc77e7fd",
+      "hosts": [
+        {
+          "path": ".claude/skills/handoff-work/SKILL.md",
+          "kind": "pointer",
+          "sha256": "702c078ae99ea49653aeae35a8c875b5c7ee7f816fb428cccf30cf1586813d28",
+          "target": ".agents/skills/handoff-work/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "implement-change",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/implement-change/SKILL.md",
+      "sha256": "b8a3ed142117b03f341c01e582ccaeb239049dce53ce1d943a6a101ef8e054f8",
+      "hosts": [
+        {
+          "path": ".claude/skills/implement-change/SKILL.md",
+          "kind": "pointer",
+          "sha256": "7896acb2dba3efac0c9584db1f302ec38f51eddee2c609b08e50c509c4409d3c",
+          "target": ".agents/skills/implement-change/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "incident-root-cause",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/incident-root-cause/SKILL.md",
+      "sha256": "d1b6d8de18e69dd740e56e4d83c5a2b0e94bdd602476f888520e48ba0107ff6d",
+      "hosts": [
+        {
+          "path": ".claude/skills/incident-root-cause/SKILL.md",
+          "kind": "pointer",
+          "sha256": "b7f87278195139a47b4472d80611d7eaa33fa2f329f29600940c55cf93fa67f5",
+          "target": ".agents/skills/incident-root-cause/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "issue-pickup-execution",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/issue-pickup-execution/SKILL.md",
+      "sha256": "3d694601d946a1381e41ae229cfa61ec17394acded1640a1625f65621ee1a855",
+      "hosts": [
+        {
+          "path": ".claude/skills/issue-pickup-execution/SKILL.md",
+          "kind": "pointer",
+          "sha256": "8ead9d2e3c029ed484bbf4108eba64675bdb550bd356836d1158b697ff1c762e",
+          "target": ".agents/skills/issue-pickup-execution/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "kun",
+      "role": "vendor-stub",
+      "license": "unverified-upstream",
+      "notice": "Local vendor stub only. Upstream kunchenguid/kun is not fetched, pinned, or license-cleared. Not an adopted MIT copy.",
+      "canonical": ".agents/skills/kun/SKILL.md",
+      "sha256": "37864c82e1d8b73a153fbad9d9b88d2ab62278867b051cdf884ed16d258af0d0",
+      "hosts": [
+        {
+          "path": ".cursor/skills/kun/SKILL.md",
+          "kind": "copy",
+          "sha256": "37864c82e1d8b73a153fbad9d9b88d2ab62278867b051cdf884ed16d258af0d0",
+          "target": ".agents/skills/kun/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "longitudinal-evaluation",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/longitudinal-evaluation/SKILL.md",
+      "sha256": "fb0d5fe7cc95604e3fa3b0286e7ab529d99b2504a1fc7ba459505e7b30b462dc",
+      "hosts": [
+        {
+          "path": ".claude/skills/longitudinal-evaluation/SKILL.md",
+          "kind": "pointer",
+          "sha256": "a9c863fd6eb0b643658422d68b2233599836eb1e94aaed34c99c7c9f9be7bf14",
+          "target": ".agents/skills/longitudinal-evaluation/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "mcp-tool-design",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/mcp-tool-design/SKILL.md",
+      "sha256": "9ef28df0d8e8e27048fe274aa11d8da43b9bf67b4c21d6eb142bf35a2e6073cd",
+      "hosts": [
+        {
+          "path": ".claude/skills/mcp-tool-design/SKILL.md",
+          "kind": "pointer",
+          "sha256": "f9f6ed05a5136798e273803225d258c0d41f4e0317487c13d23d5fa35a00c0dc",
+          "target": ".agents/skills/mcp-tool-design/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "migration-work",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/migration-work/SKILL.md",
+      "sha256": "d5fefedb3739a2fc14541897b5f80bde32aaaf6bd26b5052359b3bf36b306e8f",
+      "hosts": [
+        {
+          "path": ".claude/skills/migration-work/SKILL.md",
+          "kind": "pointer",
+          "sha256": "dfbbba98648189acef7ab3ab82cebc532099d19a382c3233b7f21a7f796e976c",
+          "target": ".agents/skills/migration-work/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "observability-debuggability",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/observability-debuggability/SKILL.md",
+      "sha256": "0c6656e6af4d9da93a6a859650fce16fceba9c3be89da5005dde547dc612057c",
+      "hosts": [
+        {
+          "path": ".claude/skills/observability-debuggability/SKILL.md",
+          "kind": "pointer",
+          "sha256": "de95e1f5bec2c5f1c0937a12024151a0fca976faabb7e5a93e3de6354a67b495",
+          "target": ".agents/skills/observability-debuggability/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "oracle-backlog",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/oracle-backlog/SKILL.md",
+      "sha256": "f4ac5461d30c9ce192785dabda422fb073dd7a9523c0ce1e186fbcbfd9586791",
+      "hosts": [
+        {
+          "path": ".claude/skills/oracle-backlog/SKILL.md",
+          "kind": "pointer",
+          "sha256": "ddd8f2e68bf81c1d786379a1a38c8ab24958d23aaf7dad62795ff3d916c43fe5",
+          "target": ".agents/skills/oracle-backlog/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "orient-repository",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/orient-repository/SKILL.md",
+      "sha256": "0733d0612028d1bd8e8c853b5db00c3fd2653f74a6cef90052a01e2a6cc5b08c",
+      "hosts": [
+        {
+          "path": ".claude/skills/orient-repository/SKILL.md",
+          "kind": "pointer",
+          "sha256": "d37b21f66ba9afb8d916b1fcf5ba6a1334977a41d8f9ef0fdab538a78550d685",
+          "target": ".agents/skills/orient-repository/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "performance-engineering",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/performance-engineering/SKILL.md",
+      "sha256": "a6dd998169eca8cffa7819c1c53422f670d519805ef4cfab2fecca66d3c8b1af",
+      "hosts": [
+        {
+          "path": ".claude/skills/performance-engineering/SKILL.md",
+          "kind": "pointer",
+          "sha256": "9a5a9385a927d092a0267ed69e3c80c1284354d54fcaf3d4c2d820145925b7f1",
+          "target": ".agents/skills/performance-engineering/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "property-fuzz-testing",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/property-fuzz-testing/SKILL.md",
+      "sha256": "fb6f66483c33e26c66944c1d327338723ee572369c30ff283e3eaa475b89894f",
+      "hosts": [
+        {
+          "path": ".claude/skills/property-fuzz-testing/SKILL.md",
+          "kind": "pointer",
+          "sha256": "27de430e4d7f4d60248fdc6dfe550e1c7e5445840f4f286e6b893de686c93f4d",
+          "target": ".agents/skills/property-fuzz-testing/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "provenance-invalidation",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/provenance-invalidation/SKILL.md",
+      "sha256": "f836dfc3614c6942741dea8c8563b5da39ccdda18d5ae3d7cf69e17d79a3f898",
+      "hosts": [
+        {
+          "path": ".claude/skills/provenance-invalidation/SKILL.md",
+          "kind": "pointer",
+          "sha256": "372b9af1ecd45e23dbf9bbe477e625dd1f6fad81204bbe8ec82c32eacdee8f6f",
+          "target": ".agents/skills/provenance-invalidation/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "refactor-safely",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/refactor-safely/SKILL.md",
+      "sha256": "c4570a303f8d7a9de45f9d6cd3f81d63404f2111d32f7658b8863536d5d2508f",
+      "hosts": [
+        {
+          "path": ".claude/skills/refactor-safely/SKILL.md",
+          "kind": "pointer",
+          "sha256": "8070b6a1f52d9c97b910ad53d311b518d3fee08343f2756c3da6a642bbe1079d",
+          "target": ".agents/skills/refactor-safely/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "release-readiness",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/release-readiness/SKILL.md",
+      "sha256": "473a4b46d188130f3e361b96cac6bc3d444faeb60c519ef2e391a52b859ad9b8",
+      "hosts": [
+        {
+          "path": ".claude/skills/release-readiness/SKILL.md",
+          "kind": "pointer",
+          "sha256": "4b24bf110e435041ee96ae7be856aa35085efa58f34520ec492cb7ac714daa52",
+          "target": ".agents/skills/release-readiness/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "reliability-engineering",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/reliability-engineering/SKILL.md",
+      "sha256": "e54368c097357c1099159f64811cd8b9b5f5e2b48c48bbc2e98607cbd6cb9c24",
+      "hosts": [
+        {
+          "path": ".claude/skills/reliability-engineering/SKILL.md",
+          "kind": "pointer",
+          "sha256": "5886309eace4c6c481740ef9b7acb1409a639bd473a43ccdb82b0f9afd711e28",
+          "target": ".agents/skills/reliability-engineering/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "repository-archaeology",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/repository-archaeology/SKILL.md",
+      "sha256": "321fece7f0b756b2383e411eba6a9a4442cffa81a48530d67c11870fc12d1ccd",
+      "hosts": [
+        {
+          "path": ".claude/skills/repository-archaeology/SKILL.md",
+          "kind": "pointer",
+          "sha256": "a14c90d046ee907caa6902dd98be0d077d67faa79e408efccbaf7ada1e6f3947",
+          "target": ".agents/skills/repository-archaeology/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "review-change",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/review-change/SKILL.md",
+      "sha256": "e20e71bd6f0a465bf8aab1169234dc5e65ef61afef93b658eb5ff1c256d2ea14",
+      "hosts": [
+        {
+          "path": ".claude/skills/review-change/SKILL.md",
+          "kind": "pointer",
+          "sha256": "0f15f98589badee708917df533f52e68f317e5c37a57aba18d2b42746b819407",
+          "target": ".agents/skills/review-change/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "security-privacy-review",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/security-privacy-review/SKILL.md",
+      "sha256": "375823b18c8087866b5914c641839842101cabb6756034874713a8f5de91951b",
+      "hosts": [
+        {
+          "path": ".claude/skills/security-privacy-review/SKILL.md",
+          "kind": "pointer",
+          "sha256": "6f975623695720f014cfca8395d51a439d916a4f3764e0aa511928293ec4828c",
+          "target": ".agents/skills/security-privacy-review/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "show-me",
+      "role": "house-overlay",
+      "license": "MIT",
+      "notice": "Kizuki house overlay. Covered by the repository LICENSE. Host copies must match this canonical file. No upstream file is copied.",
+      "canonical": ".claude/skills/show-me/SKILL.md",
+      "sha256": "523b6d99d2e0c1883737662b5d3d56b69ecb26f0b0349b26fa2c902e6cbc5564",
+      "hosts": [
+        {
+          "path": ".cursor/skills/show-me/SKILL.md",
+          "kind": "copy",
+          "sha256": "523b6d99d2e0c1883737662b5d3d56b69ecb26f0b0349b26fa2c902e6cbc5564",
+          "target": ".claude/skills/show-me/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "sqlite-data-modeling",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/sqlite-data-modeling/SKILL.md",
+      "sha256": "76222373f169c6bcd8e98e1c9120ac0f5c79c970ef02815550b4ba27ae4b13c7",
+      "hosts": [
+        {
+          "path": ".claude/skills/sqlite-data-modeling/SKILL.md",
+          "kind": "pointer",
+          "sha256": "85e602249e60442d490d07c9c60fd1fb2b4c165685457ada01b5f854a08d86c0",
+          "target": ".agents/skills/sqlite-data-modeling/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "test-strategy",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/test-strategy/SKILL.md",
+      "sha256": "ed97bfce54560dab05f2c4cefded7c02e55bdd4f20e96755e350d025fdf2b150",
+      "hosts": [
+        {
+          "path": ".claude/skills/test-strategy/SKILL.md",
+          "kind": "pointer",
+          "sha256": "3575fdafbd2464ad092a5df8314c7af14abffd0246d951a9e110bf57dcbd0758",
+          "target": ".agents/skills/test-strategy/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "threat-modeling",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/threat-modeling/SKILL.md",
+      "sha256": "fb3e0532e5e6df4f5fbedd451bb8f3ca6d6065e311c7f896db700b9900b22bb6",
+      "hosts": [
+        {
+          "path": ".claude/skills/threat-modeling/SKILL.md",
+          "kind": "pointer",
+          "sha256": "1bb4f4d98cfc74c49d98009c677e30bc5491cffb713595b51aedd882140589f5",
+          "target": ".agents/skills/threat-modeling/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "ux-dx-ax-parity",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/ux-dx-ax-parity/SKILL.md",
+      "sha256": "21102f0299ee57e0f8411ce377f468ea2d981f4cfe6e4e22a0440080954b6fa9",
+      "hosts": [
+        {
+          "path": ".claude/skills/ux-dx-ax-parity/SKILL.md",
+          "kind": "pointer",
+          "sha256": "40891a2f5a54e734faf3753025800cdee5e6229245d2c8affa87e31bebd4c7bc",
+          "target": ".agents/skills/ux-dx-ax-parity/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "world-model-architecture",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/world-model-architecture/SKILL.md",
+      "sha256": "976d7c6aaa8360aa5c21791a7e0a6ed9028d83dfee193031ebabc045a25db6f3",
+      "hosts": [
+        {
+          "path": ".claude/skills/world-model-architecture/SKILL.md",
+          "kind": "pointer",
+          "sha256": "8a7089a4391a9cf6c2a2af9f47ea9fa91e08bbeac21378c234e005774baec9d1",
+          "target": ".agents/skills/world-model-architecture/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "world-slice-design",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/world-slice-design/SKILL.md",
+      "sha256": "9dd11aeb2caecf6df2adf5792517e4efdb222bcba80b6939749588a72ad683e0",
+      "hosts": [
+        {
+          "path": ".claude/skills/world-slice-design/SKILL.md",
+          "kind": "pointer",
+          "sha256": "3e051ead989afd1dc39280d96ea8009613cd4a706454eafd3fc366a71c838649",
+          "target": ".agents/skills/world-slice-design/SKILL.md"
+        }
+      ]
+    },
+    {
+      "id": "write-rfc",
+      "role": "kizuki-owned",
+      "license": "MIT",
+      "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
+      "canonical": ".agents/skills/write-rfc/SKILL.md",
+      "sha256": "0d758f69800f55fb6e02e2cce6d7c158af9932881f85e2cea5553a7b743c1cf7",
+      "hosts": [
+        {
+          "path": ".claude/skills/write-rfc/SKILL.md",
+          "kind": "pointer",
+          "sha256": "2b690f7a14bd3d0ed5ad34abddb473a577416cd25da1736652207f814bd32523",
+          "target": ".agents/skills/write-rfc/SKILL.md"
+        }
+      ]
+    }
+  ]
+}
