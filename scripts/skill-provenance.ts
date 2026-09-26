@@ -258,6 +258,112 @@ export function checkProvenance(
   return errors;
 }
 
+export type AdoptionAction =
+  | { readonly kind: "unchanged"; readonly path: string; readonly sha256: string }
+  | {
+      readonly kind: "would-restore";
+      readonly path: string;
+      readonly from: string;
+      readonly sha256: string;
+      readonly bytes: number;
+    }
+  | { readonly kind: "refused"; readonly path: string; readonly reason: string };
+
+export type AdoptionPreview = {
+  readonly writes: false;
+  readonly destination: string;
+  readonly action: AdoptionAction;
+};
+
+export type AdoptionCommand =
+  | { readonly mode: "verify" }
+  | { readonly mode: "dry-run"; readonly destination: string }
+  | { readonly mode: "refused"; readonly reason: string };
+
+/** A selected host only. Repair flags are refused so this command cannot write. */
+export function adoptionCommand(argv: readonly string[]): AdoptionCommand {
+  if (argv.includes("--apply") || argv.includes("--repair")) {
+    return { mode: "refused", reason: "repair is not implemented; dry-run performs no writes" };
+  }
+  if (!argv.includes("--dry-run")) return { mode: "verify" };
+  const index = argv.indexOf("--destination");
+  const value = index >= 0 ? argv[index + 1] : undefined;
+  if (value === undefined || value.startsWith("-")) {
+    return { mode: "refused", reason: "selected destination is required" };
+  }
+  return { mode: "dry-run", destination: value };
+}
+
+/**
+ * Preview restoring one adopted host from its locked canonical bytes.
+ * The result carries a digest and length, never file text, and never writes.
+ */
+export function previewAdoption(
+  lock: ProvenanceLock,
+  files: ReadonlyMap<string, FileState>,
+  destination: string,
+): AdoptionPreview {
+  if (destination.trim() === "") throw new Error("selected destination is required");
+  const path = assertRepoPath(destination, "destination");
+  const refused = (reason: string): AdoptionPreview => ({
+    writes: false,
+    destination: path,
+    action: { kind: "refused", path, reason },
+  });
+  if (containsExcluded(path)) return refused("excluded material: semantic-algos");
+
+  let host: SkillHost | undefined;
+  let entry: SkillEntry | undefined;
+  for (const item of lock.entries) {
+    const found = item.hosts.find((candidate) => candidate.path === path);
+    if (found !== undefined) {
+      host = found;
+      entry = item;
+      break;
+    }
+  }
+  if (host === undefined || entry === undefined) {
+    return refused(
+      lock.entries.some((item) => item.canonical === path)
+        ? "canonical drift is a lock failure, not a repair target"
+        : "destination is not an adopted host path",
+    );
+  }
+
+  const state = stateFor(files, path);
+  if (state.kind === "symlink") return refused("refused symlink");
+  if (state.kind === "unsafe") return refused("refused unsafe path");
+  if (host.kind === "pointer") {
+    if (state.kind === "bytes" && sha256Hex(state.bytes) === host.sha256) {
+      return { writes: false, destination: path, action: { kind: "unchanged", path, sha256: host.sha256 } };
+    }
+    return refused("pointer bytes are not stored; dry-run will not invent adapter text");
+  }
+  if (host.sha256 !== entry.sha256) {
+    return refused("copy lock digest does not match canonical; dry-run will not invent bytes");
+  }
+
+  const canonical = stateFor(files, entry.canonical);
+  if (canonical.kind !== "bytes") return refused(`missing source: ${entry.canonical}`);
+  if (sha256Hex(canonical.bytes) !== entry.sha256) {
+    return refused("canonical digest mismatch; dry-run will not copy drifted source");
+  }
+  if (state.kind === "bytes" && sha256Hex(state.bytes) === host.sha256) {
+    return { writes: false, destination: path, action: { kind: "unchanged", path, sha256: host.sha256 } };
+  }
+  return {
+    writes: false,
+    destination: path,
+    action: {
+      kind: "would-restore",
+      path,
+      from: entry.canonical,
+      sha256: entry.sha256,
+      bytes: canonical.bytes.byteLength,
+    },
+  };
+}
+
 export function loadSkillState(root: string, rel: string): FileState {
   try {
     assertRepoPath(rel, rel);
@@ -325,19 +431,35 @@ export function discoverSkillFiles(root: string): { paths: string[]; errors: str
 
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
+function readLock(root: string): ProvenanceLock {
+  return parseProvenanceLock(JSON.parse(decoder.decode(readFileSync(join(root, "scripts", "skill-provenance.lock.json")))));
+}
+
 if (import.meta.main) {
-  try {
-    const root = join(import.meta.dir, "..");
-    const lock = parseProvenanceLock(JSON.parse(decoder.decode(readFileSync(join(root, "scripts", "skill-provenance.lock.json")))));
-    const discovered = discoverSkillFiles(root);
-    const files = new Map<string, FileState>();
-    for (const path of lockedPaths(lock)) files.set(path, loadSkillState(root, path));
-    const errors = [...discovered.errors, ...checkProvenance(lock, files, discovered.paths)];
-    for (const error of errors) console.error(error);
-    if (errors.length > 0) process.exitCode = 1;
-    else console.log("skill provenance verification passed");
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : "skill provenance verification failed");
+  const command = adoptionCommand(process.argv.slice(2));
+  if (command.mode === "refused") {
+    console.error(command.reason);
     process.exitCode = 1;
+  } else {
+    try {
+      const root = join(import.meta.dir, "..");
+      const lock = readLock(root);
+      const files = new Map<string, FileState>();
+      for (const path of lockedPaths(lock)) files.set(path, loadSkillState(root, path));
+      if (command.mode === "dry-run") {
+        const preview = previewAdoption(lock, files, command.destination);
+        console.log(JSON.stringify(preview));
+        if (preview.action.kind === "refused") process.exitCode = 1;
+      } else {
+        const discovered = discoverSkillFiles(root);
+        const errors = [...discovered.errors, ...checkProvenance(lock, files, discovered.paths)];
+        for (const error of errors) console.error(error);
+        if (errors.length > 0) process.exitCode = 1;
+        else console.log("skill provenance verification passed");
+      }
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : "skill provenance verification failed");
+      process.exitCode = 1;
+    }
   }
 }
