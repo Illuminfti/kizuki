@@ -107,7 +107,11 @@ Agent playbooks live under `.agents/skills/`. [AGENTS.md](AGENTS.md) is
 repository policy. `scripts/skill-routing.ts` checks the offline fixtures in
 `scripts/skill-routing-fixtures.json` during `bun run verify`. A request can
 select only an existing catalog skill. It cannot invent merge authority, a
-worker schedule, or an approval queue.
+worker schedule, or an approval queue. `scripts/skill-provenance.ts` checks
+`scripts/skill-provenance.lock.json` in the same offline gate. The lock binds
+each adopted skill file to its sha256, license, and host entrypoint. A missing
+file, changed byte, stale adapter, unknown license, or excluded Semantic Algos
+path fails closed. The checker does not install, fetch, or repair.
 
 ## License
 
