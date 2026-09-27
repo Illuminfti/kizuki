@@ -184,7 +184,8 @@ Implemented on this revision:
   listing, and context packets are core serving functions exposed over MCP,
   not CLI verbs.
 - **MCP stdio.** `bun packages/mcp/src/bin.ts --vault PATH (--owner | --token-env VAR | --token-ref file:/absolute/path)`.
-  Read tools: `search`, `get_page`, `query_entities`, `timeline`,
+  Read tools: `search`, `get_page`, `query_entities`, `timeline`
+  (including `event_id` expansion of one omitted capture span),
   `context_packet`, `graph_neighbors`, `system_health`. Write tools:
   `propose` and `correct`. There is no `put_page`.
 - **Loopback HTTP.** `kizuki serve` binds loopback unless `--no-http`.

@@ -26,7 +26,7 @@ export const TOOL_DESCRIPTIONS: Record<Tool, string> = {
   search: `Full-text search over canon notes and, with scope "ledger" or "all", captured records. ${TAINT_RULE}`,
   get_page: `Read one canon note by id or by vault-relative path. ${TAINT_RULE}`,
   query_entities: `List canon notes about people, organizations, projects, places and topics. ${TAINT_RULE}`,
-  timeline: `List captured records in a time window, optionally narrowed by subject, connector or kind. ${TAINT_RULE}`,
+  timeline: `List captured records in a time window, optionally narrowed by subject, connector or kind. Pass event_id, and optional offset, span, and integrity, to expand one omitted span from that evidence reference. A missing record, a denied grant, and a mismatched integrity pin return no captured text. This is not a file reader. ${TAINT_RULE}`,
   context_packet: `Build one purpose-scoped Markdown brief within a token budget. Pass purpose (session, recall, correction, audit), and advertise capabilities=["delta"] with retain_prefix plus prior_hash to skip an unchanged body. Optional hooks negotiate session_start, turn, pre_compaction, post_compaction, or session_end; unsupported hooks stay pull-only through this tool and are never invented host hooks. ${TAINT_RULE}`,
   graph_neighbors: `List the links around a note, a subject or a record. ${TAINT_RULE}`,
   system_health: `Report vault, ledger, connector and agent counts for this principal. ${TAINT_RULE}`,

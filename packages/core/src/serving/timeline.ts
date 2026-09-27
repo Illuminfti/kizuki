@@ -11,6 +11,8 @@ import {
 } from "./arguments";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
+import { expandTimelineDetail, wantsTimelineExpansion } from "./expand";
+import type { TimelineExpandData } from "./expand";
 import {
   collectAuthorizedTimeline,
   eventDecision,
@@ -29,10 +31,24 @@ export interface TimelineArgs {
   connector_id?: string;
   kind?: string;
   limit?: number;
+  /** Expand one captured record by its evidence id. Not a list filter. */
+  event_id?: string;
+  /** Code-point offset into the current captured text. */
+  offset?: number;
+  /** Code points to return. Defaults to 512, capped at 2000. */
+  span?: number;
+  /** When set, a mismatch withholds the text and the current digest. */
+  integrity?: string;
 }
 
-export function serveTimeline(ctx: ServeContext, args: TimelineArgs): Envelope {
-  return gate(ctx, "timeline", auditArguments(args), ({ ctx }): Served<undefined> => {
+export type { TimelineExpandData } from "./expand";
+
+export function serveTimeline(
+  ctx: ServeContext,
+  args: TimelineArgs,
+): Envelope<TimelineExpandData | undefined> {
+  return gate(ctx, "timeline", auditArguments(args), ({ ctx }): Served<TimelineExpandData | undefined> => {
+    if (wantsTimelineExpansion(args)) return expandTimelineDetail(ctx, args);
     const grant = ctx.principal.grant;
     const window = scopedWindow(
       grant,

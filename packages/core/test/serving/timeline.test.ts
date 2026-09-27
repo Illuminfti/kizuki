@@ -4,7 +4,6 @@ import { registerConnection } from "../../src/ledger/connections";
 import { setSourceGrant } from "../../src/ledger/source-grants";
 import { serveTimeline } from "../../src/serving/timeline";
 import { ServeError } from "../../src/serving/types";
-import type { Envelope } from "../../src/serving/types";
 import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
 import { serveFixture, storeEvent } from "./helpers";
@@ -20,7 +19,7 @@ afterAll(() => {
   fixture.dispose();
 });
 
-function eventIds(envelope: Envelope): string[] {
+function eventIds(envelope: { quoted: { event_id: string }[] }): string[] {
   return envelope.quoted.map((chunk) => chunk.event_id);
 }
 

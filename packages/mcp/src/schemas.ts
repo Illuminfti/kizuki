@@ -108,6 +108,10 @@ export const TIMELINE_INPUT = z.strictObject({
   connector_id: ID.optional(),
   kind: ID.optional(),
   limit: z.int().min(1).max(200).optional(),
+  event_id: ID.optional(),
+  offset: z.int().min(0).max(100_000).optional(),
+  span: z.int().min(1).max(2_000).optional(),
+  integrity: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 });
 
 export const GRAPH_INPUT = z.strictObject({

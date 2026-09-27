@@ -695,7 +695,9 @@ states and MCP connection example.
 ## Not CLI verbs
 
 `timeline` is not registered. Timeline exists
-as an MCP / core serving function.
+as an MCP / core serving function. `event_id` expands one omitted span from
+that evidence reference, with optional `offset`, `span`, and `integrity`.
+It does not read a vault path.
 
 Source revocation maintenance inventories both known native retrieval roots under
 `.kizuki/retrieval`, including a previously selected engine. Each store has a

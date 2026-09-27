@@ -22,7 +22,7 @@ export type { GetPageArgs } from "./page";
 export { ENTITY_TYPES, serveEntities } from "./entities";
 export type { EntitiesArgs, EntitiesData } from "./entities";
 export { serveTimeline } from "./timeline";
-export type { TimelineArgs } from "./timeline";
+export type { TimelineArgs, TimelineExpandData } from "./timeline";
 export { serveGraph } from "./graph";
 export type { GraphArgs, GraphData } from "./graph";
 export { serveHealth } from "./health";
