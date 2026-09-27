@@ -350,6 +350,9 @@ test("context packet hooks accept named lifecycle events and refuse invented hos
   expect(PACKET_INPUT.safeParse({ hooks: ["private_provider"] }).success).toBe(false);
   expect(PACKET_INPUT.safeParse({ hooks: ["delta"] }).success).toBe(false);
   expect(PACKET_INPUT.safeParse({ hooks: ["compaction"] }).success).toBe(false);
+  expect(PACKET_INPUT.safeParse({ task_event_id: "rec-task", task_integrity: "a".repeat(64) }).success).toBe(true);
+  expect(PACKET_INPUT.safeParse({ task_event_id: "facts/linked.md" }).success).toBe(true);
+  expect(PACKET_INPUT.safeParse({ task_integrity: "not-a-pin" }).success).toBe(false);
 });
 
 test("a listed MCP client receives pull-only lifecycle negotiation without claiming hooks", async () => {

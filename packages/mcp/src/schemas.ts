@@ -144,6 +144,8 @@ export const PACKET_INPUT = z.strictObject({
   retain_prefix: z.boolean().optional(),
   prior_hash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   epoch: z.int().min(0).optional(),
+  task_event_id: ID.optional(),
+  task_integrity: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 });
 
 const MAX_FRONTMATTER_STRING = 4096;

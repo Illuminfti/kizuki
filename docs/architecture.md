@@ -186,7 +186,8 @@ Implemented on this revision:
 - **MCP stdio.** `bun packages/mcp/src/bin.ts --vault PATH (--owner | --token-env VAR | --token-ref file:/absolute/path)`.
   Read tools: `search`, `get_page`, `query_entities`, `timeline`
   (including `event_id` expansion of one omitted capture span),
-  `context_packet`, `graph_neighbors`, `system_health`. Write tools:
+  `context_packet` (optional `task_event_id` for structured sections from one
+  permitted capture), `graph_neighbors`, `system_health`. Write tools:
   `propose` and `correct`. There is no `put_page`.
 - **Loopback HTTP.** `kizuki serve` binds loopback unless `--no-http`.
 - **Agent identity in core.** Grants, sensitivity ceilings, tool allowlists,

@@ -35,6 +35,25 @@ function parseQuery(raw: string | undefined): string | undefined {
   return raw;
 }
 
+function parseTaskEvent(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/.test(raw)) {
+    throw new UsageError("invalid arguments: task_event_id: must be an identifier of at most 64 characters");
+  }
+  return raw;
+}
+
+function parseTaskIntegrity(raw: string | undefined, event: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  if (event === undefined) {
+    throw new UsageError("invalid arguments: task_event_id: required to read task sections");
+  }
+  if (!/^[0-9a-f]{64}$/.test(raw)) {
+    throw new UsageError("invalid arguments: task_integrity: must be a sha256 hex digest");
+  }
+  return raw;
+}
+
 function parseWindowBound(field: "since" | "until", raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined;
   if (!isRfc3339(raw)) {
@@ -56,7 +75,7 @@ function parseContextWindow(options: Map<string, string>): { since?: string; unt
 }
 
 export const CONTEXT_SCHEMA = {
-  options: ["--purpose", "--budget", "--query", "--since", "--until"],
+  options: ["--purpose", "--budget", "--query", "--since", "--until", "--task-event", "--task-integrity"],
   flags: ["--json"],
   defaults: { "--purpose": "session" },
   bounds: {
@@ -64,13 +83,15 @@ export const CONTEXT_SCHEMA = {
     "--budget": "50..2000",
     "--since": "RFC3339",
     "--until": "RFC3339",
+    "--task-event": "identifier",
+    "--task-integrity": "sha256",
   },
 } as const satisfies CommandHelpSchema;
 
 export const contextCommand: Command = {
   name: "context",
   usage:
-    "context [--purpose session|recall|correction|audit] [--budget N] [--query TEXT] [--since RFC3339] [--until RFC3339] [--json]",
+    "context [--purpose session|recall|correction|audit] [--budget N] [--query TEXT] [--since RFC3339] [--until RFC3339] [--task-event ID] [--task-integrity SHA256] [--json]",
   summary: "give your agent relevant context, with sources and a token budget",
   schema: CONTEXT_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -87,6 +108,8 @@ export const contextCommand: Command = {
     const rawBudget = parsed.options.get("--budget");
     const budget = rawBudget === undefined ? undefined : parseBudget(rawBudget);
     const query = parseQuery(parsed.options.get("--query"));
+    const taskEvent = parseTaskEvent(parsed.options.get("--task-event"));
+    const taskIntegrity = parseTaskIntegrity(parsed.options.get("--task-integrity"), taskEvent);
     const window = parseContextWindow(parsed.options);
 
     return withReadVault(io, async (ctx) => {
@@ -96,19 +119,31 @@ export const contextCommand: Command = {
           purpose: rawPurpose as PacketPurpose,
           ...(budget === undefined ? {} : { budget_tokens: budget }),
           ...(query === undefined ? {} : { query }),
+          ...(taskEvent === undefined ? {} : { task_event_id: taskEvent }),
+          ...(taskIntegrity === undefined ? {} : { task_integrity: taskIntegrity }),
           ...window,
         },
       );
       ctx.assertCurrent();
       const retrievalDegraded = envelope.data?.retrieval_degraded ?? [];
       if (retrievalDegraded.length > 0) io.err(`degraded=${retrievalDegraded.join(",")}`);
+      const task = envelope.data?.task;
+      const taskTextServed = task?.sections !== undefined
+        && Object.values(task.sections).some((items) => items.length > 0);
       const incomplete = envelope.data === undefined || envelope.denied.some(
         (entry) => entry.reason === "error",
       );
       if (incomplete) {
         io.err("Context could not be gathered completely. Run kizuki doctor to check the vault.");
-      } else if (envelope.data !== undefined && Object.values(envelope.data.sections).every((count) => count === 0)) {
+      } else if (
+        envelope.data !== undefined
+        && Object.values(envelope.data.sections).every((count) => count === 0)
+        && !taskTextServed
+      ) {
         io.err("No matching context fits this packet. Try a broader --query, a larger --budget, or an explicit --since/--until window; use kizuki doctor to check your sources.");
+      }
+      if (task !== undefined && task.status !== "current") {
+        io.err(`task=${task.status}${task.reason === undefined ? "" : ` reason=${task.reason}`}`);
       }
       if (parsed.flags.has("--json")) {
         io.out(jsonEnvelope("context", incomplete || retrievalDegraded.length > 0 ? "degraded" : "ok", envelope, {
