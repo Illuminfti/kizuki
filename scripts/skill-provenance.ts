@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, sep } from "node:path";
 
 export type SkillRole = "kizuki-owned" | "house-overlay" | "vendor-stub";
 export type HostKind = "pointer" | "copy";
@@ -278,20 +279,42 @@ export type AdoptionPreview = {
 export type AdoptionCommand =
   | { readonly mode: "verify" }
   | { readonly mode: "dry-run"; readonly destination: string }
+  | { readonly mode: "repair"; readonly destination: string }
+  | { readonly mode: "rollback"; readonly destination: string; readonly backup: string }
   | { readonly mode: "refused"; readonly reason: string };
 
-/** A selected host only. Repair flags are refused so this command cannot write. */
-export function adoptionCommand(argv: readonly string[]): AdoptionCommand {
-  if (argv.includes("--apply") || argv.includes("--repair")) {
-    return { mode: "refused", reason: "repair is not implemented; dry-run performs no writes" };
-  }
-  if (!argv.includes("--dry-run")) return { mode: "verify" };
-  const index = argv.indexOf("--destination");
+function flagValue(argv: readonly string[], flag: string): string | undefined {
+  const index = argv.indexOf(flag);
   const value = index >= 0 ? argv[index + 1] : undefined;
-  if (value === undefined || value.startsWith("-")) {
+  if (value === undefined || value.startsWith("-")) return undefined;
+  return value;
+}
+
+/** Dry-run never writes. Repair and rollback are explicit and destination-scoped. */
+export function adoptionCommand(argv: readonly string[]): AdoptionCommand {
+  if (argv.includes("--apply")) {
+    return { mode: "refused", reason: "--apply is refused; use --repair with a selected destination" };
+  }
+  const destination = flagValue(argv, "--destination");
+  const wantsRepair = argv.includes("--repair");
+  const wantsRollback = argv.includes("--rollback");
+  const wantsDryRun = argv.includes("--dry-run");
+  if (wantsRepair && wantsDryRun) return { mode: "refused", reason: "dry-run performs no writes" };
+  if (wantsRepair && wantsRollback) {
+    return { mode: "refused", reason: "repair and rollback are separate commands" };
+  }
+  if ((wantsRepair || wantsRollback || wantsDryRun) && destination === undefined) {
     return { mode: "refused", reason: "selected destination is required" };
   }
-  return { mode: "dry-run", destination: value };
+  if (!wantsRepair && !wantsRollback && !wantsDryRun) return { mode: "verify" };
+  if (destination === undefined) return { mode: "refused", reason: "selected destination is required" };
+  if (wantsRollback) {
+    const backup = flagValue(argv, "--backup");
+    if (backup === undefined) return { mode: "refused", reason: "backup path is required" };
+    return { mode: "rollback", destination, backup };
+  }
+  if (wantsRepair) return { mode: "repair", destination };
+  return { mode: "dry-run", destination };
 }
 
 /**
@@ -429,6 +452,240 @@ export function discoverSkillFiles(root: string): { paths: string[]; errors: str
   return { paths, errors };
 }
 
+export type SkillRepairReceipt =
+  | {
+      readonly writes: false;
+      readonly destination: string;
+      readonly action: "unchanged";
+      readonly sha256: string;
+    }
+  | {
+      readonly writes: false;
+      readonly destination: string;
+      readonly action: "refused";
+      readonly reason: string;
+    }
+  | {
+      readonly writes: true;
+      readonly destination: string;
+      readonly action: "restored";
+      readonly backup: string;
+      readonly before: string;
+      readonly after: string;
+    }
+  | {
+      readonly writes: true;
+      readonly destination: string;
+      readonly action: "rolled-back";
+      readonly before: string;
+      readonly after: string;
+    };
+
+function isEnoent(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error as { code?: unknown }).code === "ENOENT";
+}
+
+function refusedRepair(destination: string, reason: string): SkillRepairReceipt {
+  return { writes: false, destination, action: "refused", reason };
+}
+
+function unchangedRepair(destination: string, digest: string): SkillRepairReceipt {
+  return { writes: false, destination, action: "unchanged", sha256: digest };
+}
+
+/** An absolute path with no symlink component. The final entry may be absent. */
+function resolveNoSymlink(target: string, allowMissingFinal: boolean): string | undefined {
+  if (!target.startsWith(sep) || target.includes("\0") || target.split(sep).includes("..")) return undefined;
+  const parts = target.split(sep).filter((part) => part !== "" && part !== ".");
+  let current: string = sep;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part === undefined) return undefined;
+    current = join(current, part);
+    try {
+      if (lstatSync(current).isSymbolicLink()) return undefined;
+    } catch (error) {
+      if (isEnoent(error) && allowMissingFinal && index === parts.length - 1) return current;
+      return undefined;
+    }
+  }
+  return current;
+}
+
+function outsideRoot(root: string, target: string, allowMissingFinal: boolean): string | undefined {
+  let rootReal: string;
+  try {
+    rootReal = realpathSync(root);
+  } catch {
+    return undefined;
+  }
+  const resolved = resolveNoSymlink(target, allowMissingFinal);
+  if (resolved === undefined) return undefined;
+  if (resolved === rootReal || resolved.startsWith(`${rootReal}${sep}`)) return undefined;
+  return resolved;
+}
+
+function destinationAbsolute(root: string, rel: string): string | "symlink" | "missing" | "unsafe" {
+  let rootReal: string;
+  try {
+    rootReal = realpathSync(root);
+  } catch {
+    return "unsafe";
+  }
+  let current = rootReal;
+  const parts = rel.split("/");
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part === undefined) return "unsafe";
+    current = join(current, part);
+    try {
+      const stat = lstatSync(current);
+      if (stat.isSymbolicLink()) return "symlink";
+      if (index === parts.length - 1 && !stat.isFile()) return "unsafe";
+    } catch (error) {
+      if (isEnoent(error)) return "missing";
+      return "unsafe";
+    }
+  }
+  if (!current.startsWith(`${rootReal}${sep}`)) return "unsafe";
+  return current;
+}
+
+function replaceRegularFile(absolute: string, next: Uint8Array): void {
+  const stat = lstatSync(absolute);
+  if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("refused symlink");
+  const temp = `${absolute}.kizuki-repair-tmp`;
+  try {
+    const tempStat = lstatSync(temp);
+    if (tempStat.isSymbolicLink() || !tempStat.isFile()) throw new Error("refused symlink");
+    rmSync(temp);
+  } catch (error) {
+    if (!isEnoent(error)) throw error;
+  }
+  writeFileSync(temp, next, { flag: "wx", mode: (stat.mode & 0o777) || 0o644 });
+  try {
+    renameSync(temp, absolute);
+  } catch (error) {
+    try {
+      rmSync(temp);
+    } catch {
+      // Destination is unchanged. Removing the temp file is the leftover cleanup.
+    }
+    throw error;
+  }
+}
+
+function keepBackup(dir: string, before: string, bytes: Uint8Array): string | undefined {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const path = join(dir, `${before}.bak`);
+  try {
+    const existing = lstatSync(path);
+    if (existing.isSymbolicLink() || !existing.isFile()) return undefined;
+    if (sha256Hex(new Uint8Array(readFileSync(path))) !== before) return undefined;
+    return path;
+  } catch (error) {
+    if (!isEnoent(error)) return undefined;
+  }
+  writeFileSync(path, bytes, { flag: "wx", mode: 0o600 });
+  if (sha256Hex(new Uint8Array(readFileSync(path))) !== before) return undefined;
+  return path;
+}
+
+function statesFor(root: string, lock: ProvenanceLock, destination: string): Map<string, FileState> {
+  const files = new Map<string, FileState>([[destination, loadSkillState(root, destination)]]);
+  const entry = lock.entries.find((item) => item.hosts.some((host) => host.path === destination));
+  if (entry !== undefined) files.set(entry.canonical, loadSkillState(root, entry.canonical));
+  return files;
+}
+
+/**
+ * Restore one adopted copy from its locked canonical bytes.
+ * The backup is written outside the tree before the destination changes.
+ * A missing copy is not installed.
+ */
+export function repairAdoption(
+  root: string,
+  lock: ProvenanceLock,
+  destination: string,
+  backupDir: string,
+): SkillRepairReceipt {
+  const path = assertRepoPath(destination, "destination");
+  const absolute = destinationAbsolute(root, path);
+  if (absolute === "symlink") return refusedRepair(path, "refused symlink");
+  if (absolute === "missing") return refusedRepair(path, "missing destination; repair does not install");
+  if (absolute === "unsafe") return refusedRepair(path, "refused unsafe path");
+  const preview = previewAdoption(lock, statesFor(root, lock, path), path);
+  if (preview.action.kind === "refused") return refusedRepair(preview.destination, preview.action.reason);
+  if (preview.action.kind === "unchanged") return unchangedRepair(preview.destination, preview.action.sha256);
+  const backupRoot = outsideRoot(root, backupDir, true);
+  if (backupRoot === undefined) return refusedRepair(path, "refused unsafe path: backup");
+  const canonical = loadSkillState(root, preview.action.from);
+  if (canonical.kind !== "bytes" || sha256Hex(canonical.bytes) !== preview.action.sha256) {
+    return refusedRepair(path, "canonical digest mismatch; repair will not copy drifted source");
+  }
+  const current = new Uint8Array(readFileSync(absolute));
+  const before = sha256Hex(current);
+  const backup = keepBackup(backupRoot, before, current);
+  if (backup === undefined) return refusedRepair(path, "backup was not recorded; destination unchanged");
+  replaceRegularFile(absolute, canonical.bytes);
+  if (sha256Hex(new Uint8Array(readFileSync(absolute))) !== preview.action.sha256) {
+    replaceRegularFile(absolute, current);
+    return refusedRepair(path, "repair failed closed; destination restored from memory");
+  }
+  return {
+    writes: true,
+    destination: path,
+    action: "restored",
+    backup,
+    before,
+    after: preview.action.sha256,
+  };
+}
+
+/** Put one adopted copy back to the bytes saved before repair. Does not install. */
+export function rollbackAdoption(
+  root: string,
+  lock: ProvenanceLock,
+  destination: string,
+  backupPath: string,
+): SkillRepairReceipt {
+  const path = assertRepoPath(destination, "destination");
+  const absolute = destinationAbsolute(root, path);
+  if (absolute === "symlink") return refusedRepair(path, "refused symlink");
+  if (absolute === "missing") return refusedRepair(path, "missing destination; rollback does not install");
+  if (absolute === "unsafe") return refusedRepair(path, "refused unsafe path");
+  const copy = lock.entries.find((item) => item.hosts.some((host) => host.path === path && host.kind === "copy"));
+  if (copy === undefined) {
+    if (lock.entries.some((item) => item.canonical === path)) {
+      return refusedRepair(path, "canonical drift is a lock failure, not a repair target");
+    }
+    if (lock.entries.some((item) => item.hosts.some((host) => host.path === path))) {
+      return refusedRepair(path, "pointer hosts are not a repair target");
+    }
+    return refusedRepair(path, "destination is not an adopted host path");
+  }
+  const backup = outsideRoot(root, backupPath, false);
+  if (backup === undefined) return refusedRepair(path, "refused unsafe path: backup");
+  try {
+    const backupStat = lstatSync(backup);
+    if (backupStat.isSymbolicLink() || !backupStat.isFile()) return refusedRepair(path, "refused symlink");
+  } catch (error) {
+    if (isEnoent(error)) return refusedRepair(path, "missing backup");
+    return refusedRepair(path, "refused unsafe path: backup");
+  }
+  const backupBytes = new Uint8Array(readFileSync(backup));
+  const current = new Uint8Array(readFileSync(absolute));
+  const before = sha256Hex(current);
+  const after = sha256Hex(backupBytes);
+  if (before === after) return unchangedRepair(path, before);
+  replaceRegularFile(absolute, backupBytes);
+  if (sha256Hex(new Uint8Array(readFileSync(absolute))) !== after) {
+    replaceRegularFile(absolute, current);
+    return refusedRepair(path, "rollback failed closed; destination restored from memory");
+  }
+  return { writes: true, destination: path, action: "rolled-back", before, after };
+}
+
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 function readLock(root: string): ProvenanceLock {
@@ -450,6 +707,14 @@ if (import.meta.main) {
         const preview = previewAdoption(lock, files, command.destination);
         console.log(JSON.stringify(preview));
         if (preview.action.kind === "refused") process.exitCode = 1;
+      } else if (command.mode === "repair") {
+        const receipt = repairAdoption(root, lock, command.destination, join(tmpdir(), "kizuki-skill-repair"));
+        console.log(JSON.stringify(receipt));
+        if (receipt.action === "refused") process.exitCode = 1;
+      } else if (command.mode === "rollback") {
+        const receipt = rollbackAdoption(root, lock, command.destination, command.backup);
+        console.log(JSON.stringify(receipt));
+        if (receipt.action === "refused") process.exitCode = 1;
       } else {
         const discovered = discoverSkillFiles(root);
         const errors = [...discovered.errors, ...checkProvenance(lock, files, discovered.paths)];

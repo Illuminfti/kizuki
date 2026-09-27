@@ -111,9 +111,13 @@ worker schedule, or an approval queue. `scripts/skill-provenance.ts` checks
 `scripts/skill-provenance.lock.json` in the same offline gate. The lock binds
 each adopted skill file to its sha256, license, and host entrypoint. A missing
 file, changed byte, stale adapter, unknown license, or excluded Semantic Algos
-path fails closed. The checker does not install, fetch, or repair.
+path fails closed. The checker does not install or fetch.
 `bun scripts/skill-provenance.ts --dry-run --destination <repo-relative host path>`
-previews one adopted host and writes nothing. `--apply` and `--repair` are refused.
+previews one adopted host and writes nothing. `--apply` is refused.
+`--repair --destination <path>` backs up that copy outside the tree, then restores
+the locked canonical bytes. A second repair of a matching copy writes nothing.
+`--rollback --destination <path> --backup <path>` puts those backup bytes back.
+Symlinks, missing copies, pointer hosts, and canonical files are refused.
 
 ## License
 
