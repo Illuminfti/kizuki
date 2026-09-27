@@ -969,6 +969,7 @@ export type {
   SubjectLabelDegradation,
   Served,
   TimelineArgs,
+  TimelineExpandData,
   WorldKnownAt,
   WorldObjectRef,
   WorldReadInput,
