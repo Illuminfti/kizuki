@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  adoptionCommand,
   checkProvenance,
   discoverSkillFiles,
   loadSkillState,
   lockedPaths,
   parseProvenanceLock,
+  previewAdoption,
   type FileState,
 } from "./skill-provenance";
 
@@ -206,5 +208,112 @@ describe("skill provenance", () => {
     for (const path of lockedPaths(lock)) files.set(path, loadSkillState(root, path));
     expect(checkProvenance(lock, files, discovered.paths)).toEqual([]);
     expect(lock.entries.find((entry) => entry.id === "kun")?.license).toBe("unverified-upstream");
+  });
+
+  test("dry-run requires a destination and refuses repair flags", () => {
+    expect(adoptionCommand(["--dry-run"])).toEqual({
+      mode: "refused",
+      reason: "selected destination is required",
+    });
+    expect(adoptionCommand(["--apply", "--destination", pointer])).toEqual({
+      mode: "refused",
+      reason: "repair is not implemented; dry-run performs no writes",
+    });
+    expect(adoptionCommand([])).toEqual({ mode: "verify" });
+  });
+
+  test("dry-run previews a drifted copy twice and writes nothing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skill-dry-run-"));
+    const source = ".agents/skills/elegance-review/SKILL.md";
+    const copy = ".claude/skills/elegance-review/SKILL.md";
+    const unrelated = ".claude/skills/elegance-review/NOTES.md";
+    const body = "# Elegance\n";
+    const drifted = "# Elegance\n\ndrift\n";
+    mkdirSync(join(dir, ".agents", "skills", "elegance-review"), { recursive: true });
+    mkdirSync(join(dir, ".claude", "skills", "elegance-review"), { recursive: true });
+    writeFileSync(join(dir, source), body);
+    writeFileSync(join(dir, copy), drifted);
+    writeFileSync(join(dir, unrelated), "leave me\n");
+    const lock = parseProvenanceLock(sampleLock({
+      entries: [
+        {
+          id: "elegance-review",
+          role: "house-overlay",
+          license: "MIT",
+          notice: "Kizuki house overlay. Host copies must match this canonical file.",
+          canonical: source,
+          sha256: sha256(body),
+          hosts: [{ path: copy, kind: "copy", sha256: sha256(body), target: source }],
+        },
+      ],
+    }));
+    const files = new Map<string, FileState>([
+      [source, loadSkillState(dir, source)],
+      [copy, loadSkillState(dir, copy)],
+    ]);
+    const first = previewAdoption(lock, files, copy);
+    expect(previewAdoption(lock, files, copy)).toEqual(first);
+    expect(first).toEqual({
+      writes: false,
+      destination: copy,
+      action: {
+        kind: "would-restore",
+        path: copy,
+        from: source,
+        sha256: sha256(body),
+        bytes: new TextEncoder().encode(body).byteLength,
+      },
+    });
+    expect(readFileSync(join(dir, copy), "utf8")).toBe(drifted);
+    expect(readFileSync(join(dir, source), "utf8")).toBe(body);
+    expect(readFileSync(join(dir, unrelated), "utf8")).toBe("leave me\n");
+  });
+
+  test("dry-run refuses a symlink, an unsafe path, and a canonical target", () => {
+    const lock = parseProvenanceLock(sampleLock());
+    expect(() => previewAdoption(lock, sampleFiles(), "../secrets/SKILL.md")).toThrow(
+      "refused unsafe path: destination",
+    );
+    expect(previewAdoption(lock, sampleFiles(), canonical).action).toEqual({
+      kind: "refused",
+      path: canonical,
+      reason: "canonical drift is a lock failure, not a repair target",
+    });
+
+    const dir = mkdtempSync(join(tmpdir(), "skill-dry-run-link-"));
+    const copy = ".claude/skills/implement-change/SKILL.md";
+    mkdirSync(join(dir, ".claude", "skills", "implement-change"), { recursive: true });
+    const outside = join(dir, "outside.md");
+    writeFileSync(outside, "owned\n");
+    symlinkSync(outside, join(dir, copy));
+    const files = new Map<string, FileState>([[copy, loadSkillState(dir, copy)]]);
+    expect(previewAdoption(lock, files, copy).action).toEqual({
+      kind: "refused",
+      path: copy,
+      reason: "refused symlink",
+    });
+    expect(lstatSync(join(dir, copy)).isSymbolicLink()).toBe(true);
+    expect(readFileSync(outside, "utf8")).toBe("owned\n");
+  });
+
+  test("the live dry-run command does not change an adopted copy", () => {
+    const dest = ".claude/skills/elegance-review/SKILL.md";
+    const before = readFileSync(join(root, dest));
+    const previewRun = Bun.spawnSync(
+      ["bun", "scripts/skill-provenance.ts", "--dry-run", "--destination", dest],
+      { cwd: root, stdout: "pipe", stderr: "pipe" },
+    );
+    expect(previewRun.exitCode).toBe(0);
+    const preview = JSON.parse(new TextDecoder().decode(previewRun.stdout)) as { writes: boolean; action: { kind: string } };
+    expect(preview.writes).toBe(false);
+    expect(preview.action.kind).toBe("unchanged");
+    const repair = Bun.spawnSync(
+      ["bun", "scripts/skill-provenance.ts", "--repair", "--destination", dest],
+      { cwd: root, stdout: "pipe", stderr: "pipe" },
+    );
+    expect(repair.exitCode).toBe(1);
+    expect(new TextDecoder().decode(repair.stderr)).toContain("repair is not implemented");
+    expect(readFileSync(join(root, dest))).toEqual(before);
+    expect(read(join(import.meta.dir, "skill-provenance.ts"))).not.toContain("writeFileSync");
   });
 });

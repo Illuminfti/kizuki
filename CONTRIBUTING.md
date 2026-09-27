@@ -112,6 +112,8 @@ worker schedule, or an approval queue. `scripts/skill-provenance.ts` checks
 each adopted skill file to its sha256, license, and host entrypoint. A missing
 file, changed byte, stale adapter, unknown license, or excluded Semantic Algos
 path fails closed. The checker does not install, fetch, or repair.
+`bun scripts/skill-provenance.ts --dry-run --destination <repo-relative host path>`
+previews one adopted host and writes nothing. `--apply` and `--repair` are refused.
 
 ## License
 
