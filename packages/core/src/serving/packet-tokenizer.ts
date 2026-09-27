@@ -5,9 +5,20 @@ import ranks from "js-tiktoken/ranks/cl100k_base";
 export const PACKET_TOKENIZER_ID = "js-tiktoken@1.0.21/cl100k_base";
 let encoding: Tiktoken | undefined;
 
-/** Bundled ranks; special-token-looking source text is encoded as ordinary text. */
-export function packetTokens(value: string): number {
+function vocabulary(): Tiktoken {
   // Most hosts never request a context packet. Build the vocabulary on first use.
   encoding ??= new Tiktoken(ranks);
-  return encoding.encode(value, [], []).length;
+  return encoding;
+}
+
+/** Bundled ranks; special-token-looking source text is encoded as ordinary text. */
+export function packetTokens(value: string): number {
+  return vocabulary().encode(value, [], []).length;
+}
+
+/** Longest prefix of `value` that fits `budget` tokens. One encode, not a search. */
+export function packetPrefix(value: string, budget: number): string {
+  const tokens = vocabulary().encode(value, [], []);
+  if (tokens.length <= budget) return value;
+  return vocabulary().decode(tokens.slice(0, budget));
 }
