@@ -351,7 +351,8 @@ before the vault is opened. `--task-event` asks Core for structured sections
 from that one permitted capture. The same `task_event_id` field is accepted by
 MCP and loopback `context_packet`. A constraint that cannot fit the remaining
 budget is withheld whole and reported incomplete. A path is not a file read.
-Grant-bound clamping and denial stay in Core.
+A `hint` line in that capture is a relevance label. It is not a file read and
+not a grant. Grant-bound clamping and denial stay in Core.
 Claims and derived statements follow the live grant and
 [context privacy rules](context-privacy.md), including fail-closed provenance
 and bounded audit coverage.
