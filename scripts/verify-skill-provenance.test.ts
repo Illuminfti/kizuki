@@ -10,6 +10,8 @@ import {
   lockedPaths,
   parseProvenanceLock,
   previewAdoption,
+  repairAdoption,
+  rollbackAdoption,
   type FileState,
 } from "./skill-provenance";
 
@@ -210,14 +212,26 @@ describe("skill provenance", () => {
     expect(lock.entries.find((entry) => entry.id === "kun")?.license).toBe("unverified-upstream");
   });
 
-  test("dry-run requires a destination and refuses repair flags", () => {
+  test("dry-run requires a destination and repair is a separate write command", () => {
     expect(adoptionCommand(["--dry-run"])).toEqual({
+      mode: "refused",
+      reason: "selected destination is required",
+    });
+    expect(adoptionCommand(["--repair"])).toEqual({
       mode: "refused",
       reason: "selected destination is required",
     });
     expect(adoptionCommand(["--apply", "--destination", pointer])).toEqual({
       mode: "refused",
-      reason: "repair is not implemented; dry-run performs no writes",
+      reason: "--apply is refused; use --repair with a selected destination",
+    });
+    expect(adoptionCommand(["--repair", "--dry-run", "--destination", pointer])).toEqual({
+      mode: "refused",
+      reason: "dry-run performs no writes",
+    });
+    expect(adoptionCommand(["--repair", "--destination", pointer])).toEqual({
+      mode: "repair",
+      destination: pointer,
     });
     expect(adoptionCommand([])).toEqual({ mode: "verify" });
   });
@@ -311,9 +325,132 @@ describe("skill provenance", () => {
       ["bun", "scripts/skill-provenance.ts", "--repair", "--destination", dest],
       { cwd: root, stdout: "pipe", stderr: "pipe" },
     );
-    expect(repair.exitCode).toBe(1);
-    expect(new TextDecoder().decode(repair.stderr)).toContain("repair is not implemented");
+    expect(repair.exitCode).toBe(0);
+    const receipt = JSON.parse(new TextDecoder().decode(repair.stdout)) as { writes: boolean; action: string };
+    expect(receipt.writes).toBe(false);
+    expect(receipt.action).toBe("unchanged");
     expect(readFileSync(join(root, dest))).toEqual(before);
-    expect(read(join(import.meta.dir, "skill-provenance.ts"))).not.toContain("writeFileSync");
+    expect(read(join(import.meta.dir, "skill-provenance.ts"))).not.toContain("fetch(");
+    expect(read(join(import.meta.dir, "skill-provenance.ts"))).not.toContain("child_process");
+  });
+
+  test("repair backs up a drifted copy, restores it, and rolls back", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skill-repair-"));
+    const backupDir = mkdtempSync(join(tmpdir(), "skill-repair-bak-"));
+    const source = ".agents/skills/elegance-review/SKILL.md";
+    const copy = ".claude/skills/elegance-review/SKILL.md";
+    const unrelated = ".claude/skills/elegance-review/NOTES.md";
+    const body = "# Elegance\n";
+    const drifted = "# Elegance\n\ndrift\n";
+    mkdirSync(join(dir, ".agents", "skills", "elegance-review"), { recursive: true });
+    mkdirSync(join(dir, ".claude", "skills", "elegance-review"), { recursive: true });
+    writeFileSync(join(dir, source), body);
+    writeFileSync(join(dir, copy), drifted);
+    writeFileSync(join(dir, unrelated), "leave me\n");
+    const lock = parseProvenanceLock(sampleLock({
+      entries: [
+        {
+          id: "elegance-review",
+          role: "house-overlay",
+          license: "MIT",
+          notice: "Kizuki house overlay. Host copies must match this canonical file.",
+          canonical: source,
+          sha256: sha256(body),
+          hosts: [{ path: copy, kind: "copy", sha256: sha256(body), target: source }],
+        },
+      ],
+    }));
+
+    const first = repairAdoption(dir, lock, copy, backupDir);
+    expect(first.writes).toBe(true);
+    if (first.action !== "restored") throw new Error(`expected restore, got ${first.action}`);
+    expect(first.before).toBe(sha256(drifted));
+    expect(first.after).toBe(sha256(body));
+    expect(readFileSync(first.backup, "utf8")).toBe(drifted);
+    expect(readFileSync(join(dir, copy), "utf8")).toBe(body);
+    expect(readFileSync(join(dir, source), "utf8")).toBe(body);
+    expect(readFileSync(join(dir, unrelated), "utf8")).toBe("leave me\n");
+
+    expect(repairAdoption(dir, lock, copy, backupDir)).toEqual({
+      writes: false,
+      destination: copy,
+      action: "unchanged",
+      sha256: sha256(body),
+    });
+
+    const undone = rollbackAdoption(dir, lock, copy, first.backup);
+    expect(undone.writes).toBe(true);
+    if (undone.action !== "rolled-back") throw new Error(`expected rollback, got ${undone.action}`);
+    expect(readFileSync(join(dir, copy), "utf8")).toBe(drifted);
+    expect(readFileSync(join(dir, source), "utf8")).toBe(body);
+    expect(readFileSync(join(dir, unrelated), "utf8")).toBe("leave me\n");
+    expect(rollbackAdoption(dir, lock, copy, first.backup).writes).toBe(false);
+    expect(readFileSync(join(dir, copy), "utf8")).toBe(drifted);
+  });
+
+  test("repair refuses a symlink, a missing copy, and a backup inside the tree", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skill-repair-refuse-"));
+    const source = ".agents/skills/elegance-review/SKILL.md";
+    const copy = ".claude/skills/elegance-review/SKILL.md";
+    const body = "# Elegance\n";
+    mkdirSync(join(dir, ".agents", "skills", "elegance-review"), { recursive: true });
+    mkdirSync(join(dir, ".claude", "skills", "elegance-review"), { recursive: true });
+    writeFileSync(join(dir, source), body);
+    const outside = join(dir, "outside.md");
+    writeFileSync(outside, "owned\n");
+    symlinkSync(outside, join(dir, copy));
+    const lock = parseProvenanceLock(sampleLock({
+      entries: [
+        {
+          id: "elegance-review",
+          role: "house-overlay",
+          license: "MIT",
+          notice: "Kizuki house overlay. Host copies must match this canonical file.",
+          canonical: source,
+          sha256: sha256(body),
+          hosts: [{ path: copy, kind: "copy", sha256: sha256(body), target: source }],
+        },
+      ],
+    }));
+    const inside = join(dir, "backup");
+    mkdirSync(inside);
+    expect(repairAdoption(dir, lock, copy, inside)).toEqual({
+      writes: false,
+      destination: copy,
+      action: "refused",
+      reason: "refused symlink",
+    });
+    expect(lstatSync(join(dir, copy)).isSymbolicLink()).toBe(true);
+    expect(readFileSync(outside, "utf8")).toBe("owned\n");
+
+    const missingDir = mkdtempSync(join(tmpdir(), "skill-repair-missing-"));
+    const missingCopy = ".claude/skills/elegance-review/SKILL.md";
+    mkdirSync(join(missingDir, ".agents", "skills", "elegance-review"), { recursive: true });
+    mkdirSync(join(missingDir, ".claude", "skills", "elegance-review"), { recursive: true });
+    writeFileSync(join(missingDir, source), body);
+    const backupDir = mkdtempSync(join(tmpdir(), "skill-repair-missing-bak-"));
+    expect(repairAdoption(missingDir, lock, missingCopy, backupDir)).toEqual({
+      writes: false,
+      destination: missingCopy,
+      action: "refused",
+      reason: "missing destination; repair does not install",
+    });
+    expect(() => readFileSync(join(missingDir, missingCopy))).toThrow();
+
+    const insideDir = mkdtempSync(join(tmpdir(), "skill-repair-inside-"));
+    mkdirSync(join(insideDir, ".agents", "skills", "elegance-review"), { recursive: true });
+    mkdirSync(join(insideDir, ".claude", "skills", "elegance-review"), { recursive: true });
+    writeFileSync(join(insideDir, source), body);
+    writeFileSync(join(insideDir, copy), `${body}drift\n`);
+    const insideBackup = join(insideDir, "backup");
+    mkdirSync(insideBackup);
+    expect(repairAdoption(insideDir, lock, copy, insideBackup)).toEqual({
+      writes: false,
+      destination: copy,
+      action: "refused",
+      reason: "refused unsafe path: backup",
+    });
+    expect(readFileSync(join(insideDir, copy), "utf8")).toBe(`${body}drift\n`);
+    expect(readFileSync(join(insideDir, source), "utf8")).toBe(body);
   });
 });
