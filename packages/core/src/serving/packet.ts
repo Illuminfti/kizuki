@@ -122,7 +122,8 @@ export interface ContextPacketData {
   };
   /**
    * Present only when the caller named `task_event_id`. Captured lines are
-   * data. A constraint that cannot fit is withheld whole.
+   * data. A constraint that cannot fit is withheld whole. A hint line is a
+   * relevance label, not a file read or a grant.
    */
   task?: TaskAttachment;
 }

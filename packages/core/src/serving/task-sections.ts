@@ -17,6 +17,7 @@ const TASK_KINDS = [
   "rejected",
   "question",
   "coverage",
+  "hint",
 ] as const;
 
 export type TaskKind = (typeof TASK_KINDS)[number];
@@ -94,6 +95,7 @@ function blankSections(): Record<TaskKind, string[]> {
     rejected: [],
     question: [],
     coverage: [],
+    hint: [],
   };
 }
 
@@ -222,7 +224,9 @@ function servedSections(
 
 /**
  * Read one permitted capture as structured task sections. A vault path is an
- * event id lookup, never a file read. Constraints are kept whole or withheld.
+ * event id lookup, never a file read. A hint line is a relevance label from
+ * that capture, not a grant and not a file read. Constraints are kept whole
+ * or withheld.
  */
 export function readTaskAttachment(
   ctx: ServeContext,
