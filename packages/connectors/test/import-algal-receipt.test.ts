@@ -61,6 +61,30 @@ test("a consented receipt with supplied manifest bytes becomes one private event
   });
 });
 
+test("an executor-reported complete is not an independent observation", () => {
+  const parsed = parseAlgalRunReceipt(receipt(), consent);
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.event.text).toContain("executor-reported outcome complete");
+  expect(parsed.event.text).toContain("independent observation absent");
+  expect(parsed.event.text).not.toContain("independently observed");
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_outcome: "complete",
+      independent_observation: "absent",
+      grant: "not_conferred",
+    },
+  });
+  expect(JSON.stringify(parsed.event.metadata)).not.toContain("observed_success");
+  const failed = parseAlgalRunReceipt(receipt({ outcome: "failed" }), consent);
+  expect(failed.status).toBe("partial");
+  if (failed.status === "refused") return;
+  expect(failed.event.text).toContain("executor-reported outcome failed");
+  expect(failed.event.metadata["algal"]).toMatchObject({
+    coverage: { executor_reported_outcome: "failed", independent_observation: "absent", grant: "not_conferred" },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");

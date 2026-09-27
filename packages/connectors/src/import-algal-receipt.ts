@@ -272,7 +272,7 @@ export function parseAlgalRunReceipt(
     observed_at: input.observedAt,
     text: [
       "ALGAL run receipt (unverified, not executed, bytes not retrieved):",
-      `outcome ${String(raw["outcome"])}`,
+      `executor-reported outcome ${String(raw["outcome"])}; independent observation absent`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -293,6 +293,9 @@ export function parseAlgalRunReceipt(
           retrieved: false,
           executed: false,
           source_clock: "absent",
+          executor_reported_outcome: raw["outcome"],
+          independent_observation: "absent",
+          grant: "not_conferred",
         },
       },
     },
