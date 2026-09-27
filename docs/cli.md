@@ -335,7 +335,7 @@ same pass. No model required. Prints an undo line when a receipt is minted.
 ## context
 
 ```text
-usage: kizuki context [--purpose session|recall|correction|audit] [--budget N] [--query TEXT] [--since RFC3339] [--until RFC3339] [--json]
+usage: kizuki context [--purpose session|recall|correction|audit] [--budget N] [--query TEXT] [--since RFC3339] [--until RFC3339] [--task-event ID] [--task-integrity SHA256] [--json]
 ```
 
 Purpose-scoped compilation of canon, graph, timeline, and working-knowledge
@@ -347,7 +347,11 @@ complete packet. Omitting `--since`/`--until` keeps the purpose profile's
 recent window (session is seven days). Explicit RFC3339 bounds pass through to
 Core's existing request fields; timeline evidence uses each source's
 `occurred_at`. Malformed timestamps and an inverted window are usage errors
-before the vault is opened. Grant-bound clamping and denial stay in Core.
+before the vault is opened. `--task-event` asks Core for structured sections
+from that one permitted capture. The same `task_event_id` field is accepted by
+MCP and loopback `context_packet`. A constraint that cannot fit the remaining
+budget is withheld whole and reported incomplete. A path is not a file read.
+Grant-bound clamping and denial stay in Core.
 Claims and derived statements follow the live grant and
 [context privacy rules](context-privacy.md), including fail-closed provenance
 and bounded audit coverage.

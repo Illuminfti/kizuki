@@ -24,6 +24,8 @@ import {
 import { ServeError } from "./types";
 import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
 import { PACKET_TOKENIZER_ID, packetTokens as tokens } from "./packet-tokenizer";
+import { parseTaskArgs, readTaskAttachment } from "./task-sections";
+import type { TaskAttachment } from "./task-sections";
 
 export { PACKET_PURPOSES, PACKET_SECTIONS, PACKET_TOKENIZER_ID };
 
@@ -75,6 +77,13 @@ export interface ContextPacketArgs {
    * negotiation reports `pull_only` instead of inventing one.
    */
   hooks?: (typeof LIFECYCLE_HOOKS)[number][];
+  /**
+   * Recover structured sections from one permitted capture. Not a file path
+   * and not a new packet section.
+   */
+  task_event_id?: string;
+  /** When set, a mismatch withholds the task text and the current digest. */
+  task_integrity?: string;
 }
 
 export interface ContextPacketData {
@@ -111,6 +120,11 @@ export interface ContextPacketData {
     requested_hooks: (typeof LIFECYCLE_HOOKS)[number][];
     unsupported_hooks: (typeof LIFECYCLE_HOOKS)[number][];
   };
+  /**
+   * Present only when the caller named `task_event_id`. Captured lines are
+   * data. A constraint that cannot fit is withheld whole.
+   */
+  task?: TaskAttachment;
 }
 
 function hashBody(value: string): string {
@@ -248,6 +262,7 @@ export async function serveContextPacket(
       const include = sectionList(args.include, profile.include);
       const advertised = capabilitiesOf(args.capabilities);
       const lifecycle = negotiateLifecycle(args.hooks);
+      const taskArgs = parseTaskArgs(args);
       const retainPrefix = args.retain_prefix === true;
       const priorHash = priorHashOf(args.prior_hash);
       if (args.retain_prefix !== undefined && args.retain_prefix !== true && args.retain_prefix !== false) {
@@ -321,28 +336,38 @@ export async function serveContextPacket(
         timeline: 0,
         claims: 0,
       };
-      const empty = (): Served<ContextPacketData> => ({
-        canon: [],
-        quoted: [],
-        withheld: [{ id: "tool:context_packet", reason: "error" }],
-        data: {
-          packet_md: header,
-          retrieval_degraded: ["context-unavailable"],
-          tokens_estimate: tokens(header),
-          budget_tokens: budget,
-          sections: emptySections,
-          purpose,
-          delivery: "full",
-          truncated: false,
-          packet_hash: hashBody(""),
-          etag: hashBody(""),
-          tokenizer: PACKET_TOKENIZER_ID,
-          claims_epoch: epoch,
-          valid_until: validUntil,
-          status,
-          ...(lifecycle === undefined ? {} : { lifecycle }),
-        },
-      });
+      const empty = (): Served<ContextPacketData> => {
+        const attached = taskArgs === undefined
+          ? undefined
+          : readTaskAttachment(ctx, taskArgs, header, budget);
+        const taskBody = attached?.block ?? "";
+        return {
+          canon: [],
+          quoted: attached?.quoted ?? [],
+          withheld: [
+            { id: "tool:context_packet", reason: "error" },
+            ...(attached?.withheld ?? []),
+          ],
+          data: {
+            packet_md: `${header}${taskBody}`,
+            retrieval_degraded: ["context-unavailable"],
+            tokens_estimate: tokens(`${header}${taskBody}`),
+            budget_tokens: budget,
+            sections: emptySections,
+            purpose,
+            delivery: "full",
+            truncated: false,
+            packet_hash: hashBody(taskBody),
+            etag: hashBody(taskBody),
+            tokenizer: PACKET_TOKENIZER_ID,
+            claims_epoch: epoch,
+            valid_until: validUntil,
+            status,
+            ...(lifecycle === undefined ? {} : { lifecycle }),
+            ...(attached === undefined ? {} : { task: attached.task }),
+          },
+        };
+      };
 
       let pieces: Piece[];
       let withheld: AuditDenial[];
@@ -414,6 +439,15 @@ export async function serveContextPacket(
         if (chosen.quoted !== undefined) quoted.push(chosen.quoted);
       }
 
+      let task: TaskAttachment | undefined;
+      if (taskArgs !== undefined) {
+        const attached = readTaskAttachment(ctx, taskArgs, `${header}${body}`, budget);
+        task = attached.task;
+        if (attached.block !== "") body += attached.block;
+        quoted.push(...attached.quoted);
+        withheld.push(...attached.withheld);
+      }
+
       const packetHash = hashBody(body);
       const canDelta = advertised.includes("delta");
       const unchanged =
@@ -448,6 +482,7 @@ export async function serveContextPacket(
           valid_until: validUntil,
           status,
           ...(lifecycle === undefined ? {} : { lifecycle }),
+          ...(task === undefined ? {} : { task }),
         },
       };
     },

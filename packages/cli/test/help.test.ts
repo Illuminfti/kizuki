@@ -413,7 +413,7 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("context");
-      expect(body.data.options).toEqual(["--purpose", "--budget", "--query", "--since", "--until"]);
+      expect(body.data.options).toEqual(["--purpose", "--budget", "--query", "--since", "--until", "--task-event", "--task-integrity"]);
       expect(body.data.flags).toEqual(["--json"]);
       expect(body.data.defaults).toEqual({ "--purpose": "session" });
       expect(body.data.bounds).toEqual({
@@ -421,6 +421,8 @@ describe("help", () => {
         "--budget": "50..2000",
         "--since": "RFC3339",
         "--until": "RFC3339",
+        "--task-event": "identifier",
+        "--task-integrity": "sha256",
       });
       expect(body.data.irreversible).toBe(false);
     }
