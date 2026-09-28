@@ -254,6 +254,9 @@ function validateReceipt(raw: Record<string, unknown>): { refs: string[] } | Ref
     if (cell["outputs"] !== undefined && !isPlainObject(cell["outputs"])) {
       return refused("invalid_record", "cell outputs is not a plain object");
     }
+    if (cell["toolCalls"] !== undefined && !Array.isArray(cell["toolCalls"])) {
+      return refused("invalid_record", "cell toolCalls is not an array");
+    }
     if (cell["via"] !== undefined && !text(cell["via"], 128)) {
       return refused("invalid_record", "cell via is not a bounded label");
     }
@@ -368,6 +371,9 @@ export function parseAlgalRunReceipt(
   const outputsPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
     (cell) => isPlainObject(cell) && cell["outputs"] !== undefined,
   );
+  const toolCallsPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
+    (cell) => isPlainObject(cell) && cell["toolCalls"] !== undefined,
+  );
   const draft: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: ALGAL_RECEIPT_CONNECTOR_ID,
@@ -386,6 +392,7 @@ export function parseAlgalRunReceipt(
       `executor-reported rounds ${roundsPresent ? "present" : "absent"}; measured reuse not conferred`,
       `executor-reported items ${itemsPresent ? "present" : "absent"}; measured reuse not conferred`,
       `executor-reported outputs ${outputsPresent ? "present" : "absent"}; execution not conferred`,
+      `executor-reported toolCalls ${toolCallsPresent ? "present" : "absent"}; execution not conferred`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -421,6 +428,8 @@ export function parseAlgalRunReceipt(
           executor_reported_items: itemsPresent ? "present" : "absent",
           executor_reported_outputs: outputsPresent ? "present" : "absent",
           outputs_execution: "not_conferred",
+          executor_reported_tool_calls: toolCallsPresent ? "present" : "absent",
+          tool_calls_execution: "not_conferred",
           measured_reuse: "not_conferred",
           independent_observation: "absent",
           grant: "not_conferred",

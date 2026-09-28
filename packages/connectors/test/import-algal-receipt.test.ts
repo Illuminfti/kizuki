@@ -369,6 +369,72 @@ test("cell outputs stay executor-reported and do not confer execution", () => {
   });
 });
 
+test("cell toolCalls stay an executor-reported array and do not confer execution", () => {
+  const call = "SYNTHETIC_CALL_DO_NOT_COPY";
+  const digest = `sha256:${"cd".repeat(32)}`;
+  const cell = {
+    status: "committed",
+    work: 0,
+    toolCalls: [call, "../outside", digest],
+    shadowOut: "SYNTHETIC_SHADOW_DO_NOT_PIN",
+  };
+  const parsed = parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": cell } }), consent);
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.missingDigests).toEqual([manifestDigest]);
+  expect(parsed.event.text).toContain("executor-reported toolCalls present");
+  expect(parsed.event.text).toContain("execution not conferred");
+  expect(parsed.event.text).not.toContain(call);
+  expect(parsed.event.text).not.toContain("../outside");
+  expect(parsed.event.text).not.toContain(digest);
+  expect(parsed.event.text).not.toContain("SYNTHETIC_SHADOW_DO_NOT_PIN");
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_tool_calls: "present",
+      tool_calls_execution: "not_conferred",
+      executed: false,
+      retrieved: false,
+      grant: "not_conferred",
+      independent_observation: "absent",
+    },
+    receipt: {
+      cells: {
+        "synthetic/step": {
+          toolCalls: [call, "../outside", digest],
+          shadowOut: "SYNTHETIC_SHADOW_DO_NOT_PIN",
+        },
+      },
+    },
+  });
+  expect(JSON.stringify(parsed.event.metadata)).not.toContain("execution_conferred");
+  for (const toolCalls of [{ name: call }, call, 1, null, false]) {
+    expect(parseAlgalRunReceipt(
+      receipt({ cells: { "synthetic/step": { status: "committed", work: 0, toolCalls } } }),
+      consent,
+    ).code).toBe("invalid_record");
+  }
+  const empty = parseAlgalRunReceipt(
+    receipt({ cells: { "synthetic/step": { status: "committed", work: 0, toolCalls: [] } } }),
+    consent,
+  );
+  expect(empty.status).toBe("partial");
+  if (empty.status === "refused") return;
+  expect(empty.event.text).toContain("executor-reported toolCalls present");
+  expect(empty.missingDigests).toEqual([manifestDigest]);
+  const absent = parseAlgalRunReceipt(receipt(), consent);
+  expect(absent.status).toBe("partial");
+  if (absent.status === "refused") return;
+  expect(absent.event.text).toContain("executor-reported toolCalls absent");
+  expect(absent.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_tool_calls: "absent",
+      tool_calls_execution: "not_conferred",
+      executed: false,
+      grant: "not_conferred",
+    },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");
