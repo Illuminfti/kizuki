@@ -644,6 +644,80 @@ test("effect error message stays pinned text and is not copied", () => {
   });
 });
 
+test("cell shadowOut stays in the receipt and does not confer a decision", () => {
+  const reported = "SYNTHETIC_SHADOW_DO_NOT_COPY";
+  const outside = "../outside";
+  const digest = `sha256:${"ef".repeat(32)}`;
+  const cell = {
+    status: "committed",
+    work: 0,
+    outputs: { out: "taken-label" },
+    shadowOut: reported,
+  };
+  const parsed = parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": cell } }), consent);
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.missingDigests).toEqual([manifestDigest]);
+  expect(parsed.event.text).toContain("executor-reported shadowOut present");
+  expect(parsed.event.text).toContain("decision not conferred");
+  expect(parsed.event.text).toContain("executor-reported outcome complete");
+  expect(parsed.event.text).not.toContain(reported);
+  expect(parsed.event.text).not.toContain("taken-label");
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_shadow_out: "present",
+      shadow_out: "not_copied",
+      shadow_decision: "not_conferred",
+      executor_reported_outcome: "complete",
+      executed: false,
+      grant: "not_conferred",
+      independent_observation: "absent",
+    },
+    receipt: { cells: { "synthetic/step": cell } },
+  });
+  expect(JSON.stringify(parsed.event.metadata)).not.toContain("decision_conferred");
+  const unbound = [
+    { take: outside, bound: reported },
+    [outside, reported],
+    0,
+    1.5,
+    null,
+    false,
+    true,
+    "",
+    digest,
+  ];
+  for (const shadowOut of unbound) {
+    const admitted = parseAlgalRunReceipt(
+      receipt({ cells: { "synthetic/step": { status: "committed", work: 0, shadowOut } } }),
+      consent,
+    );
+    expect(admitted.status).toBe("partial");
+    if (admitted.status === "refused") return;
+    expect(admitted.missingDigests).toEqual([manifestDigest]);
+    expect(admitted.event.text).toContain("executor-reported shadowOut present");
+    expect(admitted.event.text).not.toContain(outside);
+    expect(admitted.event.text).not.toContain(reported);
+    expect(admitted.event.text).not.toContain(digest);
+    expect(admitted.event.metadata["algal"]).toMatchObject({
+      coverage: { shadow_decision: "not_conferred", shadow_out: "not_copied" },
+      receipt: { cells: { "synthetic/step": { shadowOut } } },
+    });
+  }
+  const absent = parseAlgalRunReceipt(receipt(), consent);
+  expect(absent.status).toBe("partial");
+  if (absent.status === "refused") return;
+  expect(absent.event.text).toContain("executor-reported shadowOut absent");
+  expect(absent.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_shadow_out: "absent",
+      shadow_out: "not_copied",
+      shadow_decision: "not_conferred",
+      grant: "not_conferred",
+    },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");
