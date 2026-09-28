@@ -239,6 +239,9 @@ function validateReceipt(raw: Record<string, unknown>): { refs: string[] } | Ref
     }
     const slot = cellSlot(cell);
     if (slot) return slot;
+    if (cell["via"] !== undefined && !text(cell["via"], 128)) {
+      return refused("invalid_record", "cell via is not a bounded label");
+    }
   }
   if (!Array.isArray(raw["effects"]) || !Array.isArray(raw["events"])) {
     return refused("unavailable", "effects or events are missing");
@@ -338,6 +341,9 @@ export function parseAlgalRunReceipt(
   const slotPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
     (cell) => isPlainObject(cell) && cell["slot"] !== undefined,
   );
+  const viaPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
+    (cell) => isPlainObject(cell) && cell["via"] !== undefined,
+  );
   const draft: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: ALGAL_RECEIPT_CONNECTOR_ID,
@@ -352,6 +358,7 @@ export function parseAlgalRunReceipt(
       `executor-reported effect flags ${flagsPresent ? "pinned" : "absent"}; independent observation absent`,
       `executor-reported wake ${wakePresent ? "present" : "absent"}; capability not conferred`,
       `executor-reported slot ${slotPresent ? "present" : "absent"}; access not conferred`,
+      `executor-reported via ${viaPresent ? "present" : "absent"}; route not conferred`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -381,6 +388,8 @@ export function parseAlgalRunReceipt(
           capability: "not_conferred",
           executor_reported_slot: slotPresent ? "present" : "absent",
           slot_access: "not_conferred",
+          executor_reported_via: viaPresent ? "present" : "absent",
+          via_route: "not_conferred",
           independent_observation: "absent",
           grant: "not_conferred",
         },

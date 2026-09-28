@@ -226,6 +226,51 @@ test("a cell slot stays executor-reported and does not confer access", () => {
   });
 });
 
+test("a cell via stays executor-reported and does not confer a route", () => {
+  const cell = { status: "committed", work: 0, via: "fixture-via" };
+  const parsed = parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": cell } }), consent);
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.event.text).toContain("executor-reported via present");
+  expect(parsed.event.text).toContain("route not conferred");
+  expect(parsed.event.text).not.toContain("fixture-via");
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_via: "present",
+      via_route: "not_conferred",
+      executed: false,
+      grant: "not_conferred",
+      independent_observation: "absent",
+    },
+  });
+  expect(JSON.stringify(parsed.event.metadata)).not.toContain("route_granted");
+  const pathShaped = parseAlgalRunReceipt(
+    receipt({ cells: { "synthetic/step": { ...cell, via: "../outside" } } }),
+    consent,
+  );
+  expect(pathShaped.status).toBe("partial");
+  if (pathShaped.status === "refused") return;
+  expect(pathShaped.event.text).not.toContain("../outside");
+  expect(pathShaped.event.metadata["algal"]).toMatchObject({
+    coverage: { executed: false, via_route: "not_conferred", retrieved: false },
+  });
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, via: "" } } }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, via: "x".repeat(129) } } }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, via: 1 } } }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, via: { path: "local" } } } }), consent).code)
+    .toBe("invalid_record");
+  const absent = parseAlgalRunReceipt(receipt(), consent);
+  expect(absent.status).toBe("partial");
+  if (absent.status === "refused") return;
+  expect(absent.event.text).toContain("executor-reported via absent");
+  expect(absent.event.metadata["algal"]).toMatchObject({
+    coverage: { executor_reported_via: "absent", via_route: "not_conferred", grant: "not_conferred" },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");
