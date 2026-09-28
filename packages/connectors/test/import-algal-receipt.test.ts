@@ -317,6 +317,58 @@ test("cell rounds and items stay executor-reported and do not confer measured re
   });
 });
 
+test("cell outputs stay executor-reported and do not confer execution", () => {
+  const cell = {
+    status: "committed",
+    work: 0,
+    outputs: { note: "SYNTHETIC_OUTPUT_DO_NOT_COPY", path: "../outside" },
+  };
+  const parsed = parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": cell } }), consent);
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.event.text).toContain("executor-reported outputs present");
+  expect(parsed.event.text).toContain("execution not conferred");
+  expect(parsed.event.text).not.toContain("SYNTHETIC_OUTPUT_DO_NOT_COPY");
+  expect(parsed.event.text).not.toContain("../outside");
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_outputs: "present",
+      outputs_execution: "not_conferred",
+      executed: false,
+      retrieved: false,
+      grant: "not_conferred",
+      independent_observation: "absent",
+    },
+    receipt: { cells: { "synthetic/step": { outputs: { note: "SYNTHETIC_OUTPUT_DO_NOT_COPY" } } } },
+  });
+  expect(JSON.stringify(parsed.event.metadata)).not.toContain("execution_conferred");
+  for (const outputs of [[], "note", 1, null, false]) {
+    expect(parseAlgalRunReceipt(
+      receipt({ cells: { "synthetic/step": { ...cell, outputs } } }),
+      consent,
+    ).code).toBe("invalid_record");
+  }
+  const empty = parseAlgalRunReceipt(
+    receipt({ cells: { "synthetic/step": { status: "committed", work: 0, outputs: {} } } }),
+    consent,
+  );
+  expect(empty.status).toBe("partial");
+  if (empty.status === "refused") return;
+  expect(empty.event.text).toContain("executor-reported outputs present");
+  const absent = parseAlgalRunReceipt(receipt(), consent);
+  expect(absent.status).toBe("partial");
+  if (absent.status === "refused") return;
+  expect(absent.event.text).toContain("executor-reported outputs absent");
+  expect(absent.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_outputs: "absent",
+      outputs_execution: "not_conferred",
+      executed: false,
+      grant: "not_conferred",
+    },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");
