@@ -123,6 +123,68 @@ test("effect usage stays executor-reported and a bad count refuses", () => {
   });
 });
 
+test("effect flags stay pinned and a wake does not confer a capability", () => {
+  const requestDigest = `sha256:${"ef".repeat(32)}`;
+  const handle = `cap:clock:sha256:${"ab".repeat(32)}`;
+  const base = {
+    requestDigest,
+    output: { noted: true },
+    executor: "synthetic",
+    cached: true,
+    retryable: false,
+  };
+  const parsed = parseAlgalRunReceipt(receipt({ effects: [base] }), consent);
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.event.text).toContain("executor-reported effect flags pinned");
+  expect(parsed.event.text).toContain("executor-reported wake absent");
+  expect(parsed.event.text).toContain("capability not conferred");
+  expect(parsed.event.text).not.toContain(handle);
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_effect_flags: "pinned",
+      wake: "absent",
+      capability: "not_conferred",
+      grant: "not_conferred",
+      independent_observation: "absent",
+    },
+  });
+  expect(parseAlgalRunReceipt(receipt({ effects: [{ ...base, cached: false }] }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ effects: [{ ...base, retryable: true }] }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ effects: [{ ...base, wake: [handle] }] }), consent).code)
+    .toBe("invalid_record");
+  const suspended = {
+    requestDigest,
+    error: { code: "EFFECT_SUSPENDED", message: "waiting" },
+    executor: "synthetic",
+    wake: [handle],
+  };
+  const woken = parseAlgalRunReceipt(receipt({ effects: [suspended] }), consent);
+  expect(woken.status).toBe("partial");
+  if (woken.status === "refused") return;
+  expect(woken.event.text).toContain("executor-reported wake present");
+  expect(woken.event.text).toContain("capability not conferred");
+  expect(woken.event.text).not.toContain(handle);
+  expect(woken.event.text).not.toContain("cap:");
+  expect(woken.event.metadata["algal"]).toMatchObject({
+    coverage: { wake: "executor_reported", wake_digest: "format_checked_not_resolved", capability: "not_conferred", grant: "not_conferred" },
+  });
+  expect(parseAlgalRunReceipt(receipt({ effects: [{ ...suspended, wake: [handle, handle] }] }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ effects: [{ ...suspended, wake: ["../outside"] }] }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ effects: [{ ...suspended, wake: [] }] }), consent).code)
+    .toBe("invalid_record");
+  const many = Array.from({ length: 17 }, (_, index) => {
+    const prefix = index.toString(16).padStart(2, "0");
+    return `cap:clock:sha256:${prefix}${"cd".repeat(31)}`;
+  });
+  expect(parseAlgalRunReceipt(receipt({ effects: [{ ...suspended, wake: many }] }), consent).code)
+    .toBe("invalid_record");
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");

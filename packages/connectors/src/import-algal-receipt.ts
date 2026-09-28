@@ -15,6 +15,7 @@ export const ALGAL_RECEIPT_CONSENT = "owner-selected-local-file";
 export const MAX_ALGAL_RECEIPT_BYTES = 64 * 1024;
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
+const WAKE_HANDLE = /^cap:[a-z][a-z0-9-]{0,63}:sha256:[0-9a-f]{64}$/;
 const OUTCOMES = new Set(["complete", "failed", "stuck", "suspended"]);
 const CELL_STATUS = new Set(["committed", "skipped", "failed", "suspended"]);
 const EVENT_KINDS = new Set([
@@ -133,6 +134,32 @@ function effectUsage(value: unknown): Refusal | undefined {
   return undefined;
 }
 
+function effectFlags(effect: Record<string, unknown>): Refusal | undefined {
+  if (effect["cached"] !== undefined && effect["cached"] !== true) {
+    return refused("invalid_record", "effect cached flag is not the pinned value");
+  }
+  if (effect["retryable"] !== undefined && effect["retryable"] !== false) {
+    return refused("invalid_record", "effect retryable flag is not the pinned value");
+  }
+  if (effect["wake"] === undefined) return undefined;
+  const error = effect["error"];
+  if (!isPlainObject(error) || error["code"] !== "EFFECT_SUSPENDED") {
+    return refused("invalid_record", "wake requires a suspended effect");
+  }
+  const wake = effect["wake"];
+  if (!Array.isArray(wake) || wake.length < 1 || wake.length > 16) {
+    return refused("invalid_record", "wake must contain 1 to 16 handles");
+  }
+  const seen = new Set<string>();
+  for (const handle of wake) {
+    if (typeof handle !== "string" || !WAKE_HANDLE.test(handle) || seen.has(handle)) {
+      return refused("invalid_record", "wake handle is not a unique pinned capability label");
+    }
+    seen.add(handle);
+  }
+  return undefined;
+}
+
 function failure(value: unknown, withPath: boolean): Refusal | undefined {
   if (!isPlainObject(value) || !allowed(value, withPath ? ["code", "message", "path"] : ["code", "message"])) {
     return refused("invalid_record", "failure record is not the pinned shape");
@@ -219,6 +246,8 @@ function validateReceipt(raw: Record<string, unknown>): { refs: string[] } | Ref
       const stop = effectUsage(effect["usage"]);
       if (stop) return stop;
     }
+    const flags = effectFlags(effect);
+    if (flags) return flags;
     if (effect["configurationDigest"] !== undefined) {
       const ref = digest(effect["configurationDigest"]);
       if (typeof ref !== "string") return ref;
@@ -286,6 +315,12 @@ export function parseAlgalRunReceipt(
   const usagePresent = Array.isArray(raw["effects"]) && raw["effects"].some(
     (effect) => isPlainObject(effect) && effect["usage"] !== undefined,
   );
+  const flagsPresent = Array.isArray(raw["effects"]) && raw["effects"].some(
+    (effect) => isPlainObject(effect) && (effect["cached"] !== undefined || effect["retryable"] !== undefined),
+  );
+  const wakePresent = Array.isArray(raw["effects"]) && raw["effects"].some(
+    (effect) => isPlainObject(effect) && effect["wake"] !== undefined,
+  );
   const draft: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: ALGAL_RECEIPT_CONNECTOR_ID,
@@ -297,6 +332,8 @@ export function parseAlgalRunReceipt(
       "ALGAL run receipt (unverified, not executed, bytes not retrieved):",
       `executor-reported outcome ${String(raw["outcome"])}; independent observation absent`,
       `executor-reported usage ${usagePresent ? "present" : "absent"}; independent cost observation absent`,
+      `executor-reported effect flags ${flagsPresent ? "pinned" : "absent"}; independent observation absent`,
+      `executor-reported wake ${wakePresent ? "present" : "absent"}; capability not conferred`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -320,6 +357,10 @@ export function parseAlgalRunReceipt(
           executor_reported_outcome: raw["outcome"],
           executor_reported_usage: usagePresent ? "present" : "absent",
           usage_observation: "not_independent",
+          executor_reported_effect_flags: flagsPresent ? "pinned" : "absent",
+          wake: wakePresent ? "executor_reported" : "absent",
+          wake_digest: wakePresent ? "format_checked_not_resolved" : "absent",
+          capability: "not_conferred",
           independent_observation: "absent",
           grant: "not_conferred",
         },
