@@ -85,6 +85,44 @@ test("an executor-reported complete is not an independent observation", () => {
   });
 });
 
+test("effect usage stays executor-reported and a bad count refuses", () => {
+  const requestDigest = `sha256:${"cd".repeat(32)}`;
+  const effect = {
+    requestDigest,
+    output: { approval: "claimed" },
+    executor: "synthetic",
+    usage: { model: "fixture-model", tokensIn: 3, tokensOut: 1 },
+  };
+  const parsed = parseAlgalRunReceipt(receipt({ effects: [effect] }), consent);
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.event.text).toContain("executor-reported usage present");
+  expect(parsed.event.text).toContain("independent cost observation absent");
+  expect(parsed.event.text).not.toContain("fixture-model");
+  expect(parsed.event.text).not.toContain("grant conferred");
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_usage: "present",
+      usage_observation: "not_independent",
+      independent_observation: "absent",
+      grant: "not_conferred",
+    },
+  });
+  expect(JSON.stringify(parsed.event.metadata)).not.toContain("observed_cost");
+  expect(parseAlgalRunReceipt(receipt({ effects: [{ ...effect, usage: { tokensIn: -1 } }] }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ effects: [{ ...effect, usage: { approval: true } }] }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ approval: true }), consent).code).toBe("unsupported_field");
+  const absent = parseAlgalRunReceipt(receipt(), consent);
+  expect(absent.status).toBe("partial");
+  if (absent.status === "refused") return;
+  expect(absent.event.text).toContain("executor-reported usage absent");
+  expect(absent.event.metadata["algal"]).toMatchObject({
+    coverage: { executor_reported_usage: "absent", grant: "not_conferred" },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");

@@ -117,6 +117,22 @@ function text(value: unknown, max: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= max;
 }
 
+function effectUsage(value: unknown): Refusal | undefined {
+  if (!isPlainObject(value) || !allowed(value, ["model", "tokensIn", "tokensOut"])) {
+    return refused("invalid_record", "effect usage is not the pinned shape");
+  }
+  if (value["model"] !== undefined && !text(value["model"], 128)) {
+    return refused("invalid_record", "effect usage model is not a bounded label");
+  }
+  if (
+    (value["tokensIn"] !== undefined && !integer(value["tokensIn"]))
+    || (value["tokensOut"] !== undefined && !integer(value["tokensOut"]))
+  ) {
+    return refused("invalid_record", "effect usage counts must be non-negative safe integers");
+  }
+  return undefined;
+}
+
 function failure(value: unknown, withPath: boolean): Refusal | undefined {
   if (!isPlainObject(value) || !allowed(value, withPath ? ["code", "message", "path"] : ["code", "message"])) {
     return refused("invalid_record", "failure record is not the pinned shape");
@@ -199,6 +215,10 @@ function validateReceipt(raw: Record<string, unknown>): { refs: string[] } | Ref
       if (stop) return stop;
     }
     if (!text(effect["executor"], 256)) return refused("invalid_record", "effect executor is not a bounded label");
+    if (effect["usage"] !== undefined) {
+      const stop = effectUsage(effect["usage"]);
+      if (stop) return stop;
+    }
     if (effect["configurationDigest"] !== undefined) {
       const ref = digest(effect["configurationDigest"]);
       if (typeof ref !== "string") return ref;
@@ -263,6 +283,9 @@ export function parseAlgalRunReceipt(
   const partial = missingDigests.length > 0;
   const manifest = raw["manifestDigest"];
   const own = raw["digest"];
+  const usagePresent = Array.isArray(raw["effects"]) && raw["effects"].some(
+    (effect) => isPlainObject(effect) && effect["usage"] !== undefined,
+  );
   const draft: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: ALGAL_RECEIPT_CONNECTOR_ID,
@@ -273,6 +296,7 @@ export function parseAlgalRunReceipt(
     text: [
       "ALGAL run receipt (unverified, not executed, bytes not retrieved):",
       `executor-reported outcome ${String(raw["outcome"])}; independent observation absent`,
+      `executor-reported usage ${usagePresent ? "present" : "absent"}; independent cost observation absent`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -294,6 +318,8 @@ export function parseAlgalRunReceipt(
           executed: false,
           source_clock: "absent",
           executor_reported_outcome: raw["outcome"],
+          executor_reported_usage: usagePresent ? "present" : "absent",
+          usage_observation: "not_independent",
           independent_observation: "absent",
           grant: "not_conferred",
         },
