@@ -435,6 +435,73 @@ test("cell toolCalls stay an executor-reported array and do not confer execution
   });
 });
 
+test("event path stays pinned text and is not resolved", () => {
+  const outside = "../outside";
+  const digest = `sha256:${"ef".repeat(32)}`;
+  const parsed = parseAlgalRunReceipt(
+    receipt({ events: [{ seq: 0, kind: "run.start", path: outside }] }),
+    consent,
+  );
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.missingDigests).toEqual([manifestDigest]);
+  expect(parsed.event.text).toContain("executor-reported event path present");
+  expect(parsed.event.text).toContain("path not resolved");
+  expect(parsed.event.text).not.toContain(outside);
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_event_path: "present",
+      event_path_resolution: "not_resolved",
+      retrieved: false,
+      executed: false,
+      grant: "not_conferred",
+      independent_observation: "absent",
+    },
+    receipt: { events: [{ seq: 0, kind: "run.start", path: outside }] },
+  });
+  expect(JSON.stringify(parsed.event.metadata)).not.toContain("path_resolved");
+  for (const path of [{ name: outside }, [outside], 1, null, false, "x".repeat(4097)]) {
+    expect(parseAlgalRunReceipt(
+      receipt({ events: [{ seq: 0, kind: "run.start", path }] }),
+      consent,
+    ).code).toBe("invalid_record");
+  }
+  const bound = parseAlgalRunReceipt(
+    receipt({ events: [{ seq: 0, kind: "run.start", path: "x".repeat(4096) }] }),
+    consent,
+  );
+  expect(bound.status).toBe("partial");
+  if (bound.status === "refused") return;
+  expect(bound.event.text).not.toContain("x".repeat(32));
+  const empty = parseAlgalRunReceipt(
+    receipt({ events: [{ seq: 0, kind: "run.start", path: "" }] }),
+    consent,
+  );
+  expect(empty.status).toBe("partial");
+  if (empty.status === "refused") return;
+  expect(empty.event.text).toContain("executor-reported event path present");
+  const addressed = parseAlgalRunReceipt(
+    receipt({ events: [{ seq: 1, kind: "cell.commit", path: digest }] }),
+    consent,
+  );
+  expect(addressed.status).toBe("partial");
+  if (addressed.status === "refused") return;
+  expect(addressed.missingDigests).toEqual([manifestDigest]);
+  expect(addressed.event.text).not.toContain(digest);
+  const absent = parseAlgalRunReceipt(receipt(), consent);
+  expect(absent.status).toBe("partial");
+  if (absent.status === "refused") return;
+  expect(absent.event.text).toContain("executor-reported event path absent");
+  expect(absent.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_event_path: "absent",
+      event_path_resolution: "not_resolved",
+      retrieved: false,
+      grant: "not_conferred",
+    },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");
