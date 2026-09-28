@@ -304,6 +304,9 @@ function validateReceipt(raw: Record<string, unknown>): { refs: string[] } | Ref
     if (event["path"] !== undefined && (typeof event["path"] !== "string" || event["path"].length > 4096)) {
       return refused("invalid_record", "event path is not pinned text");
     }
+    if (event["outcome"] !== undefined && (typeof event["outcome"] !== "string" || event["outcome"].length > 32)) {
+      return refused("invalid_record", "event outcome is not pinned text");
+    }
   }
   return { refs: [...new Set(refs)] };
 }
@@ -380,6 +383,9 @@ export function parseAlgalRunReceipt(
   const eventPathPresent = Array.isArray(raw["events"]) && raw["events"].some(
     (event) => isPlainObject(event) && event["path"] !== undefined,
   );
+  const eventOutcomePresent = Array.isArray(raw["events"]) && raw["events"].some(
+    (event) => isPlainObject(event) && event["outcome"] !== undefined,
+  );
   const draft: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: ALGAL_RECEIPT_CONNECTOR_ID,
@@ -400,6 +406,7 @@ export function parseAlgalRunReceipt(
       `executor-reported outputs ${outputsPresent ? "present" : "absent"}; execution not conferred`,
       `executor-reported toolCalls ${toolCallsPresent ? "present" : "absent"}; execution not conferred`,
       `executor-reported event path ${eventPathPresent ? "present" : "absent"}; path not resolved`,
+      `executor-reported event outcome ${eventOutcomePresent ? "present" : "absent"}; independent observation absent`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -439,6 +446,8 @@ export function parseAlgalRunReceipt(
           tool_calls_execution: "not_conferred",
           executor_reported_event_path: eventPathPresent ? "present" : "absent",
           event_path_resolution: "not_resolved",
+          executor_reported_event_outcome: eventOutcomePresent ? "present" : "absent",
+          event_outcome_observation: "not_independent",
           measured_reuse: "not_conferred",
           independent_observation: "absent",
           grant: "not_conferred",
