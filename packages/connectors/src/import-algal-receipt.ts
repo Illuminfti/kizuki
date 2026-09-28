@@ -195,6 +195,17 @@ function failure(value: unknown, withPath: boolean): Refusal | undefined {
   return undefined;
 }
 
+function effectError(value: unknown): Refusal | undefined {
+  if (!isPlainObject(value) || !allowed(value, ["code", "message"])) {
+    return refused("invalid_record", "failure record is not the pinned shape");
+  }
+  const message = value["message"];
+  if (typeof value["code"] !== "string" || !FAILURE_CODES.has(value["code"]) || typeof message !== "string" || message.length > 2048) {
+    return refused("invalid_record", "effect error message is not pinned text");
+  }
+  return undefined;
+}
+
 function validateReceipt(raw: Record<string, unknown>): { refs: string[] } | Refusal {
   if (!allowed(raw, ROOT_KEYS)) return refused("unsupported_field", "receipt has a field outside the pinned profile");
   if (raw["contract"] !== ALGAL_RUN_RECEIPT_PIN.contract) {
@@ -273,7 +284,7 @@ function validateReceipt(raw: Record<string, unknown>): { refs: string[] } | Ref
       return refused("invalid_record", "effect needs exactly one output or error");
     }
     if (effect["error"] !== undefined) {
-      const stop = failure(effect["error"], false);
+      const stop = effectError(effect["error"]);
       if (stop) return stop;
     }
     if (!text(effect["executor"], 256)) return refused("invalid_record", "effect executor is not a bounded label");
@@ -386,6 +397,9 @@ export function parseAlgalRunReceipt(
   const eventOutcomePresent = Array.isArray(raw["events"]) && raw["events"].some(
     (event) => isPlainObject(event) && event["outcome"] !== undefined,
   );
+  const effectErrorMessagePresent = Array.isArray(raw["effects"]) && raw["effects"].some(
+    (effect) => isPlainObject(effect) && isPlainObject(effect["error"]) && typeof effect["error"]["message"] === "string",
+  );
   const draft: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: ALGAL_RECEIPT_CONNECTOR_ID,
@@ -407,6 +421,7 @@ export function parseAlgalRunReceipt(
       `executor-reported toolCalls ${toolCallsPresent ? "present" : "absent"}; execution not conferred`,
       `executor-reported event path ${eventPathPresent ? "present" : "absent"}; path not resolved`,
       `executor-reported event outcome ${eventOutcomePresent ? "present" : "absent"}; independent observation absent`,
+      `executor-reported effect error message ${effectErrorMessagePresent ? "present" : "absent"}; message not copied`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -448,6 +463,8 @@ export function parseAlgalRunReceipt(
           event_path_resolution: "not_resolved",
           executor_reported_event_outcome: eventOutcomePresent ? "present" : "absent",
           event_outcome_observation: "not_independent",
+          executor_reported_effect_error_message: effectErrorMessagePresent ? "present" : "absent",
+          effect_error_message: "not_copied",
           measured_reuse: "not_conferred",
           independent_observation: "absent",
           grant: "not_conferred",
