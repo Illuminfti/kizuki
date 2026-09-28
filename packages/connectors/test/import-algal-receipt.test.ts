@@ -271,6 +271,52 @@ test("a cell via stays executor-reported and does not confer a route", () => {
   });
 });
 
+test("cell rounds and items stay executor-reported and do not confer measured reuse", () => {
+  const cell = { status: "committed", work: 0, rounds: 2, items: 0 };
+  const parsed = parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": cell } }), consent);
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.event.text).toContain("executor-reported rounds present");
+  expect(parsed.event.text).toContain("executor-reported items present");
+  expect(parsed.event.text).toContain("measured reuse not conferred");
+  expect(parsed.event.text).not.toContain("rounds 2");
+  expect(parsed.event.text).not.toContain("items 0");
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_rounds: "present",
+      executor_reported_items: "present",
+      measured_reuse: "not_conferred",
+      executed: false,
+      grant: "not_conferred",
+      independent_observation: "absent",
+    },
+  });
+  expect(JSON.stringify(parsed.event.metadata)).not.toContain("reuse_conferred");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, rounds: -1 } } }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, rounds: 1.5 } } }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, rounds: "2" } } }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, items: { count: 1 } } } }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, items: Number.MAX_SAFE_INTEGER + 1 } } }), consent).code)
+    .toBe("invalid_record");
+  const absent = parseAlgalRunReceipt(receipt(), consent);
+  expect(absent.status).toBe("partial");
+  if (absent.status === "refused") return;
+  expect(absent.event.text).toContain("executor-reported rounds absent");
+  expect(absent.event.text).toContain("executor-reported items absent");
+  expect(absent.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_rounds: "absent",
+      executor_reported_items: "absent",
+      measured_reuse: "not_conferred",
+      grant: "not_conferred",
+    },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");

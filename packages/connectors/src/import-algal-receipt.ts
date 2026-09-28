@@ -172,6 +172,16 @@ function cellSlot(cell: Record<string, unknown>): Refusal | undefined {
   return undefined;
 }
 
+function cellCounts(cell: Record<string, unknown>): Refusal | undefined {
+  if (cell["rounds"] !== undefined && !integer(cell["rounds"])) {
+    return refused("invalid_record", "cell rounds is not a non-negative safe integer");
+  }
+  if (cell["items"] !== undefined && !integer(cell["items"])) {
+    return refused("invalid_record", "cell items is not a non-negative safe integer");
+  }
+  return undefined;
+}
+
 function failure(value: unknown, withPath: boolean): Refusal | undefined {
   if (!isPlainObject(value) || !allowed(value, withPath ? ["code", "message", "path"] : ["code", "message"])) {
     return refused("invalid_record", "failure record is not the pinned shape");
@@ -239,6 +249,8 @@ function validateReceipt(raw: Record<string, unknown>): { refs: string[] } | Ref
     }
     const slot = cellSlot(cell);
     if (slot) return slot;
+    const counts = cellCounts(cell);
+    if (counts) return counts;
     if (cell["via"] !== undefined && !text(cell["via"], 128)) {
       return refused("invalid_record", "cell via is not a bounded label");
     }
@@ -344,6 +356,12 @@ export function parseAlgalRunReceipt(
   const viaPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
     (cell) => isPlainObject(cell) && cell["via"] !== undefined,
   );
+  const roundsPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
+    (cell) => isPlainObject(cell) && cell["rounds"] !== undefined,
+  );
+  const itemsPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
+    (cell) => isPlainObject(cell) && cell["items"] !== undefined,
+  );
   const draft: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: ALGAL_RECEIPT_CONNECTOR_ID,
@@ -359,6 +377,8 @@ export function parseAlgalRunReceipt(
       `executor-reported wake ${wakePresent ? "present" : "absent"}; capability not conferred`,
       `executor-reported slot ${slotPresent ? "present" : "absent"}; access not conferred`,
       `executor-reported via ${viaPresent ? "present" : "absent"}; route not conferred`,
+      `executor-reported rounds ${roundsPresent ? "present" : "absent"}; measured reuse not conferred`,
+      `executor-reported items ${itemsPresent ? "present" : "absent"}; measured reuse not conferred`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -390,6 +410,9 @@ export function parseAlgalRunReceipt(
           slot_access: "not_conferred",
           executor_reported_via: viaPresent ? "present" : "absent",
           via_route: "not_conferred",
+          executor_reported_rounds: roundsPresent ? "present" : "absent",
+          executor_reported_items: itemsPresent ? "present" : "absent",
+          measured_reuse: "not_conferred",
           independent_observation: "absent",
           grant: "not_conferred",
         },
