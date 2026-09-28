@@ -564,6 +564,86 @@ test("event outcome stays pinned text and is not an independent observation", ()
   });
 });
 
+test("effect error message stays pinned text and is not copied", () => {
+  const requestDigest = `sha256:${"cd".repeat(32)}`;
+  const reported = "SYNTHETIC_EFFECT_ERROR_MESSAGE";
+  const effect = {
+    requestDigest,
+    executor: "synthetic",
+    error: { code: "INTERNAL", message: reported },
+  };
+  const parsed = parseAlgalRunReceipt(receipt({ effects: [effect] }), consent);
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.missingDigests).toEqual([manifestDigest, requestDigest]);
+  expect(parsed.event.text).toContain("executor-reported effect error message present");
+  expect(parsed.event.text).toContain("message not copied");
+  expect(parsed.event.text).not.toContain(reported);
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_effect_error_message: "present",
+      effect_error_message: "not_copied",
+      executed: false,
+      grant: "not_conferred",
+    },
+    receipt: { effects: [effect] },
+  });
+  expect(JSON.stringify(parsed.event.metadata)).not.toContain("error_observed");
+  for (const message of [{ text: reported }, [reported], 1, null, false, "e".repeat(2049)]) {
+    expect(parseAlgalRunReceipt(
+      receipt({ effects: [{ ...effect, error: { code: "INTERNAL", message } }] }),
+      consent,
+    ).code).toBe("invalid_record");
+  }
+  const bound = parseAlgalRunReceipt(
+    receipt({ effects: [{ ...effect, error: { code: "INTERNAL", message: "e".repeat(2048) } }] }),
+    consent,
+  );
+  expect(bound.status).toBe("partial");
+  if (bound.status === "refused") return;
+  expect(bound.event.text).not.toContain("e".repeat(32));
+  const units = "\u{1F44D}".repeat(1024);
+  expect(units.length).toBe(2048);
+  const utf16 = parseAlgalRunReceipt(
+    receipt({ effects: [{ ...effect, error: { code: "INTERNAL", message: units } }] }),
+    consent,
+  );
+  expect(utf16.status).toBe("partial");
+  expect(parseAlgalRunReceipt(
+    receipt({ effects: [{ ...effect, error: { code: "INTERNAL", message: `${units}x` } }] }),
+    consent,
+  ).code).toBe("invalid_record");
+  const empty = parseAlgalRunReceipt(
+    receipt({ effects: [{ ...effect, error: { code: "INTERNAL", message: "" } }] }),
+    consent,
+  );
+  expect(empty.status).toBe("partial");
+  if (empty.status === "refused") return;
+  expect(empty.event.text).toContain("executor-reported effect error message present");
+  expect(empty.event.text).not.toContain(reported);
+  const root = parseAlgalRunReceipt(
+    receipt({ failure: { code: "INTERNAL", message: "r".repeat(2049), path: "synthetic/root" } }),
+    consent,
+  );
+  expect(root.status).toBe("partial");
+  const cell = parseAlgalRunReceipt(
+    receipt({ cells: { "synthetic/step": { status: "failed", work: 0, failure: { code: "INTERNAL", message: "c".repeat(2049) } } } }),
+    consent,
+  );
+  expect(cell.status).toBe("partial");
+  const absent = parseAlgalRunReceipt(receipt(), consent);
+  expect(absent.status).toBe("partial");
+  if (absent.status === "refused") return;
+  expect(absent.event.text).toContain("executor-reported effect error message absent");
+  expect(absent.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_effect_error_message: "absent",
+      effect_error_message: "not_copied",
+      grant: "not_conferred",
+    },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");
