@@ -301,6 +301,9 @@ function validateReceipt(raw: Record<string, unknown>): { refs: string[] } | Ref
       if (typeof ref !== "string") return ref;
       refs.push(ref);
     }
+    if (event["path"] !== undefined && (typeof event["path"] !== "string" || event["path"].length > 4096)) {
+      return refused("invalid_record", "event path is not pinned text");
+    }
   }
   return { refs: [...new Set(refs)] };
 }
@@ -374,6 +377,9 @@ export function parseAlgalRunReceipt(
   const toolCallsPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
     (cell) => isPlainObject(cell) && cell["toolCalls"] !== undefined,
   );
+  const eventPathPresent = Array.isArray(raw["events"]) && raw["events"].some(
+    (event) => isPlainObject(event) && event["path"] !== undefined,
+  );
   const draft: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: ALGAL_RECEIPT_CONNECTOR_ID,
@@ -393,6 +399,7 @@ export function parseAlgalRunReceipt(
       `executor-reported items ${itemsPresent ? "present" : "absent"}; measured reuse not conferred`,
       `executor-reported outputs ${outputsPresent ? "present" : "absent"}; execution not conferred`,
       `executor-reported toolCalls ${toolCallsPresent ? "present" : "absent"}; execution not conferred`,
+      `executor-reported event path ${eventPathPresent ? "present" : "absent"}; path not resolved`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -430,6 +437,8 @@ export function parseAlgalRunReceipt(
           outputs_execution: "not_conferred",
           executor_reported_tool_calls: toolCallsPresent ? "present" : "absent",
           tool_calls_execution: "not_conferred",
+          executor_reported_event_path: eventPathPresent ? "present" : "absent",
+          event_path_resolution: "not_resolved",
           measured_reuse: "not_conferred",
           independent_observation: "absent",
           grant: "not_conferred",
