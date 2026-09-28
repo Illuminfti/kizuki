@@ -251,6 +251,9 @@ function validateReceipt(raw: Record<string, unknown>): { refs: string[] } | Ref
     if (slot) return slot;
     const counts = cellCounts(cell);
     if (counts) return counts;
+    if (cell["outputs"] !== undefined && !isPlainObject(cell["outputs"])) {
+      return refused("invalid_record", "cell outputs is not a plain object");
+    }
     if (cell["via"] !== undefined && !text(cell["via"], 128)) {
       return refused("invalid_record", "cell via is not a bounded label");
     }
@@ -362,6 +365,9 @@ export function parseAlgalRunReceipt(
   const itemsPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
     (cell) => isPlainObject(cell) && cell["items"] !== undefined,
   );
+  const outputsPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
+    (cell) => isPlainObject(cell) && cell["outputs"] !== undefined,
+  );
   const draft: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: ALGAL_RECEIPT_CONNECTOR_ID,
@@ -379,6 +385,7 @@ export function parseAlgalRunReceipt(
       `executor-reported via ${viaPresent ? "present" : "absent"}; route not conferred`,
       `executor-reported rounds ${roundsPresent ? "present" : "absent"}; measured reuse not conferred`,
       `executor-reported items ${itemsPresent ? "present" : "absent"}; measured reuse not conferred`,
+      `executor-reported outputs ${outputsPresent ? "present" : "absent"}; execution not conferred`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -412,6 +419,8 @@ export function parseAlgalRunReceipt(
           via_route: "not_conferred",
           executor_reported_rounds: roundsPresent ? "present" : "absent",
           executor_reported_items: itemsPresent ? "present" : "absent",
+          executor_reported_outputs: outputsPresent ? "present" : "absent",
+          outputs_execution: "not_conferred",
           measured_reuse: "not_conferred",
           independent_observation: "absent",
           grant: "not_conferred",
