@@ -502,6 +502,68 @@ test("event path stays pinned text and is not resolved", () => {
   });
 });
 
+test("event outcome stays pinned text and is not an independent observation", () => {
+  const reported = "SYNTHETIC_EVENT_OUTCOME";
+  const parsed = parseAlgalRunReceipt(
+    receipt({ events: [{ seq: 0, kind: "run.end", outcome: reported }] }),
+    consent,
+  );
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.event.text).toContain("executor-reported event outcome present");
+  expect(parsed.event.text).toContain("executor-reported outcome complete");
+  expect(parsed.event.text).toContain("independent observation absent");
+  expect(parsed.event.text).not.toContain(reported);
+  expect(parsed.event.text).not.toContain("independently observed");
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_event_outcome: "present",
+      event_outcome_observation: "not_independent",
+      executor_reported_outcome: "complete",
+      independent_observation: "absent",
+      executed: false,
+      grant: "not_conferred",
+    },
+    receipt: { events: [{ seq: 0, kind: "run.end", outcome: reported }] },
+  });
+  expect(JSON.stringify(parsed.event.metadata)).not.toContain("observed_success");
+  for (const outcome of [{ name: reported }, [reported], 1, null, false, "z".repeat(33)]) {
+    expect(parseAlgalRunReceipt(
+      receipt({ events: [{ seq: 0, kind: "run.end", outcome }] }),
+      consent,
+    ).code).toBe("invalid_record");
+  }
+  const bound = parseAlgalRunReceipt(
+    receipt({ events: [{ seq: 0, kind: "run.end", outcome: "y".repeat(32) }] }),
+    consent,
+  );
+  expect(bound.status).toBe("partial");
+  if (bound.status === "refused") return;
+  expect(bound.event.text).not.toContain("y".repeat(32));
+  const empty = parseAlgalRunReceipt(
+    receipt({ events: [{ seq: 0, kind: "run.end", outcome: "" }] }),
+    consent,
+  );
+  expect(empty.status).toBe("partial");
+  if (empty.status === "refused") return;
+  expect(empty.event.text).toContain("executor-reported event outcome present");
+  expect(empty.event.metadata["algal"]).toMatchObject({
+    coverage: { executor_reported_outcome: "complete" },
+  });
+  const absent = parseAlgalRunReceipt(receipt(), consent);
+  expect(absent.status).toBe("partial");
+  if (absent.status === "refused") return;
+  expect(absent.event.text).toContain("executor-reported event outcome absent");
+  expect(absent.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_event_outcome: "absent",
+      event_outcome_observation: "not_independent",
+      independent_observation: "absent",
+      grant: "not_conferred",
+    },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");
