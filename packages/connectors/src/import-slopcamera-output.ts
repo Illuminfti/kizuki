@@ -42,7 +42,7 @@ const RESERVED = new Set([
   "plans",
   "receipts",
 ]);
-const NOTE_KEYS = ["author", "rationale", "outputSha256"];
+const NOTE_KEYS = ["author", "rationale", "outputSha256", "acceptance"];
 
 export type SlopcameraOutputCode =
   | "ok"
@@ -59,6 +59,7 @@ export type SlopcameraOutputCode =
   | "invalid_path"
   | "invalid_record"
   | "note_unbound"
+  | "acceptance_not_conferred"
   | "digest_mismatch"
   | "unexpected_reference";
 
@@ -66,6 +67,7 @@ export type SlopcameraOutputNote = {
   author: "owner" | "agent";
   rationale: string;
   outputSha256: string;
+  acceptance?: "accepted" | "rejected";
 };
 
 export type SlopcameraOutputParse =
@@ -138,7 +140,19 @@ function noteOf(value: unknown, outputSha256: string): SlopcameraOutputNote | Re
   const bound = digest(value["outputSha256"]);
   if (typeof bound !== "string") return bound;
   if (bound !== outputSha256) return refused("note_unbound", "note digest is not this output");
-  return { author: value["author"], rationale, outputSha256: bound };
+  const acceptance = value["acceptance"];
+  if (acceptance !== undefined && acceptance !== "accepted" && acceptance !== "rejected") {
+    return refused("invalid_record", "note acceptance must be accepted or rejected");
+  }
+  if (acceptance !== undefined && value["author"] !== "owner") {
+    return refused("acceptance_not_conferred", "an agent interpretation cannot confer acceptance");
+  }
+  return {
+    author: value["author"],
+    rationale,
+    outputSha256: bound,
+    ...(acceptance === undefined ? {} : { acceptance }),
+  };
 }
 
 /**
@@ -225,7 +239,9 @@ export function parseSlopcameraRenderOutput(
       `output ${outputSha256}`,
       `revision ${revisionSha256}`,
       "source clock absent; occurred_at is the observation time",
-      "acceptance absent; a digest is not approval",
+      note?.acceptance === undefined
+        ? "acceptance absent; a digest is not approval"
+        : `owner-stated ${note.acceptance}; a digest is not approval or a grant`,
     ].join("\n"),
     subjects: [],
     sensitivity_hint: "private",
@@ -253,7 +269,10 @@ export function parseSlopcameraRenderOutput(
                 role: note.author === "owner" ? "owner-note" : "agent-interpretation",
                 rationale: note.rationale,
                 bound_output_sha256: note.outputSha256,
-                acceptance: "absent",
+                acceptance: note.acceptance === undefined ? "absent" : "owner-stated",
+                ...(note.acceptance === undefined
+                  ? {}
+                  : { verdict: note.acceptance, grant: "not_conferred" }),
               },
             }),
         coverage: {
@@ -264,7 +283,8 @@ export function parseSlopcameraRenderOutput(
           executed: false,
           media_type_basis: "pinned_mp4_suffix",
           time_region: "unsupported_on_pin",
-          acceptance: "absent",
+          acceptance: note?.acceptance === undefined ? "absent" : "owner-stated",
+          acceptance_grant: "not_conferred",
           source_clock: "absent",
         },
       },
