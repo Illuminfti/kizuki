@@ -160,6 +160,18 @@ function effectFlags(effect: Record<string, unknown>): Refusal | undefined {
   return undefined;
 }
 
+function cellSlot(cell: Record<string, unknown>): Refusal | undefined {
+  if (cell["slot"] === undefined) return undefined;
+  const slot = cell["slot"];
+  if (!isPlainObject(slot) || !allowed(slot, ["name", "mode"])) {
+    return refused("invalid_record", "cell slot is not the pinned shape");
+  }
+  if (!text(slot["name"], 128) || (slot["mode"] !== "read" && slot["mode"] !== "write")) {
+    return refused("invalid_record", "cell slot name or mode is not pinned");
+  }
+  return undefined;
+}
+
 function failure(value: unknown, withPath: boolean): Refusal | undefined {
   if (!isPlainObject(value) || !allowed(value, withPath ? ["code", "message", "path"] : ["code", "message"])) {
     return refused("invalid_record", "failure record is not the pinned shape");
@@ -225,6 +237,8 @@ function validateReceipt(raw: Record<string, unknown>): { refs: string[] } | Ref
       const stop = failure(cell["failure"], false);
       if (stop) return stop;
     }
+    const slot = cellSlot(cell);
+    if (slot) return slot;
   }
   if (!Array.isArray(raw["effects"]) || !Array.isArray(raw["events"])) {
     return refused("unavailable", "effects or events are missing");
@@ -321,6 +335,9 @@ export function parseAlgalRunReceipt(
   const wakePresent = Array.isArray(raw["effects"]) && raw["effects"].some(
     (effect) => isPlainObject(effect) && effect["wake"] !== undefined,
   );
+  const slotPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
+    (cell) => isPlainObject(cell) && cell["slot"] !== undefined,
+  );
   const draft: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: ALGAL_RECEIPT_CONNECTOR_ID,
@@ -334,6 +351,7 @@ export function parseAlgalRunReceipt(
       `executor-reported usage ${usagePresent ? "present" : "absent"}; independent cost observation absent`,
       `executor-reported effect flags ${flagsPresent ? "pinned" : "absent"}; independent observation absent`,
       `executor-reported wake ${wakePresent ? "present" : "absent"}; capability not conferred`,
+      `executor-reported slot ${slotPresent ? "present" : "absent"}; access not conferred`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -361,6 +379,8 @@ export function parseAlgalRunReceipt(
           wake: wakePresent ? "executor_reported" : "absent",
           wake_digest: wakePresent ? "format_checked_not_resolved" : "absent",
           capability: "not_conferred",
+          executor_reported_slot: slotPresent ? "present" : "absent",
+          slot_access: "not_conferred",
           independent_observation: "absent",
           grant: "not_conferred",
         },

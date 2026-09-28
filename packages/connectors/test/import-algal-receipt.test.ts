@@ -185,6 +185,47 @@ test("effect flags stay pinned and a wake does not confer a capability", () => {
     .toBe("invalid_record");
 });
 
+test("a cell slot stays executor-reported and does not confer access", () => {
+  const cell = { status: "committed", work: 0, slot: { name: "fixture-slot", mode: "read" } };
+  const parsed = parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": cell } }), consent);
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.event.text).toContain("executor-reported slot present");
+  expect(parsed.event.text).toContain("access not conferred");
+  expect(parsed.event.text).not.toContain("fixture-slot");
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_slot: "present",
+      slot_access: "not_conferred",
+      grant: "not_conferred",
+      independent_observation: "absent",
+    },
+  });
+  expect(JSON.stringify(parsed.event.metadata)).not.toContain("access_granted");
+  const written = parseAlgalRunReceipt(
+    receipt({ cells: { "synthetic/step": { ...cell, slot: { name: "fixture-slot", mode: "write" } } } }),
+    consent,
+  );
+  expect(written.status).toBe("partial");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, slot: { name: "fixture-slot", mode: "execute" } } } }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, slot: { name: "fixture-slot", mode: "read", grant: true } } } }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, slot: "read" } } }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, slot: { mode: "read" } } } }), consent).code)
+    .toBe("invalid_record");
+  expect(parseAlgalRunReceipt(receipt({ cells: { "synthetic/step": { ...cell, slot: { name: "", mode: "read" } } } }), consent).code)
+    .toBe("invalid_record");
+  const absent = parseAlgalRunReceipt(receipt(), consent);
+  expect(absent.status).toBe("partial");
+  if (absent.status === "refused") return;
+  expect(absent.event.text).toContain("executor-reported slot absent");
+  expect(absent.event.metadata["algal"]).toMatchObject({
+    coverage: { executor_reported_slot: "absent", slot_access: "not_conferred", grant: "not_conferred" },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");
