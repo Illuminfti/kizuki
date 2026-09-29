@@ -5,9 +5,12 @@ import {
   stampDerived,
 } from "./derived-meta";
 import {
+  graphRegistryCurrent,
   rebuildGraphLayer,
   refreshPageEdges,
+  refreshRegisteredPage,
   removePageEdges,
+  removeRegisteredPage,
 } from "./graph/graph";
 import type { GraphRebuildResult } from "./graph/graph";
 import { graphSchemaNeedsRebuild, initGraph } from "./graph/schema";
@@ -28,6 +31,7 @@ import {
   fatalCanonSkips,
   isLiveCanonPage,
   listCanonPagesReport,
+  scanCanonSignatures,
 } from "./vault/pages";
 import type { CanonPage } from "./vault/pages";
 
@@ -88,6 +92,7 @@ export function rebuildDerived(
     generation,
     pages: live,
     skipped: report.skipped,
+    signatures: report.signatures,
     rebuilt_at: rebuiltAt,
     canon_hash: canonPagesHash(live),
   };
@@ -109,7 +114,13 @@ export function rebuildWorldLayer(db: Database): { layer: "world"; tables: strin
   return db.transaction(() => ({ layer: "world" as const, tables: resetWorldTables(db, readSchemaVersion(db)) })).immediate();
 }
 
-/** One incremental write path: search and graph for a single page. */
+/**
+ * One incremental write path: search and graph for a single page. While the
+ * vault still matches what the graph's page registry was filled from, no page
+ * is parsed or assessed but this one; the cost is that page's evidence and the
+ * pages that link to it. Any other file added, removed or rewritten takes one
+ * full walk, which fills the registry again.
+ */
 export function refreshDerivedPage(
   db: Database,
   page: CanonPage,
@@ -117,10 +128,12 @@ export function refreshDerivedPage(
 ): void {
   initSearch(db);
   initGraph(db);
-  const report = listCanonPagesReport(vaultPath);
+  const signatures = scanCanonSignatures(vaultPath);
+  const report = graphRegistryCurrent(db, signatures, page) ? null : listCanonPagesReport(vaultPath);
   db.transaction(() => {
     replacePage(db, page);
-    refreshPageEdges(db, page, report.pages, report.skipped.length);
+    if (report === null) refreshRegisteredPage(db, page, signatures);
+    else refreshPageEdges(db, page, report.pages, report.skipped.length, report.signatures);
   }).immediate();
 }
 
@@ -131,9 +144,11 @@ export function removeDerivedPage(
 ): void {
   initSearch(db);
   initGraph(db);
-  const report = listCanonPagesReport(vaultPath);
+  const signatures = scanCanonSignatures(vaultPath);
+  const report = graphRegistryCurrent(db, signatures, { id: pageId }) ? null : listCanonPagesReport(vaultPath);
   db.transaction(() => {
     removeDoc(db, "canon", pageId);
-    removePageEdges(db, pageId, report.pages, report.skipped.length);
+    if (report === null) removeRegisteredPage(db, pageId);
+    else removePageEdges(db, pageId, report.pages, report.skipped.length, report.signatures);
   }).immediate();
 }

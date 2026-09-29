@@ -2,7 +2,8 @@ import { targetRefusal } from "../contracts/page-candidate";
 import type { Claim, ClaimKind } from "../contracts/proposal";
 import { AUTHORITY_TIERS } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
-import { findPageById } from "../vault/pages";
+import { registeredPagePath } from "../graph/graph";
+import { findPageById, scanCanonSignatures } from "../vault/pages";
 import { CanonWriteError } from "./errors";
 import { machineOriginPath } from "./origin";
 export { assertPageRelPath } from "./paths";
@@ -76,6 +77,14 @@ function resolvePageById(io: CanonIo, pageId: string): ResolvedPage | null {
   if (indexed !== null) {
     const onDisk = pageAt(io, indexed.rel_path);
     if (onDisk !== null && onDisk.page_id === pageId) return onDisk;
+  }
+  // A page the index does not know is found by the graph registry while the
+  // vault still matches it, and by a walk otherwise.
+  const registered = registeredPagePath(io.db, scanCanonSignatures(io.vault_path), pageId);
+  if (registered === null) return null;
+  if (registered !== undefined) {
+    const onDisk = pageAt(io, registered);
+    return onDisk !== null && onDisk.page_id === pageId ? onDisk : null;
   }
   const scanned = findPageById(io.vault_path, pageId);
   return scanned === null ? null : { page_id: scanned.id, rel_path: scanned.relPath };

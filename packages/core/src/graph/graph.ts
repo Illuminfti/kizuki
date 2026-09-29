@@ -20,7 +20,7 @@ import {
 } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
 import { projectablePageEvidence } from "../vault/provenance";
-import { linkIndexFromPages, resolveWikilink } from "./resolve";
+import { linkIndexFromTargets, linkKeys, resolveWikilink } from "./resolve";
 import type { LinkIndex } from "./resolve";
 import { initGraph } from "./schema";
 
@@ -36,6 +36,8 @@ export interface GraphRebuildInput {
   generation: string;
   pages: readonly CanonPage[];
   skipped: readonly SkippedPage[];
+  /** Stat signatures of the walk, so later refreshes can tell the vault has not changed. */
+  signatures?: ReadonlyMap<string, string>;
   rebuilt_at: string;
   canon_hash: string | null;
 }
@@ -164,17 +166,16 @@ function pageTaint(page: CanonPage): "clean" | "quoted" {
   return page.data["taint"] === "quoted" ? "quoted" : "clean";
 }
 
+
 function destSensitivity(
   kind: GraphEdgeKind,
   dst: string,
-  byId: ReadonlyMap<string, CanonPage>,
+  projected: ReadonlyMap<string, PageRow>,
   eventHints: ReadonlyMap<string, string>,
 ): string | null {
   switch (kind) {
-    case "wikilink": {
-      const dest = byId.get(dst);
-      return dest === undefined ? null : pageSensitivity(dest);
-    }
+    case "wikilink":
+      return projected.get(dst)?.sensitivity ?? null;
     case "subject":
       return null;
     case "source":
@@ -184,21 +185,6 @@ function destSensitivity(
       throw new Error(`unexpected graph edge kind: ${_exhaustive}`);
     }
   }
-}
-
-function sourceEventIds(pages: readonly CanonPage[]): string[] {
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  for (const page of pages) {
-    if (!isLiveCanonPage(page)) continue;
-    for (const source of stringArray(page.data["sources"])) {
-      const eventId = bareRetrievalId(source);
-      if (seen.has(eventId)) continue;
-      seen.add(eventId);
-      ids.push(eventId);
-    }
-  }
-  return ids;
 }
 
 function eventSensitivityHints(
@@ -227,43 +213,234 @@ function eventSensitivityHints(
   return hints;
 }
 
-function pageEdges(
+
+/**
+ * What the registry keeps about one page: enough to project its edges, and to
+ * find every edge its identity touches, without reading the vault again.
+ */
+interface PageRow {
+  readonly id: string;
+  readonly relPath: string;
+  readonly title: string | null;
+  readonly active: boolean;
+  /** Live evidence and derive consent hold; only an admitted page projects edges. */
+  readonly admitted: boolean;
+  readonly sensitivity: string;
+  readonly taint: "clean" | "quoted";
+  readonly authority: RetrievalAuthority | null;
+  /** JSON array of the page's source references, as it is stored on every edge. */
+  readonly provenance: string;
+}
+
+interface PageLinks {
+  readonly wikilinks: readonly string[];
+  readonly subjects: readonly string[];
+}
+
+const NO_LINKS: PageLinks = { wikilinks: [], subjects: [] };
+
+function assessPage(
   page: CanonPage,
-  index: LinkIndex,
-  byId: ReadonlyMap<string, CanonPage>,
-  eventHints: ReadonlyMap<string, string>,
-  authority: RetrievalAuthority,
-): StoredEdge[] {
-  const provenance = JSON.stringify(stringArray(page.data["sources"]));
-  const sensitivity = pageSensitivity(page);
-  const taint = pageTaint(page);
-  const edges: StoredEdge[] = [];
-  const seen = new Set<string>();
-  const push = (dst: string, kind: GraphEdgeKind) => {
-    const key = `${dst}\u0000${kind}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    edges.push({
-      src: page.id,
-      dst,
-      kind,
-      sensitivity,
-      dest_sensitivity: destSensitivity(kind, dst, byId, eventHints),
-      taint,
-      authority,
-      provenance,
-    });
+  evidence: { readonly revision: { readonly authority: RetrievalAuthority } } | undefined,
+): { row: PageRow; links: PageLinks } {
+  const active = isLiveCanonPage(page);
+  const title = page.data["title"];
+  return {
+    row: {
+      id: page.id,
+      relPath: page.relPath,
+      title: typeof title === "string" ? title : null,
+      active,
+      admitted: evidence !== undefined,
+      sensitivity: pageSensitivity(page),
+      taint: pageTaint(page),
+      authority: evidence?.revision.authority ?? null,
+      provenance: JSON.stringify(stringArray(page.data["sources"])),
+    },
+    links: active
+      ? {
+          wikilinks: [...new Set(wikilinks(page.body))],
+          subjects: [...new Set(stringArray(page.data["subjects"]))],
+        }
+      : NO_LINKS,
   };
-  for (const target of wikilinks(page.body)) {
-    push(resolveWikilink(index, target) ?? target, "wikilink");
+}
+
+function sourcesOf(row: PageRow): string[] {
+  return stringArray(JSON.parse(row.provenance));
+}
+
+/** Everything a projection needs to know about the pages as a set. */
+interface GraphState {
+  readonly rows: readonly PageRow[];
+  /** Pages whose relations are withheld: held by a write, purge or recovery, or live without positive evidence. */
+  readonly held: { readonly paths: Set<string>; readonly pageIds: Set<string> };
+  readonly aliases: ReadonlySet<string>;
+  /** False when a held page is not among the rows, so its aliases are unknown. */
+  readonly complete: boolean;
+  readonly withheldCount: number;
+  /** Held pages stay in resolution so a link to one is withheld, not resolved to a raw title. */
+  readonly index: LinkIndex;
+  /** Pages that project edges, by id. */
+  readonly projected: ReadonlyMap<string, PageRow>;
+}
+
+function graphState(db: Database, rows: readonly PageRow[]): GraphState {
+  const held = readDerivedHolds(db, rows);
+  const missing = new Set(held.paths);
+  const aliases = new Set<string>();
+  let withheldCount = held.paths.size;
+  for (const row of rows) {
+    missing.delete(row.relPath);
+    // Unheld inactive pages do not resolve links or suppress ordinary prose targets.
+    if (!held.paths.has(row.relPath) && (!row.active || row.admitted)) continue;
+    if (!held.paths.has(row.relPath) && row.active) withheldCount += 1;
+    held.paths.add(row.relPath);
+    held.pageIds.add(row.id);
+    for (const alias of linkKeys(row)) aliases.add(alias);
   }
-  for (const subject of stringArray(page.data["subjects"])) {
-    push(subject, "subject");
+  if (held.paths.size > 0 && tableExists(db, "page_index")) {
+    for (const row of db.query<{ page_id: string }, [string]>(
+      "SELECT page_id FROM page_index WHERE rel_path IN (SELECT value FROM json_each(?))",
+    ).all(JSON.stringify([...held.paths]))) held.pageIds.add(row.page_id);
   }
-  for (const source of stringArray(page.data["sources"])) {
-    push(source, "source");
+  return {
+    rows, held, aliases, complete: missing.size === 0, withheldCount,
+    index: linkIndexFromTargets(rows.filter((row) => row.active)),
+    projected: new Map(rows.filter((row) => row.active && !held.paths.has(row.relPath)).map((row) => [row.id, row])),
+  };
+}
+
+function isHeldEdge(edge: StoredEdge, state: GraphState): boolean {
+  return state.held.pageIds.has(edge.dst) || (edge.kind === "wikilink" && state.aliases.has(edge.dst.toLowerCase()));
+}
+
+function readRegistry(db: Database, where = "", bindings: string[] = []): PageRow[] {
+  return db.query<{
+    page_id: string; rel_path: string; title: string | null; active: number; admitted: number;
+    sensitivity: string; taint: "clean" | "quoted"; authority: RetrievalAuthority | null; provenance: string;
+  }, string[]>(`SELECT page_id, rel_path, title, active, admitted, sensitivity, taint, authority, provenance FROM graph_pages ${where}`)
+    .all(...bindings).map((row) => ({
+      id: row.page_id, relPath: row.rel_path, title: row.title, active: row.active === 1, admitted: row.admitted === 1,
+      sensitivity: row.sensitivity, taint: row.taint, authority: row.authority, provenance: row.provenance,
+    }));
+}
+
+/** Links of the named pages, or of every page. */
+function readLinks(db: Database, ids?: readonly string[]): Map<string, PageLinks> {
+  const rows = ids === undefined
+    ? db.query<{ src: string; kind: string; target: string }, []>("SELECT src, kind, target FROM graph_links").all()
+    : db.query<{ src: string; kind: string; target: string }, [string]>(
+      "SELECT src, kind, target FROM graph_links WHERE src IN (SELECT value FROM json_each(?))",
+    ).all(JSON.stringify(ids));
+  const links = new Map<string, { wikilinks: string[]; subjects: string[] }>();
+  for (const { src, kind, target } of rows) {
+    const entry = links.get(src) ?? { wikilinks: [], subjects: [] };
+    (kind === "wikilink" ? entry.wikilinks : entry.subjects).push(target);
+    links.set(src, entry);
   }
-  return edges;
+  return links;
+}
+
+function insertRow(db: Database, row: PageRow, links: PageLinks): void {
+  db.query(
+    `INSERT OR REPLACE INTO graph_pages
+       (page_id, rel_path, title, active, admitted, sensitivity, taint, authority, provenance)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(row.id, row.relPath, row.title, row.active ? 1 : 0, row.admitted ? 1 : 0, row.sensitivity, row.taint, row.authority, row.provenance);
+  const insert = db.query("INSERT OR IGNORE INTO graph_links (src, kind, target, key) VALUES (?, ?, ?, ?)");
+  for (const target of links.wikilinks) insert.run(row.id, "wikilink", target, target.toLowerCase());
+  for (const target of links.subjects) insert.run(row.id, "subject", target, target.toLowerCase());
+}
+
+/** The row for this identity replaces whatever the registry held under its id or path. */
+function saveRow(db: Database, row: PageRow, links: PageLinks): void {
+  removeRow(db, row.id, row.relPath);
+  insertRow(db, row, links);
+}
+
+function removeRow(db: Database, id: string, relPath: string): void {
+  db.query("DELETE FROM graph_links WHERE src IN (SELECT page_id FROM graph_pages WHERE page_id = ? OR rel_path = ?)").run(id, relPath);
+  db.query("DELETE FROM graph_pages WHERE page_id = ? OR rel_path = ?").run(id, relPath);
+}
+
+/** Lowercase link keys of what the registry holds under this identity. */
+function registeredKeys(db: Database, id: string, relPath: string): string[] {
+  return readRegistry(db, "WHERE page_id = ? OR rel_path = ?", [id, relPath]).flatMap(linkKeys);
+}
+
+export function clearGraphRegistry(db: Database): void {
+  for (const table of ["graph_links", "graph_pages", "graph_files", "graph_registry"]) {
+    if (tableExists(db, table)) db.exec(`DELETE FROM ${table}`);
+  }
+}
+
+/** True once a walk has filled the registry, so one page can be refreshed without another walk. */
+export function graphRegistryReady(db: Database): boolean {
+  return tableExists(db, "graph_registry") && db.query("SELECT 1 FROM graph_registry").get() !== null;
+}
+
+/**
+ * True when the registry was filled from a vault that still looks the same,
+ * apart from the named page: no file added, removed or rewritten since.
+ */
+export function graphRegistryCurrent(
+  db: Database,
+  signatures: ReadonlyMap<string, string>,
+  page: { readonly id: string; readonly relPath?: string },
+): boolean {
+  if (!graphRegistryReady(db)) return false;
+  const own = new Set(db.query<{ rel_path: string }, [string]>("SELECT rel_path FROM graph_pages WHERE page_id = ?")
+    .all(page.id).map((row) => row.rel_path));
+  if (page.relPath !== undefined) own.add(page.relPath);
+  const known = new Map(db.query<{ rel_path: string; signature: string }, []>("SELECT rel_path, signature FROM graph_files")
+    .all().map((row) => [row.rel_path, row.signature]));
+  for (const [relPath, signature] of signatures) {
+    if (!own.has(relPath) && known.get(relPath) !== signature) return false;
+  }
+  for (const relPath of known.keys()) {
+    if (!own.has(relPath) && !signatures.has(relPath)) return false;
+  }
+  return true;
+}
+
+/**
+ * Where the registry says the page with this id lives: a path, null when the
+ * vault still matches the registry and holds no such page, undefined when only
+ * a walk can tell.
+ */
+export function registeredPagePath(
+  db: Database,
+  signatures: ReadonlyMap<string, string>,
+  pageId: string,
+): string | null | undefined {
+  if (!graphRegistryCurrent(db, signatures, { id: pageId })) return undefined;
+  return db.query<{ rel_path: string }, [string]>("SELECT rel_path FROM graph_pages WHERE page_id = ?").get(pageId)?.rel_path ?? null;
+}
+
+function registrySkipped(db: Database): number {
+  return db.query<{ skipped: number }, []>("SELECT skipped FROM graph_registry").get()?.skipped ?? 0;
+}
+
+/** Replace the registry with a walk's pages, assessing each one's evidence. */
+function syncRegistry(
+  db: Database,
+  pages: readonly CanonPage[],
+  skipped: number,
+  signatures: ReadonlyMap<string, string> = new Map(),
+): GraphState {
+  const evidence = projectablePageEvidence(db, pages);
+  clearGraphRegistry(db);
+  for (const [relPath, signature] of signatures) {
+    db.query("INSERT INTO graph_files (rel_path, signature) VALUES (?, ?)").run(relPath, signature);
+  }
+  const rows = pages.map((page) => {
+    const assessed = assessPage(page, evidence.get(page.relPath));
+    insertRow(db, assessed.row, assessed.links);
+    return assessed.row;
+  });
+  db.query("INSERT INTO graph_registry (singleton, skipped) VALUES (1, ?)").run(skipped);
+  return graphState(db, rows);
 }
 
 function insertEdge(db: Database, edge: StoredEdge): void {
@@ -286,84 +463,106 @@ function insertEdge(db: Database, edge: StoredEdge): void {
   );
 }
 
-function graphExclusions(db: Database, pages: readonly CanonPage[]) {
-  const held = readDerivedHolds(db, pages);
-  const evidence = projectablePageEvidence(db, pages);
-  const missing = new Set(held.paths);
-  const aliases = new Set<string>();
-  let withheldCount = held.paths.size;
-  for (const page of pages) {
-    missing.delete(page.relPath);
-    // Unheld inactive pages do not resolve links or suppress ordinary prose targets.
-    if (!held.paths.has(page.relPath) && (!isLiveCanonPage(page) || evidence.has(page.relPath))) continue;
-    if (!held.paths.has(page.relPath) && isLiveCanonPage(page)) withheldCount += 1;
-    held.paths.add(page.relPath);
-    held.pageIds.add(page.id);
-    const base = page.relPath.split("/").pop()!;
-    for (const alias of [page.id, page.relPath, page.relPath.replace(/\.md$/i, ""), base, base.replace(/\.md$/i, ""), page.data["title"]]) {
-      if (typeof alias === "string") aliases.add(alias.toLowerCase());
+function pageEdges(
+  row: PageRow,
+  links: PageLinks,
+  state: GraphState,
+  eventHints: ReadonlyMap<string, string>,
+): StoredEdge[] {
+  const edges: StoredEdge[] = [];
+  const seen = new Set<string>();
+  const push = (dst: string, kind: GraphEdgeKind) => {
+    const key = `${dst}\u0000${kind}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    edges.push({
+      src: row.id,
+      dst,
+      kind,
+      sensitivity: row.sensitivity,
+      dest_sensitivity: destSensitivity(kind, dst, state.projected, eventHints),
+      taint: row.taint,
+      authority: row.authority!,
+      provenance: row.provenance,
+    });
+  };
+  for (const target of links.wikilinks) {
+    push(resolveWikilink(state.index, target) ?? target, "wikilink");
+  }
+  for (const subject of links.subjects) {
+    push(subject, "subject");
+  }
+  for (const source of sourcesOf(row)) {
+    push(source, "source");
+  }
+  return edges;
+}
+
+/** Write the edges of the named pages that project, from the registry alone. */
+function projectPages(db: Database, state: GraphState, ids: readonly string[]): void {
+  const rows = ids.flatMap((id) => state.projected.get(id) ?? []);
+  const links = readLinks(db, ids);
+  const eventHints = eventSensitivityHints(db, [...new Set(rows.flatMap(sourcesOf).map(bareRetrievalId))]);
+  for (const row of rows) {
+    for (const edge of pageEdges(row, links.get(row.id) ?? NO_LINKS, state, eventHints)) {
+      if (!isHeldEdge(edge, state)) insertEdge(db, edge);
     }
   }
-  if (held.paths.size > 0 && tableExists(db, "page_index")) {
-    for (const row of db.query<{ page_id: string }, [string]>(
-      "SELECT page_id FROM page_index WHERE rel_path IN (SELECT value FROM json_each(?))",
-    ).all(JSON.stringify([...held.paths]))) held.pageIds.add(row.page_id);
-  }
-  return { ...held, aliases, complete: missing.size === 0, evidence, withheldCount };
 }
 
-function isHeldEdge(edge: StoredEdge, held: ReturnType<typeof graphExclusions>): boolean {
-  return held.pageIds.has(edge.dst) || (edge.kind === "wikilink" && held.aliases.has(edge.dst.toLowerCase()));
-}
-
-/** Project every live page's edges. Same write as a graph rebuild. */
-export function replacePageEdges(
-  db: Database,
-  pages: readonly CanonPage[],
-): void {
-  assertDerivedDiscoveryReady(db);
-  const held = graphExclusions(db, pages);
+/** Project every page's edges. Same write as a graph rebuild. */
+function projectAll(db: Database, state: GraphState): void {
   db.exec("DELETE FROM graph_edges");
   // A missing held page leaves its title aliases unknown. Withhold this
   // projection until a complete page snapshot can exclude those relations.
-  if (!held.complete) {
-    markDerivedHeld(db, "graph", held.withheldCount);
-    return;
-  }
-  const live = pages.filter(page => isLiveCanonPage(page) && !held.paths.has(page.relPath));
-  // Keep held pages in resolution so links to them are withheld, rather than
-  // falling back to an apparently unrelated raw title or path edge.
-  const index = linkIndexFromPages(pages);
-  const byId = new Map(live.map((page) => [page.id, page]));
-  const eventHints = eventSensitivityHints(db, sourceEventIds(live));
-  for (const page of live) {
-    for (const edge of pageEdges(page, index, byId, eventHints, held.evidence.get(page.relPath)!.revision.authority)) {
-      if (isHeldEdge(edge, held)) continue;
-      insertEdge(db, edge);
-    }
-  }
-  markDerivedHeld(db, "graph", held.withheldCount);
+  if (state.complete) projectPages(db, state, [...state.projected.keys()]);
+  markDerivedHeld(db, "graph", state.withheldCount);
 }
 
-function removeHeldEdges(db: Database, held: ReturnType<typeof graphExclusions>): void {
-  if (held.paths.size === 0) return;
-  if (!held.complete) {
+/** The pages whose edges may change when this identity changes: those linking by one of its names. */
+function affectedPages(db: Database, keys: readonly string[], pageId: string): string[] {
+  return db.query<{ src: string }, [string, string]>(
+    `SELECT src FROM graph_links WHERE key IN (SELECT value FROM json_each(?))
+     UNION SELECT src FROM graph_edges WHERE dst = ?`,
+  ).all(JSON.stringify(keys), pageId).map((row) => row.src);
+}
+
+/** Re-project one page and every page whose links to it would resolve differently now. */
+function projectAffected(db: Database, state: GraphState, keys: readonly string[], pageId: string): void {
+  const ids = [...new Set([pageId, ...affectedPages(db, keys, pageId)])];
+  db.query("DELETE FROM graph_edges WHERE src IN (SELECT value FROM json_each(?))").run(JSON.stringify(ids));
+  projectPages(db, state, ids);
+}
+
+/** Only this page's own edges. Relations into a page that does not project are dropped, not re-resolved. */
+function projectOne(db: Database, state: GraphState, pageId: string): void {
+  db.query("DELETE FROM graph_edges WHERE src = ?").run(pageId);
+  if (state.projected.has(pageId)) projectPages(db, state, [pageId]);
+  else db.query("DELETE FROM graph_edges WHERE dst = ?").run(pageId);
+}
+
+function removeHeldEdges(db: Database, state: GraphState): void {
+  if (state.held.paths.size === 0) return;
+  if (!state.complete) {
     db.exec("DELETE FROM graph_edges");
     return;
   }
-  const ids = JSON.stringify([...held.pageIds]);
+  const ids = JSON.stringify([...state.held.pageIds]);
   db.query(`DELETE FROM graph_edges
              WHERE src IN (SELECT value FROM json_each(?))
                 OR dst IN (SELECT value FROM json_each(?))
                 OR (kind='wikilink' AND lower(dst) IN (SELECT value FROM json_each(?)))`)
-    .run(ids, ids, JSON.stringify([...held.aliases]));
+    .run(ids, ids, JSON.stringify([...state.aliases]));
 }
 
 /** Remove existing held relations without projecting any new page content. */
 export function removeHeldPageEdges(db: Database, pages: readonly CanonPage[]): void {
-  const held = graphExclusions(db, pages);
-  removeHeldEdges(db, held);
-  markDerivedHeld(db, "graph", held.withheldCount);
+  const evidence = projectablePageEvidence(db, pages);
+  const state = graphState(db, pages.map((page) => assessPage(page, evidence.get(page.relPath)).row));
+  removeHeldEdges(db, state);
+  markDerivedHeld(db, "graph", state.withheldCount);
+  // The registry would keep the erased evidence's references and now disagrees with the edges.
+  clearGraphRegistry(db);
 }
 
 function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount: number): void {
@@ -384,11 +583,10 @@ function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount:
   });
 }
 
-function restoreGraphStamp(db: Database, pages: readonly CanonPage[]): void {
-  const excluded = graphExclusions(db, pages);
+function restoreGraphStamp(db: Database, state: GraphState): void {
   const existing = readDerivedMeta(db, "graph");
-  if (excluded.withheldCount === 0 && (existing === null || existing.status === "ok")) return;
-  const live = pages.filter(page => excluded.evidence.has(page.relPath) && !excluded.paths.has(page.relPath));
+  if (state.withheldCount === 0 && (existing === null || existing.status === "ok")) return;
+  const live = [...state.projected.values()];
   const edges =
     db
       .query<{ count: number }, []>(
@@ -401,81 +599,112 @@ function restoreGraphStamp(db: Database, pages: readonly CanonPage[]): void {
       db,
       {
         generation: ulid(),
-        pages: live,
+        pages: [],
         skipped: [],
         rebuilt_at: new Date().toISOString(),
         canon_hash: canonPagesHash(live),
       },
       live.length,
       edges,
-      excluded.withheldCount,
+      state.withheldCount,
     ),
   );
 }
 
 /**
- * Incremental graph write. A complete walk projects the live set; a skipped
- * page keeps its edges until the next complete walk, except relations to a
- * page explicitly known to be inactive.
+ * Bring the projection up to date after one page changed; `keys` are the names
+ * other pages may have linked to it by before the change. Without a change,
+ * every page is projected again. After a complete walk the pages linking to
+ * the changed page are projected again with it. A walk that skipped files
+ * keeps every other page's edges until the next complete walk.
+ */
+function settleGraph(
+  db: Database,
+  state: GraphState,
+  skipped: number,
+  change: { readonly pageId: string; readonly keys: readonly string[] } | null,
+): void {
+  if (!state.complete) {
+    db.exec("DELETE FROM graph_edges");
+    stampGraphIncomplete(db, skipped, state.withheldCount);
+    return;
+  }
+  removeHeldEdges(db, state);
+  if (change === null) projectAll(db, state);
+  else if (skipped === 0) projectAffected(db, state, change.keys, change.pageId);
+  else projectOne(db, state, change.pageId);
+  if (skipped === 0) restoreGraphStamp(db, state);
+  else stampGraphIncomplete(db, skipped, state.withheldCount);
+}
+
+/** Project every live page's edges from a walk. */
+export function replacePageEdges(
+  db: Database,
+  pages: readonly CanonPage[],
+  signatures?: ReadonlyMap<string, string>,
+): void {
+  assertDerivedDiscoveryReady(db);
+  projectAll(db, syncRegistry(db, pages, 0, signatures));
+}
+
+/**
+ * Incremental graph write from a walk. A complete walk projects the live set;
+ * otherwise only this page and the pages that link to it are projected again.
  */
 export function refreshPageEdges(
   db: Database,
   page: CanonPage,
   pages: readonly CanonPage[],
   skipped: number,
+  signatures?: ReadonlyMap<string, string>,
 ): void {
   assertDerivedDiscoveryReady(db);
-  const held = graphExclusions(db, [...pages.filter(candidate => candidate.relPath !== page.relPath), page]);
-  if (!held.complete) {
-    db.exec("DELETE FROM graph_edges");
-    stampGraphIncomplete(db, skipped, held.withheldCount);
-    return;
-  }
-  removeHeldEdges(db, held);
-  if (skipped === 0) {
-    replacePageEdges(db, pages);
-    restoreGraphStamp(db, pages);
-    return;
-  }
-  const index = linkIndexFromPages(pages);
-  const byId = new Map(
-    pages.filter(candidate => held.evidence.has(candidate.relPath) && !held.paths.has(candidate.relPath)).map((candidate) => [candidate.id, candidate]),
-  );
-  if (isLiveCanonPage(page) && !held.paths.has(page.relPath)) {
-    db.query("DELETE FROM graph_edges WHERE src = ?").run(page.id);
-    const eventHints = eventSensitivityHints(db, sourceEventIds([page]));
-    for (const edge of pageEdges(page, index, byId, eventHints, held.evidence.get(page.relPath)!.revision.authority)) {
-      if (isHeldEdge(edge, held)) continue;
-      insertEdge(db, edge);
-    }
-  } else {
-    db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(page.id, page.id);
-  }
-  stampGraphIncomplete(db, skipped, held.withheldCount);
+  const before = graphRegistryReady(db) ? registeredKeys(db, page.id, page.relPath) : [];
+  const state = syncRegistry(db, [...pages.filter(candidate => candidate.relPath !== page.relPath), page], skipped, signatures);
+  const row = state.rows.find((candidate) => candidate.id === page.id)!;
+  settleGraph(db, state, skipped, skipped === 0 ? null : { pageId: page.id, keys: [...before, ...linkKeys(row)] });
 }
 
-/** Incremental delete. Incomplete walks drop all relations to this page. */
+/** Incremental delete from a walk. An incomplete walk projects only the pages that linked to it again. */
 export function removePageEdges(
   db: Database,
   pageId: string,
   pages: readonly CanonPage[],
   skipped: number,
+  signatures?: ReadonlyMap<string, string>,
 ): void {
   assertDerivedDiscoveryReady(db);
-  const held = graphExclusions(db, pages);
-  if (!held.complete) {
-    db.exec("DELETE FROM graph_edges");
-    stampGraphIncomplete(db, skipped, held.withheldCount);
-    return;
-  }
-  removeHeldEdges(db, held);
-  if (skipped === 0) {
-    replacePageEdges(db, pages);
-    restoreGraphStamp(db, pages);
-    return;
-  }
-  db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(pageId, pageId);
-  stampGraphIncomplete(db, skipped, held.withheldCount);
+  const before = graphRegistryReady(db) ? registeredKeys(db, pageId, "") : [];
+  const state = syncRegistry(db, pages, skipped, signatures);
+  settleGraph(db, state, skipped, skipped === 0 ? null : { pageId, keys: before });
+}
+
+/**
+ * Refresh one page from the registry a walk filled earlier: only this page's
+ * evidence is assessed, and only it and the pages linking to it are projected
+ * again. Callers check `graphRegistryReady` first.
+ */
+export function refreshRegisteredPage(db: Database, page: CanonPage, signatures: ReadonlyMap<string, string>): void {
+  assertDerivedDiscoveryReady(db);
+  const before = registeredKeys(db, page.id, page.relPath);
+  const assessed = assessPage(page, projectablePageEvidence(db, [page]).get(page.relPath));
+  saveRow(db, assessed.row, assessed.links);
+  db.query("DELETE FROM graph_files WHERE rel_path IN (SELECT rel_path FROM graph_pages WHERE page_id = ?)").run(page.id);
+  const signature = signatures.get(page.relPath);
+  if (signature !== undefined) db.query("INSERT OR REPLACE INTO graph_files (rel_path, signature) VALUES (?, ?)").run(page.relPath, signature);
+  settleGraph(db, graphState(db, readRegistry(db)), registrySkipped(db), {
+    pageId: page.id,
+    keys: [...before, ...linkKeys(assessed.row)],
+  });
+}
+
+/** Incremental delete from the registry. Callers check `graphRegistryReady` first. */
+export function removeRegisteredPage(db: Database, pageId: string): void {
+  assertDerivedDiscoveryReady(db);
+  const before = registeredKeys(db, pageId, "");
+  db.query("DELETE FROM graph_files WHERE rel_path IN (SELECT rel_path FROM graph_pages WHERE page_id = ?)").run(pageId);
+  removeRow(db, pageId, "");
+  settleGraph(db, graphState(db, readRegistry(db)), registrySkipped(db), { pageId, keys: before });
 }
 
 function stampGraph(
@@ -512,6 +741,7 @@ function snapshotGraphInput(vaultPath: string): GraphRebuildInput {
     generation: ulid(),
     pages: report.pages,
     skipped: report.skipped,
+    signatures: report.signatures,
     rebuilt_at: new Date().toISOString(),
     canon_hash: canonPagesHash(live),
   };
@@ -523,23 +753,22 @@ export function rebuildGraphLayer(
   input: GraphRebuildInput,
 ): GraphRebuildResult {
   assertDerivedDiscoveryReady(db);
-  const held = graphExclusions(db, input.pages);
-  const live = input.pages.filter(page => held.evidence.has(page.relPath) && !held.paths.has(page.relPath));
-  replacePageEdges(db, input.pages);
+  const state = syncRegistry(db, input.pages, input.skipped.length, input.signatures);
+  projectAll(db, state);
   const edges =
     db
       .query<{ count: number }, []>(
         "SELECT count(*) AS count FROM graph_edges",
       )
       .get()?.count ?? 0;
-  stampDerived(db, stampGraph(db, input, live.length, edges, held.withheldCount));
+  stampDerived(db, stampGraph(db, input, state.projected.size, edges, state.withheldCount));
   return {
-    pages: live.length,
+    pages: state.projected.size,
     edges,
     skipped: [...input.skipped],
     rebuilt_at: input.rebuilt_at,
     generation: input.generation,
-    status: input.skipped.length + held.withheldCount > 0 ? "degraded" : "ok",
+    status: input.skipped.length + state.withheldCount > 0 ? "degraded" : "ok",
   };
 }
 
