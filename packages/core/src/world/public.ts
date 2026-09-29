@@ -43,3 +43,8 @@ export type {
   WorldReadResult,
   WorldViewEnvelope,
 } from "../serving/world-view";
+export { RESPONSE_CONTRACT_KEY, unsupportedContract } from "../serving/contract";
+export type { ResponseContract } from "../serving/contract";
+export type { DispatchOptions } from "../serving/dispatch";
+export { ENVELOPE_V2_SCHEMA } from "../serving/types";
+export type { EnvelopeV2 } from "../serving/types";

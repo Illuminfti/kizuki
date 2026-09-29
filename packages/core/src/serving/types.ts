@@ -4,8 +4,10 @@ import type { AuthorityTier } from "../contracts/proposal";
 import type { RetrievalPort } from "../contracts/retrieval";
 import type { PageTaint } from "../vault/schema";
 import type { RedactionCounts, Redactor } from "./redact";
+import type { WireRef } from "../world/references";
 
 export const ENVELOPE_SCHEMA = "kizuki.envelope/v1" as const;
+export const ENVELOPE_V2_SCHEMA = "kizuki.envelope/v2" as const;
 
 export interface ServeContext {
   /**
@@ -87,6 +89,26 @@ export type Envelope<T = undefined> = {
   /** Credential-shaped spans replaced in this response, per kind. Never the values. */
   redacted?: RedactionCounts;
   data?: T;
+};
+
+/**
+ * The closed scoped envelope. It has no `denied`, no `has_withheld` and no
+ * `source_policy`, so nothing global about the vault's policy can ride on it.
+ * The type parameters let a tool that never carries chunks say so.
+ */
+export type EnvelopeV2<
+  T = unknown,
+  K extends Tool = Tool,
+  C extends readonly CanonChunk[] = readonly CanonChunk[],
+  Q extends readonly QuotedChunk[] = readonly QuotedChunk[],
+> = {
+  readonly schema: typeof ENVELOPE_V2_SCHEMA;
+  readonly tool: K;
+  readonly principal: WireRef<"principal">;
+  readonly at: string;
+  readonly canon: C;
+  readonly quoted: Q;
+  readonly data: T;
 };
 
 /** How long a caller should wait before retrying a contended ledger. */
