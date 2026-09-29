@@ -1,4 +1,5 @@
-import type { inspectServeDoctor } from "@kizuki/core";
+import type { MassWithdrawalHold, inspectServeDoctor } from "@kizuki/core";
+import { withdrawalReleaseCommand } from "../withdrawal-hold";
 
 type ServeDoctor = ReturnType<typeof inspectServeDoctor>;
 
@@ -7,6 +8,8 @@ interface NextInput {
   readonly serve: ServeDoctor;
   readonly live_claims: readonly { readonly claim_id: string }[];
   readonly filed_claims: readonly unknown[];
+  /** Sources whose last run withdrew nothing because it would have withdrawn most of them. */
+  readonly held?: readonly { readonly connector_id: string; readonly source_key: string; readonly hold: MassWithdrawalHold }[];
 }
 
 /**
@@ -15,6 +18,10 @@ interface NextInput {
  * and repairs nothing a failure is about.
  */
 export function nextStep(report: NextInput): string | null {
+  const held = report.held?.[0];
+  if (!report.ok && report.serve.ok && held !== undefined) {
+    return `next: restore the source named by the source-hold line and the next sync clears it, or release it once with: ${withdrawalReleaseCommand(held.connector_id, held.source_key, held.hold)}`;
+  }
   if (!report.ok) return failureStep(report.serve);
   const firstLive = report.live_claims[0];
   if (firstLive !== undefined) return `next: kizuki tell "<statement>" --claim ${firstLive.claim_id}`;

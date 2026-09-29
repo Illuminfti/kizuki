@@ -14,6 +14,7 @@ import {
   doctorVault,
   getCanonReceiptRecord,
   getCheckpoint,
+  massWithdrawalHoldOf,
   inspectLedgerHealth,
   inspectCanonRecoveryDetail,
   inspectPurgeHealth,
@@ -25,7 +26,7 @@ import {
   readHolds,
   readVaultId,
 } from "@kizuki/core";
-import type { CaptureFanoutCounts, ClaimStatus, LiveClaimProducers } from "@kizuki/core";
+import type { CaptureFanoutCounts, ClaimStatus, LiveClaimProducers, MassWithdrawalHold } from "@kizuki/core";
 import { readSqliteRuntime } from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
@@ -39,6 +40,7 @@ import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
 import { serveTomlModeHint } from "../config-custody";
 import { configuredModelBinding, inspectModelBinding, type ModelBindingSummary } from "../serve-runtime";
 import { serveSupervisorHost } from "../service-host";
+import { withdrawalHoldLine } from "../withdrawal-hold";
 import { supervisorFailureLine } from "../service-custody";
 import { nextStep } from "./doctor-next";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
@@ -66,6 +68,12 @@ interface DoctorConnection {
    * answered, not that it has nothing more to give.
    */
   last_run_clean: boolean;
+  /**
+   * The last run withdrew nothing because it would have withdrawn most of the
+   * source. Restoring the source clears it; `sync --confirm-withdrawals`
+   * releases it.
+   */
+  hold: MassWithdrawalHold | null;
   problem: string | null;
 }
 
@@ -317,6 +325,7 @@ async function collect(
       last_error: scrubDetail(checkpoint?.last_result.errors[0] ?? null),
       backfill_complete: checkpoint?.backfill_complete === true,
       last_run_clean: checkpoint !== null && checkpoint.last_result.errors.length === 0,
+      hold: massWithdrawalHoldOf(ctx.db, host.connection.connector_id, host.connection.source_key),
     };
     if (host.state === null) {
       connections.push({
@@ -417,7 +426,7 @@ async function collect(
     problems.push({ page: "-", error: errorText(error) });
   }
 
-  const unhealthy = connections.some((item) => item.health !== "ok");
+  const unhealthy = connections.some((item) => item.health !== "ok" || item.hold !== null);
   const host = serveSupervisorHost(env, vaultPath);
   let boundModel: ModelBindingSummary | null = null;
   let modelConfigError: string | null = null;
@@ -577,6 +586,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     const reason = item.last_error === null ? "" : ` last_error=${JSON.stringify(item.last_error)}`;
     const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors} last_run_clean=${item.last_run_clean ? "yes" : "no"}${reason}`;
     io.out(item.problem === null ? line : `${line} ${item.problem}`);
+    if (item.hold !== null) io.out(`source-hold ${item.connector_id} source=${item.source_key} ${withdrawalHoldLine(item.connector_id, item.source_key, item.hold)}`);
   }
   io.out(`receipts=${report.receipts} orphans=${report.orphans.length}`);
   io.out(hashDriftCoverageLine(report.hash_drift));
@@ -610,6 +620,6 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     io.out(`serve-failure ${supervisorFailureLine(failure, report.serve.supervisor, report.serve.supervisor_exit, report.vault)}`);
   }
   io.out(`status=${report.ok ? "ok" : "failed"}`);
-  const next = nextStep(report);
+  const next = nextStep({ ...report, held: report.connections.flatMap((item) => item.hold === null ? [] : [{ connector_id: item.connector_id, source_key: item.source_key, hold: item.hold }]) });
   if (next !== null) io.out(next);
 }

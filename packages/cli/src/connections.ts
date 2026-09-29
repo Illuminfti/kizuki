@@ -30,6 +30,7 @@ import { TelegramConnector, type TelegramConnectorConfig, type TelegramDeps } fr
 import { errorText } from "./output";
 import { tokenResolver, validTokenRef } from "./secrets";
 import { consentHint } from "./source-consent";
+import { movedAway, movedAwayMarks, recordHistory } from "./mirror-history";
 
 export const HOST_STATE_SCHEMA = "kizuki.cli.connection-state/v1" as const;
 
@@ -53,6 +54,7 @@ const MARKDOWN_SHA256 = /^[0-9a-f]{64}$/;
 type HostConnectorFactoryDeps = Partial<TelegramDeps> &
   Partial<MarkdownFolderDeps> & {
     wikiCommittedFiles?: LegacyWikiDeps["committedFiles"];
+    wikiRecordHistory?: LegacyWikiDeps["recordHistory"];
   };
 
 /**
@@ -66,14 +68,18 @@ export function markdownCommittedIdentities(
   if (!SOURCE_KEY.test(sourceKey)) {
     throw new ConnectionError("markdown committed identities require a source key");
   }
-  let rows: Array<{ relpath: string; sha256: unknown; size: unknown }>;
+  let rows: Array<{ relpath: string; sha256: unknown; size: unknown; accepted_at: string; event_id: string }>;
+  let marks: ReturnType<typeof movedAwayMarks>;
   try {
+    marks = movedAwayMarks(db, MARKDOWN_FOLDER_CONNECTOR_ID, sourceKey);
     rows = db
-      .query<{ relpath: string; sha256: unknown; size: unknown }, [string, string, number]>(
-        `SELECT relpath, sha256, size FROM (
+      .query<{ relpath: string; sha256: unknown; size: unknown; accepted_at: string; event_id: string }, [string, string, number]>(
+        `SELECT relpath, sha256, size, accepted_at, event_id FROM (
            SELECT e.source_record_id AS relpath,
                   json_extract(e.metadata, '$.sha256') AS sha256,
                   json_extract(e.metadata, '$.size') AS size,
+                  e.accepted_at AS accepted_at,
+                  e.event_id AS event_id,
                   e.deleted,
                   ROW_NUMBER() OVER (
                     PARTITION BY e.source_record_id
@@ -99,6 +105,8 @@ export function markdownCommittedIdentities(
   const files: Array<[string, { sha256: string; size: number }]> = [];
   const seen = new Set<string>();
   for (const row of rows) {
+    // Renamed to another name by a later event: the mirror no longer has it.
+    if (movedAway(marks, row.relpath, row)) continue;
     const relpath = row.relpath;
     const sha256 = row.sha256;
     const size = row.size;
@@ -183,21 +191,27 @@ export function wikiCommittedIdentities(
   }
   type Row = {
     event_id: string;
+    accepted_at: string;
     relpath: string;
     hash: unknown;
+    plan: unknown;
     target: unknown;
     marked: number;
     chars: number;
     bytes: number;
   };
   let rows: Row[];
+  let marks: ReturnType<typeof movedAwayMarks>;
   try {
+    marks = movedAwayMarks(db, LEGACY_WIKI_CONNECTOR_ID, sourceKey);
     rows = db
       .query<Row, [string, string, number]>(
-        `SELECT event_id, relpath, hash, target, marked, chars, bytes FROM (
+        `SELECT event_id, accepted_at, relpath, hash, plan, target, marked, chars, bytes FROM (
            SELECT e.event_id,
+                  e.accepted_at AS accepted_at,
                   e.source_record_id AS relpath,
                   json_extract(e.metadata, '$.sha256') AS hash,
+                  json_extract(e.metadata, '$.plan_sha256') AS plan,
                   json_extract(e.metadata, '$.page_candidate.target') AS target,
                   json_type(e.metadata, '$.body_truncated') IS NOT NULL AS marked,
                   length(e.text) AS chars,
@@ -241,6 +255,7 @@ export function wikiCommittedIdentities(
       );
     }
     seen.add(relpath);
+    if (movedAway(marks, relpath, row)) continue;
     if (typeof target !== "string" || targetProblem(target) !== null) continue;
     const unstaged =
       row.marked === 0 && longerThanProposal(db, row.event_id, row.chars, row.bytes);
@@ -250,6 +265,7 @@ export function wikiCommittedIdentities(
           ? hash
           : "",
       target,
+      ...(typeof row.plan === "string" && MARKDOWN_SHA256.test(row.plan) ? { plan: row.plan } : {}),
     }]);
   }
   return files;
@@ -646,7 +662,9 @@ export async function loadConnector(
   store: ConnectionStateReader,
   db: Database,
   env: Record<string, string | undefined> = process.env,
-  factory: (id: string, config?: unknown, deps?: HostConnectorFactoryDeps) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.google-calendar" ? createGoogleCalendarConnector(config as GoogleCalendarConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.x" ? createXApiConnector(config as XApiConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.markdown-folder" ? createMarkdownFolderConnector(config as MarkdownFolderConfig, deps?.committedFiles ? { committedFiles: deps.committedFiles } : {}) : id === LEGACY_WIKI_CONNECTOR_ID ? createLegacyWikiConnector(config as LegacyWikiConfig, deps?.wikiCommittedFiles ? { committedFiles: deps.wikiCommittedFiles } : {}) : getConnector(id, config),
+  factory: (id: string, config?: unknown, deps?: HostConnectorFactoryDeps) => Connector = (id, config, deps) => id === "kizuki.telegram" ? new TelegramConnector(config as TelegramConnectorConfig, deps) : id === "kizuki.gmail" ? createGmailConnector(config as GmailConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.google-calendar" ? createGoogleCalendarConnector(config as GoogleCalendarConnectorConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.x" ? createXApiConnector(config as XApiConfig, deps?.persist ? {persist:deps.persist} : {}) : id === "kizuki.markdown-folder" ? createMarkdownFolderConnector(config as MarkdownFolderConfig, deps?.committedFiles ? { committedFiles: deps.committedFiles, ...(deps.recordHistory ? { recordHistory: deps.recordHistory } : {}), ...(deps.confirmWithdrawals === undefined ? {} : { confirmWithdrawals: deps.confirmWithdrawals }) } : {}) : id === LEGACY_WIKI_CONNECTOR_ID ? createLegacyWikiConnector(config as LegacyWikiConfig, deps?.wikiCommittedFiles ? { committedFiles: deps.wikiCommittedFiles, ...(deps.wikiRecordHistory ? { recordHistory: deps.wikiRecordHistory } : {}), ...(deps.confirmWithdrawals === undefined ? {} : { confirmWithdrawals: deps.confirmWithdrawals }) } : {}) : getConnector(id, config),
+  /** Releases one held mass withdrawal of at most this many records; see `sync --confirm-withdrawals`. */
+  confirmWithdrawals?: number,
 ): Promise<Connector> {
   try { sourceCaptureAdmission(db, selected.connection.connector_id, selected.connection.source_key); }
   catch (error) {
@@ -754,11 +772,17 @@ export async function loadConnector(
         ? {
             committedFiles: () =>
               markdownCommittedIdentities(db, selected.connection.source_key),
+            recordHistory: (relpaths) =>
+              recordHistory(db, MARKDOWN_FOLDER_CONNECTOR_ID, selected.connection.source_key, relpaths),
+            ...(confirmWithdrawals === undefined ? {} : { confirmWithdrawals }),
           }
         : wiki
           ? {
               wikiCommittedFiles: () =>
                 wikiCommittedIdentities(db, selected.connection.source_key),
+              wikiRecordHistory: (relpaths) =>
+                recordHistory(db, LEGACY_WIKI_CONNECTOR_ID, selected.connection.source_key, relpaths),
+              ...(confirmWithdrawals === undefined ? {} : { confirmWithdrawals }),
             }
           : undefined,
   );
