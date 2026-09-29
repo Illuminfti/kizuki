@@ -1423,7 +1423,10 @@ function applyClaimInsert(
       ...(input.sensitivity === undefined
         ? {}
         : input.intent === "correct"
-          ? { owner_label: input.sensitivity, owner_override: true }
+          // Only the owner speaking may set the label directly. A relay's label
+          // can only raise: its text is never public because the claim it
+          // corrects was, and the statement event's own hint still applies.
+          ? { owner_label: input.sensitivity, owner_override: !input.producer.startsWith("agent:") }
           : { model_label: input.sensitivity }),
     }).sensitivity,
     taint: input.taint ?? "clean",
