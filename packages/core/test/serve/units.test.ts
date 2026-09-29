@@ -12,6 +12,7 @@ import {
   SERVICE_START_SECONDS,
   SERVICE_STOP_SECONDS,
   systemdUnitName,
+  unitVaultPath,
 } from "../../src/serve/units";
 
 const spec = {
@@ -91,5 +92,23 @@ describe("serve units", () => {
         expect(acquireLease(db, { pid: 101, boot_id: "synthetic-boot", now: now(seconds), isAlive: () => false }).reason).toBe("reclaimed");
       } finally { db.close(); }
     }
+  });
+});
+
+describe("unit vault binding", () => {
+  const paths = ["/tmp/vault-ada", "/tmp/my vault", "/tmp/100% $HOME \"quoted\" vault", "/tmp/a&b<c>d"];
+  for (const vaultPath of paths) {
+    test(`reads back the vault a rendered definition launches: ${vaultPath}`, () => {
+      const rendered = { ...spec, vaultPath, execStart: ["/usr/bin/kizuki", "serve", "--vault", vaultPath] };
+      expect(unitVaultPath("systemd", renderSystemdUnit(rendered))).toBe(vaultPath);
+      expect(unitVaultPath("launchd", renderLaunchdPlist(rendered))).toBe(vaultPath);
+    });
+  }
+
+  test("a definition without a vault argument names none", () => {
+    const rendered = { ...spec, execStart: ["/usr/bin/kizuki", "serve"] };
+    expect(unitVaultPath("systemd", renderSystemdUnit(rendered))).toBeNull();
+    expect(unitVaultPath("launchd", renderLaunchdPlist(rendered))).toBeNull();
+    expect(unitVaultPath("systemd", "")).toBeNull();
   });
 });

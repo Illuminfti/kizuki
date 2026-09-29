@@ -568,8 +568,9 @@ export function inspectServeDoctor(
   let supervisorExit: SupervisorLastExit | null = null;
   if (hostChecks && intent === "installed" && (supervisor.state !== "active" || !supervisor.enabled)) {
     fail(`supervisor ${supervisor.state}${supervisor.state === "active" ? " but not enabled" : ""}`, "service");
-    // The unit's own last exit decides the command that restarts it.
-    if (supervisor.state !== "active" && options.supervisor?.lastExit !== undefined) {
+    // The unit's own last exit decides the command that restarts it. A status
+    // with no unit is a service bound to another vault, whose exit is not ours.
+    if (supervisor.state !== "active" && supervisor.unit !== null && options.supervisor?.lastExit !== undefined) {
       try { supervisorExit = options.supervisor.lastExit(ensureVaultId(vaultPath)); } catch { supervisorExit = null; }
     }
   }
