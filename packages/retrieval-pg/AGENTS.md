@@ -24,7 +24,12 @@ finalization, declared degradation). The recipe and graph walk are a
 permitted fork under `vendor/` of the public-tip algorithm files named in
 that directory's NOTICE. Hybrid is the search path when an embedding port
 is bound; otherwise the port degrades to lexical and declares
-`vector-skipped`. `kizuki.retrieval.fts5` remains the zero-model default.
+`vector-skipped`. When the embedding call fails or times out, hybrid answers
+by keyword and declares `vector-unavailable`; only a vector-only search throws.
+Chunks hold body text sized by the embedding port's tokenizer when it has one;
+the title travels beside each chunk. The engine refuses a corpus above
+`max_text_bytes` (default 4 MiB) whole, before touching the active index, and
+records the refusal in `engine.json` for `kizuki doctor`. `kizuki.retrieval.fts5` remains the zero-model default.
 It does not write canon, own correction, label sensitivity, install a
 daemon, or implement purge totality. Rerank and local GGUF stay out of
 this package.

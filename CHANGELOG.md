@@ -387,6 +387,44 @@
   `pages_repaired`. A page that cannot be rewritten degrades the run with
   `brief-repair-failed` and is tried again on the next sweep.
 
+### Semantic retrieval
+
+- New optional embedding port `kizuki.embedding.local-http` (`@kizuki/embed-local-http`)
+  sends text to an OpenAI-compatible `/v1/embeddings` or ollama-compatible
+  `/api/embed` server on a loopback address. Only IPv4 loopback and `[::1]`
+  address literals over plain `http` are accepted; a hostname, another address,
+  credentials, a path or a redirect is refused, and the port opens its own
+  socket so `HTTP_PROXY` cannot reroute the text. Model, width and context
+  window are pinned in `[ports.embedding]`; prompts, chunk size, batch size and
+  timeout are optional. The space id covers the model, width, prompts and
+  tokenizer, so a prompt change is a new space. It is off unless configured,
+  and Kizuki does not start or download a server or a model.
+- `query`, `context`, MCP `search` and `context_packet` ask the embedded engine
+  for hybrid ranking whenever it can rank by vector, in the CLI, the MCP stdio
+  host and the daemon (which now bind the vault's embedding port with the
+  engine). `query` and `context` bind the engine when it is free. An answer
+  that was not vector-ranked although an embedding port is configured carries
+  `retrieval-vector-unavailable`, and one that covers only part of the corpus
+  carries `retrieval-vector-partial`. A dead or slow embedding server leaves
+  keyword ranking and the label; hybrid never fails with the server.
+- The `embed-backfill` rail embeds up to 200 chunks per run, newest documents
+  first, and receipts the documents embedded and the backlog left. It replaces
+  the unwired backlog hook. A write embeds the documents it wrote and leaves an
+  older backlog to the rail; a refresh embeds only documents that changed.
+- Embedding recipe fixes: the document title (not its id) is framed into every
+  chunk and is no longer part of the chunk text; the GGUF table embedder's
+  prompts are slots only, so no prompt word is averaged into its vectors; chunk
+  sizes are counted with the embedding port's tokenizer when it has one
+  (`EmbeddingPort.countTokens`, additive), an over-long unbroken run is cut to
+  fit, and chunks written before an embedder was bound are cut again for it.
+  The GGUF space's prompts changed, so a vault using the fixture embedder needs
+  `kizuki rebuild --confirm`.
+- The embedded engine refuses a corpus above `max_text_bytes` (default 4 MiB of
+  titles and bodies, 1 MiB to 1 GiB under `[ports.retrieval]`) whole, before it
+  touches the active index, and `kizuki doctor` prints `vector layer: refused
+  (...)` with the sizes. Doctor also prints `not in use` when an embedding port
+  is configured but retrieval is not the embedded engine.
+
 ## 1.0.2 (2026-09-24)
 
 ### Added
