@@ -391,6 +391,9 @@ export function parseAlgalRunReceipt(
   const toolCallsPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
     (cell) => isPlainObject(cell) && cell["toolCalls"] !== undefined,
   );
+  const shadowOutPresent = isPlainObject(raw["cells"]) && Object.values(raw["cells"]).some(
+    (cell) => isPlainObject(cell) && cell["shadowOut"] !== undefined,
+  );
   const eventPathPresent = Array.isArray(raw["events"]) && raw["events"].some(
     (event) => isPlainObject(event) && event["path"] !== undefined,
   );
@@ -419,6 +422,7 @@ export function parseAlgalRunReceipt(
       `executor-reported items ${itemsPresent ? "present" : "absent"}; measured reuse not conferred`,
       `executor-reported outputs ${outputsPresent ? "present" : "absent"}; execution not conferred`,
       `executor-reported toolCalls ${toolCallsPresent ? "present" : "absent"}; execution not conferred`,
+      `executor-reported shadowOut ${shadowOutPresent ? "present" : "absent"}; decision not conferred`,
       `executor-reported event path ${eventPathPresent ? "present" : "absent"}; path not resolved`,
       `executor-reported event outcome ${eventOutcomePresent ? "present" : "absent"}; independent observation absent`,
       `executor-reported effect error message ${effectErrorMessagePresent ? "present" : "absent"}; message not copied`,
@@ -459,6 +463,9 @@ export function parseAlgalRunReceipt(
           outputs_execution: "not_conferred",
           executor_reported_tool_calls: toolCallsPresent ? "present" : "absent",
           tool_calls_execution: "not_conferred",
+          executor_reported_shadow_out: shadowOutPresent ? "present" : "absent",
+          shadow_out: "not_copied",
+          shadow_decision: "not_conferred",
           executor_reported_event_path: eventPathPresent ? "present" : "absent",
           event_path_resolution: "not_resolved",
           executor_reported_event_outcome: eventOutcomePresent ? "present" : "absent",
