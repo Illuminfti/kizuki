@@ -38,7 +38,7 @@ class AppOperationFailure extends AppFailure {
     constructor(code: string, readonly result: AppOperation['result']) { super(code); }
 }
 const ROUTES: Record<AppRoute, readonly string[]> = {
-    world_view: ['operation', 'label', 'valid', 'knownAt', 'concept', 'situation'],
+    world_view: ['operation', 'label', 'cursor', 'valid', 'knownAt', 'concept', 'situation'],
     status: [], catalog: [], initialize: ['path', 'no_service'], service_status: [], install_service: [], sources: [], enroll: ['provider', 'path', 'fields', 'calendar_id', 'source_key', 'new_source'],
     consent: ['source_key', 'expected_revision', 'operation_id', 'policy'], capture: ['source_key', 'mode'], query: ['text', 'limit'], activity: ['limit'], undo: ['receipt_id', 'cascade'], operation: ['id'],
     revoke: ['source_key', 'expected_revision', 'operation_id'], resume_revocation: ['source_key', 'operation_id'],

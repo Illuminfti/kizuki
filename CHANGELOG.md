@@ -148,6 +148,17 @@
 - A response rejected whole, including `finish_reason=length`, now records the
   input and output tokens the provider billed in receipts and usage rows
   instead of zero.
+- World reads no longer claim completeness they do not have. `kizuki world`,
+  MCP `world_view` and HTTP `/v1/world_view` now report `partial` coverage with
+  a `coverage` gap when a source the caller can read has unfinished history
+  import or a failed last capture run, and with a `pending_consolidation` gap
+  when a readable, extraction-granted source has events extraction has not yet
+  consumed. An empty discovery in that state is `partial` instead of
+  `complete_for_query`. Sources the grant hides never affect the result.
+- Label search in `find_concepts` and `find_situations` is case-insensitive with
+  Unicode folding, and is paginated: the previous 32-match cap is now the page
+  size, and results carry an opaque `cursor` (null on the last page) that
+  `kizuki world --cursor`, MCP and HTTP accept.
 
 ### Changed
 

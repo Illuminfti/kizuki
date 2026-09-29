@@ -57,3 +57,42 @@ test("listed MCP client discovers and reads real supported Concept and Situation
   });
   expect(malformed.isError).toBe(true);
 });
+
+test("MCP world_view pages label discovery with the returned cursor", async () => {
+  fixture = mcpFixture();
+  const first = await worldFixture(fixture.db, { label: "Topic 00", subject: "topic:0" });
+  for (let i = 1; i < 33; i += 1)
+    await worldFixture(fixture.db, {
+      sourceKey: first.sourceKey,
+      label: `Topic ${String(i).padStart(2, "0")}`,
+      subject: `topic:${i}`,
+    });
+  const client = await connectClient(fixture.owner(), open);
+  type Page = { matches: { ref: { token: string } }[]; cursor: string | null };
+  const page = async (cursor?: string) => {
+    const result = await call(client, "world_view", {
+      operation: "find_concepts",
+      label: "TOPIC",
+      ...(cursor === undefined ? {} : { cursor }),
+      valid: { kind: "all" },
+      knownAt: { kind: "current" },
+    });
+    expect(result.isError ?? false).toBe(false);
+    return (envelopeOf(result).data as { result: { data: Page } }).result.data;
+  };
+  const one = await page();
+  expect(one.matches).toHaveLength(32);
+  expect(one.cursor).not.toBeNull();
+  const two = await page(one.cursor!);
+  expect(two.matches).toHaveLength(1);
+  expect(two.cursor).toBeNull();
+  expect(two.matches[0]!.ref.token).not.toBe(one.matches[0]!.ref.token);
+  const bad = await call(client, "world_view", {
+    operation: "find_concepts",
+    label: "",
+    cursor: "not-a-token",
+    valid: { kind: "all" },
+    knownAt: { kind: "current" },
+  });
+  expect(bad.isError).toBe(true);
+});

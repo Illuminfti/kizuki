@@ -5,11 +5,11 @@ import { ceilingSql, instantBoundPair, instantPairSql } from "../query/sql";
 import type { ServeContext } from "../serving/types";
 import type { WorldValidQuery } from "../serving/world-view";
 
-/** Push current policy before candidate/support LIMIT; Core still validates selected complete records. */
-export function authorizedSupportSql(
-  ctx: ServeContext,
-  alias = "s",
-): { sql: string; bindings: (string | number)[] } {
+/** The grant's own limits on `events` rows: liveness, ceiling, source grant, types, subjects and time window. */
+export function authorizedEventSql(ctx: ServeContext): {
+  clauses: string[];
+  bindings: (string | number)[];
+} {
   const grant = ctx.principal.grant,
     bindings: (string | number)[] = [];
   const event = [LIVE_PREDICATE, ceilingSql("events.sensitivity_hint")];
@@ -41,6 +41,16 @@ export function authorizedSupportSql(
     event.push(`${instantPairSql("events.occurred_at")} <= (?,?)`);
     bindings.push(...instantBoundPair(grant.until, "until"));
   }
+  return { clauses: event, bindings };
+}
+
+/** Push current policy before candidate/support LIMIT; Core still validates selected complete records. */
+export function authorizedSupportSql(
+  ctx: ServeContext,
+  alias = "s",
+): { sql: string; bindings: (string | number)[] } {
+  const grant = ctx.principal.grant;
+  const { clauses: event, bindings } = authorizedEventSql(ctx);
   event.push(`(( ${alias}.support_origin='source' AND EXISTS(SELECT 1 FROM source_event_bindings b WHERE b.event_id=events.event_id AND b.source_key=${alias}.source_key)) OR
     (${alias}.support_origin='native_owner' AND ${ctx.principal.kind === "owner" || grant.relay_owner_corrections ? "1" : "0"} AND ${alias}.source_key='native-owner' AND ${alias}.grant_revision=0 AND
       NOT EXISTS(SELECT 1 FROM source_event_bindings b WHERE b.event_id=events.event_id) AND

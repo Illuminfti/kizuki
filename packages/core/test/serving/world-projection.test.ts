@@ -248,7 +248,8 @@ test("discovery issues only returned object refs and grant changes erase namespa
   try {
     const f = await worldFixture(db, { label: "École" });
     expect(matches(f.ctx, "Éco")).toHaveLength(1);
-    expect(matches(f.ctx, "éco")).toHaveLength(0);
+    expect(matches(f.ctx, "éco")).toHaveLength(1);
+    expect(matches(f.ctx, "eco")).toHaveLength(0);
     expect(
       db
         .query(
