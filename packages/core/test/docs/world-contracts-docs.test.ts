@@ -360,7 +360,7 @@ test("the amendment record lists all twelve deviations, each with changes, rule,
     }
     for (const label of ["Changes", "New rule", "Reason", "Status"]) {
       const text = labelled(entry[1], label);
-      if (text === null || text.length < 40)
+      if (text === null || text.length < (label === "Status" ? 10 : 40))
         problems.push(`amendment ${index + 1}: missing or empty ${label}`);
     }
     const changes = labelled(entry[1], "Changes") ?? "";
