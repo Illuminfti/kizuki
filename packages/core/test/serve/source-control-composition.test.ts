@@ -14,18 +14,18 @@ import { proposalsForEvent } from "../../src/staging/producers";
 import { sha256Hex } from "../../src/util/hash";
 import { ulid } from "../../src/util/ulid";
 import { parseFrontmatter } from "../../src/vault/frontmatter";
-import { validEvent } from "../fixtures";
+import { documentEvent } from "../fixtures";
 import { canonFixture, write } from "../canon/helpers";
 
 function fixture(self: boolean) {
   const f = canonFixture();
-  const original = accept(f.db, validEvent());
+  const original = accept(f.db, documentEvent());
   if (original.status !== "stored") throw new Error("source fixture failed");
   const proposal = fileProposal(f.db, proposalsForEvent(original.event).find(row => row.kind === "claim")!).proposal;
   const receipt = write(f.io, getClaim(f.db, proposal.proposal_id)!);
   const text = `Source deletion fixture (${self})`;
   if (self) commitMachineByteIntent(f.db, { receipt_id: ulid(), before_hash: null, after_hash: sha256Hex(text) }, () => {});
-  const deleted = accept(f.db, { ...validEvent(), deleted: true, text });
+  const deleted = accept(f.db, { ...documentEvent(), deleted: true, text });
   if (deleted.status !== "stored") throw new Error("deletion fixture failed");
   const control = sourceTombstoneProposal(f.db, deleted.event, receipt.page_path, f.io);
   if (control === null) throw new Error("control fixture failed");
@@ -157,7 +157,7 @@ test("a persisted control cannot acquire owner authority at retry or final canon
 test("ordinary external insertion still accepts omitted frontmatter without vault context", async () => {
   const f = canonFixture();
   try {
-    const event = accept(f.db, validEvent());
+    const event = accept(f.db, documentEvent());
     if (event.status !== "stored") throw new Error("ordinary fixture failed");
     const result = await insertClaim({ db: f.db }, { kind: "claim", body: "Ordinary external fact",
       provenance: [event.event.event_id], producer: "deterministic", confidence: 0.8 });

@@ -127,7 +127,7 @@ describe("proposalsForEvent", () => {
     ).find((p) => p.kind === "claim");
 
     expect(note?.body).toBe(
-      "Captured from `fixture` (message) at 2026-02-28T10:30:00Z.\n\n> line one\n>\n> line two",
+      "Captured from `fixture` (file) at 2026-02-28T10:30:00Z.\n\n> line one\n>\n> line two",
     );
     expect(note?.frontmatter["type"]).toBe("source");
     expect(note?.target).toBe("captures/fixture/2026-02-28");

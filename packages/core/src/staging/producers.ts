@@ -11,7 +11,7 @@ import type { ProposalInput } from "./proposals";
 import { sourceTombstoneProposal, SourceTombstoneError } from "../canon/source-tombstone";
 import type { SourceTombstoneContext } from "../canon/source-tombstone";
 import type { RejectReason } from "../contracts/producer";
-import { DETERMINISTIC_PRODUCER_BUDGET } from "./budget";
+import { CONVERSATION_EVENT_KINDS, DETERMINISTIC_PRODUCER_BUDGET } from "./budget";
 import { encodeSubjectSegment, namespacedSubjectId } from "./subjects";
 
 export { DETERMINISTIC_PRODUCER_BUDGET };
@@ -149,8 +149,10 @@ const NO_GRANTS: ProducerGrants = { page_candidates: false };
 /**
  * Entity candidates for every distinct subject, plus either the typed page an
  * event proposes through its metadata or, failing that, one source-faithful
- * capture note quoting the event text. A tombstone produces nothing: it
- * withdraws proposals rather than making them.
+ * capture note quoting the event text. A conversational record (a message or
+ * an email) gets no capture note: its text is extraction evidence in the
+ * ledger, not a page. A tombstone produces nothing: it withdraws proposals
+ * rather than making them.
  */
 export function proposalsForEvent(
   event: CaptureEvent,
@@ -176,7 +178,10 @@ export function proposalsForEvent(
     : null;
   if (candidate !== null && candidate.ok) {
     proposals.push(pageCandidateProposal(event, candidate.value));
-  } else if (event.text.trim().length > 0) {
+  } else if (
+    event.text.trim().length > 0 &&
+    !CONVERSATION_EVENT_KINDS.includes(event.kind)
+  ) {
     proposals.push(captureNoteProposal(event));
   }
   return proposals;
