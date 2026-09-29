@@ -15,7 +15,7 @@ type PortKey = (typeof PORT_KEYS)[number];
 
 const KNOWN_PORT_IDS: Readonly<Record<PortKey, readonly string[]>> = {
   retrieval: ["kizuki.retrieval.fts5", "kizuki.retrieval.embedded-pg", "kizuki.retrieval.pg"],
-  embedding: ["kizuki.embedding.none", "kizuki.embedding.gguf"],
+  embedding: ["kizuki.embedding.none", "kizuki.embedding.gguf", "kizuki.embedding.local-http"],
   llm: [
     "kizuki.llm.none",
     "kizuki.llm.openai-compatible",
@@ -186,6 +186,9 @@ export function loadVaultConfig(vaultPath: string): VaultConfig {
     if (typeof table["embedding"] === "string") {
       assertKnownPort("embedding", table["embedding"], path);
       ports.embedding = table["embedding"];
+    } else if (isPlainObject(table["embedding"]) && typeof table["embedding"]["id"] === "string") {
+      assertKnownPort("embedding", table["embedding"]["id"], path);
+      ports.embedding = table["embedding"]["id"];
     }
     if (typeof table["llm"] === "string") {
       assertKnownPort("llm", table["llm"], path);

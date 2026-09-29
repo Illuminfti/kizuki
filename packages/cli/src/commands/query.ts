@@ -104,6 +104,6 @@ export const queryCommand: Command = {
       }
       for (const hit of hits) io.out(formatHit(hit));
       return 0;
-    }, { audit: true, retrieval: "optional" });
+    }, { audit: true, retrieval: "bound" });
   },
 };

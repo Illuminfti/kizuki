@@ -215,6 +215,7 @@ export {
 export type {
   AbsenceProof,
   ProvenanceAbsenceProof,
+  EmbedProgress,
   EntityRef,
   GraphEdge as RetrievalGraphEdge,
   GraphQueryOptions,
@@ -1142,7 +1143,8 @@ export type {
   WritePassResult,
 } from "./serve";
 
-export { loadConfiguredRetrieval, persistConfiguredRetrieval, readRetrievalPortState, readRetrievalEngineSpace, editRetrievalPortToml } from "./retrieval/config";
+export { bindConfiguredEmbedding } from "./retrieval/embedding-host";
+export { loadConfiguredRetrieval, persistConfiguredRetrieval, readRetrievalPortState, readRetrievalEngineSpace, readRetrievalEngineRefusal, editRetrievalPortToml } from "./retrieval/config";
 export type { ConfiguredRetrieval, RetrievalPortState } from "./retrieval/config";
 export { tryAdvisoryFileLock } from "./util/advisory-file-lock";
 export type { AdvisoryFileLock } from "./util/advisory-file-lock";

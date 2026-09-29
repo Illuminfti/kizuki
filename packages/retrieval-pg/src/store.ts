@@ -74,38 +74,56 @@ export function storedFromDoc(doc: RetrievalDoc): StoredDoc {
   };
 }
 
+/**
+ * Splits the document body into overlapping chunks. Sizes are counted with the
+ * embedding port's own tokenizer when it has one and in whitespace-separated
+ * words otherwise. The title is not part of the chunk: the port frames it into
+ * every chunk's document prompt instead.
+ */
 export function chunkDocument(
   doc: RetrievalDoc,
   tokens: number,
   overlap: number,
+  countTokens?: (text: string) => number,
 ): StoredChunk[] {
-  const words = `${doc.title} ${doc.text}`.split(/\s+/).filter(Boolean);
   const size = Math.max(1, tokens);
-  const step = Math.max(1, size - Math.max(0, overlap));
-  if (words.length === 0) {
-    return [
-      {
-        chunk_id: `${doc.doc_id}#0`,
-        index: 0,
-        text: "",
-        vector: null,
-        embedded_at: null,
-        space: null,
-      },
-    ];
-  }
+  const words = doc.text.split(/\s+/).filter(Boolean).flatMap((word) => {
+    if (countTokens === undefined || countTokens(word) <= size) return [word];
+    // A run with no whitespace, such as a URL or an encoded blob, is cut so
+    // that no piece can exceed the window. A character costs at most one token.
+    const characters = [...word];
+    const pieces: string[] = [];
+    for (let at = 0; at < characters.length; at += size) pieces.push(characters.slice(at, at + size).join(""));
+    return pieces;
+  });
+  const weights = words.map((word) => (countTokens === undefined ? 1 : Math.max(1, countTokens(word))));
+  const chunk = (index: number, text: string): StoredChunk => ({
+    chunk_id: `${doc.doc_id}#${index}`,
+    index,
+    text,
+    vector: null,
+    embedded_at: null,
+    space: null,
+  });
+  if (words.length === 0) return [chunk(0, "")];
   const chunks: StoredChunk[] = [];
-  for (let start = 0, index = 0; start < words.length; start += step, index += 1) {
-    const slice = words.slice(start, start + size);
-    chunks.push({
-      chunk_id: `${doc.doc_id}#${index}`,
-      index,
-      text: slice.join(" "),
-      vector: null,
-      embedded_at: null,
-      space: null,
-    });
-    if (start + size >= words.length) break;
+  for (let start = 0; start < words.length; ) {
+    let end = start;
+    let used = 0;
+    while (end < words.length && (end === start || used + weights[end]! <= size)) {
+      used += weights[end]!;
+      end += 1;
+    }
+    chunks.push(chunk(chunks.length, words.slice(start, end).join(" ")));
+    if (end >= words.length) break;
+    // The next chunk re-reads the last `overlap` tokens but always moves forward.
+    let next = end;
+    let carried = 0;
+    while (next > start + 1 && carried + weights[next - 1]! <= Math.max(0, overlap)) {
+      carried += weights[next - 1]!;
+      next -= 1;
+    }
+    start = next;
   }
   return chunks;
 }

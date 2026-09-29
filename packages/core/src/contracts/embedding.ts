@@ -28,10 +28,17 @@ export interface Chunk {
   readonly doc_id: string;
   readonly text: string;
   readonly index: number;
+  /** Title of the document the chunk belongs to; ports frame it into the document prompt. */
+  readonly title?: string;
 }
 
 export interface EmbeddingPort extends Port {
   space(): EmbeddingSpace;
   embedQuery(texts: readonly string[]): Promise<Float32Array[]>;
   embedDocs(chunks: readonly Chunk[]): Promise<Float32Array[]>;
+  /**
+   * Tokens `text` occupies under the port's tokenizer. Engines size chunks with
+   * it. A port without it is chunked by whitespace-separated words.
+   */
+  countTokens?(text: string): number;
 }

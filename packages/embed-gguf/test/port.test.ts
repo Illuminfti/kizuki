@@ -36,8 +36,8 @@ describe("kizuki.embedding.gguf", () => {
       expect(space.provider).toBe("gguf");
       expect(space.model).toBe("kizuki-fixture-embed");
       expect(space.dims).toBe(8);
-      expect(space.prompt_query).toBe("task: search result | query: {q}");
-      expect(space.prompt_doc).toBe("title: {title} | text: {text}");
+      expect(space.prompt_query).toBe("{q}");
+      expect(space.prompt_doc).toBe("{title}\n{text}");
       expect(space.chunk).toEqual({ tokens: 800, overlap: 120 });
 
       const [query] = await port.embedQuery(["grace partnerships"]);
@@ -63,6 +63,22 @@ describe("kizuki.embedding.gguf", () => {
           rss_ceiling_bytes: 512 * 1024 * 1024,
         },
       });
+    } finally {
+      await port.close();
+    }
+  });
+
+  test("frames a document with its title, never its id, and no prompt words", async () => {
+    const temporary = temporaryEmbed();
+    cleanups.push(temporary.cleanup);
+    const port = createGgufEmbeddingPort(temporary.ctx);
+    try {
+      const chunk = { chunk_id: "c0", doc_id: "page:one", title: "Acme", text: "grace partnerships", index: 0 };
+      const [viaTitle] = await port.embedDocs([chunk]);
+      const [otherId] = await port.embedDocs([{ ...chunk, chunk_id: "c9", doc_id: "page:two" }]);
+      const [asQuery] = await port.embedQuery(["Acme\ngrace partnerships"]);
+      expect([...viaTitle!]).toEqual([...otherId!]);
+      expect([...viaTitle!]).toEqual([...asQuery!]);
     } finally {
       await port.close();
     }
@@ -203,7 +219,8 @@ describe("kizuki.embedding.gguf", () => {
     });
     try {
       for (const run of [
-        () => port.embedQuery(["grace"]),
+        // Two tokens are enough to sum past the float32 range; the prompt no longer adds any.
+        () => port.embedQuery(["grace partnerships"]),
         () => port.embedDocs(fixtureChunks()),
       ]) {
         try {

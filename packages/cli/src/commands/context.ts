@@ -153,6 +153,6 @@ export const contextCommand: Command = {
         io.out(envelope.data.packet_md);
       }
       return incomplete ? 1 : 0;
-    }, { audit: true, retrieval: "optional" });
+    }, { audit: true, retrieval: "bound" });
   },
 };

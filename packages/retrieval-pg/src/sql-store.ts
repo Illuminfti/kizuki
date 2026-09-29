@@ -17,6 +17,7 @@ export interface CandidateRow {
 export interface PendingRow {
   chunk_id: string;
   doc_id: string;
+  title: string;
   body: string;
   chunk_index: number;
   revision: string;
@@ -114,7 +115,7 @@ export class SqlStore {
   async setMeta(key: string, value: unknown, tx: Transaction | PGlite = this.db): Promise<void> {
     await tx.query("INSERT INTO retrieval_meta VALUES ($1,$2::jsonb) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [key, JSON.stringify(value)]);
   }
-  async writeDoc(tx: Transaction, doc: RetrievalDoc, tokens: number, overlap: number): Promise<void> {
+  async writeDoc(tx: Transaction, doc: RetrievalDoc, tokens: number, overlap: number, countTokens?: (text: string) => number): Promise<void> {
     const old = (await tx.query<{
       title: string;
       body: string;
@@ -124,16 +125,18 @@ export class SqlStore {
    ON CONFLICT(doc_id) DO UPDATE SET doc=excluded.doc,title=excluded.title,body=excluded.body,
    sensitivity=excluded.sensitivity,kind=excluded.kind,subjects=excluded.subjects,provenance=excluded.provenance,
    occurred_at=excluded.occurred_at,updated_at=excluded.updated_at,search_doc=excluded.search_doc`, [doc.doc_id, JSON.stringify(doc), doc.title, doc.text, doc.sensitivity === null ? null : SENSITIVITY_ORDER[doc.sensitivity], doc.kind, [...doc.subjects], [...doc.provenance], doc.occurred_at, doc.updated_at]);
-    if (old?.title !== doc.title || old.body !== doc.text) {
-      await tx.query("DELETE FROM retrieval_chunks WHERE doc_id=$1", [doc.doc_id]);
-      for (const chunk of chunkDocument(doc, tokens, overlap)) {
-        await tx.query("INSERT INTO retrieval_chunks(chunk_id,doc_id,chunk_index,body,revision) VALUES($1,$2,$3,$4,$5)", [chunk.chunk_id, doc.doc_id, chunk.index, chunk.text, crypto.randomUUID()]);
-      }
-    }
+    if (old?.title !== doc.title || old.body !== doc.text) await this.writeChunks(tx, doc, tokens, overlap, countTokens);
     await tx.query("DELETE FROM entity_edges WHERE source=$1", [doc.doc_id]);
     for (const target of new Set(doc.subjects)) {
       const edge: StoredEdge = { from: doc.doc_id, to: target, type: "subject", weight: 1, valid_from: doc.occurred_at, valid_to: null, provenance: [...doc.provenance] };
       await tx.query("INSERT INTO entity_edges VALUES($1,$2,$3::jsonb)", [doc.doc_id, target, JSON.stringify(edge)]);
+    }
+  }
+  /** Replaces the document's chunks; their vectors are gone until embedded again. */
+  async writeChunks(tx: Transaction, doc: RetrievalDoc, tokens: number, overlap: number, countTokens?: (text: string) => number): Promise<void> {
+    await tx.query("DELETE FROM retrieval_chunks WHERE doc_id=$1", [doc.doc_id]);
+    for (const chunk of chunkDocument(doc, tokens, overlap, countTokens)) {
+      await tx.query("INSERT INTO retrieval_chunks(chunk_id,doc_id,chunk_index,body,revision) VALUES($1,$2,$3,$4,$5)", [chunk.chunk_id, doc.doc_id, chunk.index, chunk.text, crypto.randomUUID()]);
     }
   }
   scope(query: RetrievalQuery, args: unknown[], alias = "d"): string {
@@ -209,9 +212,25 @@ export class SqlStore {
       });
     }
   }
-  async pending(): Promise<PendingRow | undefined> {
-    return (await this.db.query<PendingRow>(`SELECT c.chunk_id,c.doc_id,c.body,c.chunk_index,c.revision FROM retrieval_chunks c
-   JOIN retrieval_docs d USING(doc_id) WHERE c.embedding IS NULL ORDER BY d.updated_at DESC NULLS LAST,c.doc_id,c.chunk_index LIMIT 1`)).rows[0];
+  /** The next chunk without a vector, newest documents first; `only` narrows it to those documents. */
+  async pending(only?: readonly string[]): Promise<PendingRow | undefined> {
+    return (await this.db.query<PendingRow>(`SELECT c.chunk_id,c.doc_id,d.title,c.body,c.chunk_index,c.revision FROM retrieval_chunks c
+   JOIN retrieval_docs d USING(doc_id) WHERE c.embedding IS NULL AND ($1::text[] IS NULL OR c.doc_id=ANY($1::text[]))
+   ORDER BY d.updated_at DESC NULLS LAST,c.doc_id,c.chunk_index LIMIT 1`, [only === undefined ? null : [...only]])).rows[0];
+  }
+  /**
+   * Copies the stored vectors of a document into the rebuild staging table when
+   * its chunks are exactly the ones already embedded. Reports whether it did.
+   */
+  async reuseVectors(docId: string, chunks: readonly { chunk_id: string; index: number; text: string }[]): Promise<boolean> {
+    const stored = (await this.db.query<{ chunk_index: number; body: string; embedded: boolean }>(
+      "SELECT chunk_index,body,embedding IS NOT NULL AS embedded FROM retrieval_chunks WHERE doc_id=$1 ORDER BY chunk_index", [docId])).rows;
+    if (stored.length !== chunks.length || stored.some((row, at) => !row.embedded || row.chunk_index !== chunks[at]!.index || row.body !== chunks[at]!.text)) return false;
+    await this.db.query("INSERT INTO rebuild_vectors SELECT chunk_id,embedding FROM retrieval_chunks WHERE doc_id=$1", [docId]);
+    return true;
+  }
+  async pendingCount(): Promise<number> {
+    return (await this.db.query<{ pending: number }>("SELECT count(*)::int AS pending FROM retrieval_chunks WHERE embedding IS NULL")).rows[0]?.pending ?? 0;
   }
   async edges(ceiling: Sensitivity, query?: RetrievalQuery, candidateIds?: readonly string[]): Promise<StoredEdge[]> {
     const args: unknown[] = [];

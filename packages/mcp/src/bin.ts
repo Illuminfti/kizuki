@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { authenticateAgentCredential, isLedgerBusy, LEDGER_BUSY_TIMEOUT_MS, leaseHeldMessage, PortError, PortRegistry, bindLocalSourcePort, loadConfiguredRetrieval } from "@kizuki/core";
-import { registerEmbeddedRetrieval } from "@kizuki/retrieval-pg";
+import { authenticateAgentCredential, bindConfiguredEmbedding, isLedgerBusy, LEDGER_BUSY_TIMEOUT_MS, leaseHeldMessage, PortError, PortRegistry, bindLocalSourcePort, loadConfiguredRetrieval } from "@kizuki/core";
+import { registerGgufEmbedding } from "@kizuki/embed-gguf";
+import { registerLocalHttpEmbedding } from "@kizuki/embed-local-http";
+import { createEmbeddedRetrievalPort, EMBEDDED_RETRIEVAL_DESCRIPTOR, registerEmbeddedRetrieval } from "@kizuki/retrieval-pg";
 import { openLedgerForServing } from "@kizuki/core/internal";
 import type { Principal, RetrievalPort } from "@kizuki/core";
 import { ownerPrincipal, principalFromToken } from "./principal";
@@ -60,18 +62,30 @@ function parse(argv: string[]): Options | null {
 async function bindRetrieval(vault: string, id: string): Promise<RetrievalPort> {
   const dataDir = join(vault, ".kizuki", "retrieval", id);
   const registry = new PortRegistry();
-  registerEmbeddedRetrieval(registry);
-  const { port } = await registry.bindFromConfig<RetrievalPort>("retrieval", { retrieval: id }, {
-    vault_path: vault,
-    data_dir: dataDir,
-    config: loadConfiguredRetrieval(vault).config,
-    secrets: () => Promise.reject(new Error("no secret is configured")),
-    clock: () => new Date().toISOString(),
-    // stdout is the protocol channel; a port's own lines go to stderr.
-    logger: (line) => process.stderr.write(`${line.level} ${line.message}\n`),
-  });
-  // The host registry above contains only the concrete local embedded factory.
-  return id === "kizuki.retrieval.embedded-pg" ? bindLocalSourcePort(port, { store_id: `local:${id}` }) : port;
+  // stdout is the protocol channel; a port's own lines go to stderr.
+  const logger = (line: { level: string; message: string }): void => { process.stderr.write(`${line.level} ${line.message}\n`); };
+  // The vault's configured embedding port rides with the engine, so this
+  // session's search can rank by vector and its writes cut chunks the same way.
+  const embedding = id === "kizuki.retrieval.embedded-pg"
+    ? await bindConfiguredEmbedding(vault, (embeddings) => { registerGgufEmbedding(embeddings); registerLocalHttpEmbedding(embeddings); }, logger)
+    : undefined;
+  if (embedding === undefined) registerEmbeddedRetrieval(registry);
+  else registry.registerPort(EMBEDDED_RETRIEVAL_DESCRIPTOR, (ctx) => createEmbeddedRetrievalPort(ctx, { embedding, own_embedding: true }));
+  try {
+    const { port } = await registry.bindFromConfig<RetrievalPort>("retrieval", { retrieval: id }, {
+      vault_path: vault,
+      data_dir: dataDir,
+      config: loadConfiguredRetrieval(vault).config,
+      secrets: () => Promise.reject(new Error("no secret is configured")),
+      clock: () => new Date().toISOString(),
+      logger,
+    });
+    // The host registry above contains only the concrete local embedded factory.
+    return id === "kizuki.retrieval.embedded-pg" ? bindLocalSourcePort(port, { store_id: `local:${id}` }) : port;
+  } catch (error) {
+    await embedding?.close();
+    throw error;
+  }
 }
 
 function refuse(message: string): never {

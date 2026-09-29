@@ -110,7 +110,7 @@ describe("embed-backfill without an embedding port", () => {
   });
 
   test("doctor reports a configured port and keeps a quiet embed rail with nothing to embed healthy", () => {
-    const { path, db } = vault('[ports]\nembedding = "kizuki.embedding.gguf"\n');
+    const { path, db } = vault('[ports]\nretrieval = "kizuki.retrieval.embedded-pg"\nembedding = "kizuki.embedding.gguf"\n');
     for (let index = 0; index < 6; index += 1) {
       persistRunReceipt(db, path, {
         ...emptyRunTotals(), run_id: `01JEMBEDPORT000000000000${index}`, rail: "embed-backfill",
@@ -121,6 +121,33 @@ describe("embed-backfill without an embedding port", () => {
     const report = inspectServeDoctor(db, path, { now: at(6 * 60), supervisor });
     expect(report.stores.vector_layer).toEqual({ state: "configured", detail: "vector layer: configured (kizuki.embedding.gguf)" });
     expect(report.rails.find((rail) => rail.rail === "embed-backfill")).toMatchObject({ status: "ok", reason: null, empty_streak: 0 });
+    db.close();
+  });
+
+  test("doctor says so when a configured embedding port has no engine to rank with", () => {
+    const { path, db } = vault('[ports]\nembedding = "kizuki.embedding.gguf"\n');
+    const layer = inspectServeDoctor(db, path, { now: at(0), supervisor }).stores.vector_layer;
+    expect(layer.state).toBe("unbound");
+    expect(layer.detail).toContain("retrieval is kizuki.retrieval.fts5");
+    expect(layer.detail).toContain("select kizuki.retrieval.embedded-pg");
+    db.close();
+  });
+
+  test("doctor explains a corpus the embedded engine refused", () => {
+    const { path, db } = vault('[ports]\nretrieval = "kizuki.retrieval.embedded-pg"\nembedding = "kizuki.embedding.gguf"\n');
+    const engineDir = join(path, ".kizuki", "retrieval", "kizuki.retrieval.embedded-pg");
+    mkdirSync(engineDir, { recursive: true });
+    const MIB = 1024 * 1024;
+    writeFileSync(join(engineDir, "engine.json"), JSON.stringify({ refusal: { corpus_bytes: 70 * MIB + 1, limit_bytes: 8 * MIB, at: at(0) } }));
+    const layer = inspectServeDoctor(db, path, { now: at(0), supervisor }).stores.vector_layer;
+    expect(layer.state).toBe("refused");
+    expect(layer.detail).toContain("corpus is 71 MiB of text");
+    expect(layer.detail).toContain("at most 8 MiB");
+    expect(layer.detail).toContain("searches stay lexical");
+    expect(layer.detail).toContain("max_text_bytes");
+    // A malformed record is ignored rather than trusted.
+    writeFileSync(join(engineDir, "engine.json"), JSON.stringify({ refusal: { corpus_bytes: "lots" } }));
+    expect(inspectServeDoctor(db, path, { now: at(0), supervisor }).stores.vector_layer.state).toBe("configured");
     db.close();
   });
 

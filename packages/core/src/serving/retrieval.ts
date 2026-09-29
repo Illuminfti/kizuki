@@ -1,8 +1,9 @@
 import { sourcePolicyEpoch, isLocalSourcePort } from "../ledger/source-grants";
 import { validateGraphResult, validateRetrievalResult } from "../contracts/retrieval";
-import type { RetrievalDocKind, RetrievalQuery } from "../contracts/retrieval";
+import type { RetrievalDocKind, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
 import type { GraphEdge, GraphEdgeKind } from "../graph/graph";
 import { bareRetrievalId } from "../retrieval/ids";
+import { loadEmbeddingSelection } from "../serve/config";
 import type { SearchOptions } from "../search/query";
 import type { ServeContext } from "./types";
 
@@ -16,13 +17,40 @@ export interface RetrievalGraphCandidates extends RetrievalCandidates {
   ok: boolean;
 }
 
+/** The only strings about vector ranking that leave the engine. Anything else it reports is `retrieval-degraded`. */
+const VECTOR_LABELS: Readonly<Record<string, string>> = {
+  "vector-skipped": "retrieval-vector-unavailable",
+  "vector-unavailable": "retrieval-vector-unavailable",
+  "embedding-space-mismatch": "retrieval-vector-unavailable",
+  "vector-backlog": "retrieval-vector-partial",
+};
+
+/** Hybrid only when the bound engine reports it can rank by vector; otherwise the lexical floor it always has. */
+export function retrievalMode(descriptor: RetrievalPort["descriptor"]): "hybrid" | "lexical" {
+  return descriptor.supports.includes("hybrid") && descriptor.supports.includes("vector") ? "hybrid" : "lexical";
+}
+
+/** The vault selects an embedding port, so a read that cannot rank by vector must say so. */
+function vectorExpected(ctx: ServeContext): boolean {
+  return loadEmbeddingSelection(ctx.vaultPath).state === "configured";
+}
+
+function publicDegraded(engine: readonly string[]): string[] {
+  return [...new Set(engine.map((label) => VECTOR_LABELS[label] ?? "retrieval-degraded"))];
+}
+
 /** A derived engine nominates identities. Its cached text never becomes served evidence. */
 export async function retrievalCandidates(
   ctx: ServeContext,
   query: string,
   options: SearchOptions,
 ): Promise<RetrievalCandidates> {
-  if (ctx.retrieval === undefined) return { ids: [], degraded: ctx.retrievalUnavailable ? ["retrieval-unavailable", ...(typeof ctx.retrievalUnavailable === "string" ? [ctx.retrievalUnavailable] : [])] : [] };
+  if (ctx.retrieval === undefined) {
+    return { ids: [], degraded: [
+      ...(ctx.retrievalUnavailable ? ["retrieval-unavailable", ...(typeof ctx.retrievalUnavailable === "string" ? [ctx.retrievalUnavailable] : [])] : []),
+      ...(vectorExpected(ctx) ? ["retrieval-vector-unavailable"] : []),
+    ] };
+  }
   if (sourcePolicyEpoch(ctx.db) > 0 && !isLocalSourcePort(ctx.retrieval)) return { ids: [], degraded: ["retrieval-source-egress-denied"] };
   // The v1 port has no page-type predicate. Keep that request on the scoped
   // deterministic index rather than spending its window on excluded types.
@@ -31,8 +59,9 @@ export async function retrievalCandidates(
   }
   const kinds: RetrievalDocKind[] = options.scope === "canon" ? ["page"]
     : options.scope === "ledger" ? ["event"] : ["page", "event"];
+  const mode = retrievalMode(ctx.retrieval.descriptor);
   const request: RetrievalQuery = {
-    text: query, mode: "lexical", scope: { kinds,
+    text: query, mode, scope: { kinds,
       ...(options.subjects === undefined ? {} : { subjects: options.subjects }),
       ...(options.since === undefined ? {} : { since: options.since }),
       ...(options.until === undefined ? {} : { until: options.until }),
@@ -59,7 +88,11 @@ export async function retrievalCandidates(
     return {
       ids: validated.hits.map((hit) => hit.doc_id),
       // Provider strings are not a public diagnostic channel.
-      degraded: validated.degraded.length > 0 ? ["retrieval-degraded"] : [],
+      degraded: [
+        ...publicDegraded(validated.degraded),
+        // A configured embedding port the engine could not bind is not a lexical-only choice.
+        ...(mode === "lexical" && vectorExpected(ctx) ? ["retrieval-vector-unavailable"] : []),
+      ],
     };
   } catch {
     return { ids: [], degraded: ["retrieval-unavailable"] };
