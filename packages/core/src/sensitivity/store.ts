@@ -198,22 +198,25 @@ export function raiseConnectorSensitivityFloor(
 
 /**
  * The owner's consent policy sets what an owner-mapped importer's labels may
- * lower a source to. `requested` may not go below the connection's floor; a
- * policy that leaves it out gives back the connector's class default.
+ * lower a source to. `requested` may not go below the connection's floor. A
+ * policy that leaves it out gives back the connector's class default, and
+ * touches nothing when the owner never set one.
  */
 export function setGrantSensitivityDefault(
   db: Database,
   connection: { connector_id: string; source_key: string },
   requested: Sensitivity | undefined,
   at?: string,
-): ConnectorSensitivity {
+): void {
   const classPolicy = policyForConnector(connection.connector_id);
-  const current = seedConnectorSensitivity(db, connection, classPolicy, at);
+  let current: ConnectorSensitivity | null;
   let next: Sensitivity;
   if (requested === undefined) {
-    if (current.set_by !== "grant") return current;
+    current = getConnectorSensitivity(db, connection.connector_id, connection.source_key);
+    if (current === null || current.set_by !== "grant") return;
     next = stricter(current.floor, classPolicy.default_sensitivity);
   } else {
+    current = seedConnectorSensitivity(db, connection, classPolicy, at);
     if (SENSITIVITY_ORDER[requested] < SENSITIVITY_ORDER[current.floor]) {
       throw new SensitivityError(
         "default_below_floor",
@@ -223,19 +226,12 @@ export function setGrantSensitivityDefault(
     next = requested;
   }
   const setBy: SensitivitySetBy = requested === undefined ? "manifest" : "grant";
-  if (next === current.default_sensitivity && setBy === current.set_by) return current;
-  const record: ConnectorSensitivity = {
-    ...current,
-    default_sensitivity: next,
-    set_by: setBy,
-    at: nowOf(at),
-  };
+  if (next === current.default_sensitivity && setBy === current.set_by) return;
   db.query(
     `UPDATE connector_sensitivity
         SET default_sensitivity = ?, set_by = ?, at = ?
       WHERE connector_id = ? AND source_key = ?`,
-  ).run(record.default_sensitivity, record.set_by, record.at, record.connector_id, record.source_key);
-  return record;
+  ).run(next, setBy, nowOf(at), current.connector_id, current.source_key);
 }
 
 export function applyConnectionSensitivity(
