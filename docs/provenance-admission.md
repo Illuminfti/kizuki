@@ -21,7 +21,8 @@ Refreshing one written page reads that page's evidence and the graph's record
 of the other pages (`graph_pages`, `graph_links`, `graph_files`), which every
 full walk replaces and a purge clears; while the vault's stat signatures still
 match it, no other page is assessed, and a changed file makes the next write
-walk again. Incoming relations that resolve differently because of the page
+walk again. Other pages are not assessed again until their own write or a
+rebuild; serving still checks a page's evidence on every read. Incoming relations that resolve differently because of the page
 (a title now shared, a new page a link can reach, an archived page) are
 projected again with it, so the result equals a full rebuild after a complete
 walk.

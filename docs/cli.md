@@ -724,7 +724,8 @@ applied to the persisted schedule when the service starts, and `[extraction]`
 sets `max_calls_per_pass`, `records_per_request`, `max_input_tokens`,
 `max_output_tokens`, `max_pass_seconds` and the daily budgets
 `max_calls_per_day` and `max_output_tokens_per_day`. `[budget]
-canon_writes_per_run` (default 32) sets how many canon pages one pass writes;
+canon_writes_per_run` (default 32) sets how many canon pages one pass writes, and
+a value above 32 raises the pass's former fixed ceiling;
 the pass takes the writer for one page at a time and reads a stop request
 between pages, and a typed page that fails three passes in a row is set aside
 for a day (see [canon writes per pass](extraction-budgets.md#canon-writes-per-pass)). `serve status` and

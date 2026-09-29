@@ -46,7 +46,7 @@ test("stuck typed pages do not starve a healthy one, and are set aside after thr
   const refusal = refuse(new Set(stuck.map(page => page.path)));
   let clock = Date.parse("2026-03-01T00:00:00.000Z");
   const pass = () => runWritePass(f.db, f.vault, {
-    budget: createBudgetTracker({ canon_writes_per_run: 40 }), canon_writes_per_pass: 40,
+    budget: createBudgetTracker({ canon_writes_per_run: 40 }),
     model_ref: "fixture/model", claims: { db: f.db }, producer, now: () => new Date(clock).toISOString(),
   });
 

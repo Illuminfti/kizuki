@@ -140,10 +140,12 @@ follow a single order.
 
 After extraction the pass writes canon one page at a time, up to
 `[budget] canon_writes_per_run` pages (default 32; the daily ceiling
-`canon_writes_per_day` still applies). A pass that reaches the number ends as
-`ok` and the next pass continues, so a vault with a long queue can raise it
-and one with a slow model can lower it. `doctor --json` reports it as
-`serve.model.budget.canon_writes_per_run.limit`.
+`canon_writes_per_day` still applies). A value below 32 stops the pass at that
+many pages as `budget:canon_writes_per_run`. From 32 up the pass ends `ok` when
+it reaches the number and the next pass continues; a value above 32 used to
+change nothing, because the pass ended at 32 whatever the setting. A vault with
+a long queue can raise it, and one with a slow model can lower it.
+`doctor --json` reports it as `serve.model.budget.canon_writes_per_run.limit`.
 
 A write costs the page written, not the vault: it assesses that page's
 evidence only and refreshes the graph edges of that page and of the pages

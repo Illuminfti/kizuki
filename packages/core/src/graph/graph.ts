@@ -688,8 +688,8 @@ export function refreshRegisteredPage(db: Database, page: CanonPage, signatures:
   assertDerivedDiscoveryReady(db);
   const before = registeredKeys(db, page.id, page.relPath);
   const assessed = assessPage(page, projectablePageEvidence(db, [page]).get(page.relPath));
-  saveRow(db, assessed.row, assessed.links);
   db.query("DELETE FROM graph_files WHERE rel_path IN (SELECT rel_path FROM graph_pages WHERE page_id = ?)").run(page.id);
+  saveRow(db, assessed.row, assessed.links);
   const signature = signatures.get(page.relPath);
   if (signature !== undefined) db.query("INSERT OR REPLACE INTO graph_files (rel_path, signature) VALUES (?, ?)").run(page.relPath, signature);
   settleGraph(db, graphState(db, readRegistry(db)), registrySkipped(db), {

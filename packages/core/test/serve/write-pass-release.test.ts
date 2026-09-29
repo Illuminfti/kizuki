@@ -80,23 +80,23 @@ test("a stop request between two pages ends the pass with at most one more page"
   db.close();
 });
 
-test("the vault's per-run write budget sets how many pages one pass writes, at most 32 by default", async () => {
+test("a run budget below 32 stops the pass at its limit", async () => {
   const { path, db, options } = pending(5);
-  const capped = await runWritePass(db, path, { ...options(), canon_writes_per_pass: 3 });
+  const capped = await runWritePass(db, path, { ...options(), budget: createBudgetTracker({ canon_writes_per_run: 3 }) });
   expect(capped.canon_writes).toBe(3);
-  expect(capped.stopped).toBeNull();
+  expect(capped.stopped).toBe("budget:canon_writes_per_run");
   const rest = await runWritePass(db, path, options());
   expect(rest.canon_writes).toBe(2);
   db.close();
 });
 
-test("serve.toml's canon_writes_per_run sets the pages a sync rail writes per pass; the default stays 32", async () => {
+test("serve.toml's canon_writes_per_run raises the pages a sync rail writes per pass past 32, and lowers them below", async () => {
   const { path, db, options } = pending(34);
   const hooks = { model_ref: "fixture/model", producer, claims: { db } };
   writeFileSync(join(path, ".kizuki", "serve.toml"), "[budget]\ncanon_writes_per_run = 3\n");
   const small = await runRail(db, path, "sync", { hooks });
   expect(small.canon_writes).toBe(3);
-  expect(small.stopped).toBeNull();
+  expect(small.stopped).toBe("budget:canon_writes_per_run");
   writeFileSync(join(path, ".kizuki", "serve.toml"), "[budget]\ncanon_writes_per_run = 40\n");
   const large = await runRail(db, path, "sync", { hooks });
   expect(large.canon_writes).toBe(31);
@@ -107,7 +107,7 @@ test("serve.toml's canon_writes_per_run sets the pages a sync rail writes per pa
 
 test("without a configured value one pass still writes at most 32 pages", async () => {
   const { path, db, options } = pending(33);
-  const first = await runWritePass(db, path, { ...options(), budget: createBudgetTracker({ canon_writes_per_run: 100 }) });
+  const first = await runWritePass(db, path, options());
   expect(first.canon_writes).toBe(32);
   expect(first.stopped).toBeNull();
   expect((await runWritePass(db, path, options())).canon_writes).toBe(1);

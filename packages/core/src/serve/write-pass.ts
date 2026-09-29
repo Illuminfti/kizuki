@@ -53,8 +53,12 @@ import { redactReceiptError } from "./receipts";
 import { runWorldJobs } from "./world-jobs";
 import { clearStuckPage, listQuarantinedPages, recordStuckPage } from "./write-quarantine";
 
-/** One sync pass never materializes more than this many unwritten claims unless the vault's `canon_writes_per_run` says otherwise. */
-export const DEFAULT_CANON_WRITES_PER_PASS = 32;
+/**
+ * A pass ends by itself after this many canon writes, or after the run budget's
+ * limit when that is larger, so the vault's `canon_writes_per_run` can raise it.
+ * A smaller run budget stops the pass first, as `budget:canon_writes_per_run`.
+ */
+const WRITE_PASS_LIMIT = 32;
 /** Owner-edited skips stay live; scan past them so they cannot fill the write cap. */
 const WRITE_PASS_SCAN = 256;
 /** A stop request or signal ends the pass at the next extraction step. */
@@ -248,8 +252,6 @@ export interface WritePassOptions {
   readonly model_ref?: string | null;
   readonly producer?: ExtractionProducerPort;
   readonly claims?: ClaimsIo;
-  /** Canon writes one pass may make; the vault's `canon_writes_per_run`. Absent keeps 32. */
-  readonly canon_writes_per_pass?: number;
   /** RFC3339 clock shared with rails, receipt timestamps, reservation days and the pass's time budget. */
   readonly now?: () => string;
 }
@@ -349,7 +351,6 @@ export async function runWritePass(
     ...(model_ref === undefined ? {} : { model_ref }),
     ...(producer === undefined ? {} : { producer }),
     ...(capturedClaims === undefined ? {} : { claims: capturedClaims }),
-    ...(options.canon_writes_per_pass === undefined ? {} : { canon_writes_per_pass: options.canon_writes_per_pass }),
     ...(now === undefined ? {} : { now }),
   });
   if (options.claims !== undefined && options.claims.db !== db) throw new Error("claims ledger does not match write pass");
@@ -389,7 +390,7 @@ type Page = "wrote" | "failed" | "done";
  * owner verb, a request or a stop waits for one page and not for the pass.
  */
 async function writeCanon(io: CanonIo, options: WritePassOptions, tally: PassTally): Promise<void> {
-  const limit = Math.max(1, options.canon_writes_per_pass ?? DEFAULT_CANON_WRITES_PER_PASS);
+  const limit = Math.max(WRITE_PASS_LIMIT, options.budget.usage().canon_writes_per_run.limit);
   const now = options.now ?? (() => new Date().toISOString());
   const attempted = new Set<string>();
   while (tally.canon_writes < limit) {
@@ -404,6 +405,8 @@ async function writeCanon(io: CanonIo, options: WritePassOptions, tally: PassTal
     }, SETTLE_WAIT_MS);
     if (!step.held) { tally.stopped = step.stopped; return; }
     if (step.value === "done") return;
+    // A write that could not complete keeps its intent and blocks every later one.
+    if (inspectCanonRecovery(io.db).pending) { tally.stopped = "recovery:held"; return; }
     await new Promise(resolve => setTimeout(resolve, PAGE_GAP_MS));
   }
 }

@@ -389,9 +389,9 @@
   writer for every page and reads a stop request between pages, so a stop ends
   it after the page in progress. `kizuki tell` and `kizuki undo` wait up to 30
   seconds for the writer instead of failing `writer_busy` at once.
-- `[budget] canon_writes_per_run` in `serve.toml` now sets how many canon pages
-  one pass writes (default 32, as before). It was capped at 32 whatever its
-  value.
+- `[budget] canon_writes_per_run` in `serve.toml` above 32 now raises how many
+  canon pages one pass writes (default 32, as before). The pass used to end at
+  32 whatever the value.
 - A typed page group that fails three passes in a row is set aside for 24
   hours, with its handle and path in the receipt, so groups behind it are
   written instead of starving once 32 are stuck. `kizuki doctor` and

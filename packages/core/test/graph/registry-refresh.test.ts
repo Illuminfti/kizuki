@@ -1,6 +1,7 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { appendFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import * as graph from "../../src/graph/graph";
 import { rebuildDerived, refreshDerivedPage, removeDerivedPage } from "../../src/derived";
 import { readDerivedMeta } from "../../src/derived-meta";
@@ -108,3 +109,39 @@ for (const seed of [1, 2, 3]) {
     expect(readDerivedMeta(db, "graph")).not.toBeNull();
   }, 120_000);
 }
+
+test("the registry follows a page that moves, and a purge clears it", async () => {
+  const db = searchDb();
+  const vault = tempVault();
+  disposers.push(() => db.close(), vault.dispose);
+  for (const slug of ["one", "two"]) {
+    await recordedPage(db, vault.path, `facts/${slug}.md`, {
+      id: `fact:${slug}`, title: slug, type: "fact", status: "active", sensitivity: "personal", taint: "clean",
+    }, "See [[two]] and [[one]].");
+  }
+  rebuildDerived(db, vault.path);
+  const walked = spyOn(graph, "refreshPageEdges");
+  const filesOf = () => db.query<{ rel_path: string }, []>("SELECT rel_path FROM graph_files ORDER BY rel_path").all().map((row) => row.rel_path);
+
+  // The same page under a new path: no other file changed, so no walk, and no stale file row.
+  const one = listCanonPages(vault.path).find((page) => page.id === "fact:one")!;
+  writeFileSync(join(vault.path, "facts/moved.md"), serializePage({ data: one.data, body: one.body }));
+  unlinkSync(one.path);
+  refreshDerivedPage(db, listCanonPages(vault.path).find((page) => page.id === "fact:one")!, vault.path);
+  expect(filesOf()).toEqual(["facts/moved.md", "facts/two.md"]);
+  refreshDerivedPage(db, listCanonPages(vault.path).find((page) => page.id === "fact:two")!, vault.path);
+  expect(walked).not.toHaveBeenCalled();
+  expect(graphRows(db)).toEqual(rebuiltRows(db, vault.path));
+  walked.mockRestore();
+
+  // Purge withdraws the derived relations of erased evidence; the registry, which names it, goes too.
+  expect(graph.graphRegistryReady(db)).toBe(true);
+  graph.removeHeldPageEdges(db, listCanonPages(vault.path));
+  expect(graph.graphRegistryReady(db)).toBe(false);
+  for (const table of ["graph_pages", "graph_links", "graph_files"]) {
+    expect(db.query(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
+  }
+  refreshDerivedPage(db, listCanonPages(vault.path)[0]!, vault.path);
+  expect(graph.graphRegistryReady(db)).toBe(true);
+  expect(graphRows(db)).toEqual(rebuiltRows(db, vault.path));
+}, 60_000);
