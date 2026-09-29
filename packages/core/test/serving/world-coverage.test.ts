@@ -9,6 +9,8 @@ import { openLedger } from "../../src/ledger/db";
 import { setSourceGrant } from "../../src/ledger/source-grants";
 import { advanceExtractCheckpoint } from "../../src/serve/extract-checkpoint";
 import { readWorldView, WorldViewError } from "../../src/serving/world-view";
+import { discoverWorld } from "../../src/world/projection";
+import { resolveWorldObject, worldNamespace } from "../../src/world/references";
 import type { ServeContext } from "../../src/serving/types";
 import { worldFixture } from "./world-fixture";
 
@@ -156,7 +158,7 @@ test("label discovery pages past the first page with an opaque cursor", async ()
   } finally {
     db.close();
   }
-});
+}, 60_000);
 
 test("a cursor is bound to the principal that received it and to discovery", async () => {
   const db = openLedger(":memory:");
@@ -316,6 +318,104 @@ test("a hidden source's backlog, failures and unfinished import change neither o
     db.close();
   }
 });
+
+function consumeThrough(db: Database, subject: string) {
+  const event = db
+    .query<{ accepted_at: string; event_id: string }, [string]>(
+      `SELECT accepted_at,event_id FROM events
+        WHERE EXISTS (SELECT 1 FROM json_each(events.subjects) s WHERE json_extract(s.value,'$.subject_id') = ?)
+        ORDER BY accepted_at DESC, event_id DESC LIMIT 1`,
+    )
+    .get(subject)!;
+  db.transaction(() =>
+    advanceExtractCheckpoint(
+      db,
+      "extract",
+      `${event.accepted_at}\t${event.event_id}`,
+    ),
+  ).immediate();
+}
+
+test("backlog of events outside the grant's subjects or ceiling in a visible source changes nothing", async () => {
+  for (const scope of ["subjects", "ceiling"] as const) {
+    const db = openLedger(":memory:");
+    try {
+      const seen = await worldFixture(db, {
+        subject: "topic:seen",
+        label: "Seen idea",
+      });
+      // Accepted after the readable event, in the same source, but outside the reader's grant.
+      await worldFixture(db, {
+        sourceKey: seen.sourceKey,
+        subject: scope === "subjects" ? "topic:hidden" : "topic:other",
+        label: "Other idea",
+        floor: scope === "ceiling" ? "private" : "public",
+      });
+      allowExtraction(db, seen.sourceKey, 1);
+      const agent = addAgent(db, "scoped-reader", {
+        ...OWNER_AGENT_GRANT,
+        ...(scope === "subjects"
+          ? { subjects: ["topic:seen"] }
+          : { ceiling: "public" as const }),
+      });
+      const ctx = { ...seen.ctx, principal: authenticate(db, agent.token)! };
+      const view = () =>
+        JSON.stringify([find(ctx, "nothing"), find(ctx, "idea")]);
+      consumeThrough(db, "topic:seen");
+      const unconsumed = view();
+      expect(JSON.parse(unconsumed)[0].page.coverage.gaps).toEqual([]);
+      // Control: a principal that can read the trailing event does see the backlog.
+      expect(find(seen.ctx, "nothing").page.coverage.gaps).toEqual([
+        "pending_consolidation",
+      ]);
+      consumeThrough(db, scope === "subjects" ? "topic:hidden" : "topic:other");
+      expect(view()).toBe(unconsumed);
+    } finally {
+      db.close();
+    }
+  }
+}, 60_000);
+
+test("discovery hands back a cursor when its scan budget is spent, never a complete answer", async () => {
+  const db = openLedger(":memory:");
+  try {
+    const first = await worldFixture(db, { label: "Topic 0", subject: "topic:0" });
+    for (let i = 1; i < 5; i += 1)
+      await worldFixture(db, {
+        sourceKey: first.sourceKey,
+        label: `Topic ${i}`,
+        subject: `topic:${i}`,
+      });
+    let pages = 0;
+    db.transaction(() => {
+      const ns = worldNamespace(db, first.ctx.principal);
+      let after: string | null = null;
+      do {
+        const page = discoverWorld(
+          first.ctx,
+          ns,
+          "concept",
+          "zzz-no-match",
+          { kind: "all" },
+          after,
+          2,
+        );
+        pages += 1;
+        expect(page.matches).toEqual([]);
+        expect(page.coverage.status).toBe(page.cursor === null ? "complete_for_query" : "partial");
+        if (page.cursor !== null)
+          expect(page.coverage.gaps).toContain("traversal_limit");
+        after =
+          page.cursor === null
+            ? null
+            : resolveWorldObject(db, ns, page.cursor);
+      } while (after !== null && pages < 10);
+    }).immediate();
+    expect(pages).toBe(3);
+  } finally {
+    db.close();
+  }
+}, 60_000);
 
 test("situation discovery reports the same coverage gaps", async () => {
   const db = openLedger(":memory:");

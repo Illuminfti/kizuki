@@ -56,9 +56,14 @@ const MAX_SUPPORTS = 32;
 /** The page size of label discovery. */
 export const MAX_WORLD_MATCHES = 32;
 const DISCOVERY_SCAN = 256;
+/** Most handles one discovery request examines before it hands back a cursor, so a rare label cannot hold the event loop across a whole vault. */
+export const WORLD_DISCOVERY_SCAN_BUDGET = 4096;
 /** Unicode-aware, locale-independent fold shared by the query and the stored labels. */
 export function foldLabel(text: string): string {
   return text.normalize("NFKC").toUpperCase().toLowerCase();
+}
+function labelMatches(text: unknown, wanted: string): boolean {
+  return typeof text === "string" && foldLabel(text).includes(wanted);
 }
 function coverageFor(
   ctx: ServeContext,
@@ -608,6 +613,7 @@ export function discoverWorld(
   label: string,
   valid: WorldValidQuery,
   after: string | null = null,
+  scanBudget: number = WORLD_DISCOVERY_SCAN_BUDGET,
 ): {
   schema: "kizuki.concept-matches/v1" | "kizuki.situation-matches/v1";
   matches: readonly { ref: WireRef<"object">; labels: readonly string[] }[];
@@ -619,6 +625,8 @@ export function discoverWorld(
   const wanted = foldLabel(label);
   let traversal = false;
   let next = false;
+  let budgetSpent = false;
+  let scanned = 0;
   let last: string | null = null;
   let position = after ?? "";
   const permitted = authorizedSupportSql(ctx),
@@ -627,24 +635,25 @@ export function discoverWorld(
     labelTime = validMeaningSql(valid, "lc");
   // Handles in id order after the cursor, each with its currently authorized label texts.
   // Folding happens here, in one place, because SQL has no Unicode case folding.
+  const filtering = wanted.length > 0;
   const scan = ctx.db.query<
     { handle_id: string; labels: string },
     (string | number)[]
-  >(`SELECT b.handle_id, json_group_array(json_extract(lc.payload,'$.object.value')) AS labels
+  >(`SELECT b.handle_id, ${filtering ? "json_group_array(json_extract(lc.payload,'$.object.value'))" : "'[]'"} AS labels
     FROM semantic_bindings b JOIN claim_v2_semantics c
     ON c.subject_kind=b.raw_kind AND c.subject_id=b.raw_id AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=b.raw_namespace JOIN claims base ON base.claim_id=c.claim_id
-    LEFT JOIN claim_v2_semantics lc ON lc.subject_kind=b.raw_kind AND lc.subject_id=b.raw_id AND coalesce(json_extract(lc.payload,'$.subject.namespace'),'')=b.raw_namespace
+    ${filtering ? `    LEFT JOIN claim_v2_semantics lc ON lc.subject_kind=b.raw_kind AND lc.subject_id=b.raw_id AND coalesce(json_extract(lc.payload,'$.subject.namespace'),'')=b.raw_namespace
       AND lc.predicate=? AND lc.polarity='positive' AND ${labelTime.sql}
       AND EXISTS(SELECT 1 FROM claims lb WHERE lb.claim_id=lc.claim_id AND lb.status='live')
-      AND EXISTS(SELECT 1 FROM claim_v2_support ls WHERE ls.claim_id=lc.claim_id AND ${labelPolicy.sql})
+      AND EXISTS(SELECT 1 FROM claim_v2_support ls WHERE ls.claim_id=lc.claim_id AND ${labelPolicy.sql})` : ""}
     WHERE b.handle_id>? AND c.predicate='world.kind' AND base.status='live' AND c.polarity='positive' AND json_extract(c.payload,'$.object.ref.id')=? AND ${time.sql}
     AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
     GROUP BY b.handle_id ORDER BY b.handle_id LIMIT ?`);
   scanning: for (;;) {
     const rows = scan.all(
-      `${kind}.label`,
-      ...labelTime.bindings,
-      ...labelPolicy.bindings,
+      ...(filtering
+        ? [`${kind}.label`, ...labelTime.bindings, ...labelPolicy.bindings]
+        : []),
       position,
       `world/${kind}`,
       ...time.bindings,
@@ -652,11 +661,16 @@ export function discoverWorld(
       DISCOVERY_SCAN,
     );
     for (const row of rows) {
+      if (scanned === scanBudget) {
+        budgetSpent = true;
+        break scanning;
+      }
+      scanned += 1;
       position = row.handle_id;
       if (
-        wanted.length > 0 &&
-        !(JSON.parse(row.labels) as (string | null)[]).some(
-          (text) => text !== null && foldLabel(text).includes(wanted),
+        filtering &&
+        !(JSON.parse(row.labels) as unknown[]).some((text) =>
+          labelMatches(text, wanted),
         )
       )
         continue;
@@ -713,7 +727,7 @@ export function discoverWorld(
       if (
         !classified ||
         (wanted.length > 0 &&
-          !labels.some((text) => foldLabel(text).includes(wanted)))
+          !labels.some((text) => labelMatches(text, wanted)))
       )
         continue;
       if (matches.length === MAX_WORLD_MATCHES) {
@@ -729,6 +743,7 @@ export function discoverWorld(
     }
     if (rows.length < DISCOVERY_SCAN) break;
   }
+  const resume = budgetSpent ? position : next ? last : null;
   matches.sort(
     (a, b) =>
       (a.labels[0] ?? "").localeCompare(b.labels[0] ?? "") ||
@@ -740,7 +755,7 @@ export function discoverWorld(
         ? "kizuki.concept-matches/v1"
         : "kizuki.situation-matches/v1",
     matches,
-    cursor: next && last !== null ? issueWorldRef(ctx.db, ns, "object", last).token : null,
-    coverage: coverageFor(ctx, valid, traversal || next),
+    cursor: resume === null ? null : issueWorldRef(ctx.db, ns, "object", resume).token,
+    coverage: coverageFor(ctx, valid, traversal || next || budgetSpent),
   };
 }

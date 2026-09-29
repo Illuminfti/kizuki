@@ -472,11 +472,12 @@ grant hides never changes the result or its wording):
   last capture run reported an error or could not be read. A source with no
   recorded capture run adds no gap.
 - `pending_consolidation`: a readable source whose grant permits extraction has
-  live events the extraction rail has not consumed, including events held in
+  events this caller can read that the extraction rail has not consumed, including events held in
   its deferred queue. An empty discovery in that state is `partial`, not
   complete: absence here does not mean the vault holds no such Concept.
-- `traversal_limit`: more matches follow on another page, or one object hit a
-  bounded read limit.
+- `traversal_limit`: more matches follow on another page (the `cursor` is then
+  set), one request spent its scan budget before reaching the end of the vault
+  (the `cursor` resumes there), or one object hit a bounded read limit.
 
 In the MCP and HTTP result, `partial` coverage is returned as status
 `incomplete` with the gaps as `reasons`.

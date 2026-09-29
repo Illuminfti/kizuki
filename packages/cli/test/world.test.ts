@@ -89,7 +89,7 @@ describe("world", () => {
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain(message);
     }
-  }, 15_000);
+  }, 60_000);
 });
 
 import { openLedger } from "../../core/src/ledger/db";

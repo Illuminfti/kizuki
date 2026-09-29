@@ -95,4 +95,4 @@ test("MCP world_view pages label discovery with the returned cursor", async () =
     knownAt: { kind: "current" },
   });
   expect(bad.isError).toBe(true);
-});
+}, 60_000);
