@@ -244,6 +244,7 @@ function enter(
   tool: Tool,
   args: Record<string, unknown>,
   at: string,
+  refusal?: ServeError,
 ): Entered {
   const bag = boundedArguments(args);
   const live = liveContext(ctx);
@@ -265,6 +266,15 @@ function enter(
     ]);
     throw new ServeError("unknown_agent", "unknown agent");
   }
+  // Authority came first, so a revoked agent still reads unknown_agent. The
+  // grant check comes after: a contract refusal never depends on what the
+  // caller may read.
+  if (refusal !== undefined) {
+    updateAudit(live.db, reserved.audit_id, bag, [], [
+      { id: `tool:${tool}`, reason: refusal.code },
+    ]);
+    throw refusal;
+  }
   if (!toolAllowed(live.principal.grant, tool)) {
     updateAudit(live.db, reserved.audit_id, bag, [], [
       { id: `tool:${tool}`, reason: "tool_not_granted" },
@@ -274,8 +284,28 @@ function enter(
   return { live: { ...live, sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall", redactor: createRedactor(live.principal) }, audit_id: reserved.audit_id };
 }
 
+/**
+ * Audits and throws a refusal decided before the tool ran, such as a
+ * contract it cannot be served under. It takes the same rate reservation and
+ * leaves the same one audit row as any refused call, and reads nothing.
+ */
+export function refuseCall(
+  ctx: ServeContext,
+  tool: Tool,
+  args: Record<string, unknown>,
+  refusal: ServeError,
+): never {
+  try {
+    enter(ctx, tool, args, new Date().toISOString(), refusal);
+  } catch (error) {
+    if (error instanceof ServeError || !isLedgerBusy(error)) throw error;
+    throw ledgerBusyServeError(error);
+  }
+  throw refusal;
+}
+
 /** Contention reads as a retry, never as a broken engine or a denied grant. */
-function ledgerBusyServeError(error: unknown): ServeError {
+export function ledgerBusyServeError(error: unknown): ServeError {
   return new ServeError(
     "busy",
     "the ledger is busy while another writer holds it; retry this call",

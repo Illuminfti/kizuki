@@ -7,7 +7,9 @@ import { OWNER, TOOLS, authenticate } from "../agents";
 import type { Principal, Tool } from "../agents";
 import { initAgents } from "../agents/schema";
 import { ServeError, dispatchServeTool } from "../serving";
+import { RESPONSE_CONTRACT_KEY } from "../serving/contract";
 import type { ServeContext } from "../serving";
+import { isPlainObject } from "../util/validate";
 import { SERVE_TOKEN_PATH, ServeDaemonError } from "./types";
 
 const LOOPBACK = new Set(["127.0.0.1", "::1"]);
@@ -88,6 +90,13 @@ function json(status: number, body: unknown): Response {
 
 function refused(error: unknown): Response {
   if (error instanceof ServeError) {
+    // The contract refusal is the same bytes for every cause, with no retry hint.
+    if (error.code === "unsupported_contract") {
+      return json(400, {
+        ok: false,
+        error: { code: error.code, message: error.message, retryable: false },
+      });
+    }
     const status = error.code === "rate_limited" ? 429 : error.code === "busy" ? 503 : 400;
     return json(status, {
       ok: false,
@@ -154,11 +163,21 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
         });
       }
       let args: Record<string, unknown> = {};
+      let response_contract: unknown;
       try {
         const body = await request.json();
         if (body !== null && typeof body === "object" && !Array.isArray(body)) {
           const record = body as Record<string, unknown>;
-          args = (record["args"] as Record<string, unknown> | undefined) ?? record;
+          if (Object.hasOwn(record, RESPONSE_CONTRACT_KEY)) {
+            // The closed wrapper is exactly the selector and its arguments. Any
+            // other body that names a selector is left whole, so Core sees the
+            // selector inside the arguments and refuses it instead of dropping it.
+            response_contract = record[RESPONSE_CONTRACT_KEY];
+            const wrapped = Object.keys(record).length === 2 && isPlainObject(record["args"]);
+            args = wrapped ? (record["args"] as Record<string, unknown>) : record;
+          } else {
+            args = (record["args"] as Record<string, unknown> | undefined) ?? record;
+          }
         }
       } catch {
         return json(400, {
@@ -173,6 +192,7 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
           },
           tool as Tool,
           args,
+          { response_contract },
         );
         return json(200, { ok: true, value: envelope });
       } catch (error) {
