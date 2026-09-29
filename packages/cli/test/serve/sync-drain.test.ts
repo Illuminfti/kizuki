@@ -1,0 +1,218 @@
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { ConnectionStateStore, runRail, setSourceGrant } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
+import { createServeRuntime } from "../../src/serve-runtime";
+import { createHelpers } from "../helpers";
+
+// These tests spawn real CLI processes and commit thousands of events on a shared host.
+setDefaultTimeout(600_000);
+
+const h = createHelpers();
+afterEach(() => h.cleanup());
+
+const BATCH = 500;
+
+const turn = (file: number, line: number, text: string) =>
+  JSON.stringify({
+    type: "user",
+    uuid: `u-${file}-${line}`,
+    sessionId: `s-${file}`,
+    timestamp: "2026-01-15T10:00:00.000Z",
+    cwd: "/work/example-app",
+    message: { role: "user", content: text },
+  });
+
+/** A transcript tree of `files` sessions with `turns` conversation turns each. */
+function transcripts(
+  root: string,
+  files: number,
+  turns: number,
+  text: (file: number, line: number) => string,
+): void {
+  mkdirSync(join(root, "proj"), { recursive: true });
+  for (let file = 0; file < files; file++) {
+    const lines = Array.from({ length: turns }, (_, line) =>
+      turn(file, line, text(file, line)),
+    );
+    writeFileSync(
+      join(root, "proj", `s-${file}.jsonl`),
+      `${lines.join("\n")}\n`,
+    );
+  }
+}
+
+/** A vault with one consented Claude Code transcript source, and the ledger open on it. */
+function enrolled(sessions: string, serveToml: string) {
+  const setup = h.tempVault();
+  writeFileSync(join(setup.vault, ".kizuki", "serve.toml"), serveToml, {
+    mode: 0o600,
+  });
+  const connected = h.runCli(
+    setup.env,
+    "connect",
+    "claude-code-sessions",
+    "--source",
+    sessions,
+  );
+  expect(connected.exitCode, connected.stderr).toBe(0);
+  const sourceKey =
+    connected.stdout.match(/source=([0-9A-HJKMNP-TV-Z]{26})/)?.[1] ?? "";
+  const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  setSourceGrant(db, {
+    source_key: sourceKey,
+    expected_revision: 0,
+    operation_id: "drain-grant",
+    policy: {
+      purposes: ["capture", "recall", "session", "derive"],
+      allowed_fields: ["text", "subjects", "metadata"],
+      retention: "persistent_owned_until_revoked",
+      egress: "local_only",
+      sensitivity_floor: "private",
+    },
+  });
+  const runtime = () =>
+    createServeRuntime({
+      db,
+      vaultPath: setup.vault,
+      store: new ConnectionStateStore(join(setup.vault, ".kizuki")),
+      env: setup.env,
+      err: () => {},
+    });
+  const stored = () =>
+    db.query<{ n: number }, []>("SELECT count(*) AS n FROM events").get()!.n;
+  return { setup, db, runtime, stored };
+}
+
+test("a first backfill drains across sync passes, one bounded slice at a time", async () => {
+  const sessions = h.tempDir("kizuki-sessions-drain-");
+  transcripts(
+    sessions,
+    2,
+    850,
+    (file, line) =>
+      `Synthetic decision ${file}.${line}: keep the exporter stable.`,
+  );
+  const { setup, db, runtime, stored } = enrolled(
+    sessions,
+    "[serve]\nconnector_drain_batches = 1\n",
+  );
+  try {
+    const passes = [];
+    for (let pass = 0; pass < 4; pass++) {
+      passes.push(
+        await runRail(db, setup.vault, "sync", {
+          acquireRuntime: runtime,
+        }),
+      );
+      // The write pass and the derived refresh ran after the slice, not after the whole drain.
+      expect(passes.at(-1)!.errors).toEqual([]);
+    }
+    // 1,700 turns are four batches: three slices that stop with more to read, then the last.
+    expect(
+      passes.map((receipt) => [receipt.events_stored, receipt.has_more === true]),
+    ).toEqual([
+      [BATCH, true],
+      [BATCH, true],
+      [BATCH, true],
+      [200, false],
+    ]);
+    expect(passes.map((receipt) => receipt.events_duplicate)).toEqual([
+      0, 0, 0, 0,
+    ]);
+    expect(stored()).toBe(1_700);
+  } finally {
+    db.close();
+  }
+});
+
+test("a spent deadline still reads one batch per connection, and a stop request reads none", async () => {
+  const sessions = h.tempDir("kizuki-sessions-drain-");
+  transcripts(
+    sessions,
+    1,
+    1_200,
+    (file, line) =>
+      `Synthetic decision ${file}.${line}: keep the exporter stable.`,
+  );
+  const { db, runtime, stored } = enrolled(sessions, "");
+  const held = await runtime();
+  try {
+    const stopped = await held.hooks.sync!({
+      deadline_ms: 60_000,
+      max_batches: 100,
+      stopRequested: () => true,
+    });
+    expect(stopped).toMatchObject({ has_more: true, events_stored: 0 });
+    expect(stored()).toBe(0);
+
+    const spent = await held.hooks.sync!({ deadline_ms: 0, max_batches: 100 });
+    expect(spent).toMatchObject({
+      has_more: true,
+      events_stored: BATCH,
+      errors: [],
+    });
+    expect(stored()).toBe(BATCH);
+  } finally {
+    await held.close();
+    db.close();
+  }
+});
+
+const MEGABYTE = 1024 * 1024;
+/** Growth allowed once the heap has its working set. Retaining what the passes scan or store would cost several times this. */
+const MEMORY_GROWTH_BOUND_MB = 64;
+
+/**
+ * A tree shaped like a multi-gigabyte transcript store at test scale: many large
+ * files whose bytes are mostly tool output the connector never keeps, and whose
+ * conversation turns are longer than an event may be. Each file fills a batch.
+ */
+function transcriptStore(root: string, files: number): { bytes: number } {
+  mkdirSync(join(root, "proj"), { recursive: true });
+  const toolOutput = "y".repeat(100 * 1024);
+  const longTurn = "Synthetic reasoning about the exporter and the importer plan. ".repeat(700);
+  let bytes = 0;
+  for (let file = 0; file < files; file++) {
+    const lines: string[] = [];
+    for (let line = 0; line < 64; line++) {
+      lines.push(turn(file, line, `${longTurn}${file}.${line}`));
+      lines.push(
+        JSON.stringify({
+          type: "user", uuid: `t-${file}-${line}`, sessionId: `s-${file}`, timestamp: "2026-01-15T10:00:00.000Z",
+          message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: toolOutput }] },
+        }),
+      );
+    }
+    const body = `${lines.join("\n")}\n`;
+    writeFileSync(join(root, "proj", `s-${file}.jsonl`), body);
+    bytes += body.length;
+  }
+  return { bytes };
+}
+
+test("twenty bounded sync passes over a large transcript store keep daemon memory flat", async () => {
+  const sessions = h.tempDir("kizuki-sessions-drain-");
+  const { bytes } = transcriptStore(sessions, 20);
+  expect(bytes).toBeGreaterThan(150 * MEGABYTE);
+  const { setup, db, runtime, stored } = enrolled(sessions, "[serve]\nconnector_drain_batches = 1\n");
+  try {
+    const samples: number[] = [];
+    for (let more: boolean | undefined = true; more === true; ) {
+      const receipt = await runRail(db, setup.vault, "sync", { acquireRuntime: runtime });
+      expect(receipt.errors).toEqual([]);
+      more = receipt.has_more;
+      Bun.gc(true);
+      samples.push(process.memoryUsage().rss / MEGABYTE);
+    }
+    // At least twenty batches ran, and their text reached the ledger.
+    expect(samples.length).toBeGreaterThanOrEqual(20);
+    expect(stored()).toBeGreaterThan(1_000);
+    const warm = Math.max(...samples.slice(2, 5));
+    const growth = Math.max(...samples.slice(5)) - warm;
+    expect(growth, `rss in MB after each pass: ${samples.map(Math.round).join(" ")}`).toBeLessThan(MEMORY_GROWTH_BOUND_MB);
+  } finally {
+    db.close();
+  }
+}, 900_000);

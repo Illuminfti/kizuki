@@ -33,6 +33,8 @@ optional, and the defaults below are the behavior described above:
 ```toml
 [serve]
 sync_period_s = 900        # 60..86400; sync rail period
+connector_drain_seconds = 120  # 1..3600; seconds a sync pass spends reading sources
+connector_drain_batches = 100  # 1..10000; batches one connection reads per sync pass
 
 [extraction]
 max_calls_per_pass = 1     # 1..256; extraction steps one sync pass may take
@@ -78,6 +80,21 @@ A value outside its range, a fraction or a string keeps that key's default.
   pass keeps retrieval, purge and embedding catch-up waiting. Passes run back
   to back while the sync rail is due, so for continuous extraction set
   `sync_period_s` no longer than `max_pass_seconds`.
+- **Reading sources.** Before extraction the sync rail reads each enrolled
+  source in a bounded slice. `connector_drain_seconds` is the time for the whole
+  pass, shared equally among the connections left, so a connection that
+  finishes early lends the rest of its share; `connector_drain_batches` caps
+  the batches one connection reads. Each connection reads at least one batch,
+  and the batch in flight when the time is spent finishes and commits with its
+  checkpoint. A connection that still has more stops at that cursor and the
+  receipt says `has_more`; the write pass, extraction and the derived refresh
+  then run as usual, and the next pass resumes from the cursor. The rail reads a
+  stop request between batches. A pass that a stop request ended before a
+  connection was exhausted stops as `serve:stop_requested`, skips the derived
+  refresh, and leaves it to the retrieval sweep after the next start. Other
+  rails run between passes, so a large first backfill delays them by at most one
+  pass and not by the whole drain. `kizuki sync [connector]` and `kizuki backfill` are not
+  sliced; `kizuki sync --once` runs the rail and takes its slice.
 - **Per-request limits.** `records_per_request` and the two token reservations
   bound each typed request. More records per request need a larger output
   reservation: an ordinary record's anchored response runs to one to three

@@ -124,6 +124,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
       value["events_self_skipped"],
       totals.events_self_skipped,
     ),
+    ...(value["has_more"] === true ? { has_more: true as const } : {}),
     claims_extracted: numberOr(value["claims_extracted"], totals.claims_extracted),
     claims_written: numberOr(value["claims_written"], totals.claims_written),
     ...(typeof value["claims_written_extracted"] === "number" && Number.isFinite(value["claims_written_extracted"])
@@ -481,6 +482,7 @@ export function isNoopReceipt(receipt: RunReceipt): boolean {
   ];
   return receipt.status === "ok" && receipt.stopped === null && receipt.errors.length === 0 &&
     receipt.oversized === undefined && receipt.retrieval.degraded.length === 0 &&
+    receipt.has_more === undefined &&
     Object.keys(receipt.claims_rejected).length === 0 && counters.every((count) => count === 0);
 }
 

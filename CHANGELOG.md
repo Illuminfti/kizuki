@@ -400,6 +400,19 @@
   run through the same notifier, keeping its body. The run receipt records
   `pages_repaired`. A page that cannot be rewritten degrades the run with
   `brief-repair-failed` and is tried again on the next sweep.
+- The sync rail drains connectors in bounded slices. `[serve]
+  connector_drain_seconds` (1 to 3,600, default 120) is the time one pass
+  spends reading sources, shared equally among the connections left, and
+  `connector_drain_batches` (1 to 10,000, default 100) caps the batches one
+  connection reads per pass. A connection that is not exhausted when either is
+  spent stops at its last committed cursor, the pass still runs the write pass
+  and the derived refresh, its run receipt carries `has_more`, and the next
+  pass resumes from the cursor. A first backfill of a large source therefore
+  no longer holds the retrieval, purge and other rails for hours, and the rail
+  reads a stop request between batches, so `serve stop` and SIGTERM end a
+  pass within one batch and skip the derived refresh until the next start.
+  `kizuki sync [connector]` and `kizuki backfill` still drain to exhaustion;
+  `kizuki sync --once` takes the rail's slice.
 
 ## 1.0.2 (2026-09-24)
 

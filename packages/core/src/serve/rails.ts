@@ -25,15 +25,31 @@ import {
   InjectedCrash,
   emptyRunTotals,
   type CrashPoint,
-  type ExtractionConfig,
   type RailId,
   type RunReceipt,
   type RunExecution,
+  type ServeConfig,
 } from "./types";
-import { runWritePass } from "./write-pass";
+import { STOP_REQUESTED, runWritePass } from "./write-pass";
 import { LegacyExtractReconciliationError, requireAtomicExtractReplay } from "./extract";
 
+/**
+ * What one sync pass may spend draining connectors. A connection that is not
+ * done when it is spent resumes from its cursor on the next pass, so a large
+ * first backfill cannot hold the other rails.
+ */
+export interface RailSyncDrain {
+  /** Milliseconds for the whole pass, shared among its connections. */
+  readonly deadline_ms: number;
+  /** Batches one connection may drain. */
+  readonly max_batches: number;
+  /** Read before every batch; true ends the pass. */
+  readonly stopRequested?: () => boolean;
+}
+
 export interface RailSyncResult {
+  /** True when a connection stopped at the drain budget or a stop request with more to read. */
+  readonly has_more?: true;
   readonly events_synced: number;
   readonly events_stored: number;
   readonly events_duplicate: number;
@@ -51,7 +67,7 @@ export interface RailRefreshReport {
 }
 
 interface RailHooksBase {
-  readonly sync?: () => Promise<RailSyncResult>;
+  readonly sync?: (drain: RailSyncDrain) => Promise<RailSyncResult>;
   /** Host-owned derived stores refresh after a successful or partial write pass. */
   readonly refresh?: () => Promise<RailRefreshReport>;
   readonly claims?: ClaimsIo;
@@ -152,12 +168,13 @@ async function runSyncRail(
   db: Database,
   vaultPath: string,
   budget: BudgetTracker,
-  extraction: ExtractionConfig,
+  config: ServeConfig,
   hooks: AnyRailHooks | undefined,
   runId: string,
   now: () => string,
   stopRequested: (() => boolean) | undefined,
 ): Promise<Partial<RunReceipt>> {
+  const { extraction } = config;
   const synced =
     hooks?.sync === undefined
       ? {
@@ -167,7 +184,11 @@ async function runSyncRail(
           events_self_skipped: 0,
           errors: [] as string[],
         }
-      : await hooks.sync();
+      : await hooks.sync({
+          deadline_ms: config.connector_drain_seconds * 1_000,
+          max_batches: config.connector_drain_batches,
+          ...(stopRequested === undefined ? {} : { stopRequested }),
+        });
   const written = await runWritePass(db, vaultPath, {
     budget,
     extraction,
@@ -183,16 +204,20 @@ async function runSyncRail(
   // with a zeroed failed rail would hide a real write and understate budget.
   let refreshed: readonly string[];
   try {
-    refreshed = hooks?.refresh === undefined ? [] : (await hooks.refresh()).degraded;
+    // A stop request skips the refresh; the retrieval sweep catches up after restart.
+    refreshed = hooks?.refresh === undefined || stopRequested?.() === true ? [] : (await hooks.refresh()).degraded;
   } catch (error) {
     refreshed = [redactReceiptError(error)];
   }
   const errors = [...synced.errors, ...written.errors, ...refreshed];
+  // A drain the stop request cut short is a stopped pass even when no extraction step saw the request.
+  const stopped = written.stopped ?? (synced.has_more === true && stopRequested?.() === true ? STOP_REQUESTED : null);
   let status: RunReceipt["status"] = "ok";
-  if (written.stopped !== null) status = "stopped";
+  if (stopped !== null) status = "stopped";
   else if (errors.length > 0) status = "degraded";
   return {
     status,
+    ...(synced.has_more === true ? { has_more: true } : {}),
     events_synced: synced.events_synced,
     events_stored: synced.events_stored,
     events_duplicate: synced.events_duplicate,
@@ -207,7 +232,7 @@ async function runSyncRail(
     canon_writes: written.canon_writes,
     model: { ...written.model, model_ref: hooks?.model_ref ?? null },
     ...(written.oversized.segments + written.oversized.skipped === 0 ? {} : { oversized: written.oversized }),
-    stopped: written.stopped,
+    stopped,
     errors,
   };
 }
@@ -510,7 +535,7 @@ async function runRailImpl(
       }
       switch (rail) {
         case "sync":
-          partial = await runSyncRail(db, vaultPath, budget, config.extraction, hooks, runId, now, options.stopRequested);
+          partial = await runSyncRail(db, vaultPath, budget, config, hooks, runId, now, options.stopRequested);
           break;
         case "retrieval-sweep":
           partial = await runRetrievalSweep(db, hooks);

@@ -1113,6 +1113,7 @@ export type {
   RailRuntimeV2,
   RailId,
   RailSpec,
+  RailSyncDrain,
   RailSyncResult,
   RunRailOptions,
   RunRailOptionsV2,

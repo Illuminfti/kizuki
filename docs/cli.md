@@ -340,8 +340,9 @@ One connection failure does not skip the rest.
 Capture through `backfill`, plain `sync`, and `import` does not open the optional
 retrieval engine, so an existing MCP retrieval session cannot block ingestion or
 source-consent checks. These commands still refresh the local SQLite search
-floor. `sync --once` runs the automation tick and retains its configured
-retrieval requirements.
+floor. `sync --once` runs the automation tick, with the sync rail's bounded
+slice per source (see [serve](#serve)) instead of draining to exhaustion, and
+retains its configured retrieval requirements.
 The Beeper connector conservatively rescans available history on each completed
 sync cycle to observe edits and explicit tombstones; unchanged records deduplicate.
 
@@ -732,6 +733,14 @@ until a persisted wait is over; see
 [rejected responses](extraction-budgets.md#rejected-responses-and-daily-budgets). A pass never holds the vault writer across a model
 request, and `kizuki serve stop` or a signal ends it before its next request
 as `serve:stop_requested`. See [extraction budgets](extraction-budgets.md#owner-throughput-settings).
+
+The sync rail reads sources in bounded slices. `[serve] connector_drain_seconds`
+(default 120) is the time one pass spends reading, shared among the enrolled
+connections, and `connector_drain_batches` (default 100) caps the batches per
+connection. A connection that is not exhausted stops at its committed cursor,
+the run receipt carries `has_more`, the write pass and the derived refresh still
+run, and the next pass resumes there, so a large first backfill does not hold
+the other rails; `serve stop` and SIGTERM end the pass within one batch.
 
 A record too large for one typed request is extracted one segment per request.
 One that cannot be split, such as a single token longer than a request, is
