@@ -149,8 +149,11 @@ export interface ClaimsOp<Query = unknown> extends WorldOpBase {
 }
 
 /**
- * An operation derived from the build alone. It takes no key but `operation`,
- * touches no storage and cannot vary with vault contents.
+ * An operation derived from the build alone. Its own keys are none: it takes
+ * `operation` and the optional common keys, touches no storage and cannot vary
+ * with vault contents. A catalogue has no valid-time axis, so a well-formed
+ * `valid` is accepted and changes nothing; a `knownAt` other than current is
+ * `unavailable` with reason `history`, as for every other operation.
  */
 export interface BuildOp extends WorldOpBase {
   readonly source: "build";
@@ -163,7 +166,7 @@ export type WorldOpRegistry = readonly WorldOp[];
 /** The whole key contract of an operation as the reader enforces it, common keys included. */
 export function worldOpKeys(op: WorldOp): WorldOpKeys {
   return op.source === "build"
-    ? { required: ["operation"], optional: [] }
+    ? { required: ["operation"], optional: ["valid", "knownAt"] }
     : {
         required: ["operation", ...op.keys.required, "valid", "knownAt"],
         optional: op.keys.optional,

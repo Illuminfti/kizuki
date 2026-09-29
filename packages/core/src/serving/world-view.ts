@@ -87,6 +87,8 @@ export type WorldViewEnvelope = {
 };
 
 const MAX_RESPONSE_BYTES = 256 * 1024;
+const ALL_VALID: WorldValidQuery = { kind: "all" };
+const CURRENT: WorldKnownAt = { kind: "current" };
 
 function answer(
   operation: string,
@@ -110,7 +112,10 @@ function present(op: WorldOp, outcome: WorldOpOutcome): WorldReadResult {
   const { gaps } = outcome;
   if (Buffer.byteLength(JSON.stringify(outcome.data), "utf8") > MAX_RESPONSE_BYTES)
     throw new WorldProjectionBudgetError();
-  // The registry is open and `WorldData` names the shipped bodies; an operation returns one of the schemas it declares.
+  // Every adapter states a grammar per declared schema; a body outside them is a defect, never served.
+  if (!op.dataSchemas.includes(outcome.data.schema))
+    throw new ServeError("error", "serving failed");
+  // The registry is open and `WorldData` names the shipped bodies; the check above ties `data` to a declared schema.
   const data = outcome.data as WorldData;
   return answer(
     op.name,
@@ -141,7 +146,13 @@ export function readWorldView(
   const { required, optional } = worldOpKeys(op);
   if (!hasWorldKeys(input, required, optional)) throw new WorldViewError();
   try {
-    if (op.source === "build") return present(op, op.run(registry));
+    if (op.source === "build") {
+      const valid = Object.hasOwn(input, "valid") ? parseWorldValid(input.valid) : ALL_VALID,
+        knownAt = Object.hasOwn(input, "knownAt") ? parseWorldKnownAt(input.knownAt) : CURRENT;
+      if (valid === null || knownAt === null) throw new WorldViewError();
+      if (knownAt.kind !== "current") return unavailable(op.name, "history");
+      return present(op, op.run(registry));
+    }
     const query = op.parse(input),
       valid = parseWorldValid(input.valid),
       knownAt = parseWorldKnownAt(input.knownAt);

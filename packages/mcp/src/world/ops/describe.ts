@@ -28,5 +28,5 @@ export const describeFragment: McpWorldOp = {
     },
   },
   summary:
-    "describe, with no other key, lists the kinds this build can serve (shipped or dark), the operations with their keys and result schemas, and the vocabulary version; it carries no counts and no claims, so it reads the same for every caller.",
+    "describe lists the kinds this build can serve (shipped or dark), the operations with their keys and result schemas, and the vocabulary version; it carries no counts and no claims, so it reads the same for every caller. It takes only the common keys valid and knownAt: a well-formed valid changes nothing and a knownAt other than current is unavailable (history).",
 };

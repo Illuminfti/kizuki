@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { withWorldOps } from "@kizuki/core/testing";
-import { WORLD_OPS, readWorldView } from "@kizuki/core/world";
+import { WORLD_OPS, readWorldView, worldOpInputKeys } from "@kizuki/core/world";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
@@ -91,10 +91,29 @@ describe("world_view as generated from the registry", () => {
     expect(JSON.stringify(data)).toBe(JSON.stringify(direct.result.data));
   });
 
-  test("describe refuses a key it does not take", async () => {
+  test("describe takes the common keys as Core does: explicit defaults are the same call, a past cutoff is unavailable", async () => {
     const client = await connect();
-    const refused = await call(client, "world_view", { operation: "describe", valid: { kind: "at", at: "2026-01-01T00:00:00.000Z" } });
-    expect(refused.isError).toBe(true);
+    const bare = envelopeOf(await call(client, "world_view", { operation: "describe" }));
+    const explicit = await call(client, "world_view", {
+      operation: "describe",
+      valid: { kind: "all" },
+      knownAt: { kind: "current" },
+    });
+    expect(explicit.isError ?? false).toBe(false);
+    expect(JSON.stringify(envelopeOf(explicit)["data"])).toBe(JSON.stringify(bare["data"]));
+    const direct = readWorldView(fixture!.owner(), { operation: "describe", valid: { kind: "all" }, knownAt: { kind: "current" } });
+    expect(JSON.stringify(direct)).toBe(JSON.stringify(bare["data"]));
+    const past = await call(client, "world_view", { operation: "describe", knownAt: { kind: "time", at: "2026-01-01T00:00:00.000Z" } });
+    expect(envelopeOf(past)["data"]).toMatchObject({ operation: "describe", result: { status: "unavailable", reason: "history" } });
+  });
+
+  test("the fragments name the same own keys as the core operations", () => {
+    const common = ["operation", "valid", "knownAt"];
+    for (const op of WORLD_OPS) {
+      const fragment = MCP_WORLD_OPS.find((entry) => entry.name === op.name);
+      const own = worldOpInputKeys(op).filter((key) => !common.includes(key));
+      expect(Object.keys(fragment?.fields ?? {}).sort(), op.name).toEqual([...own].sort());
+    }
   });
 
   test("a test-only operation with one fragment is listed and answered with no edit to the server", async () => {

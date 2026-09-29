@@ -14,9 +14,9 @@ Four operations keep their exact output: `find_concepts`, `find_situations`, `co
 | `find_situations` | claims | `label`, optional `cursor`, `valid`, `knownAt` | `kizuki.situation-matches/v1` |
 | `concept` | claims | `concept`, `valid`, `knownAt` | `kizuki.concept-card/v1` |
 | `situation` | claims | `situation`, `valid`, `knownAt` | `kizuki.situation-card/v1` |
-| `describe` | build | none | `kizuki.world-describe/v1` |
+| `describe` | build | optional `valid`, `knownAt` | `kizuki.world-describe/v1` |
 
-A `claims` operation reads claims. The reader parses `valid` and `knownAt`, answers `unavailable` with reason `history` for any time cutoff it cannot serve, answers `unavailable` with reason `storage` when the world tables are missing, and runs the operation inside the one immediate transaction with the caller's authorization namespace. A `build` operation reads nothing: it takes only `operation`, opens no transaction and cannot vary with vault contents.
+A `claims` operation reads claims. The reader parses `valid` and `knownAt`, answers `unavailable` with reason `history` for any time cutoff it cannot serve, answers `unavailable` with reason `storage` when the world tables are missing, and runs the operation inside the one immediate transaction with the caller's authorization namespace. A `build` operation reads nothing: it takes `operation` and the optional common keys, opens no transaction and cannot vary with vault contents.
 
 A result larger than 256 KiB is never served in part. It becomes `unavailable` with reason `budget`.
 
@@ -52,4 +52,6 @@ The core test proves the registry invariants, a test-only operation routed throu
 
 - The result type is a closed union of the shipped bodies. A later operation adds its body type to `WorldData` when it lands.
 - The kind list behind `describe` is a small table in `world/ops/kinds.ts`. It is not yet the vocabulary registry, which arrives with the write-time vocabulary work.
-- `describe` takes no `valid` or `knownAt`. It is derived from the build.
+- `describe` accepts the common keys `valid` and `knownAt` as optional, so a caller may send one uniform input to every operation. It is derived from the build and has no valid-time axis: a well-formed `valid` changes nothing, and a `knownAt` other than current answers `unavailable` with reason `history`, as every other operation does. Hand-off to F3 and VERIFY: uniform-input drivers need no special case for `describe`.
+- `withWorldOps` is sequential-only: it throws when entered while another use is running, and no non-test source may import it.
+- The generated `kizuki world` usage is one line joined with ` | `. `docs/cli.md` still shows the earlier two usage lines and does not mention `describe`; DOCS owns that update.

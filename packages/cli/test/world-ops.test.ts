@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 import { withWorldOps } from "@kizuki/core/testing";
-import { WORLD_OPS, worldOpInputKeys } from "@kizuki/core/world";
+import { WORLD_OPS, worldOpInputKeys, worldOpKeys } from "@kizuki/core/world";
 import { openLedger } from "../../core/src/ledger/db";
-import { startServeHttp } from "../../core/src/serve/http";
+import { startLoopback } from "../../core/test/helpers/world-kit/loopback";
 import { PING_INPUT, PING_SCHEMA, pingOp } from "../../core/test/serving/world-test-op";
 import { MCP_WORLD_OPS } from "../../mcp/src/world/ops";
 import { createAppHost, appWorldRouteKeys } from "../src/app/host";
 import { UsageError } from "../src/args";
 import type { CliIo } from "../src/commands";
-import { createWorldCommand } from "../src/commands/world";
+import { createWorldCommand, worldCommand } from "../src/commands/world";
 import type { WorldCliEntry } from "../src/commands/world/ops";
 import { WORLD_CLI_OPS } from "../src/commands/world/ops";
 import { createHelpers } from "./helpers";
@@ -59,8 +59,36 @@ describe("every registered operation reaches every surface", () => {
       if (entry.cli === null) expect(entry.reason.length, entry.name).toBeGreaterThan(10);
       else expect(entry.cli.options.every((option) => option.startsWith("--"))).toBe(true);
     }
+    const command = createWorldCommand(WORLD_CLI_OPS);
+    expect(command.schema?.bounds?.["--operation"]).toBe(
+      WORLD_CLI_OPS.flatMap((entry) => (entry.cli === null ? [] : [entry.name])).join("|"),
+    );
+    expect(worldCommand.schema?.bounds?.["--operation"]).toBe(command.schema?.bounds?.["--operation"]);
     const keys = new Set(appWorldRouteKeys());
     for (const op of WORLD_OPS) for (const key of worldOpInputKeys(op)) expect(keys.has(key), `${op.name}.${key}`).toBe(true);
+  });
+});
+
+describe("a command-line spec builds only the keys its core operation takes", () => {
+  const SAMPLE_TOKEN = "A".repeat(43);
+  const samples = new Map([
+    ["--label", "flux"],
+    ["--cursor", SAMPLE_TOKEN],
+    ["--ref", SAMPLE_TOKEN],
+  ]);
+  test("every key built is one the operation names, and every required key is built", () => {
+    for (const entry of WORLD_CLI_OPS) {
+      if (entry.cli === null) continue;
+      const op = WORLD_OPS.find((candidate) => candidate.name === entry.name)!;
+      const { required } = worldOpKeys(op);
+      const options = new Map(entry.cli.options.map((option) => [option, samples.get(option) ?? "x"]));
+      const built = entry.cli.buildInput(options);
+      expect(built, entry.name).not.toBeNull();
+      const keys = Object.keys(built!);
+      const allowed = worldOpInputKeys(op);
+      for (const key of keys) expect(allowed.includes(key), `${entry.name}.${key}`).toBe(true);
+      for (const key of required.filter((key) => key !== "operation")) expect(keys.includes(key), `${entry.name}.${key}`).toBe(true);
+    }
   });
 });
 
@@ -86,21 +114,16 @@ describe("a test-only operation with one core file, one fragment and one spec", 
   test("is answered by the loopback endpoint", async () => {
     const { setup } = session();
     const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
-    const token = "test-token-not-a-secret-fixture";
-    const handle = startServeHttp({ db, vaultPath: setup.vault, host: "127.0.0.1", token });
+    const loopback = await startLoopback(db, setup.vault);
     try {
       await withWorldOps([pingOp], async () => {
-        const response = await fetch(`${handle.url}/v1/world_view`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-          body: JSON.stringify(PING_INPUT),
-        });
-        expect(response.status).toBe(200);
-        const body = (await response.json()) as { value: { data: { result: { data: { echo: string; schema: string } } } } };
+        const reply = await loopback.post("world_view", { ...PING_INPUT });
+        expect(reply.status).toBe(200);
+        const body = reply.body as { value: { data: { result: { data: { echo: string; schema: string } } } } };
         expect(body.value.data.result.data).toMatchObject({ schema: PING_SCHEMA, echo: "hello" });
       });
     } finally {
-      await handle.stop();
+      await loopback.stop();
       db.close();
     }
   });

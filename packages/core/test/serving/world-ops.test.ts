@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { withWorldOps } from "@kizuki/core/testing";
 import {
   WORLD_DESCRIBE_SCHEMA,
   WORLD_OPS,
   WorldViewError,
+  activeWorldOps,
   readWorldView,
   serveWorldView,
   worldOpInputKeys,
@@ -97,6 +100,46 @@ describe("the operation registry", () => {
     });
   });
 
+  test("a body whose schema the operation did not declare fails closed on Core and HTTP alike", async () => {
+    const wrong: ClaimsOp<{ text: string }> = {
+      ...pingOp,
+      name: "wrong",
+      run: () => ({ status: "data", data: { schema: "kizuki.test-undeclared/v1" }, gaps: null }),
+    };
+    await withWorldOps([wrong], () => {
+      const input = { ...PING_INPUT, operation: "wrong" };
+      expect(() => readWorldView(fixture.owner(), input)).toThrow(ServeError);
+      expect(() => serveWorldView(fixture.owner(), { ...input })).toThrow(ServeError);
+    });
+  });
+
+  test("withWorldOps refuses an overlapping use and restores the shipped registry however it ends", async () => {
+    const other: WorldOp = { ...pingOp, name: "other" } as WorldOp;
+    const seen = () => activeWorldOps().map((op) => op.name);
+    const first = withWorldOps([pingOp], async () => {
+      await Promise.resolve();
+      expect(() => withWorldOps([other], () => 0)).toThrow(/sequential-only/);
+      expect(seen()).toContain("ping");
+      expect(seen()).not.toContain("other");
+    });
+    expect(() => withWorldOps([other], () => 0)).toThrow(/sequential-only/);
+    await first;
+    expect(seen()).toEqual(WORLD_OPS.map((op) => op.name));
+    expect(() => withWorldOps([pingOp], () => { throw new Error("boom"); })).toThrow("boom");
+    await expect(withWorldOps([pingOp], async () => { throw new Error("late"); })).rejects.toThrow("late");
+    expect(seen()).toEqual(WORLD_OPS.map((op) => op.name));
+  });
+
+  test("no source file outside the test seam imports withWorldOps", () => {
+    const root = join(import.meta.dir, "..", "..", "..", "..");
+    const offenders: string[] = [];
+    for (const file of new Bun.Glob("packages/*/src/**/*.{ts,tsx}").scanSync({ cwd: root })) {
+      if (file === "packages/core/src/testing.ts" || file === "packages/core/src/world/ops/registry.ts") continue;
+      if (readFileSync(join(root, file), "utf8").includes("withWorldOps")) offenders.push(file);
+    }
+    expect(offenders).toEqual([]);
+  });
+
   test("a result over the response bound is unavailable, never a partial body", async () => {
     const big: ClaimsOp<{ text: string }> = {
       ...pingOp,
@@ -187,8 +230,22 @@ describe("describe", () => {
     expect(names(data(fixture.owner()))).not.toContain("ping");
   });
 
-  test("takes no other key and needs the grant", () => {
-    expect(() => readWorldView(fixture.owner(), { ...DESCRIBE, valid: { kind: "all" } })).toThrow(WorldViewError);
+  test("takes the common keys uniformly: defaults change no byte, a past cutoff is history, malformed or foreign keys are refused", () => {
+    const bare = JSON.stringify(readWorldView(fixture.owner(), DESCRIBE));
+    const uniform = { ...DESCRIBE, valid: { kind: "all" }, knownAt: { kind: "current" } };
+    expect(JSON.stringify(readWorldView(fixture.owner(), uniform))).toBe(bare);
+    expect(JSON.stringify(readWorldView(fixture.owner(), { ...DESCRIBE, valid: { kind: "unknown_only" } }))).toBe(bare);
+    expect(readWorldView(fixture.owner(), { ...DESCRIBE, knownAt: { kind: "time", at: "2026-01-01T00:00:00.000Z" } })).toEqual({
+      schema: "kizuki.world-view/v1",
+      operation: "describe",
+      result: { status: "unavailable", reason: "history" },
+    });
+    expect(() => readWorldView(fixture.owner(), { ...DESCRIBE, valid: { kind: "at" } })).toThrow(WorldViewError);
+    expect(() => readWorldView(fixture.owner(), { ...DESCRIBE, knownAt: { kind: "now" } })).toThrow(WorldViewError);
+    expect(() => readWorldView(fixture.owner(), { ...DESCRIBE, label: "x" })).toThrow(WorldViewError);
+  });
+
+  test("needs the grant", () => {
     expect(() => readWorldView(fixture.agent("search-only"), DESCRIBE)).toThrow(ServeError);
   });
 });

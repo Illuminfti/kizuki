@@ -77,15 +77,17 @@ export function activeWorldOps(): WorldOpRegistry {
 
 /**
  * Test seam, exported only through `@kizuki/core/testing`: runs `run` with
- * `extra` registered beside the shipped operations, then restores the registry.
+ * `extra` registered beside the shipped operations, then restores the shipped
+ * registry. The registry is process-wide, so one use at a time: entering while
+ * another use is still running throws instead of restoring out of order. A test
+ * that awaits it (no `test.concurrent`) is always sequential.
  */
 export function withWorldOps<T>(extra: readonly WorldOp[], run: () => T): T {
-  const previous = active;
-  active = worldOpRegistry([...previous, ...extra]);
-  let restored = false;
+  if (active !== WORLD_OPS)
+    throw new Error("withWorldOps is sequential-only: another use is still running");
+  active = worldOpRegistry([...WORLD_OPS, ...extra]);
   const restore = () => {
-    if (!restored) active = previous;
-    restored = true;
+    active = WORLD_OPS;
   };
   try {
     const result = run();
