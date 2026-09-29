@@ -46,6 +46,7 @@ packages/core/test/serve/http.test.ts:(toplevel).fetch#5:authenticated synthetic
 packages/core/test/serve/http.test.ts:(toplevel).fetch#6:authenticated synthetic world-view alias read against the loopback serve endpoint
 packages/core/test/serve/http.test.ts:(toplevel).fetch#7:authenticated synthetic Concept discovery against the loopback serve endpoint
 packages/core/test/serve/http.test.ts:(toplevel).fetch#8:authenticated synthetic Concept detail against the loopback serve endpoint
+packages/core/test/serve/http-token.test.ts:status.fetch#1:synthetic loopback requests proving the standing endpoint accepts the exact token and refuses near misses
 packages/core/test/serve/daemon-recovery.test.ts:(toplevel).Bun.serve#1:throwaway 127.0.0.1 probe that reserves a free loopback port for the held-writer daemon test
 packages/core/test/serve/daemon-recovery.test.ts:readWhileHeld.fetch#1:loopback health read against the daemon endpoint while its canon writer is held
 packages/core/test/serve/daemon-recovery.test.ts:readWhileHeld.fetch#2:authenticated synthetic page read against the daemon endpoint while its canon writer is held
