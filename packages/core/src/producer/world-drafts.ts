@@ -9,6 +9,7 @@ import {
 } from "../contracts/producer-v2";
 import { mintOccurrenceId, type OccurrenceEventIdentity } from "../claims/occurrences";
 import type { InsertClaimInput } from "../claims/store";
+import { guardLiteral } from "./world-guards";
 
 /** The portion of the shared writer input produced by the model adapter. */
 export interface WorldDraftInsert extends InsertClaimInput {
@@ -143,7 +144,7 @@ export function prepareWorldDrafts(
     // World support comes from one source. A claim citing records of two
     // sources can never be admitted; journaling it would wedge the batch.
     if (new Set(anchors.map(anchor => eventById.get(anchor.event_id)!.source_key)).size !== 1) return [];
-    const semantic: ClaimV2Assertion = {
+    const resolved: ClaimV2Assertion = {
       schema: CLAIM_V2_SCHEMA,
       discriminator: "assertion",
       subject: resolve(claim.subject, anchorKeys),
@@ -167,7 +168,17 @@ export function prepareWorldDrafts(
       temporal_basis: claim.temporal_basis,
       anchors: claim.anchors,
     };
-    if (!validateClaimV2Semantic(semantic).ok || context.admits?.(semantic) === false) {
+    if (!validateClaimV2Semantic(resolved).ok || context.admits?.(resolved) === false) {
+      dropped.push({ reason: "invalid_claim", id: claim.id });
+      return [];
+    }
+    // The model's literal is checked against the exact text it cited, so what
+    // it wrote about the record cannot outrank what the record says.
+    const semantic = guardLiteral(resolved, claim.body, {
+      spans: anchors.map(anchor => eventById.get(anchor.event_id)!.text.slice(anchor.start_utf16, anchor.end_utf16)),
+      events: [...new Set(anchors.map(anchor => anchor.event_id))].map(id => eventById.get(id)!.text),
+    });
+    if (semantic === null || !validateClaimV2Semantic(semantic).ok) {
       dropped.push({ reason: "invalid_claim", id: claim.id });
       return [];
     }

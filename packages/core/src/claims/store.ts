@@ -395,6 +395,16 @@ function acceptedWorldValues(input: InsertClaimInput, events: EventFacts[]) {
   };
 }
 
+/**
+ * A model reading captured text can repeat what an attacker wrote there, so
+ * its typed claim is quoted unless every cited event is the owner's own native
+ * correction. The caller's label cannot lower this; canon renders it as quoted.
+ */
+function storedTaint(input: InsertClaimInput, events: readonly EventFacts[]): ClaimTaint {
+  if (input.world_admission !== undefined && !events.every((event) => event.taint === "owner")) return "quoted";
+  return input.taint ?? "clean";
+}
+
 function resolveProvenance(db: Database, ids: readonly string[]): void {
   if (!tableExists(db, "events")) {
     throw new ClaimError("provenance_unresolved", "events table is missing");
@@ -574,20 +584,20 @@ function corroborate(db: Database, live: Claim, incoming: Claim, at: string): Cl
       .run(sensitivity, live.claim_id);
     return { ...live, sensitivity };
   }
+  // Every new citation is merged as evidence, but only a source record the
+  // claim did not already rest on is a further witness.
+  const known = sourceRoots(db, live.provenance);
+  const independent = [...sourceRoots(db, incoming.provenance)].some(root => !known.has(root));
   const next: Claim = {
     ...live,
     confidence: Math.max(live.confidence, incoming.confidence),
-    corroboration: live.corroboration + 1,
+    corroboration: live.corroboration + (independent ? 1 : 0),
     authority: higherAuthority(incoming.authority, live.authority),
     last_confirmed_at: at,
     sensitivity,
     provenance: [...existingEvidence],
   };
   persistClaim(db, next);
-  // Every new citation is merged as evidence, but only a source record the
-  // claim did not already rest on is a further witness.
-  const known = sourceRoots(db, live.provenance);
-  const independent = [...sourceRoots(db, incoming.provenance)].some(root => !known.has(root));
   // persistClaim owns neither column, so the merged support and label are written here.
   db.query("UPDATE claims SET provenance = ?, sensitivity = ? WHERE claim_id = ?")
     .run(JSON.stringify(next.provenance), next.sensitivity, next.claim_id);
@@ -1387,7 +1397,7 @@ function applyClaimInsert(
           ? { owner_label: input.sensitivity, owner_override: true }
           : { model_label: input.sensitivity }),
     }).sensitivity,
-    taint: input.taint ?? "clean",
+    taint: storedTaint(input, events),
     valid_from: input.valid_from ?? at,
     valid_to: input.valid_to ?? null,
     asserted_at: at,

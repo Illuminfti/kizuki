@@ -215,6 +215,29 @@
   now live in the host cursor store; the cursor schema is
   `kizuki.imap-cursor/v2` and v1 cursors still read and migrate. Marking the
   messages of a page as seen is one merge per page instead of one per message.
+- Typed extraction no longer lets model output launder injected text into clean
+  canon. Every typed claim read from external text is stored `taint: quoted`
+  and renders into a quoted page. A literal must be contained, after
+  normalization, in the span it cites, or the claim is admitted only as an
+  uncertain inferred interpretation; `health.*` and `preference.*` claims about
+  a name the model found in the text are dropped without a quoted basis; a
+  literal or body that repeats an instruction-shaped span from its own record
+  is dropped unless the claim reports it as a quotation. `identity.same_as`,
+  `identity.handle_on` and `decision.*` claims that name an owner, agent, grant,
+  permission, policy, access or audit are held, invisible to reads and canon,
+  until two independent source records support them. See
+  [docs/model-output-trust.md](docs/model-output-trust.md).
+- The legacy wiki and events importers refuse, with
+  `source_contains_kizuki_vault`, a source that is or contains a Kizuki vault,
+  as the Markdown folder connector already did. An ignore pattern cannot hide
+  a nested vault.
+- Machine-origin detection recognizes a copy of a written page that changed
+  only its line endings, trailing whitespace or final newline; a copy that lost
+  its frontmatter is not recognized by hash (see
+  [docs/event-identity-origin.md](docs/event-identity-origin.md)).
+- A claim's `corroboration` count rises only for a source record it did not
+  already rest on. A re-sync of the same record, whatever its bytes, no longer
+  counts as a second witness.
 - The daily brief is stamped private when it names a page that ever received a
   private receipt (a repair never lowers it), says when rail failure groups
   were omitted, and the brief repair also rewrites the run-id
