@@ -12,6 +12,29 @@
   unknown or revoked agent and an invalid grant are refused without changes.
 - The app's agent setup offers `world_view` among the read tools and an
   owner-correction relay choice that defaults to off.
+- Model prompts are scrubbed of obvious secrets before they leave for a model
+  endpoint. PEM blocks, JWTs, `sk-`, `ghp_`, `github_pat_`, `xox` and `AKIA`
+  tokens, `Authorization: Bearer` values, `NAME=value` assignments whose name
+  contains `secret`, `token`, `password` or `api_key`, and runs of 12 or more
+  lowercase words that read as a mnemonic are replaced by `[redacted:<kind>]` in the typed and legacy
+  extraction prompts and in the text a configured judge sees. The ledger is not
+  changed; the model's anchors are mapped back onto the original record. Run
+  receipts carry the per-kind count as `model.redacted`. The scrubber is a
+  documented heuristic, not a guarantee. It covers the `[ports.llm]` extraction
+  path and the text its admission judge receives. A configured
+  `[ports.systemone]` judge is a separate destination at its own `base_url`: it
+  is not named by source consent, not covered by `[ports.llm.provider]`, and not
+  shown by `connect status` or `--json` egress. The judge the reflex path uses
+  is not scrubbed.
+- `[ports.llm.provider]` passes an allow-listed `provider` object
+  (`data_collection`, `zdr`, `order`, `only`, `ignore`, `allow_fallbacks`) to
+  OpenAI-compatible routers, for example `data_collection = "deny"` and
+  `zdr = true`. Unknown keys are refused. The table is not part of the model
+  binding that source consent names.
+- `kizuki connect status` shows each source's egress destination (endpoint
+  host and model, `local only`, or `none`) and retention stance, with the
+  provider controls the configured model requests. `--json` reports `egress`;
+  `connect status --source KEY` reports it too.
 
 ### Fixed
 

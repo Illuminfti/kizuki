@@ -11,6 +11,7 @@ import { tableExists } from "../ledger/schema";
 import { isPlainObject } from "../util/validate";
 import { sha256Hex } from "../util/hash";
 import { readProducerDiagnostic } from "../producer/diagnostics";
+import { REDACTION_KINDS } from "../producer/scrub";
 import { loadServeConfig } from "./config";
 import {
   InjectedCrash,
@@ -143,6 +144,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
       calls: numberOr(model["calls"], 0),
       input_tokens: numberOr(model["input_tokens"], 0),
       output_tokens: numberOr(model["output_tokens"], 0),
+      ...redactedOf(model["redacted"]),
       unavailable: numberOr(model["unavailable"], 0),
       wall_ms: numberOr(model["wall_ms"], 0),
       model_ref: typeof model["model_ref"] === "string" ? model["model_ref"] : null,
@@ -190,6 +192,16 @@ export function canonicalReceiptContent(value: unknown): string {
 
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** Known redaction kinds with positive counts; absent on receipts from before the scrubber. */
+function redactedOf(value: unknown): { redacted?: Record<string, number> } {
+  if (!isPlainObject(value)) return {};
+  const counts = Object.fromEntries(REDACTION_KINDS.flatMap(kind => {
+    const count = value[kind];
+    return typeof count === "number" && Number.isFinite(count) && count > 0 ? [[kind, count]] : [];
+  }));
+  return Object.keys(counts).length === 0 ? {} : { redacted: counts };
 }
 
 /** Select the newest matching receipts, then return them in chronological order. */

@@ -10,18 +10,21 @@ import {
   MAX_V2_QUOTED_UTF16,
   MAX_V2_TRUSTED_REFS,
   PRODUCER_V2_CONTRACT,
+  type ExtractResponseV2,
   type ModelProducerV2Options,
   type ProduceInputV2,
+  type ProducerV2ParseInput,
   type ProduceResultV2,
   type ProducerV2Port,
   type TextAnchor,
   parseExtractResponseV2,
 } from "../contracts/producer-v2";
 import { validateProduceResult } from "./result";
-import type { ProducerDiagnostic } from "../contracts/producer";
+import type { ModelUsage, ProducerDiagnostic } from "../contracts/producer";
 import { callModel, DEFAULT_PRODUCER_DEADLINE_MS, CHARS_PER_TOKEN, parseModelProducerConfig } from "./model";
 import { hasFenceLeak, hasParsedFenceLeak, newFenceNonce } from "./fence";
 import { buildExtractionV2Messages } from "./prompt-v2";
+import { fromScrubbedOffset, scrubText, tallyRedactions, toScrubbedOffset, type Redaction, type RedactionCounts } from "./scrub";
 import { admitExtractedClaimsV2 } from "./systemone-admit";
 import { registerPort, type PortRegistry } from "../contracts/registry";
 import type { SystemOnePort } from "../contracts/systemone";
@@ -87,15 +90,86 @@ export function validateProduceInputV2(raw: unknown): ProduceInputV2 {
 }
 
 function estimate(messages: readonly { content: string }[]): number { return Math.ceil(messages.reduce((n, item) => n + item.content.length, 0) / CHARS_PER_TOKEN); }
-export type ModelExtractionV2Plan = { readonly status: "ready"; readonly input: ProduceInputV2; readonly nonce: string; readonly messages: ReturnType<typeof buildExtractionV2Messages>; readonly input_tokens: number; readonly max_output_tokens: number } | { readonly status: "rejected"; readonly diagnostic: Extract<ProducerDiagnostic, { stage: "budget" }> };
+
+type EventRedactions = ReadonlyMap<string, readonly Redaction[]>;
+/** A supplied anchor as sent, to the anchor the caller supplied, for the ones a redaction moved so they do not map straight back. */
+type SuppliedRestore = ReadonlyMap<string, TextAnchor>;
+function remapAnchor(anchor: TextAnchor, redactions: EventRedactions, remap: typeof toScrubbedOffset): TextAnchor {
+  const spans = redactions.get(anchor.event_id);
+  if (spans === undefined) return anchor;
+  return { event_id: anchor.event_id, start_utf16: remap(spans, anchor.start_utf16, "start"), end_utf16: remap(spans, anchor.end_utf16, "end") };
+}
+function remapAnchors(anchors: readonly TextAnchor[], redactions: EventRedactions, remap: typeof toScrubbedOffset): TextAnchor[] {
+  const seen = new Set<string>();
+  return anchors.map(anchor => remapAnchor(anchor, redactions, remap)).filter(anchor => !seen.has(anchorKey(anchor)) && seen.add(anchorKey(anchor)));
+}
+/** A supplied anchor that starts or ends inside a redaction is sent snapped to the marker; the model's citation of it goes back as the anchor the caller supplied. */
+function suppliedRestore(input: ProduceInputV2, redactions: EventRedactions): SuppliedRestore {
+  const restore = new Map<string, TextAnchor>();
+  for (const ref of input.supplied_refs) for (const anchor of ref.anchors) {
+    const sent = remapAnchor(anchor, redactions, toScrubbedOffset);
+    if (anchorKey(sent) !== anchorKey(anchor) && anchorKey(remapAnchor(sent, redactions, fromScrubbedOffset)) !== anchorKey(anchor) && !restore.has(anchorKey(sent))) restore.set(anchorKey(sent), anchor);
+  }
+  return restore;
+}
+function restoreAnchor(anchor: TextAnchor, redactions: EventRedactions, supplied: SuppliedRestore): TextAnchor {
+  return supplied.get(anchorKey(anchor)) ?? remapAnchor(anchor, redactions, fromScrubbedOffset);
+}
+/** The response as the caller's own text sees it: the model's anchors were written over the scrubbed text. */
+function restoreAnchors(response: ExtractResponseV2, redactions: EventRedactions, supplied: SuppliedRestore): ExtractResponseV2 {
+  if (redactions.size === 0) return response;
+  const restore = (anchors: readonly TextAnchor[]): TextAnchor[] => {
+    const seen = new Set<string>();
+    return anchors.map(anchor => restoreAnchor(anchor, redactions, supplied)).filter(anchor => !seen.has(anchorKey(anchor)) && seen.add(anchorKey(anchor)));
+  };
+  return {
+    ...response,
+    mentions: response.mentions.map(mention => ({ ...mention, anchor: restoreAnchor(mention.anchor, redactions, supplied) })),
+    claims: response.claims.map(claim => ({
+      ...claim,
+      anchors: restore(claim.anchors),
+      perspective: { ...claim.perspective, anchors: restore(claim.perspective.anchors) },
+    })),
+  };
+}
+
+export type ModelExtractionV2Plan = {
+  readonly status: "ready";
+  readonly input: ProduceInputV2;
+  /** What the model is shown and answers over: the input with secrets scrubbed and anchors moved to match. */
+  readonly outbound: ProducerV2ParseInput;
+  readonly redactions: EventRedactions;
+  readonly redacted: RedactionCounts;
+  readonly nonce: string;
+  readonly messages: ReturnType<typeof buildExtractionV2Messages>;
+  readonly input_tokens: number;
+  readonly max_output_tokens: number;
+} | { readonly status: "rejected"; readonly diagnostic: Extract<ProducerDiagnostic, { stage: "budget" }> };
+
+/** Scrubs every quoted event; supplied-handle anchors follow their text into scrubbed coordinates. */
+function scrubInput(input: ProduceInputV2): { outbound: ProducerV2ParseInput; redactions: EventRedactions; redacted: RedactionCounts } {
+  const redactions = new Map<string, readonly Redaction[]>(), redacted: RedactionCounts = {};
+  const events = input.events.map(event => {
+    const scrubbed = scrubText(event.text);
+    if (scrubbed.redactions.length > 0) redactions.set(event.event_id, scrubbed.redactions);
+    tallyRedactions(redacted, scrubbed.redactions);
+    return { event_id: event.event_id, text: scrubbed.text };
+  });
+  return {
+    outbound: { events, supplied_refs: input.supplied_refs.map(ref => ({ id: ref.id, anchors: remapAnchors(ref.anchors, redactions, toScrubbedOffset) })), vocabulary_refs: input.vocabulary_refs, predicates: input.predicates },
+    redactions, redacted,
+  };
+}
+
 /** Plans exactly one call and retains the nonce/messages whose size was budgeted. */
 export function planModelExtractionV2(raw: unknown): ModelExtractionV2Plan {
   const input = validateProduceInputV2(raw);
   if (input.budget.max_calls < 1) return { status: "rejected", diagnostic: { stage: "budget", rule: "max_calls", used: 0, requested: 1, limit: input.budget.max_calls } };
   if (input.budget.max_output_tokens < 1) return { status: "rejected", diagnostic: { stage: "budget", rule: "max_output_tokens", used: 0, requested: 1, limit: input.budget.max_output_tokens } };
-  const nonce = newFenceNonce(), messages = buildExtractionV2Messages(input, nonce), inputTokens = estimate(messages);
+  const { outbound, redactions, redacted } = scrubInput(input);
+  const nonce = newFenceNonce(), messages = buildExtractionV2Messages({ ...outbound, budget: input.budget }, nonce), inputTokens = estimate(messages);
   if (inputTokens > input.budget.max_input_tokens) return { status: "rejected", diagnostic: { stage: "budget", rule: "max_input_tokens", used: 0, requested: inputTokens, limit: input.budget.max_input_tokens } };
-  return { status: "ready", input, nonce, messages, input_tokens: inputTokens, max_output_tokens: Math.min(MAX_V2_OUTPUT_TOKENS, input.budget.max_output_tokens) };
+  return { status: "ready", input, outbound, redactions, redacted, nonce, messages, input_tokens: inputTokens, max_output_tokens: Math.min(MAX_V2_OUTPUT_TOKENS, input.budget.max_output_tokens) };
 }
 
 export function createModelProducerV2Port(ctx: PortContext, options: ModelProducerV2Options): ProducerV2Port {
@@ -118,26 +192,28 @@ export function createModelProducerV2Port(ctx: PortContext, options: ModelProduc
     },
     async produce(raw: ProduceInputV2): Promise<ProduceResultV2> {
       if (closed) throw new PortError("unavailable", "producer port is closed", false);
-      const usage = { calls: 0, input_tokens: 0, output_tokens: 0 };
+      const usage: { -readonly [K in keyof ModelUsage]: ModelUsage[K] } = { calls: 0, input_tokens: 0, output_tokens: 0 };
       const plan = planModelExtractionV2(raw);
       if (plan.status === "rejected") return { status: "rejected", reason: "budget_exhausted", usage, diagnostic: plan.diagnostic };
       if (systemone !== undefined && systemone.model_ref === null) return { status: "unavailable", reason: "unavailable", usage };
       const outcome = await callModel(llm as LlmPort, plan.messages, plan.max_output_tokens, config.deadline_ms ?? DEFAULT_PRODUCER_DEADLINE_MS);
       usage.calls = 1;
+      if (Object.keys(plan.redacted).length > 0) usage.redacted = plan.redacted;
       if (outcome.kind === "unavailable") return { status: "unavailable", reason: outcome.diagnostic.rule === "timeout" ? "timeout" : outcome.diagnostic.rule === "network" ? "network" : outcome.diagnostic.rule === "credentials" ? "credentials" : outcome.diagnostic.rule === "http" ? "http" : "unavailable", usage, diagnostic: outcome.diagnostic };
       if (outcome.kind === "rejected") return { status: "rejected", reason: outcome.reason, usage, diagnostic: outcome.diagnostic };
       usage.input_tokens = outcome.response.usage.input_tokens; usage.output_tokens = outcome.response.usage.output_tokens;
       if (hasFenceLeak(outcome.response.text, plan.nonce)) return { status: "rejected", reason: "fence_leak", usage };
       let decoded: unknown; try { decoded = JSON.parse(unwrapJsonCodeFence(outcome.response.text)); } catch { decoded = null; }
       if (decoded !== null && hasParsedFenceLeak(decoded, plan.nonce)) return { status: "rejected", reason: "fence_leak", usage };
-      const parserInput = { events: plan.input.events, supplied_refs: plan.input.supplied_refs, vocabulary_refs: plan.input.vocabulary_refs, predicates: plan.input.predicates };
-      const parsed = parseExtractResponseV2(outcome.response.text, parserInput);
+      // The model answered over the scrubbed text, so it is parsed and judged there and only then moved back.
+      const parsed = parseExtractResponseV2(outcome.response.text, plan.outbound);
       if (!parsed.ok) return { status: "rejected", reason: "schema_invalid", usage, diagnostic: { stage: "response", rule: "bad_response" } };
-      const admitted = await admitExtractedClaimsV2(parsed.response, parserInput, systemone, config.deadline_ms);
+      const admitted = await admitExtractedClaimsV2(parsed.response, plan.outbound, systemone, config.deadline_ms);
       if (admitted.status === "unavailable") return { status: "unavailable", reason: "unavailable", usage };
       if (admitted.status === "rejected") return { status: "rejected", reason: "schema_invalid", usage };
       const dropped = [...parsed.dropped, ...admitted.dropped];
-      const wire = { status: "ok" as const, response: admitted.response, usage, ...(dropped.length === 0 ? {} : { dropped }) };
+      const wire = { status: "ok" as const, response: restoreAnchors(admitted.response, plan.redactions, suppliedRestore(plan.input, plan.redactions)), usage, ...(dropped.length === 0 ? {} : { dropped }) };
+      const parserInput = { events: plan.input.events, supplied_refs: plan.input.supplied_refs, vocabulary_refs: plan.input.vocabulary_refs, predicates: plan.input.predicates };
       return validateProduceResult(wire, PRODUCER_V2_CONTRACT, parserInput).result;
     },
     async close() { closed = true; },

@@ -7,6 +7,7 @@ import { withReadVault } from "./context";
 import { clean, jsonEnvelope, table } from "./output";
 import type { CliIo } from "./commands";
 import { INVOCATION } from "./runtime";
+import { egressDestination, egressRetention, egressView } from "./egress-view";
 
 const TITLES: Record<string, string> = {
   "kizuki.beeper": "Beeper Desktop",
@@ -102,6 +103,7 @@ export async function printConnectionStatus(io: CliIo, json: boolean): Promise<n
         source_key: row.source_key,
         state: row.disconnected_at !== null ? "disconnected" : host.state === null ? "needs attention" : "enrolled",
         consent: grant?.status ?? "required",
+        egress: egressView(ctx.vaultPath, grant),
         revision: grant?.revision ?? 0,
         purge_blockers: grant?.purge_blockers ?? [],
         sensitivity: policy?.default_sensitivity ?? "not recorded",
@@ -117,8 +119,8 @@ export async function printConnectionStatus(io: CliIo, json: boolean): Promise<n
       io.out(`Choose a source: ${INVOCATION} connect`);
     } else {
       for (const line of table([
-        ["Connector", "Source", "State", "Consent", "Privacy", "Last run", "Stored", "Errors"],
-        ...connections.map((row) => [clean(row.connector_id), row.source_key, row.state, row.consent, row.sensitivity,
+        ["Connector", "Source", "State", "Consent", "Privacy", "Egress", "Retention", "Last run", "Stored", "Errors"],
+        ...connections.map((row) => [clean(row.connector_id), row.source_key, row.state, row.consent, row.sensitivity, clean(egressDestination(row.egress)), clean(egressRetention(row.egress)),
           row.last_run === null ? "not synced yet" : clean(row.last_run), `${row.stored}`, `${row.errors}`]),
       ])) io.out(line);
       io.out(`Refresh: ${INVOCATION} sync`);
