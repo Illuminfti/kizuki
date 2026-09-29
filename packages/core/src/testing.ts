@@ -15,3 +15,5 @@ export { withWorldOps } from "./world/ops/registry";
 /** Test seams for the world read pipeline: append stage entries for one read, and collect the frames a read opens. */
 export { collectReadFrames } from "./world/pipeline/frame";
 export { withWorldPipeline } from "./world/pipeline/read";
+/** Runtime rail registration. Shipped rails are listed in `serve/rail-registry.ts`. */
+export { defineRail, registerRail } from "./serve/rail-registry";

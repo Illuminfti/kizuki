@@ -22,7 +22,6 @@ export {
   WRITER_LEASE,
   emptyRunTotals,
   isCrashPoint,
-  isRailId,
   isServeIntent,
 } from "./types";
 export type {
@@ -50,6 +49,7 @@ export type {
 } from "./types";
 
 export { applyServeV7, initServe, listSchedules, seedSchedules } from "./schema";
+export { isRailId } from "./rail-registry";
 export {
   acquireLease,
   heartbeatLease,
