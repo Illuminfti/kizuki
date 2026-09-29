@@ -27,6 +27,7 @@ import {
   type WorldTableSpec,
 } from "../../src/world/tables/registry";
 import { rebuildWorldLayer } from "../../src/derived";
+import { WORLD_MIGRATION_BASE } from "../../src/world/tables/versions";
 import { validEvent } from "../fixtures";
 
 // Export and restore each open a real vault; bound them for a loaded host.
@@ -72,7 +73,7 @@ const cascadeTable = (
 ): WorldTableSpec => ({
   name: "world_synth_notes",
   class: "authority",
-  since: LEDGER_SCHEMA_VERSION,
+  since: WORLD_MIGRATION_BASE,
   columns: ["event_id", "note"],
   erasure: { via: "cascade", parent: "events" },
   create: (db) =>
@@ -86,7 +87,7 @@ const cascadeTable = (
 const triggerTable = (): WorldTableSpec => ({
   name: "world_synth_marks",
   class: "bookkeeping",
-  since: LEDGER_SCHEMA_VERSION,
+  since: WORLD_MIGRATION_BASE,
   columns: ["mark_id", "event_ref"],
   erasure: { via: "trigger", triggers: ["world_synth_marks_erased"] },
   create: (db) =>
@@ -99,7 +100,7 @@ const triggerTable = (): WorldTableSpec => ({
 const derivedTable = (): WorldTableSpec => ({
   name: "world_synth_summary",
   class: "derived",
-  since: LEDGER_SCHEMA_VERSION,
+  since: WORLD_MIGRATION_BASE,
   columns: ["subject", "summary"],
   erasure: { via: "none", reason: "rebuilt from authority" },
   create: (db) =>
@@ -111,7 +112,7 @@ const derivedTable = (): WorldTableSpec => ({
 const cacheTable = (): WorldTableSpec => ({
   name: "world_synth_slots",
   class: "cache",
-  since: LEDGER_SCHEMA_VERSION,
+  since: WORLD_MIGRATION_BASE,
   columns: ["slot", "token"],
   erasure: { via: "none", reason: "runtime cache" },
   create: (db) =>
@@ -381,7 +382,7 @@ describe("derived tables linked by a foreign key", () => {
   const parent = (): WorldTableSpec => ({
     name: "world_synth_parent",
     class: "derived",
-    since: LEDGER_SCHEMA_VERSION,
+    since: WORLD_MIGRATION_BASE,
     columns: ["id"],
     erasure: { via: "none", reason: "rebuilt from authority" },
     create: (db) => db.exec("CREATE TABLE IF NOT EXISTS world_synth_parent(id TEXT PRIMARY KEY) STRICT"),
@@ -389,7 +390,7 @@ describe("derived tables linked by a foreign key", () => {
   const child = (): WorldTableSpec => ({
     name: "world_synth_child",
     class: "derived",
-    since: LEDGER_SCHEMA_VERSION,
+    since: WORLD_MIGRATION_BASE,
     columns: ["id", "parent_id"],
     erasure: { via: "none", reason: "rebuilt from authority" },
     create: (db) =>
@@ -405,7 +406,10 @@ describe("derived tables linked by a foreign key", () => {
     child().create!(f.db);
     f.db.query("INSERT INTO world_synth_parent(id) VALUES ('p')").run();
     f.db.query("INSERT INTO world_synth_child(id,parent_id) VALUES ('c','p')").run();
-    expect(rebuildWorldLayer(f.db).tables).toEqual(["world_synth_parent", "world_synth_child"]);
+    expect(rebuildWorldLayer(f.db).tables.filter((name) => name.startsWith("world_synth_"))).toEqual([
+      "world_synth_parent",
+      "world_synth_child",
+    ]);
     expect(count(f.db, "world_synth_parent")).toBe(0);
     expect(count(f.db, "world_synth_child")).toBe(0);
   });
