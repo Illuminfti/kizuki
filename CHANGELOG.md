@@ -78,6 +78,28 @@
   changes.
 - The MCP adapter no longer runs schema repair writes when it starts on a
   current ledger, so a long writer no longer delays or refuses startup.
+- The embed-backfill rail no longer wakes every minute when no embedding port
+  is configured: it backs off to an hour and returns to a minute when the
+  service starts or on its next run after `[ports] embedding` names a port.
+  `kizuki doctor` prints `vector layer: off (no embedding model configured)`,
+  `vector layer: configured (<port id>)` or `vector layer: invalid (<reason>)`
+  for an id the host cannot bind, and an idle embed rail is no longer reported
+  down for producing nothing. The CLI and doctor read `[ports] embedding`
+  through one validator.
+- A scheduled run that did nothing no longer appends a run receipt per tick. The
+  first idle run after activity is receipted, later ones only advance the
+  schedule, with at most one idle receipt an hour per rail. Doctor takes rail
+  liveness from the schedule as well as receipts and counts the empty streak in
+  elapsed periods, so its sensitivity is unchanged. The fixture qualification
+  observer credits an idle slot from the schedule row and accepts the embed
+  rail's back-off period. The daemon's receipt count includes only receipts it
+  persisted.
+- `journal-prune` bounds `run-receipts.jsonl` by size as well as age (oldest
+  receipts dropped past 8 MiB, rows and file kept in step), and no longer
+  rewrites the journal from only the newest 10,000 rows. The prune always keeps
+  the newest receipt and replaces the file atomically before deleting rows.
+  Doctor reads at most the newest 5,000 run receipts and scans the newest 1 MiB
+  of the journal for orphans.
 
 ### Changed
 

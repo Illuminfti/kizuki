@@ -7,7 +7,7 @@ import { dirname, join, resolve, parse } from "node:path";
 import { parseBuildInfoValue } from "./stranger-proof";
 import { ArtifactProofError, parseProofJson, validateArtifactProof } from "./artifact-proof";
 import type { ArtifactPackageFile } from "./artifact-proof";
-import { evaluateQualification, qualificationDate, type QualificationProfile, type QualificationReceipt, type QualificationSample } from "../packages/core/src/serve/qualification";
+import { evaluateQualification, qualificationDate, type QualificationProfile, type QualificationReceipt, type QualificationSample, type QualificationSchedule } from "../packages/core/src/serve/qualification";
 import { loadServeConfig } from "../packages/core/src/serve/config";
 import { readProducerDiagnostic } from "../packages/core/src/producer/diagnostics";
 import { readServeProcessMarker, servePidPath } from "../packages/core/src/serve/daemon";
@@ -145,9 +145,9 @@ function openObservationDb(vault: string): Database {
 function schedules(vault: string) {
   const db = openObservationDb(vault);
   try {
-    const rows = db.query("SELECT rail, period_s, jitter_s, enabled, next_run_at FROM schedules ORDER BY rail LIMIT 101").all() as {rail:string;period_s:number;jitter_s:number;enabled:number;next_run_at:string|null}[];
+    const rows = db.query("SELECT rail, period_s, jitter_s, enabled, last_run_at, next_run_at FROM schedules ORDER BY rail LIMIT 101").all() as {rail:string;period_s:number;jitter_s:number;enabled:number;last_run_at:string|null;next_run_at:string|null}[];
     if (rows.length !== RAIL_IDS.length || rows.some((r) => r.enabled !== 1 || !r.next_run_at) || rows.map((r) => r.rail).sort().join() !== [...RAIL_IDS].sort().join()) throw new Error("all seven initialized enabled rails are required");
-    return rows.map((r) => ({ rail: r.rail, period_s: r.period_s, jitter_s: r.jitter_s, next_run_at: r.next_run_at! }));
+    return rows.map((r) => ({ rail: r.rail, period_s: r.period_s, jitter_s: r.jitter_s, last_run_at: r.last_run_at, next_run_at: r.next_run_at! }));
   } finally { db.close(); }
 }
 export function initQualification(artifactInput: string, proofInput: string, scopePath: string, outInput: string) {
@@ -155,7 +155,7 @@ export function initQualification(artifactInput: string, proofInput: string, sco
   if (Object.keys(scope).sort().join() !== "brief_hour,scope,supervisor,timezone,vault" || scope.scope !== "fixture" || scope.timezone !== "UTC" || scope.supervisor !== "none" || !Number.isInteger(scope.brief_hour) || Number(scope.brief_hour) < 0 || Number(scope.brief_hour) > 23) throw new Error("only explicit UTC fixture scope {scope,vault,brief_hour,timezone,supervisor:none} is supported");
   const artifact = pathCheck(artifactInput), proof = pathCheck(proofInput), vault = pathCheck(text(scope.vault));
   if (loadServeConfig(vault).brief_hour !== scope.brief_hour) throw new Error("scope brief_hour does not match configured morning hour");
-  const identity = verifyArtifact(artifact, proof), rails = schedules(vault), now = anchor();
+  const identity = verifyArtifact(artifact, proof), rails = schedules(vault).map(({last_run_at, ...rail}) => rail), now = anchor();
   const profile: QualificationProfile = {scope:"fixture", start_at:now.at, monotonic_ms:now.monotonic_ms, boot_id:now.boot_id, rails, brief_hour:Number(scope.brief_hour), timezone:"UTC", supervisor:"none", sampling_interval_ms:30_000, max_gap_ms:60_000, lateness_ms:30_000};
   const manifest: Manifest = { schema: "kizuki.qualification/v1", qualification_id:randomUUID(), policy_sha256:policyDigest(profile), artifact, proof, vault, identity, profile };
   evaluateQualification(manifest.profile, []);
@@ -227,15 +227,19 @@ export function strictReceiptProjection(raw: string): QualificationReceipt[] {
 }
 function collect(manifest: Manifest, known: Map<string,string>): QualificationSample {
   const now = anchor(), issues: string[] = [];
+  // Schedule rows first: the run journal is written before its row, so the
+  // receipts read next are never behind the slots the rows report.
+  const current = schedules(manifest.vault);
   const receipts = strictReceiptProjection(read(join(manifest.vault, ".kizuki/run-receipts.jsonl")).toString()).filter((r) => {
     const old = known.get(r.run_id);
     if (old && old !== r.sha256) throw new Error("conflicting run evidence");
     known.set(r.run_id, r.sha256);
     return !old && qualificationDate(r.finished_at) >= qualificationDate(manifest.profile.start_at);
   });
-  const current = schedules(manifest.vault);
   if (loadServeConfig(manifest.vault).brief_hour !== manifest.profile.brief_hour) issues.push("schedule-profile-changed");
-  if (canonical(current.map(({next_run_at, ...r}) => r)) !== canonical(manifest.profile.rails.map(({next_run_at,...r}) => r))) issues.push("schedule-profile-changed");
+  // The embed rail's period follows its port configuration; the evaluator accepts either supported period.
+  const fixedPolicy = ({rail, period_s, jitter_s}: {rail: string; period_s: number; jitter_s: number}) => ({rail, jitter_s, period_s: rail === "embed-backfill" ? 0 : period_s});
+  if (canonical(current.map(fixedPolicy)) !== canonical(manifest.profile.rails.map(fixedPolicy))) issues.push("schedule-profile-changed");
   let processBinding: QualificationSample["process"] = null;
   const db = openObservationDb(manifest.vault);
   try {
@@ -281,7 +285,8 @@ function collect(manifest: Manifest, known: Map<string,string>): QualificationSa
       }
     }
   } finally { db.close(); }
-  return {...anchor(), supervisor:"not-observed", process:processBinding, receipts, issues};
+  const rows: QualificationSchedule[] = current.map(({rail, period_s, last_run_at, next_run_at}) => ({rail, period_s, last_run_at, next_run_at}));
+  return {...anchor(), supervisor:"not-observed", process:processBinding, receipts, schedules:rows, issues};
 }
 export function sampleQualification(runInput: string) {
   const run = pathCheck(runInput);

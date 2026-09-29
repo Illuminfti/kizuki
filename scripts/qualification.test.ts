@@ -387,3 +387,15 @@ test("v3 seven-file qualification binds material identity but remains fixture-on
  appendFileSync(join(f.artifact,"THIRD-PARTY-NOTICES.txt"),"changed");
  expect(()=>statusQualification(f.out)).toThrow();
 });
+
+test("the embed rail's back-off period is accepted at init and while sampling, other periods are not", () => {
+ const backedOff=fixture();const before=openLedger(join(backedOff.vault,".kizuki/kizuki.db"));
+ before.exec("UPDATE schedules SET period_s = 3600 WHERE rail = 'embed-backfill'");before.close();
+ initQualification(backedOff.artifact,backedOff.proof,backedOff.scope,backedOff.out);
+ expect(sampleQualification(backedOff.out).issues).not.toContain("schedule-profile-changed");
+ const later=fixture();initQualification(later.artifact,later.proof,later.scope,later.out);
+ const db=openLedger(join(later.vault,".kizuki/kizuki.db"));db.exec("UPDATE schedules SET period_s = 3600 WHERE rail = 'embed-backfill'");db.close();
+ const result=sampleQualification(later.out);
+ expect(result.issues).not.toContain("schedule-profile-changed");
+ expect(result.issues).not.toContain("collection-rejected");
+});

@@ -1034,6 +1034,7 @@ export {
   listRunReceipts,
   listSchedules,
   loadConfiguredModelRef,
+  loadEmbeddingSelection,
   loadServeConfig,
   orphanJournalReceipts,
   persistRunReceipt,

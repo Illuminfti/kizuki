@@ -35,9 +35,11 @@ Status: designed
    canon prose from quoted capture and carry provenance.
 8. Fail closed: missing sensitivity label → not served; missing credentials →
    connector refuses; unknown agent → no access.
-9. Every scheduled rail emits a liveness receipt visible in `kizuki
-   doctor`. A rail is reported down when its receipt is stale, when its
-   service unit is absent, disabled or masked, or when its last runs
+9. Every scheduled rail shows liveness in `kizuki doctor`, from its receipts
+   and from its schedule row, which a coalesced idle run advances without a
+   receipt (an idle rail still writes one receipt an hour). A rail is
+   reported down when both are stale, when its service unit is absent,
+   disabled or masked, or when its last runs, counted by elapsed periods,
    produced nothing for a rail that should produce. Absence is never read
    as health.
 10. No fake surface: no registry entry, CLI verb, or README claim without a
@@ -225,8 +227,11 @@ run id a failed brief run left behind) and record the count as `pages_repaired`
 on the run receipt; a page that cannot be repaired degrades the run and names
 its day. The run receipt is the record for this repair: daemon brief pages are
 not canon and carry no canon receipt. A brief that names a private page
-is itself stamped private. Every scheduled run writes a receipt;
-stale receipts are reported as failures. Telegram / email / webhook notifiers are accepted
+is itself stamped private. A scheduled run that did something writes a receipt,
+and an idle one writes at most one an hour per rail while its schedule still
+advances; stale rails are reported as failures. Embed backfill runs at its
+short period only while an embedding port is configured. Telegram / email /
+webhook notifiers are accepted
 design behind `kizuki.notifier/v1`; the shipped notifier is the file writer.
 
 ## Security
