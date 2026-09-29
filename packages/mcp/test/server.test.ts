@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { readSqliteRuntime } from "@kizuki/core/internal";
+import { readSqliteRuntime, rebuildDerived } from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
-import { TOOLS, listAudit, revokeAgent, setGrant } from "@kizuki/core";
+import { TOOLS, accept, listAudit, revokeAgent, setGrant } from "@kizuki/core";
+import { validEvent } from "../../core/test/fixtures";
 import type { CanonChunk, RetrievalPort, ServeContext } from "@kizuki/core";
 import { listClaims } from "@kizuki/core";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -250,6 +251,33 @@ describe("the stdio MCP server over a real client", () => {
         (row) => row.tool === "search",
       ),
     ).toHaveLength(0);
+  });
+
+  test("search quotes a bounded excerpt of a long record unless full_text is passed", async () => {
+    const running = live();
+    accept(running.db, {
+      ...validEvent(),
+      source_record_id: "rec-long-excerpt",
+      text: `longexcerptmarker ${"word ".repeat(400)}`,
+      sensitivity_hint: "public",
+    });
+    rebuildDerived(running.db, running.vaultPath);
+    const client = await connect(running.agent("reader-private"));
+
+    const bounded = envelopeOf(await call(client, "search", { query: "longexcerptmarker", scope: "ledger" }));
+    const [chunk] = bounded["quoted"] as { text: string; truncated?: true }[];
+    expect(Array.from(chunk?.text ?? "")).toHaveLength(600);
+    expect(chunk?.truncated).toBe(true);
+
+    const whole = envelopeOf(
+      await call(client, "search", { query: "longexcerptmarker", scope: "ledger", full_text: true }),
+    );
+    const [full] = whole["quoted"] as { text: string; truncated?: true }[];
+    expect(full?.text.length).toBeGreaterThan(2000);
+    expect(full?.truncated).toBeUndefined();
+
+    const refused = await call(client, "search", { query: "longexcerptmarker", full_text: "yes" });
+    expect(refused.isError).toBe(true);
   });
 
   test("an out-of-range argument is stopped by the advertised bound", async () => {

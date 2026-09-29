@@ -9,6 +9,7 @@ import { searchAuditCandidates } from "../search/query";
 import type { SearchHit, SearchOptions } from "../search/query";
 import {
   enumOf,
+  flag,
   idList,
   limit,
   rfc3339,
@@ -38,6 +39,8 @@ const MAX_QUERY_CHARS = 512;
 const MAX_SCOPE_IDS = 16;
 const MAX_LIMIT = 50;
 const DEFAULT_LIMIT = 20;
+/** Code points of captured text a ledger hit carries unless the caller asks for `full_text`. */
+const LEDGER_EXCERPT = 600;
 /** Identity sample kept while paging; matches the serving audit row bound. */
 const SEARCH_WITHHELD_CAP = 200;
 
@@ -49,6 +52,8 @@ export interface SearchArgs {
   subjects?: string[];
   since?: string;
   until?: string;
+  /** Return whole captured records instead of a bounded excerpt. */
+  full_text?: boolean;
 }
 
 interface Classification {
@@ -122,6 +127,12 @@ function absorbClassification(into: Classification, from: Classification): void 
   if (room > 0) into.withheld.push(...from.withheld.slice(0, room));
 }
 
+function boundedQuote(chunk: QuotedChunk, fullText: boolean): QuotedChunk {
+  if (fullText) return chunk;
+  const { excerpt, truncated } = excerptOf(chunk.text, LEDGER_EXCERPT);
+  return truncated ? { ...chunk, text: excerpt, truncated: true } : chunk;
+}
+
 interface SearchReadSnapshot {
   generation: number;
   sourceEpoch: number;
@@ -169,6 +180,7 @@ export async function serveSearch(
         ? "canon"
         : enumOf("scope", args.scope, SEARCH_SCOPES);
     const rows = limit("limit", args.limit, MAX_LIMIT, DEFAULT_LIMIT);
+    const fullText = flag("full_text", args.full_text);
     const types = scopedTypes(
       grant,
       args.types === undefined
@@ -256,7 +268,7 @@ export async function serveSearch(
       }
       offset += ranked.candidates.length;
     }
-    const canon = classified.canon.slice(0, rows), quoted = classified.quoted.slice(0, Math.max(0, rows - classified.canon.length));
+    const canon = classified.canon.slice(0, rows), quoted = classified.quoted.slice(0, Math.max(0, rows - classified.canon.length)).map(chunk => boundedQuote(chunk, fullText));
     const canonicalSubjects = new Map(canon.map(chunk => [chunk.page_id, canonSubjects(index, index.byId.get(chunk.page_id)!)]));
     const projection = projectSubjectLabels(index, narrowed, at, [...canonicalSubjects.values()].flat().concat(quoted.flatMap(chunk => chunk.subjects)), canon.length + quoted.length);
     const audit = new Map<string, AuditItem>();

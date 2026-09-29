@@ -193,6 +193,36 @@ describe("query", () => {
     expect(hit?.taint).toBe("clean");
   });
 
+  test("ledger hits carry a 600 character excerpt unless --full-text is passed", () => {
+    const setup = tempVault();
+    writeFileSync(join(setup.notes, "long.md"), `zqxlong ${"filler word ".repeat(500)}\n`);
+    importNotes(setup);
+
+    const bounded = runCli(setup.env, "query", "zqxlong", "--scope", "ledger", "--json");
+    expect(bounded.exitCode).toBe(0);
+    const [hit] = (JSON.parse(bounded.stdout) as { data: { hits: (SearchHit & { truncated?: true })[] } }).data.hits;
+    expect(Array.from(hit?.snippet ?? "")).toHaveLength(600);
+    expect(hit?.truncated).toBe(true);
+
+    const text = runCli(setup.env, "query", "zqxlong", "--scope", "ledger");
+    expect(text.stdout.trimEnd().endsWith("…")).toBe(true);
+
+    const whole = runCli(setup.env, "query", "zqxlong", "--scope", "ledger", "--full-text", "--json");
+    expect(whole.exitCode).toBe(0);
+    const [full] = (JSON.parse(whole.stdout) as { data: { hits: (SearchHit & { truncated?: true })[] } }).data.hits;
+    expect(full?.snippet.length).toBeGreaterThan(5000);
+    expect(full?.truncated).toBeUndefined();
+  });
+
+  test("a short ledger hit is returned whole and unmarked", () => {
+    const setup = tempVault();
+    importNotes(setup);
+    const result = runCli(setup.env, "query", "moth-lantern", "--scope", "ledger", "--json");
+    const [hit] = (JSON.parse(result.stdout) as { data: { hits: (SearchHit & { truncated?: true })[] } }).data.hits;
+    expect(hit?.snippet).toContain("linus reviewed the moth-lantern patch");
+    expect(hit?.truncated).toBeUndefined();
+  });
+
   test("query refuses when canon receipts drift without a derived refresh", () => {
     const setup = tempVault();
     seedCanonPage(setup, {
