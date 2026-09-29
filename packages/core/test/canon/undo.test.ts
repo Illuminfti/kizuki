@@ -112,7 +112,13 @@ describe("undoReceipt", () => {
     expect(refused).toBeInstanceOf(UndoError);
     expect(code(refused)).toBe("page_changed");
     expect(String(refused)).toContain(`page changed since receipt ${created.receipt_id}`);
+    expect(String(refused)).toContain("edited outside kizuki");
+    expect(String(refused)).toContain("Put the page back");
+    expect(String(refused)).not.toContain("--cascade");
     expect(existsSync(path)).toBe(true);
+    const cascaded = await attempt(() => undoReceipt(io, created.receipt_id, { cascade: true }));
+    expect(code(cascaded)).toBe("page_changed");
+    expect(String(cascaded)).toContain("--cascade only reverses later receipts, and there are none");
     expect(getCanonReceipt(db, created.receipt_id)?.reverted_by).toBeNull();
   });
 
@@ -146,6 +152,7 @@ describe("undoReceipt", () => {
     const refused = await attempt(() => undoReceipt(io, created.receipt_id));
     expect(code(refused)).toBe("page_changed");
     expect(String(refused)).toContain(edited.receipt_id);
+    expect(String(refused)).toContain(`kizuki undo ${created.receipt_id} --cascade`);
 
     const revert = await undoReceipt(io, created.receipt_id, { cascade: true });
     expect(existsSync(path)).toBe(false);
