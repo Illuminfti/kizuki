@@ -1158,6 +1158,8 @@ export type { RebuildBudget } from "./retrieval/rebuild";
 export { planFullReembed, embeddingThroughputFromReceipts, formatReembedRefusal } from "./retrieval/reembed";
 export type { ReembedPlan } from "./retrieval/reembed";
 export { claimRetrievalDoc } from "./claims/store";
+export { countCaptureFanout, isCaptureFanoutSkip } from "./claims/capture-fanout";
+export type { CaptureFanoutCounts } from "./claims/capture-fanout";
 
 export { ESTATE_IMPORT_LIMITS } from "./contracts/estate-import";
 export type { EstateIssueCode, EstateImportIssue, EstateImportMapping, EstateImportReport, EstateSlice, EstateRecord, EstateAuthorization } from "./contracts/estate-import";

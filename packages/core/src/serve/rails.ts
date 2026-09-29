@@ -4,6 +4,7 @@ import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent"
 import { retryCanonProjectionObligations } from "../canon/projection-obligations";
 import { pidAlive, readBootId } from "./leases";
 import type { Database } from "bun:sqlite";
+import { skipCaptureFanoutClaims } from "../claims/capture-fanout";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
 import type { BudgetTracker } from "../canon/budget";
@@ -364,12 +365,28 @@ async function runDoctorSweep(
     ...doctor.failures.map(redactReceiptError),
   ].slice(0, SWEEP_FAILURES);
   const repair = repairReport(await repairBriefPages(vaultPath));
+  const captures = closeCaptureFanout(db, vaultPath, now);
   const allErrors = [...errors, ...(repair.errors ?? [])].slice(0, SWEEP_FAILURES);
   return {
     ...repair,
+    ...(captures === 0 ? {} : { captures_skipped: captures }),
     status: allErrors.length === 0 ? "ok" : "degraded",
     errors: allErrors,
   };
+}
+
+/**
+ * Closes out capture notes filed for conversational events by earlier
+ * revisions. It takes the canon writer's lock so a claim is never skipped
+ * while the writer is materializing it; a busy writer leaves it to the next sweep.
+ */
+function closeCaptureFanout(db: Database, vaultPath: string, now: string): number {
+  try {
+    return withVaultMutationSync({ db, vault_path: vaultPath }, () => skipCaptureFanoutClaims(db, now));
+  } catch (error) {
+    if (error instanceof VaultMutationError && error.code === "writer_busy") return 0;
+    throw error;
+  }
 }
 
 function runJournalPrune(

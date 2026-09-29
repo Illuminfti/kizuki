@@ -145,6 +145,9 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     ...(typeof value["pages_repaired"] === "number" && Number.isFinite(value["pages_repaired"])
       ? { pages_repaired: value["pages_repaired"] }
       : {}),
+    ...(typeof value["captures_skipped"] === "number" && Number.isFinite(value["captures_skipped"])
+      ? { captures_skipped: value["captures_skipped"] }
+      : {}),
     canon_writes: numberOr(value["canon_writes"], totals.canon_writes),
     canon_reverts: numberOr(value["canon_reverts"], totals.canon_reverts),
     model: {
@@ -448,7 +451,7 @@ export function isNoopReceipt(receipt: RunReceipt): boolean {
   const counters = [
     receipt.events_synced, receipt.events_stored, receipt.events_duplicate, receipt.events_self_skipped,
     receipt.claims_extracted, receipt.claims_written, receipt.claims_deduped, receipt.claims_superseded,
-    receipt.records_skipped ?? 0, receipt.canon_writes, receipt.canon_reverts,
+    receipt.records_skipped ?? 0, receipt.captures_skipped ?? 0, receipt.canon_writes, receipt.canon_reverts,
     receipt.model.calls, receipt.model.unavailable, receipt.model.input_tokens, receipt.model.output_tokens,
     receipt.retrieval.upserts, receipt.retrieval.removals, receipt.retrieval.pending_ops,
   ];
