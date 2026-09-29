@@ -225,8 +225,11 @@ run id a failed brief run left behind) and record the count as `pages_repaired`
 on the run receipt; a page that cannot be repaired degrades the run and names
 its day. The run receipt is the record for this repair: daemon brief pages are
 not canon and carry no canon receipt. A brief that names a private page
-is itself stamped private. Every scheduled run writes a receipt;
-stale receipts are reported as failures. Telegram / email / webhook notifiers are accepted
+is itself stamped private. A scheduled run that did something writes a receipt,
+and an idle one writes at most one an hour per rail while its schedule still
+advances; stale rails are reported as failures. Embed backfill runs at its
+short period only while an embedding port is configured. Telegram / email /
+webhook notifiers are accepted
 design behind `kizuki.notifier/v1`; the shipped notifier is the file writer.
 
 ## Security

@@ -47,6 +47,13 @@ of sixty seconds; the collector does not run itself. Its fixed profile allows th
 lateness plus that rail's configured jitter. Those bounds are fixture observation
 policy, not a redefinition of production SLA or acceptance tolerances.
 
+The observer credits a due slot only from a receipt, and the daemon writes an
+idle rail's receipt at most once an hour (see [CLI](cli.md#serve)). A fixture whose rails
+are idle therefore reports `missed-rail-slot` for the rails that run more often
+than hourly, and the embed-backfill period backs off to an hour without an
+embedding port, which the observer refuses as an invalid rail profile or reports as `schedule-profile-changed`. Observe
+a fixture that exercises its rails, or treat those interruptions as expected.
+
 The report binds each automatic run ID and canonical receipt-content hash to a daemon instance,
 PID and boot ID. Scheduled non-brief due slots advance from the previous intended slot
 plus its period, never from a late finish. Brief slots advance to the next
