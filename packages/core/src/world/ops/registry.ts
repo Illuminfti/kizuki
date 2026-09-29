@@ -1,4 +1,5 @@
 import { conceptOp } from "./concept";
+import { describeOp } from "./describe";
 import { discoverConceptsOp, discoverSituationsOp } from "./discover";
 import { situationOp } from "./situation";
 import type { WorldOp, WorldOpRegistry } from "./types";
@@ -51,6 +52,7 @@ export const WORLD_OPS: WorldOpRegistry = worldOpRegistry([
   discoverSituationsOp,
   conceptOp,
   situationOp,
+  describeOp,
   // slot: CARD
   // slot: KNOWN
   // slot: VIEW

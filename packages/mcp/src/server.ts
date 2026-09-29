@@ -255,7 +255,7 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     "world_view",
     {
       title: "Read a Concept or Situation",
-      description: options.worldOps === undefined ? TOOL_DESCRIPTIONS.world_view : `${world.description} ${TAINT_RULE}`,
+      description: `${world.description} ${TAINT_RULE}`,
       inputSchema: world.input,
       outputSchema: world.listed,
       annotations: READ_ONLY,

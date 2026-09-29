@@ -2,6 +2,10 @@
  * The world-model API of `@kizuki/core`. New operations and their types are
  * exported here so `src/index.ts` never has to change for them.
  */
+export { WORLD_DESCRIBE_SCHEMA } from "./ops/describe";
+export type { WorldDescribe } from "./ops/describe";
+export { WORLD_KINDS, worldKindState } from "./ops/kinds";
+export type { WorldKindEntry, WorldKindPopulation } from "./ops/kinds";
 export { NOT_FOUND, coveredOutcome } from "./ops/outcome";
 export {
   hasWorldKeys,

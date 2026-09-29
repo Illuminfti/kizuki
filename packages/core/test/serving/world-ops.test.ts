@@ -9,7 +9,8 @@ import {
   worldOpInputKeys,
   worldOpRegistry,
 } from "@kizuki/core/world";
-import type { ClaimsOp, WorldOp } from "@kizuki/core/world";
+import type { BuildOp, ClaimsOp, WorldOp } from "@kizuki/core/world";
+import { purgeEvents } from "../../src/ledger/purge";
 import { ServeError } from "../../src/serving/types";
 import { worldFixture } from "./world-fixture";
 import { serveFixture } from "./helpers";
@@ -111,6 +112,22 @@ describe("the operation registry", () => {
     });
   });
 
+  test("a build operation over the response bound is unavailable too", async () => {
+    const big: BuildOp = {
+      source: "build",
+      name: "bigbuild",
+      dataSchemas: [PING_SCHEMA],
+      run: () => ({ status: "data", data: { schema: PING_SCHEMA, blob: "x".repeat(300 * 1024) }, gaps: null }),
+    };
+    await withWorldOps([big], () => {
+      expect(readWorldView(fixture.owner(), { operation: "bigbuild" }) as unknown).toEqual({
+        schema: "kizuki.world-view/v1",
+        operation: "bigbuild",
+        result: { status: "unavailable", reason: "budget" },
+      });
+    });
+  });
+
   test("gaps reported by an operation make the result incomplete with those reasons", async () => {
     const partial: ClaimsOp<{ text: string }> = {
       ...pingOp,
@@ -154,7 +171,9 @@ describe("describe", () => {
     const before = JSON.stringify(data(fixture.owner()));
     expect(JSON.stringify(data(fixture.agent("reader-public")))).toBe(before);
     expect(JSON.stringify(data(fixture.agent("reader-private")))).toBe(before);
-    await worldFixture(fixture.db, { kind: "situation", subject: "project:describe", label: "Describe" });
+    const seeded = await worldFixture(fixture.db, { kind: "situation", subject: "project:describe", label: "Describe" });
+    expect(JSON.stringify(data(fixture.owner()))).toBe(before);
+    purgeEvents(fixture.db, fixture.vaultPath, { event_id: seeded.eventId }, "describe-purge");
     expect(JSON.stringify(data(fixture.owner()))).toBe(before);
     expect(before).not.toMatch(/count|total/);
   });

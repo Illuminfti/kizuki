@@ -37,7 +37,7 @@ describe("world_view as a client sees it", () => {
     expect(Object.keys(schema.properties ?? {}).sort()).toEqual(
       ["concept", "cursor", "knownAt", "label", "operation", "situation", "valid"],
     );
-    expect(schema.properties?.["operation"]?.enum).toEqual(["find_concepts", "find_situations", "concept", "situation"]);
+    expect(schema.properties?.["operation"]?.enum).toEqual(["find_concepts", "find_situations", "concept", "situation", "describe"]);
     expect(schema.required).toEqual(["operation"]);
     expect(schema.properties?.["label"]?.default).toBe("");
     expect(schema.properties?.["valid"]?.default).toEqual({ kind: "all" });

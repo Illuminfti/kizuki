@@ -2,6 +2,7 @@ import { resolvePrincipal, toolAllowed } from "../agents";
 import { tableExists } from "../ledger/schema";
 import { WorldProjectionBudgetError } from "../world/projection";
 import type { discoverWorld } from "../world/projection";
+import type { WorldDescribe } from "../world/ops/describe";
 import type { ConceptCard } from "../contracts/concept-card";
 import type { SituationCard } from "../contracts/situation-card";
 import { hasWorldKeys, parseWorldKnownAt, parseWorldValid } from "../world/ops/parse";
@@ -59,13 +60,15 @@ export type WorldReadInput =
       readonly concept: WorldObjectRef;
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
-    };
+    }
+  | { readonly operation: "describe" };
 
 /** The bodies the shipped operations return; each operation's `dataSchemas` say which one it is. */
 export type WorldData =
   | ConceptCard
   | SituationCard
-  | ReturnType<typeof discoverWorld>;
+  | ReturnType<typeof discoverWorld>
+  | WorldDescribe;
 export type WorldReadResult =
   | { readonly status: "not_found" }
   | {
@@ -137,26 +140,28 @@ export function readWorldView(
   if (op === undefined) throw new WorldViewError();
   const { required, optional } = worldOpKeys(op);
   if (!hasWorldKeys(input, required, optional)) throw new WorldViewError();
-  if (op.source === "build") return present(op, op.run(registry));
-  const query = op.parse(input),
-    valid = parseWorldValid(input.valid),
-    knownAt = parseWorldKnownAt(input.knownAt);
-  if (query === null || valid === null || knownAt === null)
-    throw new WorldViewError();
-  if (knownAt.kind !== "current") return unavailable(op.name, "history");
-  if (!tableExists(ctx.db, "world_authorization_namespaces"))
-    return unavailable(op.name, "storage");
-  const project = (): WorldReadResult =>
-    present(
-      op,
-      op.run({ ctx, ns: worldNamespace(ctx.db, principal) }, query, {
-        valid,
-        knownAt,
-      }),
-    );
-  // A nested transaction is a savepoint: failed/budgeted projections issue no refs.
   try {
-    return ctx.db.transaction(project).immediate();
+    if (op.source === "build") return present(op, op.run(registry));
+    const query = op.parse(input),
+      valid = parseWorldValid(input.valid),
+      knownAt = parseWorldKnownAt(input.knownAt);
+    if (query === null || valid === null || knownAt === null)
+      throw new WorldViewError();
+    if (knownAt.kind !== "current") return unavailable(op.name, "history");
+    if (!tableExists(ctx.db, "world_authorization_namespaces"))
+      return unavailable(op.name, "storage");
+    // A nested transaction is a savepoint: failed/budgeted projections issue no refs.
+    return ctx.db
+      .transaction(() =>
+        present(
+          op,
+          op.run({ ctx, ns: worldNamespace(ctx.db, principal) }, query, {
+            valid,
+            knownAt,
+          }),
+        ),
+      )
+      .immediate();
   } catch (error) {
     if (error instanceof WorldProjectionBudgetError)
       return unavailable(op.name, "budget");

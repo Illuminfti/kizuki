@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, queryServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline, readWorldView } from '@kizuki/core';
 import type { Connector, SourceGrantPolicy, ServeContext } from '@kizuki/core';
+import { activeWorldOps, worldOpInputKeys } from '@kizuki/core/world';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
 import { inspectXApiState } from '@kizuki/connectors';
@@ -37,8 +38,7 @@ class AppFailure extends Error {
 class AppOperationFailure extends AppFailure {
     constructor(code: string, readonly result: AppOperation['result']) { super(code); }
 }
-const ROUTES: Record<AppRoute, readonly string[]> = {
-    world_view: ['operation', 'label', 'cursor', 'valid', 'knownAt', 'concept', 'situation'],
+const ROUTES: Record<Exclude<AppRoute, 'world_view'>, readonly string[]> = {
     status: [], catalog: [], initialize: ['path', 'no_service'], service_status: [], install_service: [], sources: [], enroll: ['provider', 'path', 'fields', 'calendar_id', 'source_key', 'new_source'],
     consent: ['source_key', 'expected_revision', 'operation_id', 'policy'], capture: ['source_key', 'mode'], query: ['text', 'limit'], activity: ['limit'], undo: ['receipt_id', 'cascade'], operation: ['id'],
     revoke: ['source_key', 'expected_revision', 'operation_id'], resume_revocation: ['source_key', 'operation_id'],
@@ -47,6 +47,15 @@ const ROUTES: Record<AppRoute, readonly string[]> = {
     agents: [], agent_enroll: ['name', 'grant', 'operation_id'], agent_revoke: ['name'],
     correction_targets: ['page_id'], correction_preview: ['claim_id', 'target', 'statement', 'object'], correct: ['claim_id', 'target', 'statement', 'object'],
 };
+/** A world_view request may carry any key a registered operation accepts; the shared reader then holds it to that operation's own keys. */
+export function appWorldRouteKeys(): readonly string[] {
+    return [...new Set(activeWorldOps().flatMap(worldOpInputKeys))];
+}
+function routeKeys(route: string): readonly string[] | undefined {
+    if (route === 'world_view')
+        return appWorldRouteKeys();
+    return Object.hasOwn(ROUTES, route) ? ROUTES[route as Exclude<AppRoute, 'world_view'>] : undefined;
+}
 function object(value: unknown): Record<string, unknown> { if (value === null || typeof value !== 'object' || Array.isArray(value))
     throw new AppFailure('invalid_request'); return value as Record<string, unknown>; }
 function string(value: unknown, max = 4096): string { if (typeof value !== 'string' || !value.trim() || value.length > max || /[\x00-\x1f\x7f]/.test(value))
@@ -526,10 +535,11 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                 if (closed)
                     throw new AppFailure('unavailable');
                 const route = new URL(request.url).pathname.slice('/app/v1/'.length);
-                if (!Object.hasOwn(ROUTES, route))
+                const keys = routeKeys(route);
+                if (keys === undefined)
                     throw new AppFailure('invalid_request');
                 const input = object(await request.json());
-                if (Object.keys(input).some(key => !ROUTES[route as AppRoute].includes(key)))
+                if (Object.keys(input).some(key => !keys.includes(key)))
                     throw new AppFailure('invalid_request');
                 deps.onRequest?.();
                 return Response.json({ ok: true, data: await execute(route as AppRoute, input) });

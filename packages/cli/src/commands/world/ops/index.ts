@@ -1,4 +1,5 @@
 import { conceptCli } from "./concept";
+import { describeCli } from "./describe";
 import { discoverCli } from "./discover";
 import { situationCli } from "./situation";
 import type { WorldCliEntry } from "./types";
@@ -11,6 +12,7 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   { name: "find_situations", cli: discoverCli },
   { name: "concept", cli: conceptCli },
   { name: "situation", cli: situationCli },
+  { name: "describe", cli: describeCli },
   // slot: CARD
   // slot: KNOWN
   // slot: VIEW
