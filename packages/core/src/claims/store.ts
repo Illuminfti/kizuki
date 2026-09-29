@@ -36,6 +36,7 @@ import {
 import {
   claimsConflict,
   resolveConflict,
+  validityOverlaps,
   type ConflictClaim,
   type ConflictRule,
 } from "./conflict";
@@ -553,7 +554,7 @@ function structuralMatch(incoming: Claim, live: Claim): boolean {
   }
   if (incoming.polarity !== live.polarity) return false;
   if (!objectsMatch(incoming.object, live.object)) return false;
-  return true;
+  return validityOverlaps(incoming, live);
 }
 
 function corroborate(db: Database, live: Claim, incoming: Claim, at: string): Claim {
