@@ -231,8 +231,20 @@ and the fix: a source without the purpose gets the `connect grant` command with
 its current revision, and a revoked source with its purge pending gets the
 `connect resume-revocation` command. To make export work, add `"export"` to the
 purposes of each named source and grant the edited policy at that revision.
-Export never widens a grant by itself, and a backup that must not depend on
-grants is the file-level copy in the [upgrade runbook](upgrade.md).
+Export never widens a grant by itself. Export ignores a disconnected source
+that holds no exported event, whatever its grant state, and a purged grant never
+blocks it. A source that holds events still needs the purpose or its purge.
+Consent outlives the connection: `connect status`, `grant`, `revoke` and
+`resume-revocation` work on a disconnected source, so its consent can be
+inspected, widened for a backup or revoked without reconnecting it.
+
+`kizuki backup` does not ask for the `export` purpose. The `export` purpose
+governs a portable bundle that another consumer can read, and the source grant
+already fixes what the vault may retain. A snapshot is not portable: only
+`kizuki restore` reads it, it restores into the owner's custody and it holds
+nothing the vault does not already hold under its retention. It still refuses
+while a revocation is purging, because a second physical copy of a payload the
+owner has revoked would outlive the purge, which erases only the live vault.
 
 ```bash
 kizuki connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id grant-1
@@ -776,6 +788,39 @@ The same scope check runs again inside the deletion transaction.
 for incomplete scope. `--source` is a subject qualifier, not a source-wide
 purge command. `--subject` cannot be combined with `--event` or `--record`.
 
+## backup
+
+```text
+usage: kizuki backup --out DIR [--wait SECONDS]
+```
+
+Snapshots a live vault into an empty directory, safe while the service runs.
+It takes the canon writer, so no canon write is in flight, and waits (default
+30 seconds, `--wait 0` to refuse at once) while another process holds the
+writer or a crashed canon write is still pending; a pending write is finished
+by the service or `kizuki recover`. It then takes an SQLite snapshot of the
+ledger, copies canon pages, their archived revisions and the receipt stream,
+checks that the stream and the ledger's receipts agree, and writes
+`kizuki.snapshot/v1` with a SHA-256 for every file. A directory that is
+missing its manifest is unfinished and unusable. The destination must be empty
+and outside the vault.
+
+The snapshot holds ledger content, so keep it as private as the vault. It
+carries no credential: agent enrollments and token hashes, connector state,
+credential references and secret files are left out of the copied ledger.
+
+A snapshot is not a copy of the whole directory. It carries receipted canon
+pages, their archived revisions and the receipt stream. Pages that no receipt
+covers, other files, and hidden entries such as `.kizuki/serve.toml` (the model,
+port and extraction settings) are not in it. The manifest records how many
+entries it left out (`excluded_entries`) and lists the limits, and `backup` and
+`restore` print a `warning=` line when any were skipped. Keep your own copy of
+`serve.toml` and any pages outside canon. It is restore-only and needs no `export` purpose, but
+refuses while a source revocation is purging; see [Source
+consent](#source-consent). Unlike a file-level copy of a running vault, it
+cannot capture a half-finished canon write, which a copy refuses to recover.
+Use `export` for a portable bundle another consumer reads.
+
 ## export
 
 ```text
@@ -795,10 +840,20 @@ Every enrolled source must grant the `export` purpose first; see
 usage: kizuki restore --from DIR [--into DIR] [--verify]
 ```
 
-Verifies a `kizuki.backup/v3` directory and accepts `kizuki.backup/v1` and
-`kizuki.backup/v2` as legacy restore inputs. With `--into` it restores into an
-empty target after that verification. `--from DIR` alone, or with `--verify`,
-checks hashes and completeness without writing.
+Verifies a `kizuki.backup/v3` export or a `kizuki.snapshot/v1` snapshot and
+accepts `kizuki.backup/v1` and `kizuki.backup/v2` as legacy restore inputs.
+With `--into` it restores into an empty target after that verification.
+`--from DIR` alone, or with `--verify`, checks hashes and completeness without
+writing.
+
+A snapshot restore also checks that every receipted page holds bytes one of its
+receipts produced and fails when doctor finds an invalid page. A restored vault
+recreates its receipt journal, so `kizuki doctor` reports no orphans, and it
+accepts canon writes. Restore prints `reenroll_agents=`: no
+backup carries a credential, so every agent enrolls again with `kizuki agent
+add`. A snapshot names each agent it was taken with (`reenroll_agent=NAME`); an
+export does not record agent names and prints `unknown`. Restored connections
+are disconnected; reconnect each source.
 
 Current backups include the bounded deferred-input queue and any one pending
 model decision, so a restore can resume without sending the source text to the

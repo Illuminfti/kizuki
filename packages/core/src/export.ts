@@ -5,7 +5,7 @@ export type { PortableLocalAdapter } from "./portable-local";
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
 import { canonReadGeneration, inspectCanonRecovery } from "./canon/write-intent";
 import { isRfc3339 } from "./util/time";
-import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed } from "./ledger/source-grants";
+import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed, type SourceGrant } from "./ledger/source-grants";
 import { Database, constants as SQLITE_CONSTANTS } from "bun:sqlite";
 import { openOwnedDirectory, OwnedDirectoryPublicationError, type OwnedDirectory, type OwnedDirectoryIdentity } from "./util/owned-directory";
 import {
@@ -42,6 +42,7 @@ import {
   worldReceiptChain,
 } from "./canon/receipts";
 import { restoreCanonReceipts } from "./canon/restore";
+import { rebuildReceiptJournal } from "./canon/receipt-journal";
 import { isWorldCanonReceipt } from "./canon/world-receipt";
 import { assertWorldCanonPage, assertWorldReceiptBasis } from "./canon/world-materialization";
 import { canonicalJson } from "./util/hash";
@@ -1734,7 +1735,8 @@ export function exportVault(
   assertExportTransactionAvailable(db);
   // Preserve early recovery refusals before callbacks, path access or staging.
   // Authoritative admission is repeated inside both owned transactions below.
-  assertSourceExport(db); assertNoPendingPurgeExport(db);
+  const sourceGrants: SourceGrantCache = { epoch: 0, grants: new Map() };
+  assertSourceExport(db, sourceGrants); assertNoPendingPurgeExport(db);
   assertSeparated(target.vault_path, destination);
   const source = openExportSource(db, target.vault_path);
   const publication: { synced: boolean; error: OwnedDirectoryPublicationError | null } = { synced: false, error: null };
@@ -1743,7 +1745,7 @@ export function exportVault(
   let failure: unknown;
   try {
     result = withVaultMutationSync(target, scope => {
-      try { return exportVaultOwned(scope, target, destination, captured, source, publication); }
+      try { return exportVaultOwned(scope, target, destination, captured, source, publication, sourceGrants); }
       finally { source.close(); }
     });
   } catch (error) { failed = true; failure = error; }
@@ -1771,6 +1773,7 @@ function exportVaultOwned(
   options: Readonly<ExportOptions>,
   source: ExportSource,
   publication: { synced: boolean; error: OwnedDirectoryPublicationError | null },
+  sourceGrants: SourceGrantCache,
 ): ExportManifest {
   assertVaultMutationScope(scope, target);
   const { db, vault_path: vaultPath } = target;
@@ -1808,7 +1811,7 @@ function exportVaultOwned(
       // A listener may leave a transaction open; never inherit it as a savepoint.
       assertExportTransactionAvailable(db);
       assertCanonUnchanged();
-      assertSourceExport(db);
+      assertSourceExport(db, sourceGrants);
       throwIfAborted(options.signal);
       source.assertCurrent(); staged!.assertCurrent(); directory.assertCurrent();
     };
@@ -1817,7 +1820,7 @@ function exportVaultOwned(
     if (options.onProgress !== undefined) {
       assertExportTransactionAvailable(db);
       preview = db.transaction(() => {
-        source.assertCurrent(); assertSourceExport(db); assertNoPendingPurgeExport(db);
+        source.assertCurrent(); assertSourceExport(db, sourceGrants); assertNoPendingPurgeExport(db);
         return { bytes: Buffer.from(`${JSON.stringify(vaultInventory(db, vaultPath), null, 2)}\n`), epoch: sourcePolicyEpoch(db) };
       }).immediate();
       writePrivateFile(join(staging, EXPORT_INVENTORY), preview.bytes);
@@ -1828,7 +1831,7 @@ function exportVaultOwned(
     const capture = db.transaction(() => {
       source.assertCurrent(); staged!.assertCurrent();
       throwIfAborted(options.signal);
-      assertSourceExport(db); assertNoPendingPurgeExport(db);
+      assertSourceExport(db, sourceGrants); assertNoPendingPurgeExport(db);
       portable = capturePortableLocal(db, vaultPath, options.portableLocal);
       const sourceEpoch = sourcePolicyEpoch(db);
       if (preview !== undefined && preview.epoch !== sourceEpoch) throw new Error("source authorization changed during export");
@@ -1926,7 +1929,7 @@ function exportVaultOwned(
         throw new Error("export event stream drifted from the snapshot");
       }
       source.assertCurrent();
-      assertSourceExport(db); assertNoPendingPurgeExport(db);
+      assertSourceExport(db, sourceGrants); assertNoPendingPurgeExport(db);
       assertCanonUnchanged();
       if (sourcePolicyEpoch(db) !== sourceEpoch) throw new Error("source authorization changed during export");
       const manifest = signManifest({
@@ -1955,7 +1958,7 @@ function exportVaultOwned(
       if (!manifestContent.equals(stagedManifest)) throw new Error("export staged manifest changed");
       throwIfAborted(options.signal);
       source.assertCurrent();
-      assertSourceExport(db); assertNoPendingPurgeExport(db);
+      assertSourceExport(db, sourceGrants); assertNoPendingPurgeExport(db);
       assertCanonUnchanged();
       if (sourcePolicyEpoch(db) !== capture.sourceEpoch) throw new Error("source authorization changed during export");
       if (ledgerSchemaVersion(db) !== manifest.schema_versions.ledger || sqliteSchemaCookie(db) !== capture.schemaCookie) throw new Error("export schema identity changed");
@@ -3033,6 +3036,7 @@ export function restoreVault(
       restoredState = restorePortableLocal(db, staging, portable?.records ?? [], adapter);
       rebuildDerived(db, staging);
       rebuildPageIndex({ db, vault_path: staging });
+      rebuildReceiptJournal(db, staging);
       const rebuildResult: unknown = rebuildHost?.(db, staging);
       if (rebuildResult instanceof Promise) throw new Error("restore rebuild must be synchronous");
       if (db.inTransaction) throw new Error("restore rebuild left a transaction open");
@@ -3373,15 +3377,33 @@ function sourceErasedClaimRow(db: Database, row: SourceExportClaimRow, managed: 
     );
 }
 
-function assertSourceExport(db: Database): void {
+/** A disconnected source whose events are not in the ledger has nothing to export, so its grant cannot block a backup. */
+function sourceHoldsNoExportableEvent(db: Database, sourceKey: string): boolean {
+  return db.query("SELECT 1 FROM connections WHERE source_key=? LIMIT 1").get(sourceKey) !== null &&
+    db.query("SELECT 1 FROM connections WHERE source_key=? AND disconnected_at IS NULL LIMIT 1").get(sourceKey) === null &&
+    db.query("SELECT 1 FROM source_event_bindings b JOIN events e ON e.event_id=b.event_id WHERE b.source_key=? LIMIT 1").get(sourceKey) === null;
+}
+
+/** Grant inspections for one export; every grant change advances the policy epoch, which drops them. */
+interface SourceGrantCache { epoch: number; grants: Map<string, SourceGrant | null> }
+
+function assertSourceExport(db: Database, cache: SourceGrantCache = { epoch: 0, grants: new Map() }): void {
   const recovery = inspectCanonRecovery(db);
   if (recovery.pending || recovery.projection_pending > 0) throw new Error("canon_recovery_pending");
   assertSourceInventoryIdentityErasure(db);
   if (db.query("SELECT 1 FROM canon_source_erasure_intents LIMIT 1").get() !== null) throw new Error("source_erasure_recovery_pending");
-  if (sourcePolicyEpoch(db) === 0) return;
+  const epoch = sourcePolicyEpoch(db);
+  if (epoch === 0) return;
+  // One inspection per source key: the grant report walks erasure and store state, so it must not run per claim or event.
+  if (cache.epoch !== epoch) { cache.epoch = epoch; cache.grants.clear(); }
+  const grantOf = (sourceKey: string): SourceGrant | null => {
+    if (!cache.grants.has(sourceKey)) cache.grants.set(sourceKey, inspectSourceGrant(db, sourceKey));
+    return cache.grants.get(sourceKey)!;
+  };
   const refusals: string[] = [];
   for (const row of db.query<{ source_key: string }, []>("SELECT source_key FROM source_grants").iterate()) {
-    const grant = inspectSourceGrant(db, row.source_key)!;
+    if (sourceHoldsNoExportableEvent(db, row.source_key)) continue;
+    const grant = grantOf(row.source_key)!;
     if (grant.status === "denied") {
       refusals.push(`source ${grant.source_key} is revoked and its purge is pending; finish it with kizuki connect resume-revocation --source ${grant.source_key} --operation-id ${grant.revoke_operation ?? "REVOKE_OPERATION"}`);
     } else if (grant.status === "active" && !grant.policy.purposes.includes("export")) {
@@ -3396,15 +3418,17 @@ function assertSourceExport(db: Database): void {
   // A native correction can supersede a source claim that later gets erased.
   // The historical row keeps its relationship status and opaque identifier,
   // but only a complete source-erasure tombstone is safe to export without
-  // reauthorizing its now-missing source event.
+  // reauthorizing its now-missing source event. Every other claim must still
+  // have its source events; whether each event may be exported is decided once,
+  // in the event pass below.
   for (const row of db.query<SourceExportClaimRow, []>("SELECT claim_id,provenance,body,frontmatter,subjects,producer,claim_key,object,target,subject,predicate,model_ref FROM claims").iterate()) {
     const ids = JSON.parse(row.provenance) as string[];
     const managed = ids.filter(id => db.query("SELECT 1 FROM source_event_bindings WHERE event_id=?").get(id) !== null);
     if (sourceErasedClaimRow(db, row, managed)) continue;
-    if (!sourceEventsAllowed(db, managed, { owner: true, purpose: "export" })) throw new Error("source_export_denied");
+    if (managed.some(id => db.query("SELECT 1 FROM events WHERE event_id=?").get(id) === null)) throw new Error("source_export_denied");
   }
   for (const row of db.query<{ event_id: string }, []>("SELECT event_id FROM source_event_bindings WHERE event_id IN (SELECT event_id FROM events)").iterate()) {
-    if (!sourceEventsAllowed(db, [row.event_id], { owner: true, purpose: "export" })) throw new Error("source_export_denied");
+    if (!sourceEventsAllowed(db, [row.event_id], { owner: true, purpose: "export", grantOf })) throw new Error("source_export_denied");
   }
 }
 function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManifest, capturedGrants?: readonly Record<string, unknown>[]): void {
@@ -3450,3 +3474,7 @@ function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManif
     if (grant === null || row.grant_revision < 1 || row.grant_revision > grant.revision || (row.connector_id !== null && row.connector_id !== grant.connector_id)) throw new Error("backup source binding mismatch");
   }
 }
+
+// Building blocks the owner-local snapshot in ./snapshot shares with export, so both use one copy of the
+// hashed-copy, destination and inventory rules.
+export { assertNoPendingPurgeExport, assertSeparated, assertTypedCanonReceipts, sourceHoldsNoExportableEvent, validateRestoredEventOrigins, copyHashed, fsyncDirectory, hashFile, mkdirPrivate, pathUnder, prepareDestination, splitBackupPath, vaultInventory, writePrivateFile };

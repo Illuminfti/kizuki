@@ -84,7 +84,8 @@ Recovery and source withdrawal both check the saved receipt checkpoint's
 custody before any stage or page action. A vault copied or restored at file
 level while a write was pending refuses with `receipt_stream_changed` and
 changes nothing; recover at the original location, or restore from
-`kizuki export`, which refuses while recovery is pending.
+`kizuki export`, which refuses while recovery is pending. `kizuki backup`
+waits for a pending write to finish, so a snapshot never captures one.
 
 Recovery can inspect an exact existing archive as input; it cannot adopt or
 overwrite that archive. Historical unrecorded pages cannot acquire a synthetic
