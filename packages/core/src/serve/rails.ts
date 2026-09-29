@@ -56,6 +56,12 @@ interface RailHooksBase {
   readonly claims?: ClaimsIo;
   readonly model_ref?: string | null;
   readonly embedding_backlog?: number;
+  /**
+   * True when the vault configures an embedding port. The host sets it from
+   * the same configuration `kizuki doctor` reads, so the sweep judges
+   * `embed-backfill` by the rule the report does.
+   */
+  readonly embedding_configured?: boolean;
 }
 
 export interface RailHooks extends RailHooksBase {
@@ -347,8 +353,10 @@ async function runDoctorSweep(
   const doctor = inspectServeDoctor(db, vaultPath, {
     now,
     host_checks: false,
+    // The sweep runs inside the daemon's event loop and reads no page fields.
+    page_walk: false,
     model_ref: hooks?.model_ref ?? null,
-    embedding_configured: hooks?.embedding_backlog !== undefined,
+    embedding_configured: hooks?.embedding_configured === true,
   });
   const errors = [
     ...(health.ok ? [] : ["purge-unhealthy"]),

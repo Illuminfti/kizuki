@@ -7,6 +7,7 @@ import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { SINGLE_SOURCE_CAP } from "../claims/authority";
 import { countPendingRetrievalOps } from "../claims/store";
 import { readDerivedMeta } from "../derived-meta";
+import { readDerivedHolds } from "../derived-holds";
 import { inspectConnectionStateRecovery } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
 import { tableExists } from "../ledger/schema";
@@ -36,11 +37,13 @@ import {
   type CalibrationBandsReason,
   type CalibrationDoctor,
   type ModelDoctor,
+  type RailId,
   type RunReceipt,
   type ServeConfig,
   type ServeDoctorReport,
   type ServeIntent,
   type StoreDoctor,
+  type TopFailure,
   type SupervisorLastExit,
   type ThroughputDoctor,
   type OversizedDoctor,
@@ -61,6 +64,13 @@ export interface ServeDoctorOptions {
   readonly configured_model_ref?: string | null;
   /** True when an embedding port is configured; only then does embed-backfill have work to judge. */
   readonly embedding_configured?: boolean;
+  /**
+   * False skips the walk of every canon page. The walk parses each page, so a
+   * caller inside the daemon's event loop or one that reads a single field
+   * turns it off; the skipped-page and origin fields are then empty. Defaults
+   * to true.
+   */
+  readonly page_walk?: boolean;
   /**
    * False when the caller runs inside the service: its supervisor, intent and
    * liveness are the service's own to know, so they are neither checked nor a
@@ -429,9 +439,11 @@ function storeDoctor(
     degraded.push("retrieval-ops-stale");
   }
   if (!purge.ok) degraded.push("purge-unhealthy");
-  // Skipped documents are what make an index degraded; a stamp that says so
-  // after the last of them was fixed is stale, and the list below is empty.
-  if (pages.skipped.length > 0) degraded.push("index-degraded");
+  // Skipped and held documents are what make an index degraded; a stamp that
+  // says so after the last of them was fixed is stale, and both are empty.
+  const held = readDerivedHolds(db).paths.size;
+  if (pages.skipped.length > 0 || held > 0) degraded.push("index-degraded");
+  if (pages.truncated) degraded.push("canon-walk-truncated");
   const search = readDerivedMeta(db, "search");
   const graph = readDerivedMeta(db, "graph");
   return {
@@ -458,6 +470,8 @@ function storeDoctor(
     },
     skipped_pages: pages.skipped.slice(0, DOCTOR_SKIPPED_PAGES).map((page) => ({ path: page.relPath, reason: page.code })),
     skipped_pages_total: pages.skipped.length,
+    held_pages: held,
+    pages_truncated: pages.truncated,
     writers: countWriterRoles(db),
     origin: countOriginPages(pages),
     degraded,
@@ -528,26 +542,32 @@ export function inspectServeDoctor(
   const skipped = syncReceipts.reduce((sum, receipt) => sum + (receipt.records_skipped ?? 0), 0);
   const throughput = throughputDoctor(config, schedules.get("sync")?.period_s ?? config.sync_period_s, skipped);
   const oversized = oversizedDoctor(db);
-  const pages = listCanonPagesReport(vaultPath);
+  const pages: CanonPageReport =
+    options.page_walk === false
+      ? { pages: [], skipped: [], truncated: false }
+      : listCanonPagesReport(vaultPath);
   const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
   const cal = calibration(db, syncReceipts, now);
   const extraction = extractionDoctor(db, syncReceipts, model.canon_writing !== "off");
   const { egress, failures: egressFailures } = egressDoctor(db);
-  const failures: string[] = [];
-  if (model.current_failure !== null) failures.push(`${model.current_failure.detail} (at ${model.current_failure.at})`);
-  if (model.history_unverified) failures.push("model history unverified; the latest current-model attempt cannot be established from retained receipts");
-  if (hostChecks && intent === "unknown") failures.push("service intent unavailable or invalid");
+  const found: { text: string; top: TopFailure }[] = [];
+  const fail = (text: string, kind: TopFailure["kind"] = "other", rail: RailId | null = null): void => {
+    found.push({ text, top: { kind, rail } });
+  };
+  if (model.current_failure !== null) fail(`${model.current_failure.detail} (at ${model.current_failure.at})`, "model");
+  if (model.history_unverified) fail("model history unverified; the latest current-model attempt cannot be established from retained receipts");
+  if (hostChecks && intent === "unknown") fail("service intent unavailable or invalid", "service");
   else if (hostChecks && intent !== "installed" && (supervisor.enabled || supervisor.state === "active")) {
-    failures.push("supervisor active or enabled without installed intent");
+    fail("supervisor active or enabled without installed intent", "service");
   }
   if (hostChecks) {
     try {
-      if (serviceFile(join(vaultPath, ".kizuki", "service-change.json")) !== null) failures.push("service change recovery pending");
-    } catch { failures.push("service recovery state unavailable"); }
+      if (serviceFile(join(vaultPath, ".kizuki", "service-change.json")) !== null) fail("service change recovery pending", "service");
+    } catch { fail("service recovery state unavailable", "service"); }
   }
   let supervisorExit: SupervisorLastExit | null = null;
   if (hostChecks && intent === "installed" && (supervisor.state !== "active" || !supervisor.enabled)) {
-    failures.push(`supervisor ${supervisor.state}${supervisor.state === "active" ? " but not enabled" : ""}`);
+    fail(`supervisor ${supervisor.state}${supervisor.state === "active" ? " but not enabled" : ""}`, "service");
     // The unit's own last exit decides the command that restarts it.
     if (supervisor.state !== "active" && options.supervisor?.lastExit !== undefined) {
       try { supervisorExit = options.supervisor.lastExit(ensureVaultId(vaultPath)); } catch { supervisorExit = null; }
@@ -555,38 +575,40 @@ export function inspectServeDoctor(
   }
   for (const rail of rails) {
     if (rail.status === "down" && rail.reason !== null) {
-      failures.push(`rail ${rail.rail}: ${rail.reason}`);
+      fail(`rail ${rail.rail}: ${rail.reason}`, "rail", rail.rail);
     }
   }
-  failures.push(...cal.failures, ...egressFailures);
+  for (const text of [...cal.failures, ...egressFailures]) fail(text);
   if (stores.orphan_run_receipts.length > 0) {
-    failures.push(`orphan run receipts ${stores.orphan_run_receipts.length}`);
+    fail(`orphan run receipts ${stores.orphan_run_receipts.length}`);
   }
   try {
     const recovery = inspectConnectionStateRecovery(join(vaultPath, ".kizuki"));
     if (recovery.unresolved.length > 0) {
-      failures.push(`connection state journals unresolved ${recovery.unresolved.length}`);
+      fail(`connection state journals unresolved ${recovery.unresolved.length}`);
     }
     if (recovery.quarantined.length > 0) {
-      failures.push(`connection state journals quarantined ${recovery.quarantined.length}`);
+      fail(`connection state journals quarantined ${recovery.quarantined.length}`);
     }
   } catch {
-    failures.push("connection state recovery inspection unavailable");
+    fail("connection state recovery inspection unavailable");
   }
   for (const item of inspectConnections(db, { includeDisconnected: true })) {
     if (!item.ok) {
-      failures.push(`connection ${item.connector_id} unreadable`);
+      fail(`connection ${item.connector_id} unreadable`);
     }
   }
   for (const item of inspectCheckpoints(db)) {
     if (!item.ok) {
-      failures.push(`checkpoint ${item.connector_id} unreadable`);
+      fail(`checkpoint ${item.connector_id} unreadable`);
     }
   }
   if (stores.degraded.includes("retrieval-ops-stale")) {
-    failures.push("retrieval_ops older than SLA");
+    fail("retrieval_ops older than SLA");
   }
-  failures.push(...inspectPageIndex(db));
+  for (const text of inspectPageIndex(db)) fail(text);
+  const failures = found.map((item) => item.text);
+
 
   return {
     supervisor,
@@ -602,6 +624,7 @@ export function inspectServeDoctor(
     calibration: cal,
     ok: failures.length === 0,
     failures,
+    top_failure: found[0]?.top ?? null,
   };
 }
 

@@ -21,6 +21,7 @@ import { LedgerMigrationRequiredError, withVault } from "../context";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 import { serveSupervisorHost } from "../service-host";
+import { embeddingConfigured } from "../retrieval-runtime";
 import { configuredModelBinding, createServeRuntime, inspectModelBinding } from "../serve-runtime";
 import { runServiceCustodyBroker, startServiceCustody, ServiceCustodyError, type ServiceCustodyHandle } from "@kizuki/core/internal";
 import { custodyUnavailableMessage, launchServiceCustodyBroker, serviceStartupExit } from "../service-custody";
@@ -131,6 +132,7 @@ export const serveCommand: Command = {
           supervisor: host,
           model_ref: model?.model_ref ?? null,
           reasoning_effort: model?.reasoning_effort ?? null,
+          embedding_configured: embeddingConfigured(ctx.vaultPath),
           ...(configured === null ? {} : { configured_model_ref: configured.model_ref }),
         });
         const pid = readServePid(ctx.vaultPath);

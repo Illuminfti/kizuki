@@ -17,6 +17,7 @@ import {
 } from "../../src/serve/receipts";
 import { writeServeIntent } from "../../src/serve/intent";
 import {
+  DEFAULT_RAILS,
   DOCTOR_RAIL_RECEIPTS,
   DOCTOR_SKIPPED_PAGES,
   emptyRunTotals,
@@ -684,6 +685,225 @@ describe("egress and skipped pages", () => {
       path: "facts/broken-00.md",
       reason: expect.any(String),
     });
+    db.close();
+  });
+});
+
+describe("degraded runs that are making progress", () => {
+  const behind = ["derived-index-behind"];
+
+  test("a retrieval-sweep draining a large backlog in bounded passes stays healthy", () => {
+    const { path, db } = vault();
+    for (let n = 1; n <= 6; n += 1) {
+      persistRunReceipt(
+        db,
+        path,
+        run("retrieval-sweep", n, {
+          status: "degraded",
+          retrieval: {
+            upserts: 200,
+            removals: 0,
+            pending_ops: 4800 - n * 200,
+            degraded: behind,
+          },
+        }),
+      );
+    }
+    const sweep = railOf(
+      inspectServeDoctor(db, path, { now: minute(7), supervisor: host() }),
+      "retrieval-sweep",
+    );
+    expect(sweep.status).toBe("ok");
+    expect(sweep.degraded_streak).toBe(0);
+    db.close();
+  });
+
+  test("a shrinking pending count is progress even when no record was applied", () => {
+    const { path, db } = vault();
+    for (let n = 1; n <= 6; n += 1) {
+      persistRunReceipt(
+        db,
+        path,
+        run("retrieval-sweep", n, {
+          status: "degraded",
+          retrieval: { upserts: 0, removals: 0, pending_ops: 100 - n, degraded: behind },
+        }),
+      );
+    }
+    const sweep = railOf(
+      inspectServeDoctor(db, path, { now: minute(7), supervisor: host() }),
+      "retrieval-sweep",
+    );
+    expect(sweep.status).toBe("ok");
+    db.close();
+  });
+
+  test("a stuck retrieval-sweep is down and its reason names the degradation code", () => {
+    const { path, db } = vault();
+    const now = persistRuns(db, path, "retrieval-sweep", 6, {
+      status: "degraded",
+      errors: [],
+      retrieval: { upserts: 0, removals: 0, pending_ops: 4800, degraded: behind },
+    });
+    const sweep = railOf(
+      inspectServeDoctor(db, path, { now, supervisor: host() }),
+      "retrieval-sweep",
+    );
+    expect(sweep.status).toBe("down");
+    expect(sweep.reason).toContain("last 6 runs ended degraded");
+    expect(sweep.reason).toContain("derived-index-behind");
+    db.close();
+  });
+
+  test("embed-backfill and purge-sweep name what they report in retrieval.degraded", () => {
+    const { path, db } = vault();
+    persistRuns(db, path, "embed-backfill", 5, {
+      status: "degraded",
+      retrieval: { upserts: 0, removals: 0, pending_ops: 7, degraded: ["embedding-unavailable"] },
+    });
+    const now = persistRuns(db, path, "purge-sweep", 5, {
+      status: "degraded",
+      retrieval: { upserts: 0, removals: 0, pending_ops: 2, degraded: ["purge-ops-pending"] },
+    });
+    const report = inspectServeDoctor(db, path, { now, supervisor: host() });
+    expect(railOf(report, "embed-backfill").reason).toContain("embedding-unavailable");
+    expect(railOf(report, "purge-sweep").reason).toContain("purge-ops-pending");
+    db.close();
+  });
+
+  test("degraded runs from a service nobody expects to run are not a current failure", () => {
+    const { path, db } = vault();
+    persistRuns(db, path, "sync", 5, { status: "degraded", errors: ["model unavailable"] });
+    const later = new Date(Date.parse(minute(6)) + 3 * 86_400_000).toISOString();
+    const abandoned = railOf(inspectServeDoctor(db, path, { now: later }), "sync");
+    expect(abandoned.status).toBe("ok");
+    const fresh = railOf(inspectServeDoctor(db, path, { now: minute(6) }), "sync");
+    expect(fresh.status).toBe("down");
+    expect(fresh.reason).toContain("model unavailable");
+    db.close();
+  });
+});
+
+describe("extraction progress is not an empty run", () => {
+  test.each([
+    ["claims that all deduplicated", { claims_deduped: 2 }],
+    ["drafts extracted and not yet written", { claims_extracted: 3 }],
+    ["records skipped as too large", { records_skipped: 1 }],
+  ] as const)("%s shrink the backlog", (_name, progress) => {
+    const { path, db } = vault();
+    capture(db, 4);
+    const now = persistRuns(db, path, "sync", 6, progress);
+    const sync = railOf(
+      inspectServeDoctor(db, path, {
+        now,
+        supervisor: host(),
+        configured_model_ref: CONFIGURED,
+      }),
+      "sync",
+    );
+    expect(sync.status).toBe("ok");
+    expect(sync.empty_streak).toBe(0);
+    db.close();
+  });
+});
+
+describe("the streak walk is bounded", () => {
+  test("a long stuck history reports at least the verdict and runs one unwritten-claim scan", () => {
+    const { path, db } = vault();
+    capture(db, 2);
+    const now = persistRuns(db, path, "sync", 60);
+    const seen: string[] = [];
+    const spied = new Proxy(db, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target) as unknown;
+        if (property !== "query" || typeof value !== "function") return value;
+        return (sql: string) => {
+          seen.push(sql);
+          return (value as (text: string) => unknown).call(target, sql);
+        };
+      },
+    });
+    const report = inspectServeDoctor(spied, path, {
+      now,
+      supervisor: host(),
+      configured_model_ref: CONFIGURED,
+    });
+    const sync = railOf(report, "sync");
+    expect(sync.status).toBe("down");
+    expect(sync.empty_streak).toBe(10);
+    expect(sync.reason).toContain("empty streak 10+");
+    // One full count for the report, one scan for the oldest claim, none per run.
+    const scans = seen.filter((sql) => sql.includes("receipt_id IS NULL"));
+    expect(scans.length).toBeLessThanOrEqual(2);
+    db.close();
+  });
+});
+
+describe("doctor names its top failure as data", () => {
+  test("a failing rail is the top failure with its id, a healthy report has none", () => {
+    const { path, db } = vault();
+    for (const spec of DEFAULT_RAILS) persistRunReceipt(db, path, run(spec.rail, 1));
+    const healthy = inspectServeDoctor(db, path, { now: minute(2), supervisor: host() });
+    expect(healthy.failures).toEqual([]);
+    expect(healthy.top_failure).toBeNull();
+    const stale = inspectServeDoctor(db, path, {
+      now: new Date(Date.parse(minute(1)) + 4 * 86_400_000).toISOString(),
+      supervisor: host(),
+    });
+    expect(stale.failures[0]).toContain("rail ");
+    expect(stale.top_failure?.kind).toBe("rail");
+    expect(stale.top_failure?.rail).not.toBeNull();
+    db.close();
+  });
+
+  test("a failing model attempt is the top failure of kind model", () => {
+    const { path, db } = vault();
+    persistRunReceipt(
+      db,
+      path,
+      run("sync", 1, {
+        model: {
+          ...emptyRunTotals().model,
+          calls: 1,
+          model_ref: CONFIGURED,
+          last_request: "failed",
+          diagnostic: { stage: "response", rule: "response_truncated" },
+        },
+      }),
+    );
+    const found = inspectServeDoctor(db, path, {
+      now: minute(2),
+      supervisor: host(),
+      configured_model_ref: CONFIGURED,
+    });
+    expect(found.top_failure).toEqual({ kind: "model", rail: null });
+    db.close();
+  });
+});
+
+describe("index state and the page walk", () => {
+  test("a page held out of the index is index-degraded, and rebuild is not offered for it", () => {
+    const { path, db } = vault();
+    db.query(
+      "INSERT INTO canon_holds (page_path, proposal_id, reason, held_at) VALUES ('facts/held.md', 'p1', 'review', ?)",
+    ).run(minute(0));
+    const stores = report(db, path, minute(1)).stores;
+    expect(stores.held_pages).toBe(1);
+    expect(stores.skipped_pages_total).toBe(0);
+    expect(stores.degraded).toContain("index-degraded");
+    expect(stores.pages_truncated).toBe(false);
+    db.close();
+  });
+
+  test("the sweep and rebuild can skip the canon page walk", () => {
+    const { path, db } = vault();
+    mkdirSync(join(path, "facts"), { recursive: true });
+    writeFileSync(join(path, "facts", "broken.md"), "---\nnot: [valid\n---\nbody\n");
+    const walked = inspectServeDoctor(db, path, { now: minute(1), supervisor: host() });
+    expect(walked.stores.skipped_pages_total).toBe(1);
+    const skipped = inspectServeDoctor(db, path, { now: minute(1), supervisor: host(), page_walk: false });
+    expect(skipped.stores.skipped_pages_total).toBe(0);
+    expect(skipped.stores.pages_truncated).toBe(false);
     db.close();
   });
 });

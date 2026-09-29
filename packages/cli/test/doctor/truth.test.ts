@@ -182,95 +182,45 @@ describe("doctor tells the daemon's story from a shell without its secret", () =
 });
 
 describe("nextStep", () => {
-  const serve = (
-    failures: string[],
-    hint: string | null = null,
-    modelFailure: { detail: string; at: string } | null = null,
-  ) =>
+  type Top = { kind: "model" | "rail" | "service" | "other"; rail: string | null } | null;
+  const serve = (top: Top, hint: string | null = null) =>
     ({
-      failures,
+      // The hint reads the structured top failure, never the failure text.
+      failures: ["worded however the report words it"],
+      top_failure: top,
       extraction: { hint },
-      model: { current_failure: modelFailure },
     }) as never;
   const claims = [{ claim_id: "01JCLAIM" }];
+  const failed = (top: Top, hint: string | null = null) =>
+    nextStep({ ok: false, serve: serve(top, hint), live_claims: claims, filed_claims: [] });
 
   test("is the correction hint only when the report is ok", () => {
     expect(
-      nextStep({
-        ok: true,
-        serve: serve([]),
-        live_claims: claims,
-        filed_claims: [],
-      }),
+      nextStep({ ok: true, serve: serve(null), live_claims: claims, filed_claims: [] }),
     ).toBe('next: kizuki tell "<statement>" --claim 01JCLAIM');
     expect(
-      nextStep({
-        ok: true,
-        serve: serve([]),
-        live_claims: [],
-        filed_claims: [],
-      }),
+      nextStep({ ok: true, serve: serve(null), live_claims: [], filed_claims: [] }),
     ).toBeNull();
   });
 
-  test("follows the top failure when the report failed", () => {
-    const model = {
-      detail: "model response rejected: response truncated",
-      at: "2026-10-01T00:00:00.000Z",
-    };
-    const failures = [
-      `${model.detail} (at ${model.at})`,
-      "rail sync: last run failed",
-    ];
-    expect(
-      nextStep({
-        ok: false,
-        serve: serve(failures, "raise it", model),
-        live_claims: claims,
-        filed_claims: [],
-      }),
-    ).toContain("edit .kizuki/serve.toml");
-    expect(
-      nextStep({
-        ok: false,
-        serve: serve(failures, null, model),
-        live_claims: claims,
-        filed_claims: [],
-      }),
-    ).toContain("model endpoint");
-    expect(
-      nextStep({
-        ok: false,
-        serve: serve(["rail brief: stale 999s (period 86400s)"]),
-        live_claims: claims,
-        filed_claims: [],
-      }),
-    ).toContain("kizuki serve run brief");
-    expect(
-      nextStep({
-        ok: false,
-        serve: serve(["supervisor masked"]),
-        live_claims: claims,
-        filed_claims: [],
-      }),
-    ).toContain("serve-failure line");
-    expect(
-      nextStep({
-        ok: false,
-        serve: serve([]),
-        live_claims: claims,
-        filed_claims: [],
-      }),
-    ).toContain("fix the failure above");
-    for (const failing of [[], ["supervisor masked"], ["rail sync: x"]]) {
-      expect(
-        nextStep({
-          ok: false,
-          serve: serve(failing),
-          live_claims: claims,
-          filed_claims: [],
-        }),
-      ).not.toContain("tell");
+  test("follows the structured top failure when the report failed", () => {
+    expect(failed({ kind: "model", rail: null }, "raise it")).toContain("edit .kizuki/serve.toml");
+    expect(failed({ kind: "model", rail: null })).toContain("model endpoint");
+    expect(failed({ kind: "service", rail: null })).toContain("serve-failure line");
+    expect(failed({ kind: "other", rail: null })).toContain("fix the failure above");
+    expect(failed(null)).toContain("fix the failure above");
+  });
+
+  test("a down rail points at read-only diagnostics, never at running the rail", () => {
+    const step = failed({ kind: "rail", rail: "brief" });
+    expect(step).toContain("rail brief is down");
+    expect(step).toContain("kizuki serve status");
+    expect(step).not.toContain("serve run");
+  });
+
+  test("a failed report never suggests a correction", () => {
+    for (const top of [null, { kind: "service", rail: null }, { kind: "rail", rail: "sync" }, { kind: "model", rail: null }] as Top[]) {
+      expect(failed(top)).not.toContain("tell");
     }
   });
 });

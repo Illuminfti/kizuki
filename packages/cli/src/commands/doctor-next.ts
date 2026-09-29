@@ -25,16 +25,16 @@ export function nextStep(report: NextInput): string | null {
 }
 
 function failureStep(serve: ServeDoctor): string {
-  const top = serve.failures[0];
-  const modelFailure = serve.model.current_failure;
-  if (top !== undefined && modelFailure !== null && top === `${modelFailure.detail} (at ${modelFailure.at})`) {
+  const top = serve.top_failure;
+  if (top?.kind === "model") {
     return serve.extraction.hint === null
       ? "next: the model call is failing; check the model endpoint and credential named above. The daemon retries every sync pass; `kizuki serve status` shows the latest."
       : "next: edit .kizuki/serve.toml as the extraction line says; the next sync pass retries with the new setting.";
   }
-  const rail = top?.match(/^rail ([a-z-]+): /)?.[1];
-  if (rail !== undefined) return `next: kizuki serve run ${rail} --json shows what the rail does now; then run kizuki doctor again.`;
-  if (top?.startsWith("supervisor") || top?.startsWith("service")) {
+  if (top?.kind === "rail") {
+    return `next: rail ${top.rail} is down for the reason above; \`kizuki serve status\` shows the daemon's latest state (read-only). Fix the cause, then run kizuki doctor again.`;
+  }
+  if (top?.kind === "service") {
     return "next: follow the serve-failure line above to restore the service, then run kizuki doctor again.";
   }
   return "next: fix the failure above, then run kizuki doctor again.";

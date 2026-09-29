@@ -120,7 +120,7 @@ export const rebuildCommand: Command = {
           // Pricing a re-embed is the only reason to size the projection, and
           // sizing it reads the whole corpus. Do not pay that for a plain rebuild.
           const documents = (): number => countRetrievalDocuments(ctx.db, ctx.vaultPath, budget);
-          const throughputDocsPerS = inspectServeDoctor(ctx.db, ctx.vaultPath).stores.embedding_throughput_docs_per_s;
+          const throughputDocsPerS = inspectServeDoctor(ctx.db, ctx.vaultPath, { page_walk: false }).stores.embedding_throughput_docs_per_s;
           if (nextSpace !== null && nextSpace !== previousSpace) {
             const plan = planFullReembed({ previousSpace, nextSpace, documents: documents(), throughputDocsPerS });
             if (plan !== null && !confirm) throw new UsageError(formatReembedRefusal(plan));

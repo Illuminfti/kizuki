@@ -2103,8 +2103,10 @@ not a note:
 
 1. **Rails.** For each: last receipt age, expected period, status. A rail
    is **down** when `age > 2 × period + grace`, when the run status was
-   `failed`, when the last `EMPTY_STREAK = 5` runs produced nothing for a
-   rail that should produce, **or when the supervisor says the unit is
+   `failed`, when the last `EMPTY_STREAK = 5` runs had work waiting and produced
+   nothing, when the last `DEGRADED_STREAK = 5` runs ended degraded or stopped
+   without progress (`doctor-sweep` excepted: it reports other checks' failures
+   as its own degradation), **or when the supervisor says the unit is
    absent, disabled or masked**. Doctor queries the service manager
    directly (`systemctl --user is-enabled`, `launchctl print`). A
    deliberately disabled service reports `disabled by owner` — a distinct,
@@ -2114,7 +2116,10 @@ not a note:
 2. **Model and canon writing.** `canon writing: on (<model_ref>)` or
    `canon writing: off (no model configured — connectors, ledger, search,
 timeline and undo still work)`. Also the last successful model call, the
-   `unavailable` count, and budget consumption against limits.
+   `unavailable` count, and budget consumption against limits. A third
+   state, `canon writing: configured; daemon last_success=... last_failure=...
+   consecutive_failures=N`, is what a shell that cannot bind the model prints
+   from the daemon's run receipts; `unverified` means the daemon left none.
 3. **Stores.** Per port: id, contract, minor, health, `degraded[]`,
    `derived_meta` freshness per layer, embedding space and any mismatch,
    pending `retrieval_ops` and `purge_ops` with the oldest age, orphan

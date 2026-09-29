@@ -278,3 +278,23 @@ test("offline serve keeps the host retrieval capability bound for recovery sweep
     expect((await retrieval.health()).status).toBe("ready");
   } finally { await runtime.close(); await retrieval.close(); temporary.cleanup(); db.close(); }
 });
+
+test("the daemon's rail hooks carry the same embedding-configured fact doctor and serve status read", async () => {
+  const setup = tempVault();
+  const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  const open = () => createServeRuntime({ db, vaultPath: setup.vault,
+    store: new ConnectionStateStore(join(setup.vault, ".kizuki")), env: setup.env, err: () => {} });
+  try {
+    const none = await open();
+    expect(none.hooks.embedding_configured).toBe(false);
+    await none.close();
+    writeServeToml(setup.vault, '[ports]\nembedding = "kizuki.embedding.gguf"\n');
+    const gguf = await open();
+    expect(gguf.hooks.embedding_configured).toBe(true);
+    await gguf.close();
+    writeServeToml(setup.vault, '[ports]\nembedding = "kizuki.embedding.unknown"\n');
+    const unreadable = await open();
+    expect(unreadable.hooks.embedding_configured).toBe(false);
+    await unreadable.close();
+  } finally { db.close(); }
+});

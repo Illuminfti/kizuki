@@ -111,7 +111,7 @@ test("a failed source names its underlying reason in the sync receipt and in doc
   expect(connection.errors).toBe(1);
   expect(connection.last_error).toBe("kizuki.markdown-folder: cannot access configured root");
   const line = runCli(setup.env, "doctor").stdout.split("\n").find((text) => text.includes(`source=${key}`));
-  expect(line).toContain('errors=1 caught_up=no last_error="kizuki.markdown-folder: cannot access configured root"');
+  expect(line).toContain('errors=1 last_run_clean=no last_error="kizuki.markdown-folder: cannot access configured root"');
 });
 
 for (const args of [["sync", "--once"], ["serve", "run", "sync"]]) test(`${args.join(" ")} initializes the journal on an existing current-schema vault`, () => {

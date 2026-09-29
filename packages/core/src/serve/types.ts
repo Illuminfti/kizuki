@@ -412,6 +412,13 @@ export interface StoreDoctor {
   readonly skipped_pages: readonly { readonly path: string; readonly reason: string }[];
   /** Total skipped canon files, including those past the bound. */
   readonly skipped_pages_total: number;
+  /**
+   * Canon pages held out of the derived indexes by an open hold or an
+   * unfinished write. A rebuild does not clear them; finishing the write does.
+   */
+  readonly held_pages: number;
+  /** The canon walk hit its file or byte cap, so the skipped list may be short. */
+  readonly pages_truncated: boolean;
   readonly writers: {
     readonly loop: number;
     readonly correction: number;
@@ -471,6 +478,17 @@ export interface OversizedDoctor {
   readonly detail: string;
 }
 
+/**
+ * The failure the report leads with, as data: what a next-step hint switches
+ * on, so it never has to read the failure text. `rail` is set for a rail
+ * failure. `model` is a failing model attempt, `service` the supervisor,
+ * intent or recovery state.
+ */
+export interface TopFailure {
+  readonly kind: "model" | "rail" | "service" | "other";
+  readonly rail: RailId | null;
+}
+
 export interface ServeDoctorReport {
   readonly supervisor: SupervisorStatus;
   /** Read only for an installed unit that is not running; null otherwise. */
@@ -486,6 +504,8 @@ export interface ServeDoctorReport {
   readonly calibration: CalibrationDoctor;
   readonly ok: boolean;
   readonly failures: string[];
+  /** The kind of `failures[0]`; null when there is no failure. */
+  readonly top_failure: TopFailure | null;
 }
 
 export class InjectedCrash extends Error {

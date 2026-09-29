@@ -403,15 +403,22 @@ origin.
 
 A rail is judged by the work it has, not by whether its last runs changed
 anything. It is down when it never ran, went stale, last failed, ended its last
-five runs degraded or stopped, or ran five times in a row with work waiting and
-produced nothing. Work waiting means, for `sync`: events past the extract
+five runs degraded or stopped without making progress, or ran five times in a
+row with work waiting and produced nothing. Work waiting means, for `sync`: events past the extract
 cursor that a source with a model grant would send, live claims the writer has
 not written, and consented sources no run has reached (the first two only when
 a model is configured, because extraction and canon writing need one). For
 `retrieval-sweep` it means pending retrieval operations. For `embed-backfill`
 it is the backlog the rail reports on its own receipts, and only when an
 embedding port is configured. `brief`, `journal-prune`, `doctor-sweep` and
-`purge-sweep` run on a schedule and are judged by staleness and failure only.
+`purge-sweep` run on a schedule and are judged by staleness and failure only
+(a stale or failed run, or the degraded streak). The degraded or stopped
+streak applies to every rail except `doctor-sweep`, and only while the newest
+receipt is not stale. A degraded run that applied retrieval records or removals,
+or left fewer pending operations than the run before it, is a catch-up pass and
+does not count, and neither does a sync pass that extracted or deduplicated
+claims or skipped records: those shrink the backlog even when nothing new is
+filed. The reasons a rail reports in `retrieval.degraded` are named like errors.
 An idle rail is healthy however many runs changed nothing. The reason names the
 cause: the failed run's error, the error most of the degraded or stopped runs
 share, or the work that is waiting. The `doctor-sweep` rail records what
@@ -438,11 +445,16 @@ passes in a row were rejected as truncated, it adds the change to make: set
 endpoint host, the model and `retention=provider_managed`, which means the
 provider keeps sent text under its own policy. When canon files cannot be
 indexed, doctor prints `index-degraded` with the skipped paths (the first 16)
-and their total. Each connection shows `caught_up=yes|no`: the last run ended
-without an error and nothing was left to fetch, after a backfill or a sync.
-`--json` keeps `backfill_complete`, which only a finished backfill run sets,
-beside `caught_up`. The closing `next:` line follows from the top failure of a
-failed report. It suggests `kizuki tell` only when the report is ok.
+and their total; a canon page held out of the index by an open hold or write is
+listed as `index-degraded` too, and a truncated canon walk is said aloud. The
+`index-degraded` flag on query and context responses follows the derived stamp,
+so it stays until the next `kizuki rebuild`. Each connection shows
+`last_run_clean=yes|no`: the last run recorded no error. It does not say that
+nothing is left to fetch, because the checkpoint does not keep whether the
+source was exhausted. `--json` keeps `backfill_complete`, which only a finished
+backfill run sets, beside `last_run_clean`. The closing `next:` line follows from
+the structured top failure of a failed report and never suggests `kizuki tell`;
+for a down rail it points at `kizuki serve status`, which only reads.
 
 Doctor validates existing configuration and credentials without constructing a
 model runtime. Pending model or connection-state journals remain untouched and

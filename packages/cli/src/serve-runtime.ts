@@ -35,6 +35,7 @@ import { chatCompletionsUrl, parseOpenAiCompatibleConfig, parseSystemOneJevConfi
 import type { ReasoningEffort } from "@kizuki/llm";
 import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
 import { DERIVED_PASS_RECORDS, tryRefreshDerived } from "./derived";
+import { embeddingConfigured } from "./retrieval-runtime";
 import { tokenResolver } from "./secrets";
 import { loadSystemOneBinding } from "./vault-config";
 
@@ -319,6 +320,7 @@ export async function createServeRuntime(options: ServeRuntimeOptions): Promise<
   return {
     hooks: {
       model_ref: binding?.llm.model_ref ?? null,
+      embedding_configured: embeddingConfigured(options.vaultPath),
       ...(binding?.producer === undefined ? {} : { producer: binding.producer }),
       claims,
       sync: async () => {

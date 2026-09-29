@@ -31,6 +31,7 @@ import { withReadVault } from "../context";
 import type { ReadVaultContext } from "../context";
 import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
 import { clean, errorText, jsonEnvelope } from "../output";
+import { embeddingConfigured } from "../retrieval-runtime";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
 import { configuredModelBinding, inspectModelBinding, type ModelBindingSummary } from "../serve-runtime";
 import { serveSupervisorHost } from "../service-host";
@@ -55,8 +56,12 @@ interface DoctorConnection {
   last_error: string | null;
   /** A backfill run reached its end. Only a backfill run sets it, so a source that is only synced keeps it false. */
   backfill_complete: boolean;
-  /** The last run ended with no error and nothing left to fetch: after a backfill or a sync. */
-  caught_up: boolean;
+  /**
+   * The last run recorded no error. Not a claim about what is left upstream:
+   * the checkpoint keeps no cursor exhaustion, so a clean run says the source
+   * answered, not that it has nothing more to give.
+   */
+  last_run_clean: boolean;
   problem: string | null;
 }
 
@@ -303,8 +308,7 @@ async function collect(
       errors: checkpoint?.last_result.errors.length ?? 0,
       last_error: scrubDetail(checkpoint?.last_result.errors[0] ?? null),
       backfill_complete: checkpoint?.backfill_complete === true,
-      caught_up: checkpoint !== null && checkpoint.last_result.errors.length === 0 &&
-        (checkpoint.mode === "sync" || checkpoint.backfill_complete),
+      last_run_clean: checkpoint !== null && checkpoint.last_result.errors.length === 0,
     };
     if (host.state === null) {
       connections.push({
@@ -399,11 +403,8 @@ async function collect(
   }
 
   let effective: Record<string, unknown> = {};
-  let embeddingConfigured = false;
   try {
-    const vaultConfig = loadVaultConfig(vaultPath);
-    effective = effectiveVaultConfig(vaultConfig);
-    embeddingConfigured = vaultConfig.ports.embedding !== "kizuki.embedding.none";
+    effective = effectiveVaultConfig(loadVaultConfig(vaultPath));
   } catch (error) {
     problems.push({ page: "-", error: errorText(error) });
   }
@@ -433,7 +434,7 @@ async function collect(
     supervisor: host,
     model_ref: boundModel?.model_ref ?? null,
     reasoning_effort: boundModel?.reasoning_effort ?? null,
-    embedding_configured: embeddingConfigured,
+    embedding_configured: embeddingConfigured(vaultPath),
     ...(configuredModel === null ? {} : { configured_model_ref: configuredModel.model_ref }),
   });
   const ok =
@@ -514,12 +515,19 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     for (const page of stores.skipped_pages) io.out(`skipped ${clean(page.path)} (${page.reason})`);
     const hidden = stores.skipped_pages_total - stores.skipped_pages.length;
     if (hidden > 0) io.out(`skipped ... and ${hidden} more`);
-  } else {
+  }
+  if (stores.held_pages > 0) {
+    io.out(`index-degraded: ${stores.held_pages} canon page(s) are held out of the index by an open hold or write; kizuki rebuild does not clear them`);
+  }
+  if (stores.pages_truncated) {
+    io.out("canon walk truncated: the skipped-file list above may be incomplete");
+  }
+  if (stores.skipped_pages_total === 0 && stores.held_pages === 0) {
     // Incremental refreshes do not restamp a layer, so a fixed page leaves the old stamp behind.
     for (const layer of ["search", "graph"] as const) {
       const stamp = derived[layer];
       if (stamp.status !== null && stamp.status !== "ok" && stamp.skipped_count > 0) {
-        io.out(`derived ${layer} stamp is ${stamp.status} with ${stamp.skipped_count} skipped, but no canon file is skipped now; kizuki rebuild --layer ${layer} refreshes it`);
+        io.out(`derived ${layer} stamp is ${stamp.status} with ${stamp.skipped_count} skipped, but no canon file is skipped or held now; the stamp may be stale; kizuki rebuild --layer ${layer} re-evaluates it`);
       }
     }
   }
@@ -549,7 +557,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   }
   for (const item of report.connections) {
     const reason = item.last_error === null ? "" : ` last_error=${JSON.stringify(item.last_error)}`;
-    const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors} caught_up=${item.caught_up ? "yes" : "no"}${reason}`;
+    const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors} last_run_clean=${item.last_run_clean ? "yes" : "no"}${reason}`;
     io.out(item.problem === null ? line : `${line} ${item.problem}`);
   }
   io.out(`receipts=${report.receipts} orphans=${report.orphans.length}`);

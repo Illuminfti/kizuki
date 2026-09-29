@@ -46,18 +46,18 @@ function doctorConnection(env: Record<string, string | undefined>, flag?: "--jso
     : helpers.runCli(env, "doctor", "--json");
   if (flag === "--json") {
     const report = JSON.parse(result.stdout) as {
-      data: { connections: { backfill_complete: boolean; caught_up: boolean }[] };
+      data: { connections: { backfill_complete: boolean; last_run_clean: boolean }[] };
     };
     expect(report.data.connections).toHaveLength(1);
     return report.data.connections[0]!;
   }
-  const match = result.stdout.match(/caught_up=(yes|no)/);
+  const match = result.stdout.match(/last_run_clean=(yes|no)/);
   expect(match).not.toBeNull();
   expect(result.stdout).not.toContain("backfill_complete=");
   return match![1] === "yes";
 }
 
-test("doctor says a caught-up sync-only source is caught up, and keeps backfill completion as its own fact", () => {
+test("doctor says a clean sync-only source had a clean last run, and keeps backfill completion as its own fact", () => {
   const setup = helpers.tempVault();
   const connected = helpers.runCli(setup.env, "connect", "markdown-folder", "--source", setup.notes);
   expect(connected.exitCode, connected.stderr).toBe(0);
@@ -73,27 +73,27 @@ test("doctor says a caught-up sync-only source is caught up, and keeps backfill 
   );
   expect(granted.exitCode, granted.stderr).toBe(0);
 
-  // Never run: not caught up.
-  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: false, caught_up: false });
+  // Never run: not clean.
+  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: false, last_run_clean: false });
 
-  // Only ever synced, and clean: no backfill ever ran, yet nothing is left to fetch.
+  // Only ever synced, and clean: no backfill ever ran, and the last run recorded no error.
   const synced = helpers.runCli(setup.env, "sync", "markdown-folder");
   expect(synced.exitCode, synced.stderr).toBe(0);
   expect(checkpointFields(setup.vault).backfill_complete).toBe(false);
   expect(doctorConnection(setup.env)).toBe(true);
-  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: false, caught_up: true });
+  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: false, last_run_clean: true });
   const afterSync = checkpointFields(setup.vault);
-  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: false, caught_up: true });
+  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: false, last_run_clean: true });
   expect(checkpointFields(setup.vault)).toEqual(afterSync);
 
-  // A completed backfill is still reported, and a failed run is not caught up.
+  // A completed backfill is still reported, and a failed run is not clean.
   markBackfillComplete(setup.vault);
-  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: true, caught_up: true });
+  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: true, last_run_clean: true });
   chmodSync(setup.notes, 0);
   const failed = helpers.runCli(setup.env, "sync", "markdown-folder");
   chmodSync(setup.notes, 0o700);
   expect(failed.exitCode).not.toBe(0);
   expect(checkpointFields(setup.vault).backfill_complete).toBe(true);
   expect(doctorConnection(setup.env)).toBe(false);
-  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: true, caught_up: false });
+  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: true, last_run_clean: false });
 }, 120_000);

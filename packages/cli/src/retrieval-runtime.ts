@@ -46,6 +46,19 @@ export function loadConfiguredEmbedding(vaultPath: string): ConfiguredEmbedding 
   return { id: selection.id, config: selection.config };
 }
 
+/**
+ * Whether the vault configures an embedding port: the one fact doctor, `serve
+ * status` and the daemon's sweep share to decide if `embed-backfill` has work.
+ * An unreadable selection counts as not configured; rebuild names the refusal.
+ */
+export function embeddingConfigured(vaultPath: string): boolean {
+  try {
+    return loadConfiguredEmbedding(vaultPath).id !== "kizuki.embedding.none";
+  } catch {
+    return false;
+  }
+}
+
 export async function openConfiguredEmbedding(vaultPath: string): Promise<EmbeddingPort | undefined> {
   const configured = loadConfiguredEmbedding(vaultPath);
   if (configured.id === "kizuki.embedding.none") return undefined;

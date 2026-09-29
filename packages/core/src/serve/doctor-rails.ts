@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { countUnwrittenLiveClaims } from "../claims/store";
+import { countUnwrittenLiveClaims, oldestUnwrittenLiveClaimAt } from "../claims/store";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
 import { tableExists } from "../ledger/schema";
@@ -17,6 +17,8 @@ import {
 /** Far enough ahead that every timestamp is before it: "now" for an as-of query. */
 const NOW = "9999-12-31T23:59:59.999Z";
 const REASON_CAP = 160;
+/** Most runs the empty-streak walk reads back; the streak needs half of it. */
+const EMPTY_WALK = 2 * EMPTY_STREAK;
 
 /** What a rail can do, judged from ledger state and the model the vault is configured with. */
 export interface WorkContext {
@@ -121,12 +123,17 @@ function retrievalOps(db: Database, limit: number, asOf: string): number {
  * (brief, journal-prune, doctor-sweep, purge-sweep, and embed-backfill with no
  * embedding port) are judged by staleness and failure only: a run that changes
  * nothing is their normal outcome.
+ *
+ * Counting unwritten claims scans every live claim. A caller that judges many
+ * past instants passes `unwrittenSince`, the creation time of the oldest
+ * unwritten claim (one scan), and gets the same answer as a 0/1 count.
  */
 export function pendingWork(
   context: WorkContext,
   rail: RailId,
   limit: number,
   asOf: string = NOW,
+  unwrittenSince?: string | null,
 ): PendingWork | null {
   const { db } = context;
   switch (rail) {
@@ -139,7 +146,14 @@ export function pendingWork(
           "extract backlog",
           extractBacklog(db, Math.min(limit, EXTRACT_BACKLOG_CAP), asOf),
         ]);
-        parts.push(["unwritten claims", countUnwrittenLiveClaims(db, asOf)]);
+        parts.push([
+          "unwritten claims",
+          unwrittenSince === undefined
+            ? countUnwrittenLiveClaims(db, asOf)
+            : unwrittenSince !== null && unwrittenSince <= asOf
+              ? 1
+              : 0,
+        ]);
       }
       return summarize(parts);
     }
@@ -180,13 +194,37 @@ export function ageSeconds(from: string | null, now: string): number | null {
   return Math.max(0, Math.floor((end - start) / 1000));
 }
 
+/**
+ * A run moved something forward. Extraction that answered but filed nothing new
+ * (every draft deduplicated, or records passed over) still shrinks the backlog.
+ */
 function produced(receipt: RunReceipt): boolean {
   return (
     receipt.events_stored > 0 ||
+    receipt.claims_extracted > 0 ||
+    receipt.claims_deduped > 0 ||
+    (receipt.records_skipped ?? 0) > 0 ||
     receipt.claims_written > 0 ||
     receipt.canon_writes > 0 ||
     receipt.retrieval.upserts > 0 ||
     receipt.retrieval.removals > 0
+  );
+}
+
+/**
+ * A degraded run that drained retrieval work is a catch-up pass, not a fault:
+ * it applied records or removals, or left fewer pending operations than the
+ * run before it. Bounded refresh passes end degraded until the backlog is gone.
+ */
+function madeProgress(
+  receipt: RunReceipt,
+  previous: RunReceipt | undefined,
+): boolean {
+  return (
+    receipt.retrieval.upserts > 0 ||
+    receipt.retrieval.removals > 0 ||
+    (previous !== undefined &&
+      receipt.retrieval.pending_ops < previous.retrieval.pending_ops)
   );
 }
 
@@ -198,6 +236,7 @@ function runErrors(receipt: RunReceipt): string[] {
   const reasons = [
     ...(receipt.stopped === null ? [] : [`stopped ${receipt.stopped}`]),
     ...receipt.errors,
+    ...receipt.retrieval.degraded,
     ...(receipt.model.diagnostic === undefined
       ? []
       : [formatProducerDiagnostic(receipt.model.diagnostic)]),
@@ -226,8 +265,8 @@ function dominantError(runs: readonly RunReceipt[]): string | null {
 /**
  * One rail's health from its own run receipts (`receipts`, oldest first) and
  * the ledger's pending work. A rail is down when it never ran, went stale,
- * last failed, keeps ending degraded or stopped, or keeps running with work
- * waiting and produces nothing. A rail with nothing to do is healthy however
+ * last failed, keeps ending degraded or stopped without making progress, or
+ * keeps running with work waiting and produces nothing. A rail with nothing to do is healthy however
  * many runs changed nothing. `doctor-sweep` reports the other checks' failures
  * as its own degradation, so its degraded runs are not a fault of the rail.
  */
@@ -252,14 +291,31 @@ export function railDoctor(
   let empty = 0;
   let streakStart: string | null = null;
   if (workNow !== null) {
-    for (let index = receipts.length - 1; index >= 0; index -= 1) {
+    // One scan for the oldest unwritten claim answers every run's as-of check.
+    const unwrittenSince =
+      rail === "sync" && context.model_configured
+        ? oldestUnwrittenLiveClaimAt(context.db)
+        : undefined;
+    // The verdict needs EMPTY_STREAK; twice that reports "at least" without
+    // walking a whole window of receipts.
+    for (
+      let index = receipts.length - 1;
+      index >= 0 && empty < EMPTY_WALK;
+      index -= 1
+    ) {
       const receipt = receipts[index];
-      if (receipt === undefined || produced(receipt)) break;
+      if (
+        receipt === undefined ||
+        produced(receipt) ||
+        madeProgress(receipt, receipts[index - 1])
+      )
+        break;
       // Work that a run saw is work the ledger still shows as of its start,
       // or backlog the run itself reported.
       const hadWork =
         receipt.retrieval.pending_ops > 0 ||
-        (pendingWork(context, rail, 1, receipt.started_at)?.count ?? 0) > 0;
+        (pendingWork(context, rail, 1, receipt.started_at, unwrittenSince)
+          ?.count ?? 0) > 0;
       if (!hadWork) break;
       empty += 1;
       streakStart = receipt.finished_at;
@@ -276,7 +332,8 @@ export function railDoctor(
     const receipt = receipts[index];
     if (
       receipt === undefined ||
-      (receipt.status !== "degraded" && receipt.status !== "stopped")
+      (receipt.status !== "degraded" && receipt.status !== "stopped") ||
+      madeProgress(receipt, receipts[index - 1])
     )
       break;
     badRuns.push(receipt);
@@ -295,7 +352,11 @@ export function railDoctor(
     status = "down";
     const why = runErrors(last)[0];
     reason = cap(`last run failed${why === undefined ? "" : `: ${why}`}`);
-  } else if (rail !== "doctor-sweep" && badRuns.length >= DEGRADED_STREAK) {
+  } else if (
+    rail !== "doctor-sweep" &&
+    !stale &&
+    badRuns.length >= DEGRADED_STREAK
+  ) {
     status = "down";
     const kinds = [...new Set(badRuns.map((run) => run.status))].join(" or ");
     const why = dominantError(badRuns);
@@ -305,7 +366,7 @@ export function railDoctor(
   } else if (empty >= EMPTY_STREAK && expectLiveness) {
     status = "down";
     reason = cap(
-      `empty streak ${empty} with work pending${workNow === null || workNow.detail === "" ? "" : ` (${workNow.detail})`}`,
+      `empty streak ${empty}${empty >= EMPTY_WALK ? "+" : ""} with work pending${workNow === null || workNow.detail === "" ? "" : ` (${workNow.detail})`}`,
     );
   } else if (last === null && lastActiveAt === null) {
     status = "idle";
