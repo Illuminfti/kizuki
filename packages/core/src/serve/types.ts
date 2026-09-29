@@ -126,6 +126,8 @@ export interface RunModelReport {
   readonly calls: number;
   readonly input_tokens: number;
   readonly output_tokens: number;
+  /** Secrets scrubbed from outbound prompts this pass, per kind. Absent when none were. */
+  readonly redacted?: Readonly<Record<string, number>>;
   readonly unavailable: number;
   readonly wall_ms: number;
   readonly model_ref: string | null;

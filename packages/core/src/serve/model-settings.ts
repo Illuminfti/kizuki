@@ -33,6 +33,7 @@ export type AppModelConfigurationValidator = (llm: unknown) => void;
 interface Transaction { schema: "kizuki.app-model-transaction/v1"; id: string; before: string; after: string; credential_sha256: string | null }
 type Checkpoint = "journal" | "credential" | "staged" | "published";
 
+const LLM_PROVIDER_SECTION = "ports.llm.provider";
 function parseConfig(bytes: Uint8Array | null): Record<string, unknown> {
   if (bytes === null) return {};
   if (bytes.byteLength > CONFIG_BYTES) fail("configuration_invalid");
@@ -75,9 +76,11 @@ export function editAppModelSection(bytes: Uint8Array | null, llm: Readonly<Reco
     if (trimmed.startsWith("[")) {
       const header = line.match(/^\s*\[([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)\]\s*(?:#.*)?(?:\r?\n)?$/);
       if (!header) fail("configuration_unsupported");
-      if (section === "ports.llm" && end === lines.length) end = index;
-      section = header[1]!;
-      if (section.startsWith("ports.llm.")) fail("configuration_unsupported");
+      const next = header[1]!;
+      if (next.startsWith("ports.llm.") && next !== LLM_PROVIDER_SECTION) fail("configuration_unsupported");
+      // The provider subtable belongs to the model block that is rewritten whole.
+      if ((section === "ports.llm" || section === LLM_PROVIDER_SECTION) && next !== "ports.llm" && next !== LLM_PROVIDER_SECTION && end === lines.length) end = index;
+      section = next;
       if (section === "ports.llm") start = index;
     } else if (section === "ports" && /^\s*llm\s*=/.test(line)) {
       if (assignment !== -1) fail("configuration_unsupported");
@@ -85,11 +88,15 @@ export function editAppModelSection(bytes: Uint8Array | null, llm: Readonly<Reco
     }
   }
   if (llmOf(before) !== undefined && start === -1 && assignment === -1) fail("configuration_unsupported");
-  const values = Object.entries(llm).map(([key, value]) => {
-    if (!/^[a-z_]+$/.test(key) || !["string", "number", "boolean"].includes(typeof value)) fail("configuration_invalid");
+  const assignments = (table: Readonly<Record<string, unknown>>, allowed: (value: unknown) => boolean): string => Object.entries(table).map(([key, value]) => {
+    if (!/^[a-z_]+$/.test(key) || !allowed(value)) fail("configuration_invalid");
     return `${key} = ${JSON.stringify(value)}\n`;
   }).join("");
-  const block = `[ports.llm]\n${values}`;
+  const scalar = (value: unknown): boolean => ["string", "number", "boolean"].includes(typeof value);
+  const { provider, ...model } = llm;
+  if (provider !== undefined && !isPlainObject(provider)) fail("configuration_invalid");
+  const providerValue = (value: unknown): boolean => typeof value === "string" || typeof value === "boolean" || (Array.isArray(value) && value.every(item => typeof item === "string"));
+  const block = `[ports.llm]\n${assignments(model, scalar)}${provider === undefined ? "" : `[${LLM_PROVIDER_SECTION}]\n${assignments(provider, providerValue)}`}`;
   let result: string;
   if (start !== -1) result = [...lines.slice(0, start), block, ...lines.slice(end)].join("");
   else {

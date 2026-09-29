@@ -22,6 +22,46 @@ port; the receipted writer owns canon. Tests use a loopback fake endpoint.
 | `max_retries` | no | Default `2`, at most `8`. Bounded retries for network failures, timeouts and HTTP 429/502/503/504 share the request deadline. |
 | `reasoning_effort` | no | `none`, `minimal`, `low`, `medium` or `high`, sent as the chat-completions `reasoning_effort`. Absent sends nothing. Hidden reasoning counts against the output reservation, so a lower effort leaves more of it for the answer. Providers accept different subsets; an unsupported value is refused by the provider. |
 
+### Provider privacy controls (`[ports.llm.provider]`)
+
+Optional. An allow-listed table that is sent unchanged as the request's
+`provider` object, for OpenAI-compatible routers that understand it (OpenRouter
+is the reference). Absent, nothing is sent. An unknown key, a wrong type or an
+empty, oversized or malformed list is a startup failure.
+
+| Key | Type | Notes |
+| --- | --- | --- |
+| `data_collection` | `"allow"` or `"deny"` | `deny` asks the router to route only to providers that do not collect or train on prompts. |
+| `zdr` | boolean | `true` asks for zero-data-retention endpoints only. |
+| `order` | list of provider names | Providers to try first, in order. |
+| `only` | list of provider names | Providers the router may use; no others. |
+| `ignore` | list of provider names | Providers the router must not use. |
+| `allow_fallbacks` | boolean | `false` stops the router falling back outside `order`/`only`. |
+
+Lists hold one to 32 names of up to 64 characters (letters, digits, `.`, `_`,
+`/`, `:`, `-`).
+
+```toml
+[ports.llm]
+id = "kizuki.llm.openai-compatible"
+base_url = "https://openrouter.ai/api/v1"
+model = "vendor/model"
+secret_ref = "env:OPENROUTER_API_KEY"
+
+[ports.llm.provider]
+data_collection = "deny"
+zdr = true
+```
+
+Kizuki forwards these controls; the router enforces them. Kizuki cannot see or
+prove what a provider does with a prompt, and an endpoint that ignores
+`provider` ignores the request. The controls are not part of the model binding
+that source consent names: consent binds the endpoint and model, so tightening
+or loosening the table does not invalidate a grant. The controls choose among the
+providers behind the endpoint the owner already consented to; they never change
+where the request is sent. `kizuki connect status` shows the controls each
+grant would run under, so a loosened table is visible.
+
 A retry waits for the provider's `Retry-After`, or backs off exponentially from
 two seconds without one; every wait is capped at 30 seconds. A wait the
 deadline cannot cover fails the request with the provider's status instead of
@@ -31,7 +71,7 @@ started, is that HTTP failure (its `code`, or 502 without a usable one), never
 a completion.
 
 `model_ref` recorded by callers is `<port_id>:<model>@<host>`.
-`reasoning_effort` changes only the request body. It is not part of
+`reasoning_effort` and `provider` change only the request body. Neither is part of
 `model_ref`, run or canon receipts, or source consent, which binds the
 endpoint and model. `doctor` and `serve status` show it next to the bound
 model, or `provider-default` when unset, and `doctor` names a value outside

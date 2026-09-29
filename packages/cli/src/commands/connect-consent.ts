@@ -2,8 +2,9 @@ import { inspectSourceGrant, listConnections, resumeSourceRevocation, revokeSour
 import { createOwnedRetrievalInventory, OwnedRetrievalInventoryError } from "../owned-retrieval-inventory";
 import { parseArguments, UsageError } from "../args";
 import { withReadVault, withVault } from "../context";
+import { egressDestination, egressRetention, egressView } from "../egress-view";
 import { connectConsentSchema } from "../option-schema";
-import { jsonEnvelope } from "../output";
+import { clean, jsonEnvelope } from "../output";
 import { consentHint, expectedRevision, readSourcePolicy } from "../source-consent";
 import type { CliIo } from "./index";
 
@@ -41,11 +42,13 @@ export async function runConnectConsent(io: CliIo, args: string[]): Promise<numb
         maintenanceError = inventory.diagnostic() ?? maintenanceError;
       }
     }
+    const egress = egressView(ctx.vaultPath, grant);
     const purge = maintenanceError !== null ? "pending" : grant?.status === "purged" && grant.purge_blockers.length === 0 ? "complete" : grant?.status === "denied" ? "pending" : "not_requested";
     const pending = action === "resume-revocation" && (purge !== "complete" || maintenanceError !== null);
-    if (parsed.flags.has("--json")) io.out(jsonEnvelope("connect", pending ? "degraded" : "ok", { source_key: source, receipt: receipt ?? null, grant, purge, maintenance_error: maintenanceError }));
+    if (parsed.flags.has("--json")) io.out(jsonEnvelope("connect", pending ? "degraded" : "ok", { source_key: source, receipt: receipt ?? null, grant, egress, purge, maintenance_error: maintenanceError }));
     else {
       io.out(`source=${source} consent=${grant?.status ?? "required"} revision=${grant?.revision ?? 0} purge=${purge}`);
+      io.out(`egress=${clean(egressDestination(egress))} retention=${clean(egressRetention(egress))}`);
       if (maintenanceError !== null) io.out(maintenanceError);
       if (receipt !== undefined) io.out(`operation_id=${receipt.operation_id} receipt_revision=${receipt.revision}`);
       if (grant === null) io.out(consentHint(ctx.db, source));

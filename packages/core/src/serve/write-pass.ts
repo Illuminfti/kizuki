@@ -98,6 +98,8 @@ interface ProduceMetrics {
   rejected: Record<string, number>;
   /** Requests the model answered with a usable response. */
   answered: number;
+  /** Secrets scrubbed from outbound prompts, per kind. */
+  redacted: Record<string, number>;
   /**
    * The pass's latest request. A pass is judged by how it ended: a rejection a
    * later request answered past stays counted, but it is not the pass's failure.
@@ -113,7 +115,7 @@ interface RequestOutcome {
 }
 
 function emptyMetrics(): ProduceMetrics {
-  return { calls: 0, input_tokens: 0, output_tokens: 0, unavailable: 0, wall_ms: 0, rejected: {}, answered: 0 };
+  return { calls: 0, input_tokens: 0, output_tokens: 0, unavailable: 0, wall_ms: 0, rejected: {}, answered: 0, redacted: {} };
 }
 
 function count(metrics: ProduceMetrics, reason: string): void {
@@ -128,6 +130,7 @@ function observe(metrics: ProduceMetrics, validated: ValidatedProduceResult<Extr
   metrics.calls += result.usage.calls;
   metrics.input_tokens += result.usage.input_tokens;
   metrics.output_tokens += result.usage.output_tokens;
+  for (const [kind, redacted] of Object.entries(result.usage.redacted ?? {})) metrics.redacted[kind] = (metrics.redacted[kind] ?? 0) + redacted;
   const diagnostic = result.status === "ok" ? undefined : readProducerDiagnostic(result.diagnostic);
   metrics.last = {
     answered: result.status === "ok",
@@ -199,6 +202,7 @@ function metricResult(metrics: ProduceMetrics): Pick<WritePassResult, "claims_re
       calls: metrics.calls,
       input_tokens: metrics.input_tokens,
       output_tokens: metrics.output_tokens,
+      ...(Object.keys(metrics.redacted).length === 0 ? {} : { redacted: metrics.redacted }),
       unavailable: metrics.unavailable,
       wall_ms: metrics.wall_ms,
     },

@@ -4,7 +4,7 @@ import {
   readAppModelConfiguration, classifyAppModelCredential, readAppModelFileCredential, saveAppModelConfiguration,
   type AppModelCredentialChange, type AppModelDocument,
 } from "@kizuki/core";
-import { chatCompletionsUrl, createOpenAiCompatibleLlmPort, parseOpenAiCompatibleConfig, type OpenAiCompatibleLlmConfig } from "@kizuki/llm";
+import { chatCompletionsUrl, createOpenAiCompatibleLlmPort, parseOpenAiCompatibleConfig, type OpenAiCompatibleLlmConfig, type ProviderPrivacy } from "@kizuki/llm";
 import { tokenResolver } from "../secrets";
 
 export { AppModelSettingsError } from "@kizuki/core";
@@ -45,6 +45,13 @@ const validateConfiguration = (value: unknown): void => { configured(value); };
 export function readModelSelection(vaultPath: string, options: { reconcile?: boolean } = {}): { revision: string; selection: ModelSelection } {
   const document = readAppModelConfiguration(vaultPath, validateConfiguration, options);
   return { revision: document.revision, selection: configured(document.llm).selection };
+}
+/** The configured model's consent identity and the provider controls it requests, or null when no model is configured or readable. */
+export function readModelEgress(vaultPath: string): { readonly model_endpoint: string; readonly model: string; readonly provider: ProviderPrivacy | null } | null {
+  try {
+    const { selection, config } = configured(readAppModelConfiguration(vaultPath, validateConfiguration, { reconcile: false }).llm);
+    return selection.kind === "openai_compatible" ? { model_endpoint: selection.model_endpoint, model: selection.model, provider: config?.provider ?? null } : null;
+  } catch { return null; }
 }
 async function credential(vaultPath: string, document: AppModelDocument, selected: Configured, env: Record<string, string | undefined>, options: { reconcile?: boolean } = {}): Promise<string | null> {
   const ref = selected.secret_ref;

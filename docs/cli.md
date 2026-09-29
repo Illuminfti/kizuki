@@ -235,6 +235,61 @@ regranted while its purge is pending. `purge=complete` is reported only from the
 native completed state with no blockers. Local revocation does not delete the
 upstream account or source file.
 
+### Model egress and retention
+
+On the `[ports.llm]` extraction path, a source's text leaves the machine only
+when its active grant names a model endpoint and model (`egress` other than
+`local_only`) and that endpoint and model are the configured `[ports.llm]`
+model. `kizuki connect status` shows, for every source, that path only:
+
+- **Egress**: `none` (no active consent), `local only`, or the endpoint host and
+  model the grant names. A grant whose model is not the configured one is marked
+  `(not the configured model)`; it cannot send anything until the configuration
+  matches it.
+- **Retention**: `none`, or `provider-managed`, the only retention stance a
+  grant can record, followed by the provider controls the configured model asks
+  the router to enforce (`[ports.llm.provider]`, for example
+  `data_collection=deny zdr=true`) or `no provider controls requested`. Kizuki
+  cannot see what a provider retains; the stance says who manages it, not that
+  retention is off.
+
+`connect status --json` reports the same view as `egress` on each connection
+(`destination`, `host`, `model`, `retention`, `provider_controls`,
+`configured`), and `connect status --source KEY` adds it to the consent line and
+JSON. Provider controls are not part of the model binding that consent names;
+see [`@kizuki/llm`](../packages/llm/README.md#provider-privacy-controls-portsllmprovider).
+
+Before an extraction prompt reaches the `[ports.llm]` endpoint, it is scrubbed
+of obvious secrets. Each match is replaced by `[redacted:<kind>]`, where kind is:
+
+| Kind | What it matches |
+| --- | --- |
+| `pem` | A `-----BEGIN ...-----` block through its `END` line, or to the end of the text when unterminated. |
+| `jwt` | Three dot-separated base64url segments starting `eyJ`. |
+| `api_token` | `sk-`, `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`, `github_pat_`, `xox[abposr]-`, `AKIA` and `ASIA` shapes above a minimum length. |
+| `bearer` | The value of an `Authorization: Bearer` header. |
+| `secret_assignment` | The value (four or more characters) of a `NAME=value` assignment whose name contains `secret`, `token`, `password`, `passwd` or `api_key`. The name stays. |
+| `seed_phrase` | A run of 12 or more lowercase words of three to eight letters, separated by spaces, commas or single line breaks, that has a 12-word stretch with fewer than two common English function words. The whole run is redacted, so a phrase inside a sentence, one of 24 words, or one with a lead-in word such as `seed` or `phrase` is caught. A capital letter, digit, other punctuation, a blank line or a word of nine or more letters ends a run. |
+
+The scrubber is a heuristic backstop with no dependency, not a guarantee. It
+does not know your secrets: an unrecognized shape, a numbered or capitalized
+phrase, a password in prose or a short value passes through. A `token=` value
+of fewer than eight digits is treated as a counter and kept. A prose run that
+resembles a mnemonic, or a long list of plain lowercase words, is redacted. The ledger is never changed; only the copy
+sent to the model is. The model's anchors into scrubbed text are moved back onto
+the original record. The per-kind counts appear as `model.redacted` in each run
+receipt, and are absent when nothing was redacted.
+
+**Known limit: the admission judge is a separate destination.** When
+`[ports.systemone]` is configured, the extraction-path admission judge (typed
+and legacy) receives the same scrubbed extraction text at its own `base_url`
+(the default host is `api.typesafe.ai`), not at the `[ports.llm]` endpoint. That
+destination is not named by source consent, is not covered by
+`[ports.llm.provider]`, and is not shown by `connect status` or its `--json`
+`egress`. Scrubbing applies to it; the egress and retention view does not.
+Leave `[ports.systemone]` unset to keep extraction text on the `[ports.llm]`
+destination alone. The judge the reflex path uses is not scrubbed.
+
 ## backfill / sync
 
 ```text
@@ -429,7 +484,10 @@ reports a complete binding as `on` and an incomplete configuration as
 `unverified`. The optional `[ports.llm] reasoning_effort` (`none`,
 `minimal`, `low`, `medium` or `high`) is sent with each model request;
 `doctor` and `serve status` show it next to the bound model, and `doctor`
-names an invalid value. Rails hold the ledger only for the length of one batch; they
+names an invalid value. The optional `[ports.llm.provider]` table
+(`data_collection`, `zdr`, `order`, `only`, `ignore`, `allow_fallbacks`) is
+passed through to OpenAI-compatible routers; see
+[Model egress and retention](#model-egress-and-retention). Rails hold the ledger only for the length of one batch; they
 never keep a write transaction open across a network or model call, so owner
 verbs keep working while the loop runs. See
 [Running commands while the daemon writes](#running-commands-while-the-daemon-writes).

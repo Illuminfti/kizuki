@@ -202,8 +202,9 @@ export function fixtureProducer(
 export function scriptedModelProducer(
   vault: string,
   reply: (request: number, eventIds: readonly string[]) => "ok" | "rate_limited" | "truncated" | "malformed",
-): { producer: ProducerV2Port; requests: string[][] } {
+): { producer: ProducerV2Port; requests: string[][]; prompts: string[] } {
   const requests: string[][] = [];
+  const prompts: string[] = [];
   const llm: LlmPort = {
     descriptor: {
       id: "kizuki.llm.fixture-throughput",
@@ -225,6 +226,7 @@ export function scriptedModelProducer(
         (match) => match[1]!,
       );
       requests.push(ids);
+      prompts.push(prompt);
       const scripted = reply(requests.length, ids);
       if (scripted === "rate_limited")
         throw new PortError("unavailable", "http 429", true);
@@ -270,6 +272,7 @@ export function scriptedModelProducer(
       model: MODEL,
     }),
     requests,
+    prompts,
   };
 }
 
