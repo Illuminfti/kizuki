@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isPlainObject } from "../util/validate";
 import {
@@ -64,30 +64,50 @@ export function loadConfiguredModelRef(vaultPath: string): string | null {
   return `${port}:${model}`;
 }
 
+/** Embedding port ids a vault may select; the host binds exactly these. */
+export const EMBEDDING_PORT_IDS: readonly string[] = ["kizuki.embedding.none", "kizuki.embedding.gguf"];
+const EMBEDDING_CONFIG_BYTES = 65_536;
+
+/** The vault's `[ports] embedding` selection. `off` covers absence and `kizuki.embedding.none`. */
+export type EmbeddingSelection =
+  | { readonly state: "off" | "configured"; readonly id: string; readonly config: Record<string, unknown> }
+  | { readonly state: "invalid"; readonly message: string; readonly id?: string };
+
 /**
- * The vault's `[ports] embedding` selection, or null when no embedding port is
- * configured. Absence and `kizuki.embedding.none` both mean the vector layer is off.
+ * The one reader of `[ports] embedding`, shared by the CLI's port binding, the
+ * embed rail's period and doctor. It validates against the known ids, so a typo
+ * is `invalid` here exactly where the host would refuse to bind it.
  */
-export function loadConfiguredEmbeddingPort(vaultPath: string): string | null {
+export function loadEmbeddingSelection(vaultPath: string): EmbeddingSelection {
+  const off: EmbeddingSelection = { state: "off", id: "kizuki.embedding.none", config: {} };
   const path = serveConfigPath(vaultPath);
-  if (!existsSync(path)) return null;
+  if (!existsSync(path)) return off;
   let parsed: unknown;
   try {
+    if (statSync(path).size > EMBEDDING_CONFIG_BYTES) throw new Error("oversized config");
     parsed = Bun.TOML.parse(readFileSync(path, "utf8"));
   } catch {
-    return null;
+    return { state: "invalid", message: "embedding configuration is unreadable" };
   }
-  if (!isPlainObject(parsed) || !isPlainObject(parsed["ports"])) return null;
-  const value = parsed["ports"]["embedding"];
-  const id = isPlainObject(value) ? value["id"] : value;
-  return typeof id === "string" && id.length > 0 && id !== "kizuki.embedding.none" ? id : null;
+  if (!isPlainObject(parsed)) return { state: "invalid", message: "embedding configuration is invalid" };
+  const ports = parsed["ports"];
+  if (ports === undefined) return off;
+  if (!isPlainObject(ports)) return { state: "invalid", message: "ports must be a table" };
+  const value = ports["embedding"];
+  if (value === undefined) return off;
+  const table = isPlainObject(value) ? value : { id: value };
+  const id = table["id"];
+  if (typeof id !== "string" || id.length === 0) return { state: "invalid", message: "embedding must select an id" };
+  if (!EMBEDDING_PORT_IDS.includes(id)) return { state: "invalid", message: "unknown embedding port", id };
+  const { id: _id, ...config } = table;
+  return { state: id === "kizuki.embedding.none" ? "off" : "configured", id, config };
 }
 
-/** The embed-backfill period for this vault: its schedule default when a port is configured, else a long back-off. */
+/** The embed-backfill period for this vault: its schedule default only while an embedding port is configured, else a long back-off. */
 export function embedBackfillPeriod(vaultPath: string): number {
-  return loadConfiguredEmbeddingPort(vaultPath) === null
-    ? EMBED_BACKFILL_IDLE_PERIOD_S
-    : (DEFAULT_RAILS.find((spec) => spec.rail === "embed-backfill")?.period_s ?? EMBED_BACKFILL_IDLE_PERIOD_S);
+  return loadEmbeddingSelection(vaultPath).state === "configured"
+    ? (DEFAULT_RAILS.find((spec) => spec.rail === "embed-backfill")?.period_s ?? EMBED_BACKFILL_IDLE_PERIOD_S)
+    : EMBED_BACKFILL_IDLE_PERIOD_S;
 }
 
 export function loadServeConfig(vaultPath: string): ServeConfig {

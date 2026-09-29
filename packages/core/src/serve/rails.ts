@@ -356,6 +356,11 @@ function runJournalPrune(
 
 const activeRuns = new Set<string>();
 
+/**
+ * Run one rail and resolve to its receipt. A scheduled run that did nothing is
+ * coalesced: the schedule advances and the returned receipt is not persisted,
+ * so look it up in `run_receipts` before relying on its `run_id`.
+ */
 export function runRail(
   db: Database,
   vaultPath: string,

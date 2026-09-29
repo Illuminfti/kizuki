@@ -1,9 +1,15 @@
 import type { Database } from "bun:sqlite";
 import {
   appendFileSync,
+  closeSync,
   existsSync,
+  fstatSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,6 +20,7 @@ import { readProducerDiagnostic } from "../producer/diagnostics";
 import { REDACTION_KINDS } from "../producer/scrub";
 import { loadServeConfig } from "./config";
 import {
+  DOCTOR_JOURNAL_TAIL_BYTES,
   InjectedCrash,
   NOOP_RECEIPT_HEARTBEAT_S,
   RUN_RECEIPT_JOURNAL_MAX_BYTES,
@@ -309,10 +316,11 @@ export function getRunReceipt(db: Database, runId: string): RunReceipt | null {
   }
 }
 
-export function readRunReceiptsLog(vaultPath: string): RunReceipt[] {
+/** The journal's receipts; with `tailBytes`, only those in the newest that many bytes. */
+export function readRunReceiptsLog(vaultPath: string, tailBytes?: number): RunReceipt[] {
   const path = runReceiptsPath(vaultPath);
   if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
+  return readJournalText(path, tailBytes)
     .split("\n")
     .flatMap((line) => {
       if (line.trim().length === 0) return [];
@@ -321,6 +329,23 @@ export function readRunReceiptsLog(vaultPath: string): RunReceipt[] {
       const parsed = parseRunReceipt(value);
       return parsed === null ? [] : [parsed];
     });
+}
+
+function readJournalText(path: string, tailBytes: number | undefined): string {
+  if (tailBytes === undefined) return readFileSync(path, "utf8");
+  const fd = openSync(path, "r");
+  try {
+    const size = fstatSync(fd).size;
+    if (size <= tailBytes) return readFileSync(fd, "utf8");
+    const buffer = Buffer.alloc(tailBytes);
+    readSync(fd, buffer, 0, tailBytes, size - tailBytes);
+    const text = buffer.toString("utf8");
+    // The window starts mid-line; drop the partial first line.
+    const firstBreak = text.indexOf("\n");
+    return firstBreak === -1 ? "" : text.slice(firstBreak + 1);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function appendJsonl(vaultPath: string, receipt: RunReceipt): void {
@@ -489,8 +514,11 @@ export function recoverRunJournal(db: Database, vaultPath: string): string[] {
 
 /**
  * Bound the receipt journal by age and size. Receipts older than `cutoff` go,
- * then the oldest survivors go until the journal fits `maxBytes`; the JSONL
- * file is rewritten from the surviving rows and the dropped rows are deleted.
+ * then the oldest survivors go until the journal fits `maxBytes`, but the newest
+ * valid in-window receipt always stays. The surviving rows replace the JSONL file
+ * atomically before the dropped rows are deleted, so a crash between the two
+ * leaves at worst rows the journal no longer names, never journal rows the
+ * ledger cannot replay.
  */
 export function pruneRunReceipts(
   db: Database,
@@ -511,26 +539,40 @@ export function pruneRunReceipts(
     try { valid = parseRunReceipt(JSON.parse(row.report)) !== null; } catch { valid = false; }
     if (!valid) continue;
     bytes += Buffer.byteLength(row.report) + 1;
-    if (bytes > maxBytes) break;
+    if (kept.length > 0 && bytes > maxBytes) break;
     kept.push(row.report);
   }
   kept.reverse();
   const oldestKept = kept.length === 0 ? null : (JSON.parse(kept[0]!) as { finished_at: string; run_id: string });
+  const path = runReceiptsPath(vaultPath);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const staged = `${path}.tmp`;
+  const fd = openSync(staged, "w", 0o600);
+  try {
+    writeFileSync(fd, kept.map((report) => `${report}\n`).join(""));
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(staged, path);
   db.transaction(() => {
-    if (oldestKept === null) db.query("DELETE FROM run_receipts").run();
+    if (oldestKept === null) db.query("DELETE FROM run_receipts WHERE finished_at < ?").run(cutoff);
     else db.query("DELETE FROM run_receipts WHERE finished_at < ? OR (finished_at = ? AND run_id < ?)")
       .run(oldestKept.finished_at, oldestKept.finished_at, oldestKept.run_id);
   }).immediate();
-  const path = runReceiptsPath(vaultPath);
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, kept.map((report) => `${report}\n`).join(""), { mode: 0o600 });
   const after = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()?.n ?? 0;
   return { deleted: before - after, rewritten: kept.length };
 }
 
+/**
+ * Receipts the journal names that the ledger lacks, among the newest
+ * `DOCTOR_JOURNAL_TAIL_BYTES` of the file. An orphan is appended at the end
+ * before its row is written, so the tail is where any live one sits; older
+ * lines are the prune rail's to bound.
+ */
 export function orphanJournalReceipts(db: Database, vaultPath: string): string[] {
   const orphans: string[] = [];
-  for (const receipt of readRunReceiptsLog(vaultPath)) {
+  for (const receipt of readRunReceiptsLog(vaultPath, DOCTOR_JOURNAL_TAIL_BYTES)) {
     if (getRunReceipt(db, receipt.run_id) === null) {
       orphans.push(receipt.run_id);
     }

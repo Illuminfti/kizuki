@@ -35,9 +35,11 @@ Status: designed
    canon prose from quoted capture and carry provenance.
 8. Fail closed: missing sensitivity label → not served; missing credentials →
    connector refuses; unknown agent → no access.
-9. Every scheduled rail emits a liveness receipt visible in `kizuki
-   doctor`. A rail is reported down when its receipt is stale, when its
-   service unit is absent, disabled or masked, or when its last runs
+9. Every scheduled rail shows liveness in `kizuki doctor`, from its receipts
+   and from its schedule row, which a coalesced idle run advances without a
+   receipt (an idle rail still writes one receipt an hour). A rail is
+   reported down when both are stale, when its service unit is absent,
+   disabled or masked, or when its last runs, counted by elapsed periods,
    produced nothing for a rail that should produce. Absence is never read
    as health.
 10. No fake surface: no registry entry, CLI verb, or README claim without a

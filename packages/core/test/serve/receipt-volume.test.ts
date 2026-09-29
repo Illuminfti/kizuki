@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "../../src/ledger/db";
@@ -7,11 +7,11 @@ import { initVault } from "../../src/vault/init";
 import { runServeDaemon } from "../../src/serve/daemon";
 import { inspectServeDoctor } from "../../src/serve/doctor";
 import { runRail } from "../../src/serve/rails";
-import { listRunReceipts, persistRunReceipt, pruneRunReceipts, runReceiptsPath } from "../../src/serve/receipts";
+import { listRunReceipts, orphanJournalReceipts, persistRunReceipt, pruneRunReceipts, recoverRunJournal, runReceiptsPath } from "../../src/serve/receipts";
 import { listSchedules } from "../../src/serve/schema";
 import { writeServeIntent } from "../../src/serve/intent";
 import type { SupervisorHost } from "../../src/serve/supervisor";
-import { DOCTOR_RECEIPT_LIMIT, EMBED_BACKFILL_IDLE_PERIOD_S, emptyRunTotals, type RailId, type RunExecution } from "../../src/serve/types";
+import { DOCTOR_JOURNAL_TAIL_BYTES, DOCTOR_RECEIPT_LIMIT, EMBED_BACKFILL_IDLE_PERIOD_S, emptyRunTotals, type RailId, type RunExecution } from "../../src/serve/types";
 
 const dirs: string[] = [];
 
@@ -63,6 +63,23 @@ describe("embed-backfill without an embedding port", () => {
     db.close();
   });
 
+  test("an embedding id the host cannot bind is invalid and keeps the long period", async () => {
+    const { path, db } = vault('[ports]\nembedding = "kizuki.embedding.typo"\n');
+    await tick(db, path, "embed-backfill", at(0));
+    expect(schedule(db, "embed-backfill").period_s).toBe(EMBED_BACKFILL_IDLE_PERIOD_S);
+    writeServeIntent(path, "installed");
+    const report = inspectServeDoctor(db, path, { now: at(60), supervisor });
+    expect(report.stores.vector_layer).toEqual({ state: "invalid", detail: "vector layer: invalid (unknown embedding port)" });
+    expect(JSON.stringify(report)).not.toContain("typo");
+    db.close();
+  });
+
+  test("a corrupt serve.toml is invalid, not off", () => {
+    const { path, db } = vault("[ports\nembedding =");
+    expect(inspectServeDoctor(db, path, { now: at(60), supervisor }).stores.vector_layer.state).toBe("invalid");
+    db.close();
+  });
+
   test("a configured port keeps the short period", async () => {
     const { path, db } = vault('[ports.embedding]\nid = "kizuki.embedding.gguf"\n');
     await tick(db, path, "embed-backfill", at(0));
@@ -106,6 +123,16 @@ describe("embed-backfill without an embedding port", () => {
     expect(report.rails.find((rail) => rail.rail === "embed-backfill")?.reason).toBe("empty streak 6");
     db.close();
   });
+
+  test("the empty streak counts elapsed periods, so coalesced idle runs still raise it", async () => {
+    const { path, db } = vault('[ports]\nembedding = "kizuki.embedding.gguf"\n');
+    for (let minute = 0; minute <= 6; minute += 1) await tick(db, path, "embed-backfill", at(minute * 60));
+    expect(listRunReceipts(db, { rail: "embed-backfill" })).toHaveLength(1);
+    writeServeIntent(path, "installed");
+    const rail = inspectServeDoctor(db, path, { now: at(6 * 60 + 1), supervisor }).rails.find((item) => item.rail === "embed-backfill")!;
+    expect(rail).toMatchObject({ status: "down", reason: "empty streak 7", empty_streak: 7 });
+    db.close();
+  });
 });
 
 describe("no-op runs do not append a receipt per tick", () => {
@@ -121,6 +148,16 @@ describe("no-op runs do not append a receipt per tick", () => {
     expect(journalLines(path).filter((line) => line.includes('"purge-sweep"'))).toHaveLength(2);
     db.close();
   });
+
+  test("the daemon counts persisted receipts, not coalesced runs", async () => {
+    const { path, db } = vault();
+    let turns = 0;
+    const result = await runServeDaemon(db, path, { http: false, shouldContinue: () => (turns += 1) <= 25 });
+    const persisted = listRunReceipts(db).length;
+    expect(result.receipts).toBe(persisted);
+    expect(persisted).toBeLessThan(25);
+    db.close();
+  }, 30_000);
 
   test("manual runs and the brief always write their receipt", async () => {
     const { path, db } = vault();
@@ -193,13 +230,66 @@ describe("receipt journal bounds", () => {
     db.close();
   });
 
-  test("the journal-prune rail applies the size ceiling", async () => {
+  test("the journal-prune rail applies the size ceiling and keeps the newest receipt", async () => {
     const { path, db } = vault();
-    mkdirSync(join(path, ".kizuki"), { recursive: true });
-    seed(path, db, 5);
-    const receipt = await runRail(db, path, "journal-prune", { now: () => at(10) });
+    const pad = "x".repeat(800_000);
+    const insert = db.query("INSERT INTO run_receipts (run_id, rail, started_at, finished_at, status, stopped, report) VALUES (?, 'test-rail', ?, ?, 'ok', NULL, ?)");
+    for (let index = 0; index < 12; index += 1) {
+      const report = JSON.stringify({ ...emptyRunTotals(), run_id: `01JBIG${String(index).padStart(20, "0")}`, rail: "test-rail", started_at: at(index), finished_at: at(index), status: "ok", stopped: null, errors: [pad] });
+      insert.run(`01JBIG${String(index).padStart(20, "0")}`, at(index), at(index), report);
+      appendFileSync(runReceiptsPath(path), `${report}\n`);
+    }
+    expect(statSync(runReceiptsPath(path)).size).toBeGreaterThan(9 * 1024 * 1024);
+    const receipt = await runRail(db, path, "journal-prune", { now: () => at(1000) });
     expect(receipt.status).toBe("ok");
-    expect(statSync(runReceiptsPath(path)).size).toBeLessThan(8 * 1024 * 1024);
+    // The size ceiling, plus the prune rail's own receipt appended after it.
+    expect(statSync(runReceiptsPath(path)).size).toBeLessThan(8 * 1024 * 1024 + 4096);
+    const remaining = listRunReceipts(db, { rail: "test-rail" });
+    expect(remaining.length).toBeLessThan(12);
+    expect(remaining.at(-1)!.run_id).toBe("01JBIG00000000000000000011");
+    expect(journalLines(path).filter((line) => line.includes("test-rail"))).toHaveLength(remaining.length);
+    expect(listRunReceipts(db, { rail: "journal-prune" })).toHaveLength(1);
+    db.close();
+  });
+
+  test("a single receipt over the cap is kept, never the whole table dropped", () => {
+    const { path, db } = vault();
+    seed(path, db, 3, "x".repeat(200));
+    const result = pruneRunReceipts(db, path, at(-1), 10);
+    expect(result).toEqual({ deleted: 2, rewritten: 1 });
+    expect(listRunReceipts(db).map((item) => item.finished_at)).toEqual([at(2)]);
+    expect(journalLines(path)).toHaveLength(1);
+    db.close();
+  });
+
+  test("with nothing valid in the window only expired rows go", () => {
+    const { path, db } = vault();
+    seed(path, db, 3);
+    db.query("UPDATE run_receipts SET report = 'not json' WHERE finished_at >= ?").run(at(1));
+    const result = pruneRunReceipts(db, path, at(1));
+    expect(result).toEqual({ deleted: 1, rewritten: 0 });
+    expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()!.n).toBe(2);
+    db.close();
+  });
+
+  test("a journal that lost its oldest lines before the rows were deleted replays without error", () => {
+    const { path, db } = vault();
+    seed(path, db, 10);
+    const lines = journalLines(path);
+    writeFileSync(runReceiptsPath(path), lines.slice(6).map((line) => `${line}\n`).join(""));
+    expect(recoverRunJournal(db, path)).toEqual([]);
+    expect(listRunReceipts(db)).toHaveLength(10);
+    pruneRunReceipts(db, path, at(6));
+    expect(existsSync(`${runReceiptsPath(path)}.tmp`)).toBe(false);
+    db.close();
+  });
+
+  test("doctor scans only the journal tail for orphans", () => {
+    const { path, db } = vault();
+    const orphan = (id: string) => JSON.stringify({ ...emptyRunTotals(), run_id: id, rail: "test-rail", started_at: at(0), finished_at: at(0), status: "ok", stopped: null });
+    const filler = `${"x".repeat(1000)}\n`.repeat(Math.ceil(DOCTOR_JOURNAL_TAIL_BYTES / 1000) + 50);
+    writeFileSync(runReceiptsPath(path), `${orphan("01JORPHANOLD00000000000000")}\n${filler}${orphan("01JORPHANNEW00000000000000")}\n`);
+    expect(orphanJournalReceipts(db, path)).toEqual(["01JORPHANNEW00000000000000"]);
     db.close();
   });
 

@@ -28,6 +28,8 @@ export const NOOP_RECEIPT_HEARTBEAT_S = 60 * 60;
 export const EMBED_BACKFILL_IDLE_PERIOD_S = 60 * 60;
 /** The newest receipts one doctor pass reads. */
 export const DOCTOR_RECEIPT_LIMIT = 5_000;
+/** The newest bytes of `run-receipts.jsonl` one doctor pass scans for orphans. */
+export const DOCTOR_JOURNAL_TAIL_BYTES = 1024 * 1024;
 /**
  * Steady-state keep ratio, chosen against a vault whose corpus already
  * absorbs drafts: RFC 0002 E4 measured 69.9% kept against a 33-50% target,
@@ -332,8 +334,8 @@ export interface StoreDoctor {
   readonly oldest_purge_op_age_s: number | null;
   /** Successful embed-backfill docs/s, or null when doctor has no measured throughput. */
   readonly embedding_throughput_docs_per_s: number | null;
-  /** Whether an embedding port is configured; the vector layer is off without one. */
-  readonly vector_layer: { readonly state: "off" | "configured"; readonly detail: string };
+  /** Whether an embedding port is configured; the vector layer is off without one and invalid when the selection cannot bind. */
+  readonly vector_layer: { readonly state: "off" | "configured" | "invalid"; readonly detail: string };
   readonly orphan_run_receipts: string[];
   readonly derived: {
     readonly search: { rebuilt_at: string | null; doc_count: number };

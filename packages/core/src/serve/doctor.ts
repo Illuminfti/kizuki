@@ -12,7 +12,7 @@ import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
 import { tableExists } from "../ledger/schema";
 import { inspectPurgeHealth } from "../ledger/purge";
 import { listCanonPagesReport } from "../vault/pages";
-import { loadConfiguredEmbeddingPort, loadConfiguredModelRef, loadServeConfig } from "./config";
+import { loadConfiguredModelRef, loadEmbeddingSelection, loadServeConfig, type EmbeddingSelection } from "./config";
 import { readServeIntent } from "./intent";
 import { serviceFile } from "./service-files";
 import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
@@ -106,10 +106,18 @@ function railDoctor(
   const lastActiveAt = [last?.finished_at ?? null, lastRunAt].reduce((a, b) => (a === null || (b !== null && b > a) ? b : a), null);
   const age = ageSeconds(lastActiveAt, now);
   let empty = 0;
+  let streakStart: string | null = null;
   for (let index = forRail.length - 1; index >= 0; index -= 1) {
     const receipt = forRail[index];
     if (receipt === undefined || produced(receipt)) break;
     empty += 1;
+    streakStart = receipt.finished_at;
+  }
+  // Coalesced idle runs leave no receipt, so the streak is the runs the elapsed
+  // time holds: an idle rail is as visible here as when it wrote one per tick.
+  if (empty > 0 && streakStart !== null && lastActiveAt !== null && period_s > 0) {
+    const span = Math.max(0, (Date.parse(lastActiveAt) - Date.parse(streakStart)) / 1000);
+    empty = Math.max(empty, Math.floor(span / period_s) + 1);
   }
   const grace = period_s + wait_s;
   const stale = age !== null && age > 2 * period_s + grace;
@@ -444,11 +452,20 @@ function countOriginPages(vaultPath: string): StoreDoctor["origin"] {
   return { machine, human };
 }
 
+function vectorLayer(embedding: EmbeddingSelection): StoreDoctor["vector_layer"] {
+  switch (embedding.state) {
+    case "off": return { state: "off", detail: "vector layer: off (no embedding model configured)" };
+    case "configured": return { state: "configured", detail: `vector layer: configured (${embedding.id})` };
+    case "invalid": return { state: "invalid", detail: `vector layer: invalid (${embedding.message})` };
+  }
+}
+
 function storeDoctor(
   db: Database,
   vaultPath: string,
   now: string,
   receipts: RunReceipt[],
+  embedding: EmbeddingSelection,
 ): StoreDoctor {
   const pendingRetrieval = countPendingRetrievalOps(db);
   const oldestRetrieval =
@@ -483,7 +500,6 @@ function storeDoctor(
   }
   if (!purge.ok) degraded.push("purge-unhealthy");
   degraded.push("identity-authority-unavailable");
-  const embeddingPort = loadConfiguredEmbeddingPort(vaultPath);
   const search = readDerivedMeta(db, "search");
   const graph = readDerivedMeta(db, "graph");
   return {
@@ -492,9 +508,7 @@ function storeDoctor(
     pending_purge_ops: pendingPurge,
     oldest_purge_op_age_s: ageSeconds(oldestPurge, now),
     embedding_throughput_docs_per_s: embeddingThroughputFromReceipts(receipts),
-    vector_layer: embeddingPort === null
-      ? { state: "off", detail: "vector layer: off (no embedding model configured)" }
-      : { state: "configured", detail: `vector layer: configured (${embeddingPort})` },
+    vector_layer: vectorLayer(embedding),
     orphan_run_receipts: orphanJournalReceipts(db, vaultPath),
     derived: {
       search: {
@@ -536,7 +550,7 @@ export function inspectServeDoctor(
       };
   const since = new Date(Date.parse(now) - RUN_RECEIPT_RETENTION_DAYS * 86_400_000).toISOString();
   const receipts = listRunReceipts(db, { since, limit: DOCTOR_RECEIPT_LIMIT });
-  const embeddingPort = loadConfiguredEmbeddingPort(vaultPath);
+  const embedding = loadEmbeddingSelection(vaultPath);
   const expectLive = expectRailLiveness(intent, supervisor);
   const schedules = new Map(listSchedules(db).map((row) => [row.rail, row]));
   const config = loadServeConfig(vaultPath);
@@ -550,7 +564,7 @@ export function inspectServeDoctor(
       expectLive,
       syncPassWait(config.extraction),
       schedule?.last_run_at ?? null,
-      spec.rail === "embed-backfill" && embeddingPort === null,
+      spec.rail === "embed-backfill" && embedding.state !== "configured",
     );
   });
   const usedToday = receipts
@@ -574,7 +588,7 @@ export function inspectServeDoctor(
   const skipped = receipts.reduce((sum, receipt) => sum + (receipt.records_skipped ?? 0), 0);
   const throughput = throughputDoctor(config, schedules.get("sync")?.period_s ?? config.sync_period_s, skipped);
   const oversized = oversizedDoctor(db);
-  const stores = storeDoctor(db, vaultPath, now, receipts);
+  const stores = storeDoctor(db, vaultPath, now, receipts, embedding);
   const cal = calibration(db, receipts, now);
   const failures: string[] = [];
   if (model.current_failure !== null) failures.push(`${model.current_failure.detail} (at ${model.current_failure.at})`);

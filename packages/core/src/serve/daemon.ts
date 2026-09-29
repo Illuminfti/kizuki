@@ -17,7 +17,7 @@ import {
   type LeaseProcess,
   type LeaseState,
 } from "./leases";
-import { recoverRunJournal } from "./receipts";
+import { getRunReceipt, recoverRunJournal } from "./receipts";
 import { dueRails, runRail, type RailHooks, type RailHooksV2, type RailRuntime, type RailRuntimeV2 } from "./rails";
 import type { RetrievalPort } from "../contracts/retrieval";
 import { applyRailPeriod, initServe, listSchedules } from "./schema";
@@ -199,13 +199,13 @@ export async function runServeDaemon(
       for (const rail of listed) {
         if (stopRequested()) break;
         if (!isRailId(rail)) continue;
-        await runRail(db, vaultPath, rail, {
+        const receipt = await runRail(db, vaultPath, rail, {
           ...options,
           now: process.now,
           stopRequested,
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "once", due_at: null },
         });
-        receipts += 1;
+        if (getRunReceipt(db, receipt.run_id) !== null) receipts += 1;
       }
       return { receipts, http };
     }
@@ -215,14 +215,15 @@ export async function runServeDaemon(
       const due = dueRails(db, process.now());
       const rail = due[0];
       if (rail !== undefined) {
-        await runRail(db, vaultPath, rail, {
+        const receipt = await runRail(db, vaultPath, rail, {
           ...options,
           now: process.now,
           stopRequested,
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
             due_at: listSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() },
         });
-        receipts += 1;
+        // A coalesced idle run advances the schedule and persists no receipt.
+        if (getRunReceipt(db, receipt.run_id) !== null) receipts += 1;
         continue;
       }
       await sleep(1_000);

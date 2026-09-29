@@ -405,6 +405,7 @@ describe("public surface", () => {
       "listUnwrittenLiveClaims",
       "loadConfiguredModelRef",
       "loadConfiguredRetrieval",
+      "loadEmbeddingSelection",
       "loadServeConfig",
       "loopbackTransport",
       "mapSystemOneSensitivityChoice",

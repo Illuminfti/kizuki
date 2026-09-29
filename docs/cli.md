@@ -364,7 +364,7 @@ checkpoints (with the first error of each source's last run as `last_error`),
 derived-index freshness, writer ROLE stamps, machine vs human
 origin counts, calibration/liveness probes, receipts, holds, serve rails,
 a `vector layer:` line (`off (no embedding model configured)` or
-`configured (<port id>)`, read from `[ports] embedding`; JSON reports it as
+`configured (<port id>)` or `invalid (<reason>)`, read from `[ports] embedding`; JSON reports it as
 `serve.stores.vector_layer`), and `canon writing: on|off`. Off when no model is configured. The default
 report runs SQLite `quick_check` and samples ledger events. `--integrity`
 also runs `PRAGMA integrity_check` on the vault ledger; JSON then reports
@@ -505,9 +505,9 @@ reads a rail's liveness from the schedule as well as its receipts. The
 `embed-backfill` rail runs every minute only while an embedding port is
 configured; without one it backs off to an hour, applied when the service starts
 and re-checked on each run, and doctor does not call it down for producing
-nothing. The `journal-prune` rail drops receipts older than
+nothing. Doctor counts an idle rail's empty streak in elapsed periods, so coalescing does not slow that alarm. A new embedding selection is applied when the service starts and on the embed rail's next run. The `journal-prune` rail drops receipts older than
 `[serve] journal_retention_days` (default 7) and then the oldest until
-`run-receipts.jsonl` fits 8 MiB. Doctor reads at most the newest 5,000 receipts.
+`run-receipts.jsonl` fits 8 MiB. Doctor reads at most the newest 5,000 receipts and scans at most the newest 1 MiB of the journal for orphans.
 
 The sync rail runs every 15 minutes and makes one extraction request per pass
 unless `serve.toml` says otherwise: `[serve] sync_period_s` sets the period,

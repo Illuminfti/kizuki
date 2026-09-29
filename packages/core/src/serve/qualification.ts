@@ -1,5 +1,5 @@
 import { nextScheduleSlot } from "./receipts";
-import { DEFAULT_RAILS, RAIL_IDS, type RunExecution } from "./types";
+import { DEFAULT_RAILS, EMBED_BACKFILL_IDLE_PERIOD_S, RAIL_IDS, type RunExecution } from "./types";
 
 export const QUALIFICATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export interface QualificationRail { rail: string; period_s: number; jitter_s: number; next_run_at: string; }
@@ -21,13 +21,25 @@ export interface QualificationReceipt {
   run_id: string; sha256: string; rail: string; started_at: string; finished_at: string;
   status: string; execution: RunExecution | null; healthy: boolean;
 }
+/**
+ * One rail's persisted schedule row. A scheduled run that did nothing advances
+ * it without writing a receipt, so this is the evidence for such a slot.
+ */
+export interface QualificationSchedule { rail: string; period_s: number; last_run_at: string | null; next_run_at: string; }
 export interface QualificationProcess { pid: number; boot_id: string; start_ticks: string; binary_sha256: string; instance_id: string; }
 export interface QualificationSample {
   at: string; monotonic_ms: number; boot_id: string;
   supervisor: "not-observed" | "masked" | "disabled" | "active" | "unknown";
   process: QualificationProcess | null;
   receipts: QualificationReceipt[];
+  /** Read before the receipts, so a slot's receipt is never behind its schedule row. */
+  schedules?: QualificationSchedule[];
   issues: string[];
+}
+/** Periods a rail may run at: the embed rail backs off while no embedding port is configured. */
+function periodAllowed(rail: string, period_s: number): boolean {
+  const supported = DEFAULT_RAILS.find((spec) => spec.rail === rail);
+  return supported !== undefined && (period_s === supported.period_s || (rail === "embed-backfill" && period_s === EMBED_BACKFILL_IDLE_PERIOD_S));
 }
 export function qualificationDate(value: unknown): number {
   if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value)) throw new Error("invalid evidence timestamp");
@@ -44,15 +56,17 @@ export function evaluateQualification(profile: QualificationProfile, samples: re
   if (!Number.isFinite(profile.monotonic_ms) || profile.monotonic_ms < 0 || !Number.isSafeInteger(profile.max_gap_ms) || profile.max_gap_ms <= 0 || profile.max_gap_ms > 60_000 || profile.lateness_ms !== 30_000 || !Number.isInteger(profile.brief_hour) || profile.brief_hour < 0 || profile.brief_hour > 23) throw new Error("invalid qualification profile");
   if (profile.rails.map((r) => r.rail).sort().join() !== [...RAIL_IDS].sort().join()) issues.add("required-rails-missing");
   const due = new Map<string, number>();
+  const periods = new Map<string, number>();
   for (const rail of profile.rails) {
     const supported = DEFAULT_RAILS.find(spec => spec.rail === rail.rail);
     const first = qualificationDate(rail.next_run_at);
     // The observer cannot redefine cadence or postpone every obligation beyond
     // its window. A slightly overdue current slot remains observable as such.
-    if (!supported || rail.period_s !== supported.period_s || rail.jitter_s !== supported.jitter_s ||
-        first > start + supported.period_s * 1000 ||
+    if (!supported || !periodAllowed(rail.rail, rail.period_s) || rail.jitter_s !== supported.jitter_s ||
+        first > start + rail.period_s * 1000 ||
         first < start - profile.lateness_ms - supported.jitter_s * 1000) throw new Error("invalid rail profile");
     due.set(rail.rail, first);
+    periods.set(rail.rail, rail.period_s);
   }
   const seen = new Map<string, string>();
   const bindings = new Map<string, string>();
@@ -72,6 +86,17 @@ export function evaluateQualification(profile: QualificationProfile, samples: re
     if (!process || process.boot_id !== sample.boot_id) issues.add("process-unverified");
     if (processKey !== null && previousProcess !== null && processKey !== previousProcess) restarts++;
     if (processKey !== null) previousProcess = processKey;
+    // The embed rail's period follows its port configuration. A run applies the
+    // configured period before it advances the slot, so adopt the row's period
+    // first. It never pushes a due slot back, only brings one in.
+    for (const row of sample.schedules ?? []) {
+      const known = periods.get(row.rail);
+      if (known === undefined || row.period_s === known) continue;
+      if (row.rail !== "embed-backfill" || !periodAllowed(row.rail, row.period_s)) { issues.add("schedule-profile-changed"); continue; }
+      periods.set(row.rail, row.period_s);
+      const next = qualificationDate(row.next_run_at);
+      if (next < due.get(row.rail)!) due.set(row.rail, next);
+    }
     const sorted = [...sample.receipts].sort((a, b) => qualificationDate(a.finished_at) - qualificationDate(b.finished_at));
     for (const receipt of sorted) {
       const old = seen.get(receipt.run_id);
@@ -92,7 +117,22 @@ export function evaluateQualification(profile: QualificationProfile, samples: re
       if (began < expected || ended > expected + profile.lateness_ms + spec.jitter_s * 1000) issues.add("missed-rail-slot");
       if (receipt.status !== "ok" || !receipt.healthy) issues.add("rail-not-ok");
       automatic++;
-      due.set(receipt.rail, Date.parse(nextScheduleSlot(new Date(expected).toISOString(), spec.period_s, receipt.rail === "brief" ? profile.brief_hour : null)));
+      due.set(receipt.rail, Date.parse(nextScheduleSlot(new Date(expected).toISOString(), periods.get(receipt.rail)!, receipt.rail === "brief" ? profile.brief_hour : null)));
+    }
+    // A coalesced idle slot has no receipt; the schedule row that advanced past
+    // it is its evidence, credited only for the exact next slot, run in time.
+    for (const row of sample.schedules ?? []) {
+      const spec = profile.rails.find((r) => r.rail === row.rail);
+      const expected = due.get(row.rail);
+      if (!spec || expected === undefined || row.period_s !== periods.get(row.rail)) continue;
+      const next = qualificationDate(row.next_run_at);
+      if (next <= expected) continue;
+      const last = row.last_run_at === null ? null : qualificationDate(row.last_run_at);
+      const step = Date.parse(nextScheduleSlot(new Date(expected).toISOString(), row.period_s, row.rail === "brief" ? profile.brief_hour : null));
+      if (next !== step || last === null || last < expected || last > now || last > expected + profile.lateness_ms + spec.jitter_s * 1000) { issues.add("missed-rail-slot"); continue; }
+      if (!process) continue; // process-unverified is already an issue; no slot credit without a bound process
+      automatic++;
+      due.set(row.rail, next);
     }
     for (const spec of profile.rails) if (now > due.get(spec.rail)! + profile.lateness_ms + spec.jitter_s * 1000) issues.add("missed-rail-slot");
     elapsed = Math.max(0, Math.min(now - start, sample.monotonic_ms - profile.monotonic_ms));
