@@ -339,6 +339,37 @@ describe("legacy staging p1 holes", () => {
     expect(getClaim(db, first.proposal.proposal_id)?.corroboration).toBe(2);
   });
 
+  test("signature lookups are index probes on a new ledger and on one that lacks the indexes", () => {
+    const plan = (db: ReturnType<typeof memoryDb>, sql: string): string => {
+      const statement = db.prepare<{ detail: string }, []>(`EXPLAIN QUERY PLAN ${sql}`);
+      try {
+        return statement.all().map((row) => row.detail).join(" ");
+      } finally {
+        statement.finalize();
+      }
+    };
+    const lookup = (db: ReturnType<typeof memoryDb>) =>
+      plan(db, "SELECT * FROM proposals WHERE content_hash = 'x' AND status IN ('pending', 'promoted')");
+    const indexes = (db: ReturnType<typeof memoryDb>) =>
+      db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .all()
+        .map((row) => row.name);
+    const db = memoryDb();
+    expect(lookup(db)).toContain("proposals_by_content_hash");
+    expect(indexes(db)).toContain("claims_by_content_hash");
+
+    // A ledger opened before the indexes existed gets them the next time staging is used.
+    db.exec("DROP INDEX proposals_by_content_hash");
+    db.exec("DROP INDEX claims_by_content_hash");
+    expect(lookup(db)).not.toContain("proposals_by_content_hash");
+    initClaims(db);
+    expect(lookup(db)).toContain("proposals_by_content_hash");
+    expect(indexes(db)).toContain("claims_by_content_hash");
+    expect(fileProposal(db, proposalInput()).outcome).toBe("stored");
+    expect(fileProposal(db, proposalInput()).outcome).toBe("duplicate");
+  });
+
   test("remigration collapse keeps one pending occupant with a live claim", () => {
     const db = memoryDb();
     const first = fileProposal(
