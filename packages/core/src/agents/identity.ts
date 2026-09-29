@@ -17,6 +17,7 @@ import type {
   Agent,
   AgentFinding,
   Grant,
+  GrantOperation,
   Principal,
   Tool,
 } from "./types";
@@ -472,6 +473,35 @@ export function listAgents(db: Database): (Agent & { grant: Grant })[] {
   return listed;
 }
 
+/** One stored identity as an owner sees it. It never carries the token hash. */
+export interface AgentInventoryEntry extends Agent {
+  state: "active" | "revoked" | "quarantined";
+  /** Null only when the stored grant no longer decodes. */
+  grant: Grant | null;
+  grant_epoch: number;
+}
+
+/**
+ * Every stored identity, including revoked and quarantined ones, without
+ * writing: unlike `listAgents` it never quarantines a row it cannot decode,
+ * so it is safe on a read-only connection.
+ */
+export function inspectAgents(db: Database): AgentInventoryEntry[] {
+  return db
+    .query<AgentGrantRow, []>(`${AGENT_GRANT_SELECT} ORDER BY a.name`)
+    .all()
+    .map((row) => {
+      const grant = tryDecodeGrant(row);
+      const state =
+        row.revoked_at !== null
+          ? "revoked"
+          : row.quarantined_at !== null || grant === null
+            ? "quarantined"
+            : "active";
+      return { ...rowAgent(row), state, grant, grant_epoch: grantEpoch(row) };
+    });
+}
+
 export function listQuarantinedAgents(db: Database): AgentFinding[] {
   return db
     .query<
@@ -518,49 +548,61 @@ export function setGrant(
   name: string,
   patch: Partial<Grant>,
 ): Grant {
-  return db.transaction((): Grant => {
-    const row = grantRowByName(db, name);
-    if (row === null) throw new Error(`agent ${name} does not exist`);
-    const before = tryDecodeGrant(row);
-    const grant = mergeGrant(before ?? repairBase(row), patch);
-    const at = new Date().toISOString();
-    const epoch = grantEpoch(row) + 1;
-    db.query<
-      never,
-      [string, string | null, string | null, string | null, string | null, string, number, number, number, string, string]
-    >(
-      `UPDATE agent_grants
-          SET ceiling = ?, types = ?, subjects = ?, since = ?, until = ?,
-              tools = ?, rate_limit_per_minute = ?,
-              relay_owner_corrections = ?, grant_epoch = ?, updated_at = ?
-        WHERE agent_id = ?`,
-    ).run(
-      grant.ceiling,
-      grant.types === null ? null : JSON.stringify(grant.types),
-      grant.subjects === null ? null : JSON.stringify(grant.subjects),
-      grant.since,
-      grant.until,
-      JSON.stringify(grant.tools),
-      grant.rate_limit_per_minute,
-      grant.relay_owner_corrections ? 1 : 0,
-      epoch,
-      at,
-      row.agent_id,
-    );
-    db.query<never, [string]>(
-      `UPDATE agents
-          SET quarantined_at = NULL, quarantine_reason = NULL
-        WHERE agent_id = ?`,
-    ).run(row.agent_id);
-    recordLifecycle(
-      db,
-      row.agent_id,
-      "agent.grant",
-      before === null ? { after: grant } : { before, after: grant },
-      at,
-    );
-    return grant;
-  }).immediate();
+  return db.transaction((): Grant => setGrantInTransaction(db, name, patch)).immediate();
+}
+
+/** The caller owns the write transaction, as with `revokeAgentInTransaction`. */
+export function setGrantInTransaction(
+  db: Database,
+  name: string,
+  patch: Partial<Grant>,
+  operation?: GrantOperation,
+): Grant {
+  const row = grantRowByName(db, name);
+  if (row === null) throw new Error(`agent ${name} does not exist`);
+  const before = tryDecodeGrant(row);
+  const grant = mergeGrant(before ?? repairBase(row), patch);
+  const at = new Date().toISOString();
+  const epoch = grantEpoch(row) + 1;
+  db.query<
+    never,
+    [string, string | null, string | null, string | null, string | null, string, number, number, number, string, string]
+  >(
+    `UPDATE agent_grants
+        SET ceiling = ?, types = ?, subjects = ?, since = ?, until = ?,
+            tools = ?, rate_limit_per_minute = ?,
+            relay_owner_corrections = ?, grant_epoch = ?, updated_at = ?
+      WHERE agent_id = ?`,
+  ).run(
+    grant.ceiling,
+    grant.types === null ? null : JSON.stringify(grant.types),
+    grant.subjects === null ? null : JSON.stringify(grant.subjects),
+    grant.since,
+    grant.until,
+    JSON.stringify(grant.tools),
+    grant.rate_limit_per_minute,
+    grant.relay_owner_corrections ? 1 : 0,
+    epoch,
+    at,
+    row.agent_id,
+  );
+  db.query<never, [string]>(
+    `UPDATE agents
+        SET quarantined_at = NULL, quarantine_reason = NULL
+      WHERE agent_id = ?`,
+  ).run(row.agent_id);
+  recordLifecycle(
+    db,
+    row.agent_id,
+    "agent.grant",
+    {
+      ...(before === null ? {} : { before }),
+      after: grant,
+      ...(operation === undefined ? {} : { operation }),
+    },
+    at,
+  );
+  return grant;
 }
 
 export function revokeAgentInTransaction(db: Database, name: string): void {

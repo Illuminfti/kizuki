@@ -15,6 +15,7 @@ import type {
   AuditPage,
   AuditRow,
   Grant,
+  GrantOperation,
   LifecycleAction,
   Principal,
   Tool,
@@ -617,7 +618,7 @@ export function recordLifecycle(
   db: Database,
   agentId: string,
   action: LifecycleAction,
-  change: { before?: Grant; after?: Grant },
+  change: { before?: Grant; after?: Grant; operation?: GrantOperation },
   at: string = new Date().toISOString(),
 ): string {
   if (!(LIFECYCLE_ACTIONS as readonly string[]).includes(action)) {
@@ -632,7 +633,37 @@ export function recordLifecycle(
   if (change.after !== undefined) {
     args["after"] = JSON.stringify(change.after);
   }
+  if (change.operation !== undefined) {
+    args["operation_id"] = change.operation.operation_id;
+    args["request_digest"] = change.operation.request_digest;
+  }
   return insertAudit(db, agentId, action, args, [], [], stamped, null);
+}
+
+/**
+ * Whether an owner-initiated amendment with this operation id was already
+ * recorded: `replay` for the same request, `conflict` for a different one.
+ * Ids are compared through the audit shape, the form the row stores.
+ */
+export function matchGrantOperation(
+  db: Database,
+  operation: GrantOperation,
+): "new" | "replay" | "conflict" {
+  const wanted = shapeArguments({ ...operation });
+  const same = (left: unknown, right: unknown): boolean =>
+    JSON.stringify(left) === JSON.stringify(right);
+  for (const row of db
+    .query<{ query_shape: string }, [string]>(
+      "SELECT query_shape FROM agent_audit WHERE tool = ?",
+    )
+    .all("agent.grant")) {
+    const stored = JSON.parse(row.query_shape) as Record<string, unknown>;
+    if (!same(stored["operation_id"], wanted["operation_id"])) continue;
+    return same(stored["request_digest"], wanted["request_digest"])
+      ? "replay"
+      : "conflict";
+  }
+  return "new";
 }
 
 /**
