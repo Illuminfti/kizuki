@@ -3,6 +3,7 @@ import type { CaptureEvent } from "../contracts/event";
 import { sha256Hex } from "../util/hash";
 import { isUlid } from "../util/ulid";
 import { eventFromRow, type EventRow } from "./event-record";
+import { machineImageHashes } from "./machine-image";
 
 export const ABSENT_BYTE_HASH = sha256Hex("");
 export interface MachineByteIntent {
@@ -35,17 +36,20 @@ export function classifyNewEventOrigin(db: Database,
 
 function classify(db: Database, event: Pick<CaptureEvent, "text" | "text_hash">): "external" | "self" {
   if (!hash(event.text_hash) || sha256Hex(event.text) !== event.text_hash) throw new EventOriginError();
+  if (event.text.includes("KIZUKI CONTEXT v1")) return "self";
+  // The exact bytes first, then the images a lightly edited copy derives from.
+  const candidates = JSON.stringify([...new Set([event.text_hash, ...machineImageHashes(event.text)])]
+    .filter(candidate => candidate !== ABSENT_BYTE_HASH));
   using statement = db.prepare<{ before_hash: string | null; after_hash: string }, [string, string, string, string]>(`
-    SELECT before_hash,after_hash FROM canon_receipts WHERE writer='loop' AND before_hash=?
-    UNION ALL SELECT before_hash,after_hash FROM canon_receipts WHERE writer='loop' AND after_hash=?
-    UNION ALL SELECT before_hash,after_hash FROM canon_machine_byte_intents WHERE before_hash=?
-    UNION ALL SELECT before_hash,after_hash FROM canon_machine_byte_intents WHERE after_hash=? LIMIT 1
+    SELECT before_hash,after_hash FROM canon_receipts WHERE writer='loop' AND before_hash IN (SELECT value FROM json_each(?))
+    UNION ALL SELECT before_hash,after_hash FROM canon_receipts WHERE writer='loop' AND after_hash IN (SELECT value FROM json_each(?))
+    UNION ALL SELECT before_hash,after_hash FROM canon_machine_byte_intents WHERE before_hash IN (SELECT value FROM json_each(?))
+    UNION ALL SELECT before_hash,after_hash FROM canon_machine_byte_intents WHERE after_hash IN (SELECT value FROM json_each(?)) LIMIT 1
   `);
-  const matching = statement.get(event.text_hash, event.text_hash, event.text_hash, event.text_hash);
+  const matching = statement.get(candidates, candidates, candidates, candidates);
   if (matching !== null && (!hash(matching.after_hash) ||
       (matching.before_hash !== null && !hash(matching.before_hash)))) throw new EventOriginError();
-  return event.text.includes("KIZUKI CONTEXT v1") ||
-    (event.text_hash !== ABSENT_BYTE_HASH && matching !== null) ? "self" : "external";
+  return matching !== null ? "self" : "external";
 }
 
 /** Admission and the exact byte intent have one durable SQLite linearization. */

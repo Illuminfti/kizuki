@@ -48,6 +48,17 @@ normalization. Core marks an event `self` when its text contains
 receipt's before/after bytes or a pending machine-byte intent. Empty-file
 absence sentinels do not classify ordinary empty captures as self.
 
+A copy that only changed line endings, trailing whitespace on a line, or the
+final newline is still that page. At admission Core also hashes the CRLF and
+bare-CR to LF form, the form with trailing spaces and tabs stripped from every
+line, and each of those with no, one or the original trailing newlines, and
+marks the event `self` when any of them matches a registered image. Whitespace
+alone never matches. A changed word is a different document and stays external.
+A copy that has lost or rewritten its frontmatter no longer hashes to a
+registered image and is not recognized here; the importers that read files
+refuse a source inside or containing a vault instead (see
+[legacy-import.md](legacy-import.md)).
+
 Before publishing a loop file or archive, the writer commits a minimal byte
 intent and its final source/evidence admission check in one top-level SQLite
 transaction. The intent records the receipt ID and exact before/after hashes.

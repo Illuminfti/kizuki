@@ -10,14 +10,17 @@ The refusal is `source_contains_kizuki_vault`. No batch is returned, no capture
 checkpoint advances, and files hidden by the refusal are not tombstones. If a
 previously enrolled source becomes a vault, sync refuses it until an independent
 source is selected. This prevents Kizuki's own managed output entering that
-same folder capture as new external evidence.
+same folder capture as new external evidence. The legacy wiki and events
+importers apply the same refusal ([legacy import](legacy-import.md)).
 
 Core also marks captured text as machine origin when its exact UTF-8 bytes
 match a retained loop-write receipt or a durable intent registered before the
-loop publishes a file. This catches unchanged generated text copied into a
-separate source folder. These events remain in the ledger but cannot support
-model extraction or new model claims. A one-byte change is a different text
-hash; the check does not prove general authorship. See
+loop publishes a file, or match one after normalizing line endings, trailing
+whitespace and the final newline. This catches generated text copied into a
+separate source folder, including a lightly edited copy. These events remain in
+the ledger but cannot support model extraction or new model claims. A changed
+word is a different text hash, and so is a copy that lost its frontmatter; the
+check does not prove general authorship. See
 [Event identity and origin](event-identity-origin.md) for the separate Core
 check and its limits. The folder marker check does not close concurrent
 ancestor replacement by itself. The final file open verifies the listed parent
