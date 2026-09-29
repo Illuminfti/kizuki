@@ -188,6 +188,9 @@ export function assertLedgerSchema(db: Database, expectedVersion: number): void 
       throw new LedgerStoreError("corrupt", "event_purges is missing proof_digest");
     }
   }
+  if (expectedVersion >= 34 && !tableExists(db, "connector_cursor_store")) {
+    throw new LedgerStoreError("corrupt", "connector_cursor_store is missing");
+  }
   if (expectedVersion >= 25) {
     const names = tableColumns(db, "checkpoints");
     if (!names.includes("backfill_cursor") || !names.includes("sync_cursor")) {

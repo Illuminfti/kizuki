@@ -162,6 +162,27 @@ Existing two-argument connectors keep their behavior. Implementations that
 require this context refuse context-less calls; hosts never infer the mode from
 the presence of a secret reference.
 
+**Cursor bound and the host-held cursor store.** A checkpoint cursor is opaque
+to the host and capped at `MAX_CURSOR_BYTES` (8 KiB); a larger cursor is
+refused and the batch never checkpoints. A source whose resume state grows
+with the account (one entry per dialog or per folder) declares
+`capabilities.cursor_store: "host"`. The host then lends the connector the
+committed side map (`RunContext.cursor_store`, a read-only string map) on
+`backfill` and `sync`, and the connector returns changes as
+`SyncBatch.cursor_store`, a delta where a string sets a key and `null` deletes
+one. The host writes that delta in the same transaction as the checkpoint and
+run receipt, and only when the run's checkpoint advances, so a failed,
+unavailable or refused run leaves the map where the last commit put it. The
+map is per connection, shared by `backfill` and `sync`, and capped at 1 MiB
+(`MAX_CURSOR_STORE_BYTES`) and 10,000 entries; a delta that would pass either
+is refused before any event of the batch is stored. A connector that did not
+declare the capability is called exactly as before and a delta from it is
+refused. The wire cursor should still change whenever the map does (Telegram
+and IMAP carry a digest of it), because the runner treats an unchanged cursor
+as no progress. The map is derived resume state kept in the ledger table
+`connector_cursor_store` (ledger version 34); it is not exported, and a
+restored connection re-enrols with a new source key as before.
+
 ## Storage
 
 Status: designed
