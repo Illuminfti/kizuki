@@ -950,6 +950,43 @@ contradiction matrix and source lineage. It carries no script and fetches
 nothing, so it opens without a network. Exported copies live outside the vault
 and are not reached by purge.
 
+## parity
+
+```text
+usage: kizuki parity run --queries FILE [--k 1..20] [--timeout-ms N] [--min-overlap 0..1] [--json] --estate-cmd [--] ARGV...
+```
+
+Shadow parity run. For each query in `FILE` (one per line, at most 200, blank
+lines and `#` lines skipped) it asks Kizuki for its recall context and runs one
+local command for the existing memory stack, then compares the sources each one
+returned. It never injects context, never writes canon or ledger events, and
+opens no network connection of its own. Each Kizuki read is an ordinary
+audited owner read, logged with its arguments the same as `context`.
+
+`--estate-cmd` takes the rest of the command line. The query replaces `{query}`
+in any argument, or is appended as the last argument when none contains it. Put
+`--` right after `--estate-cmd` so the CLI does not read the command's own
+flags. The command runs without a shell, with no stdin, and prints one source
+key per line on stdout. A key matches a Kizuki result when it equals a canon
+page path, a source reference listed on a canon page, or a ledger event id.
+`--k` bounds both lists (default 5). `--timeout-ms` bounds each command run
+(default 10000, at most 120000); stdout is capped at 1 MiB.
+
+The receipt is written to `.kizuki/receipts/parity/<run id>.json`, mode 0600.
+Per query it holds a SHA-256 of the query, top-k counts, latency, an error
+class, the overlap ratio (shared stack keys over the stack's keys), and short
+hashes of the sources only one side returned. It holds no query text, result
+text or source name, and the stack's stderr is discarded. Hashes are unsalted so
+a query keeps the same id from run to run, which means a short, guessable query
+can be confirmed by anyone who can read the receipt file.
+
+Exit status: `0` parity met, `1` a Kizuki-side failure, `2` usage error, `3` the
+external command failed for at least one query (recorded in the receipt, the
+run continues), `4` mean overlap below `--min-overlap` (default 0.5) or no query
+had a comparable answer. Parity is never reported as met when nothing could be
+compared. See [the parity run](world/parity.md) for the receipt fields.
+Scheduling a run on a machine is an owner action.
+
 ## version
 
 ```text
