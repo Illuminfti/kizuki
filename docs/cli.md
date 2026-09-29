@@ -481,7 +481,16 @@ usage: kizuki context [--purpose session|recall|correction|audit] [--budget N] [
 ```
 
 Purpose-scoped compilation of canon, graph, timeline, and working-knowledge
-claims with provenance stamps and a token budget. Same engine as MCP
+claims with provenance stamps and a token budget. A default `--purpose session`
+packet starts with four bounded sections that answer what a fresh agent asks:
+`owner` (identity facts with owner authority), `now` (current Situations and
+recently recorded changes), `commitments` (open commitments) and `uncertain`
+(contradictions and hedged statements). Each is read from authorized claims and
+the world model and never inferred. An empty section is listed under
+`not recorded` with its reason (`none_recorded`, `not_granted`, `unavailable` or
+`budget`), and `--json` reports the same in `data.session`. The four sections
+use at most half of the room after the header. Situations need the `world_view`
+grant. Other purposes are unchanged. Same engine as MCP
 `context_packet`. Does not write canon. Empty packets keep the machine header
 on stdout and offer a next step on stderr. If gathering fails, the CLI returns
 exit 1 and reports `degraded` in JSON instead of presenting the header as a
@@ -498,6 +507,37 @@ not a grant. Grant-bound clamping and denial stay in Core.
 Claims and derived statements follow the live grant and
 [context privacy rules](context-privacy.md), including fail-closed provenance
 and bounded audit coverage.
+
+## hook
+
+Status: shipped
+
+```text
+usage: kizuki hook session-start --harness claude-code|codex|generic [--budget N] [--timeout-ms MS] [--token-ref env:VAR|file:/absolute/path] [--direct] [--verbose]
+```
+
+Prints a compact, bounded, provenance-labelled context block
+for a harness that runs a command at session start. It reads the harness's
+hook JSON on standard input (only the working directory's last segment becomes
+the search query), asks the running daemon's loopback endpoint for a
+`context_packet` with `purpose=session`, falls back to a direct read in a child
+process it can stop at the deadline, and prints the block. `--harness
+claude-code` and `--harness codex` print
+`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":...}}`;
+`--harness generic` prints the plain text. Quoted and taint labels stay on the
+lines. `--budget` is 50 to 2000 tokens (default 450) and `--timeout-ms` is 100
+to 60000 (default 2500). `--token-ref` reads as an enrolled agent, so the call is
+audited under that agent's name; without it the hook reads as the owner. The
+reference is a file or an environment variable, never the token itself.
+
+It exits 0 and prints nothing on a timeout, a denied or revoked credential, a
+missing or uninitialized vault, an empty result or any other error. An empty
+vault prints no block. `--verbose` writes one line naming the class of failure
+to standard error and never a path, token or captured text. `--direct` reads in
+the current process without contacting the daemon; its deadline cannot interrupt
+a read already running. Invalid arguments exit 2. The hook writes nothing and
+contacts only the loopback daemon. See [integrations](integrations.md) for
+Claude Code, Codex and generic recipes.
 
 ## world
 

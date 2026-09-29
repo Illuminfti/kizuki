@@ -82,6 +82,21 @@
   unreadable stored history counts as a fresh wait, never as none.
 - Run receipts carry `model.consecutive_rejections` and
   `model.last_rejection_rule` while a refusal streak lasts.
+- `kizuki hook session-start --harness claude-code|codex|generic` injects a
+  compact, bounded, provenance-labelled context block at harness session start.
+  It reads the hook JSON on standard input, prefers the running daemon's
+  loopback endpoint, falls back to a direct read it can stop at `--timeout-ms`,
+  attributes the call to the agent named by `--token-ref`, and exits 0 with no
+  output on a timeout, denial, missing vault or any error. The daemon now
+  records where its loopback endpoint listens in `.kizuki/serve.endpoint`, an
+  owner-only file that holds no credential and is removed at shutdown.
+- A default `purpose=session` context packet gains `owner`, `now`,
+  `commitments` and `uncertain` sections read from authorized claims and
+  Situations, each bounded and each listed with a reason when empty. The
+  response reports them in `data.session`. Situation content needs the
+  `world_view` grant.
+- [Integration recipes](docs/integrations.md) for Claude Code, Codex and any
+  stdio MCP client.
 
 ### Fixed
 
