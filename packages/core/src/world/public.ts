@@ -34,6 +34,7 @@ export type {
 } from "./ops/types";
 export { readWorldView, serveWorldView } from "../serving/world-view";
 export type {
+  WorldData,
   WorldReadInput,
   WorldReadResult,
   WorldViewEnvelope,
