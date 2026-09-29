@@ -1110,6 +1110,7 @@ export type {
   RailHooksV2,
   RailRefreshReport,
   RailRuntime,
+  RailRuntimeContext,
   RailRuntimeV2,
   RailId,
   RailSpec,

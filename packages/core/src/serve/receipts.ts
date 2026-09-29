@@ -22,6 +22,7 @@ import { loadServeConfig } from "./config";
 import {
   DOCTOR_JOURNAL_TAIL_BYTES,
   InjectedCrash,
+  LEDGER_LEASE_HELD_STOP,
   NOOP_RECEIPT_HEARTBEAT_S,
   RUN_RECEIPT_JOURNAL_MAX_BYTES,
   RUN_RECEIPTS_PATH,
@@ -433,7 +434,8 @@ function redactReceipt(receipt: RunReceipt): RunReceipt {
 
 /** Attach the compare-and-advance intent for the rail's next due slot. */
 function withScheduleTransition(db: Database, vaultPath: string, receipt: RunReceipt): RunReceipt {
-  if (!isRailId(receipt.rail)) return receipt;
+  // A skipped pass leaves its rail due: the daemon retries it with backoff.
+  if (!isRailId(receipt.rail) || receipt.stopped === LEDGER_LEASE_HELD_STOP) return receipt;
   const row = db.query<{ next_run_at: string | null; period_s: number }, [string]>("SELECT next_run_at,period_s FROM schedules WHERE rail=?").get(receipt.rail);
   if (row === null) return receipt;
   const scheduled = receipt.execution?.trigger === "scheduled";

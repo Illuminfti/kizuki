@@ -2,6 +2,9 @@ import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-sco
 import { recoverCanonWrites } from "../canon/recovery";
 import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { retryCanonProjectionObligations } from "../canon/projection-obligations";
+import { isLedgerBusy, withControlWait } from "../ledger/busy";
+import { LEDGER_LOOP_PROBE_TIMEOUT_MS } from "../ledger/limits";
+import { LedgerLeaseHeldError, railLeaseHeldNote } from "./lease-held";
 import { pidAlive, readBootId } from "./leases";
 import type { Database } from "bun:sqlite";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
@@ -22,6 +25,7 @@ import { coalesceNoopReceipt, recoverRunJournal, getRunReceipt, persistRunReceip
 import { applyRailPeriod, initServe, listSchedules } from "./schema";
 import {
   InjectedCrash,
+  LEDGER_LEASE_HELD_STOP,
   emptyRunTotals,
   type CrashPoint,
   type ExtractionConfig,
@@ -88,6 +92,12 @@ export interface RailRuntimeV2 {
 
 type AnyRailRuntime = RailRuntime | RailRuntimeV2;
 
+/** What a host learns when a rail asks it for its runtime. */
+export interface RailRuntimeContext {
+  /** Aborted when the daemon is told to stop; a request in flight must end with it. */
+  readonly signal: AbortSignal;
+}
+
 const processInstance = crypto.randomUUID();
 
 export interface RunRailOptions {
@@ -95,8 +105,12 @@ export interface RunRailOptions {
   readonly now?: () => string;
   /** The daemon's stop request or signal; a sync pass reads it before every extraction step. */
   readonly stopRequested?: () => boolean;
+  /** Aborted with the daemon's stop, and handed to `acquireRuntime`. */
+  readonly signal?: AbortSignal;
+  /** The caller found the ledger held: skip the pass without touching it and record why. */
+  readonly ledgerHeld?: boolean;
   readonly hooks?: RailHooks;
-  readonly acquireRuntime?: () => Promise<RailRuntime>;
+  readonly acquireRuntime?: (context: RailRuntimeContext) => Promise<RailRuntime>;
   readonly crashAfter?: CrashPoint;
 }
 
@@ -105,8 +119,12 @@ export interface RunRailOptionsV2 {
   readonly now?: () => string;
   /** The daemon's stop request or signal; a sync pass reads it before every extraction step. */
   readonly stopRequested?: () => boolean;
+  /** Aborted with the daemon's stop, and handed to `acquireRuntime`. */
+  readonly signal?: AbortSignal;
+  /** The caller found the ledger held: skip the pass without touching it and record why. */
+  readonly ledgerHeld?: boolean;
   readonly hooks?: RailHooksV2;
-  readonly acquireRuntime?: () => Promise<RailRuntimeV2>;
+  readonly acquireRuntime?: (context: RailRuntimeContext) => Promise<RailRuntimeV2>;
   readonly crashAfter?: CrashPoint;
 }
 
@@ -438,6 +456,7 @@ async function runRailImpl(
       if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
         throw new Error("rail hooks and acquireRuntime are mutually exclusive");
       }
+      if (options.ledgerHeld === true) throw new LedgerLeaseHeldError("the ledger writer is held");
       // A failed preflight may append this run's audit receipt only. In particular,
       // do not import older receipt/usage journals before validating a sync decision.
       if (rail === "sync") requireAtomicExtractReplay(db);
@@ -467,7 +486,7 @@ async function runRailImpl(
       const config = loadServeConfig(vaultPath);
       budget = createDurableWriteBudget(db, now, config);
       if (options.acquireRuntime !== undefined) {
-        try { runtime = await options.acquireRuntime(); }
+        try { runtime = await options.acquireRuntime({ signal: options.signal ?? new AbortController().signal }); }
         catch { throw new Error("rail runtime acquisition failed"); }
       }
       hooks = withResolvedModel(runtime?.hooks ?? options.hooks);
@@ -502,8 +521,12 @@ async function runRailImpl(
       }
     } catch (error) {
       if (error instanceof InjectedCrash) { interrupted = true; throw error; }
-      partial = { status: "failed", errors: [redactReceiptError(error)],
-        ...(error instanceof LegacyExtractReconciliationError ? { stopped: error.code } : {}) };
+      // A writer this pass could not outwait is not a fault of the rail: the
+      // pass is skipped, its receipt names the holder, and the daemon backs off.
+      partial = isLedgerBusy(error) || error instanceof LedgerLeaseHeldError
+        ? { status: "stopped", stopped: LEDGER_LEASE_HELD_STOP, errors: [railLeaseHeldNote(vaultPath, db)] }
+        : { status: "failed", errors: [redactReceiptError(error)],
+          ...(error instanceof LegacyExtractReconciliationError ? { stopped: error.code } : {}) };
     } finally {
       // Close before publication so failure cannot leave a successful receipt.
       // This also releases the binding before any journal persistence can fail.
@@ -551,10 +574,13 @@ async function runRailImpl(
     };
     // A scheduled run that did nothing advances its schedule without a receipt.
     if (options.crashAfter === undefined && coalesceNoopReceipt(db, vaultPath, receipt)) return receipt;
-    persistRunReceipt(db, vaultPath, receipt, {
+    const publish = (): void => persistRunReceipt(db, vaultPath, receipt, {
       ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
       ...(rail === "brief" ? { artifactPath: briefPath(vaultPath, dayOf(started)) } : {}),
     });
+    // A pass skipped for a held ledger journals its receipt, and asks the ledger only briefly.
+    if (options.ledgerHeld === true) withControlWait(db, publish, LEDGER_LOOP_PROBE_TIMEOUT_MS);
+    else publish();
     const published = getRunReceipt(db, runId);
     if (published === null) throw new Error("persisted run receipt unavailable");
     return published;
