@@ -670,7 +670,7 @@ those pins.
 ## purge
 
 ```text
-usage: kizuki purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json]
+usage: kizuki purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json] | purge --suppressions [--json] | purge --lift-suppression RECEIPT [--json]
 ```
 
 Physical deletion plus a receipt. `--reason` is required except `--verify`,
@@ -681,8 +681,9 @@ nothing. Connector selectors use ledger identity, including retired ids.
 Broad subject or connector-only deletes require `--confirm`. Exact `--event`
 and `--connector --record` paths stay noninteractive. Purged events are not
 resurrected by undo; canon rewrites stay reversible. `--include-aliases` is
-retired and refuses before planning or deletion. `--verify` prints per-store
-absence proofs and `pending`/`done`/`failed` operation state. While any inert
+retired and refuses before planning or deletion. `--verify` finishes any step
+of the purge that has not run, then prints one proof per store and
+`pending`/`done`/`failed` operation state. While any inert
 legacy identity row remains, identity absence is unprovable rather than
 successful. If the canon scan stops at its page-count or byte bound, the
 affected pages cannot be enumerated, so preview and deletion both refuse with
@@ -695,6 +696,72 @@ the canon rewrite itself failed: `--verify` then names the held page paths and
 points at `kizuki doctor` and page ownership and permissions, instead of
 offering a bare retry that replays the same failure. `--json` reports the same
 paths as `data.held_pages`, which is empty once the hold is lifted.
+
+### What purge erases
+
+Purge removes the purged text from every store Kizuki keeps, not only the
+event rows. Once every held page is rewritten, the final step:
+
+- blanks the body, frontmatter, object, subject, predicate and target of every
+  claim whose whole provenance is purged, whatever its status (a superseded claim
+  keeps its text as surely as a live one), and drops its typed meaning. The claim
+  id, provenance, hashes, receipts and status stay;
+- blanks the body, frontmatter and target of every proposal whose whole
+  provenance is purged;
+- deletes every file under `archive/` that cites a purged event or repeats a
+  purged claim body (16 characters or more), and lists each one in the command
+  output as `erased ... archive file`. The canon rewrite of a held page no
+  longer archives the page it replaces. `kizuki undo` of an earlier write
+  refuses, because the page changed or its archive copy is gone, instead of
+  restoring purged text; the receipt itself stays;
+- removes recovery records and quarantined stage bytes of receipts that cite
+  purged events, and rebuilds the search index so older index segments drop
+  the tokens;
+- turns `PRAGMA secure_delete` on for the whole purge, then truncates the
+  write-ahead log and compacts the ledger file (`VACUUM`). The retrieval
+  store is rebuilt, truncated and compacted the same way when its documents are
+  removed. Copies made outside Kizuki (backups, exports, other machines, a
+  filesystem snapshot) are out of scope.
+
+`--verify` proves absence per store, keyed by the purged event ids because the
+text itself is gone. It prints one line per store and `--json` reports the same
+list as `data.stores` (`store`, `checked`, `found`, `method`, `at`):
+
+| Store | Absent means |
+| --- | --- |
+| `events` | no ledger row for any purged event |
+| `claims` | every claim whose provenance is purged has a blank payload |
+| `proposals` | every such proposal has a blank payload |
+| `search` | no search row cites a purged event |
+| `graph` | no graph edge names or cites a purged event |
+| `canon` | no page cites a purged event and no hold remains |
+| `archive` | no file under `archive/` cites a purged event |
+| `receipt_images` | no stage record, quarantined stage image or pending write intent cites a purged event |
+| `database` | the ledger file was compacted and its write-ahead log truncated; another connection holding it open reports `ledger_files_busy` |
+
+The command exits nonzero and names the paths or ids while any store still
+holds evidence, and a repeat of `--verify` finishes the erasure. A proof cannot
+find a copy that cites no purged event id, for example a hand copy of the text
+into an unrelated note.
+
+### Purged records are not captured again silently
+
+Deleting an event does not delete the record at its source. When a source
+record still exists, `purge` warns on stderr with its path (and the JSON output
+lists them as `data.source_records_still_present`); remove it or move it out of
+the source. Until then, and until the owner lifts it, `sync` refuses to capture
+a record with the same connector and source record id, whatever its new
+content. Refused records do not fail the run or hold back the cursor: the run
+reports `suppressed=N` and prints a notice on stderr. `kizuki purge
+--suppressions [--json]` lists the refused records with the purge receipt that
+holds each one. `kizuki purge --lift-suppression RECEIPT` lifts every
+suppression of that purge, and the next sync may capture the records again;
+purging one again makes a new receipt and a new suppression. Purges made by
+revoking a source's authorization are not suppressed, since the owner
+re-authorizes that source through its own consent step. The refusal is derived
+from the purge history, so backup and restore carry it, and a restored vault
+refuses again until the owner lifts it. Purges recorded before this behavior
+refuse too.
 
 Subject purges use an exact raw `subject_id` in its emitting connector's
 namespace: `--subject ID --connector ID`. Bare subject IDs are refused,
@@ -751,10 +818,15 @@ extracted in segments and the receipts of skipped records.
 usage: kizuki recover [--json]
 ```
 
-Resumes interrupted memory writes and their retrieval updates. Exits 0 when
-nothing remains pending. If recovery is still pending, stderr names the
-reason when known and points at `kizuki doctor --json`. Existing holds stay
-in place.
+Resumes interrupted memory writes, their retrieval updates and interrupted
+purges. A purge stopped after its first phase keeps its page hold and the
+purged claim text until it is finished; `recover` lifts the hold, completes the
+batch and erases the remaining payloads, exactly as `kizuki serve` does on its
+next sweep. The JSON report lists `purges_resumed` and `purges_pending`. Exits 0
+when nothing remains pending. If recovery is still pending, stderr names the
+reason when known and points at `kizuki doctor --json`, or at `kizuki purge
+--verify RECEIPT` for a purge that could not finish. Existing holds stay in
+place until their purge finishes.
 
 ## rebuild
 
