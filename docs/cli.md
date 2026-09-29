@@ -518,12 +518,17 @@ The sync rail runs every 15 minutes and makes one extraction request per pass
 unless `serve.toml` says otherwise: `[serve] sync_period_s` sets the period,
 applied to the persisted schedule when the service starts, and `[extraction]`
 sets `max_calls_per_pass`, `records_per_request`, `max_input_tokens`,
-`max_output_tokens` and `max_pass_seconds`. `serve status` and `doctor` print
-the effective values and the records skipped in the doctor window on a
-`throughput` line; `--json` reports them as `throughput` in the serve doctor
-report. A model that still answers HTTP 429 after the port's bounded retries
-stops the pass as `model:rate_limited`, and the next pass resumes from the
-durable extraction cursor. A pass never holds the vault writer across a model
+`max_output_tokens`, `max_pass_seconds` and the daily budgets
+`max_calls_per_day` and `max_output_tokens_per_day`. `serve status` and
+`doctor` print the effective values and the records skipped in the doctor
+window on a `throughput` line; `--json` reports them as `throughput` in the
+serve doctor report. A model that still answers HTTP 429 after the port's
+bounded retries stops the pass as `model:rate_limited`, and the next pass
+resumes from the durable extraction cursor. A spent daily budget stops the
+pass as `model:budget_day`, and a model that refuses requests for different
+records alike stops it as `model:systemic_rejection` and is not asked again
+until a persisted wait is over; see
+[rejected responses](extraction-budgets.md#rejected-responses-and-daily-budgets). A pass never holds the vault writer across a model
 request, and `kizuki serve stop` or a signal ends it before its next request
 as `serve:stop_requested`. See [extraction budgets](extraction-budgets.md#owner-throughput-settings).
 

@@ -200,7 +200,10 @@ export function createModelProducerV2Port(ctx: PortContext, options: ModelProduc
       usage.calls = 1;
       if (Object.keys(plan.redacted).length > 0) usage.redacted = plan.redacted;
       if (outcome.kind === "unavailable") return { status: "unavailable", reason: outcome.diagnostic.rule === "timeout" ? "timeout" : outcome.diagnostic.rule === "network" ? "network" : outcome.diagnostic.rule === "credentials" ? "credentials" : outcome.diagnostic.rule === "http" ? "http" : "unavailable", usage, diagnostic: outcome.diagnostic };
-      if (outcome.kind === "rejected") return { status: "rejected", reason: outcome.reason, usage, diagnostic: outcome.diagnostic };
+      if (outcome.kind === "rejected") {
+        usage.input_tokens = outcome.usage?.input_tokens ?? 0; usage.output_tokens = outcome.usage?.output_tokens ?? 0;
+        return { status: "rejected", reason: outcome.reason, usage, diagnostic: outcome.diagnostic };
+      }
       usage.input_tokens = outcome.response.usage.input_tokens; usage.output_tokens = outcome.response.usage.output_tokens;
       if (hasFenceLeak(outcome.response.text, plan.nonce)) return { status: "rejected", reason: "fence_leak", usage };
       let decoded: unknown; try { decoded = JSON.parse(unwrapJsonCodeFence(outcome.response.text)); } catch { decoded = null; }

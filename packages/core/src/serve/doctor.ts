@@ -667,7 +667,7 @@ function oversizedDoctor(db: Database): OversizedDoctor {
 }
 
 function throughputDoctor(config: ServeConfig, syncPeriod: number, recordsSkipped: number): ThroughputDoctor {
-  const { max_calls_per_pass, records_per_request, max_input_tokens, max_output_tokens, max_pass_seconds } = config.extraction;
+  const { max_calls_per_pass, records_per_request, max_input_tokens, max_output_tokens, max_pass_seconds, max_calls_per_day, max_output_tokens_per_day } = config.extraction;
   const pending = syncPeriod === config.sync_period_s ? "" : ` configured_sync_period_s=${config.sync_period_s} (applies at service start)`;
   return {
     sync_period_s: syncPeriod,
@@ -677,8 +677,10 @@ function throughputDoctor(config: ServeConfig, syncPeriod: number, recordsSkippe
     max_input_tokens,
     max_output_tokens,
     max_pass_seconds,
+    max_calls_per_day,
+    max_output_tokens_per_day,
     records_skipped: recordsSkipped,
-    detail: `throughput sync_period_s=${syncPeriod} max_calls_per_pass=${max_calls_per_pass} records_per_request=${records_per_request} max_input_tokens=${max_input_tokens} max_output_tokens=${max_output_tokens} max_pass_seconds=${max_pass_seconds} records_skipped=${recordsSkipped}${pending}`,
+    detail: `throughput sync_period_s=${syncPeriod} max_calls_per_pass=${max_calls_per_pass} records_per_request=${records_per_request} max_input_tokens=${max_input_tokens} max_output_tokens=${max_output_tokens} max_pass_seconds=${max_pass_seconds} max_calls_per_day=${max_calls_per_day} max_output_tokens_per_day=${max_output_tokens_per_day} records_skipped=${recordsSkipped}${pending}`,
   };
 }
 

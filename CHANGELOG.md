@@ -58,6 +58,21 @@
   only files modified since its watermark and resumes mid-file inside the 8 KiB
   cursor bound. No tombstones are emitted. See
   [Coding-session transcripts](docs/connect.md#coding-session-transcripts).
+- `[extraction] max_calls_per_day` (1 to 100,000, default 1,000) and
+  `max_output_tokens_per_day` (1,024 to 1,000,000,000, default 4,000,000)
+  bound model spend per UTC day, rejected requests included. A pass that finds
+  one spent makes no request and stops as `model:budget_day`. The `throughput`
+  line in `doctor` and `serve status` shows both.
+- A systemic-rejection breaker: when three different records are rejected the
+  same way in a row, the pass stops as `model:systemic_rejection`, backs off
+  (15 minutes, doubling to 6 hours, stored durably) and asks again with one
+  single-record probe. Records passed over during the streak go back on the
+  deferred queue and are not counted as skipped in that pass. A probe refused
+  alone twice skips that record for good and doubles the wait, so a run of
+  poison records drains one per wait instead of wedging extraction. An
+  unreadable stored history counts as a fresh wait, never as none.
+- Run receipts carry `model.consecutive_rejections` and
+  `model.last_rejection_rule` while a refusal streak lasts.
 
 ### Fixed
 
@@ -66,6 +81,8 @@
   were omitted, and the brief repair also rewrites the run-id
   stub a failed brief run leaves behind, skips oversized files, and names the
   day of a page it could not repair.
+- `max_calls_per_day` now charges every request a legacy producer makes for one
+  record, not one per record.
 - Structural claim deduplication now requires overlapping validity. A claim
   with the same key, polarity and object but a disjoint or merely adjacent
   validity window is stored as its own claim instead of being merged into an
@@ -111,6 +128,15 @@
   the newest receipt and replaces the file atomically before deleting rows.
   Doctor reads at most the newest 5,000 run receipts and scans the newest 1 MiB
   of the journal for orphans.
+- A rejected request no longer stalls the queue head at the default one step
+  per pass. The narrowed retry, the first record alone, is now stored with the
+  extraction cursor, so the next pass sends it and a record rejected on its own
+  twice is skipped through the existing skip path.
+- A model that rejects every request no longer makes `max_calls_per_pass` of 2
+  or more skip the whole ledger without claims.
+- A response rejected whole, including `finish_reason=length`, now records the
+  input and output tokens the provider billed in receipts and usage rows
+  instead of zero.
 
 ### Changed
 

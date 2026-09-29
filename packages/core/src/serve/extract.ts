@@ -953,6 +953,23 @@ export function retrySkippedRecords(db: Database): number {
 }
 
 /**
+ * Puts records the cursor already passed back on the deferred queue, so the
+ * loop decides each one again. Records gone from the ledger or no longer
+ * eligible are left out; returns how many were queued.
+ */
+export function requeuePassedOverRecords(db: Database, eventIds: readonly string[]): number {
+  if (!db.inTransaction) throw new Error("requeuing passed-over records requires a transaction");
+  let queued = 0;
+  for (const eventId of eventIds) {
+    const event = readEvent(db, eventId);
+    if (event === null || !extractEligible(db, event)) continue;
+    insertDeferred(db, [sourceInput(db, event, undefined)]);
+    queued += 1;
+  }
+  return queued;
+}
+
+/**
  * Typed request limits. A typed response anchors every claim and runs to one to
  * three thousand output tokens per ordinary record, more when a model indents
  * its JSON, so more records per request need a larger output reservation or

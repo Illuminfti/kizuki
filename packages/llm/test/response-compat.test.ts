@@ -108,6 +108,31 @@ describe("documented response metadata", () => {
     expect(() => parseChatCompletion(completionBody("{}", { finish_reason: "content_filter" }), "synthetic")).toThrow("rejected: response_refused");
   });
 
+  test("a response refused whole still reports what the provider billed for it", () => {
+    const usage = { prompt_tokens: 700, completion_tokens: 8192 };
+    for (const [body, rule] of [
+      [{ ...completionBody("{}", { finish_reason: "length" }), usage }, "response_truncated"],
+      [{ ...message({ refusal: CANARY }), usage }, "response_refused"],
+    ] as const) {
+      let refused: unknown;
+      try { parseChatCompletion(body, "synthetic"); } catch (error) { refused = error; }
+      expect(refused).toBeInstanceOf(PortError);
+      expect((refused as PortError).message).toBe(`rejected: ${rule}`);
+      expect((refused as PortError).usage).toEqual({ input_tokens: 700, output_tokens: 8192 });
+      expect(JSON.stringify(refused)).not.toContain(CANARY);
+    }
+  });
+
+  test("a refusal carries no usage when the provider sent none or a malformed block", () => {
+    const { usage: _billed, ...bare } = completionBody("{}", { finish_reason: "length" }) as Record<string, unknown>;
+    for (const body of [bare, { ...bare, usage: { prompt_tokens: "many", completion_tokens: 1 } }]) {
+      let refused: unknown;
+      try { parseChatCompletion(body, "synthetic"); } catch (error) { refused = error; }
+      expect((refused as PortError).message).toBe("rejected: response_truncated");
+      expect((refused as PortError).usage).toBeUndefined();
+    }
+  });
+
   test("an OpenRouter-shaped fake endpoint projects text once and discards unknown metadata", async () => {
     const body: Record<string, unknown> = {
       ...message({

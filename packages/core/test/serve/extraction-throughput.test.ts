@@ -90,6 +90,8 @@ test("serve.toml throughput settings parse within bounds and keep today's defaul
       max_input_tokens: 8_000,
       max_output_tokens: EXTRACT_MAX_OUTPUT_TOKENS,
       max_pass_seconds: 60,
+      max_calls_per_day: 1_000,
+      max_output_tokens_per_day: 4_000_000,
     },
   };
   expect(loadServeConfig(f.vault)).toMatchObject(defaults);
@@ -807,9 +809,11 @@ test("a service start applies the configured sync period; doctor shows effective
     max_input_tokens: 8_000,
     max_output_tokens: 8_192,
     max_pass_seconds: 60,
+    max_calls_per_day: 1_000,
+    max_output_tokens_per_day: 4_000_000,
     records_skipped: 0,
     detail:
-      "throughput sync_period_s=900 max_calls_per_pass=24 records_per_request=2 max_input_tokens=8000 max_output_tokens=8192 max_pass_seconds=60 records_skipped=0 configured_sync_period_s=120 (applies at service start)",
+      "throughput sync_period_s=900 max_calls_per_pass=24 records_per_request=2 max_input_tokens=8000 max_output_tokens=8192 max_pass_seconds=60 max_calls_per_day=1000 max_output_tokens_per_day=4000000 records_skipped=0 configured_sync_period_s=120 (applies at service start)",
   });
 
   await runServeDaemon(f.db, f.vault, {
@@ -830,7 +834,7 @@ test("a service start applies the configured sync period; doctor shows effective
     configured_sync_period_s: 120,
   });
   expect(after.throughput.detail).toBe(
-    "throughput sync_period_s=120 max_calls_per_pass=24 records_per_request=2 max_input_tokens=8000 max_output_tokens=8192 max_pass_seconds=60 records_skipped=0",
+    "throughput sync_period_s=120 max_calls_per_pass=24 records_per_request=2 max_input_tokens=8000 max_output_tokens=8192 max_pass_seconds=60 max_calls_per_day=1000 max_output_tokens_per_day=4000000 records_skipped=0",
   );
   expect(after.rails.find((rail) => rail.rail === "sync")?.period_s).toBe(120);
 

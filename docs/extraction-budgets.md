@@ -12,10 +12,12 @@ increase these model allowances.
 Reasoning models count their hidden reasoning against the same output
 reservation. A model that spends it all before answering returns a truncated
 response, which doctor reports as `model response rejected: response
-truncated`. The pass asks again for the first record alone, and a record whose
-answer is still rejected on its own is skipped without claims when a pass
-takes two or more steps (see [steps per pass](#owner-throughput-settings)), so
-such a model loses records rather than stalling. Set `reasoning_effort = "low"` (or `"minimal"`) under
+truncated`. The next request asks for the first record alone, even when it is
+the next pass's, and a record whose answer is still rejected on its own is
+skipped without claims, so one bad record cannot stall the queue. A model that
+rejects every record the same way is stopped by a
+[systemic breaker](#rejected-responses-and-daily-budgets) rather than being
+allowed to skip the ledger. Set `reasoning_effort = "low"` (or `"minimal"`) under
 `[ports.llm]` in `serve.toml` to shorten the hidden reasoning, choose a
 non-reasoning model, or reserve more output tokens. Doctor and `serve status`
 show the effective setting next to the model. See the
@@ -36,6 +38,8 @@ records_per_request = 2    # 1..8; typed extraction only
 max_input_tokens = 8000    # 2000..32000; typed extraction only
 max_output_tokens = 8192   # 1024..16384; typed extraction only, reasoning included
 max_pass_seconds = 60      # 30..600; no step starts after this many seconds
+max_calls_per_day = 1000   # 1..100000; model requests per UTC day, rejected ones included
+max_output_tokens_per_day = 4000000  # 1024..1000000000; billed output tokens per UTC day
 ```
 
 A value outside its range, a fraction or a string keeps that key's default.
@@ -49,23 +53,23 @@ A value outside its range, a fraction or a string keeps that key's default.
   the cursor in one transaction before the next step starts. A kill therefore
   loses at most the request in flight, and the next pass resumes from the
   durable cursor. A rejected response (malformed, truncated or refused) is
-  asked for once more in the next step, for the first record of the rejected
-  request alone, because a nondeterministic model often answers a smaller
-  request well. A record rejected again on its own is skipped: the cursor
-  moves past it without claims, the receipt names the reason (`record skipped:
-  rejected on its own twice`) and counts it in `records_skipped`, and the pass
-  goes on. A typed record too large for one request is asked for one segment
-  per step, or skipped with a receipt when it cannot be split; see
+  asked for once more, for the first record of the rejected request alone,
+  because a nondeterministic model often answers a smaller request well. The
+  decision to narrow is stored with the extraction cursor, so it holds when the
+  next request is the next pass's, as it is at the default of one step. A
+  record rejected again on its own is skipped: the cursor moves past it without
+  claims, the receipt names the reason (`record skipped: rejected on its own
+  twice`) and counts it in `records_skipped`, and the pass goes on. A typed
+  record too large for one request is asked for one segment per step, or
+  skipped with a receipt when it cannot be split; see
   [records too large for one request](#records-too-large-for-one-request).
-  The narrowed retry is the pass's next step, so it needs a
-  `max_calls_per_pass` of at least 2; with the default of 1 the next pass
-  sends the same request again. With two or more steps, one record therefore
-  cannot hold every later one. A pass ends early when the ledger is drained,
-  the epoch-zero producer refuses a request before sending it, a commit finds
-  the cursor moved or its inputs purged, or the model is unavailable. Steps
-  that make no request, such as advancing over records a
-  source grant does not cover or skipping a record, still count toward the
-  limit, so the default pass is the same single step as before.
+  Whatever the number of steps, one record cannot hold every later one. A pass
+  ends early when the ledger is drained, the epoch-zero producer refuses a
+  request before sending it, a commit finds the cursor moved or its inputs
+  purged, or the model is unavailable. Steps that make no request, such as
+  advancing over records a source grant does not cover or skipping a record,
+  still count toward the limit, so the default pass is the same single step as
+  before.
 - **Time per pass.** Once `max_pass_seconds` have passed, the pass starts no
   further step; the request in flight finishes and is filed, and the next pass
   resumes from the cursor. Rails run one at a time, so this bounds how long a
@@ -118,6 +122,57 @@ decision whose previous cursor must equal the committed one. Concurrent
 requests would have to be planned against state that does not exist yet and
 thrown away whenever an earlier request fails, and filing would no longer
 follow a single order.
+
+## Rejected responses and daily budgets
+
+A rejected response is a response the port refused whole: truncated at its
+output reservation, refused by the provider, or not a valid typed response.
+The provider still billed it.
+
+- **Metering.** A rejected response that carries a `usage` block, including
+  one that ended with `finish_reason=length`, records its input and output
+  tokens in the run receipt and in the pass's usage row, like an answered
+  request. A provider that sent no usage block, or a malformed one, counts
+  zero tokens; the request itself is always counted.
+- **Systemic breaker.** A record rejected on its own twice is skipped, but the
+  same rejection for three different records in a row, with no answer between
+  them, means the model may be failing, not the records. The pass then stops as
+  `model:systemic_rejection` and skips nothing further. Records passed over
+  since the streak began are put back on the deferred queue, so they are
+  decided again once the model answers, and the pass's receipt does not count
+  them in `records_skipped`. Receipts of earlier passes already reported those
+  skips: `records_skipped` is a per-pass tally, so a total summed across
+  receipts can include records a later trip queued again. Rejections that
+  differ, such as a truncated response followed by a malformed one, do not add
+  up. Any answered request ends the streak.
+- **Backoff and probes.** After the breaker trips no request leaves for 15
+  minutes, then 30, 60 and so on up to 6 hours. The wait is stored with the
+  extraction cursor, so it survives restarts. A pass inside the wait makes no
+  request and stops as `model:systemic_rejection` with a receipt error that
+  names when it ends. A trip is a pause, not a verdict: it forgets the three
+  records it counted, and the first request after the wait is a probe for one
+  record alone. The probe record is narrowed and, refused alone twice, skipped
+  for good; the pass then stops and the wait doubles. A run of poison records
+  therefore drains at most one record per wait, and the first answered request
+  ends the streak and resets the wait. A model that fails everything costs the
+  same bound: one record per wait, at most a handful per day at the cap. A
+  stored history that cannot be read is treated as a fresh 15 minute wait, never
+  as no history, so a damaged row cannot lift a backoff.
+- **Daily budgets.** `max_calls_per_day` counts model requests (a legacy producer that makes
+  several requests per record charges each one) and
+  `max_output_tokens_per_day` counts output tokens the provider billed, per
+  UTC day, across every pass and including rejected responses. Each is checked
+  before a request leaves; the pass that finds one spent makes no request and
+  stops as `model:budget_day` (receipt status `stopped`), and the next UTC day
+  starts again from zero. A request is charged when it leaves, so a kill
+  mid-request still counts, and tokens when it returns, so a day can end at
+  most one request past its token cap. The defaults bound spend without
+  slowing the default one-step pass; raise them together with
+  `max_calls_per_pass` to drain a backlog.
+- **Receipts.** A run receipt's `model` block carries `consecutive_rejections`
+  and `last_rejection_rule` (for example `response_truncated`) while the
+  refusal streak lasts, and omits them once the model has answered. Older
+  receipts omit them too.
 
 ## Rate limits and transient provider failures
 
@@ -256,7 +311,7 @@ under the current authorization checks.
 Use the repository's pinned Bun version:
 
 ```bash
-bun test packages/core/test/serve/extraction-budget.test.ts packages/core/test/serve/extraction-throughput.test.ts packages/core/test/serve/oversized-records.test.ts packages/core/test/producer/model.test.ts packages/core/test/source-model-egress.test.ts
+bun test packages/core/test/serve/extraction-budget.test.ts packages/core/test/serve/extraction-throughput.test.ts packages/core/test/serve/extraction-rejections.test.ts packages/core/test/serve/oversized-records.test.ts packages/core/test/producer/model.test.ts packages/core/test/source-model-egress.test.ts
 bun test packages/llm/test/openai-compatible.test.ts packages/cli/test/serve/extraction-throughput.test.ts packages/cli/test/serve/oversized-records.test.ts
 bun test packages/core/test
 bun run typecheck
@@ -273,7 +328,13 @@ rejection and after a rate-limited end, a stop request and a real SIGTERM
 ending the pass at the next step, owner writes and `serve stop` during a
 request, the pass time budget, rail grace behind a long pass, a real kill
 during a request, flat statement and memory use over 64-request passes, retry
-backoff and the sync period applied at service start. The oversized-record
+backoff and the sync period applied at service start. The rejection tests cover
+narrowing across single-step passes, a poison record skipped after two
+rejections, three records rejected alike stopping the pass with nothing
+skipped and the persisted backoff and probe, records passed over during a
+systemic streak decided again once the model answers, differing rejections not
+adding up, usage recorded for rejected responses, the daily call and output
+token budgets, and the receipt fields. The oversized-record
 tests cover split boundaries, a 60,000-character record extracted in three
 segments whose anchors match the original text, segments shrunk to fit
 `max_input_tokens`, a stop request between segments, the writer free during a
