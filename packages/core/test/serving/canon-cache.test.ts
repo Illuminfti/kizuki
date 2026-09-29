@@ -20,8 +20,8 @@ function fresh(id: string, title: string) {
     status: "active",
     sensitivity: "public",
     taint: "clean",
-    subjects: [],
-  } as const;
+    subjects: [] as string[],
+  };
 }
 
 test("a canon write is visible to the next served call", async () => {

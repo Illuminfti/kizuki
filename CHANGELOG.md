@@ -32,9 +32,10 @@
 - MCP `tools/list` names only the tools the principal's grant allows.
 - Denied and invalid `world_view` calls are audited and count toward the rate
   limit; the audit row used to roll back with the refusal.
-- MCP canon reads no longer parse the whole vault on every call. Parsed pages
-  and their resolved authority are kept for the life of the adapter process and
-  refreshed when a file or the receipt history changes.
+- Served canon reads (MCP tools and the loopback host) no longer parse the
+  whole vault on every call. Parsed pages and their resolved authority are kept
+  for the life of the process and refreshed when a file or the receipt history
+  changes.
 - The MCP adapter no longer runs schema repair writes when it starts on a
   current ledger, so a long writer no longer delays or refuses startup.
 

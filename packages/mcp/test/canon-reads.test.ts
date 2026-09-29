@@ -22,8 +22,8 @@ const PAGE = {
   status: "active",
   sensitivity: "public",
   taint: "clean",
-  subjects: [],
-} as const;
+  subjects: [] as string[],
+};
 
 test("a note written after a session began is read by the very next call of every canon tool", async () => {
   fixture = mcpFixture();
