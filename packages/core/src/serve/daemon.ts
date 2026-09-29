@@ -6,6 +6,7 @@ import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, open
 import { dirname, join } from "node:path";
 import nodeProcess from "node:process";
 import { embedBackfillPeriod, loadServeConfig } from "./config";
+import { clearServeEndpoint, writeServeEndpoint } from "./endpoint";
 import { startServeHttp } from "./http";
 import type { ServeHttpHandle } from "./http";
 import {
@@ -178,6 +179,7 @@ export async function runServeDaemon(
       port: options.port ?? config.bind_port,
       ...(retrieval === undefined ? {} : { retrieval }),
     });
+    writeServeEndpoint(vaultPath, { host: http.host, port: http.port, instance_id: ownMarker.instance_id });
   }
 
 
@@ -233,7 +235,7 @@ export async function runServeDaemon(
   } finally {
     nodeProcess.off("SIGTERM", requestStop);
     nodeProcess.off("SIGINT", requestStop);
-    try { if (http !== null) await http.stop(); }
+    try { if (http !== null) { clearServeEndpoint(vaultPath); await http.stop(); } }
     finally {
       try { clearServeStopRequest(vaultPath, ownMarker); clearPid(vaultPath, instanceId); }
       finally { releaseLease(db, process); }
