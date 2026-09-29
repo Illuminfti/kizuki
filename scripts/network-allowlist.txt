@@ -104,3 +104,4 @@ packages/cli/test/reflex.test.ts:(toplevel).Bun.serve#1:loopback fake model endp
 packages/core/test/helpers/world-kit/loopback.ts:post.fetch#1:synthetic loopback request to the standing serve endpoint; the single fetch of the world test kit, reused by every world test
 packages/cli/src/hook/session-start.ts:callDaemon.fetch#1:loopback call to the running daemon's advertised 127.0.0.1 or ::1 endpoint; the endpoint file is validated as loopback and bound to the live daemon instance
 packages/cli/test/hook.test.ts:fakeDaemon.Bun.serve#1:synthetic daemon endpoint bound to 127.0.0.1 for the session-start hook tests
+packages/cli/test/hook.test.ts:(toplevel).realServe#1:wrapper around the real daemon listener, which stays bound to 127.0.0.1, so the test can count requests that reach the daemon handler
