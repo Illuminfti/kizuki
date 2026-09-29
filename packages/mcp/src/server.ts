@@ -34,7 +34,7 @@ export const TOOL_DESCRIPTIONS: Record<Tool, string> = {
   system_health: `Report vault, ledger, connector and agent counts for this principal. ${TAINT_RULE}`,
   world_view: `${WORLD.description} ${TAINT_RULE}`,
   propose: `File a claim for the receipted writer to act on. It never changes canon by itself. ${TAINT_RULE}`,
-  correct: `Relay the owner's own correction of something the store has wrong, naming the claim, the claim key or the subject it is about. The statement is recorded verbatim, retires the claim it contradicts and rewrites the note bound to it, under one receipt that undo reverses; pass "object" to say what the claim should read instead, or "dry_run" to see what would change. ${TAINT_RULE}`,
+  correct: `Relay the owner's own correction of something the store has wrong, naming the claim, the claim key or the subject it is about. The statement is recorded verbatim, retires the claim it contradicts and rewrites the note bound to it, under one receipt that undo reverses; pass "object" to say what the claim should read instead, or "dry_run" to see what would change. A claim from world_view is named by target.world_claim and takes a mode: replace_object (the default; object may be a literal, a vocabulary value or a node token), retract (the owner denies it) or reclassify_mode (with perspective_mode suggested, hypothetical or questioned, for what was an idea and not a fact). refresh_world returns the corrected card in the same call. ${TAINT_RULE}`,
 };
 
 const READ_ONLY = {

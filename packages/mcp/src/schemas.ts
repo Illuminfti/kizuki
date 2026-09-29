@@ -196,6 +196,15 @@ function frontmatterChars(bag: Record<string, unknown>): number {
   return total;
 }
 
+const CORRECT_TOKEN = z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/);
+const CORRECT_OBJECT_REF = z.strictObject({ kind: z.literal("object"), token: CORRECT_TOKEN });
+
+/**
+ * A bare string is the legacy replacement object. The typed forms are for a
+ * world claim: a literal, a registered vocabulary value, or a node named by an
+ * object token from `world_view`. Which mode takes which argument is the
+ * engine's judgement, made on every call, so a mismatch is refused and audited.
+ */
 export const CORRECT_INPUT = z.strictObject({
   statement: z.string().min(1).max(2000),
   target: z
@@ -203,10 +212,26 @@ export const CORRECT_INPUT = z.strictObject({
       claim_id: ID.optional(),
       claim_key: z.string().regex(/^[0-9a-f]{64}$/).optional(),
       subject: ID.optional(),
-      world_claim: z.strictObject({ kind: z.literal("claim"), token: z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/) }).optional(),
+      world_claim: z.strictObject({ kind: z.literal("claim"), token: CORRECT_TOKEN }).optional(),
     }).refine((target) => [target.claim_id, target.claim_key, target.subject, target.world_claim].filter((value) => value !== undefined).length <= 1, "target names exactly one selector")
     .optional(),
-  object: z.string().min(1).max(1024).optional(),
+  object: z
+    .union([
+      z.string().min(1).max(1024),
+      z.strictObject({ kind: z.literal("literal"), value: z.string().min(1).max(400) }),
+      z.strictObject({ kind: z.literal("vocabulary"), id: z.string().min(1).max(128) }),
+      z.strictObject({ kind: z.literal("node"), ref: CORRECT_OBJECT_REF }),
+    ])
+    .optional(),
+  mode: z.enum(["replace_object", "retract", "reclassify_mode"]).optional(),
+  perspective_mode: z.enum(["suggested", "hypothetical", "questioned"]).optional(),
+  refresh_world: z
+    .strictObject({
+      operation: z.enum(["concept", "situation"]),
+      concept: CORRECT_OBJECT_REF.optional(),
+      situation: CORRECT_OBJECT_REF.optional(),
+    })
+    .optional(),
   dry_run: z.boolean().optional(),
 });
 
