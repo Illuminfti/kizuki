@@ -49,10 +49,24 @@ export const SOURCE_FIELDS = [
   "attachments",
   "metadata",
 ] as const;
+/**
+ * What the owner accepts a model destination to do with the text it receives, from strictest to
+ * loosest. `provider_managed` is the pre-classification value: it names no promise, so it accepts
+ * any destination and keeps every existing grant valid and its digest unchanged.
+ */
+export const DECLARED_RETENTION_CLASSES = ["zero_retention", "logged_no_training", "logged_and_trained"] as const;
+export const EXTERNAL_RETENTION_CLASSES = [...DECLARED_RETENTION_CLASSES, "provider_managed"] as const;
+export type ExternalRetention = (typeof EXTERNAL_RETENTION_CLASSES)[number];
+/** What a bound destination declares. An undeclared destination is the loosest promise, never the strictest. */
+export type DeclaredRetention = (typeof DECLARED_RETENTION_CLASSES)[number];
+/** True when a destination's declared class is within the class the grant accepts. */
+export function retentionAccepted(accepted: ExternalRetention, declared: DeclaredRetention | undefined): boolean {
+  return EXTERNAL_RETENTION_CLASSES.indexOf(declared ?? "logged_and_trained") <= EXTERNAL_RETENTION_CLASSES.indexOf(accepted);
+}
 export interface SourceModelEgress {
   model_endpoint: string;
   model: string;
-  external_retention: "provider_managed";
+  external_retention: ExternalRetention;
 }
 export interface SourceGrantPolicy {
   purposes: SourcePurpose[];
@@ -181,11 +195,12 @@ function egress(value: unknown): SourceGrantPolicy["egress"] {
   if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "external_retention,model,model_endpoint") {
     fail("unsupported_egress");
   }
-  if (value.external_retention !== "provider_managed") fail("unsupported_retention");
+  const retention = value.external_retention;
+  if (typeof retention !== "string" || !(EXTERNAL_RETENTION_CLASSES as readonly string[]).includes(retention)) fail("unsupported_retention");
   return {
     model_endpoint: modelEndpoint(value.model_endpoint),
     model: modelName(value.model),
-    external_retention: "provider_managed",
+    external_retention: retention as ExternalRetention,
   };
 }
 function policyOf(value: unknown): SourceGrantPolicy {
@@ -713,7 +728,10 @@ export function bindSourceEvent(
 }
 
 const localPorts = new WeakSet<object>();
-const modelPorts = new WeakMap<object, Readonly<Pick<SourceModelEgress, "model_endpoint" | "model">>>();
+type ModelDestination = Readonly<Pick<SourceModelEgress, "model_endpoint" | "model"> & { retention?: DeclaredRetention }>;
+const modelPorts = new WeakMap<object, ModelDestination>();
+/** A second destination a producer sends the same events to, such as a configured System One judge. */
+const judgePorts = new WeakMap<object, ModelDestination>();
 /** A runtime that was selected only because the ledger was still epoch zero. */
 const epochZeroProducerPorts = new WeakSet<object>();
 /** Trusted host composition capability, not an event/config assertion or agent API. */
@@ -734,22 +752,46 @@ export function sourcePortBindingDigest(port: object | undefined): string {
   const model = port === undefined ? undefined : modelPorts.get(port);
   return sha256Hex(model === undefined
     ? "kizuki.source-port/v1\0unbound"
-    : `kizuki.source-port/v1\0model\0${model.model_endpoint}\0${model.model}`);
+    : `kizuki.source-port/v1\0model\0${destinationKey(model)}${judgeKey(port)}`);
 }
+const destinationKey = (to: ModelDestination): string => `${to.model_endpoint}\0${to.model}${to.retention === undefined ? "" : `\0${to.retention}`}`;
+const judgeKey = (port: object | undefined): string => {
+  const judge = port === undefined ? undefined : judgePorts.get(port);
+  return judge === undefined ? "" : `\0judge\0${destinationKey(judge)}`;
+};
+function destinationOf(binding: { model_endpoint: string; model: string; retention?: DeclaredRetention }): ModelDestination {
+  if (binding.retention !== undefined && !(DECLARED_RETENTION_CLASSES as readonly string[]).includes(binding.retention)) fail("unsupported_retention");
+  return Object.freeze({
+    model_endpoint: modelEndpoint(binding.model_endpoint),
+    model: modelName(binding.model),
+    ...(binding.retention === undefined ? {} : { retention: binding.retention }),
+  });
+}
+const sameDestination = (a: ModelDestination, b: ModelDestination): boolean =>
+  a.model_endpoint === b.model_endpoint && a.model === b.model && a.retention === b.retention;
 /** Trusted host capability for one concrete model transport destination. */
 export function bindSourceModelPort<T extends object>(
   port: T,
-  binding: { model_endpoint: string; model: string },
+  binding: { model_endpoint: string; model: string; retention?: DeclaredRetention },
 ): T {
-  const normalized = Object.freeze({
-    model_endpoint: modelEndpoint(binding.model_endpoint),
-    model: modelName(binding.model),
-  });
+  const normalized = destinationOf(binding);
   const prior = modelPorts.get(port);
-  if (prior !== undefined && (prior.model_endpoint !== normalized.model_endpoint || prior.model !== normalized.model)) {
-    fail("source_model_binding_conflict");
-  }
+  if (prior !== undefined && !sameDestination(prior, normalized)) fail("source_model_binding_conflict");
   modelPorts.set(port, prior ?? normalized);
+  return port;
+}
+/**
+ * Trusted host capability: the producer also sends the events it extracts from to this second
+ * destination. Source consent must then cover that destination too, or the events are not sent at all.
+ */
+export function bindSourceJudgePort<T extends object>(
+  port: T,
+  binding: { model_endpoint: string; model: string; retention?: DeclaredRetention },
+): T {
+  const normalized = destinationOf(binding);
+  const prior = judgePorts.get(port);
+  if (prior !== undefined && !sameDestination(prior, normalized)) fail("source_model_binding_conflict");
+  judgePorts.set(port, prior ?? normalized);
   return port;
 }
 /** Prevent a CLI runtime selected for a historical journal from crossing into a managed epoch. */
@@ -766,7 +808,13 @@ export function inheritSourcePortBindings<T extends object>(source: object, targ
   if (epochZeroProducerPorts.has(source)) epochZeroProducerPorts.add(target);
   const model = modelPorts.get(source);
   if (model !== undefined) modelPorts.set(target, model);
+  const judge = judgePorts.get(source);
+  if (judge !== undefined) judgePorts.set(target, judge);
   return target;
+}
+function consentsTo(egress: SourceGrantPolicy["egress"], to: ModelDestination): boolean {
+  return egress !== "local_only" && egress.model_endpoint === to.model_endpoint && egress.model === to.model &&
+    retentionAccepted(egress.external_retention, to.retention);
 }
 export interface SourceReadScope {
   owner: boolean;
@@ -824,8 +872,10 @@ export function sourceEventsAllowed(
       !grant.policy.purposes.includes(scope.purpose ?? "recall")
     )
       return false;
-    if (model !== undefined && (grant.policy.egress === "local_only" ||
-      grant.policy.egress.model_endpoint !== model.model_endpoint || grant.policy.egress.model !== model.model)) return false;
+    if (model !== undefined && !consentsTo(grant.policy.egress, model)) return false;
+    // A grant names one destination, so a judge elsewhere is not consented and its events are held.
+    const judge = scope.port === undefined ? undefined : judgePorts.get(scope.port);
+    if (judge !== undefined && !consentsTo(grant.policy.egress, judge)) return false;
     if (
       (row.text.length > 0 && !grant.policy.allowed_fields.includes("text")) ||
       (["subjects", "attachments", "metadata"] as const).some(

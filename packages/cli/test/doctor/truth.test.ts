@@ -6,6 +6,7 @@ import { openLedger } from "@kizuki/core/internal";
 import { createHelpers, fixtureConsent } from "../helpers";
 import { fakeSystemd } from "../serve/supervisor-fixture";
 import { nextStep } from "../../src/commands/doctor-next";
+import { RETENTION_MEANING } from "../../src/egress-view";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
 setDefaultTimeout(120_000);
@@ -130,7 +131,7 @@ describe("doctor tells the daemon's story from a shell without its secret", () =
     expect(healthy.stdout).toContain('next: kizuki tell "<statement>" --claim ');
   });
 
-  test("a source that sends text to a model is listed with host, model and retention", () => {
+  for (const retention of ["provider_managed", "zero_retention", "logged_no_training", "logged_and_trained"] as const) test(`a source that sends text to a model is listed with host, model and ${retention}`, () => {
     const setup = tempVault();
     const connected = runCli(
       setup.env,
@@ -154,7 +155,7 @@ describe("doctor tells the daemon's story from a shell without its secret", () =
         egress: {
           model_endpoint: "https://models.example.test/v1",
           model: "synthetic-model",
-          external_retention: "provider_managed",
+          external_retention: retention,
         },
         sensitivity_floor: "public",
       }),
@@ -176,7 +177,7 @@ describe("doctor tells the daemon's story from a shell without its secret", () =
     expect(granted.exitCode, granted.stderr).toBe(0);
     const result = runCli(setup.env, "doctor");
     expect(result.stdout).toContain(
-      `egress source=${key} connector=kizuki.markdown-folder host=models.example.test model=synthetic-model retention=provider_managed`,
+      `egress source=${key} connector=kizuki.markdown-folder host=models.example.test model=synthetic-model retention=${retention} (${RETENTION_MEANING[retention]})`,
     );
   });
 });

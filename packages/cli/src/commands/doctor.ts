@@ -33,6 +33,7 @@ import { listHostConnections, loadConnector } from "../connections";
 import { withReadVault } from "../context";
 import type { ReadVaultContext } from "../context";
 import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
+import { RETENTION_MEANING } from "../egress-view";
 import { clean, errorText, jsonEnvelope } from "../output";
 import { embeddingConfigured } from "../retrieval-runtime";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
@@ -597,7 +598,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(report.serve.model.detail);
   io.out(report.serve.extraction.detail);
   for (const source of report.serve.egress) {
-    io.out(`egress source=${source.source_key} connector=${source.connector_id} host=${clean(source.endpoint_host)} model=${clean(source.model)} retention=${source.retention} (the provider keeps sent text under its own policy)`);
+    io.out(`egress source=${source.source_key} connector=${source.connector_id} host=${clean(source.endpoint_host)} model=${clean(source.model)} retention=${source.retention} (${RETENTION_MEANING[source.retention]})`);
   }
   if (report.model_config_error !== null) io.out(`model configuration invalid: ${report.model_config_error}`);
   io.out(report.serve.throughput.detail);

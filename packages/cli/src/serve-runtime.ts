@@ -9,6 +9,7 @@ import {
   PortError,
   PortRegistry,
   SourceGrantError,
+  bindSourceJudgePort,
   bindSourceModelPort,
   bindEpochZeroProducerPort,
   sourcePolicyEpoch,
@@ -241,6 +242,7 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
   )).port;
   let producer: ProducerPort | ProducerV2Port | undefined;
   let systemone: SystemOnePort | undefined;
+  let judge: ReturnType<typeof parseSystemOneJevConfig> | undefined;
   try {
     if (llm.model_ref !== null) {
       const configured = selected.id === MODEL_LLM_ID ? parseOpenAiCompatibleConfig(selected.config) : null;
@@ -261,7 +263,7 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
             runtimeError("configured systemone secret reference cannot be resolved");
           }
         }
-        parseSystemOneJevConfig(config);
+        judge = parseSystemOneJevConfig(config);
         registerSystemOnePorts(registry);
         systemone = (await registry.bindFromConfig<SystemOnePort>(
           "systemone",
@@ -293,8 +295,11 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
         bindSourceModelPort(producer, {
           model_endpoint: chatCompletionsUrl(configured.base_url),
           model: configured.model,
+          ...(configured.retention === null ? {} : { retention: configured.retention }),
         });
       }
+      // The judge is sent the same events and claims, so it is egress: consent must name it too.
+      if (judge !== undefined) bindSourceJudgePort(producer, { model_endpoint: `${judge.base_url}/systemone`, model: judge.model });
     }
   } catch (error) {
     // A partially bound producer is still owned here. Cleanup failures must

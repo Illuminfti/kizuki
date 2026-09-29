@@ -1,8 +1,10 @@
 import {
+  DECLARED_RETENTION_CLASSES,
   PortError,
   isNonEmptyString,
   isPlainObject,
   isSecretRef,
+  type DeclaredRetention,
 } from "@kizuki/core";
 
 export const DEFAULT_TIMEOUT_MS = 60_000;
@@ -34,6 +36,12 @@ const PROVIDER_KEYS = new Set<string>(["data_collection", "zdr", "allow_fallback
 const PROVIDER_NAME = /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,63}$/;
 const MAX_PROVIDER_LIST = 32;
 
+/**
+ * What the owner declares the destination does with the text, never inferred. Source consent compares
+ * it with the class a grant accepts, and an undeclared destination counts as the loosest.
+ */
+export type LlmRetentionClass = DeclaredRetention;
+
 export interface OpenAiCompatibleLlmConfig {
   readonly base_url: string;
   readonly model: string;
@@ -44,6 +52,12 @@ export interface OpenAiCompatibleLlmConfig {
   readonly reasoning_effort: ReasoningEffort | null;
   /** Sent only when configured; absent leaves provider routing to the router's default. */
   readonly provider?: ProviderPrivacy;
+  /** Sent only when configured. Extraction wants 0: provider defaults vary the JSON between calls. */
+  readonly temperature: number | null;
+  /** True sends `response_format: {type: "json_object"}`; absent leaves the response format to the provider. */
+  readonly json_mode: boolean;
+  /** The owner's declared class for this destination; null is undeclared, which source consent treats as the loosest. */
+  readonly retention: LlmRetentionClass | null;
 }
 
 const ALLOWED_KEYS = new Set([
@@ -54,6 +68,9 @@ const ALLOWED_KEYS = new Set([
   "max_retries",
   "reasoning_effort",
   "provider",
+  "temperature",
+  "json_mode",
+  "retention",
 ]);
 
 function configError(message: string): never {
@@ -176,6 +193,40 @@ function parseProvider(value: unknown): ProviderPrivacy | undefined {
   return Object.keys(provider).length === 0 ? undefined : provider;
 }
 
+function parseTemperature(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 2) {
+    configError("temperature must be a number from 0 to 2");
+  }
+  return value;
+}
+
+function parseJsonMode(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value !== "boolean") configError("json_mode must be a boolean");
+  return value;
+}
+
+/**
+ * A declaration is only as strong as what the request asks for: zero retention must be requested on
+ * the wire, without fallbacks to another provider, unless the endpoint is this machine.
+ */
+function parseRetention(value: unknown, url: URL, provider: ProviderPrivacy | undefined): LlmRetentionClass | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !(DECLARED_RETENTION_CLASSES as readonly string[]).includes(value)) {
+    configError(`retention must be one of ${DECLARED_RETENTION_CLASSES.join(", ")}`);
+  }
+  const declared = value as LlmRetentionClass;
+  if (isLoopbackHost(url.hostname)) return declared;
+  if (declared === "zero_retention" && !(provider?.zdr === true && provider.allow_fallbacks === false)) {
+    configError("retention zero_retention needs provider.zdr = true and provider.allow_fallbacks = false, or a loopback base_url");
+  }
+  if (declared === "logged_no_training" && provider?.data_collection !== "deny" && provider?.zdr !== true) {
+    configError('retention logged_no_training needs provider.data_collection = "deny" or provider.zdr = true');
+  }
+  return declared;
+}
+
 export function parseOpenAiCompatibleConfig(
   value: unknown,
 ): OpenAiCompatibleLlmConfig {
@@ -211,5 +262,8 @@ export function parseOpenAiCompatibleConfig(
     max_retries: parseRetries(value["max_retries"]),
     reasoning_effort: parseReasoningEffort(value["reasoning_effort"]),
     ...(provider === undefined ? {} : { provider }),
+    temperature: parseTemperature(value["temperature"]),
+    json_mode: parseJsonMode(value["json_mode"]),
+    retention: parseRetention(value["retention"], url, provider),
   };
 }

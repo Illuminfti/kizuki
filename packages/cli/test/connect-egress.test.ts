@@ -32,7 +32,7 @@ const row = (f: ReturnType<typeof source>) => h.runCli(f.env, "connect", "status
 
 test("a source without consent shows no destination", () => {
   const f = source();
-  expect(egress(f)).toEqual({ destination: "none", host: null, model: null, retention: "none", provider_controls: null, configured: false });
+  expect(egress(f)).toEqual({ destination: "none", host: null, model: null, retention: "none", declared_retention: null, provider_controls: null, configured: false });
   expect(row(f)).toContain("Egress");
   expect(row(f)).toContain("Retention");
 });
@@ -48,7 +48,7 @@ test("a model grant names its host, model, retention and the provider controls t
   const f = source();
   grant(f, remote);
   configure(f, `[ports.llm]\n${llm}[ports.llm.provider]\ndata_collection = "deny"\nzdr = true\n`);
-  expect(egress(f)).toEqual({ destination: "model_endpoint", host: "models.example.test", model: MODEL, retention: "provider_managed", provider_controls: { data_collection: "deny", zdr: true }, configured: true });
+  expect(egress(f)).toEqual({ destination: "model_endpoint", host: "models.example.test", model: MODEL, retention: "provider_managed", declared_retention: null, provider_controls: { data_collection: "deny", zdr: true }, configured: true });
   const text = row(f);
   expect(text).toContain("models.example.test synthetic-model");
   expect(text).toContain("provider-managed; requests data_collection=deny zdr=true");
@@ -60,6 +60,19 @@ test("a model grant without provider controls says none are requested", () => {
   configure(f, `[ports.llm]\n${llm}`);
   expect(egress(f)).toMatchObject({ destination: "model_endpoint", provider_controls: null, configured: true });
   expect(row(f)).toContain("provider-managed; no provider controls requested");
+});
+
+test("a class grant shows what it accepts and what the configured model declares", () => {
+  const f = source();
+  grant(f, { ...local, egress: { model_endpoint: ENDPOINT, model: MODEL, external_retention: "zero_retention" } });
+  expect(egress(f)).toMatchObject({ retention: "zero_retention", declared_retention: null, configured: false });
+  expect(row(f)).toContain("zero-retention");
+  configure(f, `[ports.llm]\n${llm}`);
+  expect(egress(f)).toMatchObject({ retention: "zero_retention", declared_retention: null, configured: true });
+  expect(row(f)).toContain("zero-retention; model declares nothing; no provider controls requested");
+  configure(f, `[ports.llm]\n${llm}retention = "zero_retention"\n[ports.llm.provider]\nzdr = true\nallow_fallbacks = false\n`);
+  expect(egress(f)).toMatchObject({ retention: "zero_retention", declared_retention: "zero_retention", configured: true });
+  expect(row(f)).toContain("zero-retention; model declares zero_retention; requests zdr=true allow_fallbacks=false");
 });
 
 test("a granted model that is not the configured one is shown as dormant", () => {

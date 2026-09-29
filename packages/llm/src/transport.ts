@@ -134,13 +134,17 @@ export const fetchTransport: ChatTransport = async (request) => {
 
   let response: Response;
   try {
-    response = await fetch(request.url, {
+    // Bun ends any fetch at five minutes on its own, so a configured deadline of up to ten minutes never applied.
+    // The caller's signal is the only limit.
+    const init: RequestInit & { timeout: false } = {
       method: "POST",
       headers,
       body: JSON.stringify(request.body),
       redirect: "error",
+      timeout: false,
       signal: AbortSignal.timeout(request.timeout_ms),
-    });
+    };
+    response = await fetch(request.url, init);
   } catch (error) {
     return {
       ok: false,

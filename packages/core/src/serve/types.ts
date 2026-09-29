@@ -1,4 +1,5 @@
 import type { ProducerDiagnostic } from "../contracts/producer";
+import type { ExternalRetention } from "../ledger/source-grants";
 import { MAX_V2_EVENTS, MAX_V2_OUTPUT_TOKENS } from "../contracts/producer-v2";
 
 /**
@@ -386,7 +387,8 @@ export interface EgressDoctor {
   readonly connector_id: string;
   readonly endpoint_host: string;
   readonly model: string;
-  readonly retention: "provider_managed";
+  /** The loosest class of destination the source's grant accepts. */
+  readonly retention: ExternalRetention;
 }
 
 /** One derived layer as its last rebuild stamped it. */

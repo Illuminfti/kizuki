@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
+import { EXTERNAL_RETENTION_CLASSES, type ExternalRetention } from "../ledger/source-grants";
 import { isPlainObject } from "../util/validate";
 import { extractBacklog } from "./doctor-rails";
 import {
@@ -104,6 +105,7 @@ export function egressDoctor(db: Database): {
   for (const row of rows) {
     let host: string | null = null;
     let model: string | null = null;
+    let retention: ExternalRetention | null = null;
     let local = false;
     try {
       const policy: unknown = JSON.parse(row.policy);
@@ -113,16 +115,17 @@ export function egressDoctor(db: Database): {
         isPlainObject(target) &&
         typeof target["model_endpoint"] === "string" &&
         typeof target["model"] === "string" &&
-        target["external_retention"] === "provider_managed"
+        (EXTERNAL_RETENTION_CLASSES as readonly unknown[]).includes(target["external_retention"])
       ) {
         host = new URL(target["model_endpoint"]).host;
         model = target["model"];
+        retention = target["external_retention"] as ExternalRetention;
       }
     } catch {
       /* reported below */
     }
     if (local) continue;
-    if (host === null || model === null) {
+    if (host === null || model === null || retention === null) {
       failures.push(`source ${row.source_key} policy unreadable`);
       continue;
     }
@@ -131,7 +134,7 @@ export function egressDoctor(db: Database): {
       connector_id: row.connector_id,
       endpoint_host: host,
       model,
-      retention: "provider_managed",
+      retention,
     });
   }
   return { egress, failures };

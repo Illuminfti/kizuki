@@ -67,6 +67,23 @@ describe("fetchTransport", () => {
     ).toEqual([]);
   });
 
+  test("lifts Bun's own five-minute fetch cutoff so the configured deadline is the only limit", async () => {
+    // A 330 s reply is verified by hand; here the option that removes the cutoff is pinned.
+    const real = globalThis.fetch;
+    let seen: (RequestInit & { timeout?: unknown }) | undefined;
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      seen = init;
+      return new Response(JSON.stringify({ choices: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+    try {
+      await fetchTransport({ url: "http://127.0.0.1:9/v1/chat/completions", api_key: null, timeout_ms: 600_000, max_response_bytes: 4_096, body: BODY });
+    } finally {
+      globalThis.fetch = real;
+    }
+    expect(seen?.timeout).toBe(false);
+    expect(seen?.signal).toBeInstanceOf(AbortSignal);
+  });
+
   test("omits authorization when no key is configured", async () => {
     fake = startFakeEndpoint();
     await fetchTransport({
