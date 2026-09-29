@@ -42,6 +42,7 @@ import {
   worldReceiptChain,
 } from "./canon/receipts";
 import { restoreCanonReceipts } from "./canon/restore";
+import { rebuildReceiptJournal } from "./canon/receipt-journal";
 import { isWorldCanonReceipt } from "./canon/world-receipt";
 import { assertWorldCanonPage, assertWorldReceiptBasis } from "./canon/world-materialization";
 import { canonicalJson } from "./util/hash";
@@ -3035,6 +3036,7 @@ export function restoreVault(
       restoredState = restorePortableLocal(db, staging, portable?.records ?? [], adapter);
       rebuildDerived(db, staging);
       rebuildPageIndex({ db, vault_path: staging });
+      rebuildReceiptJournal(db, staging);
       const rebuildResult: unknown = rebuildHost?.(db, staging);
       if (rebuildResult instanceof Promise) throw new Error("restore rebuild must be synchronous");
       if (db.inTransaction) throw new Error("restore rebuild left a transaction open");
@@ -3472,3 +3474,7 @@ function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManif
     if (grant === null || row.grant_revision < 1 || row.grant_revision > grant.revision || (row.connector_id !== null && row.connector_id !== grant.connector_id)) throw new Error("backup source binding mismatch");
   }
 }
+
+// Building blocks the owner-local snapshot in ./snapshot shares with export, so both use one copy of the
+// hashed-copy, destination and inventory rules.
+export { assertNoPendingPurgeExport, assertSeparated, copyHashed, fsyncDirectory, hashFile, mkdirPrivate, pathUnder, prepareDestination, splitBackupPath, vaultInventory, writePrivateFile };
