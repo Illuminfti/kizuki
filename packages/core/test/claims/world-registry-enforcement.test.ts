@@ -87,6 +87,67 @@ describe("audit probes are permanent refusals at the shared writer", () => {
   });
 });
 
+describe("a contradictory second classification", () => {
+  test("is refused, and the first classification keeps governing the endpoint", async () => {
+    const w = worldWriter();
+    try {
+      await w.classify("x:a", "world/concept");
+      const before = claimCount(w.db);
+      await expect(w.classify("x:a", "world/situation")).rejects.toMatchObject({ code: "world_endpoint_kind" });
+      expect(claimCount(w.db)).toBe(before);
+      await expect(
+        w.write({ subject: "x:a", predicate: "situation.label", object: { literal: "A situation" } }),
+      ).rejects.toMatchObject({ code: "world_endpoint_kind" });
+      expect(
+        (await w.write({ subject: "x:a", predicate: "concept.label", object: { literal: "A concept" } })).outcome,
+      ).toBe("stored");
+    } finally {
+      w.close();
+    }
+  });
+
+  test("the same classification twice is not a contradiction", async () => {
+    const w = worldWriter();
+    try {
+      await w.classify("x:a", "world/concept");
+      await expect(w.classify("x:a", "world/concept")).resolves.toBeDefined();
+    } finally {
+      w.close();
+    }
+  });
+
+  test("a hypothetical or negative first classification does not block a later one", async () => {
+    const w = worldWriter();
+    try {
+      await w.write({ subject: "x:a", predicate: "world.kind", object: { vocabulary: "world/concept" }, mode: "hypothetical" });
+      await w.write({ subject: "x:b", predicate: "world.kind", object: { vocabulary: "world/concept" }, polarity: "negative" });
+      expect((await w.classify("x:a", "world/situation")).outcome).toBe("stored");
+      expect((await w.classify("x:b", "world/situation")).outcome).toBe("stored");
+    } finally {
+      w.close();
+    }
+  });
+
+  test("the outcome for a contradictory pair depends on which arrived first, and an unclassified endpoint takes either", async () => {
+    const forward = worldWriter();
+    const reverse = worldWriter();
+    try {
+      await forward.classify("x:a", "world/concept");
+      await expect(
+        forward.write({ subject: "x:a", predicate: "situation.label", object: { literal: "A situation" } }),
+      ).rejects.toMatchObject({ code: "world_endpoint_kind" });
+      // A predicate that arrived first does not block a later classification: only a known classification refuses.
+      expect(
+        (await reverse.write({ subject: "x:a", predicate: "situation.label", object: { literal: "A situation" } })).outcome,
+      ).toBe("stored");
+      expect((await reverse.classify("x:a", "world/concept")).outcome).toBe("stored");
+    } finally {
+      forward.close();
+      reverse.close();
+    }
+  });
+});
+
 describe("registry order independence", () => {
   test("an edge that arrives before either classification is accepted and surfaces only once classified", async () => {
     const w = worldWriter();
@@ -237,6 +298,14 @@ describe("generated matrix over every registry row", () => {
               predicate: spec.predicate,
               object: objectFor(spec, id),
             }),
+          ).rejects.toMatchObject({ code: "world_endpoint_kind" });
+        }
+        // A second classification that names another endpoint kind is refused.
+        if (spec.predicate === "world.kind") {
+          const id = `${spec.predicate}:second`;
+          await classify(id, "concept");
+          await expect(
+            w.write({ subject: id, predicate: spec.predicate, object: { vocabulary: "world/situation" } }),
           ).rejects.toMatchObject({ code: "world_endpoint_kind" });
         }
         // A concept object known to be another kind is refused.

@@ -64,7 +64,8 @@ function objectEndpointKinds(spec: WorldVocabularySpec): ReadonlySet<WorldEndpoi
  * Whether a world assertion has the shape its registry row declares. Rows
  * are checked in one fixed order so a refusal is deterministic. An endpoint
  * with no classification yet is accepted, in any order of arrival; only a
- * contradiction with a classification already known is refused. Predicates
+ * contradiction with a classification already known is refused, and that
+ * includes a second `world.kind` that names a different endpoint kind. Predicates
  * outside the world vocabulary are not this check's concern.
  */
 export function worldAssertionViolation(
@@ -85,6 +86,15 @@ export function worldAssertionViolation(
   }
   if (!spec.polarity.includes(semantic.polarity)) {
     return { code: "world_polarity", detail: `${spec.predicate} does not accept ${semantic.polarity} polarity` };
+  }
+  if (classifies(semantic) && semantic.object.kind === "vocabulary") {
+    const kind = registry.kindByVocabularyId(semantic.object.ref.id);
+    if (kind !== undefined) {
+      const known = knownEndpointKinds(db, registry, semantic.subject, options.pending);
+      if (known.size > 0 && !known.has(kind.endpointKind)) {
+        return { code: "world_endpoint_kind", detail: `${spec.predicate} subject is already classified as another kind` };
+      }
+    }
   }
   const endpoints = [
     { role: "subject", ref: semantic.subject, allowed: spec.subject === "raw" ? null : new Set<WorldEndpointKind>([spec.subject]) },

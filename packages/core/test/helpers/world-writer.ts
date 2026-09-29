@@ -3,13 +3,11 @@ import { insertClaim, type InsertClaimResult } from "../../src/claims/store";
 import type { ClaimsIo } from "../../src/claims/store";
 import type { ClaimV2Assertion } from "../../src/contracts/claim-v2";
 import { WORLD_ADMISSION_SCHEMA } from "../../src/contracts/world-admission";
-import { registerConnection } from "../../src/ledger/connections";
 import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
-import { setSourceGrant } from "../../src/ledger/source-grants";
-import { seedConnectorSensitivity } from "../../src/sensitivity/store";
 import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
+import { enrollSource } from "./world-seed";
 
 export type WorldObjectSpec =
   | { readonly literal: string }
@@ -27,31 +25,17 @@ export interface WorldWrite {
 const CONNECTOR = "world.writer";
 
 /**
- * Synthetic writer at the shared insertion seam. Every subject is a supplied
- * reference in one source namespace, so a test names endpoints by plain
- * strings and never touches occurrence minting.
+ * Synthetic writer at the shared insertion seam. It enrolls its source through
+ * the F3 kit (`enrollSource`), so grants and the sensitivity floor cannot drift
+ * from `worldSeed`. It stays a separate writer because `worldSeed` stores one
+ * whole kind per call (`world.kind`, a label, definitions) for one subject,
+ * while a registry test needs one arbitrary claim per call in a shared ledger.
+ * Every subject is a supplied reference in one source namespace, so a test
+ * names endpoints by plain strings and never touches occurrence minting.
  */
 export function worldWriter(options: { readonly db?: Database; readonly io?: Omit<ClaimsIo, "db"> } = {}) {
   const db: Database = options.db ?? openLedger(":memory:");
-  const sourceKey = ulid();
-  registerConnection(db, CONNECTOR, sourceKey);
-  seedConnectorSensitivity(
-    db,
-    { connector_id: CONNECTOR, source_key: sourceKey },
-    { default_sensitivity: "public", sensitivity_floor: "public" },
-  );
-  setSourceGrant(db, {
-    source_key: sourceKey,
-    expected_revision: 0,
-    operation_id: `grant-${sourceKey}`,
-    policy: {
-      purposes: ["capture", "derive", "recall", "correction", "export"],
-      allowed_fields: ["text", "subjects", "metadata", "attachments"],
-      retention: "persistent_owned_until_revoked",
-      egress: "local_only",
-      sensitivity_floor: "public",
-    },
-  });
+  const sourceKey = enrollSource(db, CONNECTOR, "public");
   const namespace = { connector_id: CONNECTOR, source_key: sourceKey };
   const ref = (id: string) => ({ kind: "supplied" as const, id, namespace });
 

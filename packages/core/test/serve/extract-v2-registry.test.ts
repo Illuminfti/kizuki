@@ -121,3 +121,20 @@ test("a draft that contradicts an already stored classification is dropped inste
     expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
   } finally { f.close(); }
 });
+
+test("a second classification of one mention is dropped, and the first keeps governing the batch", async () => {
+  const f = fixture();
+  try {
+    f.record(1);
+    const result = await f.pass([
+      ["world.kind", vocabulary("world/concept")],
+      ["world.kind", vocabulary("world/situation")],
+      ["concept.label", literal("Flux")],
+      ["situation.label", literal("Flux")],
+    ]);
+    expect(result.errors).toEqual([]);
+    expect(result.claims_extracted).toBe(2);
+    expect(f.stored()).toEqual(["concept.label", "world.kind"]);
+    expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
+  } finally { f.close(); }
+});

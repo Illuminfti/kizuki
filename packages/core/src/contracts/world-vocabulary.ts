@@ -41,25 +41,31 @@ export function activeWorldRegistry(): WorldRegistry {
   return active;
 }
 
+let swapping = false;
+
 /**
- * Test seam: runs `fn` with another registry, for a kind that exists only in
- * a test, and restores the shipped one when it settles. Nothing else replaces
- * the registry.
+ * TEST ONLY. Runs `fn` with another registry, for a kind that exists only in
+ * a test, and restores the shipped one when it settles. It swaps a
+ * process-global registry, so it refuses to nest or overlap: a second swap
+ * while one is in flight throws instead of leaving a test registry active.
+ * Production code never calls it, and it is not part of the package surface.
  */
 export function withWorldRegistry<T>(registry: WorldRegistry, fn: () => T): T {
+  if (swapping) throw new Error("withWorldRegistry cannot nest or overlap");
   const previous = active;
   active = registry;
-  let restore = true;
+  swapping = true;
+  const restore = () => { active = previous; swapping = false; };
+  let result: T;
   try {
-    const result = fn();
-    if (result instanceof Promise) {
-      restore = false;
-      return result.finally(() => { active = previous; }) as T;
-    }
-    return result;
-  } finally {
-    if (restore) active = previous;
+    result = fn();
+  } catch (error) {
+    restore();
+    throw error;
   }
+  if (result instanceof Promise) return result.finally(restore) as T;
+  restore();
+  return result;
 }
 
 export function getWorldVocabularySpec(predicate: string): WorldVocabularySpec | undefined {
