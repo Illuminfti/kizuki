@@ -18,6 +18,13 @@ if (mode === "keys") {
     process.exit(7);
   }
   process.stdout.write(keys());
+} else if (mode === "keys-if-river") {
+  if (query.includes("river-stone")) process.stdout.write(keys());
+} else if (mode === "orphan") {
+  // A wrapper that leaves a long-lived grandchild behind, then hangs; keysFile receives its pid.
+  const grandchild = Bun.spawn(["sleep", "47"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  await Bun.write(keysFile ?? "/dev/null", String(grandchild.pid));
+  await Bun.sleep(60_000);
 } else if (mode === "fail") {
   process.stderr.write("estate failure carrying private text: Vesper Quillfeather\n");
   process.exit(7);

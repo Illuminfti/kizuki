@@ -80,6 +80,8 @@ export const parityCommand: Command = {
         ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
       };
       const retrieve = async (query: string): Promise<KizukiAnswer> => {
+        // A stale vault binding aborts the run; it is never scored as a Kizuki failure.
+        ctx.assertCurrent();
         try {
           const envelope = await serveContextPacket(serving, { purpose: "recall", query, budget_tokens: 2_000 });
           ctx.assertCurrent();
@@ -97,6 +99,7 @@ export const parityCommand: Command = {
             ],
           };
         } catch {
+          ctx.assertCurrent();
           return { ok: false, errorClass: "kizuki_error" };
         }
       };
@@ -107,14 +110,16 @@ export const parityCommand: Command = {
       if (summary.kizuki_failures > 0) io.err(`kizuki failed for ${summary.kizuki_failures} of ${summary.queries} queries; see the receipt`);
       if (summary.estate_failures > 0) io.err(`estate command failed for ${summary.estate_failures} of ${summary.queries} queries; see the receipt`);
       if (summary.verdict === "below_threshold") io.err(`parity below threshold: ${summary.mean_overlap} < ${config.minOverlap}`);
-      if (summary.verdict === "not_measured") io.err("parity not measured: no query had a comparable stack answer");
+      if (summary.verdict === "not_measured") {
+        io.err(`parity not measured: ${summary.compared} of ${summary.queries} queries were comparable (need at least half)`);
+      }
       if (parsed.flags.has("--json")) {
         io.out(
           jsonEnvelope("parity", summary.exit_code === 0 ? "ok" : "degraded", { run_id: receipt.run_id, receipt: path, summary }),
         );
       } else {
         io.out(
-          `parity run=${receipt.run_id} queries=${summary.queries} compared=${summary.compared} mean_overlap=${summary.mean_overlap ?? "none"} verdict=${summary.verdict} estate_failures=${summary.estate_failures} kizuki_failures=${summary.kizuki_failures} receipt=${path}`,
+          `parity run=${receipt.run_id} queries=${summary.queries} compared=${summary.compared} estate_empty=${summary.estate_empty} mean_overlap=${summary.mean_overlap ?? "none"} verdict=${summary.verdict} estate_failures=${summary.estate_failures} kizuki_failures=${summary.kizuki_failures} receipt=${path}`,
         );
       }
       return summary.exit_code;

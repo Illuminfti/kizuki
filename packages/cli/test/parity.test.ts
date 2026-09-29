@@ -17,6 +17,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { askEstate } from "../src/parity/estate";
+import { compareSources, sourceHash } from "../src/parity/receipt";
+import { parityExitCode, runParity } from "../src/parity/run";
+import type { ParityReceipt } from "../src/parity/receipt";
 import { createHelpers, fixtureConsent } from "./helpers";
 
 // These tests spawn real CLI processes and fake estate stacks; bound them for a loaded host.
@@ -174,6 +178,8 @@ interface Receipt {
     verdict: string;
     kizuki_failures: number;
     estate_failures: number;
+    estate_empty: number;
+    coverage: number;
     exit_code: number;
   };
 }
@@ -589,7 +595,7 @@ describe("parity run: honesty and bounds", () => {
     const result = run(keysStack(seeded.kizukiKeys[2]!), []);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout).toMatch(
-      /^parity run=\S+ queries=3 compared=\d+ mean_overlap=\S+ verdict=\S+/,
+      /^parity run=\S+ queries=3 compared=\d+ estate_empty=\d+ mean_overlap=\S+ verdict=\S+/,
     );
     expect(result.stdout).toContain(join(".kizuki", "receipts", "parity"));
     expect(
@@ -610,5 +616,106 @@ describe("parity run: honesty and bounds", () => {
     );
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("no vault configured");
+  });
+});
+
+describe("parity run: coverage, exit precedence, process group, digests", () => {
+  test("a stack that answers under half the queries is not measured, and the gap is counted", () => {
+    const keysFile = join(tempDir("parity-keys-"), "keys.txt");
+    writeFileSync(keysFile, `${seeded.kizukiKeys[1]!.join("\n")}\n`);
+    const result = run(
+      [process.execPath, ESTATE, "keys-if-river", keysFile, "-"],
+      ["--json", "--min-overlap", "0"],
+    );
+    expect(result.exitCode, result.stderr).toBe(4);
+    const { receipt } = receiptOf(result);
+    expect(receipt.summary).toMatchObject({
+      queries: 3,
+      compared: 1,
+      estate_empty: 2,
+      verdict: "not_measured",
+    });
+    expect(receipt.summary.mean_overlap).toBe(1);
+    expect(result.stderr).toContain("1 of 3 queries were comparable");
+  });
+
+  test("a timed-out stack takes its whole process group with it", async () => {
+    const pidFile = join(tempDir("parity-orphan-"), "pid");
+    const answer = await askEstate(
+      [process.execPath, ESTATE, "orphan", pidFile, "-"],
+      "any query",
+      { timeoutMs: 1_500, k: 5 },
+    );
+    expect(answer.error?.class).toBe("timeout");
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(Number.isInteger(pid) && pid > 1).toBe(true);
+    const alive = (): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    for (let wait = 0; wait < 50 && alive(); wait += 1) await Bun.sleep(100);
+    expect(alive()).toBe(false);
+  });
+
+  test("exit codes rank a Kizuki failure over a stack failure over a parity miss", () => {
+    const base = { queries: 3, compared: 3, estate_empty: 0, coverage: 1, mean_overlap: 1 };
+    const summary = (
+      over: Partial<Omit<ParityReceipt["summary"], "exit_code">>,
+    ): Omit<ParityReceipt["summary"], "exit_code"> => ({
+      ...base,
+      verdict: "met",
+      kizuki_failures: 0,
+      estate_failures: 0,
+      ...over,
+    });
+    expect(parityExitCode(summary({}))).toBe(0);
+    expect(parityExitCode(summary({ verdict: "below_threshold" }))).toBe(4);
+    expect(parityExitCode(summary({ verdict: "not_measured" }))).toBe(4);
+    expect(parityExitCode(summary({ verdict: "below_threshold", estate_failures: 1 }))).toBe(3);
+    expect(
+      parityExitCode(summary({ verdict: "below_threshold", estate_failures: 1, kizuki_failures: 1 })),
+    ).toBe(1);
+  });
+
+  test("a Kizuki-side failure is recorded per query and exits 1", async () => {
+    const keysFile = join(tempDir("parity-keys-"), "keys.txt");
+    writeFileSync(keysFile, "a.md\n");
+    const receipt = await runParity(
+      {
+        queries: ["one", "two"],
+        estate: [process.execPath, ESTATE, "keys", keysFile, "-"],
+        k: 5,
+        timeoutMs: 5_000,
+        minOverlap: 0.5,
+      },
+      async (query) =>
+        query === "one"
+          ? { ok: false, errorClass: "context_incomplete" }
+          : { ok: true, chunks: [["a.md"]], degraded: [] },
+    );
+    expect(receipt.queries[0]!.kizuki).toMatchObject({
+      status: "error",
+      error_class: "context_incomplete",
+      count: 0,
+    });
+    expect(receipt.queries[0]!.overlap.comparable).toBe(false);
+    expect(receipt.summary).toMatchObject({ kizuki_failures: 1, compared: 1, exit_code: 1 });
+  });
+
+  test("a chunk with no usable key is not reported as a source, and duplicates collapse", () => {
+    const overlap = compareSources([[], [], ["x.md"], ["x.md"]], ["y.md"], true);
+    expect(overlap.kizuki_only).toEqual([sourceHash("x.md")]);
+  });
+
+  test("source digests are unsalted: a known page path is confirmable from the receipt", () => {
+    const result = run(keysStack(["people/ada-lovelace.md"]), ["--json"]);
+    const { text } = receiptOf(result);
+    const known = digest("kizuki.parity/v1:source\0people/ada-lovelace.md").slice(0, 16);
+    expect(text).toContain(known);
+    expect(text).not.toContain("ada-lovelace");
   });
 });

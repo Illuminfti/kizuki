@@ -31,7 +31,8 @@ function parseKeys(output: string, k: number): string[] {
 
 /**
  * Runs one local command for one query: no shell, no stdin, stderr discarded, stdout read up to a
- * fixed bound, the whole run cut off at `timeoutMs`. The command's own words never reach a receipt.
+ * fixed bound, the whole run cut off at `timeoutMs`,
+ * killing the command's whole process group on timeout or overflow. The command's own words never reach a receipt.
  */
 export async function askEstate(
   argv: readonly string[],
@@ -42,7 +43,7 @@ export async function askEstate(
   const latency = (): number => Math.round(performance.now() - started);
   let child: Bun.Subprocess<"ignore", "pipe", "ignore">;
   try {
-    child = Bun.spawn(estateArgv(argv, query), { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+    child = Bun.spawn(estateArgv(argv, query), { stdin: "ignore", stdout: "pipe", stderr: "ignore", detached: true });
   } catch {
     return { latencyMs: latency(), keys: [], error: { class: "spawn_failed", exitCode: null } };
   }
@@ -51,7 +52,12 @@ export async function askEstate(
   let timedOut = false;
   let overLimit = false;
   const stop = (): void => {
-    child.kill("SIGKILL");
+    // The child leads its own process group, so a wrapper's grandchildren die with it.
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
     void reader.cancel().catch(() => undefined);
   };
   const timer = setTimeout(() => {

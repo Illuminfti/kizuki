@@ -49,6 +49,9 @@ export interface ParityReceipt {
   summary: {
     queries: number;
     compared: number;
+    /** Queries where the stack ran cleanly but printed no source key. */
+    estate_empty: number;
+    coverage: number;
     mean_overlap: number | null;
     verdict: ParityVerdict;
     kizuki_failures: number;
@@ -63,9 +66,15 @@ function digest(domain: string, text: string): string {
 
 /** Full digest: a stable per-query id across runs. The text itself is never stored. */
 export const queryHash = (query: string): string => digest("query", query);
-/** Short digest of one source key, enough to tell diffs apart across runs. */
+/**
+ * Short digest of one source key, enough to tell diffs apart across runs. Unsalted like the query
+ * digest: a page path that names a person or project can be confirmed by guessing it.
+ */
 export const sourceHash = (key: string): string => digest("source", key).slice(0, 16);
 export const commandHash = (argv: readonly string[]): string => digest("command", argv.join("\0"));
+
+/** Below this share of compared queries the mean says too little, so the verdict is `not_measured`. */
+export const MIN_COVERAGE = 0.5;
 
 const round = (value: number): number => Math.round(value * 10_000) / 10_000;
 
@@ -90,7 +99,13 @@ export function compareSources(
     comparable: true,
     shared,
     ratio: round(shared / estate.length),
-    kizuki_only: kizuki.filter((chunk) => !chunk.some((key) => estateKeys.has(key))).map((chunk) => sourceHash(chunk[0] ?? "")),
+    kizuki_only: [
+      ...new Set(
+        kizuki
+          .filter((chunk) => chunk.length > 0 && !chunk.some((key) => estateKeys.has(key)))
+          .map((chunk) => sourceHash(chunk[0]!)),
+      ),
+    ],
     estate_only: estate.filter((key) => !kizukiKeys.has(key)).map(sourceHash),
   };
 }
@@ -101,11 +116,15 @@ export function summarize(
 ): Omit<ParityReceipt["summary"], "exit_code"> {
   const ratios = queries.flatMap((entry) => (entry.overlap.ratio === null ? [] : [entry.overlap.ratio]));
   const mean = ratios.length === 0 ? null : round(ratios.reduce((sum, ratio) => sum + ratio, 0) / ratios.length);
+  const coverage = queries.length === 0 ? 0 : round(ratios.length / queries.length);
+  const measured = mean !== null && coverage >= MIN_COVERAGE;
   return {
     queries: queries.length,
     compared: ratios.length,
+    estate_empty: queries.filter((entry) => entry.estate.status === "ok" && entry.estate.count === 0).length,
+    coverage,
     mean_overlap: mean,
-    verdict: mean === null ? "not_measured" : mean >= minOverlap ? "met" : "below_threshold",
+    verdict: !measured ? "not_measured" : mean >= minOverlap ? "met" : "below_threshold",
     kizuki_failures: queries.filter((entry) => entry.kizuki.status === "error").length,
     estate_failures: queries.filter((entry) => entry.estate.status === "error").length,
   };
