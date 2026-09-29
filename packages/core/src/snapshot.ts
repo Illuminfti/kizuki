@@ -23,11 +23,14 @@ import {
   assertSeparated,
   copyHashed,
   fsyncDirectory,
+  assertTypedCanonReceipts,
   hashFile,
   mkdirPrivate,
   pathUnder,
   prepareDestination,
+  sourceHoldsNoExportableEvent,
   splitBackupPath,
+  validateRestoredEventOrigins,
   vaultInventory,
   writePrivateFile,
   type RestoreOptions,
@@ -39,6 +42,7 @@ import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
 import { readSchemaVersion } from "./ledger/integrity";
 import { tableExists } from "./ledger/schema";
 import { assertWorldState } from "./world/integrity";
+import { validateDurableExtractStorage } from "./serve/extract";
 import { ensureVaultId, readVaultId, vaultIdPath } from "./serve/vault-id";
 import {
   openOwnedDirectory,
@@ -64,6 +68,12 @@ const STAGING_MARK = ".kizuki-snapshot-";
 const DEFAULT_WAIT_MS = 30_000;
 const POLL_MS = 100;
 const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
+const RECOVERY_LIMITS = [
+  "Only receipted canon pages, their archived revisions and the receipt stream are copied; other pages and files are not.",
+  "Hidden entries, including the .kizuki configuration such as serve.toml, are not copied; keep a copy of it separately.",
+  "Credentials, agent enrollments, connector state and secret files are not copied.",
+] as const;
+const EXCLUSION_KEYS = ["hidden", "links_or_special", "backup_containers", "unclassified"] as const;
 const AGENT_TABLES = [
   "agent_enrollments",
   "agent_grants",
@@ -80,9 +90,20 @@ export interface SnapshotManifest {
   receipts: number;
   /** Agents that held authority when the snapshot was taken; no credential or token hash is kept. */
   agents: string[];
+  /** Vault entries a snapshot does not carry: hidden entries such as `.kizuki` config, links, and files outside canon. */
+  excluded_entries: SnapshotExclusions;
+  /** What the snapshot leaves out, stated so a restore is never mistaken for a full copy of the directory. */
+  recovery_limits: string[];
   files: Record<string, { size: number; sha256: string }>;
   complete: true;
   manifest_sha256: string;
+}
+
+export interface SnapshotExclusions {
+  hidden: number;
+  links_or_special: number;
+  backup_containers: number;
+  unclassified: number;
 }
 
 export interface SnapshotRestoreReport extends RestoreReport {
@@ -150,12 +171,13 @@ function assertSnapshotAdmissible(db: Database): void {
     null
   )
     throw new Error("source_erasure_recovery_pending");
-  const denied = db
+  // A revoked source that is disconnected and binds no event has nothing left to purge, as in export.
+  for (const denied of db
     .query<{ source_key: string; revoke_operation: string | null }, []>(
-      "SELECT source_key,revoke_operation FROM source_grants WHERE status='denied' LIMIT 1",
+      "SELECT source_key,revoke_operation FROM source_grants WHERE status='denied'",
     )
-    .get();
-  if (denied !== null) {
+    .iterate()) {
+    if (sourceHoldsNoExportableEvent(db, denied.source_key)) continue;
     throw new Error(
       `source_revocation_pending: source ${denied.source_key} is revoked and its purge is pending; finish it with kizuki connect resume-revocation --source ${denied.source_key} --operation-id ${denied.revoke_operation ?? "REVOKE_OPERATION"}`,
     );
@@ -187,17 +209,51 @@ function snapshotLedger(db: Database, path: string, journal: string): LedgerFact
       receipts: assertJournalMatchesLedger(copy, journal),
       agents: inspectAgents(copy).filter(agent => agent.state === "active").map(agent => agent.name),
     };
-    const present = AGENT_TABLES.some(table => tableExists(copy, table) && copy.query(`SELECT 1 FROM ${table} LIMIT 1`).get() !== null);
-    if (!present) return facts;
+    const agentAuthority = AGENT_TABLES.some(table => tableExists(copy, table) && copy.query(`SELECT 1 FROM ${table} LIMIT 1`).get() !== null);
+    const connectorState = (tableExists(copy, "connections") &&
+      copy.query("SELECT 1 FROM connections WHERE config IS NOT ? OR secret_refs<>'[]' LIMIT 1").get(NULL_CONNECTION_CONFIG) !== null) ||
+      (tableExists(copy, "leases") && copy.query("SELECT 1 FROM leases LIMIT 1").get() !== null);
+    if (!agentAuthority && !connectorState) return facts;
     copy.exec("PRAGMA secure_delete=ON");
+    // The connection default is off, so without this the cascades from a removed namespace to its wire rows never run.
+    copy.exec("PRAGMA foreign_keys=ON");
     copy.transaction(() => {
       for (const table of AGENT_TABLES) if (tableExists(copy, table)) copy.exec(`DELETE FROM ${table}`);
       if (tableExists(copy, "world_authorization_namespaces")) copy.exec("DELETE FROM world_authorization_namespaces WHERE principal_id<>'owner'");
+      // Connector state and credential references stay outside a snapshot; restore reconnects nothing.
+      if (tableExists(copy, "connections")) copy.query("UPDATE connections SET config=?, secret_refs='[]'").run(NULL_CONNECTION_CONFIG);
+      if (tableExists(copy, "leases")) copy.exec("DELETE FROM leases");
     })();
+    if (copy.query("PRAGMA foreign_key_check").all().length > 0)
+      throw new Error("snapshot ledger has dangling rows after removing agent authority");
     copy.exec("VACUUM");
     return facts;
   } finally {
     copy.close();
+  }
+}
+
+/** One line naming what the snapshot left out, or none when the vault held nothing beyond what it carries. */
+export function exclusionWarnings(excluded: SnapshotExclusions): string[] {
+  const parts = EXCLUSION_KEYS.filter(key => excluded[key] > 0).map(key => `${key}=${excluded[key]}`);
+  return parts.length === 0 ? [] : [`the snapshot left out vault entries (${parts.join(" ")}); non-canon pages and .kizuki configuration such as serve.toml are not in a snapshot`];
+}
+
+/** Every receipted page present in the vault must hold bytes one of its receipts produced. */
+function assertPagesMatchReceipts(db: Database, vault: string): void {
+  if (!tableExists(db, "canon_receipts")) return;
+  const hashes = new Map<string, Set<string>>();
+  for (const row of db.query<{ page_path: string | null; after_hash: string | null }, []>("SELECT page_path, after_hash FROM canon_receipts WHERE page_path IS NOT NULL").iterate()) {
+    if (row.after_hash === null) continue;
+    const set = hashes.get(row.page_path!) ?? new Set<string>();
+    set.add(row.after_hash);
+    hashes.set(row.page_path!, set);
+  }
+  for (const [page, allowed] of hashes) {
+    const file = pathUnder(vault, splitBackupPath(page));
+    if (!existsSync(file)) continue;
+    if (!lstatSync(file).isFile() || !allowed.has(hashFile(file).sha256))
+      throw new Error(`restored page does not match its receipts: ${page}`);
   }
 }
 
@@ -227,7 +283,8 @@ function take(
     };
     const facts = snapshotLedger(db, join(staging, LEDGER_FILE), join(vault, RECEIPTS_PATH));
     record(LEDGER_FILE, hashFile(join(staging, LEDGER_FILE)));
-    for (const entry of vaultInventory(db, vault).files) {
+    const inventory = vaultInventory(db, vault);
+    for (const entry of inventory.files) {
       record(
         `vault/${entry.path}`,
         copyHashed(
@@ -252,6 +309,8 @@ function take(
       events: facts.events,
       receipts: facts.receipts,
       agents: facts.agents,
+      excluded_entries: { ...inventory.excluded_entries },
+      recovery_limits: [...RECOVERY_LIMITS],
       files: sortedFiles(files),
       complete: true,
     });
@@ -366,6 +425,11 @@ export function verifySnapshot(backupDir: string): SnapshotManifest {
     !Number.isSafeInteger(manifest.receipts) ||
     !Array.isArray(manifest.agents) ||
     !manifest.agents.every((name) => typeof name === "string" && AGENT_NAME.test(name)) ||
+    typeof manifest.excluded_entries !== "object" ||
+    manifest.excluded_entries === null ||
+    !EXCLUSION_KEYS.every(key => Number.isSafeInteger(manifest.excluded_entries[key]) && manifest.excluded_entries[key] >= 0) ||
+    !Array.isArray(manifest.recovery_limits) ||
+    !manifest.recovery_limits.every(line => typeof line === "string") ||
     typeof manifest.files !== "object" ||
     manifest.files === null ||
     manifest.files[LEDGER_FILE] === undefined
@@ -470,6 +534,11 @@ export function restoreSnapshot(
         if (tableExists(db, "leases")) db.exec("DELETE FROM leases");
         if (tableExists(db, "world_authorization_namespaces"))
           assertWorldState(db);
+        // The same structural checks an export restore runs, so a rehashed manifest cannot smuggle in altered bytes.
+        validateRestoredEventOrigins(db);
+        assertTypedCanonReceipts(db, staging);
+        validateDurableExtractStorage(db);
+        assertPagesMatchReceipts(db, staging);
       }).immediate();
       const events = db
         .query<{ count: number }, []>("SELECT count(*) AS count FROM events")
@@ -507,14 +576,18 @@ export function restoreSnapshot(
           path.startsWith("vault/"),
         ).length,
         doctor: doctorVault(staging).counts,
-        recovery_warnings:
-          connections === 0
+        recovery_warnings: [
+          ...(connections === 0
             ? []
             : [
                 "every connection restored disconnected; reconnect each source with kizuki connect",
-              ],
+              ]),
+          ...exclusionWarnings(manifest.excluded_entries),
+        ],
         agents: manifest.agents,
       };
+      if (report.doctor.invalid > 0)
+        throw new Error(`restored vault fails doctor: ${report.doctor.invalid} invalid page(s)`);
       db.close();
       unlinkSync(join(staging, INCOMPLETE));
       fsyncDirectory(staging);

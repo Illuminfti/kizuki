@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { backupVault } from "@kizuki/core";
+import { backupVault, exclusionWarnings } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
@@ -29,6 +29,7 @@ export const backupCommand: Command = {
       io.out(`manifest=${outDir}/manifest.json`);
       io.out(`schema=${manifest.schema} complete=${manifest.complete}`);
       io.out(`events=${manifest.events} receipts=${manifest.receipts} vault_files=${Object.keys(manifest.files).filter(path => path.startsWith("vault/")).length} agents=${manifest.agents.length}`);
+      for (const warning of exclusionWarnings(manifest.excluded_entries)) io.out(`warning=${warning}`);
       io.out("credentials, agent enrollments and connector state are not in a snapshot; restore it with kizuki restore");
       return 0;
     }, { retrieval: "none" });

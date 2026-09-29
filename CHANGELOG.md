@@ -9,7 +9,9 @@
   copies canon and the receipt stream, and writes a hashed `kizuki.snapshot/v1`
   manifest. It needs no `export` purpose, carries no credential and refuses
   while a source revocation is purging. `kizuki restore` reads it and verifies
-  it with `--verify`.
+  it with `--verify`. The manifest and command output report the vault entries
+  a snapshot does not carry (non-canon pages, `.kizuki` configuration), and
+  restore checks page bytes against their receipts before publishing.
 
 - `kizuki agent list [--json]` shows enrolled agents with their state, grant
   epoch and grant summary, and never a credential. `kizuki agent grant NAME

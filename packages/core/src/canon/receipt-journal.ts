@@ -24,20 +24,14 @@ export function rebuildReceiptJournal(db: Database, vaultPath: string): number {
   let count = 0;
   try {
     if (tableExists(db, "canon_receipts")) {
-      let cursor: { at: string; receipt_id: string } | null = null;
-      for (;;) {
-        const rows: CanonReceiptRow[] = cursor === null
-          ? db.query<CanonReceiptRow, [number]>("SELECT * FROM canon_receipts ORDER BY COALESCE(at,erased_at), receipt_id LIMIT ?").all(PAGE)
-          : db.query<CanonReceiptRow, [string, string, string, number]>(
-            `SELECT * FROM canon_receipts WHERE COALESCE(at,erased_at) > ? OR (COALESCE(at,erased_at) = ? AND receipt_id > ?)
-             ORDER BY COALESCE(at,erased_at), receipt_id LIMIT ?`).all(cursor.at, cursor.at, cursor.receipt_id, PAGE);
-        if (rows.length === 0) break;
-        writeSync(fd, rows.map(row => `${JSON.stringify(rowToReceiptRecord(row))}\n`).join(""));
-        count += rows.length;
-        const last = rows[rows.length - 1]!;
-        if (rows.length < PAGE) break;
-        cursor = { at: last.at ?? last.erased_at!, receipt_id: last.receipt_id };
+      // One ordered scan streams the rows; paging with a keyset on the COALESCE expression would re-sort the table per page.
+      let batch: string[] = [];
+      for (const row of db.query<CanonReceiptRow, []>("SELECT * FROM canon_receipts ORDER BY COALESCE(at,erased_at), receipt_id").iterate()) {
+        batch.push(`${JSON.stringify(rowToReceiptRecord(row))}\n`);
+        count += 1;
+        if (batch.length >= PAGE) { writeSync(fd, batch.join("")); batch = []; }
       }
+      if (batch.length > 0) writeSync(fd, batch.join(""));
     }
     fsyncSync(fd);
   } finally {

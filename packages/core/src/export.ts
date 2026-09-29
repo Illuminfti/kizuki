@@ -3477,4 +3477,4 @@ function restoreSourcePolicy(db: Database, backup: string, manifest: ExportManif
 
 // Building blocks the owner-local snapshot in ./snapshot shares with export, so both use one copy of the
 // hashed-copy, destination and inventory rules.
-export { assertNoPendingPurgeExport, assertSeparated, copyHashed, fsyncDirectory, hashFile, mkdirPrivate, pathUnder, prepareDestination, splitBackupPath, vaultInventory, writePrivateFile };
+export { assertNoPendingPurgeExport, assertSeparated, assertTypedCanonReceipts, sourceHoldsNoExportableEvent, validateRestoredEventOrigins, copyHashed, fsyncDirectory, hashFile, mkdirPrivate, pathUnder, prepareDestination, splitBackupPath, vaultInventory, writePrivateFile };

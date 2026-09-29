@@ -44,7 +44,7 @@ For a running vault, prefer `"$OLD/kizuki" backup --out "$BACKUP" --vault "$VAUL
 It takes the canon writer and never captures a half-finished canon write, which
 a file-level copy can, and `kizuki restore --from "$BACKUP" --into DIR` restores
 it. The file-level copy below is the rollback route because it keeps the
-credentials and agent identities that a snapshot leaves out, but taken while the
+credentials, agent identities, `.kizuki/serve.toml` and pages outside canon that a snapshot leaves out, but taken while the
 service runs it can capture a half-finished canon write.
 
 The database is copied with the SQLite online backup, which is safe while the
