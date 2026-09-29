@@ -21,7 +21,6 @@
   ETag-validated re-reads, as its own source and behind separate source
   consent. `--url env:VAR` reads the address from an environment variable so it
   stays out of shell history.
-  consent.
 - Model prompts are scrubbed of obvious secrets before they leave for a model
   endpoint. PEM blocks, JWTs, `sk-`, `ghp_`, `github_pat_`, `xox` and `AKIA`
   tokens, `Authorization: Bearer` values, `NAME=value` assignments whose name
