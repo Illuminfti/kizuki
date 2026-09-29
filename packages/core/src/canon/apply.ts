@@ -770,8 +770,9 @@ export function applyPurgeRewrite(
     page_action: action,
     before_hash: existing.hash,
     after_hash: expectedAfter,
-    // The predecessor is purged text: keeping an archive copy would keep it on disk.
-    archive_path: null,
+    // A rewrite that removes purged evidence must not archive the page it replaces:
+    // the archive copy would keep the purged text on disk.
+    archive_path: input.purged_event_ids.length > 0 ? null : archiveRelPath(input.rel_path, receiptId),
     writer: "loop",
     producer: "deterministic",
     model_ref: null,
@@ -992,7 +993,7 @@ export function publishOrdinaryCanonIntent(scope: VaultMutationScope, io: CanonI
   }
   const cap = grantCanonWrite(intent.receipt.writer, intent.receipt.receipt_id, io.vault_path, files);
   const path = join(io.vault_path, intent.receipt.page_path);
-  const erasePrior = intent.receipt.kind === "purge_rewrite";
+  const erasePrior = intent.receipt.kind === "purge_rewrite" && intent.receipt.archive_path === null;
   const page = after === null ? { data: {}, body: "" } : parseFrontmatter(after.toString("utf8"));
   const outcome = after === null
     ? writePage(cap, path, page, { delete: true, expected_hash: hashBytes(before!), recovery: true, erase_prior: erasePrior })

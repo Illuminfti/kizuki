@@ -220,8 +220,10 @@ describe("help", () => {
       "--record",
       "--reason",
       "--verify",
+      "--lift-suppression",
     ]);
     expect(body.data.flags).toContain("--dry-run");
+    expect(body.data.flags).toContain("--suppressions");
   });
 
   test("command help --json with extra arguments is usage", () => {

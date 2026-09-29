@@ -190,7 +190,7 @@ export const purgeCommand: Command = {
           }
           const hold = report.hold_lifted ? "hold lifted" : "hold remains";
           io.out(
-            `${pad("canon rewrite", 23)} pages rewritten ${report.pages_rewritten}    ${hold}`,
+            `${pad("canon", 23)} pages rewritten ${report.pages_rewritten}    ${hold}`,
           );
           for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
           if (!report.ok) {
