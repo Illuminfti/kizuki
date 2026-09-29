@@ -18,12 +18,16 @@ import type { Served } from "./gate";
 import {
   PACKET_PURPOSES,
   PACKET_SECTIONS,
+  SESSION_SECTIONS,
   purposeProfile,
   type PacketPurpose,
+  type SessionSection,
 } from "./sections";
 import { ServeError } from "./types";
 import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
 import { PACKET_TOKENIZER_ID, packetTokens as tokens } from "./packet-tokenizer";
+import { collectSessionPieces } from "./session-sections";
+import type { SessionEmptyReason, SessionReport } from "./session-sections";
 import { parseTaskArgs, readTaskAttachment } from "./task-sections";
 import type { TaskAttachment } from "./task-sections";
 
@@ -37,6 +41,8 @@ const MAX_BUDGET = 2_000;
 const DEFAULT_BUDGET = 450;
 /** ASCII-density token allowance for one canon atom (CANON_EXCERPT=600 / 4). */
 const CANON_ATOM_FAIR_TOKENS = Math.ceil(600 / 4);
+/** Share of the room after the header that the session sections may use, so canon and capture still fit. */
+const SESSION_STATE_SHARE = 0.5;
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 /** How long a brief is worth trusting without asking again. */
 const PACKET_TTL_MS = 15 * 60 * 1_000;
@@ -93,6 +99,11 @@ export interface ContextPacketData {
   tokens_estimate: number;
   budget_tokens: number;
   sections: { canon: number; graph: number; timeline: number; claims: number };
+  /**
+   * Present for a full purpose=session packet that gathered its default
+   * sections. Each entry counts served lines, or says why it is empty.
+   */
+  session?: SessionReport;
   purpose: PacketPurpose;
   delivery: "full" | "unchanged";
   /** True when packing stopped because a later in-scope chunk would exceed the budget. */
@@ -373,6 +384,9 @@ export async function serveContextPacket(
       let pieces: Piece[];
       let withheld: AuditDenial[];
       let degraded: string[];
+      // An explicit `include` asks for exactly those sections.
+      const gatherState = profile.session_state && args.include === undefined;
+      const stateReasons: Partial<Record<SessionSection, SessionEmptyReason>> = {};
       try {
         ({ pieces, withheld, degraded } = await collectPieces(ctx, {
           include,
@@ -381,6 +395,17 @@ export async function serveContextPacket(
           ...(types === undefined ? {} : { types }),
           ...window,
         }));
+        if (gatherState) {
+          const state = collectSessionPieces(ctx, {
+            at,
+            since: window.since,
+            ...(subjects === undefined ? {} : { subjects }),
+          });
+          pieces = [...state.pieces, ...pieces];
+          withheld.push(...state.withheld);
+          degraded.push(...state.degraded);
+          Object.assign(stateReasons, state.reasons);
+        }
       } catch {
         // The cause stays inside core; the packet degrades instead of failing.
         return empty();
@@ -391,6 +416,10 @@ export async function serveContextPacket(
       const quoted: QuotedChunk[] = [];
       const audit = new Map<string, AuditItem>();
       const sections = { ...emptySections };
+      const served = { owner: 0, now: 0, commitments: 0, uncertain: 0 };
+      const skipped = new Set<SessionSection>();
+      const stateRoom = Math.floor((budget - headerTokens) * SESSION_STATE_SHARE);
+      let stateBody = "";
       let heading = "";
       let truncated = false;
       for (const piece of pieces) {
@@ -405,6 +434,15 @@ export async function serveContextPacket(
           continue;
         }
         const prefix = piece.heading === heading ? "" : `${piece.heading}\n`;
+        const isState = (SESSION_SECTIONS as readonly string[]).includes(piece.section);
+        if (isState && tokens(`${stateBody}${prefix}${piece.block}`) > stateRoom) {
+          // The session sections yield to canon and capture instead of ending the packet.
+          if (piece.placeholder !== true) {
+            truncated = true;
+            skipped.add(piece.section as SessionSection);
+          }
+          continue;
+        }
         let chosen = piece;
         const rendered = `${prefix}${chosen.block}`;
         const candidateTokens = tokens(`${header}${body}${rendered}`);
@@ -434,7 +472,12 @@ export async function serveContextPacket(
         }
         body += `${prefix}${chosen.block}`;
         heading = chosen.heading;
-        sections[chosen.section] += 1;
+        if (isState) {
+          stateBody += `${prefix}${chosen.block}`;
+          if (chosen.placeholder !== true) served[chosen.section as SessionSection] += 1;
+        } else {
+          sections[chosen.section as keyof typeof sections] += 1;
+        }
         for (const item of freshAudit) audit.set(item.id, item);
         if (chosen.canon !== undefined) canon.push(chosen.canon);
         if (chosen.quoted !== undefined) quoted.push(chosen.quoted);
@@ -448,6 +491,17 @@ export async function serveContextPacket(
         quoted.push(...attached.quoted);
         withheld.push(...attached.withheld);
       }
+
+      const session: SessionReport | undefined = gatherState
+        ? (Object.fromEntries(
+            SESSION_SECTIONS.map((name) => [
+              name,
+              served[name] > 0
+                ? { served: served[name] }
+                : { served: 0, empty_reason: skipped.has(name) ? "budget" : (stateReasons[name] ?? "none_recorded") },
+            ]),
+          ) as SessionReport)
+        : undefined;
 
       const packetHash = hashBody(body);
       const canDelta = advertised.includes("delta");
@@ -473,6 +527,7 @@ export async function serveContextPacket(
           tokens_estimate: tokens(packet),
           budget_tokens: budget,
           sections: unchanged ? emptySections : sections,
+          ...(session === undefined || unchanged ? {} : { session }),
           purpose,
           delivery: unchanged ? "unchanged" : "full",
           truncated: unchanged ? false : truncated,
