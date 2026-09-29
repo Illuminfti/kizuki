@@ -36,6 +36,7 @@ import {
 import {
   claimsConflict,
   resolveConflict,
+  validityOverlaps,
   type ConflictClaim,
   type ConflictRule,
 } from "./conflict";
@@ -553,7 +554,8 @@ function structuralMatch(incoming: Claim, live: Claim): boolean {
   }
   if (incoming.polarity !== live.polarity) return false;
   if (!objectsMatch(incoming.object, live.object)) return false;
-  return true;
+  // RFC 0002 §5.2: a claim about a different period is a separate claim.
+  return validityOverlaps(incoming, live);
 }
 
 function corroborate(db: Database, live: Claim, incoming: Claim, at: string): Claim {
@@ -1259,6 +1261,7 @@ function applyClaimInsert(
   const authorityIntent = input.intent === "correct" && !ownerAttested ? undefined : input.intent;
   const authorityEvents = events.map(event => ({...event, taint: ownerAttested ? event.taint : "untrusted" as const}));
   const incomingConnectors = new Set(events.map((event) => event.connector_id));
+  const incomingWindow = { valid_from: input.valid_from ?? at, valid_to: input.valid_to ?? null };
   const hasCorroboration =
     key !== null &&
     liveByKey(io.db, key).some(
@@ -1267,6 +1270,7 @@ function applyClaimInsert(
         externalEvidence(io.db, live.provenance) &&
         live.polarity === polarity &&
         objectsMatch(live.object, object) &&
+        validityOverlaps(incomingWindow, live) &&
         loadEventFacts(io.db, live.provenance).some(
           (fact) => !incomingConnectors.has(fact.connector_id),
         ),

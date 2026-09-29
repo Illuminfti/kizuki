@@ -737,4 +737,72 @@ describe("claims authority", () => {
     expect(listSupersessions(db)).toEqual([]);
     db.close();
   });
+
+  test("a second connector with a disjoint validity window does not corroborate", async () => {
+    const db = claimsDb();
+    const { ids, facts } = evidencePair(db);
+    const live = await insertClaim(
+      { db, now: () => "2026-09-02T12:00:00.000Z" },
+      claimInput(ids[0], {
+        provenance: ids,
+        confidence: 0.8,
+        events: facts,
+        valid_from: "2026-01-01T00:00:00.000Z",
+        valid_to: "2026-02-01T00:00:00.000Z",
+      }),
+    );
+    expect(live.outcome).toBe("stored");
+
+    const later = putEvent(db, {
+      connector_id: "third-fixture",
+      source_record_id: "rec-later",
+      text: "Grace is at Acme again.",
+    });
+    const incoming = await insertClaim(
+      { db, now: () => "2026-09-02T12:01:00.000Z" },
+      claimInput(later, {
+        body: "Grace is at Acme again.",
+        confidence: 0.95,
+        valid_from: "2026-09-01T00:00:00.000Z",
+        valid_to: null,
+      }),
+    );
+    expect(incoming.outcome).toBe("stored");
+    if (incoming.outcome !== "stored") return;
+    expect(incoming.claim.authority).toBe("model_inference");
+    expect(incoming.claim.confidence).toBe(SINGLE_SOURCE_CAP);
+    expect(listClaims(db, { status: "live" })).toHaveLength(2);
+    db.close();
+  });
+
+  test("a second connector with an overlapping validity window still corroborates", async () => {
+    const db = claimsDb();
+    const { ids, facts } = evidencePair(db);
+    await insertClaim(
+      { db, now: () => "2026-09-02T12:00:00.000Z" },
+      claimInput(ids[0], {
+        provenance: ids,
+        confidence: 0.8,
+        events: facts,
+        valid_from: "2026-01-01T00:00:00.000Z",
+        valid_to: "2026-02-01T00:00:00.000Z",
+      }),
+    );
+    const later = putEvent(db, {
+      connector_id: "third-fixture",
+      source_record_id: "rec-overlap",
+      text: "Grace was at Acme mid January.",
+    });
+    const incoming = await insertClaim(
+      { db, now: () => "2026-09-02T12:01:00.000Z" },
+      claimInput(later, {
+        body: "Grace was at Acme mid January.",
+        valid_from: "2026-01-15T00:00:00.000Z",
+        valid_to: "2026-01-20T00:00:00.000Z",
+      }),
+    );
+    expect(incoming.outcome).toBe("duplicate");
+    expect(listClaims(db, { status: "live" })).toHaveLength(1);
+    db.close();
+  });
 });
