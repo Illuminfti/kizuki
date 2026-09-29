@@ -201,6 +201,12 @@
   now live in the host cursor store; the cursor schema is
   `kizuki.imap-cursor/v2` and v1 cursors still read and migrate. Marking the
   messages of a page as seen is one merge per page instead of one per message.
+- Machine output is no longer cut off when stdout is a pipe. The CLI wrote
+  through an asynchronous stream and then exited, so a `--json` document larger
+  than the pipe buffer (64 KiB or less, depending on the reader) reached
+  `| jq` or a hook truncated and unparseable. Every command's stdout and stderr
+  now go out with a synchronous write that waits for a slow reader; a reader
+  that closes early ends the output quietly.
 - The daily brief is stamped private when it names a page that ever received a
   private receipt (a repair never lowers it), says when rail failure groups
   were omitted, and the brief repair also rewrites the run-id
@@ -349,6 +355,14 @@
 
 ### Changed
 
+- Ledger hits from `kizuki query` and the MCP `search` tool carry an excerpt of
+  the captured text, at most 600 characters, instead of the whole record, and
+  mark it `truncated: true` when it was cut. `kizuki query --full-text` and the
+  `full_text` search argument return whole records. Canon hits are unchanged.
+- `bun run test` and `bun run verify` run `bun test --timeout 120000`, so a
+  loaded machine does not fail tests at Bun's 5-second default. A test's own
+  explicit timeout is unchanged. The CLI test helper kills a child process that
+  has not exited after 90 seconds and fails that test with a clear message.
 - A refused `kizuki export` now names the sources that block it and the exact
   grant or revocation command that clears each one, instead of a bare
   `source_export_denied`. The consent rule is unchanged: export still needs the

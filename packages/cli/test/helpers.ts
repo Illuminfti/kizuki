@@ -4,6 +4,12 @@ import { isAbsolute, join, resolve } from "node:path";
 
 const mainPath = resolve(import.meta.dir, "../src/main.ts");
 
+/**
+ * A CLI child that has not exited by now is hung, not slow. Bounding it fails
+ * the one test in under two minutes instead of stalling a whole directory run.
+ */
+export const CLI_CHILD_TIMEOUT_MS = 90_000;
+
 export interface CliResult {
   exitCode: number;
   stderr: string;
@@ -28,8 +34,11 @@ export interface CliHelpers {
   writeNotes(directory: string): { ada: string; grace: string; linus: string };
 }
 
-export function createHelpers(): CliHelpers {
+export function createHelpers(options: { childTimeoutMs?: number } = {}): CliHelpers {
   const directories: string[] = [];
+  const childTimeoutMs = options.childTimeoutMs ?? CLI_CHILD_TIMEOUT_MS;
+  const timedOut = (args: string[]): Error =>
+    new Error(`kizuki ${args[0] ?? ""} did not exit within ${childTimeoutMs} ms and was killed`);
 
   const tempDir = (prefix = "kizuki-cli-"): string => {
     const directory = mkdtempSync(join(tmpdir(), prefix));
@@ -83,9 +92,12 @@ export function createHelpers(): CliHelpers {
   ): CliResult => {
     const result = Bun.spawnSync([process.execPath, mainPath, ...args], {
       ...spawnPlan(env),
+      killSignal: "SIGKILL",
       stderr: "pipe",
       stdout: "pipe",
+      timeout: childTimeoutMs,
     });
+    if (result.exitedDueToTimeout === true) throw timedOut(args);
     return {
       exitCode: result.exitCode,
       stderr: result.stderr.toString(),
@@ -99,14 +111,17 @@ export function createHelpers(): CliHelpers {
   ): Promise<CliResult> => {
     const child = Bun.spawn([process.execPath, mainPath, ...args], {
       ...spawnPlan(env),
+      killSignal: "SIGKILL",
       stderr: "pipe",
       stdout: "pipe",
+      timeout: childTimeoutMs,
     });
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
       child.exited,
     ]);
+    if (child.signalCode === "SIGKILL") throw timedOut(args);
     return { exitCode, stderr, stdout };
   };
 
