@@ -40,6 +40,7 @@ import { canonicalJson } from "../util/hash";
 import { assertionEndpoints } from "./allocation";
 import { sourceCoverage } from "./coverage";
 import { issueWorldRef, type WorldNamespace, type WireRef } from "./references";
+import { heldUntilCorroborated } from "./corroboration";
 
 export class WorldProjectionBudgetError extends Error {}
 export type ReadBudget = { bytes: number };
@@ -325,6 +326,10 @@ export function eligibleWorldClaim(
     }
     supports.push({ row, admission, events });
   }
+  // Held, not refused: history still reads the claim, and a second independent
+  // record or the owner releases it.
+  if (!options.historical && supports.length > 0 &&
+      heldUntilCorroborated(ctx.db, claimId, claim.authority, supports[0]!.admission.semantic, permitted)) return null;
   return supports.length === 0
     ? null
     : {
