@@ -17,7 +17,10 @@ Global option: `--vault <path|name>` on every verb. User config is
 an unset environment fails closed instead of writing beside the working
 directory. Vault aliases are `[A-Za-z][A-Za-z0-9_-]{0,63}`. Writes are
 atomic under a lock. Port, model, budget, and sensitivity selection live
-in `<vault>/.kizuki/serve.toml` and appear in `doctor`.
+in `<vault>/.kizuki/serve.toml` and appear in `doctor`. The vault comes from
+`--vault`, else `$KIZUKI_VAULT`, else `default_vault` in the user config. With
+none of these a command exits with the three ways to set one and the
+`kizuki init <path>` command that creates a vault.
 
 Value options also accept `--key=value`, including `--vault=PATH`. Use that
 form when a value starts with `--`; everything after the first `=` is the
@@ -375,7 +378,11 @@ files, or claim that hybrid retrieval ran. Unknown engine IDs still refuse.
 usage: kizuki doctor [--json] [--integrity]
 ```
 
-Vault path, event count, claim counts (filed/live/written/unwritten), live
+Vault path, event count, claim counts (filed/live/written/unwritten) with a
+`live_by_producer` split on the same line that separates `model_extracted`
+claims from `deterministic_floor` (claims the deterministic floor staged
+without a model: imported page mirrors, verbatim capture notes and entity
+stubs; JSON: `claims.by_producer`), live
 claim ids (for `tell --claim`), leftover skipped rows, connections,
 checkpoints (with the first error of each source's last run as `last_error`),
 derived-index freshness, writer ROLE stamps, machine vs human
@@ -455,6 +462,13 @@ source was exhausted. `--json` keeps `backfill_complete`, which only a finished
 backfill run sets, beside `last_run_clean`. The closing `next:` line follows from
 the structured top failure of a failed report and never suggests `kizuki tell`;
 for a down rail it points at `kizuki serve status`, which only reads.
+
+Doctor names the fix when it can. A `serve.toml` that is not mode 600 stops the
+model configuration from being read; the report then names the file's mode and
+the `chmod 600` command instead of only saying the inspection is unavailable.
+A canon write intent pending for more than 300 seconds fails doctor and
+`serve status` with the pending receipt and `kizuki recover --json`; a write
+that is still in flight is not flagged.
 
 Doctor validates existing configuration and credentials without constructing a
 model runtime. Pending model or connection-state journals remain untouched and
@@ -605,7 +619,13 @@ noncanonical tokens are usage errors before the vault is opened.
 usage: kizuki undo <receipt_id> [--cascade]
 ```
 
-Restores prior canon bytes from a write receipt.
+Restores prior canon bytes from a write receipt. Undo only restores a page that
+still matches what the receipt wrote. When a later receipt changed the page, the
+refusal lists those receipts and names `kizuki undo <receipt_id> --cascade`,
+which reverses them newest first. When nothing later explains the change, the
+page was edited outside Kizuki: the refusal says so and tells you to put the
+page back to the receipt's version by hand, or keep your edit and leave the
+receipt as it is. `--cascade` cannot help there, and the refusal says why.
 
 ## audit
 

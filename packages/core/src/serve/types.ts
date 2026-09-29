@@ -311,6 +311,8 @@ export interface SupervisorStatus {
   readonly unit: string | null;
   readonly enabled: boolean;
   readonly detail: string;
+  /** Set when this vault id's service definition launches a different vault: the path of that vault. */
+  readonly bound_elsewhere?: string;
 }
 
 /** How the supervisor says the unit's last run ended, in its own words:

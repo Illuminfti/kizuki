@@ -92,6 +92,7 @@ describe("kizuki CLI stranger loop", () => {
       /claims live=6 filed=0 written=0 unwritten=6 superseded=0 skipped=0/,
     );
     expect(doctor.stdout).toContain("unwritten=");
+    expect(doctor.stdout).toContain("live_by_producer model_extracted=0 deterministic_floor=6 owner=0 agent=0");
     expect(doctor.stdout).toContain("derived search=");
     expect(doctor.stdout).toContain("next: kizuki tell");
     expect(doctor.stdout).not.toContain("tell --claim needs a live claim");

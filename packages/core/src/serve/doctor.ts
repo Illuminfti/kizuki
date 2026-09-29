@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { embeddingThroughputFromReceipts } from "../retrieval/reembed";
 import { inspectPageIndex } from "../canon";
+import { staleCanonIntentFailure } from "./canon-intent-health";
 import { isMachineOriginPath } from "../canon/origin";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { SINGLE_SOURCE_CAP } from "../claims/authority";
@@ -568,8 +569,9 @@ export function inspectServeDoctor(
   let supervisorExit: SupervisorLastExit | null = null;
   if (hostChecks && intent === "installed" && (supervisor.state !== "active" || !supervisor.enabled)) {
     fail(`supervisor ${supervisor.state}${supervisor.state === "active" ? " but not enabled" : ""}`, "service");
-    // The unit's own last exit decides the command that restarts it.
-    if (supervisor.state !== "active" && options.supervisor?.lastExit !== undefined) {
+    // The unit's own last exit decides the command that restarts it. A status
+    // with no unit is a service bound to another vault, whose exit is not ours.
+    if (supervisor.state !== "active" && supervisor.unit !== null && options.supervisor?.lastExit !== undefined) {
       try { supervisorExit = options.supervisor.lastExit(ensureVaultId(vaultPath)); } catch { supervisorExit = null; }
     }
   }
@@ -607,8 +609,9 @@ export function inspectServeDoctor(
     fail("retrieval_ops older than SLA");
   }
   for (const text of inspectPageIndex(db)) fail(text);
+  const staleIntent = staleCanonIntentFailure(db, now);
+  if (staleIntent !== null) fail(staleIntent);
   const failures = found.map((item) => item.text);
-
 
   return {
     supervisor,

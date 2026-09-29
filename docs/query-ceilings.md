@@ -62,7 +62,7 @@ selection bounds and absence from the public exports. Existing serving tests
 cover denial counts, redaction, grant scopes, source policy and live evidence.
 
 ```bash
-cd /home/ubuntu/LifeOS/workspace/kizuki-retrieval-ceilings-20260905
+cd <repository checkout>
 npx -y bun@1.3.10 test packages/core/test/query packages/core/test/search packages/core/test/serving
 npx -y bun@1.3.10 run typecheck
 ```

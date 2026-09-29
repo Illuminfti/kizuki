@@ -56,6 +56,23 @@ function laterIds(io: CanonIo, receipt: CanonReceipt): string[] {
   }).map((row) => row.receipt_id);
 }
 
+/** Every refusal names the next step; a hand edit and a later receipt need different ones. */
+export function pageChangedMessage(receiptId: string, later: readonly string[], cascade: boolean, bytesChanged: boolean): string {
+  const head = `undo: page changed since receipt ${receiptId}`;
+  if (later.length > 0) {
+    return `${head}; later receipts: ${later.join(", ")}. Undo those first, newest first, or run: kizuki undo ${receiptId} --cascade`;
+  }
+  if (!bytesChanged) {
+    return `${head}: the page bytes still match, but its recorded typed basis no longer matches this receipt, ` +
+      `so a later typed write or an erasure superseded what this receipt claimed. ` +
+      `Inspect the page history with: kizuki audit, then correct the page instead of undoing this receipt.`;
+  }
+  return `${head}, and no later receipt explains it, so the page was edited outside kizuki. ` +
+    `Undo only restores a page that still matches what the receipt wrote. ` +
+    `Put the page back to that version by hand, then run undo again, or keep your edit and leave this receipt as it is.` +
+    (cascade ? " --cascade only reverses later receipts, and there are none." : "");
+}
+
 function hasCurrentTypedBasis(io: CanonIo, receipt: CanonReceipt): boolean {
   if (!isWorldCanonReceipt(receipt)) return true;
   const current = latestWorldReceiptRecord(io.db, receipt.page_path);
@@ -157,10 +174,7 @@ export async function undoReceiptOwned(
       }
       return undoReceiptOwned(scope, io, receiptId, { cascade: false });
     }
-    throw new UndoError(
-      "page_changed",
-      `undo: page changed since receipt ${receiptId}; later receipts: ${later.join(", ")}`,
-    );
+    throw new UndoError("page_changed", pageChangedMessage(receiptId, later, opts.cascade === true, current !== original.after_hash));
   }
 
   if (reversing.has(receiptId)) {

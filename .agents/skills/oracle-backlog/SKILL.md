@@ -27,7 +27,7 @@ as a substitute for shipping code.
 - Cap soft-halt holds: this lane does not pause for Cap.
 - Exactly one Oracle planning consult per tick (recipe below), then
   continue on grok-4.6. Never a second Pro consult.
-- Dedicated worktree: `/data/kizuki-worktrees/oracle-backlog`.
+- Dedicated worktree: `$ORACLE_BACKLOG_WORKTREE`, the lane's own checkout.
 
 ## Message board
 
@@ -50,14 +50,14 @@ Land code. PRIORITY_FIRST when unclaimed and code-shaped: #539, #543,
 unfamiliar-user gates, macOS allowance-gate-only, Astra-owned UI, and
 live-provider-only quals with no code slice. Live-account connector quals:
 mark BLOCKED, do not farm another synthetic fixture unless #597 Next asks.
-Tip VERIFY stamp under `/data/kizuki-oracle-backlog/` only when time
+Tip VERIFY stamp under the lane state directory (`$ORACLE_BACKLOG_STATE`) only when time
 remains and Cap policy allows.
 
 ## Loop
 
 1. Read #597. Skip any issue the board marks in-flight or already shipped
    this lane unless you are continuing that exact branch.
-2. `git fetch origin` in `/data/kizuki-worktrees/oracle-backlog`.
+2. `git fetch origin` in `$ORACLE_BACKLOG_WORKTREE`.
 3. Merge drain only as specified by the ship backlog cron prompt.
 4. Exactly one Oracle planning consult for the whole tick. Attach ChatGPT
    Chrome; do not launch a second Chrome; do not combine attach with
@@ -66,12 +66,12 @@ remains and Cap policy allows.
 
 ```bash
 export DISPLAY=:100
-bash /home/ubuntu/.oracle/ensure-chrome.sh
+bash "$ORACLE_HOME/ensure-chrome.sh"
 timeout 12m oracle --engine browser --model gpt-6-astra --browser-thinking-time standard \
   --browser-attach-running --remote-chrome 127.0.0.1:9333 \
   -p "Kizuki 1.0 PRIORITY_FIRST. ONLY ranked implementable slices: issue, files, failing test, one-line acceptance. Max ~400 words. Prefer #539/#543/#544-549/#473/#103." \
   --file AGENTS.md --file docs/CURRENT.md --file docs/decision-log.md \
-  --file /data/kizuki-oracle-backlog/oracle-backlog-SKILL-OVERRIDE.md
+  --file "$ORACLE_BACKLOG_STATE/oracle-backlog-SKILL-OVERRIDE.md"
 ```
 
    On timeout, login, 429, or any other consult failure: record

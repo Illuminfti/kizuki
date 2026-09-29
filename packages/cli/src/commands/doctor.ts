@@ -8,6 +8,7 @@ import {
   count,
   countClaims,
   countUnwrittenLiveClaims,
+  countLiveClaimsByProducer,
   countWrittenLiveClaims,
   doctorVault,
   getCanonReceiptRecord,
@@ -22,7 +23,7 @@ import {
   readHolds,
   readVaultId,
 } from "@kizuki/core";
-import type { ClaimStatus } from "@kizuki/core";
+import type { ClaimStatus, LiveClaimProducers } from "@kizuki/core";
 import { readSqliteRuntime } from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
@@ -33,6 +34,7 @@ import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../der
 import { clean, errorText, jsonEnvelope } from "../output";
 import { embeddingConfigured } from "../retrieval-runtime";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
+import { serveTomlModeHint } from "../config-custody";
 import { configuredModelBinding, inspectModelBinding, type ModelBindingSummary } from "../serve-runtime";
 import { serveSupervisorHost } from "../service-host";
 import { supervisorFailureLine } from "../service-custody";
@@ -92,6 +94,8 @@ interface DoctorReport {
     filed: number;
     written: number;
     unwritten: number;
+    /** Live claims by producer: model extraction versus deterministic page mirrors. */
+    by_producer: LiveClaimProducers;
   };
   live_claims: DoctorClaim[];
   filed_claims: DoctorClaim[];
@@ -424,7 +428,8 @@ async function collect(
     const timedOut = errorText(error).includes("timed out");
     if (timedOut || (error instanceof Error && "code" in error &&
         ["transaction_unavailable", "custody_unavailable"].includes(String(error.code)))) {
-      problems.push({ page: "-", error: "model configuration inspection unavailable" });
+      const hint = serveTomlModeHint(vaultPath);
+      problems.push({ page: "-", error: `model configuration inspection unavailable${hint === null ? "" : `: ${hint}`}` });
     }
   }
   // Without the daemon's secret this process cannot bind the model, but the
@@ -473,6 +478,7 @@ async function collect(
       filed: countClaims(ctx.db, { status: "skipped" }),
       written: countWrittenLiveClaims(ctx.db),
       unwritten: countUnwrittenLiveClaims(ctx.db),
+      by_producer: countLiveClaimsByProducer(ctx.db),
     },
     live_claims: liveClaims,
     filed_claims: filedClaims,
@@ -501,8 +507,10 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(
     `ledger schema=${report.ledger.schema_version ?? "-"} quick_check=${report.ledger.quick_check} sampled=${report.ledger.sampled_events}`,
   );
+  const producers = report.claims.by_producer;
   io.out(
-    `claims live=${report.claims.live} filed=${report.claims.filed} written=${report.claims.written} unwritten=${report.claims.unwritten} superseded=${report.claims.superseded} skipped=${report.claims.skipped} purged=${report.claims.purged}`,
+    `claims live=${report.claims.live} filed=${report.claims.filed} written=${report.claims.written} unwritten=${report.claims.unwritten} superseded=${report.claims.superseded} skipped=${report.claims.skipped} purged=${report.claims.purged}` +
+      ` live_by_producer model_extracted=${producers.model} deterministic_floor=${producers.deterministic} owner=${producers.owner} agent=${producers.agent}`,
   );
   const derived = report.serve.stores.derived;
   io.out(

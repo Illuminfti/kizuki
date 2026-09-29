@@ -163,7 +163,11 @@ archive and claim lifecycle stay durably bound to that one undo.
 
 `kizuki recover --json` attempts the original write and known scheduled projection
 work. It exits unsuccessfully while completion fails or any hold remains.
-`kizuki doctor` reports pending recovery. Correction and undo also return an
+`kizuki doctor` reports pending recovery, and both doctor and `serve status`
+fail when a write intent has been pending for more than 300 seconds, naming the
+receipt and `kizuki recover --json`. A killed writer's stage, exact, torn,
+foreign, symlinked or hard-linked, is settled or held by the next start as
+described above. Correction and undo also return an
 unsuccessful result when their completion is unconfirmed. App operation results
 retain only the affected receipt IDs and phases, without page paths or content.
 An unrelated global hold is reported without identifying its receipt or page.

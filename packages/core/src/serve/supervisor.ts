@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { loadServeConfig } from "./config";
@@ -15,9 +16,10 @@ import {
   SERVICE_STOP_SECONDS,
   systemdUnitName,
   systemdUnitPath,
+  unitVaultPath,
   type UnitSpec,
 } from "./units";
-import { ensureVaultId } from "./vault-id";
+import { ensureVaultId, readVaultId } from "./vault-id";
 import type {
   SupervisorKind,
   SupervisorLastExit,
@@ -377,10 +379,50 @@ export function realSupervisorHost(
   };
 }
 
+function realPathOrNull(path: string): string | null {
+  try { return realpathSync(path); } catch { return null; }
+}
+
+/**
+ * The other vault this vault's service definition launches, or null. A copy
+ * of a vault carries the same vault id, so the unit name alone cannot say
+ * whose unit it is: the definition's own `--vault` does. A definition that
+ * names no vault, or a vault that no longer exists or has another id, is a
+ * stale binding that a reinstall may replace, not a second live vault.
+ */
+export function serviceBoundElsewhere(vaultPath: string, host: SupervisorHost): string | null {
+  if (host.kind === "none") return null;
+  const vaultId = ensureVaultId(vaultPath);
+  const definition = serviceFile(host.kind === "systemd"
+    ? systemdUnitPath(host.home, vaultId, host.configHome)
+    : launchdPlistPath(host.home, vaultId));
+  const bound = definition === null ? null : unitVaultPath(host.kind, definition);
+  if (bound === null || !isAbsolute(bound)) return null;
+  const boundReal = realPathOrNull(bound);
+  const ownReal = realPathOrNull(vaultPath) ?? resolve(vaultPath);
+  if (boundReal === null || boundReal === ownReal || readVaultId(boundReal) !== vaultId) return null;
+  return bound;
+}
+
+function boundElsewhereMessage(bound: string, vaultPath: string): string {
+  return `the service for this vault id serves another vault at ${bound}, not ${resolve(vaultPath)}; ` +
+    `this looks like a copy, so no service action was taken. Run the loop here in the foreground with ` +
+    `"kizuki serve --vault ${resolve(vaultPath)}", or manage the service from ${bound}`;
+}
+
 export function queryServeService(
   vaultPath: string,
   host: SupervisorHost,
 ): SupervisorStatus {
+  let bound: string | null = null;
+  try { bound = serviceBoundElsewhere(vaultPath, host); }
+  catch {
+    // Fail closed: a definition that cannot be read safely must not let another vault's unit read as this vault's.
+    return { kind: host.kind, state: "unknown", unit: null, enabled: false, detail: "service definition unreadable; not attributing a unit to this vault" };
+  }
+  if (bound !== null) {
+    return { kind: host.kind, state: "absent", unit: null, enabled: false, detail: `absent for this vault: ${boundElsewhereMessage(bound, vaultPath)}`, bound_elsewhere: bound };
+  }
   return host.query(ensureVaultId(vaultPath));
 }
 
@@ -548,6 +590,8 @@ function recoverChange(vaultPath: string, host: SupervisorHost, paths: ReturnTyp
 function changeService<T>(vaultPath: string, host: SupervisorHost, operation: (paths: ReturnType<typeof servicePaths>) => T,
   forwardRemoval?: (paths: ReturnType<typeof servicePaths>, entry: ForwardRemoval) => T, clearFailedSystemd = false): T {
   const paths = servicePaths(vaultPath, host);
+  const bound = serviceBoundElsewhere(vaultPath, host);
+  if (bound !== null) throw new Error(`service change refused: ${boundElsewhereMessage(bound, vaultPath)}`);
   const lock = tryAdvisoryFileLock(join(vaultPath, ".kizuki", "service-change.lock"));
   if (lock === null) throw new Error("another service change is in progress");
   try {

@@ -38,7 +38,12 @@ export function resolveVault(
   if (config.default_vault !== undefined && config.default_vault.length > 0) {
     return resolve(config.default_vault);
   }
-  throw new Error("no vault configured; run: kizuki init <path>");
+  let where = "the user config file";
+  try { where = configPath(env); } catch { /* An unusable config location is reported by the config reader. */ }
+  throw new Error(
+    `no vault configured; pass --vault <path|name>, set KIZUKI_VAULT, or set default_vault in ${where}. ` +
+    "To create a vault run: kizuki init <path>",
+  );
 }
 
 function resolveVaultOverride(value: string, config: KizukiConfig): string {
