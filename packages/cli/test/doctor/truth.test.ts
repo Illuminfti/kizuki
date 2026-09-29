@@ -190,17 +190,44 @@ describe("nextStep", () => {
       top_failure: top,
       extraction: { hint },
     }) as never;
-  const claims = [{ claim_id: "01JCLAIM" }];
+  const claims = [{ claim_id: "01JCLAIM", correctable: true }];
   const failed = (top: Top, hint: string | null = null) =>
-    nextStep({ ok: false, serve: serve(top, hint), live_claims: claims, filed_claims: [] });
+    nextStep({ ok: false, serve: serve(top, hint), live_claims: claims, filed_claims: [], corrections_refused: [] });
 
   test("is the correction hint only when the report is ok", () => {
     expect(
-      nextStep({ ok: true, serve: serve(null), live_claims: claims, filed_claims: [] }),
+      nextStep({ ok: true, serve: serve(null), live_claims: claims, filed_claims: [], corrections_refused: [] }),
     ).toBe('next: kizuki tell "<statement>" --claim 01JCLAIM');
     expect(
-      nextStep({ ok: true, serve: serve(null), live_claims: [], filed_claims: [] }),
+      nextStep({ ok: true, serve: serve(null), live_claims: [], filed_claims: [], corrections_refused: [] }),
     ).toBeNull();
+  });
+
+  test("never suggests tell for a claim the source grants would refuse", () => {
+    const refused = [{ claim_id: "01JCLAIM", correctable: false }];
+    const grant = nextStep({
+      ok: true,
+      serve: serve(null),
+      live_claims: refused,
+      filed_claims: [],
+      corrections_refused: [{ source_key: "01JSOURCE", revision: 3 }],
+    });
+    expect(grant).not.toContain("kizuki tell");
+    expect(grant).toContain("kizuki connect grant --source 01JSOURCE");
+    expect(grant).toContain("--expected-revision 3");
+    const other = nextStep({ ok: true, serve: serve(null), live_claims: refused, filed_claims: [], corrections_refused: [] });
+    expect(other).not.toContain("kizuki tell");
+    expect(other).toContain("kizuki connect status");
+    // A claim the owner can correct wins over a source that cannot be corrected.
+    expect(
+      nextStep({
+        ok: true,
+        serve: serve(null),
+        live_claims: [...refused, { claim_id: "01JOTHER", correctable: true }],
+        filed_claims: [],
+        corrections_refused: [{ source_key: "01JSOURCE", revision: 3 }],
+      }),
+    ).toBe('next: kizuki tell "<statement>" --claim 01JOTHER');
   });
 
   test("follows the structured top failure when the report failed", () => {
