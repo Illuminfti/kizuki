@@ -143,3 +143,118 @@ test("parent and storage appendix cannot disagree about current ledger reservati
     ]),
   );
 });
+
+const SHIPPED_MARKER = "<!-- world-shipped-subset -->";
+const CLAIMS_SCHEMA = join(ROOT, "packages/core/src/claims/schema.ts");
+const PURGE_SCHEMA = join(ROOT, "packages/core/src/ledger/purge-schema.ts");
+const CORE_SRC = join(ROOT, "packages/core/src");
+const SHIPPED_LEDGER_VERSIONS = [31, 32, 33] as const;
+const ALLOCATION_CLASSES = new Set(["authority", "bookkeeping", "derived", "cache"]);
+const FIRST_EXPANSION_VERSION = 34;
+
+function shippedSubsetSection(markdown: string): string {
+  const at = markdown.indexOf(SHIPPED_MARKER);
+  expect(at).toBeGreaterThanOrEqual(0);
+  const rest = markdown.slice(at);
+  const next = rest.search(/\n## /);
+  return next < 0 ? rest : rest.slice(0, next);
+}
+
+function migrationFunction(source: string, version: number): string | null {
+  const match = new RegExp(`\\{\\s*version:\\s*${version},\\s*apply:\\s*(\\w+)`).exec(source);
+  return match?.[1] ?? null;
+}
+
+function shippedErrors(section: string, dbSource: string): string[] {
+  const errors: string[] = [];
+  for (const version of SHIPPED_LEDGER_VERSIONS) {
+    const fn = migrationFunction(dbSource, version);
+    if (fn === null) {
+      errors.push(`ledger ${version} is not in the live migration chain`);
+      continue;
+    }
+    if (!section.includes(`ledger ${version} is applied by \`${fn}\``)) {
+      errors.push(`ledger ${version} is not classified as applied by \`${fn}\``);
+    }
+  }
+  const lower = section.toLowerCase();
+  for (const item of ["purge 6", "`id_origin`", "`claims_v4`", "`core_authority_commits`"]) {
+    const line = section
+      .split("\n")
+      .find((candidate) => candidate.toLowerCase().includes(item) && /^- /.test(candidate));
+    if (line === undefined) errors.push(`${item} is not listed as deferred`);
+    else if (!/deferred/i.test(line)) errors.push(`${item} is listed without the word deferred`);
+  }
+  if (!lower.includes("d22")) errors.push("deferral does not cite D22");
+  if (!lower.includes("not shipped")) errors.push("missing not-shipped classification");
+  return errors;
+}
+
+function allocationRows(section: string): Array<{ version: number; owner: string; klass: string }> {
+  const rows: Array<{ version: number; owner: string; klass: string }> = [];
+  const lines = section.split("\n");
+  const header = lines.findIndex((line) => /^\|\s*Version\s*\|/.test(line));
+  expect(header).toBeGreaterThanOrEqual(0);
+  for (let index = header + 2; index < lines.length && (lines[index] ?? "").startsWith("|"); index += 1) {
+    const cells = (lines[index] ?? "").split("|").map((cell) => cell.trim());
+    rows.push({ version: Number(cells[1]), owner: cells[2] ?? "", klass: (cells[4] ?? "").toLowerCase() });
+  }
+  return rows;
+}
+
+function allocationErrors(section: string): string[] {
+  const errors: string[] = [];
+  const lower = section.toLowerCase();
+  if (!lower.includes("not reservations")) errors.push("missing not-a-reservation statement");
+  if (!lower.includes("claimed at merge time")) errors.push("missing claim-at-merge-time rule");
+  if (!section.includes("world/tables/versions.ts")) errors.push("missing single-file number authority");
+  if (/remains reserved for implementation/i.test(section)) errors.push("allocation restored a reservation");
+  const rows = allocationRows(section);
+  if (rows.length === 0) errors.push("no allocation rows");
+  let previous = FIRST_EXPANSION_VERSION - 1;
+  for (const row of rows) {
+    if (!Number.isInteger(row.version) || row.version <= previous) errors.push(`version ${row.version} is not ascending`);
+    if (row.version < FIRST_EXPANSION_VERSION) errors.push(`version ${row.version} reuses an occupied number`);
+    if (!ALLOCATION_CLASSES.has(row.klass)) errors.push(`version ${row.version} has no table class`);
+    if (row.owner === "") errors.push(`version ${row.version} has no owner`);
+    previous = row.version;
+  }
+  return errors;
+}
+
+test("the shipped subset is classified against the live migration chain and defers what did not ship", () => {
+  const section = shippedSubsetSection(readFileSync(RFC, "utf8"));
+  expect(shippedErrors(section, readFileSync(DB, "utf8"))).toEqual([]);
+});
+
+test("deferred storage work is really absent from core, so the deferral cannot go stale", () => {
+  expect(readFileSync(PURGE_SCHEMA, "utf8")).toMatch(/PURGE_SCHEMA_VERSION\s*=\s*5\b/);
+  expect(readFileSync(CLAIMS_SCHEMA, "utf8")).toMatch(/CLAIMS_SCHEMA_VERSION\s*=\s*3\b/);
+  const found = Bun.spawnSync(
+    ["grep", "-rlE", "CREATE TABLE (IF NOT EXISTS )?(core_authority_commits|claims_v4)\\b", CORE_SRC],
+    { stdout: "pipe" },
+  );
+  expect(found.stdout.toString().trim()).toBe("");
+});
+
+test("a shipped version left unclassified or a deferral dropped fails the appendix", () => {
+  const section = shippedSubsetSection(readFileSync(RFC, "utf8"));
+  const dbSource = readFileSync(DB, "utf8");
+  expect(shippedErrors(section.replace("ledger 33 is applied by", "ledger 33 is"), dbSource).length).toBeGreaterThan(0);
+  expect(shippedErrors(section.replace(/deferred/gi, "planned"), dbSource).length).toBeGreaterThan(0);
+});
+
+test("the expansion allocation starts after the shipped tip, ascends and is not a reservation", () => {
+  const section = shippedSubsetSection(readFileSync(RFC, "utf8"));
+  expect(allocationErrors(section)).toEqual([]);
+  const occupied = allocationErrors(section.replace(/\|\s*34\s*\|/, "| 33 |"));
+  expect(occupied.length).toBeGreaterThan(0);
+  const reserved = allocationErrors(`${section}\nledger 34 remains reserved for implementation.`);
+  expect(reserved).toContain("allocation restored a reservation");
+});
+
+test("the storage appendix keeps its historical-baseline note beside the shipped subset section", () => {
+  const markdown = readFileSync(RFC, "utf8");
+  expect(markdown.indexOf(MARKER)).toBeLessThan(markdown.indexOf(SHIPPED_MARKER));
+  expect(reservationErrors(compatibilitySection(markdown), BASELINE_LEDGER_VERSIONS)).toEqual([]);
+});
