@@ -10,6 +10,8 @@ import {
   MAX_SYNC_BATCH_EVENTS,
   freezeManifest,
   isPlainObject,
+  massWithdrawalDetail,
+  massWithdrawalHeld,
   openSourceChild,
   policyForConnector,
   SourceReadError,
@@ -32,6 +34,8 @@ import {
   summarizeImportErrors,
 } from "../import-report";
 import type { ImportRecordError } from "../import-report";
+import { EpochReader, pairMoves } from "../mirror";
+import type { RecordHistoryReader } from "../mirror";
 import { readBoundedFd, readReason } from "../read";
 import {
   compareStrings,
@@ -43,7 +47,11 @@ import {
 export const MARKDOWN_FOLDER_CONNECTOR_ID = "kizuki.markdown-folder" as const;
 export const MARKDOWN_CURSOR_SCHEMA = "kizuki.markdown-folder.cursor/v1" as const;
 
-export const DEFAULT_PAGE_SIZE = 128;
+/**
+ * Every batch walks the folder once, so a batch that emits more spares walks:
+ * the default is the largest batch Core accepts.
+ */
+export const DEFAULT_PAGE_SIZE = MAX_SYNC_BATCH_EVENTS;
 export const MAX_PAGE_SIZE = 10_000;
 export const MAX_DEPTH = 16;
 export const MAX_FILES = 50_000;
@@ -93,15 +101,51 @@ export interface MarkdownFolderDeps {
   committedFiles?: () =>
     | ReadonlyArray<readonly [string, MarkdownFileIdentity]>
     | Promise<ReadonlyArray<readonly [string, MarkdownFileIdentity]>>;
+  /**
+   * What the ledger holds for each of these records. A record whose state
+   * changes (deleted then restored, edited then reverted) is emitted with
+   * `revision_epoch`, so bytes the ledger has seen before are not swallowed as
+   * a duplicate.
+   */
+  recordHistory?: RecordHistoryReader;
+  /**
+   * The owner's release of a held mass withdrawal: a pass that withdraws at
+   * most this many records proceeds. Set by the sync command for one run.
+   */
+  confirmWithdrawals?: number;
+}
+
+/** A file with its bytes in hand. */
+type LoadedFile = MarkdownFile & { content: string };
+
+/** What `lstat` and `fstat` agree on for one file at one moment. */
+interface StatKey {
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  ino: number;
 }
 
 interface MarkdownFile {
-  content: string;
+  /** Null when the scan reused a cached hash; read it again before emitting. */
+  content: string | null;
   sha256: string;
   size: number;
   relpath: string;
   mtimeMs: number;
+  stat: StatKey;
+  /** When the bytes were read; a cache entry is trusted only well after the file last changed. */
+  readAtMs: number;
 }
+
+/**
+ * A file this connector hashed on an earlier batch. While its stat still
+ * matches, later batches of the same drain skip reading it. Git's racy-entry
+ * rule applies: a file modified within the window before it was read could
+ * change again without moving its stat, so it is always read again.
+ */
+type KnownFiles = ReadonlyMap<string, Pick<MarkdownFile, "sha256" | "size" | "stat" | "readAtMs">>;
+const RACY_WINDOW_MS = 2_000;
 
 interface RootIdentity {
   realpath: string;
@@ -109,10 +153,19 @@ interface RootIdentity {
   ino: number;
 }
 
+/**
+ * The folder is identified by its path and its files' content, never by the
+ * device and inode it happens to sit on: a disk migration, a restore or a
+ * recreated folder keeps its checkpoint and emits only real differences.
+ */
+interface CursorRoot {
+  realpath: string;
+}
+
 export interface MarkdownCursor {
   schema: typeof MARKDOWN_CURSOR_SCHEMA;
   connector_id: typeof MARKDOWN_FOLDER_CONNECTOR_ID;
-  root: RootIdentity;
+  root: CursorRoot;
   options: { page_size: number; exclude: string[] };
   exhausted: boolean;
   phase: "files" | "tombstones";
@@ -154,6 +207,9 @@ export class MarkdownFolderConnector implements Connector {
   readonly pageSize: number;
   readonly exclude: readonly string[];
   private readonly committedFiles: MarkdownFolderDeps["committedFiles"];
+  private readonly recordHistory: MarkdownFolderDeps["recordHistory"];
+  private readonly confirmedWithdrawals: number;
+  private known: KnownFiles = new Map();
 
   constructor(config: MarkdownFolderConfig, deps: MarkdownFolderDeps = {}) {
     this.path = requirePathConfig(config, MARKDOWN_FOLDER_CONNECTOR_ID);
@@ -161,6 +217,8 @@ export class MarkdownFolderConnector implements Connector {
     this.pageSize = parsePageSize(config.page_size);
     this.exclude = parseExclude(config.exclude);
     this.committedFiles = deps.committedFiles;
+    this.recordHistory = deps.recordHistory;
+    this.confirmedWithdrawals = deps.confirmWithdrawals ?? 0;
   }
 
   manifest(): Manifest {
@@ -212,7 +270,8 @@ export class MarkdownFolderConnector implements Connector {
     const previous =
       cursor === null ? undefined : parseCursor(cursor, root, this, this.committedFiles !== undefined);
     const previousFiles = await this.snapshotIdentities(previous);
-    const scan = await scanMarkdownFiles(root, this.exclude);
+    const scan = await scanMarkdownFiles(root, this.exclude, this.known);
+    this.known = knownFiles(scan.files);
     const observedAt = new Date().toISOString();
     const current = new Map(
       scan.files.map((file) => [file.relpath, file] as const),
@@ -221,18 +280,68 @@ export class MarkdownFolderConnector implements Connector {
     const hostBacked = this.committedFiles !== undefined;
     const emitPageSize = Math.min(this.pageSize, MAX_SYNC_BATCH_EVENTS);
 
-    const fileEvents: CaptureEventInput[] = [];
-    for (const file of scan.files) {
+    // Files whose bytes differ from the last committed identity, relpath order.
+    const changed = scan.files.filter((file) => {
       const prior = previousFiles.get(file.relpath);
-      if (
+      return !(
         prior !== undefined &&
         prior.sha256 === file.sha256 &&
         prior.size === file.size
-      ) {
-        continue;
-      }
-      const event = fileEvent(file, observedAt);
-      if (utf8Bytes(JSON.stringify(event)) + 2 > MAX_SYNC_BATCH_BYTES) {
+      );
+    });
+
+    // Records gone from the source, unless a scan error hides them.
+    let absent: string[] = [];
+    if (previous !== undefined && !scan.truncated) {
+      const failed = scanErrors.map((error) => error.location);
+      absent = [...previousFiles.keys()]
+        .sort(compareStrings)
+        .filter((relpath) => !current.has(relpath) && !hiddenByScanError(relpath, failed));
+    }
+
+    // A file that reappears under a new name with the same bytes is a move:
+    // one event that names its origin, and no tombstone for the old name.
+    const moves = pairMoves(
+      changed
+        .filter((file) => !previousFiles.has(file.relpath))
+        .map((file) => ({ relpath: file.relpath, hash: file.sha256, size: file.size })),
+      absent.flatMap((relpath) => {
+        const identity = previousFiles.get(relpath);
+        return identity === undefined
+          ? []
+          : [{ relpath, hash: identity.sha256 }];
+      }),
+    );
+    const movedAway = new Set(moves.values());
+    const withdrawn = absent.filter((relpath) => !movedAway.has(relpath));
+    const held =
+      previous !== undefined &&
+      massWithdrawalHeld(withdrawn.length, previousFiles.size, this.confirmedWithdrawals);
+    const tombstones = held
+      ? []
+      : withdrawn.map((relpath) => tombstone(relpath, observedAt));
+
+    // Each sweep diffs against the durable identities updated by prior pages.
+    // The remaining diff can change between scans, including below `after`.
+    // Keep phase/after as compatible cursor hints, never as exclusion bounds.
+    // Events are built for the page only: a batch costs its page, not the tree.
+    const epochs = new EpochReader(this.recordHistory);
+    const changedNames = changed.map((file) => file.relpath);
+    const filePage: CaptureEventInput[] = [];
+    const emitted = new Map<string, LoadedFile>();
+    let encoded = 2;
+    let index = 0;
+    for (; index < changed.length && filePage.length < emitPageSize; index += 1) {
+      const file = await this.loadFile(root, changed[index]!, scanErrors);
+      if (file === null) continue;
+      const event = fileEvent(
+        file,
+        observedAt,
+        await epochs.of(changedNames, index, (relpath) => previousFiles.has(relpath)),
+        moves.get(file.relpath),
+      );
+      const extra = utf8Bytes(JSON.stringify(event));
+      if (extra + 2 > MAX_SYNC_BATCH_BYTES) {
         scanErrors.push({
           location: file.relpath,
           code: "too_large",
@@ -240,40 +349,25 @@ export class MarkdownFolderConnector implements Connector {
         });
         continue;
       }
-      fileEvents.push(event);
+      if (filePage.length > 0 && encoded + extra + 1 > MAX_SYNC_BATCH_BYTES) break;
+      filePage.push(event);
+      emitted.set(file.relpath, file);
+      encoded += extra + (filePage.length === 1 ? 0 : 1);
     }
-    fileEvents.sort((left, right) =>
-      compareStrings(left.source_record_id, right.source_record_id),
-    );
-
-    const tombstones: CaptureEventInput[] = [];
-    if (previous !== undefined && !scan.truncated) {
-      const failed = scanErrors.map((error) => error.location);
-      for (const relpath of [...previousFiles.keys()].sort(compareStrings)) {
-        if (current.has(relpath) || hiddenByScanError(relpath, failed)) continue;
-        tombstones.push(tombstone(relpath, observedAt));
-      }
-    }
-
-    // Each sweep diffs against the durable identities updated by prior pages.
-    // The remaining diff can change between scans, including below `after`.
-    // Keep phase/after as compatible cursor hints, never as exclusion bounds.
-    const { page: filePage, rest: fileRest } = takePage(
-      fileEvents,
-      emitPageSize,
-    );
-    const filesDone = fileRest.length === 0;
+    const filesDone = index >= changed.length;
     const pendingRefusal = scanErrors.length > 0 || scan.truncated;
 
     const processed = new Map(previousFiles);
     for (const event of filePage) {
-      const file = current.get(event.source_record_id);
+      const file = emitted.get(event.source_record_id);
       if (file !== undefined) {
         processed.set(event.source_record_id, {
           sha256: file.sha256,
           size: file.size,
         });
       }
+      const movedFrom = moves.get(event.source_record_id);
+      if (movedFrom !== undefined) processed.delete(movedFrom);
     }
 
     const mint = (
@@ -285,7 +379,7 @@ export class MarkdownFolderConnector implements Connector {
         ? encodeCompactCursor({
             schema: MARKDOWN_CURSOR_SCHEMA,
             connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
-            root,
+            root: { realpath: root.realpath },
             options: { page_size: this.pageSize, exclude: [...this.exclude] },
             exhausted,
             phase,
@@ -294,7 +388,7 @@ export class MarkdownFolderConnector implements Connector {
         : encodeCursor({
             schema: MARKDOWN_CURSOR_SCHEMA,
             connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
-            root,
+            root: { realpath: root.realpath },
             options: { page_size: this.pageSize, exclude: [...this.exclude] },
             exhausted,
             phase,
@@ -326,7 +420,7 @@ export class MarkdownFolderConnector implements Connector {
     }
 
     if (filePage.length > 0) {
-      const noTombstones = tombstones.length === 0;
+      const noTombstones = tombstones.length === 0 && !held;
       const next = mint(
         noTombstones && !scan.truncated,
         noTombstones ? "files" : "tombstones",
@@ -337,6 +431,17 @@ export class MarkdownFolderConnector implements Connector {
         events: filePage,
         cursor: next,
         has_more: !noTombstones || pendingRefusal,
+      };
+    }
+
+    if (held) {
+      // The hold changes no checkpoint: the next pass measures the source
+      // again, so restoring the tree clears it and a confirmation releases it.
+      return {
+        events: [],
+        cursor,
+        status: "unavailable",
+        detail: massWithdrawalDetail(withdrawn.length, previousFiles.size),
       };
     }
 
@@ -384,6 +489,21 @@ export class MarkdownFolderConnector implements Connector {
     };
   }
 
+  /** The file with its bytes, reading again when the scan reused a cached hash. */
+  private async loadFile(
+    root: RootIdentity,
+    file: MarkdownFile,
+    errors: ImportRecordError[],
+  ): Promise<LoadedFile | null> {
+    if (file.content !== null) return { ...file, content: file.content };
+    const read = await readMarkdownAt(root, file.relpath);
+    if ("error" in read) {
+      errors.push(read.error);
+      return null;
+    }
+    return { ...read.file, content: read.file.content ?? "" };
+  }
+
   private async snapshotIdentities(
     previous: MarkdownCursor | undefined,
   ): Promise<Map<string, FileIdentity>> {
@@ -391,6 +511,15 @@ export class MarkdownFolderConnector implements Connector {
     if (this.committedFiles === undefined) return new Map(previous.files);
     return new Map(parseCommittedIdentities(await this.committedFiles()));
   }
+}
+
+function knownFiles(files: readonly MarkdownFile[]): KnownFiles {
+  return new Map(
+    files.map((file) => [
+      file.relpath,
+      { sha256: file.sha256, size: file.size, stat: file.stat, readAtMs: file.readAtMs },
+    ]),
+  );
 }
 
 export function createMarkdownFolderConnector(
@@ -577,6 +706,7 @@ async function pinnedDescent(
 async function scanMarkdownFiles(
   root: RootIdentity,
   exclude: readonly string[],
+  known: KnownFiles = new Map(),
 ): Promise<ScanResult> {
   const files: MarkdownFile[] = [];
   const errors: ImportRecordError[] = [];
@@ -688,6 +818,19 @@ async function scanMarkdownFiles(
           });
           return;
         }
+        const cached = known.get(relpath);
+        if (cached !== undefined && trustedCache(cached, info)) {
+          files.push({
+            content: null,
+            sha256: cached.sha256,
+            size: cached.size,
+            relpath,
+            mtimeMs: info.mtimeMs,
+            stat: cached.stat,
+            readAtMs: cached.readAtMs,
+          });
+          continue;
+        }
         const read = await readStableMarkdown(parent.fd, entry.name, relpath);
         if ("error" in read) {
           errors.push(read.error);
@@ -715,6 +858,7 @@ async function readStableMarkdown(
     let fd: number | undefined;
     try {
       fd = openSourceChild(parentFd, name);
+      const readAtMs = Date.now();
       const before = fstatSync(fd);
       if (!before.isFile()) {
         return {
@@ -769,6 +913,13 @@ async function readStableMarkdown(
           size: bytes.byteLength,
           relpath,
           mtimeMs: after.mtimeMs,
+          stat: {
+            size: after.size,
+            mtimeMs: after.mtimeMs,
+            ctimeMs: after.ctimeMs,
+            ino: after.ino,
+          },
+          readAtMs,
         },
       };
     } catch (error) {
@@ -804,6 +955,55 @@ async function readStableMarkdown(
       reason: "file changed while it was read",
     },
   };
+}
+
+/**
+ * Whether a cached hash still describes the file. The stat must match, and the
+ * file must have been quiet for the racy window before it was read: a write
+ * inside that window can leave size and mtime as they were.
+ */
+function trustedCache(
+  cached: { stat: StatKey; readAtMs: number },
+  info: { size: number; mtimeMs: number; ctimeMs: number; ino: number },
+): boolean {
+  return (
+    cached.readAtMs - cached.stat.mtimeMs > RACY_WINDOW_MS &&
+    cached.readAtMs - cached.stat.ctimeMs > RACY_WINDOW_MS &&
+    cached.stat.size === info.size &&
+    cached.stat.mtimeMs === info.mtimeMs &&
+    cached.stat.ctimeMs === info.ctimeMs &&
+    cached.stat.ino === info.ino
+  );
+}
+
+/** Reads one file again through its pinned parent directory, as the scan does. */
+async function readMarkdownAt(
+  root: RootIdentity,
+  relpath: string,
+): Promise<{ file: MarkdownFile } | { error: ImportRecordError }> {
+  const absolute = path.join(root.realpath, ...relpath.split("/"));
+  const descent = await pinnedDescent(root.realpath, path.dirname(absolute));
+  if (descent.kind !== "directory") {
+    return {
+      error: {
+        location: relpath,
+        code: descent.kind === "symlink" ? "symlink" : "unreadable",
+        reason: descent.kind === "symlink" ? "symlink skipped" : descent.reason,
+      },
+    };
+  }
+  let parent: FileHandle;
+  try {
+    parent = await openPinnedDirectory(descent);
+  } catch (error) {
+    await classifyReplacedDirectory(descent.realpath);
+    return { error: { location: relpath, code: "unreadable", reason: readReason(error) } };
+  }
+  try {
+    return await readStableMarkdown(parent.fd, path.basename(absolute), relpath);
+  } finally {
+    await parent.close().catch(() => undefined);
+  }
 }
 
 function shouldSkipName(name: string, exclude: readonly string[]): boolean {
@@ -842,7 +1042,12 @@ function documentSubject(relpath: string): SubjectRef {
   };
 }
 
-function fileEvent(file: MarkdownFile, observedAt: string): CaptureEventInput {
+function fileEvent(
+  file: LoadedFile,
+  observedAt: string,
+  epoch: number,
+  movedFrom: string | undefined,
+): CaptureEventInput {
   return {
     schema: "kizuki.event/v1",
     connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
@@ -858,6 +1063,8 @@ function fileEvent(file: MarkdownFile, observedAt: string): CaptureEventInput {
       relpath: file.relpath,
       size: file.size,
       sha256: file.sha256,
+      ...(epoch > 0 ? { revision_epoch: epoch } : {}),
+      ...(movedFrom === undefined ? {} : { moved_from: movedFrom }),
     },
   };
 }
@@ -951,8 +1158,6 @@ function parseCursor(
     !(parsed["after"] === null || typeof parsed["after"] === "string") ||
     !isPlainObject(parsed["root"]) ||
     typeof parsed["root"]["realpath"] !== "string" ||
-    typeof parsed["root"]["dev"] !== "number" ||
-    typeof parsed["root"]["ino"] !== "number" ||
     !isPlainObject(parsed["options"]) ||
     typeof parsed["options"]["page_size"] !== "number" ||
     !Array.isArray(parsed["options"]["exclude"])
@@ -996,20 +1201,22 @@ function parseCursor(
       `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor snapshot`,
     );
   }
-  if (
-    parsed["root"]["realpath"] !== root.realpath ||
-    parsed["root"]["dev"] !== root.dev ||
-    parsed["root"]["ino"] !== root.ino
-  ) {
+  // A compact cursor names no files: its baseline is the source's committed
+  // identities, so the same connection resumes on a restored, migrated or
+  // recreated folder and emits only what differs. A cursor that carries its
+  // own snapshot belongs to the folder it was taken from. Tokens minted
+  // before this rule also pinned the device and inode; they are still read.
+  if (!committed && parsed["root"]["realpath"] !== root.realpath) {
     throw new KizukiError(
       "parse_error",
       `${MARKDOWN_FOLDER_CONNECTOR_ID}: cursor does not belong to this root`,
     );
   }
+  // The page size only sets how much one batch emits, so a token taken at
+  // another size resumes at this one. The exclusions decide which files exist.
   if (
-    parsed["options"]["page_size"] !== connector.pageSize ||
     JSON.stringify(parsed["options"]["exclude"]) !==
-      JSON.stringify([...connector.exclude])
+    JSON.stringify([...connector.exclude])
   ) {
     throw new KizukiError(
       "parse_error",
@@ -1024,11 +1231,7 @@ function parseCursor(
   return {
     schema: MARKDOWN_CURSOR_SCHEMA,
     connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
-    root: {
-      realpath: parsed["root"]["realpath"],
-      dev: parsed["root"]["dev"],
-      ino: parsed["root"]["ino"],
-    },
+    root: { realpath: parsed["root"]["realpath"] },
     options: {
       page_size: parsed["options"]["page_size"],
       exclude: parsed["options"]["exclude"].map(String),
