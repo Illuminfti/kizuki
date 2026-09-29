@@ -194,7 +194,9 @@ Implemented on this revision:
 - **Agent identity in core.** Grants, sensitivity ceilings, tool allowlists,
   rate limits, and audit live in `@kizuki/core`. `kizuki agent add` delivers an
   explicit scoped grant through a private credential file before activating its
-  identity; `kizuki agent revoke` revokes active access or cancels pending setup.
+  identity; `kizuki agent list` and `kizuki agent grant` show and amend an
+  enrolled agent's grant in place; `kizuki agent revoke` revokes active access
+  or cancels pending setup.
   The CLI and MCP project the same Core enrollment and authorization contract.
   See [agent enrollment and recovery](agent-enrollment.md).
 

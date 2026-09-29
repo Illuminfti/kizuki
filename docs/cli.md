@@ -676,11 +676,14 @@ holder rather than reporting a healthy vault as unopenable.
 
 ```text
 usage: kizuki agent add NAME --grant FILE --token-ref file:/absolute/path --operation-id ID [--dry-run] [--json]
+       kizuki agent grant NAME --grant FILE --operation-id ID [--json]
+       kizuki agent list [--json]
        kizuki agent revoke NAME [--json]
 ```
 
 Enroll a scoped agent with a complete explicit grant and a private credential
-file, or revoke its access. The parent directory must already exist and have
+file, list enrolled agents, replace an enrolled agent's grant in place, or
+revoke its access. The parent directory must already exist and have
 private owner custody. Credential delivery requires native local filesystem
 custody; a missing native helper reports `unsupported_platform`. Preview validates an existing vault without creating an identity,
 credential or configuration. An older ledger reports `migration_required`
@@ -696,6 +699,23 @@ Invalid arguments or grants exit 2; conflicts and incomplete setup exit 1.
 Cancellation may retain an inactive partial file. See the
 [agent enrollment guide](agent-enrollment.md) for the complete grant, recovery
 states and MCP connection example.
+
+`agent list` prints one row per stored agent: name, state (`active`, `revoked`
+or `quarantined`), grant epoch and a grant summary (ceiling, tools, type and
+subject scope, rate limit, owner-correction relay). `--json` returns the same
+rows with the full grant under `kizuki.cli.agent/v1`. It reads the ledger
+without writing, and it never prints a credential, a token hash or a credential
+path.
+
+`agent grant` replaces the whole grant of an enrolled agent from a grant file
+with the same eight required fields as `agent add`. The agent keeps its
+credential and existing MCP sessions: the next tool call reads the new grant,
+and the grant epoch rises by one with an `agent.grant` audit row. The same
+operation ID with the same request replays and reports the current epoch;
+the same ID with a different request or an enrollment operation ID exits 1 with
+`operation_conflict`. An unknown, revoked or unfinished agent exits 1 with
+`unknown_agent`; an invalid or incomplete grant exits 2 with `invalid_grant`.
+Nothing changes on any refusal.
 
 ## Not CLI verbs
 

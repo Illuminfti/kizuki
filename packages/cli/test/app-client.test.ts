@@ -1003,6 +1003,33 @@ test('agent grant form submits explicit narrowed scopes, ceiling and read tools'
     expect(f.requests[0]!.payload).not.toHaveProperty('token_ref');
 });
 
+test('agent setup offers world_view unchecked and an honest owner-correction relay choice that defaults off', async () => {
+    const f = fixture(); f.evaluate('agentEnrollment()');
+    const world = f.dialog.querySelector('#agent-tool-world_view')!;
+    expect(world).not.toBeNull(); expect(world.checked).toBe(false);
+    expect(f.dialog.textContent).toContain('Read concepts and situations');
+    const relay = f.dialog.querySelector('#agent-relay')!;
+    expect(relay).not.toBeNull(); expect(relay.checked).toBe(false);
+    expect(f.dialog.textContent).toContain('include the corrections you made yourself');
+    expect(f.dialog.textContent).toContain('cannot submit corrections either way');
+    f.dialog.querySelector('#agent-name')!.value = 'world-helper';
+    await f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+    void findAction(f.dialog, 'Create agent').fire('click'); await tick();
+    expect(f.requests[0]!.payload.grant).toEqual(readGrant);
+});
+
+test('agent setup submits world_view and the relay when the owner chooses them and shows both for review', async () => {
+    const f = fixture(); f.evaluate('agentEnrollment()');
+    f.dialog.querySelector('#agent-name')!.value = 'world-helper';
+    f.dialog.querySelector('#agent-tool-world_view')!.checked = true;
+    f.dialog.querySelector('#agent-relay')!.checked = true;
+    await f.dialog.querySelector('form')!.fire('submit', { preventDefault() {} });
+    expect(f.dialog.textContent).toContain('Read concepts and situations');
+    expect(f.dialog.textContent).toContain('Owner correction relayOn');
+    void findAction(f.dialog, 'Create agent').fire('click'); await tick();
+    expect(f.requests[0]!.payload.grant).toEqual({ ...readGrant, tools: ['search', 'get_page', 'world_view'], relay_owner_corrections: true });
+});
+
 test('agent launch projection refuses owner or raw-token configurations', () => {
     const f = fixture();
     for (const args of [['--owner'], ['--token', 'kzk_SYNTHETIC'], ['--token-ref', 'env:OWNER_TOKEN'], ['--token-ref', 'file:/private/agent.json', '--owner=true']]) {

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- `kizuki agent list [--json]` shows enrolled agents with their state, grant
+  epoch and grant summary, and never a credential. `kizuki agent grant NAME
+  --grant FILE --operation-id ID` replaces an enrolled agent's grant in place:
+  the credential and running MCP sessions keep working, the grant epoch rises
+  with an audit row, and a retry of the same operation ID is idempotent. An
+  unknown or revoked agent and an invalid grant are refused without changes.
+- The app's agent setup offers `world_view` among the read tools and an
+  owner-correction relay choice that defaults to off.
+
 ### Fixed
 
 - Structural claim deduplication now requires overlapping validity. A claim
@@ -9,6 +20,7 @@
   validity window is stored as its own claim instead of being merged into an
   earlier one, and it no longer raises authority through cross-connector
   corroboration. Overlapping windows still corroborate.
+- The standing HTTP endpoint compares its bearer token in constant time.
 
 ## 1.0.2 (2026-09-24)
 

@@ -63,6 +63,12 @@ export interface Grant {
   relay_owner_corrections: boolean;
 }
 
+/** Names one owner-initiated amendment so a retry can be recognised. */
+export interface GrantOperation {
+  operation_id: string;
+  request_digest: string;
+}
+
 function freezeGrant(grant: Grant): Grant {
   return Object.freeze({
     ceiling: grant.ceiling,

@@ -68,6 +68,8 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
   agent: [
     `${INVOCATION} agent add assistant --grant GRANT.json --token-ref file:/absolute/private/credential --operation-id assistant-setup-1 --dry-run`,
     `${INVOCATION} agent add assistant --grant GRANT.json --token-ref file:/absolute/private/credential --operation-id assistant-setup-1`,
+    `${INVOCATION} agent list`,
+    `${INVOCATION} agent grant assistant --grant GRANT.json --operation-id assistant-grant-1`,
     `${INVOCATION} agent revoke assistant`,
   ],
   purge: [

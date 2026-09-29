@@ -93,6 +93,40 @@ identity, completed enrollment and original file binding. Copying the file to a
 different path does not satisfy that binding. Existing environment-token
 authentication remains available.
 
+## List agents and amend a grant
+
+```bash
+kizuki --vault /absolute/vault agent list
+kizuki --vault /absolute/vault agent grant assistant --grant agent-grant.json --operation-id assistant-grant-1 --json
+```
+
+`agent list` shows each agent's state, grant epoch and grant summary. It never
+prints a credential, a token hash or a credential path.
+
+`agent grant` replaces the agent's complete grant without revoking it or
+issuing a new credential. The grant file has the same eight required fields as
+enrollment, so to add `world_view` to a reader, save the full grant with
+`"tools": ["search", "world_view"]`. To change owner-correction relay, change
+`relay_owner_corrections`. The credential file and running MCP sessions keep
+working; the next call authorizes against the new grant, and the grant epoch
+rises by one with an `agent.grant` audit row (see `kizuki audit`).
+Use a fresh operation ID for each intended change. Repeating an ID with the same
+request is safe and reports the current grant; the same ID with a different
+grant, or an ID already used for enrollment, is refused as `operation_conflict`.
+An unknown, revoked or unfinished agent is refused as `unknown_agent`. Amending
+a quarantined agent with a valid grant repairs it. Old grants are not restored
+by a retry.
+
+The Core `OWNER_AGENT_GRANT` preset, meant for a harness the owner runs
+themselves, includes `world_view`, `propose` and `correct` with relay on. The
+public default grant given to a newly created arbitrary agent stays inert: no
+tools, public ceiling and relay off. The app's **Set up an agent** dialog offers
+`world_view` among its read tools, unchecked by default, and an owner-correction
+relay choice that defaults to off. With relay on, the agent's `world_view` reads
+include the owner's own corrections. That dialog grants no `propose` or
+`correct` tool, so an app-created agent cannot relay a correction until its
+grant is widened with `agent grant`.
+
 ## Retry and revoke
 
 Repeat the exact add command after a lost response. Its identity and initial
@@ -137,7 +171,10 @@ token hash, credential digest or OS path.
 
 Add exits 0 for a validated preview or completed/active/ready setup, 2 for
 invalid input, and 1 for every other setup state. Revoke exits 0 after terminal
-revocation or cancellation. Fixed error codes appear in JSON; diagnostics go
+revocation or cancellation. Grant exits 0 after an amendment or a replay of one,
+2 for invalid input or grant, and 1 for every refusal. Its `data` is
+`kizuki.agent-grant/v1`: operation ID, agent ID, name, the resulting grant, its
+epoch and a replay indicator. List exits 0 with the agent rows. Fixed error codes appear in JSON; diagnostics go
 to stderr and omit private paths and input.
 
 Portable backups exclude agent identities, grants, authentication audit,

@@ -1,17 +1,18 @@
 import { Database, constants } from "bun:sqlite";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { recordLifecycle } from "./audit";
+import { matchGrantOperation, recordLifecycle } from "./audit";
 import { openCredentialDirectory, type CredentialDirectory, type CredentialFileIdentity, type CredentialFileInspection } from "./credential-file";
-import { AGENT_NAME, authenticate, generateAgentToken, getAgent, hashAgentToken, principalForAgentId, revokeAgentInTransaction, validateAgentGrant, writeAgentGrant } from "./identity";
+import { AGENT_NAME, authenticate, generateAgentToken, getAgent, hashAgentToken, principalForAgentId, revokeAgentInTransaction, setGrantInTransaction, validateAgentGrant, writeAgentGrant } from "./identity";
 import { sha256 } from "./hash";
-import { TOOLS, type Grant, type Principal } from "./types";
+import { TOOLS, type Grant, type GrantOperation, type Principal } from "./types";
 import { ulid } from "../util/ulid";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../ledger/db";
 import { assertLedgerSchema } from "../ledger/integrity";
 import { oneShotGet as readOne, tableExists } from "../ledger/schema";
 
 const SCHEMA = "kizuki.agent-enrollment/v1" as const;
+const GRANT_SCHEMA = "kizuki.agent-grant/v1" as const;
 const ENVELOPE_SCHEMA = "kizuki.agent-credential/v1";
 const OPERATION_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{7,63}$/;
 const AGENT_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -44,7 +45,7 @@ export interface AgentEnrollmentResult {
 export type AgentEnrollmentErrorCode =
   | "invalid_request" | "invalid_grant" | "vault_unavailable" | "unsupported_platform"
   | "credential_unsafe" | "credential_conflict" | "operation_conflict" | "name_conflict"
-  | "migration_required" | "enrollment_busy" | "recovery_required" | "enrollment_unavailable";
+  | "migration_required" | "enrollment_busy" | "recovery_required" | "enrollment_unavailable" | "unknown_agent";
 export class AgentEnrollmentError extends Error {
   constructor(readonly code: AgentEnrollmentErrorCode) { super(code); }
 }
@@ -454,6 +455,59 @@ export function revokeAgentEnrollment(vaultPath: string, name: string): AgentEnr
         const state = currentGrant(ledger.db, target.agentId);
         if (state.authority === "revoked") return revokedResult(ledger.db, target.agentId, true);
       }
+      throw error;
+    }
+  } catch (error) { return safeError(error); }
+  finally { ledger?.close(); }
+}
+export interface AgentGrantRequest { operation_id: string; name: string; grant: Grant; }
+export interface AgentGrantResult {
+  schema: typeof GRANT_SCHEMA;
+  operation_id: string;
+  agent_id: string;
+  name: string;
+  grant: Grant;
+  grant_epoch: number;
+  replayed: boolean;
+}
+
+/**
+ * Replace an enrolled agent's whole grant without touching its credential.
+ * One immediate transaction bumps the epoch, writes the audit row that names
+ * the operation, and answers a retry of the same request from that row.
+ */
+export function amendAgentGrant(vaultPath: string, request: AgentGrantRequest): AgentGrantResult {
+  let operation: GrantOperation, name: string, grant: Grant;
+  try {
+    if (request === null || typeof request !== "object" || Array.isArray(request) || Object.keys(request).length !== 3 ||
+      Object.keys(request).some(key => !["operation_id", "name", "grant"].includes(key)) ||
+      typeof request.operation_id !== "string" || !OPERATION_ID.test(request.operation_id) ||
+      typeof request.name !== "string" || !AGENT_NAME.test(request.name) || request.name === "owner") fail("invalid_request");
+    name = request.name; grant = normalizedGrant(request.grant);
+    operation = { operation_id: request.operation_id, request_digest: sha256(JSON.stringify({ schema: GRANT_SCHEMA, name, grant })) };
+  } catch (error) { return safeError(error); }
+  let ledger: EnrollmentLedger | undefined;
+  const applied = (db: Database, replayed: boolean): AgentGrantResult => {
+    const agent = getAgent(db, name), principal = agent === null ? null : principalForAgentId(db, agent.agent_id);
+    if (agent === null || principal?.kind !== "agent") fail("enrollment_unavailable");
+    return { schema: GRANT_SCHEMA, operation_id: operation.operation_id, agent_id: agent.agent_id, name, grant: principal.grant, grant_epoch: principal.grant_epoch, replayed };
+  };
+  try {
+    ledger = new EnrollmentLedger(vaultPath);
+    try {
+      return ledger.write(db => {
+        const agent = getAgent(db, name);
+        if (agent === null || agent.revoked_at !== null) fail("unknown_agent");
+        if (readRow(db, operation.operation_id) !== null) fail("operation_conflict");
+        const seen = matchGrantOperation(db, operation);
+        if (seen === "conflict") fail("operation_conflict");
+        if (seen === "new") setGrantInTransaction(db, name, grant, operation);
+        return applied(db, seen === "replay");
+      });
+    } catch (error) {
+      ledger.reopen();
+      // An uncertain commit is settled by the audit row the same transaction wrote.
+      if (matchGrantOperation(ledger.db, operation) === "replay") return applied(ledger.db, true);
       throw error;
     }
   } catch (error) { return safeError(error); }
