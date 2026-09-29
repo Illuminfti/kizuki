@@ -157,17 +157,17 @@ describe("a purged source record is not captured again silently", () => {
   });
 });
 
-describe("ledger migration 35", () => {
-  test("a fresh ledger and an upgraded v34 ledger both carry the purge tables", () => {
+describe("ledger migration 34", () => {
+  test("a fresh ledger and an upgraded v33 ledger both carry the purge tables", () => {
     const { vault, db } = fixture();
     const names = () => db.query<{ name: string }, []>(
       "SELECT name FROM sqlite_master WHERE name IN ('purge_erasures','purge_claim_scope','purge_suppression_lifts','purge_suppression_sources','event_purge_proofs_by_record') ORDER BY name",
     ).all().map((row) => row.name);
     const expected = ["event_purge_proofs_by_record", "purge_claim_scope", "purge_erasures", "purge_suppression_lifts", "purge_suppression_sources"];
-    expect(LEDGER_SCHEMA_VERSION).toBeGreaterThanOrEqual(35);
+    expect(LEDGER_SCHEMA_VERSION).toBeGreaterThanOrEqual(34);
     expect(names()).toEqual(expected);
 
-    db.exec("DROP TABLE purge_erasures; DROP TABLE purge_claim_scope; DROP TABLE purge_suppression_lifts; DROP TABLE purge_suppression_sources; DROP INDEX event_purge_proofs_by_record; UPDATE schema_version SET version = 34");
+    db.exec("DROP TABLE purge_erasures; DROP TABLE purge_claim_scope; DROP TABLE purge_suppression_lifts; DROP TABLE purge_suppression_sources; DROP INDEX event_purge_proofs_by_record; UPDATE schema_version SET version = 33");
     db.close();
     const upgraded = openLedger(join(vault, ".kizuki", "kizuki.db"));
     try {

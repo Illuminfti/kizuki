@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 /**
- * Ledger migration 35. Additive tables and one index; no existing row is
+ * Additive tables and one index; no existing row is
  * touched, so a re-run is a no-op and an interrupted run rolls back whole.
  *
  * `purge_erasures` receipts what a purge batch erased (archive copies, claim and
@@ -19,7 +19,7 @@ import type { Database } from "bun:sqlite";
  * `purge_suppression_sources` narrows that refusal to the source the record
  * was captured from, when the event was bound to one.
  */
-export function applyPurgeReingestV35(db: Database): void {
+export function applyPurgeReingestV34(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS purge_erasures (
       batch_id TEXT PRIMARY KEY,

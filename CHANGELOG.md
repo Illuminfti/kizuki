@@ -15,7 +15,7 @@
   found; a page or archive file the proof cannot read is reported as
   unverifiable. Typed claims bound to a purged event by their support are
   erased too. `kizuki recover` and the daemon sweep finish a purge interrupted after
-  its first phase. Ledger migration 35 adds `purge_erasures`,
+  its first phase. The ledger migration adds `purge_erasures`,
   `purge_claim_scope`, `purge_suppression_lifts` and
   `purge_suppression_sources`.
 - A source record that was purged is no longer captured again silently. Sync

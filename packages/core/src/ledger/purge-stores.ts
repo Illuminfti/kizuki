@@ -105,7 +105,7 @@ export function markSupportPurgedClaims(db: Database, batchId: string, at: strin
     )
     .all(batchId)
     .map((row) => row.claim_id);
-  const mark = db.query("UPDATE claims SET status='purged', retracted_at=? WHERE claim_id=? AND status != 'purged'");
+  const mark = db.query("UPDATE claims SET status='purged', retracted_at=? WHERE claim_id=? AND status IN ('live', 'provenance_reduced')");
   for (const id of ids) mark.run(at, id);
   return ids;
 }
