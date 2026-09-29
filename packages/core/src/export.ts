@@ -1,4 +1,4 @@
-import { WORLD_TABLES, WORLD_TABLE_COLUMNS } from "./world/schema";
+import { createWorldTables, exportedWorldTables, resetWorldTables } from "./world/tables/registry";
 import { assertWorldState } from "./world/integrity";
 import { capturePortableAdapter, capturePortableLocal, hashPortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
 export type { PortableLocalAdapter } from "./portable-local";
@@ -1869,8 +1869,9 @@ function exportVaultOwned(
       );
       writeStream(staging, "claims/bindings.jsonl", pageBindings(db), files, options.signal);
       assertWorldState(db);
-      for (const table of WORLD_TABLES) {
-        writeStream(staging, `world/${table}.jsonl`, db.query(`SELECT * FROM ${table} ORDER BY ${WORLD_TABLE_COLUMNS[table].join(",")}`).iterate(), files, options.signal);
+      for (const table of exportedWorldTables(schema.ledger)) {
+        if (!tableExists(db, table.name)) throw new Error("world storage migration required");
+        writeStream(staging, worldStream(table.name), db.query(`SELECT * FROM ${table.name} ORDER BY ${table.columns.join(",")}`).iterate(), files, options.signal);
       }
       writeStream(staging, CLAIM_V2_SEMANTICS_BACKUP, pageClaimV2Semantics(db), files, options.signal);
       writeStream(staging, CLAIM_V2_SUPPORT_BACKUP, pageClaimV2Support(db), files, options.signal);
@@ -2162,11 +2163,17 @@ function assertBackupFormat(manifest: ExportManifest): void {
   // `commitClaimV2` fills (B1c). A v3 backup at 31 therefore streams them beside
   // claims/claims.jsonl and restores them in foreign-key order. Backups written
   // before those files existed name none of them and restore empty tables.
-  // Future migrations must make their own explicit compatibility decision.
+  // Ledger32 and later world tables are table-driven (world/tables/registry.ts):
+  // authority and bookkeeping tables stream a file when their `since` is at or
+  // below the backup's ledger, and derived and cache tables never stream.
+  // Ledger21 is the first v3-only version; every version up to the current
+  // ledger is accepted, and a newer one is refused.
+  if (manifest.schema === BACKUP_SCHEMA && versions.ledger > LEDGER_SCHEMA_VERSION) {
+    throw new Error(`backup ledger schema ${versions.ledger} is newer than ${LEDGER_SCHEMA_VERSION}`);
+  }
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
-      versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
-      versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28 || versions.ledger === 29 || versions.ledger === 30 || versions.ledger === 31 || versions.ledger === 32 || versions.ledger === 33))) {
+      !(versions.ledger >= 16 && versions.ledger <= 20) &&
+      !(manifest.schema === BACKUP_SCHEMA && versions.ledger >= 21)) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {
@@ -2778,6 +2785,36 @@ export function verifyBackup(backupDir: string, options: Pick<ExportOptions, "po
   return manifest;
 }
 
+const worldStream = (table: string): string => `world/${table}.jsonl`;
+
+/**
+ * Authority and bookkeeping tables import from their streams in registry order.
+ * Derived and cache tables never stream: restore only initialises them. A
+ * stream no registered table names is refused, never dropped. A stream of a
+ * registered table whose `since` is above the archive's ledger is ignored:
+ * archives relabelled to an older ledger keep the streams they were cut with.
+ */
+function restoreWorldTables(db: Database, backup: string, manifest: ExportManifest): void {
+  const tables = exportedWorldTables(manifest.schema_versions.ledger);
+  const named = new Set(exportedWorldTables(LEDGER_SCHEMA_VERSION).map((table) => worldStream(table.name)));
+  for (const key of Object.keys(manifest.files)) {
+    if (key.startsWith("world/") && !named.has(key)) throw new Error(`backup carries ${key}, which no registered world table accepts`);
+  }
+  createWorldTables(db, LEDGER_SCHEMA_VERSION);
+  for (const { name, columns } of tables) {
+    for (const row of streamRows(backup, manifest, worldStream(name), true)) {
+      if (Object.keys(row).length !== columns.length || !columns.every((key) => Object.hasOwn(row, key))) throw new Error("world backup row has unexpected fields");
+      const values = columns.map((key) => {
+        const value = row[key];
+        if (value !== null && typeof value !== "string" && typeof value !== "number") throw new Error("world backup value invalid");
+        return value;
+      });
+      db.query(`INSERT INTO ${name}(${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(...values);
+    }
+  }
+  resetWorldTables(db, LEDGER_SCHEMA_VERSION);
+}
+
 export function restoreVault(
   backupDir: string,
   targetDir: string,
@@ -2792,11 +2829,6 @@ export function restoreVault(
   assertSeparated(source, destination);
   const manifest = verifyBackup(source, adapter === undefined ? {} : { portableLocal: adapter });
   const supported = supportedSchemaVersions();
-  if (manifest.schema_versions.ledger > supported.ledger) {
-    throw new Error(
-      `backup ledger schema ${manifest.schema_versions.ledger} is newer than ${supported.ledger}`,
-    );
-  }
   if (manifest.schema_versions.serve > supported.serve) {
     throw new Error(`backup serve schema ${manifest.schema_versions.serve} is newer than ${supported.serve}`);
   }
@@ -2896,18 +2928,7 @@ export function restoreVault(
         for (const row of streamRows(source, manifest, CLAIM_V2_SUPPORT_EVENTS_BACKUP, false)) {
           insertClaimV2SupportEvent(db, row);
         }
-        if (manifest.schema_versions.ledger >= 32) {
-          for (const table of WORLD_TABLES) {
-            const columns = WORLD_TABLE_COLUMNS[table];
-            for (const row of streamRows(source, manifest, `world/${table}.jsonl`, true)) {
-              if (Object.keys(row).length !== columns.length || !columns.every(key => Object.hasOwn(row,key))) throw new Error("world backup row has unexpected fields");
-              const values = columns.map(key => { const value=row[key];
-                if(value!==null && typeof value!=="string" && typeof value!=="number") throw new Error("world backup value invalid");
-                return value; });
-              db.query(`INSERT INTO ${table}(${columns.join(",")}) VALUES (${columns.map(()=>"?").join(",")})`).run(...values);
-            }
-          }
-        }
+        restoreWorldTables(db, source, manifest);
         let identityCount = 0;
         for (const row of streamRows(source, manifest, IDENTITY_BACKUP, manifest.schema === BACKUP_SCHEMA)) {
           insertIdentityLink(db, row, manifest.schema);

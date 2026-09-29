@@ -11,6 +11,7 @@ import {
 } from "./graph/graph";
 import type { GraphRebuildResult } from "./graph/graph";
 import { graphSchemaNeedsRebuild, initGraph } from "./graph/schema";
+import { readSchemaVersion } from "./ledger/integrity";
 import { tableExists } from "./ledger/schema";
 import {
   projectSearchDocs,
@@ -21,6 +22,7 @@ import {
 import type { SearchRebuildResult } from "./search/indexer";
 import { initSearch } from "./search/schema";
 import { ulid } from "./util/ulid";
+import { resetWorldTables } from "./world/tables/registry";
 import {
   canonPagesHash,
   fatalCanonSkips,
@@ -97,6 +99,14 @@ export function rebuildDerived(
     const graph = rebuildGraphLayer(db, { ...input, pages: report.pages });
     return { search, graph, generation };
   }).immediate();
+}
+
+/**
+ * `kizuki rebuild --layer world`: derived and cache world tables return to
+ * their initial state. Authority and bookkeeping tables are never touched.
+ */
+export function rebuildWorldLayer(db: Database): { layer: "world"; tables: string[] } {
+  return db.transaction(() => ({ layer: "world" as const, tables: resetWorldTables(db, readSchemaVersion(db)) })).immediate();
 }
 
 /** One incremental write path: search and graph for a single page. */
