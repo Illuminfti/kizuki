@@ -23,7 +23,8 @@ export async function runConnectConsent(io: CliIo, args: string[]): Promise<numb
   if (action === "grant" && file === undefined) throw new UsageError("connect grant requires --policy FILE");
   const policy = file === undefined ? undefined : readSourcePolicy(file);
   return (action === "status" ? withReadVault : withVault)(io, async (ctx) => {
-    if (!listConnections(ctx.db).some((connection) => connection.source_key === source)) throw new Error("source_not_enrolled");
+    // Consent outlives the connection: an owner must reach a disconnected source to inspect, widen or revoke it.
+    if (!listConnections(ctx.db, { includeDisconnected: true }).some((connection) => connection.source_key === source)) throw new Error("source_not_enrolled");
     let receipt;
     if (action === "grant") receipt = setSourceGrant(ctx.db, { source_key: source, expected_revision: revision!, operation_id: operation!, policy });
     if (action === "revoke") receipt = revokeSourceGrant(ctx.db, { source_key: source, expected_revision: revision!, operation_id: operation! });
