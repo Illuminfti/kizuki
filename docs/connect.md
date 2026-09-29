@@ -416,11 +416,13 @@ The source is a directory, read offline: nothing is fetched, no account or
 token is involved, and the connector never writes to it. Enrollment refuses a
 path that is not a readable directory. Until a source grant exists, capture is
 refused (`source_capture_denied`). This policy authorizes local capture and
-recall of the captured text and its provenance, with no model call:
+recall of the captured text and its provenance, with no model call. It also
+carries `correction` and `audit`, so `kizuki tell` and audit can act on what the
+source produced; leave them out and `tell` is refused for that source:
 
 ```json
 {
-  "purposes": ["capture", "recall", "session", "derive"],
+  "purposes": ["capture", "recall", "session", "correction", "audit", "derive"],
   "allowed_fields": ["text", "subjects", "metadata"],
   "retention": "persistent_owned_until_revoked",
   "egress": "local_only",

@@ -186,7 +186,7 @@ We chose keyboard-first navigation for the accessibility prototype.
 NOTE
 
 cat > "$demo/policy.json" <<'POLICY'
-{"purposes":["capture","recall","session","derive"],"allowed_fields":["text","subjects","attachments","metadata"],"retention":"persistent_owned_until_revoked","egress":"local_only","sensitivity_floor":"private"}
+{"purposes":["capture","recall","session","correction","audit","derive"],"allowed_fields":["text","subjects","attachments","metadata"],"retention":"persistent_owned_until_revoked","egress":"local_only","sensitivity_floor":"private"}
 POLICY
 chmod 600 "$demo/policy.json"
 

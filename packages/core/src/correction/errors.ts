@@ -10,6 +10,7 @@ export const CORRECT_ERROR_CODES = [
   "budget_exhausted",
   "unsupported_assertion",
   "correction_refused",
+  "source_access_denied",
 ] as const;
 export type CorrectErrorCode = (typeof CORRECT_ERROR_CODES)[number];
 

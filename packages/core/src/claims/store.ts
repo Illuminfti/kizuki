@@ -1104,7 +1104,51 @@ export function supersedeExactWorldClaim(
   };
   persistClaim(db, superseded);
   writeSupersession(db, winner.claim_id, loser.claim_id, "R5", priorValidTo, at);
-  const retrieval = io.retrieval;
+  enqueueRetiredClaim(io, superseded, at);
+}
+
+/**
+ * A claim with no key retires by identity, so it cannot ride the key group
+ * that `supersedeLiveGroup` walks. Shares the supersession journal, the undo
+ * record and the retrieval outbox transaction with the keyed and typed paths.
+ */
+export function supersedeExactClaim(
+  io: Pick<ClaimsIo, "db" | "retrieval">,
+  winner: Claim,
+  loserId: string,
+  at: string,
+): void {
+  const { db } = io;
+  if (!db.inTransaction)
+    throw new ClaimError("schema_invalid", "exact supersession requires the claim transaction");
+  const loser = getClaim(db, loserId);
+  if (
+    loser === null ||
+    loser.status !== "live" ||
+    loser.claim_key !== null ||
+    winner.status !== "live" ||
+    winner.claim_id === loserId
+  )
+    throw new ClaimError("schema_invalid", "unkeyed correction target changed");
+  const superseded = {
+    ...loser,
+    status: "superseded" as const,
+    superseded_by: winner.claim_id,
+    retracted_at: at,
+    valid_to: minTimestamp(loser.valid_to, winner.valid_from),
+  };
+  persistClaim(db, superseded);
+  writeSupersession(db, winner.claim_id, loser.claim_id, "R5", loser.valid_to, at);
+  enqueueRetiredClaim(io, superseded, at);
+}
+
+/** A retired claim leaves retrieval only through a port its source grant lets see the correction. */
+function enqueueRetiredClaim(
+  io: Pick<ClaimsIo, "db" | "retrieval">,
+  superseded: Claim,
+  at: string,
+): void {
+  const { db, retrieval } = io;
   const retrievalAllowed =
     sourcePolicyEpoch(db) === 0 ||
     (retrieval !== undefined &&

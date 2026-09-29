@@ -23,3 +23,4 @@ export { indexEvent, indexEvents, indexPage, initSearch, removeCanonPath, remove
 export { eventRetrievalDoc, publishLedgerEvent } from "./retrieval/events";
 export { initGraph } from "./graph";
 export { rebuildDerived, rebuildWorldLayer } from "./derived";
+export { listSourcesRefusingCorrection, sourceEventsAllowed } from "./ledger/source-grants";

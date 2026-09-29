@@ -2,6 +2,8 @@ import { sha256Hex } from "../util/hash";
 import { extendOwnedCanonIo, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
 import { VaultMutationError } from "../vault/mutation-scope";
 import {
+  describeSourceConsentDenial,
+  sourceConsentDenial,
   sourcePolicyEpoch,
   requireSourceEvents,
 } from "../ledger/source-grants";
@@ -12,9 +14,18 @@ import {
   resolveConflict,
   type ConflictClaim,
 } from "../claims/conflict";
-import { insertClaim, getClaim, listClaims } from "../claims/store";
+import {
+  insertClaim,
+  getClaim,
+  listClaims,
+  prepareClaimInsert,
+  retryRetrievalOps,
+  supersedeExactClaim,
+} from "../claims/store";
+import type { InsertClaimResult } from "../claims/store";
 import type { RawSubjectRef } from "../contracts/claim-v2";
 import type { AuthorityTier, Claim } from "../contracts/proposal";
+import type { CanonIo } from "../canon";
 import { recordNativeCorrection } from "../correction/evidence";
 import { text } from "./arguments";
 import { auditArguments, claimsIo, gateAsync, principalName } from "./gate";
@@ -246,6 +257,7 @@ async function correctWorldClaim(
   // A typed correction is filed at the owner's authority; a grant that cannot relay the owner cannot file one.
   if (ctx.principal.kind !== "owner" && !ctx.principal.grant.relay_owner_corrections)
     throw new ServeError("held", "correction relay is not granted");
+  refuseRelayOverOwnerCorrection(ctx, [claim]);
   const reader = claimReader(ctx.db, ctx.principal.grant, {
     owner: ctx.principal.kind === "owner",
     purpose: "correction",
@@ -389,6 +401,25 @@ function relayCeiling(ctx: ServeContext): AuthorityTier | undefined {
     : "owner_authored";
 }
 
+/** Text an agent relayed is quoted evidence, never the owner's own prose (RFC 0002 10.5). */
+function relayedTaint(ctx: ServeContext): "clean" | "quoted" {
+  return ctx.principal.kind === "owner" ? "clean" : "quoted";
+}
+
+/**
+ * The owner's own correction is pinned: a relay, even one holding the relay
+ * grant, never replaces it. Only the owner speaking directly can.
+ */
+function refuseRelayOverOwnerCorrection(ctx: ServeContext, live: readonly Claim[]): void {
+  if (ctx.principal.kind === "owner") return;
+  if (live.some((claim) => claim.producer === "owner" && claim.authority === "owner_correction")) {
+    throw new ServeError(
+      "held",
+      "correction is held: the live claim is the owner's own correction, which a relayed correction cannot replace",
+    );
+  }
+}
+
 /**
  * Refuse before native owner evidence when this relay cannot beat a live
  * rival. Uses the same filed tier and conflict comparator as insertClaim.
@@ -403,6 +434,8 @@ function assertSufficientAuthority(
 ): void {
   const rivals = listClaims(ctx.db, { claim_key: claimKey, status: "live" });
   const live = rivals.length > 0 ? rivals : group;
+  // A relay without the owner tier files below it and meets the authority refusal instead.
+  if (relayCeiling(ctx) === undefined) refuseRelayOverOwnerCorrection(ctx, live);
   const incoming: ConflictClaim = {
     claim_id: "",
     claim_key: claimKey,
@@ -456,6 +489,142 @@ function snapshot<T>(field: string, value: T): T {
   } catch {
     throw refuse(field, "must be plain data");
   }
+}
+
+/** The refusal for a claim whose source grant lacks the correction purpose, naming the fix when one source is to blame. */
+function sourceRefusal(ctx: ServeContext, claims: readonly Claim[]): string {
+  const generic = "source authorization does not permit this correction";
+  const denial = sourceConsentDenial(
+    ctx.db,
+    [...new Set(claims.flatMap((claim) => claim.provenance))],
+    { owner: ctx.principal.kind === "owner", purpose: "correction" },
+  );
+  return denial === null ? generic : `${generic}: ${describeSourceConsentDenial(denial)}`;
+}
+
+/**
+ * A claim with no predicate, such as an importer's, has no key for a
+ * correction to supersede a group by. The correction retracts exactly that
+ * claim: it files an owner-authority claim and retires the named one with it
+ * in one transaction, and the receipted writer then rewrites the page that
+ * holds the retired claim. Nothing is asserted in its place: reading a
+ * replacement out of the sentence needs a model and a predicate.
+ */
+async function correctUnkeyedClaim(
+  scope: VaultMutationScope,
+  canon: CanonIo,
+  ctx: ServeContext,
+  args: CorrectArgs,
+  statement: string,
+  claim: Claim,
+  at: string,
+): Promise<Served<CorrectData>> {
+  if (args.object !== undefined) {
+    throw refuse("object", "names a claim with no predicate, which is retracted and not replaced");
+  }
+  const target = { claim_id: claim.claim_id };
+  const label = claim.target ?? claim.claim_id;
+  if (args.dry_run === true) {
+    return {
+      canon: [],
+      quoted: [],
+      withheld: [],
+      data: {
+        receipt_id: null,
+        event_id: null,
+        claim_id: null,
+        superseded: [{ claim_id: claim.claim_id, claim_key: "" }],
+        rewritten: [],
+        ambiguous: [],
+        answer: `Nothing was written. This would retire 1 claim(s) about ${label}.`,
+      },
+    };
+  }
+  refuseRelayOverOwnerCorrection(ctx, [claim]);
+  requireSourceEvents(ctx.db, claim.provenance, {
+    owner: ctx.principal.kind === "owner",
+    purpose: "correction",
+  });
+  const eventId = recordStatement(
+    ctx,
+    statement,
+    recordId(statement, target),
+    label,
+    at,
+    sha256Hex(JSON.stringify([statement, target, null])),
+  );
+  const markEvidence = (state: "filed" | "failed"): void => {
+    ctx.db
+      .query("UPDATE native_owner_evidence SET filing_state=? WHERE event_id=?")
+      .run(state, eventId);
+  };
+  const io = claimsIo(ctx);
+  const ceiling = relayCeiling(ctx);
+  let filed: InsertClaimResult;
+  try {
+    const prepared = await prepareClaimInsert(io, {
+      kind: "claim",
+      target: `correction:${claim.claim_id}`,
+      body: statement,
+      provenance: [...new Set([eventId, ...claim.provenance])],
+      subjects: [...claim.subjects],
+      producer: ctx.principal.kind === "owner" ? "owner" : `agent:${ctx.principal.agent.name}`,
+      confidence: 1,
+      intent: "correct",
+      taint: relayedTaint(ctx),
+      sensitivity: claim.sensitivity,
+      ...(ceiling === undefined ? {} : { relay_ceiling: ceiling }),
+    });
+    filed = ctx.db
+      .transaction(() => {
+        const inserted = prepared.apply();
+        if (inserted.outcome === "stored") {
+          supersedeExactClaim(io, inserted.claim, claim.claim_id, inserted.claim.asserted_at);
+        }
+        return inserted;
+      })
+      .immediate();
+    await retryRetrievalOps(io);
+  } catch (error) {
+    markEvidence("failed");
+    throw error;
+  }
+  if (filed.outcome === "skipped") {
+    markEvidence("failed");
+    throw refuseAuthority();
+  }
+  markEvidence("filed");
+  const winner = filed.outcome === "contested" ? filed.incoming : filed.claim;
+  const retired = filed.outcome === "stored" ? [{ claim_id: claim.claim_id, claim_key: "" }] : [];
+  const rewrite: CanonRewrite =
+    filed.outcome === "stored"
+      ? rewriteCanon(scope, canon, ctx, winner, [])
+      : { receipt_id: null, rewritten: [], unreached: [], failed: false };
+  const answer =
+    filed.outcome === "duplicate"
+      ? "That correction was already recorded; nothing changed."
+      : sentence(retired.length, label, rewrite);
+  return {
+    canon: [],
+    quoted: [],
+    withheld:
+      rewrite.failed || rewrite.recovery_pending !== undefined
+        ? [{ id: "tool:correct", reason: "error" }]
+        : [],
+    data: {
+      ...(rewrite.recovery_pending === undefined ? {} : { recovery_pending: rewrite.recovery_pending }),
+      receipt_id: rewrite.receipt_id,
+      event_id: eventId,
+      claim_id: winner.claim_id,
+      superseded: retired,
+      rewritten: rewrite.rewritten,
+      ambiguous: [],
+      answer: `${answer} Relayed by ${principalName(ctx.principal)}.`,
+    },
+    audit_ids: {
+      claim_ids: [winner.claim_id, ...retired.map((entry) => entry.claim_id)],
+    },
+  };
 }
 
 /**
@@ -588,15 +757,12 @@ export async function serveCorrect(
         owner: ctx.principal.kind === "owner",
         purpose: "correction",
       });
+      readable(grant, resolved.claims);
       if (
         sourcePolicyEpoch(ctx.db) > 0 &&
         resolved.claims.some((claim) => !sourceReader.canRead(claim))
       )
-        throw new ServeError(
-          "held",
-          "source authorization does not permit this correction",
-        );
-      readable(grant, resolved.claims);
+        throw new ServeError("held", sourceRefusal(ctx, resolved.claims));
 
       const groups = groupByKey(resolved.claims);
       if (groups.size > 1) {
@@ -609,6 +775,10 @@ export async function serveCorrect(
       }
 
       const entry = [...groups.entries()][0];
+      const unkeyed = resolved.claims[0];
+      if (entry === undefined && unkeyed !== undefined && args.target?.claim_id !== undefined) {
+        return await correctUnkeyedClaim(scope, canon, ctx, args, statement, unkeyed, at);
+      }
       if (entry === undefined) {
         throw refuse("target", "names no live keyed claim");
       }
@@ -694,7 +864,7 @@ export async function serveCorrect(
             : `agent:${ctx.principal.agent.name}`,
         confidence: 1,
         intent: "correct",
-        taint: "clean",
+        taint: relayedTaint(ctx),
         sensitivity,
         ...(ceiling === undefined ? {} : { relay_ceiling: ceiling }),
       }).catch((error) => {

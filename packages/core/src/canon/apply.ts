@@ -379,10 +379,11 @@ function supersededRefs(io: CanonIo, decision: TargetDecision): CanonReceipt["su
   if (decision.action !== "supersede") return [];
   return decision.superseded.map((claimId) => {
     const loser = getClaim(io.db, claimId);
-    if (loser === null || loser.claim_key === null) {
-      throw new CanonWriteError("decision_stale", `superseded claim ${claimId} has no conflict key`);
+    if (loser === null) {
+      throw new CanonWriteError("decision_stale", `superseded claim ${claimId} is missing`);
     }
-    return { claim_id: claimId, claim_key: loser.claim_key };
+    // An unkeyed claim retires by identity: its id stands where a key would.
+    return { claim_id: claimId, claim_key: loser.claim_key ?? claimId };
   });
 }
 

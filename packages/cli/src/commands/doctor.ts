@@ -26,7 +26,7 @@ import {
   readVaultId,
 } from "@kizuki/core";
 import type { CaptureFanoutCounts, ClaimStatus, LiveClaimProducers } from "@kizuki/core";
-import { readSqliteRuntime } from "@kizuki/core/internal";
+import { listSourcesRefusingCorrection, readSqliteRuntime, sourceEventsAllowed } from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
 import { listHostConnections, loadConnector } from "../connections";
@@ -75,6 +75,11 @@ interface DoctorClaim {
   predicate: string | null;
 }
 
+interface DoctorLiveClaim extends DoctorClaim {
+  /** False when the claim's source grant would refuse `kizuki tell` on it. */
+  correctable: boolean;
+}
+
 interface HashDriftCoverage {
   complete: boolean;
   sampled: boolean;
@@ -101,8 +106,10 @@ interface DoctorReport {
     /** Live claims by producer: model extraction versus deterministic page mirrors. */
     by_producer: LiveClaimProducers;
   };
-  live_claims: DoctorClaim[];
+  live_claims: DoctorLiveClaim[];
   filed_claims: DoctorClaim[];
+  /** Active source grants that lack the correction purpose while live claims rest on them. */
+  corrections_refused: { source_key: string; revision: number }[];
   connections: DoctorConnection[];
   receipts: number;
   orphans: string[];
@@ -465,7 +472,10 @@ async function collect(
     predicate: claim.predicate,
   });
   const liveClaims = listClaims(ctx.db, { status: "live", limit: 8 }).map(
-    toDoctorClaim,
+    (claim): DoctorLiveClaim => ({
+      ...toDoctorClaim(claim),
+      correctable: sourceEventsAllowed(ctx.db, claim.provenance, { owner: true, purpose: "correction" }),
+    }),
   );
   const filedClaims = listClaims(ctx.db, { status: "skipped", limit: 8, filter: (claim) => !isCaptureFanoutSkip(claim) }).map(
     toDoctorClaim,
@@ -487,6 +497,7 @@ async function collect(
     },
     live_claims: liveClaims,
     filed_claims: filedClaims,
+    corrections_refused: listSourcesRefusingCorrection(ctx.db),
     connections,
     receipts: countCanonReceiptRows(ctx.db),
     orphans,
@@ -577,6 +588,9 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     const reason = item.last_error === null ? "" : ` last_error=${JSON.stringify(item.last_error)}`;
     const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors} last_run_clean=${item.last_run_clean ? "yes" : "no"}${reason}`;
     io.out(item.problem === null ? line : `${line} ${item.problem}`);
+  }
+  for (const refusal of report.corrections_refused) {
+    io.out(`source=${refusal.source_key} corrections: refused (grant lacks correction)`);
   }
   io.out(`receipts=${report.receipts} orphans=${report.orphans.length}`);
   io.out(hashDriftCoverageLine(report.hash_drift));

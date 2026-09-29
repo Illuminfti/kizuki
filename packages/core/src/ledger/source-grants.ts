@@ -114,9 +114,21 @@ interface GrantRow extends Omit<
 > {
   policy: string;
 }
+/** The source whose consent refused a read, so the owner is told the fix. */
+export interface SourceConsentDenial {
+  source_key: string;
+  purpose: SourcePurpose;
+  revision: number;
+  /** `purpose_missing`: the active grant lacks the purpose. `inactive`: revoked or purged. */
+  reason: "purpose_missing" | "inactive";
+}
 export class SourceGrantError extends Error {
   override name = "SourceGrantError";
-  constructor(readonly code: string) {
+  constructor(
+    readonly code: string,
+    /** Set when a source_access_denied can be traced to one source's grant. */
+    readonly denial?: SourceConsentDenial,
+  ) {
     super(code);
   }
 }
@@ -915,12 +927,71 @@ export function sourceServingSql(
   return { sql, bindings };
 }
 
+/** The first bound source whose grant lacks the scope's purpose or is no longer active. */
+export function sourceConsentDenial(
+  db: Database,
+  ids: readonly string[],
+  scope: SourceReadScope,
+): SourceConsentDenial | null {
+  const purpose = scope.purpose ?? "recall";
+  for (const id of ids) {
+    const bound = db
+      .query<{ source_key: string }, [string]>("SELECT source_key FROM source_event_bindings WHERE event_id=?")
+      .get(id);
+    if (bound === null) continue;
+    const grant = inspectSourceGrant(db, bound.source_key);
+    if (grant === null) continue;
+    if (grant.status !== "active") {
+      return { source_key: grant.source_key, purpose, revision: grant.revision, reason: "inactive" };
+    }
+    if (!grant.policy.purposes.includes(purpose)) {
+      return { source_key: grant.source_key, purpose, revision: grant.revision, reason: "purpose_missing" };
+    }
+  }
+  return null;
+}
+
+/** One sentence naming the missing consent and the exact command that grants it. */
+export function describeSourceConsentDenial(denial: SourceConsentDenial): string {
+  const { source_key: key, purpose, revision } = denial;
+  if (denial.reason === "inactive") {
+    return `source ${key} has no active grant, so ${purpose} is refused; see kizuki connect status --source ${key}`;
+  }
+  return `source ${key} does not permit ${purpose}; add "${purpose}" to its policy purposes and run kizuki connect grant --source ${key} --policy POLICY.json --expected-revision ${revision} --operation-id OPERATION`;
+}
+
+/** Active grants whose policy lacks `correction` while live claims rest on their events. */
+export function listSourcesRefusingCorrection(
+  db: Database,
+): { source_key: string; revision: number }[] {
+  if (sourcePolicyEpoch(db) === 0 || !tableExists(db, "source_event_bindings") || !tableExists(db, "claims")) return [];
+  const keys = db
+    .query<{ source_key: string }, []>(
+      `SELECT DISTINCT b.source_key AS source_key
+         FROM claims c, json_each(c.provenance) p
+         JOIN source_event_bindings b ON b.event_id = p.value
+        WHERE c.status = 'live'
+        ORDER BY b.source_key`,
+    )
+    .all();
+  const out: { source_key: string; revision: number }[] = [];
+  for (const { source_key } of keys) {
+    const grant = inspectSourceGrant(db, source_key);
+    if (grant !== null && grant.status === "active" && !grant.policy.purposes.includes("correction")) {
+      out.push({ source_key, revision: grant.revision });
+    }
+  }
+  return out;
+}
+
 export function requireSourceEvents(
   db: Database,
   ids: readonly string[],
   scope: SourceReadScope,
 ): void {
-  if (!sourceEventsAllowed(db, ids, scope)) fail("source_access_denied");
+  if (sourceEventsAllowed(db, ids, scope)) return;
+  const denial = sourceConsentDenial(db, ids, scope);
+  throw new SourceGrantError("source_access_denied", ...(denial === null ? [] : [denial]));
 }
 
 /** Current source floor applies to old projections as well as newly captured rows. */

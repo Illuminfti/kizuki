@@ -175,11 +175,12 @@ without group/world write permission; root-owned sticky directories such as
 `/tmp` are allowed. The bounded directory chain and open file are checked
 before and after reading. This is a POSIX local-owner boundary: the same user
 is trusted, and unsupported permission semantics are refused. For example, this policy permits local capture
-and owner recall of text and its provenance:
+and owner recall of text and its provenance, and lets the owner correct and audit
+what the source produced:
 
 ```json
 {
-  "purposes": ["capture", "recall", "session", "derive"],
+  "purposes": ["capture", "recall", "session", "correction", "audit", "derive"],
   "allowed_fields": ["text", "subjects", "attachments", "metadata"],
   "retention": "persistent_owned_until_revoked",
   "egress": "local_only",
@@ -188,7 +189,12 @@ and owner recall of text and its provenance:
 ```
 
 Purposes are `capture`, `recall`, `session`, `correction`, `audit`, `derive`,
-`extract`, and `export`; choose only the uses you authorize. Populated fields
+`extract`, and `export`; choose only the uses you authorize. `kizuki tell` and
+MCP `correct` need `correction` on every source that produced the claim they
+change. When a grant lacks it, the refusal names the source and the purpose and
+prints the exact `kizuki connect grant` command, and `kizuki doctor` prints
+`corrections: refused (grant lacks correction)` for that source and stops
+suggesting `tell` until the grant is edited. Populated fields
 outside `allowed_fields` refuse capture. `extract` does not make an untrusted
 model local. There is currently no native local model capability in the CLI.
 Managed `local_only` sources refuse extraction through the generic
@@ -205,7 +211,7 @@ canonicalization:
 
 ```json
 {
-  "purposes": ["capture", "recall", "derive", "extract"],
+  "purposes": ["capture", "recall", "correction", "audit", "derive", "extract"],
   "allowed_fields": ["text", "subjects", "attachments", "metadata"],
   "retention": "persistent_owned_until_revoked",
   "egress": {
@@ -408,8 +414,9 @@ pending=M` line (JSON: `claims.capture_fanout`) that counts capture notes of
 chat and email records closed out as `skipped` with reason
 `message_capture_fanout` apart from the real unwritten claims, and names
 `kizuki serve run doctor-sweep` while `pending` notes still wait to be closed,
-live
-claim ids (for `tell --claim`), leftover skipped rows, connections,
+live claim ids (for `tell --claim`, each with a JSON `correctable` flag), one
+`corrections: refused (grant lacks correction)` line per source whose grant
+cannot be corrected through (JSON `corrections_refused`), leftover skipped rows, connections,
 checkpoints (with the first error of each source's last run as `last_error`),
 derived-index freshness, writer ROLE stamps, machine vs human
 origin counts, calibration/liveness probes, receipts, holds, serve rails,
@@ -515,13 +522,26 @@ through Core's existing undo path, and then resumes inspection.
 ## tell
 
 ```text
-usage: kizuki tell "<statement>" [--claim CLAIM_ID|--world-claim TOKEN] [--since TIME] [--until TIME] [--dry-run] [--json] [--verbose]
+usage: kizuki tell "<statement>" [--claim CLAIM_ID|--world-claim TOKEN] [--since TIME] [--until TIME] [--wait SECONDS] [--dry-run] [--json] [--verbose]
 ```
 
 Owner correction. `--claim` names a **live** legacy claim; `--world-claim`
 accepts the opaque claim token emitted by `kizuki world` for the current owner
 namespace. The options are mutually exclusive. Rewrites affected canon in the
-same pass. No model required. Prints an undo line when a receipt is minted.
+same pass. No model required. Prints an undo line for every receipt it minted.
+
+A claim an importer produced has no subject and no predicate, so there is no
+claim key to supersede a group by. `--claim` on such a claim supersedes exactly
+that claim, records the supersession, and rewrites the page that already holds
+it; it never creates a second page for the same target. A claim no page holds
+yet is retired without a page write, and the loop writes the correction where
+the old claim would have gone. `kizuki undo` restores the retired claim.
+
+`tell` needs the `correction` purpose on the grant of every source that
+produced the claim; see [Source consent](#source-consent). The canon writer is
+exclusive and a sync pass holds it for the whole pass, so a busy writer is
+waited out instead of refused: `--wait SECONDS` (default 30, `0` to refuse at
+once) bounds the wait, and stderr names the process that holds the writer.
 
 ## context
 
@@ -654,16 +674,19 @@ noncanonical tokens are usage errors before the vault is opened.
 ## undo
 
 ```text
-usage: kizuki undo <receipt_id> [--cascade]
+usage: kizuki undo <receipt_id> [--cascade] [--wait SECONDS]
 ```
 
-Restores prior canon bytes from a write receipt. Undo only restores a page that
+Restores prior canon bytes from a write receipt, and puts back the claims that
+receipt retired. Undo only restores a page that
 still matches what the receipt wrote. When a later receipt changed the page, the
 refusal lists those receipts and names `kizuki undo <receipt_id> --cascade`,
 which reverses them newest first. When nothing later explains the change, the
 page was edited outside Kizuki: the refusal says so and tells you to put the
 page back to the receipt's version by hand, or keep your edit and leave the
 receipt as it is. `--cascade` cannot help there, and the refusal says why.
+A busy canon writer is waited out for `--wait SECONDS` (default 30, `0` to
+refuse at once), the same way as `tell`.
 
 ## audit
 

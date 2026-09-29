@@ -14,12 +14,12 @@ import { BudgetExhausted, createBudgetTracker } from "../canon/budget";
 import { CanonWriteError } from "../canon/errors";
 import type { CanonIo } from "../canon";
 import { getCanonReceipt } from "../canon/receipts";
-import { getClaim, insertClaim, prepareClaimInsert, retryRetrievalOps, listClaims, supersedeLiveGroup, supersedeExactWorldClaim } from "../claims/store";
+import { getClaim, insertClaim, prepareClaimInsert, retryRetrievalOps, listClaims, supersedeLiveGroup, supersedeExactClaim, supersedeExactWorldClaim } from "../claims/store";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { CLAIM_MEANING_SCHEMA, type ClaimMeaning } from "../contracts/claim-v2";
 import type { Claim, FrontmatterValue, Producer } from "../contracts/proposal";
 import { recordNativeCorrection } from "./evidence";
-import { requireSourceEvents } from "../ledger/source-grants";
+import { SourceGrantError, describeSourceConsentDenial, requireSourceEvents } from "../ledger/source-grants";
 import type { CaptureEventInput, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
 import { isRfc3339 } from "../util/time";
@@ -41,6 +41,22 @@ import type { CorrectInput, CorrectIo, CorrectResult, CorrectTarget } from "./ty
 const STATEMENT_MAX = 2000;
 const TARGET_REQUIRED_HINT =
   'kizuki tell "…" --claim <id>  (see kizuki doctor).';
+
+/** Refuses a correction the source grants do not permit, naming the missing consent and its fix. */
+function requireCorrectionConsent(io: CorrectIo, provenance: readonly string[]): void {
+  try {
+    requireSourceEvents(io.db, provenance, { owner: !(io.producer ?? "owner").startsWith("agent:"), purpose: "correction" });
+  } catch (error) {
+    if (error instanceof SourceGrantError && error.code === "source_access_denied") {
+      throw new CorrectError(
+        "source_access_denied",
+        error.denial === undefined ? "source authorization does not permit this correction" : describeSourceConsentDenial(error.denial),
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
 
 function nowOf(io: CorrectIo): string {
   return io.now?.() ?? new Date().toISOString();
@@ -279,11 +295,11 @@ function reconstruct(
     .all(winner.claim_id);
   const superseded = losers.flatMap((row) => {
     const claim = getClaim(io.db, row.loser);
-    if (claim === null || claim.claim_key === null) return [];
+    if (claim === null || (claim.claim_key === null && readClaimV2Semantic(io.db, claim.claim_id) !== null)) return [];
     return [
       {
         claim_id: claim.claim_id,
-        claim_key: claim.claim_key,
+        claim_key: claim.claim_key ?? "",
         was: answerTerms(io.db, claim).value,
         page_path: pagePathForClaim(io.db, claim),
       },
@@ -328,10 +344,7 @@ function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectRe
   if (prior.status === "skipped") {
     throw new CorrectError("below_authority", "correction was below the live claim's authority");
   }
-  requireSourceEvents(io.db, prior.provenance, {
-    owner: !(io.producer ?? "owner").startsWith("agent:"),
-    purpose: "correction",
-  });
+  requireCorrectionConsent(io, prior.provenance);
   const replay = reconstruct(io, eventId, prior);
   const recovery = inspectCanonRecovery(io.db);
   if (
@@ -349,6 +362,7 @@ function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectRe
 function answerTerms(db: Database, claim: Claim): { readonly label: string; readonly value: string } {
   const semantic = readClaimV2Semantic(db, claim.claim_id);
   if (semantic !== null && semantic.discriminator === "assertion") return describeAssertion(semantic);
+  if (claim.subject === null && claim.predicate === null) return { label: claim.target ?? "claim", value: claim.body };
   return { label: `${claim.subject ?? "subject"} ${claim.predicate ?? "claim"}`, value: claim.object ?? claim.body };
 }
 
@@ -514,6 +528,8 @@ async function insertCorrection(
       const inserted=prepared.apply();
       if(typedSemantic!==undefined && (inserted.outcome==="stored" || inserted.outcome==="duplicate")) {
         supersedeExactWorldClaim(io, inserted.claim, live.claim_id, at);
+      } else if(typedSemantic===undefined && live.claim_key===null && inserted.outcome==="stored") {
+        supersedeExactClaim(io, inserted.claim, live.claim_id, at);
       }
       return inserted;
     }).immediate();
@@ -681,7 +697,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     throw new CorrectError("claim_unknown", "no live claims matched the target and scope");
   }
   const provenance = [...new Set(group.flatMap(claim => claim.provenance))];
-  requireSourceEvents(io.db, provenance, { owner: !(io.producer ?? "owner").startsWith("agent:"), purpose: "correction" });
+  requireCorrectionConsent(io, provenance);
   const seed = seedClaim(group, input.target as CorrectTarget);
   const at = nowOf(io);
   const plan = planCorrection(io, input, seed, at);
