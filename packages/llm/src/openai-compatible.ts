@@ -26,6 +26,7 @@ import { inBandErrorStatus, isRetryableStatus, parseChatCompletion } from "./res
 import {
   DEFAULT_MAX_RESPONSE_BYTES,
   fetchTransport,
+  orUntilAborted,
 } from "./transport";
 import type { ChatTransport, TransportResult } from "./transport";
 
@@ -112,6 +113,10 @@ function timeoutError(): PortError {
   return new PortError("timeout", "model request timed out", true);
 }
 
+function abortedError(): PortError {
+  return new PortError("unavailable", "model request aborted", false);
+}
+
 /** Keep the caller's one deadline authoritative, including injected transports. */
 async function beforeDeadline<T>(work: Promise<T>, deadline: number): Promise<T> {
   const remaining = deadline - Date.now();
@@ -139,6 +144,7 @@ function transportToError(result: Extract<TransportResult, { ok: false }>): neve
     if (result.failure === "timeout") {
       throw new PortError("timeout", "model request timed out", true);
     }
+    if (result.failure === "aborted") throw abortedError();
     if (result.failure === "too_large") {
       throw new PortError("unavailable", "rejected: response_too_large", false);
     }
@@ -221,6 +227,9 @@ export function createOpenAiCompatibleLlmPort(
     async complete(request: LlmRequest): Promise<LlmResponse> {
       assertOpen();
       const validated = validateRequest(request);
+      const { signal } = request;
+      const aborted = (): boolean => signal?.aborted === true;
+      if (aborted()) throw abortedError();
       const deadline = Date.now() + Math.min(config.timeout_ms, validated.deadline_ms);
       const apiKey = await beforeDeadline(resolveApiKey(ctx, config.secret_ref), deadline);
       const body = buildWireBody(config, validated);
@@ -236,6 +245,7 @@ export function createOpenAiCompatibleLlmPort(
           timeout_ms: remaining,
           max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
           body,
+          ...(signal === undefined ? {} : { signal }),
         }), deadline);
         if (last.ok) {
           const failed = inBandErrorStatus(last.body);
@@ -257,7 +267,8 @@ export function createOpenAiCompatibleLlmPort(
             : Math.min(last.retry_after_ms ?? backoff, RETRY_CAP_MS);
         // A wait the deadline cannot cover reports the refusal, not a timeout.
         if (delay >= deadline - Date.now()) transportToError(last);
-        await beforeDeadline(wait(delay), deadline);
+        await beforeDeadline(orUntilAborted(wait(delay), signal), deadline);
+        if (aborted()) throw abortedError();
         attempt += 1;
       }
       if (last === undefined || last.ok) {

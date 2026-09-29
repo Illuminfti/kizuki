@@ -321,6 +321,54 @@ describe("openai-compatible port", () => {
     }
   });
 
+  test("an abort ends a request in flight as unavailable, not as a timeout, and is never retried", async () => {
+    const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, {
+      base_url: "http://127.0.0.1:9/v1", model: "synthetic", max_retries: 4, timeout_ms: 600_000,
+    });
+    try {
+      const controller = new AbortController();
+      let calls = 0;
+      const port = createOpenAiCompatibleLlmPort(temporary.ctx, {
+        transport: (request) => {
+          calls += 1;
+          return new Promise<TransportResult>((resolve) => {
+            request.signal?.addEventListener("abort", () => resolve({ ok: false, kind: "transport", status: 0, failure: "aborted" }));
+          });
+        },
+      });
+      setTimeout(() => controller.abort(), 30);
+      const error = await port.complete({ ...SAMPLE_REQUEST, deadline_ms: 600_000, signal: controller.signal }).catch((e: unknown) => e);
+      expect(error).toEqual(new PortError("unavailable", "model request aborted", false));
+      expect(calls).toBe(1);
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
+  test("an abort during the wait between retries ends the request without waiting it out", async () => {
+    const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, {
+      base_url: "http://127.0.0.1:9/v1", model: "synthetic", max_retries: 2, timeout_ms: 600_000,
+    });
+    try {
+      const controller = new AbortController();
+      let calls = 0;
+      const port = createOpenAiCompatibleLlmPort(temporary.ctx, {
+        transport: async () => { calls += 1; return { ok: false, kind: "http", status: 503, retry_after_ms: null }; },
+        // A backoff that would outlast the test; only the abort can end it.
+        sleep: () => new Promise<void>(() => undefined),
+      });
+      setTimeout(() => controller.abort(), 30);
+      const error = await port.complete({ ...SAMPLE_REQUEST, deadline_ms: 600_000, signal: controller.signal }).catch((e: unknown) => e);
+      expect(error).toEqual(new PortError("unavailable", "model request aborted", false));
+      expect(calls).toBe(1);
+      const refused = await port.complete({ ...SAMPLE_REQUEST, signal: AbortSignal.abort() }).catch((e: unknown) => e);
+      expect(refused).toEqual(new PortError("unavailable", "model request aborted", false));
+      expect(calls).toBe(1);
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
   test("an in-band gateway error is that HTTP failure, retried and then reported", async () => {
     const bodies: unknown[] = [
       { error: { code: 429, message: "synthetic upstream limit" } },
