@@ -60,8 +60,8 @@ test("import and query both complete while another writer holds the ledger", asy
     ]);
     expect(imported.stderr).not.toContain("database is locked");
     expect(queried.stderr).not.toContain("database is locked");
-    expect(imported.exitCode).toBe(0);
-    expect(queried.exitCode).toBe(0);
+    expect(imported.exitCode, imported.stderr).toBe(0);
+    expect(queried.exitCode, queried.stderr).toBe(0);
   } finally {
     await holder.release();
   }
