@@ -33,13 +33,13 @@ that a provider application or account does not exist.
 | `kizuki.screenpipe` | offline SQLite | [Screenpipe](#screenpipe) |
 | `kizuki.claude-code-sessions` | local transcript folder | [Coding-session transcripts](#coding-session-transcripts) |
 | `kizuki.codex-sessions` | local transcript folder | [Coding-session transcripts](#coding-session-transcripts) |
-| `kizuki.ics` | local ICS file | [ICS calendar file](#ics-calendar-file) |
+| `kizuki.ics` | local ICS file or https feed | [ICS calendar](#ics-calendar) |
 | `kizuki.beeper` | local app token | [Beeper Desktop](#beeper-desktop) |
-| `kizuki.imap` | interactive sign-in | [IMAP email](#imap-email) |
+| `kizuki.imap` | native account sign-in (terminal prompts) | [IMAP email](#imap-email) |
 | `kizuki.telegram` | native sign-in | [Telegram](#telegram) |
-| `kizuki.gmail` | browser sign-in | [Gmail](#gmail) |
-| `kizuki.google-calendar` | browser sign-in | [Google Calendar](#google-calendar) |
-| `kizuki.x` | browser sign-in | [X own-post API](#x-own-post-api) |
+| `kizuki.gmail` | native account sign-in (browser) | [Gmail](#gmail) |
+| `kizuki.google-calendar` | native account sign-in (browser) | [Google Calendar](#google-calendar) |
+| `kizuki.x` | native account sign-in (browser) | [X own-post API](#x-own-post-api) |
 
 WHOOP remains a component without CLI enrollment. See
 [not enrollable](#not-enrollable-from-this-cli).
@@ -232,11 +232,13 @@ reauthorization, and limits.
 
 ## X own-post API
 
-Read-only own-post browser sign-in is CLI-wired. Use an interactive desktop
-terminal with public `KIZUKI_X_CLIENT_ID` and `KIZUKI_X_REDIRECT_URI`
+Read-only own-post browser sign-in is CLI-wired. Use an interactive
+terminal (add `--no-browser` on a headless server) with public `KIZUKI_X_CLIENT_ID` and `KIZUKI_X_REDIRECT_URI`
 configuration. Register the callback exactly as
 `http://127.0.0.1:PORT/callback`, with a port from 1 through 65535 that is free
-on that desktop. Core uses S256 PKCE; enrollment needs no client secret or
+on the machine that runs the CLI. On a headless server the browser's machine
+reaches that port through the printed `ssh -L` tunnel, so the same port must
+also be free there. Core uses S256 PKCE; enrollment needs no client secret or
 pasted access token.
 
 ```bash
@@ -262,16 +264,69 @@ An eligible X Native App and API usage credits are external prerequisites.
 Live-account access and credit availability have not been qualified. The local
 X archive importer remains available separately and requires no API access.
 
-## ICS calendar file
+## ICS calendar
 
-CLI enrollment is the none-mode file path:
+Two enrollment modes. The none-mode file path:
 
 ```bash
 kizuki connect ics --source /path/to/calendar.ics
 ```
 
-Interactive HTTPS/webcal URL sign-in exists as a library surface and is not a
-`connect` verb on this revision.
+An https feed, such as a private calendar address from a calendar provider:
+
+```bash
+kizuki connect ics --url https://calendar.example.com/private/feed.ics
+```
+
+Only `https://` addresses are accepted (`webcal://` is rewritten to `https://`);
+`http://` is refused before any request. The feed is fetched in full to prove
+it parses when you enroll and each time a sync or `doctor` pass loads the
+source, and the sync itself then re-reads it with ETag and Last-Modified
+validation, so an unchanged feed costs one full read plus one conditional
+request per pass. A private feed address embeds its own capability token, so
+Kizuki keeps it only in owner-only connection state and never prints it or
+stores it in the ledger database. Typed as `--url https://...` it appears in
+your shell history and process list. To avoid that, pass `--url env:VAR` and
+export the address in `VAR` first; Kizuki reads it from that variable. A vault
+holds at most about 31 calendar sources of this kind; enrolling past that limit
+fails with an identity-scan error. Each address is its own source, separate from any file calendar
+you enrolled with `--source`, and the same address is not enrolled twice.
+Enrollment captures nothing: grant the printed source key an explicit
+[source consent policy](cli.md#source-consent), then run
+`kizuki backfill ics --source KEY`.
+
+## Sign-in on a headless server
+
+Gmail, Google Calendar and X sign-in use a loopback callback, and the CLI
+normally asks the system to open the authorization page. On a server with no
+desktop, that opener is missing or fails. Kizuki then prints the authorization
+address to stderr, together with the tunnel that carries the callback home,
+and keeps waiting:
+
+```text
+No browser could be opened on this machine.
+Open this address in a browser on any device and finish signing in there:
+https://accounts.google.com/o/oauth2/v2/auth?...
+The provider sends the browser back to 127.0.0.1:PORT on this machine. From the device with the browser, forward that port first:
+  ssh -L PORT:127.0.0.1:PORT <host>
+Still waiting for the sign-in to complete. Press Ctrl-C to cancel.
+```
+
+Run the printed `ssh -L` command on the device that has the browser, replacing
+`<host>` with the login you use for this server, keep it open, then open the
+printed address there. After you approve access the browser lands on
+`127.0.0.1:PORT`, the tunnel carries it to Kizuki, and the command finishes. If
+nothing arrives before the sign-in deadline the command fails cleanly, releases
+its port and leaves any existing source untouched.
+
+Pass `--no-browser` to skip the opener and print the address straight away, for
+example when a desktop session exists but you want a different browser. Use it
+too when the opener reports success but nothing appears, such as `xdg-open`
+falling back to a text browser: if no window opens and no address is printed,
+re-run with `--no-browser`. The
+flag applies to `connect gmail`, `connect google-calendar`, `connect x-api` and
+`connect recover-x-api`. A terminal is still required (`ssh -t`). The
+operator's OAuth client configuration for each provider is unchanged.
 
 ## Screenpipe
 

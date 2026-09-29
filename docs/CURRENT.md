@@ -65,8 +65,11 @@ preserves its account identity and checkpoint. Connect, the first state probe,
 fails in seconds instead of hanging. Native Gmail and Google Calendar
 browser sign-in use operator-configured desktop clients and separate source consent;
 Calendar requires one canonical calendar and explicit fields. Their account and artifact
-qualification remain separate. ICS enrolls as a local file path; interactive
-calendar URL sign-in is library surface, not a `connect` verb. Other sign-in
+qualification remain separate. When no browser opens, or with `--no-browser`,
+Gmail, Google Calendar and X sign-in print the authorization address and an
+`ssh -L` loopback hint and keep waiting; headless sign-in has no real-account
+qualification yet. ICS enrolls as a local file path or as an https feed through
+`connect ics --url`. Other sign-in
 connectors are not enrollable through this CLI except X own-post API native sign-in.
 X requires a public native app, an exact registered fixed loopback callback, explicit
 fields and history start, usage credits and separate source consent; real-account

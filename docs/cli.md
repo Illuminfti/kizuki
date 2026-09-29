@@ -101,6 +101,17 @@ An import runs alongside the serve daemon: see
 
 Google Calendar supports `connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments [--source KEY | --new-source] [--json]`. Operator desktop app configuration and separate source consent are required; see [the native Calendar contract and limits](google-calendar.md). Use `--fields none` for baseline metadata and event-resource identity only. `primary` is refused; existing account/calendar/fields and recovery state are preserved during reauthorization.
 
+Gmail, Google Calendar and X sign-in work on a headless server. When no system
+browser opens (the opener is missing or fails) or with `--no-browser`, sign-in
+prints the authorization address to stderr with the loopback callback port and
+an `ssh -L PORT:127.0.0.1:PORT <host>` tunnel command, keeps waiting for the
+callback and times out cleanly if it never arrives; see
+[headless sign-in](connect.md#sign-in-on-a-headless-server).
+`connect ics --url https://...` enrolls an https calendar feed as its own
+source (ETag-validated re-reads; source consent is separate and required before
+capture). `--url` cannot be combined with `--source`, and `--no-browser` is
+refused for other connectors.
+
 Gmail and Google Calendar accept `--new-source` for explicit additional enrollment; it cannot be combined with `--source KEY`. Duplicate account identities (Calendar: account plus canonical calendar) refuse even if fields differ or prior consent is revoked. Existing-source reauthorization preserves checkpoints and recovery state. New sources require separate grants; see the provider docs for bounds and refusal semantics.
 
 ```text
@@ -109,10 +120,11 @@ usage: kizuki connect [--list|status] [--json]
        kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]
        kizuki connect imap [--source KEY] [--sensitivity public|personal|private]
        kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]
-       kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--json]
-       kizuki connect recover-x-api --source KEY --fields relationships,links,media|none --history-start RFC3339 [--json]
-       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--sensitivity public|personal|private] [--json]
-       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--sensitivity public|personal|private] [--json]
+       kizuki connect ics --url https://HOST/PATH.ics [--sensitivity public|personal|private] [--json]
+       kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--no-browser] [--json]
+       kizuki connect recover-x-api --source KEY --fields relationships,links,media|none --history-start RFC3339 [--no-browser] [--json]
+       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--no-browser] [--sensitivity public|personal|private] [--json]
+       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--no-browser] [--sensitivity public|personal|private] [--json]
 ```
 
 Browse sources, inspect saved sync status, or enroll a source. Local Beeper
@@ -921,7 +933,7 @@ Ordinary capture and `connect x-api` then refuse with
 `credential_recovery_required`.
 
 Use `connect recover-x-api --source KEY --fields FIELDS --history-start RFC3339`
-from an interactive desktop terminal to obtain a new browser grant. Supply the
+from an interactive terminal to obtain a new browser grant (`--no-browser` prints the address on a headless server). Supply the
 source's existing fields and history start. Recovery preserves the pending state
 until the new grant verifies the same account, app and selection and publishes
 against the exact original source state. Failed or competing recovery preserves

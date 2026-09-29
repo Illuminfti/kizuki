@@ -853,8 +853,9 @@ describe("help", () => {
         "--fields",
         "--calendar",
         "--history-start",
+        "--url",
       ]);
-      expect(body.data.flags).toEqual(["--list", "--json", "--new-source"]);
+      expect(body.data.flags).toEqual(["--list", "--json", "--new-source", "--no-browser"]);
       expect(body.data.irreversible).toBe(false);
     }
     const text = runCli(env, "connect", "--help");
@@ -862,6 +863,8 @@ describe("help", () => {
     expect(text.stdout).toContain("--token-ref");
     expect(text.stdout).toContain("--json");
     expect(text.stdout).toContain("--new-source");
+    expect(text.stdout).toContain("--no-browser");
+    expect(text.stdout).toContain("--url");
     for (const [args, diagnostic] of [
       [["connect", "--nope"], "unknown option --nope"],
       [["connect", "--json", "--json"], "repeated flag --json"],

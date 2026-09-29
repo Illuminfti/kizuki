@@ -33,7 +33,7 @@ These ids match `defaultConnectorRegistry.ids()` on this revision.
 | `kizuki.codex-sessions`  | A folder of Codex rollout transcripts (JSONL), text turns only, read-only and offline; same parser and limits | Live local source |
 | `kizuki.gmail`           | Read-only Gmail via operator desktop OAuth client and browser sign-in; live-account qualification unrun | Bounded live source |
 | `kizuki.google-calendar` | Explicitly selected read-only Google calendar revisions; native CLI, explicit source consent | Bounded live source |
-| `kizuki.ics`             | A local iCalendar file. CLI enrolls the file path; URL sign-in is library surface, not a connect verb | Live local source |
+| `kizuki.ics`             | A local iCalendar file (`--source PATH`) or an https feed (`--url`, ETag re-reads); each is its own source | Live source |
 | `kizuki.imap`            | Read-only IMAP mailbox via interactive app-password sign-in                                           | Bounded live source |
 | `kizuki.import-beacon`   | One selected Beacon agent-run `runtime.jsonl` snapshot; local and read-only                           | Snapshot importer |
 | `kizuki.import-chatgpt`  | The `conversations.json` of a ChatGPT data export                                                     | Snapshot importer |

@@ -6,6 +6,7 @@ import { ConnectionError, DuplicateSourceError, closeHostConnector, enrollSigned
 import { withVault } from '../context';
 import { jsonEnvelope } from '../output';
 import { consentHint } from '../source-consent';
+import { headlessBrowserOpener } from '../headless-sign-in';
 import { googleCalendarClient, googleCalendarFields, googleCalendarId, googleCalendarRequiredFields, openGoogleCalendarBrowser, type GoogleCalendarFactory } from '../google-calendar';
 import type { CliIo } from './index';
 export interface GoogleCalendarEnrollmentOptions {
@@ -13,6 +14,7 @@ export interface GoogleCalendarEnrollmentOptions {
     newSource?: boolean | undefined;
     fields?: string | undefined;
     calendar?: string | undefined;
+    noBrowser?: boolean | undefined;
     sensitivity?: Sensitivity | undefined;
     json: boolean;
 }
@@ -21,7 +23,7 @@ export async function runGoogleCalendarConnect(io: CliIo, options: GoogleCalenda
     // Configuration refusal precedes terminal checks, prompts, browser or provider I/O.
     const calendar = googleCalendarId(options.calendar), fields = googleCalendarFields(options.fields), client = await googleCalendarClient(io.env);
     if (!io.stdinIsTTY || !io.stderrIsTTY)
-        throw new UsageError('connect google-calendar --calendar CANONICAL_ID --fields FIELDS [--source KEY | --new-source] [--json] (interactive desktop terminal required)');
+        throw new UsageError('connect google-calendar --calendar CANONICAL_ID --fields FIELDS [--source KEY | --new-source] [--no-browser] [--json] (interactive terminal required)');
     return withVault(io, async (ctx) => {
         const existing = listHostConnections(ctx.db, ctx.store, 'kizuki.google-calendar', { includeDisconnected: true });
         if (existing.some(item => item.state === null))
@@ -39,10 +41,10 @@ export async function runGoogleCalendarConnect(io: CliIo, options: GoogleCalenda
             throw new ConnectionError('Google Calendar reauthorization must preserve its selected calendar, fields, pending page, anchors and cooldown. Use the existing fields; changing source projection is unsupported.');
         const connector = create({ client, calendar_id: calendar, fields, ...(identity ? { expected_account: identity.account_id } : {}) }, { ...(previous ? { previousState: previous } : {}) });
         checkSensitivity(ctx.db, connector.manifest(), options.sensitivity, selected?.connection);
-        io.err('Google Calendar will open your system browser for read-only calendar event access and account identity. Google grants read-only access to events on all calendars. Kizuki reads only the calendar you selected and stores only selected fields plus required identity/schedule metadata. Selected data and protected OAuth state stay in this vault. No event modification access; attachment bodies unsupported. Enrollment captures no history and source consent is separate. Press Ctrl-C to cancel.');
+        io.err('Google Calendar will open your system browser, or print an address to open on another device if none opens or with --no-browser, for read-only calendar event access and account identity. Google grants read-only access to events on all calendars. Kizuki reads only the calendar you selected and stores only selected fields plus required identity/schedule metadata. Selected data and protected OAuth state stay in this vault. No event modification access; attachment bodies unsupported. Enrollment captures no history and source consent is separate. Press Ctrl-C to cancel.');
         let connection: Connection;
         try {
-            connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, { prompt: async () => { throw new ConnectionError('Google Calendar does not request pasted keys or authorization codes.'); }, notify: () => { }, openUrl }, options.source, assertSameGoogleCalendarIdentity, options.newSource);
+            connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, { prompt: async () => { throw new ConnectionError('Google Calendar does not request pasted keys or authorization codes.'); }, notify: () => { }, openUrl: headlessBrowserOpener(io, openUrl, options.noBrowser) }, options.source, assertSameGoogleCalendarIdentity, options.newSource);
         }
         catch (error) {
             if (error instanceof DuplicateSourceError) throw error;

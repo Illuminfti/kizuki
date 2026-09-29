@@ -7,6 +7,7 @@ import { ConnectionError, DuplicateSourceError, closeHostConnector, enrollSigned
 import { withVault } from '../context';
 import { jsonEnvelope } from '../output';
 import { consentHint } from '../source-consent';
+import { headlessBrowserOpener } from '../headless-sign-in';
 import { xApiClient, xApiSelection, openXApiBrowser, type XApiFactory } from '../x-api';
 import type { CliIo } from './index';
 export interface XApiEnrollmentOptions {
@@ -14,6 +15,7 @@ export interface XApiEnrollmentOptions {
     newSource?: boolean | undefined;
     fields?: string | undefined;
     historyStart?: string | undefined;
+    noBrowser?: boolean | undefined;
     sensitivity?: Sensitivity | undefined;
     json: boolean;
 }
@@ -46,7 +48,7 @@ async function enrollX(io: CliIo, options: XApiEnrollmentOptions, checkSensitivi
             throw new ConnectionError('credential_recovery_required; X refresh outcome is unknown; only connect recover-x-api obtains a new authorization; ordinary sign-in cannot reuse pending credentials.');
         const client = xApiClient(io.env, identity);
         if (!io.stdinIsTTY || !io.stderrIsTTY)
-            throw new UsageError('connect x-api --fields FIELDS --history-start RFC3339 [--source KEY | --new-source] [--json] (interactive desktop terminal required)');
+            throw new UsageError('connect x-api --fields FIELDS --history-start RFC3339 [--source KEY | --new-source] [--no-browser] [--json] (interactive terminal required)');
 
         const priorGrant = selected ? inspectSourceGrant(ctx.db, selected.connection.source_key) : null;
         const verifyReplacement = (old: Uint8Array, next: Uint8Array) => {
@@ -64,18 +66,10 @@ async function enrollX(io: CliIo, options: XApiEnrollmentOptions, checkSensitivi
         const connector = create({ client_id: client.id, redirect_uri: client.redirectUri, ...(recover ? { recover_credentials: true } : {}), selection, ...(identity ? { expected_account: identity.account_id } : {}) }, { oauth: { postForm: native.postForm, listen: async path => { listener = await native.listen(path); return listener; } } });
         checkSensitivity(ctx.db, connector.manifest(), options.sensitivity, selected?.connection);
         if (recover) io.err('The previous X refresh outcome is unknown. This recovery obtains a new browser grant; it does not retry old credentials or prove remote invalidation. Capture consent and existing history remain unchanged.');
-        io.err('X will open your system browser for read-only own-post access, account identity and offline access. Selected data and protected OAuth state stay in this vault. No posting or direct-message access. Enrollment captures no history; source consent is separate. API access requires an eligible native app and usage credits. Press Ctrl-C to cancel.');
+        io.err('X will open your system browser, or print an address to open on another device if none opens or with --no-browser, for read-only own-post access, account identity and offline access. Selected data and protected OAuth state stay in this vault. No posting or direct-message access. Enrollment captures no history; source consent is separate. API access requires an eligible native app and usage credits. Press Ctrl-C to cancel.');
         let connection: Connection;
         try {
-            connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, { prompt: async () => { throw new ConnectionError('X does not request pasted keys or authorization codes.'); }, notify: () => { }, openUrl: async url => {
-                try { await openUrl(url); }
-                catch {
-                    // This CLI keeps authorization URLs out of logs and JSON. With no
-                    // printed manual fallback, close its pending callback and offer retry.
-                    if (listener !== null) await listener.close();
-                    throw new ConnectionError('X browser launch failed; retry in a supported desktop session.');
-                }
-            } }, options.source, verifyReplacement, options.newSource);
+            connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, { prompt: async () => { throw new ConnectionError('X does not request pasted keys or authorization codes.'); }, notify: () => { }, openUrl: headlessBrowserOpener(io, openUrl, options.noBrowser) }, options.source, verifyReplacement, options.newSource);
         }
         catch (error) {
             if (error instanceof DuplicateSourceError) throw error;
