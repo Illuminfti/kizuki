@@ -403,6 +403,9 @@ export function parseAlgalRunReceipt(
   const effectErrorMessagePresent = Array.isArray(raw["effects"]) && raw["effects"].some(
     (effect) => isPlainObject(effect) && isPlainObject(effect["error"]) && typeof effect["error"]["message"] === "string",
   );
+  const effectOutputPresent = Array.isArray(raw["effects"]) && raw["effects"].some(
+    (effect) => isPlainObject(effect) && effect["output"] !== undefined,
+  );
   const draft: CaptureEventInput = {
     schema: "kizuki.event/v1",
     connector_id: ALGAL_RECEIPT_CONNECTOR_ID,
@@ -426,6 +429,7 @@ export function parseAlgalRunReceipt(
       `executor-reported event path ${eventPathPresent ? "present" : "absent"}; path not resolved`,
       `executor-reported event outcome ${eventOutcomePresent ? "present" : "absent"}; independent observation absent`,
       `executor-reported effect error message ${effectErrorMessagePresent ? "present" : "absent"}; message not copied`,
+      `executor-reported effect output ${effectOutputPresent ? "present" : "absent"}; execution not conferred`,
       `manifest ${String(manifest)}`,
       `receipt ${String(own)}`,
       "source clock absent; occurred_at is the observation time",
@@ -472,6 +476,9 @@ export function parseAlgalRunReceipt(
           event_outcome_observation: "not_independent",
           executor_reported_effect_error_message: effectErrorMessagePresent ? "present" : "absent",
           effect_error_message: "not_copied",
+          executor_reported_effect_output: effectOutputPresent ? "present" : "absent",
+          effect_output: "not_copied",
+          effect_output_execution: "not_conferred",
           measured_reuse: "not_conferred",
           independent_observation: "absent",
           grant: "not_conferred",
