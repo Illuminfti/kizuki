@@ -7,7 +7,8 @@
     "./contracts": "./src/contracts/index.ts",
     "./internal": "./src/internal.ts",
     "./testing": "./src/testing.ts",
-    "./reflex": "./src/reflex/index.ts"
+    "./reflex": "./src/reflex/index.ts",
+    "./world": "./src/world/public.ts"
   },
   "dependencies": {
     "js-tiktoken": "1.0.21"

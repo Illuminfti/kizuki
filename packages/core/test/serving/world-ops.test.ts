@@ -9,7 +9,7 @@ import {
   worldOpInputKeys,
   worldOpRegistry,
 } from "@kizuki/core/world";
-import type { WorldOp } from "@kizuki/core/world";
+import type { ClaimsOp, WorldOp } from "@kizuki/core/world";
 import { ServeError } from "../../src/serving/types";
 import { worldFixture } from "./world-fixture";
 import { serveFixture } from "./helpers";
@@ -62,7 +62,7 @@ describe("the operation registry", () => {
     expect(() => readWorldView(ctx, PING_INPUT)).toThrow(WorldViewError);
     await withWorldOps([pingOp], () => {
       const result = readWorldView(ctx, PING_INPUT);
-      expect(result).toEqual({
+      expect(result as unknown).toEqual({
         schema: "kizuki.world-view/v1",
         operation: "ping",
         result: {
@@ -97,13 +97,13 @@ describe("the operation registry", () => {
   });
 
   test("a result over the response bound is unavailable, never a partial body", async () => {
-    const big: WorldOp = {
+    const big: ClaimsOp<{ text: string }> = {
       ...pingOp,
       name: "big",
       run: () => ({ status: "data", data: { schema: PING_SCHEMA, blob: "x".repeat(300 * 1024) }, gaps: null }),
     };
     await withWorldOps([big], () => {
-      expect(readWorldView(fixture.owner(), { ...PING_INPUT, operation: "big" })).toEqual({
+      expect(readWorldView(fixture.owner(), { ...PING_INPUT, operation: "big" }) as unknown).toEqual({
         schema: "kizuki.world-view/v1",
         operation: "big",
         result: { status: "unavailable", reason: "budget" },
@@ -112,13 +112,13 @@ describe("the operation registry", () => {
   });
 
   test("gaps reported by an operation make the result incomplete with those reasons", async () => {
-    const partial: WorldOp = {
+    const partial: ClaimsOp<{ text: string }> = {
       ...pingOp,
       name: "partial",
       run: () => ({ status: "data", data: { schema: PING_SCHEMA }, gaps: ["coverage"] }),
     };
     await withWorldOps([partial], () => {
-      expect(readWorldView(fixture.owner(), { ...PING_INPUT, operation: "partial" })).toEqual({
+      expect(readWorldView(fixture.owner(), { ...PING_INPUT, operation: "partial" }) as unknown).toEqual({
         schema: "kizuki.world-view/v1",
         operation: "partial",
         result: { status: "incomplete", data: { schema: PING_SCHEMA }, reasons: ["coverage"] },
