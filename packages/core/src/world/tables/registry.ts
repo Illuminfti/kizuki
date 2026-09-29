@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
-import { tableExists } from "../../ledger/schema";
+import { LedgerStoreError } from "../../ledger/errors";
+import { tableColumns, tableExists } from "../../ledger/schema";
 import { WORLD_TABLE_COLUMNS, type WorldTable } from "../schema";
+import { WORLD_MIGRATION_BASE } from "./versions";
 
 /**
  * How a world table behaves under backup, restore, rebuild and purge.
@@ -78,6 +80,13 @@ const LEDGER_32_TABLES: readonly WorldTableSpec[] = (
  */
 export const WORLD_TABLE_SPECS: readonly WorldTableSpec[] = [
   ...LEDGER_32_TABLES,
+  // slot: view
+  // slot: known
+  // slot: consol
+  // slot: ident
+  // slot: attn
+  // slot: refs
+  // slot: fcst
 ];
 
 let registered: readonly WorldTableSpec[] = [];
@@ -145,4 +154,27 @@ export function resetWorldTables(
     reset.push(spec.name);
   }
   return reset;
+}
+
+/**
+ * Integrity for the tables whose migration versions.ts numbers: each exists
+ * with its declared columns and the erasure path its spec names. The frozen
+ * ledger32 tables keep their own check in world/schema.ts.
+ */
+export function assertWorldTableSchema(db: Database, expectedVersion: number): void {
+  for (const spec of worldTableSpecs()) {
+    if (spec.since <= WORLD_MIGRATION_BASE || spec.since > expectedVersion) continue;
+    const columns = tableColumns(db, spec.name);
+    if (!tableExists(db, spec.name) || spec.columns.some((column) => !columns.includes(column))) {
+      throw new LedgerStoreError("corrupt", `world storage missing ${spec.name}`);
+    }
+    const { erasure } = spec;
+    const reached =
+      erasure.via === "cascade"
+        ? db.query(`SELECT 1 FROM pragma_foreign_key_list(?) WHERE "table"=? AND on_delete='CASCADE'`).get(spec.name, erasure.parent) !== null
+        : erasure.via === "trigger"
+          ? erasure.triggers.every((name) => db.query("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?").get(name) !== null)
+          : true;
+    if (!reached) throw new LedgerStoreError("corrupt", `world storage erasure missing for ${spec.name}`);
+  }
 }
