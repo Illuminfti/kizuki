@@ -20,7 +20,9 @@ rejects every record the same way is stopped by a
 allowed to skip the ledger. Set `reasoning_effort = "low"` (or `"minimal"`) under
 `[ports.llm]` in `serve.toml` to shorten the hidden reasoning, choose a
 non-reasoning model, or reserve more output tokens. Doctor and `serve status`
-show the effective setting next to the model. See the
+show the effective setting next to the model, and once three passes in a row are
+rejected as truncated the `extraction` line says which of the two settings to
+change. See the
 [LLM port configuration](../packages/llm/README.md#config-portsllm).
 
 ## Owner throughput settings
@@ -113,7 +115,10 @@ A value outside its range, a fraction or a string keeps that key's default.
   `claims_rejected` and the receipt's errors. Rails that waited behind a
   multi-request pass get `max_pass_seconds` of extra grace before doctor calls
   them stale, and the `throughput` line shows `records_skipped` for the doctor
-  window.
+  window. A shell that cannot bind the model reads the same receipts under the
+  model reference with its host, so `doctor` prints the daemon's `last_success`,
+  `last_failure` and `consecutive_failures` from there, and a rail whose last
+  five passes all ended degraded is down with the error most of them share.
 
 Requests stay sequential. Each step's input is planned from the durable state
 the previous step left: the committed cursor, the deferred queue and its scan

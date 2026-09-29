@@ -382,8 +382,9 @@ derived-index freshness, writer ROLE stamps, machine vs human
 origin counts, calibration/liveness probes, receipts, holds, serve rails,
 a `vector layer:` line (`off (no embedding model configured)` or
 `configured (<port id>)` or `invalid (<reason>)`, read from `[ports] embedding`; JSON reports it as
-`serve.stores.vector_layer`), and `canon writing: on|off`. Off when no model is configured. The default
-report runs SQLite `quick_check` and samples ledger events. `--integrity`
+`serve.stores.vector_layer`), and `canon writing: on|configured|unverified|off`. Off when no model is
+configured. The default report runs SQLite `quick_check` and samples ledger
+events. `--integrity`
 also runs `PRAGMA integrity_check` on the vault ledger; JSON then reports
 that result in `ledger.integrity_check` (otherwise `null`). Exit 1 when
 the report is not ok. Successful CLI writes seal `.kizuki/ledger-mark` with
@@ -397,6 +398,63 @@ under `auto/`; human pages stay where they are. A later claim for a target
 that was already written under `auto/` edits that page instead of failing, and
 the daemon's daily briefs (`dashboards/brief-YYYY-MM-DD.md`) count as machine
 origin.
+
+### What doctor says about the loop
+
+A rail is judged by the work it has, not by whether its last runs changed
+anything. It is down when it never ran, went stale, last failed, ended its last
+five runs degraded or stopped without making progress, or ran five times in a
+row with work waiting and produced nothing. Work waiting means, for `sync`: events past the extract
+cursor that a source with a model grant would send, live claims the writer has
+not written, and consented sources no run has reached (the first two only when
+a model is configured, because extraction and canon writing need one). For
+`retrieval-sweep` it means pending retrieval operations. For `embed-backfill`
+it is the backlog the rail reports on its own receipts, and only when an
+embedding port is configured. `brief`, `journal-prune`, `doctor-sweep` and
+`purge-sweep` run on a schedule and are judged by staleness and failure only
+(a stale or failed run, or the degraded streak). The degraded or stopped
+streak applies to every rail except `doctor-sweep`, and only while the newest
+receipt is not stale. A degraded run that applied retrieval records or removals,
+or left fewer pending operations than the run before it, is a catch-up pass and
+does not count, and neither does a sync pass that extracted or deduplicated
+claims or skipped records: those shrink the backlog even when nothing new is
+filed. The reasons a rail reports in `retrieval.degraded` are named like errors.
+An idle rail is healthy however many runs changed nothing. The reason names the
+cause: the failed run's error, the error most of the degraded or stopped runs
+share, or the work that is waiting. The `doctor-sweep` rail records what
+`serve status` would fail on, except what only the supervisor can know, as its
+receipt's errors and marks itself `degraded`, so it never reads `ok` beside a
+failed report. Its own degraded runs are not a fault of the rail. Doctor reads
+the newest 2,000 sync receipts and the newest 200 of every other rail.
+
+The model line reports the model the way the daemon's receipts do. From a shell
+that lacks the daemon's secret, doctor cannot bind the model, so it prints what
+the daemon did:
+
+```text
+canon writing: configured; daemon last_success=<ts|never> last_failure=<reason> at <ts> consecutive_failures=N
+```
+
+It says `unverified` only when the daemon has left no receipts for the
+configured model. The `extraction` line shows the events waiting past the
+extract cursor for a granted source (counted up to 10,000, shown as `N+`) and
+`last_extracted_at`, the time a model claim was last recorded. When three
+passes in a row were rejected as truncated, it adds the change to make: set
+`[ports.llm] reasoning_effort` or raise `[extraction] max_output_tokens`. An
+`egress` line names, for every source whose text may go to a model, the
+endpoint host, the model and `retention=provider_managed`, which means the
+provider keeps sent text under its own policy. When canon files cannot be
+indexed, doctor prints `index-degraded` with the skipped paths (the first 16)
+and their total; a canon page held out of the index by an open hold or write is
+listed as `index-degraded` too, and a truncated canon walk is said aloud. The
+`index-degraded` flag on query and context responses follows the derived stamp,
+so it stays until the next `kizuki rebuild`. Each connection shows
+`last_run_clean=yes|no`: the last run recorded no error. It does not say that
+nothing is left to fetch, because the checkpoint does not keep whether the
+source was exhausted. `--json` keeps `backfill_complete`, which only a finished
+backfill run sets, beside `last_run_clean`. The closing `next:` line follows from
+the structured top failure of a failed report and never suggests `kizuki tell`;
+for a down rail it points at `kizuki serve status`, which only reads.
 
 Doctor validates existing configuration and credentials without constructing a
 model runtime. Pending model or connection-state journals remain untouched and
@@ -532,8 +590,9 @@ Always-on loop. HTTP is loopback unless `--no-http`. `init` installs the
 user service when a supervisor exists. The CLI still runs when the daemon is
 down. Before a rail writes canon, `serve` binds the selected LLM port from
 `[ports.llm]`; a model name by itself never enables writes. `kizuki doctor`
-reports a complete binding as `on` and an incomplete configuration as
-`unverified`. The optional `[ports.llm] reasoning_effort` (`none`,
+reports a binding this process made as `on`. Where it cannot bind the model, it
+reports `configured` with the daemon's own last success and failure from its
+run receipts, or `unverified` when the daemon has left none. The optional `[ports.llm] reasoning_effort` (`none`,
 `minimal`, `low`, `medium` or `high`) is sent with each model request;
 `doctor` and `serve status` show it next to the bound model, and `doctor`
 names an invalid value. The optional `[ports.llm.provider]` table
@@ -588,8 +647,8 @@ bounded number of records, commits each batch, and records its position, so an
 interrupted pass still leaves the next one less to do. The pass reports what it
 indexed as `retrieval.upserts` and what remains as `retrieval.pending_ops`; it
 is `ok` only when nothing remains, and reports `derived-index-behind` while the
-index is still behind. A sweep with nothing outstanding is a complete pass, not
-an idle one, so it does not accrue an empty streak in `serve status`.
+index is still behind. A sweep with nothing outstanding is a healthy pass, and
+only a sweep that keeps leaving work behind is reported down.
 
 ## models
 

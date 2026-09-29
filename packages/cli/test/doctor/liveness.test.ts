@@ -18,10 +18,11 @@ function supervisedVault() {
 afterEach(cleanup);
 
 describe("doctor liveness", () => {
-  test("doctor prints the fixed legacy identity degradation", () => {
+  test("doctor does not print the retired identity authority as a fault", () => {
     const setup = supervisedVault();
     const result = runCli(setup.env, "doctor");
-    expect(result.stdout).toContain("identity authority: unavailable");
+    expect(result.stdout).not.toContain("identity authority");
+    expect(result.stdout).not.toContain("identity-authority");
   });
 
   test("a masked or absent unit for an enabled vault is a failure", () => {
@@ -103,26 +104,24 @@ describe("doctor liveness", () => {
     expect(missing.stdout).not.toContain("opted-out");
   });
 
-  test("a rail with five empty runs in a row is reported down", () => {
+  test("rails that ran and had nothing to do keep the report ok", () => {
     const setup = supervisedVault();
-    for (let index = 0; index < 5; index += 1) {
-      const ran = runCli(setup.env, "serve", "run", "sync", "--json");
+    // Every rail runs on each pass; six idle passes is past every empty-streak bound.
+    for (let index = 0; index < 6; index += 1) {
+      const ran = runCli(setup.env, "serve", "--once", "--no-http");
       expect(ran.exitCode).toBe(0);
     }
-    // Intent is still opted-out from tempVault, so empty rails are idle, not down.
-    // Install first so the vault expects liveness.
     runCli({ ...setup.env, KIZUKI_SUPERVISOR: "systemd" }, "serve", "--install");
     const live = runCli(
-      {
-        ...setup.env,
-        KIZUKI_SUPERVISOR: "systemd",
-        TEST_SUPERVISOR_STATE: "active",
-      },
+      { ...setup.env, KIZUKI_SUPERVISOR: "systemd", TEST_SUPERVISOR_STATE: "active" },
       "doctor",
     );
-    expect(live.exitCode).toBe(1);
-    expect(live.stdout).toContain("empty streak");
-  }, 30_000);
+    expect(live.stdout).not.toContain("empty streak");
+    expect(live.stdout).toContain("rail sync status=ok");
+    expect(live.stdout).toContain("rail journal-prune status=ok");
+    expect(live.stdout).toContain("status=ok");
+    expect(live.exitCode).toBe(0);
+  }, 180_000);
 
   test("doctor reports canon writing off with no model configured", () => {
     const setup = supervisedVault();

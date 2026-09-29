@@ -162,6 +162,55 @@
   `kizuki world --cursor`, MCP and HTTP accept. One request examines at most a
   fixed number of handles; past that it returns a cursor with a `traversal_limit`
   gap rather than scanning the whole vault.
+- `kizuki doctor` reports `status=failed` only for real failures and names
+  them. An idle rail with no pending work is healthy: the empty streak counts
+  only runs that had work waiting (extract backlog past the cursor for a
+  granted source, unwritten live claims, consented sources no run has reached,
+  pending retrieval operations), and `brief`, `journal-prune`, `doctor-sweep`,
+  `purge-sweep` and an unconfigured `embed-backfill` are judged by staleness and
+  failure only. A rail whose last five runs ended degraded or stopped, without
+  applying retrieval work or shrinking its pending count, is down with the error
+  most of them share (including the codes a rail reports in `retrieval.degraded`),
+  and a failed rail says why it failed. A bounded catch-up pass that drains a
+  large index backlog is progress, not a fault, and so is extraction that
+  answered but filed no new claim (deduplicated drafts, skipped records). The
+  degraded streak applies to every rail except `doctor-sweep`, and only while
+  the newest receipt is not stale, so an uninstalled service stops failing.
+- The model line reflects the daemon, not whether the doctor process can
+  resolve the model secret. The configured model reference now carries its
+  `@host` exactly as run receipts record it, so from a shell without the secret
+  doctor prints `canon writing: configured; daemon last_success=... last_failure=...
+  consecutive_failures=N` and says `unverified` only when the daemon left no
+  receipts. `doctor` gains an `extraction` line (backlog past the extract cursor,
+  `last_extracted_at`, and the setting to change after repeated truncation) and
+  an `egress` line per source that sends text to a model (endpoint host, model,
+  retention).
+- The constant `identity authority: unavailable` line and the
+  `identity-authority-unavailable` entry in every context packet's degraded list
+  are gone. Doctor lists the canon files the index cannot read, and reports
+  `index-degraded` only while one exists.
+- The closing `next:` line follows from the top failure and no longer suggests
+  `kizuki tell` for a failed report.
+- Connections show `last_run_clean` (the last run recorded no error) instead of
+  `backfill_complete=no` forever for a source that is only synced. It makes no
+  claim about what is left upstream, because the checkpoint keeps no cursor
+  exhaustion. `doctor --json` keeps `backfill_complete` beside it.
+- Doctor reports a canon page held out of the index by an open hold or write as
+  `index-degraded` (a rebuild does not clear it), says when the canon walk was
+  truncated, and words a degraded stamp with nothing skipped or held as possibly
+  stale. The `index-degraded` flag on query and context responses still follows
+  the derived stamp; it clears at the next `kizuki rebuild`, not on an
+  incremental refresh.
+- The failure a report leads with is now structured (`top_failure`), so the
+  `next:` hint no longer reads failure text, and a down rail's hint points at
+  the read-only `kizuki serve status` instead of running the rail.
+- The daemon, `kizuki doctor` and `kizuki serve status` read whether an
+  embedding port is configured from the same configuration, so the
+  `doctor-sweep` receipt judges `embed-backfill` as doctor does. The sweep and
+  `kizuki rebuild` no longer walk every canon page to read one field.
+- Doctor reads the newest 2,000 sync receipts and the newest 200 of each other
+  rail instead of a week of receipts, and the `doctor-sweep` rail now records
+  the failures doctor would report, so its status matches.
 
 ### Changed
 

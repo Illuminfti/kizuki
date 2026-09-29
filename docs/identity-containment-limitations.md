@@ -5,8 +5,9 @@ identity authority. Kizuki cannot infer aliases, merges, corrections, or purge
 scope from them.
 
 The service continues to return ordinary capture, claims, search, timeline,
-context, and undo behavior. Context packets and doctor identify the unavailable
-identity capability with `identity-authority-unavailable`.
+context, and undo behavior. Identity link APIs refuse with `identity_unsupported`.
+That is a fixed fact of this release, not a fault, so context packets and doctor
+do not carry a flag for it.
 
 An owner who needs identity effects must wait for a separately reviewed,
 receipted migration and authority design. Re-entering old rows through import

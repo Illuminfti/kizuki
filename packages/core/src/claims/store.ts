@@ -773,18 +773,44 @@ export function countClaims(
   );
 }
 
-/** Live writable claims the receipted writer has not yet materialized. */
-export function countUnwrittenLiveClaims(db: Database): number {
+/**
+ * Live writable claims the receipted writer has not yet materialized. `asOf`
+ * counts only claims created by then, so a past run can be judged against the
+ * work it could have seen.
+ */
+export function countUnwrittenLiveClaims(db: Database, asOf?: string): number {
   if (!tableExists(db, "claims")) return 0;
-  const typed=tableExists(db,"claim_v2_semantics") ? "AND NOT EXISTS (SELECT 1 FROM claim_v2_semantics v2 WHERE v2.claim_id=claims.claim_id)" : "";
   return (
     db
-      .query<{ n: number }, []>(
+      .query<{ n: number }, [string]>(
         `SELECT count(*) AS n FROM claims
-          WHERE status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review' ${typed}`,
+          WHERE ${unwrittenLiveWhere(db)} AND created_at <= ?`,
       )
-      .get()?.n ?? 0
+      .get(asOf ?? "9999-12-31T23:59:59.999Z")?.n ?? 0
   );
+}
+
+/**
+ * When the oldest live claim the writer has not written was created, or null
+ * when there is none. One scan answers "was any unwritten claim there at time
+ * T" for every T, which a per-time count would have to repeat.
+ */
+export function oldestUnwrittenLiveClaimAt(db: Database): string | null {
+  if (!tableExists(db, "claims")) return null;
+  return (
+    db
+      .query<{ at: string | null }, []>(
+        `SELECT min(created_at) AS at FROM claims WHERE ${unwrittenLiveWhere(db)}`,
+      )
+      .get()?.at ?? null
+  );
+}
+
+function unwrittenLiveWhere(db: Database): string {
+  const typed = tableExists(db, "claim_v2_semantics")
+    ? "AND NOT EXISTS (SELECT 1 FROM claim_v2_semantics v2 WHERE v2.claim_id=claims.claim_id)"
+    : "";
+  return `status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review' ${typed}`;
 }
 
 /** Live claims bound to a canon receipt. */

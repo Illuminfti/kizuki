@@ -49,11 +49,11 @@ afterEach(() => {
   for (const directory of dirs.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-test("doctor names legacy identity authority as unavailable", () => {
+test("doctor does not report the retired identity authority as a fault", () => {
   const { path, db } = vault();
-  expect(inspectServeDoctor(db, path).stores.degraded).toContain(
-    "identity-authority-unavailable",
-  );
+  const report = inspectServeDoctor(db, path);
+  expect(report.stores.degraded).toEqual([]);
+  expect(JSON.stringify(report)).not.toContain("identity-authority");
   db.close();
 });
 
@@ -126,33 +126,23 @@ describe("serve doctor", () => {
     db.close();
   });
 
-  test("a rail with five empty runs in a row is reported down", () => {
+  test("an idle sync rail with no pending work is healthy however many runs changed nothing", () => {
     const { path, db } = vault();
     writeServeIntent(path, "installed");
-    for (let index = 1; index <= 5; index += 1) {
-      persistRunReceipt(
-        db,
-        path,
-        receipt(`2026-09-0${index}`, {
-          run_id: `01JBEMPTY0000000000000000${index}`,
-          rail: "sync",
-        }),
-      );
+    for (let index = 1; index <= 8; index += 1) {
+      persistRunReceipt(db, path, receipt(`2026-09-0${index}`, { run_id: `01JBEMPTY0000000000000000${index}`, rail: "sync" }));
     }
     const report = inspectServeDoctor(db, path, {
-      now: "2026-09-03T00:10:00Z",
-      supervisor: host({
-        kind: "systemd",
-        state: "active",
-        unit: "kizuki@x.service",
-        enabled: true,
-        detail: "active",
-      }),
+      now: "2026-09-08T00:10:00Z",
+      configured_model_ref: "model:idle@host.test",
+      supervisor: host({ kind: "systemd", state: "active", unit: "kizuki@x.service", enabled: true, detail: "active" }),
     });
     const sync = report.rails.find((rail) => rail.rail === "sync");
-    expect(sync?.status).toBe("down");
-    expect(sync?.reason).toContain("empty streak");
-    expect(report.ok).toBe(false);
+    expect(sync?.status).toBe("ok");
+    expect(sync?.reason).toBeNull();
+    expect(sync?.empty_streak).toBe(0);
+    expect(sync?.pending_work).toBe(0);
+    expect(report.failures.filter((failure) => failure.startsWith("rail sync"))).toEqual([]);
     db.close();
   });
 
