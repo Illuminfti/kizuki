@@ -37,7 +37,7 @@ describe("connect catalog", () => {
     for (const id of ["kizuki.gmail", "kizuki.google-calendar", "kizuki.x", "kizuki.imap", "kizuki.telegram"]) {
       expect(byId.get(id)?.mode).toBe("native account sign-in");
     }
-    expect(byId.get("kizuki.ics")?.mode).toBe("local source");
+    expect(byId.get("kizuki.ics")?.mode).toBe("local file or https feed");
     for (const source of sources) expect(source.name).not.toBe(source.id);
     expect(byId.get("kizuki.import-beacon")?.name).toBe("Beacon agent-run import");
   });

@@ -21,12 +21,17 @@ export interface IcsUrlEnrollmentOptions {
  */
 export async function runIcsUrlConnect(io: CliIo, options: IcsUrlEnrollmentOptions, checkSensitivity: (db: Database, manifest: Manifest, requested: Sensitivity | undefined, connection?: Connection) => void, deps: IcsConnectorDeps = {}): Promise<number> {
     return withVault(io, async (ctx) => {
+        // `env:VAR` keeps a capability URL out of shell history and the process list.
+        const envName = /^env:([A-Za-z_][A-Za-z0-9_]{0,127})$/.exec(options.url)?.[1];
+        const url = envName === undefined ? options.url : io.env[envName];
+        if (url === undefined || url === '')
+            throw new ConnectionError(`Calendar URL was not enrolled: environment variable ${envName ?? ''} is not set`);
         const connector = createIcsConnector({}, deps);
         checkSensitivity(ctx.db, connector.manifest(), options.sensitivity);
         let connection: Connection;
         try {
             // Every URL is its own source, so a file-mode calendar is never replaced.
-            connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, { prompt: async () => options.url, notify: () => { }, openUrl: async () => { throw new ConnectionError('Calendar URL sign-in does not open a browser.'); } }, undefined, undefined, true);
+            connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, { prompt: async () => url, notify: () => { }, openUrl: async () => { throw new ConnectionError('Calendar URL sign-in does not open a browser.'); } }, undefined, undefined, true);
         }
         catch (error) {
             if (error instanceof DuplicateSourceError) throw new ConnectionError('source_already_enrolled; this calendar URL is already connected; source consent is unchanged');

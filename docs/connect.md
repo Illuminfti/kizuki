@@ -279,13 +279,17 @@ kizuki connect ics --url https://calendar.example.com/private/feed.ics
 ```
 
 Only `https://` addresses are accepted (`webcal://` is rewritten to `https://`);
-`http://` is refused before any request. The feed is fetched once to prove it
-parses, then re-read on every sync with ETag and Last-Modified validation, so an
-unchanged feed costs one conditional request. A private feed address embeds its
-own capability token, so Kizuki keeps it only in owner-only connection state
-and never prints it or stores it in the ledger database. It still appears in
-your shell history and process list when typed as `--url`; clear it there if
-that matters. Each address is its own source, separate from any file calendar
+`http://` is refused before any request. The feed is fetched in full to prove
+it parses when you enroll and each time a sync or `doctor` pass loads the
+source, and the sync itself then re-reads it with ETag and Last-Modified
+validation, so an unchanged feed costs one full read plus one conditional
+request per pass. A private feed address embeds its own capability token, so
+Kizuki keeps it only in owner-only connection state and never prints it or
+stores it in the ledger database. Typed as `--url https://...` it appears in
+your shell history and process list. To avoid that, pass `--url env:VAR` and
+export the address in `VAR` first; Kizuki reads it from that variable. A vault
+holds at most about 31 calendar sources of this kind; enrolling past that limit
+fails with an identity-scan error. Each address is its own source, separate from any file calendar
 you enrolled with `--source`, and the same address is not enrolled twice.
 Enrollment captures nothing: grant the printed source key an explicit
 [source consent policy](cli.md#source-consent), then run
@@ -316,7 +320,10 @@ nothing arrives before the sign-in deadline the command fails cleanly, releases
 its port and leaves any existing source untouched.
 
 Pass `--no-browser` to skip the opener and print the address straight away, for
-example when a desktop session exists but you want a different browser. The
+example when a desktop session exists but you want a different browser. Use it
+too when the opener reports success but nothing appears, such as `xdg-open`
+falling back to a text browser: if no window opens and no address is printed,
+re-run with `--no-browser`. The
 flag applies to `connect gmail`, `connect google-calendar`, `connect x-api` and
 `connect recover-x-api`. A terminal is still required (`ssh -t`). The
 operator's OAuth client configuration for each provider is unchanged.

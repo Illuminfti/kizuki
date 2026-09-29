@@ -112,3 +112,13 @@ test('public connect ics validates its flags before touching the vault', () => {
   expect(browser.exitCode).not.toBe(0);
   expect(browser.stderr + browser.stdout).toContain('--no-browser is only supported');
 });
+
+test('connect ics --url env:VAR reads the address from the environment and never echoes it', async () => {
+  const setup = h.tempVault(), o = owner(setup), f = feed();
+  o.io.env = { ...setup.env, SYNTHETIC_FEED_URL: FEED };
+  expect(await runIcsUrlConnect(o.io, { url: 'env:SYNTHETIC_FEED_URL', json: true }, () => { }, { fetch: f.fetch })).toBe(0);
+  expect(f.asked[0]?.url).toBe(FEED);
+  expect(o.text()).not.toContain('SYNTHETIC-TOKEN');
+  const unset = owner(setup);
+  await expect(runIcsUrlConnect(unset.io, { url: 'env:SYNTHETIC_MISSING', json: true }, () => { }, { fetch: f.fetch })).rejects.toThrow('SYNTHETIC_MISSING is not set');
+});

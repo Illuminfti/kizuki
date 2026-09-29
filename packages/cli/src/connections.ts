@@ -529,6 +529,8 @@ function inspectConnection(
         problem: "connection state is missing",
       };
     }
+    // Path-mode and URL-mode calendar state share one ref shape, so telling them apart
+    // reads the owner-only bytes in memory here (as IMAP and Telegram do); nothing is printed or fetched.
     const icsRef = connection.secret_refs[0];
     if (connection.connector_id === "kizuki.ics" && icsRef !== undefined && isIcsUrlState(bytes)) {
       return { connection, state: { schema: HOST_STATE_SCHEMA, connector_id: connection.connector_id, config: { secret_ref: icsRef } }, problem: null };
