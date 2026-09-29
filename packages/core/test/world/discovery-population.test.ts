@@ -9,7 +9,7 @@ import { OWNER, OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agen
 import { createWorldRegistry, type WorldVocabularyModule } from "../../src/contracts/world-kinds";
 import { WORLD_VOCABULARY_MODULES, withWorldRegistry } from "../../src/contracts/world-vocabulary";
 import { openLedger } from "../../src/ledger/db";
-import { serveWorldView } from "../../src/serving/world-view";
+import { serveWorldView } from "@kizuki/core/world";
 import type { ServeContext } from "../../src/serving/types";
 import { worldSeed } from "../helpers/world-seed";
 

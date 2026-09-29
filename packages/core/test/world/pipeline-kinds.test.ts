@@ -5,6 +5,7 @@
  * because no `world_view` operation exists for it.
  */
 import { expect, setDefaultTimeout, test } from "bun:test";
+import { withWorldPipeline } from "@kizuki/core/testing";
 import { OWNER } from "../../src/agents";
 import {
   createWorldRegistry,
@@ -18,7 +19,7 @@ import {
 import { openLedger } from "../../src/ledger/db";
 import type { ServeContext } from "../../src/serving/types";
 import { newReadFrame } from "../../src/world/pipeline/frame";
-import { readWorldCard, readWorldMatches, withWorldPipeline } from "../../src/world/pipeline/read";
+import { readWorldCard, readWorldMatches } from "../../src/world/pipeline/read";
 import { worldNamespace } from "../../src/world/references";
 import { testKind } from "../helpers/world-kinds";
 import { questionAssembler, validateQuestionCard, type QuestionCard } from "../helpers/question-card";

@@ -12,10 +12,10 @@ import type { ConceptCard } from "../../src/contracts/concept-card";
 import type { Enricher } from "../../src/world/pipeline/enrich";
 import type { Collector } from "../../src/world/pipeline/collect";
 import type { Grouper } from "../../src/world/pipeline/group";
-import { readWorldView } from "../../src/serving/world-view";
+import { withWorldPipeline } from "@kizuki/core/testing";
+import { readWorldView } from "@kizuki/core/world";
 import { WORLD_REGISTRY } from "../../src/contracts/world-vocabulary";
 import { KIND_ASSEMBLERS } from "../../src/world/kinds";
-import { withWorldPipeline } from "../../src/world/pipeline/read";
 import {
   goldenReader,
   goldenScene,

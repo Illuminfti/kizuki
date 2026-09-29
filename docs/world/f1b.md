@@ -66,7 +66,7 @@ bun test packages/core/test/serving/world-projection.test.ts packages/core/test/
 
 The golden files in `packages/core/test/world/golden` are the traces of a client's `world_view` calls for the owner, a narrow agent, a revoked source, a purged event, a partial-coverage reader and the paging and overflow cases. Wire tokens are random, so a token is named by its first appearance; every other byte and the key order are compared as served. `KIZUKI_UPDATE_GOLDEN=1` rewrites them and belongs only in a change that means to move a byte.
 
-`withWorldPipeline` and `collectReadFrames` are test seams. They swap process-wide lists, do not nest and are not part of the package surface.
+`withWorldPipeline` and `collectReadFrames` are test seams, exported only through `@kizuki/core/testing`. They swap process-wide lists, do not nest and no production code calls them.
 
 ## Limits
 

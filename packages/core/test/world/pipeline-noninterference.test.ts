@@ -11,11 +11,11 @@ import {
   type ReadCase,
   type WorkStats,
 } from "../helpers/noninterference";
-import { serveWorldView } from "../../src/serving/world-view";
+import { collectReadFrames, withWorldPipeline } from "@kizuki/core/testing";
+import { serveWorldView } from "@kizuki/core/world";
 import { worldSeed } from "../helpers/world-seed";
 import type { Collector } from "../../src/world/pipeline/collect";
-import { collectReadFrames, type ReadFrame } from "../../src/world/pipeline/frame";
-import { withWorldPipeline } from "../../src/world/pipeline/read";
+import type { ReadFrame } from "../../src/world/pipeline/frame";
 
 setDefaultTimeout(120_000);
 

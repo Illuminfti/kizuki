@@ -29,7 +29,7 @@ import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
 import { initSearch } from "../../src/search/schema";
 import type { ServeContext } from "../../src/serving/types";
-import { serveWorldView } from "../../src/serving/world-view";
+import { serveWorldView } from "@kizuki/core/world";
 import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
 import { enrollSource, worldSeed } from "./world-seed";
