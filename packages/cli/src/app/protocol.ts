@@ -1,5 +1,5 @@
 /** Local browser protocol. Only the app bearer belongs in sessionStorage. */
-import type { SourceGrantPolicy, Grant, AgentEnrollmentResult, SubjectLabel, WorldReadInput, WorldReadResult } from '@kizuki/core';
+import type { SourceGrantPolicy, Grant, AgentEnrollmentResult, SubjectLabel, WorldReadResult } from '@kizuki/core';
 import type { ServeIntent, SupervisorKind, SupervisorState } from '@kizuki/core';
 import type { inspectOwnerPageCorrectionTargets } from '@kizuki/core';
 export type AppWorldCorrectionTarget = { readonly world_claim: { readonly kind: 'claim'; readonly token: string } };
@@ -112,7 +112,7 @@ export interface AppReceipt {
     reverted: boolean;
 }
 export interface AppProtocol {
-    world_view: { request: WorldReadInput; response: WorldReadResult };
+    world_view: { request: Record<string, unknown>; response: WorldReadResult };
     status: {
         request: {};
         response: {

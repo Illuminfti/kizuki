@@ -10,3 +10,5 @@ export { neighbors } from "./graph";
 export { registerWorldTableSpecs } from "./world/tables/registry";
 /** Registers synthetic world jobs until the returned disposer runs. */
 export { registerWorldJobs } from "./serve/world-jobs";
+/** Test seam for the world operation registry; production code never registers an operation this way. */
+export { withWorldOps } from "./world/ops/registry";
