@@ -718,6 +718,95 @@ test("cell shadowOut stays in the receipt and does not confer a decision", () =>
   });
 });
 
+test("effect output stays in the receipt and does not confer execution", () => {
+  const requestDigest = `sha256:${"cd".repeat(32)}`;
+  const reported = "SYNTHETIC_EFFECT_OUTPUT_DO_NOT_COPY";
+  const outside = "../outside";
+  const digest = `sha256:${"ef".repeat(32)}`;
+  const effect = {
+    requestDigest,
+    executor: "synthetic",
+    output: reported,
+  };
+  const parsed = parseAlgalRunReceipt(receipt({ effects: [effect] }), consent);
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.missingDigests).toEqual([manifestDigest, requestDigest]);
+  expect(parsed.missingDigests).not.toContain(digest);
+  expect(parsed.event.text).toContain("executor-reported effect output present");
+  expect(parsed.event.text).toContain("execution not conferred");
+  expect(parsed.event.text).toContain("executor-reported outcome complete");
+  expect(parsed.event.text).not.toContain(reported);
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_effect_output: "present",
+      effect_output: "not_copied",
+      effect_output_execution: "not_conferred",
+      executor_reported_outcome: "complete",
+      executed: false,
+      retrieved: false,
+      grant: "not_conferred",
+      independent_observation: "absent",
+    },
+    receipt: { effects: [effect] },
+  });
+  expect(JSON.stringify(parsed.event.metadata)).not.toContain("execution_conferred");
+  const unbound = [
+    { take: outside, bound: reported },
+    [outside, reported],
+    0,
+    1.5,
+    null,
+    false,
+    true,
+    "",
+    digest,
+  ];
+  for (const output of unbound) {
+    const admitted = parseAlgalRunReceipt(
+      receipt({ effects: [{ requestDigest, executor: "synthetic", output }] }),
+      consent,
+    );
+    expect(admitted.status).toBe("partial");
+    if (admitted.status === "refused") return;
+    expect(admitted.missingDigests).toEqual([manifestDigest, requestDigest]);
+    expect(admitted.event.text).toContain("executor-reported effect output present");
+    expect(admitted.event.text).not.toContain(outside);
+    expect(admitted.event.text).not.toContain(reported);
+    expect(admitted.event.text).not.toContain(digest);
+    expect(admitted.event.metadata["algal"]).toMatchObject({
+      coverage: { effect_output_execution: "not_conferred", effect_output: "not_copied", retrieved: false },
+      receipt: { effects: [{ output }] },
+    });
+  }
+  const erred = parseAlgalRunReceipt(
+    receipt({
+      effects: [{
+        requestDigest,
+        executor: "synthetic",
+        error: { code: "INTERNAL", message: reported },
+      }],
+    }),
+    consent,
+  );
+  expect(erred.status).toBe("partial");
+  if (erred.status === "refused") return;
+  expect(erred.event.text).toContain("executor-reported effect output absent");
+  expect(erred.event.text).not.toContain(reported);
+  const absent = parseAlgalRunReceipt(receipt(), consent);
+  expect(absent.status).toBe("partial");
+  if (absent.status === "refused") return;
+  expect(absent.event.text).toContain("executor-reported effect output absent");
+  expect(absent.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_effect_output: "absent",
+      effect_output: "not_copied",
+      effect_output_execution: "not_conferred",
+      grant: "not_conferred",
+    },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");
