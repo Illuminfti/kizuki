@@ -7,6 +7,7 @@ import { Database } from 'bun:sqlite';
 import { errorText } from '../src/output';
 import type { CliIo } from '../src/commands';
 import { worldFixture } from '../../core/test/serving/world-fixture';
+import { openMcpSession } from './mcp-stdio-session';
 const h = createHelpers();
 afterEach(h.cleanup);
 const policy = { purposes: ['capture', 'recall', 'session'], allowed_fields: ['text', 'subjects', 'metadata', 'attachments'], retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' };
@@ -290,3 +291,38 @@ test('app activity and undo route through the existing native receipted writer',
         await host.close();
     }
 });
+test('app agent onboarding stores the world_view and relay choices and the launched agent can read the world view', async () => {
+    const setup = h.tempVault();
+    const host = createAppHost({ env: setup.env, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out: () => { }, err: () => { }, prompt: async () => { throw Error(); } });
+    const call = async (route: string, body: unknown = {}) => (await host.handle(new Request('http://127.0.0.1/app/v1/' + route, { method: 'POST', body: JSON.stringify(body) }))).json() as Promise<any>;
+    const done = async (id: string) => { for (let i = 0; i < 200; i++) {
+        const value = (await call('operation', { id })).data;
+        if (value.state !== 'running') return value;
+        await Bun.sleep(10);
+    } throw Error('synthetic job did not finish'); };
+    const grant = (tools: string[], relay: boolean) => ({ ceiling: 'personal', types: null, subjects: null, since: null, until: null, tools, rate_limit_per_minute: 60, relay_owner_corrections: relay });
+    let session: { close(): Promise<void> } | undefined;
+    try {
+        const plain = await done((await call('agent_enroll', { name: 'plain-reader', operation_id: 'app-plain-reader', grant: grant(['search'], false) })).data.operation_id);
+        expect(plain.state).toBe('succeeded');
+        const wide = await done((await call('agent_enroll', { name: 'world-reader', operation_id: 'app-world-reader', grant: grant(['search', 'world_view'], true) })).data.operation_id);
+        expect(wide.state).toBe('succeeded');
+        expect(wide.result.agent.receipt.grant).toEqual(grant(['search', 'world_view'], true));
+        const listed = (await call('agents')).data.agents as { name: string; grant: { tools: string[]; relay_owner_corrections: boolean } }[];
+        expect(listed.find(agent => agent.name === 'plain-reader')!.grant).toMatchObject({ tools: ['search'], relay_owner_corrections: false });
+        expect(listed.find(agent => agent.name === 'world-reader')!.grant).toMatchObject({ tools: ['search', 'world_view'], relay_owner_corrections: true });
+        const args: string[] = wide.result.agent.mcp.args, tokenRef = args[args.indexOf('--token-ref') + 1]!;
+        const opened = openMcpSession(setup.vault, tokenRef, h.tempDir('kizuki-app-world-home-'));
+        session = opened; await opened.initialize();
+        const reply = await opened.call('world_view', { operation: 'find_concepts', label: '', valid: { kind: 'all' }, knownAt: { kind: 'current' } });
+        expect(reply.result?.isError ?? false).toBe(false);
+        const plainRef = (plain.result.agent.mcp.args as string[]);
+        const blocked = openMcpSession(setup.vault, plainRef[plainRef.indexOf('--token-ref') + 1]!, h.tempDir('kizuki-app-plain-home-'));
+        try {
+            await blocked.initialize();
+            const refused = await blocked.call('world_view', { operation: 'find_concepts', label: '', valid: { kind: 'all' }, knownAt: { kind: 'current' } });
+            expect(refused.result?.isError).toBe(true);
+            expect(JSON.parse(refused.result!.content![0]!.text).error).toBe('tool_not_granted');
+        } finally { await blocked.close(); }
+    } finally { await session?.close(); await host.close(); }
+}, 30_000);

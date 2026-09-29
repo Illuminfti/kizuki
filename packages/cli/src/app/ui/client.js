@@ -654,7 +654,7 @@ function runSummary(operation) {
 async function runPass() {
   await launchOperation('run_pass', {}, 'Organising your memory', async (_operation, _present) => { await refresh(); });
 }
-const agentReadTools = [['search', 'Search memory'], ['get_page', 'Read memory pages'], ['query_entities', 'Find entities'], ['timeline', 'Read timelines'], ['context_packet', 'Get relevant context'], ['graph_neighbors', 'Explore connections'], ['system_health', 'Check system health']];
+const agentReadTools = [['search', 'Search memory'], ['get_page', 'Read memory pages'], ['query_entities', 'Find entities'], ['timeline', 'Read timelines'], ['context_packet', 'Get relevant context'], ['graph_neighbors', 'Explore connections'], ['system_health', 'Check system health'], ['world_view', 'Read concepts and situations']];
 async function loadAgents() {
   if (!bearer || !privateViewValid) return;
   const sequence = ++agentsSequence;
@@ -716,7 +716,8 @@ function agentEnrollment() {
   const since = field(scopeFields, 'From (your local time, optional)', 'agent-since', '', 'datetime-local');
   const until = field(scopeFields, 'Until (your local time, optional)', 'agent-until', '', 'datetime-local');
   const rate = field(form, 'Requests per minute', 'agent-rate', '60', 'number'); rate.value = '60'; rate.setAttribute('min', '1'); rate.setAttribute('max', '1000'); rate.setAttribute('step', '1');
-  form.append(el('p', { class: 'model-note' }, 'Owner correction relay: off. This setup grants no correction or proposal tools.'));
+  const relay = el('input', { type: 'checkbox', id: 'agent-relay' }); relay.checked = false;
+  form.append(el('label', { class: 'check-row', for: 'agent-relay' }, relay, 'Let this agent see and relay my corrections'), el('p', { class: 'model-note' }, 'Off by default. On: its concept and situation views include the corrections you made yourself, and a correction it relays would count as yours. Off: your own corrections are left out of what it reads. This setup grants read tools only, so the agent cannot submit corrections either way.'));
   const errorLine = el('p', { class: 'form-error', role: 'alert' });
   form.append(errorLine, el('div', { class: 'form-actions' }, button('Cancel', closeDialog), el('button', { type: 'submit', class: 'button button-primary' }, 'Review access')));
   form.addEventListener('submit', event => {
@@ -728,7 +729,7 @@ function agentEnrollment() {
     let start = null, end = null;
     try { start = since.value ? new Date(since.value).toISOString() : null; end = until.value ? new Date(until.value).toISOString() : null; } catch { errorLine.textContent = 'Enter a valid start and end time, or leave them blank.'; return; }
     if (start && end && start > end) { errorLine.textContent = 'The start time must be before the end time.'; since.focus(); return; }
-    const request = { name: name.value.trim(), operation_id: crypto.randomUUID(), grant: { ceiling: ceiling.value, types: scope(types), subjects: scope(subjects), since: start, until: end, tools: tools.filter(check => check.checked).map(check => check.value), rate_limit_per_minute: limit, relay_owner_corrections: false } };
+    const request = { name: name.value.trim(), operation_id: crypto.randomUUID(), grant: { ceiling: ceiling.value, types: scope(types), subjects: scope(subjects), since: start, until: end, tools: tools.filter(check => check.checked).map(check => check.value), rate_limit_per_minute: limit, relay_owner_corrections: relay.checked } };
     const review = openDialog('Review this agent’s access', request.name, 'lock');
     review.append(grantSummary(request.grant), el('p', { class: 'dialog-description' }, 'Only these permissions will be granted. The next step creates a private credential file on this device; its secret value will not appear in the browser.'), el('div', { class: 'form-actions' }, button('Cancel', closeDialog), button('Create agent', () => launchOperation('agent_enroll', request, 'Creating agent access', async (operation, present) => { await loadAgents(); if (present()) showAgentResult(operation); }), 'primary')));
     focusDialog(review);
