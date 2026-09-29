@@ -913,16 +913,17 @@ function allowedFieldSql(field: (typeof SOURCE_FIELDS)[number]): string {
     ))`;
 }
 
-/**
- * Serving-read source policy as a SQL predicate so LIMIT counts authorized
- * rows. Epoch 0 is a no-op. Missing grant tables deny every row.
- */
 export interface SourceServingScope {
   owner: boolean;
   purpose?: SourcePurpose;
   /** Content classes the reader may not see; withheld in the same SQL as the source policy. */
   deny_classes?: readonly EventClass[];
 }
+/**
+ * Serving-read source policy and class denial as one SQL predicate so LIMIT
+ * counts authorized rows. Epoch 0 has no source policy to apply, but a denied
+ * class still is. Missing grant tables deny every row.
+ */
 export function sourceServingSql(
   db: Database,
   scope: SourceServingScope,
