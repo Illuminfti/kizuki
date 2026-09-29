@@ -132,6 +132,9 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     ...(typeof value["records_skipped"] === "number" && Number.isFinite(value["records_skipped"])
       ? { records_skipped: value["records_skipped"] }
       : {}),
+    ...(typeof value["pages_repaired"] === "number" && Number.isFinite(value["pages_repaired"])
+      ? { pages_repaired: value["pages_repaired"] }
+      : {}),
     canon_writes: numberOr(value["canon_writes"], totals.canon_writes),
     canon_reverts: numberOr(value["canon_reverts"], totals.canon_reverts),
     model: {

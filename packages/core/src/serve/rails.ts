@@ -12,9 +12,9 @@ import type { ProducerV2Port } from "../contracts/producer-v2";
 import { inspectPurgeHealth, listPurgeRecoveryReceipts, resumePurge } from "../ledger/purge";
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
-import { serializePage } from "../vault/frontmatter";
 import { createDurableWriteBudget } from "./budget-ledger";
 import { loadServeConfig } from "./config";
+import { composeBrief, repairBriefPages, type BriefRepair } from "./brief";
 import { createFileNotifier, briefPath } from "./notifier-file";
 import { recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
 import { initServe, listSchedules } from "./schema";
@@ -291,60 +291,45 @@ async function runEmbedBackfill(hooks: AnyRailHooks | undefined): Promise<Partia
   };
 }
 
-function renderBrief(now: string, extra: string[]): string {
-  const day = dayOf(now);
-  return serializePage({
-    data: {
-      id: `rollup:brief-${day}`,
-      title: `Daily brief ${day}`,
-      type: "rollup",
-      status: "active",
-      sensitivity: "personal",
-      taint: "clean",
-      // Rendered from rail state, not from ledger events: the honest
-      // provenance is an explicit empty list, declared in `parsePageSources`.
-      sources: [],
-      "x-brief-producer": "deterministic",
-    },
-    body: [
-      `# Brief ${day}`,
-      "",
-      "The loop writes canon. There is no review queue.",
-      "Correction is `kizuki tell` / MCP `correct`. Audit and undo stay in the TUI.",
-      "",
-      ...extra.map((line) => `- ${line}`),
-      "",
-    ].join("\n"),
-  });
+/** A repaired page is receipted on the run; one that cannot be repaired degrades it. */
+function repairReport(repair: BriefRepair): Partial<RunReceipt> {
+  return {
+    ...(repair.repaired === 0 ? {} : { pages_repaired: repair.repaired }),
+    ...(repair.failed === 0 ? {} : { status: "degraded", errors: ["brief-repair-failed"] }),
+  };
 }
 
 async function runBrief(
+  db: Database,
   vaultPath: string,
   now: string,
-  extra: string[],
+  modelRef: string | null,
 ): Promise<Partial<RunReceipt>> {
   const notifier = createFileNotifier(vaultPath);
   const day = dayOf(now);
   await notifier.notify({
     notification_id: day,
     title: `brief:${day}`,
-    body: renderBrief(now, extra),
+    body: composeBrief(db, now, modelRef),
     sensitivity: "personal",
     provenance: [],
   });
-  return { status: "ok" };
+  return { status: "ok", ...repairReport(await repairBriefPages(vaultPath)) };
 }
 
-async function runDoctorSweep(db: Database, now: string): Promise<Partial<RunReceipt>> {
+async function runDoctorSweep(db: Database, vaultPath: string, now: string): Promise<Partial<RunReceipt>> {
   const health = inspectPurgeHealth(db, now);
   const recovery = inspectCanonRecovery(db);
   const errors = [
     ...(health.ok ? [] : ["purge-unhealthy"]),
     ...(recovery.pending || recovery.projection_pending > 0 ? ["canon-recovery-pending"] : []),
   ];
+  const repair = repairReport(await repairBriefPages(vaultPath));
+  const allErrors = [...errors, ...(repair.errors ?? [])];
   return {
-    status: errors.length === 0 ? "ok" : "degraded",
-    errors,
+    ...repair,
+    status: allErrors.length === 0 ? "ok" : "degraded",
+    errors: allErrors,
   };
 }
 
@@ -462,12 +447,10 @@ async function runRailImpl(
           partial = await runEmbedBackfill(hooks);
           break;
         case "brief":
-          partial = await runBrief(vaultPath, started, [
-            `canon writing: ${hooks?.model_ref ? `on (${hooks.model_ref})` : "off (no model configured — connectors, ledger, search, timeline and undo still work)"}`,
-          ]);
+          partial = await runBrief(db, vaultPath, started, hooks?.model_ref ?? null);
           break;
         case "doctor-sweep":
-          partial = await runDoctorSweep(db, started);
+          partial = await runDoctorSweep(db, vaultPath, started);
           break;
         case "journal-prune":
           partial = runJournalPrune(db, vaultPath, started, config.journal_retention_days);

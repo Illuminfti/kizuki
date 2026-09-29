@@ -59,6 +59,25 @@
   grant or revocation command that clears each one, instead of a bare
   `source_export_denied`. The consent rule is unchanged: export still needs the
   `export` purpose on every source.
+- The canon writer now updates a page the loop already materialised. A claim
+  whose target was written earlier under the machine-origin `auto/` prefix used
+  to be planned as a create and fail with `page ... already exists` on every
+  pass, so later claims for that target never landed. The arbiter now finds the
+  page under `auto/` and edits it through the receipted writer, before and
+  after hashes included. A page at the target's own path still wins.
+- The daily brief is now a bounded summary of what changed since the previous
+  brief: new, updated, corrected and undone canon pages, rail runs that
+  failed, degraded or stopped, and the extraction backlog (live claims not yet
+  written, ledger events past the extraction cursor, deferred inputs). It is
+  never just boilerplate, and its page carries valid frontmatter with
+  `sources: []`.
+- Daemon-written briefs are classified as machine origin in `kizuki doctor`
+  and in retrieval candidates; other pages under `dashboards/` stay human.
+- A daemon-written brief that fails the page schema, such as one an older
+  build wrote without `sources`, is rewritten by the next brief or doctor-sweep
+  run through the same notifier, keeping its body. The run receipt records
+  `pages_repaired`. A page that cannot be rewritten degrades the run with
+  `brief-repair-failed` and is tried again on the next sweep.
 
 ## 1.0.2 (2026-09-24)
 
