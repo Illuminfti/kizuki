@@ -10,6 +10,8 @@ Help a person resume real work with another authorized client using current, evi
 
 [RFC 0002](../rfcs/0002-autonomous-canon.md), [RFC 0000](../rfcs/0000-constraints.md), the [current direction](CURRENT.md) and [decision log](decision-log.md) govern until an accepted amendment explicitly changes a named contract. [RFC 0003](../rfcs/0003-rich-subject-foundation.md) proposes the rich-subject/shared-support foundation; [RFC 0004](../rfcs/0004-living-epistemic-world-model.md) proposes the broader claim-backed world model and scoped views. Both remain proposals. Merging a planning document does not itself bind its schema or implement its surfaces.
 
+The amendment record and the domain contracts appendix are both Proposed until the owner records decisions. The [amendment record](../rfcs/0004-living-epistemic-world-model.md#amendments) lists each proposed deviation from RFC 0004 with its reason, and [Appendix B](../rfcs/0004-domain-contracts.md) defines the contracts for questions, people, skills, frameworks, procedures, commitments, decisions, Situation v2, artifact versions, outcomes, World Slice, World Diff, attention, forecasts, Atlas views and the resume handle, so that each packet below reuses one shape. Draft decision rows for the owner are in [proposed decision rows](world/decisions-proposed.md). Neither document ships a surface.
+
 ## Invariants and shared product law
 
 - Preserve frozen `kizuki.event/v1`, the append-only event ledger except receipted purge, authoritative SQLite claims and readable Markdown canon. Derived stores remain rebuildable behind their existing ports.
