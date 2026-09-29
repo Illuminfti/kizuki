@@ -77,23 +77,53 @@ test("a predicate list alone decides what a kind stores", async () => {
   }
 });
 
-test("a new kind is seeded from its predicates or refused whole, never half seeded", async () => {
+const attempt = (db: Database, options: Parameters<typeof worldSeed>[1]) =>
+  worldSeed(db, options).then(
+    (seed) => seed,
+    (error: unknown) => error,
+  );
+const count = (db: Database, table: "claims" | "events") =>
+  db.query<{ n: number }, []>(`SELECT count(*) AS n FROM ${table}`).get()!.n;
+
+test("a new kind is seeded from its predicates, or the refusal is fail-fast and leaves its event", async () => {
   const db = openLedger(":memory:");
   try {
-    const outcome = await worldSeed(db, { kind: "question", label: "What is idempotency?" }).then(
-      (seed) => seed,
-      (error: unknown) => error,
-    );
-    const count = () => db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims").get()!.n;
+    const outcome = await attempt(db, { kind: "question", label: "What is idempotency?" });
     if (outcome instanceof WorldSeedError) {
       expect(outcome.message).toContain("world.kind");
-      expect(count()).toBe(0);
+      // Refusal is not atomic: the event is accepted before the first claim is tried.
+      expect(count(db, "events")).toBe(1);
+      expect(count(db, "claims")).toBe(0);
     } else {
       const seed = outcome as Awaited<ReturnType<typeof worldSeed>>;
       expect(seed.claims).toHaveLength(2);
-      expect(count()).toBe(2);
+      expect(count(db, "claims")).toBe(2);
       expect(seed.ref).toBeNull();
     }
+  } finally {
+    db.close();
+  }
+});
+
+test("a new kind seeded with an explicit predicate list stores exactly those predicates", async () => {
+  const db = openLedger(":memory:");
+  try {
+    const outcome = await attempt(db, {
+      kind: "question",
+      label: "What is idempotency?",
+      predicates: [{ predicate: "question.text", object: { kind: "literal", value: "What is idempotency?" } }],
+    });
+    if (outcome instanceof WorldSeedError) {
+      expect(outcome.message).toMatch(/world\.kind|question\./);
+      return;
+    }
+    const seed = outcome as Awaited<ReturnType<typeof worldSeed>>;
+    expect(seed.claims).toHaveLength(3);
+    const predicates = db
+      .query<{ predicate: string }, []>("SELECT predicate FROM claim_v2_semantics ORDER BY predicate")
+      .all()
+      .map((row) => row.predicate);
+    expect(predicates).toEqual(["question.label", "question.text", "world.kind"]);
   } finally {
     db.close();
   }
@@ -108,7 +138,7 @@ test("discovery can be switched off for a kind that has a discovery operation", 
   }
 });
 
-test("the test clock fixes asserted_at without a sleep", async () => {
+test("the test clock fixes asserted_at and admitted_at without a sleep", async () => {
   const db = openLedger(":memory:");
   try {
     const clock = testClock("2026-03-01T09:00:00.000Z");
@@ -120,6 +150,11 @@ test("the test clock fixes asserted_at without a sleep", async () => {
       .all()
       .map((row) => row.asserted_at);
     expect(times).toEqual(["2026-03-01T09:00:00.000Z", "2026-03-01T09:01:30.000Z"]);
+    const admitted = db
+      .query<{ admitted_at: string }, []>("SELECT DISTINCT admitted_at FROM claim_v2_support ORDER BY admitted_at")
+      .all()
+      .map((row) => row.admitted_at);
+    expect(admitted).toEqual(times);
     expect(() => clock.set("2026-03-01T09:00:00.000Z")).toThrow(RangeError);
     expect(clock.set("2026-03-02T00:00:00.000Z")).toBe("2026-03-02T00:00:00.000Z");
     expect(() => clock.advance(-1)).toThrow(RangeError);

@@ -16,18 +16,16 @@ import { join } from "node:path";
 import { OWNER, OWNER_AGENT_GRANT, addAgent, authenticate, setGrant, type Principal } from "../../../src/agents";
 import { initGraph } from "../../../src/graph/schema";
 import { openLedger } from "../../../src/ledger/db";
-import { registerConnection } from "../../../src/ledger/connections";
 import { accept } from "../../../src/ledger/ledger";
 import { purgeEvents } from "../../../src/ledger/purge";
-import { revokeSourceGrant, setSourceGrant } from "../../../src/ledger/source-grants";
+import { revokeSourceGrant } from "../../../src/ledger/source-grants";
 import { initSearch } from "../../../src/search/schema";
-import { seedConnectorSensitivity } from "../../../src/sensitivity/store";
 import type { ServeContext } from "../../../src/serving/types";
 import { dispatchServeTool } from "../../../src/serving/dispatch";
-import { ulid } from "../../../src/util/ulid";
 import { validEvent } from "../../fixtures";
 import { testClock, type TestClock } from "../clock";
 import { tempVault } from "../vault";
+import { enrollSource } from "../world-seed";
 
 const FIXTURE = join(import.meta.dir, "../../../../../rfcs/fixtures/world-concept-design.json");
 
@@ -120,28 +118,8 @@ export async function conceptScenario(): Promise<ConceptScenario> {
     initGraph(db);
     const clock = testClock(input.initial_policy_at.replace("Z", ".000Z"));
     const sources = new Map<string, string>();
-    for (const [index, source] of input.sources.entries()) {
-      const sourceKey = ulid();
-      const connector = `world.scenario.${source.id}`;
-      registerConnection(db, connector, sourceKey);
-      seedConnectorSensitivity(
-        db,
-        { connector_id: connector, source_key: sourceKey },
-        { default_sensitivity: "private", sensitivity_floor: "private" },
-      );
-      setSourceGrant(db, {
-        source_key: sourceKey,
-        expected_revision: 0,
-        operation_id: `scenario-grant-${index}`,
-        policy: {
-          purposes: ["capture", "derive", "recall", "correction", "export"],
-          allowed_fields: ["text", "subjects", "metadata", "attachments"],
-          retention: "persistent_owned_until_revoked",
-          egress: "local_only",
-          sensitivity_floor: "private",
-        },
-      });
-      sources.set(source.id, sourceKey);
+    for (const source of input.sources) {
+      sources.set(source.id, enrollSource(db, `world.scenario.${source.id}`, "private"));
     }
     const subjectToken = new Map(input.source_subjects.map((subject) => [subject.id, subject.raw_subject]));
     const records = new Map<string, string>();
@@ -224,7 +202,9 @@ export async function conceptScenario(): Promise<ConceptScenario> {
           const kept = entry.principal.grant.subjects?.filter((subject) => !removed.has(subject)) ?? [];
           setGrant(db, entry.name, { subjects: [...kept] });
         } else {
-          throw new ScenarioDeferred(id, DEFERRED_CONTROL_OWNER[control.kind] ?? "VERIFY");
+          const owner = DEFERRED_CONTROL_OWNER[control.kind];
+          if (owner === undefined) throw new Error(`the concept fixture has a control kind with no product operation and no owner: ${control.kind}`);
+          throw new ScenarioDeferred(id, owner);
         }
       },
       dispose() {

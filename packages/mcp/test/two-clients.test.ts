@@ -1,4 +1,5 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
+import { OWNER_AGENT_GRANT, addAgent } from "@kizuki/core";
 import { startLoopback, type Loopback } from "../../core/test/helpers/world-kit/loopback";
 import { twoClients, type TwoClients } from "./helpers/two-clients";
 
@@ -42,16 +43,24 @@ test("a scoped agent outside the seeded subject gets no match while the owner do
   expect(audit.agent.filter((row) => row.tool === "world_view").length).toBe(1);
 });
 
-test("the loopback helper reaches the standing endpoint as the owner and as an agent", async () => {
-  running = await twoClients();
+test("the loopback helper reaches the standing endpoint as the owner and as a scoped agent", async () => {
+  running = await twoClients({ agent: { tools: ["world_view"] } });
   loopback = await startLoopback(running.db, running.vaultPath);
-  const discovery = await loopback.post("world_view", {
-    operation: "find_concepts",
-    label: "Bayesian",
-    valid: { kind: "all" },
-    knownAt: { kind: "current" },
+  const discover = { operation: "find_concepts", label: "Bayesian", valid: { kind: "all" }, knownAt: { kind: "current" } };
+  const owner = await loopback.post("world_view", discover);
+  expect(owner.status).toBe(200);
+  expect(JSON.stringify(owner.body)).toContain("Bayesian updating");
+  const scoped = await loopback.post("world_view", discover, running.agentToken);
+  expect(scoped.status).toBe(200);
+  expect(JSON.stringify(scoped.body)).toContain("Bayesian updating");
+  const elsewhere = addAgent(running.db, "scoped-elsewhere", {
+    ...OWNER_AGENT_GRANT,
+    ceiling: "public",
+    subjects: ["topic:elsewhere"],
+    tools: ["world_view"],
   });
-  expect(discovery.status).toBe(200);
-  expect(JSON.stringify(discovery.body)).toContain("Bayesian updating");
+  const none = await loopback.post("world_view", discover, elsewhere.token);
+  expect(none.status).toBe(200);
+  expect(JSON.stringify(none.body)).not.toContain("Bayesian updating");
   expect((await loopback.post("world_view", {}, "not-a-token")).status).toBe(401);
 });

@@ -7,13 +7,13 @@
  * applies the mutation to state the reader cannot see, observes again, and
  * reports any difference in three dimensions:
  *
- * - bytes: the canonical output, normalizing only `at` and wire-token values;
+ * - bytes: the canonical output, normalizing only `at` and the `token` of a wire ref;
  * - error: the class and text of a refusal;
  * - stats: work counters, the timing proxy (wall-clock time is not promised).
  *
- * The work counters are SQL statements run through the read's own connection
- * until the projection reports its own frame statistics; a case may return
- * richer counters with `stats`.
+ * The work counters are SQL statements and rows returned through the read's own
+ * connection until the projection reports its own frame statistics; a case may
+ * return richer counters with `stats`.
  */
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
@@ -355,25 +355,32 @@ function canonical(value: unknown, tokens: Map<string, number>): unknown {
           key,
           key === "at" && typeof item === "string"
             ? "<at>"
-            : canonical(item, tokens),
+            : key === "token" && typeof item === "string" && TOKEN.test(item)
+              ? token(item, tokens)
+              : canonical(item, tokens),
         ]),
     );
-  }
-  if (typeof value === "string" && TOKEN.test(value)) {
-    if (!tokens.has(value)) tokens.set(value, tokens.size);
-    return `<token ${tokens.get(value)}>`;
   }
   return value;
 }
 
-/** Sorted-key JSON where only `at` and wire-token values are normalized. */
+function token(value: string, tokens: Map<string, number>): string {
+  if (!tokens.has(value)) tokens.set(value, tokens.size);
+  return `<token ${tokens.get(value)}>`;
+}
+
+/**
+ * Sorted-key JSON where only `at` and the `token` of a wire ref are normalized.
+ * Any other string, including a 43-character digest, stays byte-exact.
+ */
 export function canonicalBytes(value: unknown): string {
   return JSON.stringify(canonical(value, new Map())) ?? "undefined";
 }
 
-/** `db` whose executed statements are counted; everything else passes through. */
+/** `db` whose statements and returned rows are counted; everything else passes through. */
 function counting(db: Database): { db: Database; stats(): WorkStats } {
   let statements = 0;
+  let rows = 0;
   const statement = (target: object): object =>
     new Proxy(target, {
       get(inner, property) {
@@ -388,7 +395,20 @@ function counting(db: Database): { db: Database; stats(): WorkStats } {
         ) {
           return (...args: unknown[]) => {
             statements += 1;
-            return Reflect.apply(value, inner, args);
+            const result = Reflect.apply(value, inner, args);
+            if (property === "all" || property === "values") {
+              rows += (result as unknown[]).length;
+            } else if (property === "get") {
+              if (result !== null && result !== undefined) rows += 1;
+            } else if (property === "iterate") {
+              return (function* () {
+                for (const row of result as Iterable<unknown>) {
+                  rows += 1;
+                  yield row;
+                }
+              })();
+            }
+            return result;
           };
         }
         return value.bind(inner);
@@ -411,7 +431,7 @@ function counting(db: Database): { db: Database; stats(): WorkStats } {
       return value.bind(target);
     },
   });
-  return { db: proxy, stats: () => ({ statements }) };
+  return { db: proxy, stats: () => ({ statements, rows }) };
 }
 
 export async function observe(

@@ -29,7 +29,9 @@ A design fixture never calls product code. Its own `status` stays
 1. Write the test that runs the fixture's scenario against the product at a
    public seam (Core, stdio MCP, loopback HTTP, CLI or the App).
 2. In `rfcs/fixtures/status.ts`, replace `deferred("OWNER")` with
-   `executable("path/to/that.test.ts")` for the fixture id. For the concept and
+   `executable("path/to/that.test.ts")` for the fixture id. The path must be a
+   `.test.ts` file under `rfcs/` or `packages/*/test/` whose text names the
+   fixture id, and never one of the registry's own files. For the concept and
    longitudinal fixtures, do the same on each assertion line in
    `ORACLE_ASSERTION_STATUS`.
 3. Run `bun test rfcs/fixtures`. The registry test fails if the named file does
@@ -45,12 +47,15 @@ narrow reader that sees two public objects, and private evidence in a source
 its grant cannot reach. For each mutation it reads every case, applies the
 mutation, reads again, and compares three things.
 
-- Bytes: the canonical output, where only `at` values and wire tokens are
-  normalized.
+- Bytes: the canonical output, where only `at` values and the `token` of a wire
+  ref are normalized. Every other string, including a digest or etag, stays
+  byte-exact.
 - Error: the class, code and text of a refusal.
 - Stats: work counters. Until the projection reports its own frame statistics,
-  the counter is the number of SQL statements the read ran on its connection. A
-  case can return richer counters through its `stats` hook.
+  the counters are the SQL statements the read ran on its connection and the
+  rows those statements returned, so a broad query filtered afterwards in
+  memory is still seen. A case can return richer counters through its `stats`
+  hook.
 
 The seven mutations are a hidden claim, source revoke, purge, identity merge,
 owner correction, supersession and dependency edge. Add a read operation by
@@ -63,7 +68,8 @@ await assertNoninterference({
 ```
 
 The driver proves it can fail: `LEAKY_GLOBAL_COUNT` answers with global row
-counts and must be reported. Wall-clock timing is not promised; equal counters
+counts and must be reported, and a visible change on the real world cases must
+be reported too, so a pass is not vacuous. Wall-clock timing is not promised; equal counters
 are the timing proxy, matching RFC 0004.
 
 ## Seed and time
@@ -71,7 +77,7 @@ are the timing proxy, matching RFC 0004.
 `worldSeed(db, { kind, subject, label, predicates, clock })` stores the event
 and claims for one object. With default options it stores what `worldFixture`
 stores for a Concept or Situation. Pass `predicates` to store any claim set
-the writer accepts, and `clock` to fix `asserted_at`:
+the writer accepts, and `clock` to fix `asserted_at` and `admitted_at`:
 
 ```ts
 const clock = testClock("2026-03-01T09:00:00.000Z");
@@ -79,7 +85,8 @@ await worldSeed(db, { clock });
 clock.advance(90_000);
 ```
 
-Time only moves forward. Capture time (`accepted_at`) is the ledger's wall
+A refused predicate stops the seed at once and is not atomic: the event and the
+claims written before it stay in the ledger. Time only moves forward. Capture time (`accepted_at`) is the ledger's wall
 clock and cannot be driven from a test, so known-at tests fix claim times, not
 capture times.
 
@@ -87,7 +94,8 @@ capture times.
 
 `twoClients()` starts the owner and a scoped agent as separate stdio
 processes on one vault and returns their audit rows. `startLoopback(db,
-vaultPath)` starts the standing HTTP endpoint and returns a `post` helper. Both
+vaultPath)` starts the standing HTTP endpoint and returns a `post` helper that
+takes the owner token or an agent's bearer (`agentToken` from `twoClients`). Both
 are the only new call sites for a process transport or `fetch` in the world
 tests; reuse them rather than adding more.
 
@@ -100,8 +108,9 @@ tests; reuse them rather than adding more.
   exist yet. Scheduled admissions are not built for the same reason.
 - No oracle assertion is executable yet. The coverage table reports that
   plainly and names an owner for each unit.
-- The statement counter changes only when a read runs different SQL. It does
-  not see work done in memory. The projection frame statistics replace it.
+- The counters change only when a read runs different SQL or returns different
+  rows. They do not see work done in memory on the same rows. The projection
+  frame statistics replace them.
 
 ## Verify
 

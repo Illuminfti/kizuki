@@ -133,6 +133,8 @@ export interface TwoClients {
   readonly vaultPath: string;
   readonly seed: WorldSeed;
   readonly agentName: string;
+  /** Bearer of the scoped agent, for the loopback endpoint. */
+  readonly agentToken: string;
   readonly owner: StdioClient;
   readonly agent: StdioClient;
   /** Discover the concept, then read it: the same two world_view calls for either client. */
@@ -171,6 +173,7 @@ export async function twoClients(options: TwoClientsOptions = {}): Promise<TwoCl
       vaultPath: vault.path,
       seed,
       agentName,
+      agentToken: token,
       owner,
       agent,
       async readConcept(client, label = seed.label) {

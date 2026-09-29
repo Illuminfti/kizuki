@@ -5,7 +5,10 @@
  * default options it stores the same event and claims for a Concept or a
  * Situation. A new kind passes its own predicate list once the vocabulary
  * admits it; until then the writer's refusal surfaces as a `WorldSeedError`
- * that names the predicate, never as a half-seeded ledger.
+ * that names the predicate. The refusal is fail-fast, not atomic: the event and
+ * every claim written before the refused predicate stay in the ledger, because
+ * `insertClaim` is async and cannot share one transaction. Seed a refusable
+ * kind in a throwaway ledger.
  */
 import type { Database } from "bun:sqlite";
 import { OWNER } from "../../src/agents";
@@ -82,6 +85,34 @@ function bodyOf(predicate: string, object: ClaimV2Object): string {
   return `${predicate}: ${JSON.stringify(object)}`;
 }
 
+/** Register a connection, seed its sensitivity floor and grant the source its policy. */
+export function enrollSource(
+  db: Database,
+  connector: string,
+  floor: "public" | "private",
+  sourceKey: string = ulid(),
+): string {
+  registerConnection(db, connector, sourceKey);
+  seedConnectorSensitivity(
+    db,
+    { connector_id: connector, source_key: sourceKey },
+    { default_sensitivity: floor, sensitivity_floor: floor },
+  );
+  setSourceGrant(db, {
+    source_key: sourceKey,
+    expected_revision: 0,
+    operation_id: `grant-${sourceKey}`,
+    policy: {
+      purposes: ["capture", "derive", "recall", "correction", "export"],
+      allowed_fields: ["text", "subjects", "metadata", "attachments"],
+      retention: "persistent_owned_until_revoked",
+      egress: "local_only",
+      sensitivity_floor: floor,
+    },
+  });
+  return sourceKey;
+}
+
 export async function worldSeed(db: Database, options: WorldSeedOptions = {}): Promise<WorldSeed> {
   const kind = options.kind ?? "concept",
     subject = options.subject ?? "topic:bayes",
@@ -89,26 +120,7 @@ export async function worldSeed(db: Database, options: WorldSeedOptions = {}): P
     floor = options.floor ?? "public",
     connector = options.connector ?? "world.fixture",
     sourceKey = options.sourceKey ?? ulid();
-  if (options.sourceKey === undefined) {
-    registerConnection(db, connector, sourceKey);
-    seedConnectorSensitivity(
-      db,
-      { connector_id: connector, source_key: sourceKey },
-      { default_sensitivity: floor, sensitivity_floor: floor },
-    );
-    setSourceGrant(db, {
-      source_key: sourceKey,
-      expected_revision: 0,
-      operation_id: `grant-${sourceKey}`,
-      policy: {
-        purposes: ["capture", "derive", "recall", "correction", "export"],
-        allowed_fields: ["text", "subjects", "metadata", "attachments"],
-        retention: "persistent_owned_until_revoked",
-        egress: "local_only",
-        sensitivity_floor: floor,
-      },
-    });
-  }
+  if (options.sourceKey === undefined) enrollSource(db, connector, floor, sourceKey);
   const accepted = accept(
     db,
     {

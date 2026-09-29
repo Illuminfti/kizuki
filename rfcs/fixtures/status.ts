@@ -6,7 +6,7 @@
  * with `executable(test)`, naming the test file that runs the fixture against
  * the product.
  */
-import { existsSync, lstatSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { isAbsolute, join, normalize } from "node:path";
 
 /** Workstream keys of the world-model program that may own a deferred id. */
@@ -107,14 +107,35 @@ export const ORACLE_ASSERTION_STATUS: FixtureRegistry = {
 /** Absolute path of the repository root, resolved from this file. */
 export const REPOSITORY_ROOT = join(import.meta.dir, "../..");
 
-/** Why a registered test path cannot be trusted, or null when it is a real file. */
-export function boundTestErrors(test: string, root: string): string[] {
+/** Where a product test may live: under rfcs/ or a package's test directory. */
+const TEST_PATH = /^(?:rfcs\/|packages\/[^/]+\/test\/).+\.test\.ts$/;
+
+/** The registry's own files prove nothing about a fixture, so none of them may be a binding. */
+const REGISTRY_FILES: readonly string[] = [
+  "rfcs/fixtures/status.ts",
+  "rfcs/fixtures/fixture-status.test.ts",
+  "rfcs/fixtures/oracle-coverage.ts",
+  "rfcs/fixtures/oracle-coverage.test.ts",
+];
+
+/**
+ * Why a registered test path cannot be trusted, or an empty list when it is a
+ * real test file that names the unit it binds. `unit` is a fixture id or a
+ * `<fixture id>#<assertion id>` key; the file text must contain either the unit
+ * or its fixture id, so a promotion line cannot point at an unrelated file.
+ */
+export function boundTestErrors(test: string, root: string, unit: string): string[] {
   const clean = normalize(test);
   if (isAbsolute(test) || clean.startsWith("..") || clean !== test) {
     return [`${test} is not a normalized repository-relative path`];
   }
+  if (!TEST_PATH.test(test)) return [`${test} is not a test file under rfcs/ or packages/*/test/`];
+  if (REGISTRY_FILES.includes(test)) return [`${test} is part of the registry and cannot bind a fixture`];
   const path = join(root, clean);
   if (!existsSync(path) || !lstatSync(path).isFile()) return [`${test} does not exist`];
+  const fixture = unit.split("#", 1)[0]!;
+  const text = readFileSync(path, "utf8");
+  if (!text.includes(unit) && !text.includes(fixture)) return [`${test} never names ${fixture}`];
   return [];
 }
 
@@ -132,5 +153,5 @@ export function fixtureStatusErrors(
   const entry = Object.hasOwn(registry, id) ? registry[id] : undefined;
   if (entry === undefined) return [`${id} is not in the fixture status registry`];
   if (declared !== DESIGN_ONLY) return [`${id} must declare ${DESIGN_ONLY}, found ${String(declared)}`];
-  return entry.status === "executable" ? boundTestErrors(entry.test, root) : [];
+  return entry.status === "executable" ? boundTestErrors(entry.test, root, id) : [];
 }
