@@ -69,6 +69,7 @@ export function goldenText(value: unknown): string {
   return `${JSON.stringify(walk(value, null), null, 2)}\n`;
 }
 
+/** Null when the value matches its golden file; otherwise where the two first differ. */
 export function expectGolden(name: string, value: unknown): string | null {
   const path = join(GOLDEN_DIR, `${name}.json`);
   const text = goldenText(value);
@@ -79,7 +80,13 @@ export function expectGolden(name: string, value: unknown): string | null {
   }
   if (!existsSync(path))
     return `golden file ${name}.json is missing; run with KIZUKI_UPDATE_GOLDEN=1 to create it`;
-  return readFileSync(path, "utf8") === text ? null : text;
+  const expected = readFileSync(path, "utf8");
+  if (expected === text) return null;
+  const want = expected.split("\n");
+  const got = text.split("\n");
+  const line = want.findIndex((entry, at) => entry !== got[at]);
+  const at = line === -1 ? Math.min(want.length, got.length) : line;
+  return `golden ${name}.json differs at line ${at + 1}: expected ${JSON.stringify(want[at])} but served ${JSON.stringify(got[at])}`;
 }
 
 export interface WireObjectRef {
