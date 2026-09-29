@@ -55,6 +55,7 @@ import { semanticKey } from "./claim-v2-keys";
 import { claimKey, hashBody, normalizeObject, objectsMatch } from "./hash";
 import { isRegisteredPredicate } from "./predicates";
 import { initClaims } from "./init";
+import { sourceRoots } from "./source-roots";
 
 /** One sweep never walks the whole backlog: the next pass takes the rest. */
 export const RETRIEVAL_SWEEP_LIMIT = 32;
@@ -583,6 +584,10 @@ function corroborate(db: Database, live: Claim, incoming: Claim, at: string): Cl
     provenance: [...existingEvidence],
   };
   persistClaim(db, next);
+  // Every new citation is merged as evidence, but only a source record the
+  // claim did not already rest on is a further witness.
+  const known = sourceRoots(db, live.provenance);
+  const independent = [...sourceRoots(db, incoming.provenance)].some(root => !known.has(root));
   // persistClaim owns neither column, so the merged support and label are written here.
   db.query("UPDATE claims SET provenance = ?, sensitivity = ? WHERE claim_id = ?")
     .run(JSON.stringify(next.provenance), next.sensitivity, next.claim_id);
