@@ -170,6 +170,30 @@ describe("groupers", () => {
   });
 });
 
+describe("the recorded cutoff", () => {
+  test("a known-at time or snapshot is still unavailable(history) on every operation", () => {
+    const reader = goldenReader(scene.owner);
+    const concept = reader.find("concepts", "find_concepts", "Bayesian updating")[0]!.ref;
+    const situation = reader.find("situations", "find_situations", "Launch")[0]!.ref;
+    const snapshot = { kind: "snapshot", token: Buffer.alloc(32, 7).toString("base64url") };
+    const operations: Record<string, unknown>[] = [
+      { operation: "find_concepts", label: "Bayes" },
+      { operation: "find_situations", label: "Launch" },
+      { operation: "concept", concept },
+      { operation: "situation", situation },
+    ];
+    for (const knownAt of [{ kind: "time", at: "2026-06-01T00:00:00.000Z" }, { kind: "snapshot", ref: snapshot }]) {
+      for (const input of operations) {
+        expect(readWorldView(scene.owner, { ...input, valid: { kind: "all" }, knownAt })).toEqual({
+          schema: "kizuki.world-view/v1",
+          operation: input.operation,
+          result: { status: "unavailable", reason: "history" },
+        });
+      }
+    }
+  });
+});
+
 describe("the stage lists", () => {
   test("a test swap does not nest and leaves the shipped lists behind it", () => {
     expect(() =>
