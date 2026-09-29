@@ -19,6 +19,8 @@ export interface LlmRequest {
   readonly messages: readonly LlmMessage[];
   readonly max_output_tokens: number;
   readonly deadline_ms: number;
+  /** Aborting ends the request at once with an `unavailable` refusal. */
+  readonly signal?: AbortSignal;
 }
 
 export interface LlmResponse {

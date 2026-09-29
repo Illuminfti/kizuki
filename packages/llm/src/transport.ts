@@ -8,6 +8,8 @@ export interface TransportRequest {
   readonly timeout_ms: number;
   readonly max_response_bytes: number;
   readonly body: unknown;
+  /** Aborting ends the request now, failing as `aborted` rather than `timeout`. */
+  readonly signal?: AbortSignal;
 }
 
 export type TransportFailure =
@@ -15,7 +17,8 @@ export type TransportFailure =
   | "network"
   | "redirect"
   | "too_large"
-  | "not_json";
+  | "not_json"
+  | "aborted";
 
 export type TransportResult =
   | {
@@ -41,7 +44,9 @@ export type ChatTransport = (
   request: TransportRequest,
 ) => Promise<TransportResult>;
 
-function classifyFetchError(error: unknown): TransportFailure {
+function classifyFetchError(error: unknown, signal?: AbortSignal): TransportFailure {
+  // The caller's own abort is not a slow provider, whatever the runtime names it.
+  if (signal?.aborted === true) return "aborted";
   if (error instanceof DOMException && error.name === "TimeoutError") {
     return "timeout";
   }
@@ -139,14 +144,17 @@ export const fetchTransport: ChatTransport = async (request) => {
       headers,
       body: JSON.stringify(request.body),
       redirect: "error",
-      signal: AbortSignal.timeout(request.timeout_ms),
+      signal:
+        request.signal === undefined
+          ? AbortSignal.timeout(request.timeout_ms)
+          : AbortSignal.any([AbortSignal.timeout(request.timeout_ms), request.signal]),
     });
   } catch (error) {
     return {
       ok: false,
       kind: "transport",
       status: 0,
-      failure: classifyFetchError(error),
+      failure: classifyFetchError(error, request.signal),
     };
   }
 
@@ -167,7 +175,7 @@ export const fetchTransport: ChatTransport = async (request) => {
       ok: false,
       kind: "transport",
       status: 0,
-      failure: classifyFetchError(error),
+      failure: classifyFetchError(error, request.signal),
     };
   }
   if (text === null) {
@@ -195,3 +203,14 @@ export const fetchTransport: ChatTransport = async (request) => {
 
   return { ok: true, kind: "ok", status: response.status, body };
 };
+
+/** Resolve when `work` does, or as soon as `signal` aborts; the caller checks the signal afterwards. */
+export function orUntilAborted(work: Promise<void>, signal: AbortSignal | undefined): Promise<void> {
+  if (signal === undefined) return work;
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return resolve();
+    const abort = (): void => resolve();
+    signal.addEventListener("abort", abort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
