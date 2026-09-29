@@ -943,7 +943,7 @@ test("unsupported nonliteral correction fails before recording native evidence",
           target: { claim_id: f.claims[0]! },
         },
       ),
-    ).rejects.toThrow("plain qualified-subject literal");
+    ).rejects.toThrow("unsupported_assertion: classification_claim");
     expect(
       db.query("SELECT count(*) AS n FROM native_owner_evidence").get(),
     ).toEqual(before);

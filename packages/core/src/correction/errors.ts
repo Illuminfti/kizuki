@@ -8,12 +8,16 @@ export const CORRECT_ERROR_CODES = [
   "tool_not_granted",
   "below_authority",
   "budget_exhausted",
+  "unsupported_assertion",
+  "correction_refused",
 ] as const;
 export type CorrectErrorCode = (typeof CORRECT_ERROR_CODES)[number];
 
 /** Stable, actionable, and never carries the owner's statement. */
 export class CorrectError extends Error {
   override readonly name = "CorrectError";
+  /** The refusal without the class and code prefix, for an adapter that words it itself. */
+  readonly detail: string;
 
   constructor(
     readonly code: CorrectErrorCode,
@@ -21,5 +25,6 @@ export class CorrectError extends Error {
     options?: ErrorOptions,
   ) {
     super(`CorrectError: ${code}: ${message}`, options);
+    this.detail = message;
   }
 }
