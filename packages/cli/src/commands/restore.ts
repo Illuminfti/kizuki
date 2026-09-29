@@ -1,8 +1,10 @@
+import type { Database } from "bun:sqlite";
 import { join, resolve } from "node:path";
-import { hardenLedgerFile, restoreVault, verifyBackup } from "@kizuki/core";
+import { hardenLedgerFile, isSnapshotBackup, restoreSnapshot, restoreVault, verifyBackup, verifySnapshot } from "@kizuki/core";
 import { sealLedger } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
 import { portableLocalAdapter } from "../connections";
+import { clean } from "../output";
 import { refreshDerived } from "../derived";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
@@ -14,7 +16,7 @@ export const RESTORE_SCHEMA = {
 export const restoreCommand: Command = {
   name: "restore",
   usage: "restore --from DIR [--into DIR] [--verify]",
-  summary: "verify a backup and restore it into an empty directory",
+  summary: "verify an export or snapshot and restore it into an empty directory",
   schema: RESTORE_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
@@ -26,17 +28,20 @@ export const restoreCommand: Command = {
     if (from === undefined) throw new UsageError(this.usage);
     const backupDir = resolve(from);
     const into = parsed.options.get("--into");
+    const snapshot = isSnapshotBackup(backupDir);
     if (into === undefined) {
-      const manifest = verifyBackup(backupDir, { portableLocal: portableLocalAdapter() });
+      const manifest = snapshot ? verifySnapshot(backupDir) : verifyBackup(backupDir, { portableLocal: portableLocalAdapter() });
       io.out(`verified=${backupDir}/manifest.json`);
       io.out(`schema=${manifest.schema} complete=${manifest.complete}`);
-      if (manifest.schema_versions.serve < 8) {
+      if (!snapshot && "schema_versions" in manifest && manifest.schema_versions.serve < 8) {
         io.out("warning=backup predates durable extraction recovery; an interrupted model decision was not preserved");
       }
       return 0;
     }
     const target = resolve(into);
-    const report = restoreVault(backupDir, target, { portableLocal: portableLocalAdapter(), rebuildDerived(db, stagingPath) { refreshDerived(db, stagingPath); hardenLedgerFile(join(stagingPath, ".kizuki", "kizuki.db")); sealLedger(stagingPath, db); } });
+    const options = { portableLocal: portableLocalAdapter(), rebuildDerived(db: Database, stagingPath: string) { refreshDerived(db, stagingPath); hardenLedgerFile(join(stagingPath, ".kizuki", "kizuki.db")); sealLedger(stagingPath, db); } };
+    const restored = snapshot ? restoreSnapshot(backupDir, target, options) : undefined;
+    const report = restored ?? restoreVault(backupDir, target, options);
     io.out(`vault=${target}`);
     io.out(
       [
@@ -50,6 +55,14 @@ export const restoreCommand: Command = {
     );
     for (const warning of report.recovery_warnings) io.out(`warning=${warning}`);
     io.out(`connection_state=${report.connection_state}`);
+    // No backup carries a credential, so each agent needs a fresh enrollment before it can act.
+    if (restored !== undefined) {
+      io.out(`reenroll_agents=${restored.agents.length}`);
+      for (const name of restored.agents) io.out(`reenroll_agent=${clean(name)}`);
+    } else {
+      io.out("reenroll_agents=unknown");
+      io.out("warning=export backups do not record agent names; enroll each agent again with kizuki agent add");
+    }
     return 0;
   },
 };

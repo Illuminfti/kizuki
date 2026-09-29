@@ -791,6 +791,8 @@ export {
 export { MAX_PROPOSAL_BODY_CHARS } from "./staging/proposals";
 export type { DeterministicProduceResult } from "./staging/producers";
 export { BACKUP_SCHEMA, exportVault, restoreVault, verifyBackup } from "./export";
+export { SNAPSHOT_SCHEMA, backupVault, isSnapshotBackup, restoreSnapshot, verifySnapshot } from "./snapshot";
+export type { BackupOptions, SnapshotManifest, SnapshotRestoreReport } from "./snapshot";
 export type {
   BackupSchemaVersions,
   BackupSnapshot,
