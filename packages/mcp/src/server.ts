@@ -1,10 +1,10 @@
-import { ServeError, dispatchServeTool } from "@kizuki/core";
+import { ServeError, dispatchServeTool, resolvePrincipal, toolAllowed } from "@kizuki/core";
 import type { WorldViewEnvelope, Envelope, ServeContext, Tool } from "@kizuki/core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   CORRECT_INPUT,
   ENTITIES_INPUT,
-  ENVELOPE_SHAPE,
+  envelopeFor,
   GET_PAGE_INPUT,
   GRAPH_INPUT,
   HEALTH_INPUT,
@@ -12,8 +12,9 @@ import {
   PROPOSE_INPUT,
   SEARCH_INPUT,
   TIMELINE_INPUT,
+  WORLD_ENVELOPE,
+  WORLD_ENVELOPE_LISTED,
   WORLD_VIEW_INPUT,
-  WORLD_ENVELOPE_SHAPE,
 } from "./schemas";
 import { SERVER_VERSION } from "./version";
 
@@ -30,7 +31,7 @@ export const TOOL_DESCRIPTIONS: Record<Tool, string> = {
   context_packet: `Build one purpose-scoped Markdown brief within a token budget. Pass purpose (session, recall, correction, audit), and advertise capabilities=["delta"] with retain_prefix plus prior_hash to skip an unchanged body. Optional task_event_id recovers structured sections from that one permitted capture; a constraint that cannot fit is withheld whole, a path is not a file read, and a hint line is a relevance label rather than a grant. Optional hooks negotiate session_start, turn, pre_compaction, post_compaction, or session_end; unsupported hooks stay pull-only through this tool and are never invented host hooks. ${TAINT_RULE}`,
   graph_neighbors: `List the links around a note, a subject or a record. ${TAINT_RULE}`,
   system_health: `Report vault, ledger, connector and agent counts for this principal. ${TAINT_RULE}`,
-  world_view: `Discover admitted Concepts or Situations by label, then read them using the returned principal-scoped object token. Valid lookups that are absent, erased, or inaccessible return not_found. ${TAINT_RULE}`,
+  world_view: `Discover admitted Concepts or Situations with operation find_concepts or find_situations and an optional label (default empty), then read one with operation concept or situation and the returned principal-scoped object token in the field of that name. valid defaults to {kind:"all"} and knownAt to {kind:"current"}. Valid lookups that are absent, erased, or inaccessible return not_found. ${TAINT_RULE}`,
   propose: `File a claim for the receipted writer to act on. It never changes canon by itself. ${TAINT_RULE}`,
   correct: `Relay the owner's own correction of something the store has wrong, naming the claim, the claim key or the subject it is about. The statement is recorded verbatim, retires the claim it contradicts and rewrites the note bound to it, under one receipt that undo reverses; pass "object" to say what the claim should read instead, or "dry_run" to see what would change. ${TAINT_RULE}`,
 };
@@ -98,6 +99,48 @@ async function respond(
   }
 }
 
+/**
+ * The SDK has filled `label`, `valid` and `knownAt`. The engine takes exactly
+ * the keys an operation names, so a `label` that is only the default is not
+ * passed to a read; a label the caller wrote is, and the engine refuses it.
+ */
+function engineArguments(args: Record<string, unknown>): Record<string, unknown> {
+  const discovery = args["operation"] === "find_concepts" || args["operation"] === "find_situations";
+  if (discovery || args["label"] !== "") return args;
+  const { label: _default, ...rest } = args;
+  return rest;
+}
+
+/** The advertised world_view shape is a summary; every answer is held to the whole grammar. */
+function checked(envelope: Envelope<unknown> | WorldViewEnvelope): WorldViewEnvelope {
+  if (!WORLD_ENVELOPE.safeParse(envelope).success) throw new ServeError("error", "serving failed");
+  return envelope as WorldViewEnvelope;
+}
+
+type ListHandler = (request: unknown, extra: unknown) => Promise<{ tools: { name: string }[] }>;
+
+/**
+ * `tools/list` names only the tools this principal's grant allows, read from
+ * the store on each listing like every other authority here. Calls are left
+ * alone: a tool the grant excludes is still refused, and audited, by the
+ * engine rather than by the SDK's own "unknown tool" answer. The SDK exposes
+ * no hook for the listing, so this wraps its handler; the SDK version is
+ * pinned exactly, and a version without the handler fails here at startup.
+ */
+function listOnlyGrantedTools(server: McpServer, ctx: ServeContext): void {
+  const handlers = (server.server as unknown as { _requestHandlers?: Map<string, ListHandler> })._requestHandlers;
+  const list = handlers?.get("tools/list");
+  if (handlers === undefined || list === undefined) throw new Error("the MCP SDK no longer exposes its tools/list handler");
+  handlers.set("tools/list", async (request, extra) => {
+    const listed = await list(request, extra);
+    const principal = resolvePrincipal(ctx.db, ctx.principal);
+    return {
+      ...listed,
+      tools: listed.tools.filter((tool) => principal !== null && toolAllowed(principal.grant, tool.name as Tool)),
+    };
+  });
+}
+
 export function createServer(ctx: ServeContext): McpServer {
   const server = new McpServer(
     { name: "kizuki", version: SERVER_VERSION },
@@ -110,7 +153,7 @@ export function createServer(ctx: ServeContext): McpServer {
       title: "Search notes and records",
       description: TOOL_DESCRIPTIONS.search,
       inputSchema: SEARCH_INPUT,
-      outputSchema: ENVELOPE_SHAPE,
+      outputSchema: envelopeFor("search"),
       annotations: READ_ONLY,
     },
     (args) => respond(() => dispatchServeTool(ctx, "search", args)),
@@ -122,7 +165,7 @@ export function createServer(ctx: ServeContext): McpServer {
       title: "Read one note",
       description: TOOL_DESCRIPTIONS.get_page,
       inputSchema: GET_PAGE_INPUT,
-      outputSchema: ENVELOPE_SHAPE,
+      outputSchema: envelopeFor("get_page"),
       annotations: READ_ONLY,
     },
     (args) => respond(() => dispatchServeTool(ctx, "get_page", args)),
@@ -134,7 +177,7 @@ export function createServer(ctx: ServeContext): McpServer {
       title: "List entity notes",
       description: TOOL_DESCRIPTIONS.query_entities,
       inputSchema: ENTITIES_INPUT,
-      outputSchema: ENVELOPE_SHAPE,
+      outputSchema: envelopeFor("query_entities"),
       annotations: READ_ONLY,
     },
     (args) => respond(() => dispatchServeTool(ctx, "query_entities", args)),
@@ -146,7 +189,7 @@ export function createServer(ctx: ServeContext): McpServer {
       title: "List captured records",
       description: TOOL_DESCRIPTIONS.timeline,
       inputSchema: TIMELINE_INPUT,
-      outputSchema: ENVELOPE_SHAPE,
+      outputSchema: envelopeFor("timeline"),
       annotations: READ_ONLY,
     },
     (args) => respond(() => dispatchServeTool(ctx, "timeline", args)),
@@ -158,7 +201,7 @@ export function createServer(ctx: ServeContext): McpServer {
       title: "Build a bounded brief",
       description: TOOL_DESCRIPTIONS.context_packet,
       inputSchema: PACKET_INPUT,
-      outputSchema: ENVELOPE_SHAPE,
+      outputSchema: envelopeFor("context_packet"),
       annotations: READ_ONLY,
     },
     (args) => respond(() => dispatchServeTool(ctx, "context_packet", args)),
@@ -170,7 +213,7 @@ export function createServer(ctx: ServeContext): McpServer {
       title: "List links around a node",
       description: TOOL_DESCRIPTIONS.graph_neighbors,
       inputSchema: GRAPH_INPUT,
-      outputSchema: ENVELOPE_SHAPE,
+      outputSchema: envelopeFor("graph_neighbors"),
       annotations: READ_ONLY,
     },
     (args) => respond(() => dispatchServeTool(ctx, "graph_neighbors", args)),
@@ -182,7 +225,7 @@ export function createServer(ctx: ServeContext): McpServer {
       title: "Report system health",
       description: TOOL_DESCRIPTIONS.system_health,
       inputSchema: HEALTH_INPUT,
-      outputSchema: ENVELOPE_SHAPE,
+      outputSchema: envelopeFor("system_health"),
       annotations: READ_ONLY,
     },
     () => respond(() => dispatchServeTool(ctx, "system_health", {})),
@@ -194,10 +237,10 @@ export function createServer(ctx: ServeContext): McpServer {
       title: "Read a Concept or Situation",
       description: TOOL_DESCRIPTIONS.world_view,
       inputSchema: WORLD_VIEW_INPUT,
-      outputSchema: WORLD_ENVELOPE_SHAPE,
+      outputSchema: WORLD_ENVELOPE_LISTED,
       annotations: READ_ONLY,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "world_view", args)),
+    (args) => respond(async () => checked(await dispatchServeTool(ctx, "world_view", engineArguments(args)))),
   );
 
   server.registerTool(
@@ -206,7 +249,7 @@ export function createServer(ctx: ServeContext): McpServer {
       title: "File a claim for the writer",
       description: TOOL_DESCRIPTIONS.propose,
       inputSchema: PROPOSE_INPUT,
-      outputSchema: ENVELOPE_SHAPE,
+      outputSchema: envelopeFor("propose"),
       annotations: WRITE,
     },
     (args) => respond(() => dispatchServeTool(ctx, "propose", args)),
@@ -218,11 +261,12 @@ export function createServer(ctx: ServeContext): McpServer {
       title: "Relay an owner correction",
       description: TOOL_DESCRIPTIONS.correct,
       inputSchema: CORRECT_INPUT,
-      outputSchema: ENVELOPE_SHAPE,
+      outputSchema: envelopeFor("correct"),
       annotations: WRITE,
     },
     (args) => respond(() => dispatchServeTool(ctx, "correct", args)),
   );
 
+  listOnlyGrantedTools(server, ctx);
   return server;
 }
