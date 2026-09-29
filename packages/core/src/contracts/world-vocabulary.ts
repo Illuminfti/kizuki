@@ -1,186 +1,71 @@
+import { createWorldRegistry, type WorldRegistry, type WorldVocabularyModule, type WorldVocabularySpec } from "./world-kinds";
+import { CONCEPT_VOCABULARY } from "./world-vocab/concept";
+import { LEARNING_VOCABULARY } from "./world-vocab/learning";
+import { SITUATION_VOCABULARY } from "./world-vocab/situation";
+
+export type { WorldEndpointKind, WorldObjectKind, WorldVocabularySpec } from "./world-kinds";
+
 export const WORLD_VOCABULARY_SCHEMA = "kizuki.world-vocabulary/v1" as const;
 
-export const WORLD_VOCABULARY_PREDICATES = [
-  "world.kind",
-  "situation.label", "situation.objective", "situation.commitment", "situation.blocker", "situation.change", "situation.participant",
-  "concept.label",
-  "concept.definition",
-  "concept.requires",
-  "concept.example",
-  "concept.counterexample",
-  "concept.distinguished_from",
-  "learning.exposure",
-  "learning.explanation",
-  "learning.application",
-  "learning.demonstration",
-  "learning.assistance",
-] as const;
+/** Predicates are data once kinds register them, so the name is a plain string. */
+export type WorldVocabularyPredicate = string;
 
-export type WorldVocabularyPredicate =
-  (typeof WORLD_VOCABULARY_PREDICATES)[number];
+/**
+ * Every vocabulary module, in the order its rows reach the extraction prompt.
+ * A workstream adds one line under its own marker; nothing scans a directory.
+ */
+export const WORLD_VOCABULARY_MODULES: readonly WorldVocabularyModule[] = [
+  SITUATION_VOCABULARY,
+  CONCEPT_VOCABULARY,
+  LEARNING_VOCABULARY,
+  // slot: quest
+  // slot: people
+  // slot: skill
+  // slot: sit2
+  // slot: art
+  // slot: ident
+];
 
-export type WorldEndpointKind =
-  | "raw"
-  | "concept"
-  | "situation"
-  | "person"
-  | "task_context";
+export const WORLD_REGISTRY: WorldRegistry = createWorldRegistry(WORLD_VOCABULARY_MODULES);
 
-export type WorldObjectKind =
-  | "literal"
-  | "concept"
-  | "raw_subject"
-  | "vocabulary";
+export const WORLD_VOCABULARY: readonly WorldVocabularySpec[] = WORLD_REGISTRY.vocabulary;
 
-export interface WorldVocabularySpec {
-  readonly predicate: WorldVocabularyPredicate;
-  readonly subject: WorldEndpointKind;
-  readonly objects: readonly WorldObjectKind[];
-  readonly cardinality: "multi";
-  readonly polarity: readonly ("positive" | "negative")[];
-  readonly max_literal_chars: number | null;
-  readonly vocabulary_values: readonly string[] | null;
-}
-
-const BOTH_POLARITIES = Object.freeze(["positive", "negative"] as const);
-const LITERAL_MAX_CHARS = 400;
-
-export const WORLD_VOCABULARY: readonly WorldVocabularySpec[] = Object.freeze([
-  {
-    predicate: "world.kind",
-    subject: "raw",
-    objects: Object.freeze(["vocabulary"] as const),
-    cardinality: "multi",
-    polarity: BOTH_POLARITIES,
-    max_literal_chars: null,
-    vocabulary_values: Object.freeze(["world/concept", "world/situation"] as const),
-  },
-  ...(["situation.label", "situation.objective", "situation.commitment", "situation.blocker", "situation.change"] as const).map(predicate => ({
-    predicate, subject: "situation" as const, objects: Object.freeze(["literal"] as const), cardinality: "multi" as const,
-    polarity: BOTH_POLARITIES, max_literal_chars: LITERAL_MAX_CHARS, vocabulary_values: null,
-  })),
-  { predicate: "situation.participant", subject: "situation", objects: Object.freeze(["raw_subject"] as const), cardinality: "multi",
-    polarity: BOTH_POLARITIES, max_literal_chars: null, vocabulary_values: null },
-  {
-    predicate: "concept.label",
-    subject: "concept",
-    objects: Object.freeze(["literal"] as const),
-    cardinality: "multi",
-    polarity: BOTH_POLARITIES,
-    max_literal_chars: LITERAL_MAX_CHARS,
-    vocabulary_values: null,
-  },
-  {
-    predicate: "concept.definition",
-    subject: "concept",
-    objects: Object.freeze(["literal"] as const),
-    cardinality: "multi",
-    polarity: BOTH_POLARITIES,
-    max_literal_chars: LITERAL_MAX_CHARS,
-    vocabulary_values: null,
-  },
-  {
-    predicate: "concept.requires",
-    subject: "concept",
-    objects: Object.freeze(["concept"] as const),
-    cardinality: "multi",
-    polarity: BOTH_POLARITIES,
-    max_literal_chars: null,
-    vocabulary_values: null,
-  },
-  {
-    predicate: "concept.example",
-    subject: "concept",
-    objects: Object.freeze(["literal", "raw_subject"] as const),
-    cardinality: "multi",
-    polarity: BOTH_POLARITIES,
-    max_literal_chars: LITERAL_MAX_CHARS,
-    vocabulary_values: null,
-  },
-  {
-    predicate: "concept.counterexample",
-    subject: "concept",
-    objects: Object.freeze(["literal", "raw_subject"] as const),
-    cardinality: "multi",
-    polarity: BOTH_POLARITIES,
-    max_literal_chars: LITERAL_MAX_CHARS,
-    vocabulary_values: null,
-  },
-  {
-    predicate: "concept.distinguished_from",
-    subject: "concept",
-    objects: Object.freeze(["concept"] as const),
-    cardinality: "multi",
-    polarity: BOTH_POLARITIES,
-    max_literal_chars: null,
-    vocabulary_values: null,
-  },
-  {
-    predicate: "learning.exposure",
-    subject: "person",
-    objects: Object.freeze(["concept"] as const),
-    cardinality: "multi",
-    polarity: BOTH_POLARITIES,
-    max_literal_chars: null,
-    vocabulary_values: null,
-  },
-  {
-    predicate: "learning.explanation",
-    subject: "person",
-    objects: Object.freeze(["concept"] as const),
-    cardinality: "multi",
-    polarity: BOTH_POLARITIES,
-    max_literal_chars: null,
-    vocabulary_values: null,
-  },
-  {
-    predicate: "learning.application",
-    subject: "person",
-    objects: Object.freeze(["concept"] as const),
-    cardinality: "multi",
-    polarity: BOTH_POLARITIES,
-    max_literal_chars: null,
-    vocabulary_values: null,
-  },
-  {
-    predicate: "learning.demonstration",
-    subject: "person",
-    objects: Object.freeze(["concept"] as const),
-    cardinality: "multi",
-    polarity: BOTH_POLARITIES,
-    max_literal_chars: null,
-    vocabulary_values: null,
-  },
-  {
-    predicate: "learning.assistance",
-    subject: "task_context",
-    objects: Object.freeze(["vocabulary"] as const),
-    cardinality: "multi",
-    polarity: BOTH_POLARITIES,
-    max_literal_chars: null,
-    vocabulary_values: Object.freeze([
-      "learning/assisted",
-      "learning/unassisted",
-    ] as const),
-  },
-]);
-
-const WORLD_VOCABULARY_BY_PREDICATE = new Map(
-  WORLD_VOCABULARY.map((entry) => [entry.predicate, entry] as const),
+export const WORLD_VOCABULARY_PREDICATES: readonly WorldVocabularyPredicate[] = Object.freeze(
+  WORLD_VOCABULARY.map(spec => spec.predicate),
 );
 
-export function getWorldVocabularySpec(
-  predicate: string,
-): WorldVocabularySpec | undefined {
-  return WORLD_VOCABULARY_BY_PREDICATE.get(
-    predicate as WorldVocabularyPredicate,
-  );
+let active: WorldRegistry = WORLD_REGISTRY;
+
+/** The registry every write, read and prompt consults. */
+export function activeWorldRegistry(): WorldRegistry {
+  return active;
 }
 
-export function isWorldVocabularyPredicate(
-  predicate: string,
-): predicate is WorldVocabularyPredicate {
-  return WORLD_VOCABULARY_BY_PREDICATE.has(
-    predicate as WorldVocabularyPredicate,
-  );
+/**
+ * Test seam: runs `fn` with another registry, for a kind that exists only in
+ * a test, and restores the shipped one when it settles. Nothing else replaces
+ * the registry.
+ */
+export function withWorldRegistry<T>(registry: WorldRegistry, fn: () => T): T {
+  const previous = active;
+  active = registry;
+  let restore = true;
+  try {
+    const result = fn();
+    if (result instanceof Promise) {
+      restore = false;
+      return result.finally(() => { active = previous; }) as T;
+    }
+    return result;
+  } finally {
+    if (restore) active = previous;
+  }
+}
+
+export function getWorldVocabularySpec(predicate: string): WorldVocabularySpec | undefined {
+  return active.spec(predicate);
+}
+
+export function isWorldVocabularyPredicate(predicate: string): predicate is WorldVocabularyPredicate {
+  return active.spec(predicate) !== undefined;
 }
