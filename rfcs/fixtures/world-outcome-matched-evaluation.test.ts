@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-outcome-matched-evaluation-design.json");
@@ -77,7 +78,7 @@ function pairStats(pairs: Pair[]) {
 function matchedErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-outcome-matched-evaluation-design", example.status));
   if (example.result_class !== "illustrative") errors.push("illustrative numbers promoted to measured results");
   if (example.id !== "matched-subsequent-task-benefit-and-cost") errors.push("unexpected example id");
   if (example.longitudinal_base.file !== "world-longitudinal-design.json") errors.push("longitudinal base drifted");

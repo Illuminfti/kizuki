@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-outcome-usefulness-design.json");
@@ -32,7 +33,7 @@ function load(): Fixture {
 function usefulnessErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-outcome-usefulness-design", example.status));
   if (example.id !== "task-outcome-does-not-inflate-truth") errors.push("unexpected example id");
   if (!example.tasks.success.comparable || !example.tasks.failure.comparable) errors.push("comparability dropped");
   if (example.tasks.success.result !== "success") errors.push("success result drifted");

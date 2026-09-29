@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-slice-partial-design.json");
@@ -32,7 +33,7 @@ function row(example: Fixture, kind: string): Coverage | undefined {
 function sliceErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-slice-partial-design", example.status));
   if (example.id !== "partial-slice-coverage-is-advertised") errors.push("unexpected example id");
   const kinds = example.coverage.map((item) => item.kind).sort();
   const requested = [...example.request.requested_kinds].sort();

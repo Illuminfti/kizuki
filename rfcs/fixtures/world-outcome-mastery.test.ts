@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-outcome-mastery-design.json");
@@ -26,7 +27,7 @@ function load(): Fixture {
 function masteryErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-outcome-mastery-design", example.status));
   if (example.id !== "assisted-execution-is-not-user-mastery") errors.push("unexpected example id");
   if (example.execution.kind !== "assisted_execution") errors.push("execution kind drifted");
   if (example.execution.actor !== "agent_client") errors.push("actor drifted");

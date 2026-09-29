@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-question-copy-design.json");
@@ -58,7 +59,7 @@ function row(example: Fixture, id: string): Candidate {
 function questionErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-question-copy-design", example.status));
   if (example.id !== "copied-answer-is-not-corroboration") errors.push("unexpected example id");
   if (example.question.lifecycle !== "open") errors.push("question left the open lifecycle");
   if (!example.question.survives_source_conversation) errors.push("question died with its conversation");

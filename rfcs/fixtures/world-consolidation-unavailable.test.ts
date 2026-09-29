@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-consolidation-unavailable-design.json");
@@ -38,7 +39,7 @@ function load(): Fixture {
 function consolidationErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-consolidation-unavailable-design", example.status));
   if (example.id !== "unavailable-is-not-empty-success") errors.push("unexpected example id");
   if (example.job.result !== "unavailable") errors.push("job result left unavailable");
   if (example.job.empty_batch) errors.push("unavailable job labeled empty batch");

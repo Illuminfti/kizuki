@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PACKET_TOKENIZER_ID, packetTokens } from "../../packages/core/src/serving/packet-tokenizer.ts";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-slice-budget-design.json");
@@ -66,7 +67,7 @@ function overBudget(example: Fixture, status: string): Slice {
 test("a fitting serialized slice keeps the constraint and qualifications inside budget", () => {
   const example = load();
   expect(example.evaluation_state).toBe("not_run");
-  expect(example.status).toBe("future_unimplemented");
+  expect(fixtureStatusErrors("world-slice-budget-design", example.status)).toEqual([]);
   expect(example.id).toBe("world-slice-budget-constraint");
   expect(example.tokenizer_id).toBe(PACKET_TOKENIZER_ID);
   const slice = fitting(example);

@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-consolidation-inflight-design.json");
@@ -26,7 +27,7 @@ function load(): Fixture {
 function inflightErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-consolidation-inflight-design", example.status));
   if (example.id !== "inflight-correction-beats-stale-commit") errors.push("unexpected example id");
   if (!example.job.stale_commit) errors.push("stale commit marker dropped");
   if (!example.correction.during_job) errors.push("correction was not during the job");
