@@ -6,6 +6,9 @@ import { MAX_PROPOSAL_BODY_CHARS } from "./proposals";
 import type { ProposalInput } from "./proposals";
 import { namespacedSubjectId } from "./subjects";
 
+/** A source record has more revisions than this only if its connector is broken. */
+const MAX_REVISION_EPOCH = 1_000_000;
+
 /** At most `units` UTF-16 units of `text`, never half of a surrogate pair. */
 function headOf(text: string, units: number): string {
   const last = text.charCodeAt(units - 1);
@@ -45,6 +48,14 @@ export function pageCandidateProposal(
   const truncated = event.text.length > MAX_PROPOSAL_BODY_CHARS;
   if (truncated) frontmatter["x-body-truncated"] = true;
   else delete frontmatter["x-body-truncated"];
+  // So is the revision marker. A page that returns to text it had before, or
+  // comes back after its source deleted it, is a new claim about the page and
+  // not a repeat of the old one; without the marker the claim store would
+  // dedupe it against the earlier claim and canon would stay where it was.
+  const revision = event.metadata["revision_epoch"];
+  if (typeof revision === "number" && Number.isSafeInteger(revision) && revision > 0 && revision <= MAX_REVISION_EPOCH) {
+    frontmatter["x-source-revision"] = revision;
+  } else delete frontmatter["x-source-revision"];
 
   const subjects: string[] = [];
   for (const subject of event.subjects.slice(

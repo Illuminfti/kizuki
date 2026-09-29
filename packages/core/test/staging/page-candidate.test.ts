@@ -326,3 +326,49 @@ describe("a migrated page through the receipted writer", () => {
     }
   });
 });
+
+describe("a source revision marker on a page candidate", () => {
+  const withEpoch = (revision_epoch: unknown) =>
+    granted(
+      event({
+        text: "the same page text",
+        metadata: { ...candidateMetadata(), revision_epoch },
+      }),
+    ).at(-1)!;
+
+  test("is stamped on the proposal so a returned page is a new claim", () => {
+    const plain = granted(event({ text: "the same page text", metadata: candidateMetadata() })).at(-1)!;
+    expect(plain.frontmatter["x-source-revision"]).toBeUndefined();
+    expect(withEpoch(2).frontmatter["x-source-revision"]).toBe(2);
+  });
+
+  test("files a second claim for identical text instead of deduplicating it", () => {
+    const db = memoryDb();
+    try {
+      const stored = (epoch: unknown) => {
+        const accepted = accept(db, {
+          ...validEvent(),
+          text: "the same page text",
+          metadata: epoch === undefined ? candidateMetadata() : { ...candidateMetadata(), revision_epoch: epoch },
+        });
+        if (accepted.status !== "stored") throw new Error(`event was not stored: ${accepted.status}`);
+        const proposal = granted(accepted.event).at(-1)!;
+        const outcome = fileProposal(db, proposal).outcome;
+        // The same claim filed again is still one claim.
+        expect(fileProposal(db, proposal).outcome).toBe("duplicate");
+        return outcome;
+      };
+      expect(stored(undefined)).toBe("stored");
+      expect(stored(2)).toBe("stored");
+      expect(stored(4)).toBe("stored");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("ignores a value that is not a small positive integer", () => {
+    for (const bad of [0, -1, 1.5, "2", null, 10 ** 12, Number.NaN, [2], { n: 2 }]) {
+      expect(withEpoch(bad).frontmatter["x-source-revision"]).toBeUndefined();
+    }
+  });
+});
