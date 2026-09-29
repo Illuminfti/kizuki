@@ -808,6 +808,7 @@ type Attention = {
 - A `CueKey` is derived only from values the principal can already see, so it discloses nothing hidden and needs no new wire kind. Delivering the same key twice reports `duplicate: true` from the file notifier and writes one brief line.
 - Dismiss and snooze are written only by the owner command and by delivery. Agents read candidates and write no attention state. No MCP write tool is added. Attention state is bookkeeping class: exported, restored and erased on purge.
 - A scoped principal sees only candidates from its own permitted projections and never another principal's dispositions. Hidden changes never create, remove or reorder a candidate.
+- A disposition is not an approval step and there is no review queue (D10). No canon write, extraction or delivery of a fact waits on it, and it grants no execution.
 - The delivery channel is the file notifier only by default. An outward channel needs an explicit owner yes.
 
 **Delivered by:** the attention workstream: providers, the notifier idempotency, the owner command and the read-only `attention` operation.
