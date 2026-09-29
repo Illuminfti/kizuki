@@ -670,7 +670,7 @@ those pins.
 ## purge
 
 ```text
-usage: kizuki purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json] | purge --suppressions [--json] | purge --lift-suppression RECEIPT [--json]
+usage: kizuki purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT [--repair]) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json] | purge --suppressions [--json] | purge --lift-suppression RECEIPT [--json]
 ```
 
 Physical deletion plus a receipt. `--reason` is required except `--verify`,
@@ -680,9 +680,11 @@ writes a completion receipt. `--dry-run` prints a bounded plan and writes
 nothing. Connector selectors use ledger identity, including retired ids.
 Broad subject or connector-only deletes require `--confirm`. Exact `--event`
 and `--connector --record` paths stay noninteractive. Purged events are not
-resurrected by undo; canon rewrites stay reversible. `--include-aliases` is
+resurrected by undo, and a canon rewrite that removes purged text keeps no
+copy of it, so undo of that rewrite refuses. `--include-aliases` is
 retired and refuses before planning or deletion. `--verify` finishes any step
-of the purge that has not run, then prints one proof per store and
+of a purge that has not run (held pages, pending store operations, an unsealed
+erasure); on a finished purge it only proves. It prints one proof per store and
 `pending`/`done`/`failed` operation state. While any inert
 legacy identity row remains, identity absence is unprovable rather than
 successful. If the canon scan stops at its page-count or byte bound, the
@@ -725,7 +727,7 @@ event rows. Once every held page is rewritten, the final step:
 
 `--verify` proves absence per store, keyed by the purged event ids because the
 text itself is gone. It prints one line per store and `--json` reports the same
-list as `data.stores` (`store`, `checked`, `found`, `method`, `at`):
+list as `data.stores` (`store`, `checked`, `found`, `unverifiable`, `method`, `at`):
 
 | Store | Absent means |
 | --- | --- |
@@ -739,23 +741,45 @@ list as `data.stores` (`store`, `checked`, `found`, `method`, `at`):
 | `receipt_images` | no stage record, quarantined stage image or pending write intent cites a purged event |
 | `database` | the ledger file was compacted and its write-ahead log truncated; another connection holding it open reports `ledger_files_busy` |
 
-The command exits nonzero and names the paths or ids while any store still
-holds evidence, and a repeat of `--verify` finishes the erasure. A proof cannot
-find a copy that cites no purged event id, for example a hand copy of the text
-into an unrelated note.
+On a finished purge, `--verify` changes nothing. It exits nonzero and names the
+paths or ids while any store still holds evidence, so a copy that reappeared is
+reported rather than quietly removed. `--verify RECEIPT --repair` erases what
+the proofs found and reports the stores it repaired as `data.repaired_stores`.
+A page or archive file the proof could not read or scan (a page that does not
+parse, a duplicate page id, an archive file over 16 MiB, more than 20000
+archive files, a canon walk that hit its page limit) is listed as
+`unverifiable` in the store's proof and printed as `unproven`. It is not
+evidence, but the store cannot be shown clean until the named path is repaired
+or removed. A proof cannot find a copy that cites no purged event id, for
+example a hand copy of the text into an unrelated note.
+
+The erasure is receipted in `purge_erasures`: the archive files removed, the
+claim and proposal counts, and whether the ledger files were compacted and
+truncated. A typed (claim/v2) claim whose every evidence link was purged is
+purged with the rest, even when its provenance names another event, and its
+semantics and support anchors are deleted.
 
 ### Purged records are not captured again silently
 
 Deleting an event does not delete the record at its source. When a source
-record still exists, `purge` warns on stderr with its path (and the JSON output
-lists them as `data.source_records_still_present`); remove it or move it out of
-the source. Until then, and until the owner lifts it, `sync` refuses to capture
-a record with the same connector and source record id, whatever its new
-content. Refused records do not fail the run or hold back the cursor: the run
-reports `suppressed=N` and prints a notice on stderr. `kizuki purge
+record of a path-based source (a markdown folder and similar) still exists,
+`purge` warns on stderr with its path (and the JSON output lists them as
+`data.source_records_still_present`); remove it or move it out of the source.
+Every purge that creates a suppression also prints the notice and the lift
+command, whatever the connector. Until the owner lifts it, `sync` refuses to
+capture a record with the same connector, source and source record id,
+whatever its new content. A purged event bound to an enrolled source refuses
+only that source's record; an unbound event refuses the record from any source
+of its connector. Refused records do not fail the run or hold back the cursor:
+`sync` reports `suppressed=N` and prints a notice on stderr, and the daemon
+sync (`serve`, `sync --once`, the app's processing pass) records a
+`refused N purged source record(s)` line in the run receipt's errors, so the
+rail shows as degraded until the next sync that refuses nothing. `kizuki purge
 --suppressions [--json]` lists the refused records with the purge receipt that
 holds each one. `kizuki purge --lift-suppression RECEIPT` lifts every
-suppression of that purge, and the next sync may capture the records again;
+suppression of that purge, and the next sync may capture the records again once
+the source offers them (the cursor already moved past a refused record, so it
+returns when the source changes it again, or after a backfill);
 purging one again makes a new receipt and a new suppression. Purges made by
 revoking a source's authorization are not suppressed, since the owner
 re-authorizes that source through its own consent step. The refusal is derived

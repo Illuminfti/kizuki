@@ -117,7 +117,7 @@ function ledgerAtV30(path: string): void {
 test("claim/v2 tables, indexes and schema version land at ledger 31", () => {
   const db = claimsDb();
   try {
-    expect(LEDGER_SCHEMA_VERSION).toBe(34);
+    expect(LEDGER_SCHEMA_VERSION).toBe(35);
     expect(schemaVersion(db)).toBe(LEDGER_SCHEMA_VERSION);
 
     for (const table of [

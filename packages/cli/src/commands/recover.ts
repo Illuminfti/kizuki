@@ -26,7 +26,7 @@ export const recoverCommand: Command = {
         ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
       };
       let completed: string[] = [], projections: string[] = [], reason: string | null = null;
-      let purges: { receipt_id: string; ok: boolean }[] = [];
+      let purges: { receipt_id: string; ok: boolean; error?: string }[] = [];
       let stageRecoveries: CanonStageRecoveryRecord[] = [];
       try {
         const report = recoverCanonWrites(target);
@@ -48,7 +48,7 @@ export const recoverCommand: Command = {
       if (parsed.flags.has("--json")) io.out(jsonEnvelope("recover", ok ? "ok" : "error", result));
       else {
         io.out(`Memory writes recovered: ${completed.length}. Retrieval updates completed: ${projections.length}. Purges finished: ${result.purges_resumed.length}.`);
-        for (const receipt of purgesPending) io.err(`Purge ${receipt} is not finished. next: kizuki purge --verify ${receipt}`);
+        for (const purge of purges.filter(item => !item.ok)) io.err(`Purge ${purge.receipt_id} is not finished${purge.error === undefined ? "" : ` (${purge.error})`}. next: kizuki purge --verify ${purge.receipt_id}`);
         for (const item of result.stage_recoveries) {
           io.out(`stage ${item.stage} ${item.classification}: ${item.action}${item.quarantine_path === null ? "" : ` to ${item.quarantine_path}`}${item.outcome === "done" ? "" : " (planned, not yet done)"}`);
         }

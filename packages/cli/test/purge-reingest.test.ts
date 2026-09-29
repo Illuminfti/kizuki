@@ -78,3 +78,15 @@ test("suppression flags refuse to combine with a purge selector", () => {
   expect(runCli(s.env, "purge", "--suppressions", "--event", s.target.event_id).exitCode).toBe(2);
   expect(runCli(s.env, "purge", "--lift-suppression", "X", "--suppressions").exitCode).toBe(2);
 });
+
+test("the daemon sync path names a refused purged record in the receipt and in sync --once", () => {
+  const s = setup();
+  const purged = runCli(s.env, "purge", "--event", s.target.event_id, "--reason", "retire", "--json");
+  expect(purged.exitCode).toBe(0);
+  appendFileSync(join(s.notes, "acme.md"), "Edited after the purge.\n");
+  const once = runCli(s.env, "sync", "--once");
+  expect(once.stderr).toContain("refused 1 purged source record(s)");
+  expect(once.stderr).toContain("kizuki purge --suppressions");
+  expect(once.exitCode).toBe(1);
+  expect(events(s.vault).some((event) => event.source_record_id === "acme.md")).toBe(false);
+});

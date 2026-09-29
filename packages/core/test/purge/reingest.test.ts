@@ -51,7 +51,7 @@ describe("a purged source record is not captured again silently", () => {
     expect(accept(db, record("notes/b.md", "other record")).status).toBe("stored");
     expect(accept(db, record("notes/a.md", "same id, other connector", "fixture-two")).status).toBe("stored");
     expect(listPurgeSuppressions(db)).toEqual([
-      { connector_id: "fixture", source_record_id: "notes/a.md", receipt_id: receipt, purged_at: AT },
+      { connector_id: "fixture", source_key: null, source_record_id: "notes/a.md", receipt_id: receipt, purged_at: AT },
     ]);
     db.close();
   });
@@ -88,6 +88,34 @@ describe("a purged source record is not captured again silently", () => {
     await resumeSourceRevocation(db, vault, "revoke");
     expect(db.query("SELECT count(*) AS n FROM event_purges").get()).toEqual({ n: 1 });
     expect(findPurgeSuppression(db, "fixture", "notes/a.md")).toBeNull();
+    db.close();
+  });
+
+  test("the refusal is keyed by the source: a second source of one connector is not refused", async () => {
+    const { vault, db } = fixture();
+    const grant = (): string => {
+      const key = ulid();
+      registerConnection(db, "fixture", key);
+      setSourceGrant(db, {
+        source_key: key, expected_revision: 0, operation_id: `grant-${key}`,
+        policy: {
+          purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+          retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public",
+        },
+      });
+      return key;
+    };
+    const [first, second] = [grant(), grant()];
+    const captured = accept(db, record("notes/todo.md", "first source text"), { source: { source_key: first, expected_revision: 1 } });
+    if (captured.status !== "stored") throw new Error("expected stored");
+    const receipt = (await runPurge(db, vault, { event_id: captured.event.event_id }, "retire", { now: () => AT })).receipts[0]!.receipt_id;
+
+    expect(accept(db, record("notes/todo.md", "edited"), { source: { source_key: first, expected_revision: 1 } }))
+      .toEqual({ status: "suppressed", receipt_id: receipt });
+    expect(accept(db, record("notes/todo.md", "other source text"), { source: { source_key: second, expected_revision: 1 } }).status).toBe("stored");
+    // A capture that names no source is refused: the check fails closed.
+    expect(findPurgeSuppression(db, "fixture", "notes/todo.md")).toBe(receipt);
+    expect(listPurgeSuppressions(db)).toMatchObject([{ source_key: first, source_record_id: "notes/todo.md" }]);
     db.close();
   });
 
@@ -129,23 +157,23 @@ describe("a purged source record is not captured again silently", () => {
   });
 });
 
-describe("ledger migration 34", () => {
-  test("a fresh ledger and an upgraded v33 ledger both carry the purge tables", () => {
+describe("ledger migration 35", () => {
+  test("a fresh ledger and an upgraded v34 ledger both carry the purge tables", () => {
     const { vault, db } = fixture();
     const names = () => db.query<{ name: string }, []>(
-      "SELECT name FROM sqlite_master WHERE name IN ('purge_erasures','purge_suppression_lifts','event_purge_proofs_by_record') ORDER BY name",
+      "SELECT name FROM sqlite_master WHERE name IN ('purge_erasures','purge_claim_scope','purge_suppression_lifts','purge_suppression_sources','event_purge_proofs_by_record') ORDER BY name",
     ).all().map((row) => row.name);
-    const expected = ["event_purge_proofs_by_record", "purge_erasures", "purge_suppression_lifts"];
-    expect(LEDGER_SCHEMA_VERSION).toBeGreaterThanOrEqual(34);
+    const expected = ["event_purge_proofs_by_record", "purge_claim_scope", "purge_erasures", "purge_suppression_lifts", "purge_suppression_sources"];
+    expect(LEDGER_SCHEMA_VERSION).toBeGreaterThanOrEqual(35);
     expect(names()).toEqual(expected);
 
-    db.exec("DROP TABLE purge_erasures; DROP TABLE purge_suppression_lifts; DROP INDEX event_purge_proofs_by_record; UPDATE schema_version SET version = 33");
+    db.exec("DROP TABLE purge_erasures; DROP TABLE purge_claim_scope; DROP TABLE purge_suppression_lifts; DROP TABLE purge_suppression_sources; DROP INDEX event_purge_proofs_by_record; UPDATE schema_version SET version = 34");
     db.close();
     const upgraded = openLedger(join(vault, ".kizuki", "kizuki.db"));
     try {
       expect(upgraded.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });
       expect(upgraded.query<{ name: string }, []>(
-        "SELECT name FROM sqlite_master WHERE name IN ('purge_erasures','purge_suppression_lifts','event_purge_proofs_by_record') ORDER BY name",
+        "SELECT name FROM sqlite_master WHERE name IN ('purge_erasures','purge_claim_scope','purge_suppression_lifts','purge_suppression_sources','event_purge_proofs_by_record') ORDER BY name",
       ).all().map((row) => row.name)).toEqual(expected);
     } finally { upgraded.close(); }
   });

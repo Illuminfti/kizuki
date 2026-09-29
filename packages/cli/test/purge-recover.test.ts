@@ -66,6 +66,10 @@ for (const stage of ["phase-one-committed", "discovery-held"] as const) {
       expect(claim).toEqual({ body: "", status: "purged" });
     } finally { db.close(); }
     expect(readFileSync(join(f.vault, "facts/note.md"), "utf8")).not.toContain(MARKER);
+    // The database file and its log hold no trace either, whether or not the compaction ran.
+    for (const name of ["kizuki.db", "kizuki.db-wal"]) {
+      if (existsSync(join(f.vault, ".kizuki", name))) expect(readFileSync(join(f.vault, ".kizuki", name)).includes(MARKER)).toBe(false);
+    }
     for (const name of existsSync(join(f.vault, "archive")) ? readdirSync(join(f.vault, "archive")) : []) {
       expect(readFileSync(join(f.vault, "archive", name), "utf8")).not.toContain(MARKER);
     }

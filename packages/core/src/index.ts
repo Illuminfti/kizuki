@@ -713,6 +713,7 @@ export {
   listHistoricalConnectorIds,
   normalizePurgeReason,
   previewPurge,
+  purgeNeedsCompletion,
   readHolds,
   resolvePurgeConnectorId,
   resumePendingPurges,

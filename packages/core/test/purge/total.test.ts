@@ -23,7 +23,7 @@ import { correct } from "../../src/correction/correct";
 import { initGraph } from "../../src/graph/schema";
 import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
-import { PURGE_STORE_NAMES } from "../../src/ledger/purge-stores";
+import { MAX_ARCHIVE_FILE_BYTES, PURGE_STORE_NAMES } from "../../src/ledger/purge-stores";
 import {
   createVaultFts5Port,
   resumePurge,
@@ -404,7 +404,7 @@ describe("purge is physically total", () => {
       .run(JSON.stringify([f.event.event_id]));
     writeFileSync(
       join(f.vault, "people", "left.md"),
-      `---\nid: left-page\ntitle: Left\ntype: person\nstatus: active\nsensitivity: personal\ntaint: clean\nsources:\n  - ${f.event.event_id}\n---\nLeft.\n`,
+      `---\nid: \"left-page\"\ntitle: \"Left\"\ntype: \"person\"\nstatus: \"active\"\nsensitivity: \"personal\"\ntaint: \"clean\"\nsources: [\"${f.event.event_id}\"]\n---\nLeft.\n`,
       { mode: 0o600 },
     );
     const dirty = await verifyPurge(f.db, f.vault, receipt, {
@@ -416,6 +416,47 @@ describe("purge is physically total", () => {
     expect(found["graph"]).toEqual(["a -> b"]);
     expect(found["canon"]).toEqual(["people/left.md"]);
     expect(dirty.ok).toBe(false);
+    f.db.close();
+  });
+
+  test("the erasure is receipted with the archive files removed, and survives an unsealed retry", async () => {
+    const f = await seed(MARKER);
+    const outcome = await runPurge(f.db, f.vault, { event_id: f.event.event_id }, "retire", { now: () => AT, retrieval: f.port });
+    const row = f.db
+      .query<{ sealed: number; archive_paths: string; claims: number; proposals: number }, []>(
+        "SELECT sealed, archive_paths, claims, proposals FROM purge_erasures",
+      )
+      .get()!;
+    expect(row.sealed).toBe(1);
+    expect(JSON.parse(row.archive_paths)).toEqual([...outcome.erased.archive_copies].sort());
+    expect(row.claims).toBe(outcome.erased.claims);
+    expect(row.proposals).toBe(1);
+
+    // Finishing again finds nothing to delete and keeps what the first run receipted.
+    await resumePurge(f.db, f.vault, outcome.receipts[0]!.receipt_id, { retrieval: f.port, now: () => AT });
+    const again = f.db.query<{ archive_paths: string; claims: number }, []>("SELECT archive_paths, claims FROM purge_erasures").get()!;
+    expect(JSON.parse(again.archive_paths)).toEqual(JSON.parse(row.archive_paths));
+    expect(again.claims).toBe(row.claims);
+    f.db.close();
+  });
+
+  test("a page or archive file the proof cannot read is unverifiable, not evidence, and fails the proof", async () => {
+    const f = await seed(MARKER);
+    const outcome = await runPurge(f.db, f.vault, { event_id: f.event.event_id }, "retire", { now: () => AT, retrieval: f.port });
+    const receipt = outcome.receipts[0]!.receipt_id;
+    mkdirSync(join(f.vault, "people"), { recursive: true });
+    writeFileSync(join(f.vault, "people", "broken.md"), "---\nid: [unclosed\n---\nBroken.\n", { mode: 0o600 });
+    writeFileSync(join(f.vault, "archive", "huge.bin"), Buffer.alloc(MAX_ARCHIVE_FILE_BYTES + 1), { mode: 0o600 });
+    const report = await verifyPurge(f.db, f.vault, receipt, { retrieval: f.port });
+    const byStore = Object.fromEntries(report.stores.map((proof) => [proof.store, proof]));
+    expect(byStore["canon"]!.found).toEqual([]);
+    expect(byStore["canon"]!.unverifiable).toEqual(["people/broken.md (parse)"]);
+    expect(byStore["archive"]!.found).toEqual([]);
+    expect(byStore["archive"]!.unverifiable).toEqual([`archive/huge.bin (over ${MAX_ARCHIVE_FILE_BYTES} bytes)`]);
+    expect(report.ok).toBe(false);
+    rmSync(join(f.vault, "people", "broken.md"));
+    rmSync(join(f.vault, "archive", "huge.bin"));
+    expect((await verifyPurge(f.db, f.vault, receipt, { retrieval: f.port })).ok).toBe(true);
     f.db.close();
   });
 });

@@ -441,7 +441,19 @@ export class Fts5RetrievalPort implements RetrievalPort {
    */
   private sealErasedEvidence(): void {
     this.db.exec("INSERT INTO search_docs(search_docs) VALUES ('rebuild')");
-    for (const step of ["PRAGMA wal_checkpoint(TRUNCATE)", "VACUUM", "PRAGMA wal_checkpoint(TRUNCATE)"]) this.db.exec(step);
+    // A reader holding the file open keeps old pages in the log or the file. Say
+    // so, so the purge operation stays pending and is retried, instead of
+    // reporting absence over bytes that are still there.
+    const priorTimeout = this.db.query<{ timeout: number }, []>("PRAGMA busy_timeout").get()?.timeout ?? 0;
+    this.db.exec("PRAGMA busy_timeout=2000");
+    try {
+      const checkpoint = () => this.db.query<{ busy: number }, []>("PRAGMA wal_checkpoint(TRUNCATE)").get()?.busy !== 0;
+      if (checkpoint()) throw new Error("retrieval store files are busy; retry");
+      this.db.exec("VACUUM");
+      if (checkpoint()) throw new Error("retrieval store files are busy; retry");
+    } finally {
+      this.db.exec(`PRAGMA busy_timeout=${priorTimeout}`);
+    }
   }
 
   async verifyAbsent(ids: readonly string[]): Promise<AbsenceProof> {

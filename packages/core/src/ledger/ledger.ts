@@ -118,7 +118,7 @@ export function accept(
 
     return runImmediate(db, (): AcceptResult => {
       if (deps.source !== undefined) { normalized = authorizeSourceCapture(db, normalized, deps.source); contentHash = computeContentHash(normalized); }
-      const suppressedBy = findPurgeSuppression(db, normalized.connector_id, normalized.source_record_id);
+      const suppressedBy = findPurgeSuppression(db, normalized.connector_id, normalized.source_record_id, deps.source?.source_key ?? null);
       if (suppressedBy !== null) return { status: "suppressed", receipt_id: suppressedBy };
       const textHash = sha256Hex(normalized.text);
       let duplicate = db

@@ -2166,7 +2166,7 @@ function assertBackupFormat(manifest: ExportManifest): void {
   if ((manifest.schema === BACKUP_SCHEMA || manifest.schema === V2_BACKUP_SCHEMA) &&
       versions.ledger !== 16 && versions.ledger !== 17 && versions.ledger !== 18 &&
       versions.ledger !== 19 && versions.ledger !== 20 &&
-      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28 || versions.ledger === 29 || versions.ledger === 30 || versions.ledger === 31 || versions.ledger === 32 || versions.ledger === 33 || versions.ledger === 34))) {
+      !(manifest.schema === BACKUP_SCHEMA && (versions.ledger === 21 || versions.ledger === 22 || versions.ledger === 23 || versions.ledger === 24 || versions.ledger === 25 || versions.ledger === 26 || versions.ledger === 27 || versions.ledger === 28 || versions.ledger === 29 || versions.ledger === 30 || versions.ledger === 31 || versions.ledger === 32 || versions.ledger === 33 || versions.ledger === 34 || versions.ledger === 35))) {
     throw new Error("current backup ledger schema is invalid");
   }
   if (manifest.schema === LEGACY_BACKUP_SCHEMA && (versions.ledger < 1 || versions.ledger > 15)) {

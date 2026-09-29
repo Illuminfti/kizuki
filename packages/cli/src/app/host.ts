@@ -433,6 +433,8 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                         job.counts.stored += result.stored;
                         job.counts.duplicates += result.duplicates;
                         job.counts.errors += result.errors.length;
+                        if (result.suppressed !== undefined)
+                            job.counts.suppressed = (job.counts.suppressed ?? 0) + result.suppressed;
                         if (result.errors.length)
                             throw new AppFailure('unavailable');
                         const after = getCheckpoint(ctx.db, row.connector_id, key)?.cursor ?? null;

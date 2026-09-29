@@ -32,6 +32,12 @@ export interface PurgeStoreProof {
   checked: number;
   /** Ids or vault-relative paths that still hold purged evidence. */
   found: string[];
+  /**
+   * Paths the proof could not read or scan. A store with any of these cannot be
+   * shown clean, but they are not evidence: repair or remove the named file and
+   * verify again.
+   */
+  unverifiable: string[];
   method: string;
   at: string;
 }
@@ -47,6 +53,9 @@ export interface PurgeErasure {
 const ULID_TOKEN = /[0-9A-HJKMNP-TV-Z]{26}/g;
 const ARCHIVE_DIRECTORY = "archive";
 const MIN_BODY_MATCH = 16;
+/** Archive scans stay bounded: a larger directory or file fails closed as unverifiable. */
+export const MAX_ARCHIVE_FILES = 20_000;
+export const MAX_ARCHIVE_FILE_BYTES = 16 * 1_048_576;
 
 function citedIds(text: string, ids: ReadonlySet<string>): boolean {
   for (const token of text.matchAll(ULID_TOKEN))
@@ -59,18 +68,92 @@ function citedIds(text: string, ids: ReadonlySet<string>): boolean {
  * superseded or skipped claim keeps its text as surely as a live one. Typed
  * claims lose their provenance on purge, so the batch time names them too.
  */
-function batchClaimIds(db: Database, batchId: string, eventIds: readonly string[]): string[] {
-  if (!tableExists(db, "claims") || eventIds.length === 0) return [];
-  return db
-    .query<{ claim_id: string }, [string, string]>(
+function scopeTablesPresent(db: Database): boolean {
+  return tableExists(db, "purge_claim_scope") && claimV2TablesPresent(db);
+}
+
+/**
+ * Record, before phase 1 deletes the evidence links, every typed claim whose
+ * support named a purged event. Those links are the only path from such a claim
+ * back to the purge, and they go with the event.
+ */
+export function capturePurgeClaimScope(db: Database, batchId: string, eventIds: readonly string[]): void {
+  if (!scopeTablesPresent(db) || eventIds.length === 0) return;
+  db.query(
+    `INSERT OR IGNORE INTO purge_claim_scope (batch_id, claim_id)
+     SELECT DISTINCT ?, s.claim_id FROM claim_v2_support s
+       JOIN claim_v2_support_events e ON e.support_key = s.support_key
+      WHERE e.event_id IN (SELECT value FROM json_each(?))`,
+  ).run(batchId, JSON.stringify(eventIds));
+}
+
+const NO_SURVIVING_SUPPORT =
+  "NOT EXISTS (SELECT 1 FROM claim_v2_support s JOIN claim_v2_support_events e ON e.support_key = s.support_key WHERE s.claim_id = claims.claim_id)";
+
+/**
+ * Typed claims whose every evidence link was purged are purged too, even when
+ * their provenance column still names a surviving event. Returns their ids.
+ */
+export function markSupportPurgedClaims(db: Database, batchId: string, at: string): string[] {
+  if (!scopeTablesPresent(db)) return [];
+  const ids = db
+    .query<{ claim_id: string }, [string]>(
       `SELECT claim_id FROM claims
-        WHERE (status = 'purged' AND retracted_at IN (
-                 SELECT e.purged_at FROM purge_batch_receipts m JOIN event_purges e USING(receipt_id) WHERE m.batch_id = ?))
-           OR (EXISTS (SELECT 1 FROM json_each(claims.provenance) p WHERE p.value IN (SELECT value FROM json_each(?)))
-               AND NOT EXISTS (SELECT 1 FROM json_each(claims.provenance) p JOIN events e ON e.event_id = p.value))
+        WHERE claim_id IN (SELECT claim_id FROM purge_claim_scope WHERE batch_id = ?)
+          AND ${NO_SURVIVING_SUPPORT}
         ORDER BY claim_id`,
     )
-    .all(batchId, JSON.stringify(eventIds))
+    .all(batchId)
+    .map((row) => row.claim_id);
+  const mark = db.query("UPDATE claims SET status='purged', retracted_at=? WHERE claim_id=? AND status != 'purged'");
+  for (const id of ids) mark.run(at, id);
+  return ids;
+}
+
+/**
+ * Claims whose whole provenance is purged, whatever became of them since: a
+ * superseded or skipped claim keeps its text as surely as a live one. Typed
+ * claims lose their provenance on purge, so the batch time names them too, and
+ * so does the support scope captured before the evidence links went.
+ */
+function batchClaimIds(db: Database, batchId: string, eventIds: readonly string[]): string[] {
+  if (!tableExists(db, "claims") || eventIds.length === 0) return [];
+  const ids = new Set(
+    db
+      .query<{ claim_id: string }, [string, string]>(
+        `SELECT claim_id FROM claims
+          WHERE (status = 'purged' AND retracted_at IN (
+                   SELECT e.purged_at FROM purge_batch_receipts m JOIN event_purges e USING(receipt_id) WHERE m.batch_id = ?))
+             OR (EXISTS (SELECT 1 FROM json_each(claims.provenance) p WHERE p.value IN (SELECT value FROM json_each(?)))
+                 AND NOT EXISTS (SELECT 1 FROM json_each(claims.provenance) p JOIN events e ON e.event_id = p.value))
+          ORDER BY claim_id`,
+      )
+      .all(batchId, JSON.stringify(eventIds))
+      .map((row) => row.claim_id),
+  );
+  if (scopeTablesPresent(db)) {
+    for (const row of db
+      .query<{ claim_id: string }, [string]>(
+        `SELECT claim_id FROM claims
+          WHERE claim_id IN (SELECT claim_id FROM purge_claim_scope WHERE batch_id = ?)
+            AND ${NO_SURVIVING_SUPPORT}`,
+      )
+      .all(batchId)) ids.add(row.claim_id);
+  }
+  return [...ids].sort();
+}
+
+/** Scoped claims that kept other evidence but still hold anchors into a purged event. */
+function orphanSupportClaims(db: Database, batchId: string): string[] {
+  if (!scopeTablesPresent(db)) return [];
+  return db
+    .query<{ claim_id: string }, [string]>(
+      `SELECT DISTINCT s.claim_id FROM claim_v2_support s
+        WHERE s.claim_id IN (SELECT claim_id FROM purge_claim_scope WHERE batch_id = ?)
+          AND NOT EXISTS (SELECT 1 FROM claim_v2_support_events e WHERE e.support_key = s.support_key)
+        ORDER BY s.claim_id`,
+    )
+    .all(batchId)
     .map((row) => row.claim_id);
 }
 
@@ -90,13 +173,15 @@ function batchProposalIds(db: Database, eventIds: readonly string[]): string[] {
 function unblankedClaims(db: Database, ids: readonly string[]): string[] {
   if (ids.length === 0) return [];
   const semantics = claimV2TablesPresent(db)
-    ? "OR EXISTS (SELECT 1 FROM claim_v2_semantics s WHERE s.claim_id = claims.claim_id)"
+    ? `OR EXISTS (SELECT 1 FROM claim_v2_semantics s WHERE s.claim_id = claims.claim_id)
+       OR EXISTS (SELECT 1 FROM claim_v2_support s WHERE s.claim_id = claims.claim_id)`
     : "";
   return db
     .query<{ claim_id: string }, [string]>(
       `SELECT claim_id FROM claims
         WHERE claim_id IN (SELECT value FROM json_each(?))
-          AND (body != '' OR frontmatter != '{}' OR object IS NOT NULL OR subject IS NOT NULL OR predicate IS NOT NULL ${semantics})`,
+          AND (body != '' OR frontmatter != '{}' OR object IS NOT NULL OR subject IS NOT NULL OR predicate IS NOT NULL
+               OR target IS NOT NULL OR subjects != '[]' OR model_ref IS NOT NULL ${semantics})`,
     )
     .all(JSON.stringify(ids))
     .map((row) => row.claim_id);
@@ -106,7 +191,7 @@ function unblankedProposals(db: Database, ids: readonly string[]): string[] {
   if (ids.length === 0) return [];
   return db
     .query<{ proposal_id: string }, [string]>(
-      "SELECT proposal_id FROM proposals WHERE proposal_id IN (SELECT value FROM json_each(?)) AND (body != '' OR frontmatter != '{}')",
+      "SELECT proposal_id FROM proposals WHERE proposal_id IN (SELECT value FROM json_each(?)) AND (body != '' OR frontmatter != '{}' OR target IS NOT NULL OR subjects != '[]')",
     )
     .all(JSON.stringify(ids))
     .map((row) => row.proposal_id);
@@ -119,6 +204,35 @@ function archiveNames(vaultPath: string): string[] {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+}
+
+interface ArchiveListing {
+  /** Regular files small enough to read, in name order. */
+  readable: string[];
+  /** Files or the directory itself that a bounded scan cannot cover. */
+  unverifiable: string[];
+  entries: number;
+}
+
+function listArchive(vaultPath: string): ArchiveListing {
+  const names = archiveNames(vaultPath);
+  const listing: ArchiveListing = { readable: [], unverifiable: [], entries: names.length };
+  if (names.length > MAX_ARCHIVE_FILES) {
+    listing.unverifiable.push(`${ARCHIVE_DIRECTORY} (more than ${MAX_ARCHIVE_FILES} files)`);
+    return listing;
+  }
+  for (const name of names) {
+    const relPath = `${ARCHIVE_DIRECTORY}/${name}`;
+    try {
+      const stat = lstatSync(join(vaultPath, relPath));
+      if (!stat.isFile()) continue;
+      if (stat.size > MAX_ARCHIVE_FILE_BYTES) listing.unverifiable.push(`${relPath} (over ${MAX_ARCHIVE_FILE_BYTES} bytes)`);
+      else listing.readable.push(relPath);
+    } catch {
+      listing.unverifiable.push(`${relPath} (unreadable)`);
+    }
+  }
+  return listing;
 }
 
 function isRegularFile(vaultPath: string, relPath: string): boolean {
@@ -153,9 +267,7 @@ function eraseArchiveCopies(
   bodies: readonly string[],
 ): string[] {
   const erased: string[] = [];
-  for (const name of archiveNames(vaultPath)) {
-    const relPath = `${ARCHIVE_DIRECTORY}/${name}`;
-    if (!isRegularFile(vaultPath, relPath)) continue;
+  for (const relPath of listArchive(vaultPath).readable) {
     const snapshot = files.read(relPath);
     if (snapshot === null) continue;
     try {
@@ -205,6 +317,18 @@ export function erasePurgedPayloads(
         "DELETE FROM claim_v2_semantics WHERE claim_id=?",
       );
       for (const id of claimIds) dropSemantics.run(id);
+      // Support anchors are offsets into the purged event; a claim that lost
+      // all its evidence keeps none, and one that kept some loses only the
+      // anchors whose event links are gone.
+      const dropSupport = db.query("DELETE FROM claim_v2_support WHERE claim_id=?");
+      for (const id of claimIds) dropSupport.run(id);
+      if (tableExists(db, "purge_claim_scope")) {
+        db.query(
+          `DELETE FROM claim_v2_support
+            WHERE claim_id IN (SELECT claim_id FROM purge_claim_scope WHERE batch_id = ?)
+              AND NOT EXISTS (SELECT 1 FROM claim_v2_support_events e WHERE e.support_key = claim_v2_support.support_key)`,
+        ).run(batchId);
+      }
     }
     const blankProposal = db.query(
       "UPDATE proposals SET body='', target=NULL, frontmatter='{}', subjects='[]', status='withdrawn' WHERE proposal_id=?",
@@ -227,8 +351,16 @@ function proof(
   found: string[],
   method: string,
   at: string,
+  unverifiable: string[] = [],
 ): PurgeStoreProof {
-  return { store, checked, found: [...new Set(found)].sort(), method, at };
+  return {
+    store,
+    checked,
+    found: [...new Set(found)].sort(),
+    unverifiable: [...new Set(unverifiable)].sort(),
+    method,
+    at,
+  };
 }
 
 function searchFound(db: Database, eventIds: readonly string[]): string[] {
@@ -271,7 +403,7 @@ function canonFound(
   vaultPath: string,
   batchId: string,
   ids: ReadonlySet<string>,
-): string[] {
+): { found: string[]; unverifiable: string[] } {
   const report = listCanonPagesReport(vaultPath);
   const found = report.pages
     .filter((page) =>
@@ -290,25 +422,31 @@ function canonFound(
         .map((row) => row.page_path),
     );
   }
-  // A page the walk could not read cannot be shown clean.
-  found.push(
-    ...report.skipped
-      .filter((entry) => entry.code !== "invalid" && entry.code !== "oversize")
-      .map((entry) => entry.relPath),
-  );
-  return found;
+  // A page the walk could not read cannot be shown clean. It is not evidence
+  // either, so it is named apart from the pages that hold purged sources.
+  const unverifiable = report.skipped
+    .filter((entry) => entry.code !== "invalid" && entry.code !== "oversize")
+    .map((entry) => `${entry.relPath} (${entry.code})`);
+  if (report.truncated) unverifiable.push("canon walk (truncated at its page limit)");
+  return { found, unverifiable };
 }
 
 function archiveFound(
   vaultPath: string,
   ids: ReadonlySet<string>,
   files: CanonFiles,
-): string[] {
+): { found: string[]; unverifiable: string[]; checked: number } {
+  const listing = listArchive(vaultPath);
   const found: string[] = [];
-  for (const name of archiveNames(vaultPath)) {
-    const relPath = `${ARCHIVE_DIRECTORY}/${name}`;
-    if (!isRegularFile(vaultPath, relPath)) continue;
-    const snapshot = files.read(relPath);
+  const unverifiable = [...listing.unverifiable];
+  for (const relPath of listing.readable) {
+    let snapshot;
+    try {
+      snapshot = files.read(relPath);
+    } catch {
+      unverifiable.push(`${relPath} (unreadable)`);
+      continue;
+    }
     if (snapshot === null) continue;
     try {
       if (citedIds(Buffer.from(snapshot.bytes).toString("utf8"), ids))
@@ -317,7 +455,7 @@ function archiveFound(
       snapshot.close();
     }
   }
-  return found;
+  return { found, unverifiable, checked: listing.entries };
 }
 
 /** A pending write intent embeds whole before and after page images. */
@@ -371,6 +509,8 @@ export function proveLocalStores(
   const ids = new Set(eventIds);
   const claimIds = batchClaimIds(db, batchId, eventIds);
   const proposalIds = batchProposalIds(db, eventIds);
+  const canon = canonFound(db, vaultPath, batchId, ids);
+  const archive = archiveFound(vaultPath, ids, files);
   const present =
     eventIds.length === 0
       ? []
@@ -385,7 +525,7 @@ export function proveLocalStores(
     proof(
       "claims",
       claimIds.length,
-      unblankedClaims(db, claimIds),
+      [...unblankedClaims(db, claimIds), ...orphanSupportClaims(db, batchId)],
       "blank-payload",
       at,
     ),
@@ -413,16 +553,18 @@ export function proveLocalStores(
     proof(
       "canon",
       eventIds.length,
-      canonFound(db, vaultPath, batchId, ids),
+      canon.found,
       "page-sources-and-holds",
       at,
+      canon.unverifiable,
     ),
     proof(
       "archive",
-      archiveNames(vaultPath).length,
-      archiveFound(vaultPath, ids, files),
+      archive.checked,
+      archive.found,
       "archive-sources-scan",
       at,
+      archive.unverifiable,
     ),
     proof(
       "receipt_images",

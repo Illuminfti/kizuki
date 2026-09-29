@@ -11,13 +11,18 @@
   checkpoint and a compaction). The canon rewrite of a held page no longer
   archives the page it replaces. `purge --verify` prints one proof per store
   and fails while any store still holds the text; its previous `ok` could be
-  empty. `kizuki recover` and the daemon sweep finish a purge interrupted after
-  its first phase. Ledger migration 34 adds `purge_erasures` and
-  `purge_suppression_lifts`.
+  empty. A finished purge is only proved, and `--repair` erases what the proofs
+  found; a page or archive file the proof cannot read is reported as
+  unverifiable. Typed claims bound to a purged event by their support are
+  erased too. `kizuki recover` and the daemon sweep finish a purge interrupted after
+  its first phase. Ledger migration 35 adds `purge_erasures`,
+  `purge_claim_scope`, `purge_suppression_lifts` and
+  `purge_suppression_sources`.
 - A source record that was purged is no longer captured again silently. Sync
   refuses a record whose connector and source record id match a purge, reports
   `suppressed=N`, and keeps going; `purge` warns with the path of a record that
-  still exists at its source. `kizuki purge --suppressions` lists the refusals
+  still exists at its source. The daemon sync path reports the refusal in the run
+  receipt. `kizuki purge --suppressions` lists the refusals
   and `kizuki purge --lift-suppression RECEIPT` lifts them. Purges recorded
   earlier refuse too until lifted.
 

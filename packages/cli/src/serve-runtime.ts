@@ -136,6 +136,11 @@ async function syncConnections(
         events_stored += result.stored;
         events_duplicate += result.duplicates;
         events_synced += result.stored + result.duplicates;
+        // A refused purged record is stored nowhere and advances the cursor, so
+        // the receipt is the only place the owner learns why it never arrived.
+        if (result.suppressed !== undefined && errors.length < MAX_SYNC_ERRORS) {
+          errors.push(`connector ${selected.connection.connector_id} refused ${result.suppressed} purged source record(s); see: kizuki purge --suppressions`);
+        }
         // Why, not only that: the receipt is where an owner looks first.
         if (result.errors.length > 0 && errors.length < MAX_SYNC_ERRORS) {
           errors.push(`connector ${selected.connection.connector_id} sync failed: ${redactReceiptError(result.errors[0])}`);
