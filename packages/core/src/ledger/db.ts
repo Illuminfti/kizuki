@@ -3,7 +3,9 @@ import { Database } from "bun:sqlite";
 import { manageDatabaseLifetime } from "./lifetime";
 import { configureLedgerWalLifecycle } from "./wal-lifecycle";
 import { applySourceGrantsV11, applyNativeOwnerEvidenceV12, applySourceStoresV13, applySourceErasureV14, applySourceReceiptIntegrityV15 } from "./source-grants-schema";
-import { applyAgentsV9 } from "../agents/schema";
+import { applyAgentsV9, initAgents } from "../agents/schema";
+import { initGraph } from "../graph/schema";
+import { initSearch } from "../search/schema";
 import { applyCanonV4, initCanon } from "../canon/schema";
 import { applyClaimsV3, repairClaimsCompatibility } from "../claims/schema";
 import { applyDerivedV10 } from "../derived";
@@ -13,6 +15,7 @@ import { applyCheckpointBackfillCompleteV23, applyCheckpointModeCursorsV25, appl
 import { LedgerStoreError } from "./errors";
 import {
   assertLedgerSchema,
+  assertServableLedger,
   inspectLedgerHealth,
   readSchemaVersion,
 } from "./integrity";
@@ -361,6 +364,53 @@ export function openLedger(
     // Apply before migrations: concurrent process startup is a writer too.
     configureLedgerBusyTimeout(db, timeout);
     ensureLedgerSchema(db, options);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+}
+
+/** Every surface an adapter serves from, including the derived layers. Reads only. */
+function servableAsOpened(db: Database): boolean {
+  try {
+    if (db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode !== "wal") return false;
+    assertServableLedger(db, LEDGER_SCHEMA_VERSION);
+    for (const query of [
+      "SELECT * FROM search_documents LIMIT 0",
+      "SELECT * FROM search_docs LIMIT 0",
+      "SELECT sensitivity, dest_sensitivity FROM graph_edges LIMIT 0",
+      "SELECT status FROM derived_meta LIMIT 0",
+    ]) db.query(query).all();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The opener for a long-lived serving adapter. A ledger that is already
+ * current is used as it stands: repairing it is a write, and the write lock
+ * can be held by another process for as long as a rebuild takes. A ledger
+ * that is not current takes the same repair path as `openLedger`.
+ */
+export function openLedgerForServing(
+  dbPath: string,
+  options: { busyTimeoutMs?: number } = {},
+): Database {
+  const timeout = validatedBusyTimeout(options.busyTimeoutMs);
+  const db = manageDatabaseLifetime(new Database(dbPath));
+  try {
+    configureLedgerWalLifecycle(db, dbPath);
+    configureLedgerBusyTimeout(db, timeout);
+    if (servableAsOpened(db)) {
+      db.exec("PRAGMA foreign_keys = ON");
+      return db;
+    }
+    ensureLedgerSchema(db);
+    initSearch(db);
+    initGraph(db);
+    initAgents(db);
     return db;
   } catch (error) {
     db.close();

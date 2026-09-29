@@ -1,9 +1,8 @@
 import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
-import { join } from "node:path";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { ServeContext } from "@kizuki/core";
 import { call, connectClient, envelopeOf } from "./client";
-import { mcpFixture } from "./helpers";
+import { holdWriteLock, mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
@@ -17,43 +16,6 @@ afterEach(async () => {
   fixture?.dispose();
   fixture = null;
 });
-
-const HOLDER = join(import.meta.dir, "../../core/test/ledger-busy-child.ts");
-
-interface Holder {
-  release(): Promise<void>;
-}
-
-/** Another process holding the ledger write lock, as a serve rail batch does. */
-async function holdWriteLock(
-  vaultPath: string,
-  holdMs: number,
-): Promise<Holder> {
-  const child = Bun.spawn(
-    [
-      process.execPath,
-      HOLDER,
-      join(vaultPath, ".kizuki", "kizuki.db"),
-      String(holdMs),
-    ],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  const reader = child.stdout.getReader();
-  let buffered = "";
-  while (!buffered.includes("\n")) {
-    const chunk = await reader.read();
-    if (chunk.done) throw new Error("write-lock holder ended before it held");
-    buffered += new TextDecoder().decode(chunk.value);
-  }
-  expect(buffered.split("\n")[0]).toBe("held");
-  reader.releaseLock();
-  return {
-    async release() {
-      if (child.exitCode === null && child.signalCode === null) child.kill();
-      await child.exited;
-    },
-  };
-}
 
 async function connect(ctx: ServeContext): Promise<Client> {
   return connectClient(ctx, open);

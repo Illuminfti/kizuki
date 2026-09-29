@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { authenticateAgentCredential, initAgents, isLedgerBusy, LEDGER_BUSY_TIMEOUT_MS, leaseHeldMessage, PortError, PortRegistry, bindLocalSourcePort, loadConfiguredRetrieval } from "@kizuki/core";
+import { authenticateAgentCredential, isLedgerBusy, LEDGER_BUSY_TIMEOUT_MS, leaseHeldMessage, PortError, PortRegistry, bindLocalSourcePort, loadConfiguredRetrieval } from "@kizuki/core";
 import { registerEmbeddedRetrieval } from "@kizuki/retrieval-pg";
-import { openLedger, initGraph, initSearch } from "@kizuki/core/internal";
+import { openLedgerForServing } from "@kizuki/core/internal";
 import type { Principal, RetrievalPort } from "@kizuki/core";
 import { ownerPrincipal, principalFromToken } from "./principal";
 import { runStdio } from "./stdio";
@@ -89,16 +89,13 @@ export async function main(argv: string[]): Promise<void> {
   const stateDir = join(options.vault, ".kizuki");
   if (!existsSync(stateDir)) refuse("vault is not initialized");
 
-  let db: ReturnType<typeof openLedger> | undefined;
+  let db: ReturnType<typeof openLedgerForServing> | undefined;
   try {
-    db = openLedger(join(stateDir, "kizuki.db"), { busyTimeoutMs: LEDGER_BUSY_TIMEOUT_MS });
-    initSearch(db);
-    initGraph(db);
-    initAgents(db);
+    db = openLedgerForServing(join(stateDir, "kizuki.db"), { busyTimeoutMs: LEDGER_BUSY_TIMEOUT_MS });
   } catch (error) {
     db?.close();
-    // Opening runs schema repair, which is a write. Name the holder rather
-    // than reporting a healthy vault as unopenable.
+    // A ledger that needs repair is repaired by opening it, which is a write.
+    // Name the holder rather than reporting a healthy vault as unopenable.
     refuse(isLedgerBusy(error) ? leaseHeldMessage(options.vault) : "vault could not open");
   }
 

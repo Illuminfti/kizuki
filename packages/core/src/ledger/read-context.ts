@@ -4,7 +4,7 @@ import { openLedgerDirectory } from "../vault/canon-files";
 import { assertVaultControl } from "../vault/init";
 import { bindServingAudit } from "../serving/audit-capability";
 import { LEDGER_SCHEMA_VERSION } from "./db";
-import { assertLedgerSchema } from "./integrity";
+import { assertServableLedger } from "./integrity";
 import { LEDGER_BUSY_TIMEOUT_MS } from "./limits";
 import { manageDatabaseLifetime } from "./lifetime";
 import { ledgerAccepted, readLedgerMark } from "./mark";
@@ -61,18 +61,7 @@ export function openLedgerRead(vaultPath: string, options: { audit?: boolean } =
       handle.exec("PRAGMA foreign_keys = ON");
       assertCurrent();
       try {
-        assertLedgerSchema(handle, LEDGER_SCHEMA_VERSION);
-        // These authoritative surfaces used to be silently repaired by initAgents,
-        // initServe and initCanon. Reads require them, without creating any object.
-        for (const query of [
-          "SELECT agent_id, quarantined_at, quarantine_reason FROM agents LIMIT 0",
-          "SELECT relay_owner_corrections, grant_epoch FROM agent_grants LIMIT 0",
-          "SELECT audit_id, served_count, denied_count, grant_epoch FROM agent_audit LIMIT 0",
-          "SELECT * FROM canon_receipts LIMIT 0", "SELECT * FROM page_index LIMIT 0",
-          "SELECT * FROM canon_source_erasure_intents LIMIT 0", "SELECT * FROM claims LIMIT 0",
-          "SELECT * FROM schedules LIMIT 0", "SELECT * FROM run_receipts LIMIT 0",
-          "SELECT input_ids, integrity, outcome, batch_mode, model_inputs, deferred_inputs FROM extract_batches LIMIT 0",
-        ]) handle.query(query).all();
+        assertServableLedger(handle, LEDGER_SCHEMA_VERSION);
       }
       catch {
         // A schema error can follow an inode swap; custody takes precedence.
