@@ -17,8 +17,9 @@ export function charge(budget: ReadBudget, value: string): void {
 /**
  * Which recorded past a read is served from. Only the present is servable, so
  * a `knownAt` time or snapshot is refused before a frame exists. Known-at
- * history widens this type and `claimVisibleSql`, and nothing else in the
- * pipeline names a claim status.
+ * history widens this type and `claimVisibleSql`, the one place the collect
+ * stage names a claim status in SQL. `eligibleWorldClaim` checks the status
+ * of the row it loads and moves with it.
  */
 export type RecordedCutoff = { readonly kind: "current" };
 

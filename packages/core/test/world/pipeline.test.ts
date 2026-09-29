@@ -176,7 +176,7 @@ describe("the recorded cutoff", () => {
     const concept = reader.find("concepts", "find_concepts", "Bayesian updating")[0]!.ref;
     const situation = reader.find("situations", "find_situations", "Launch")[0]!.ref;
     const snapshot = { kind: "snapshot", token: Buffer.alloc(32, 7).toString("base64url") };
-    const operations: Record<string, unknown>[] = [
+    const operations: { operation: "find_concepts" | "find_situations" | "concept" | "situation"; [key: string]: unknown }[] = [
       { operation: "find_concepts", label: "Bayes" },
       { operation: "find_situations", label: "Launch" },
       { operation: "concept", concept },

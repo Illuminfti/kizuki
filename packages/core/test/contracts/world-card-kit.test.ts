@@ -50,7 +50,7 @@ function card(over: Record<string, unknown> = {}): QuestionCard {
   } as QuestionCard;
 }
 
-const REFUSED = { ok: false, errors: ["invalid question-card/v1 payload"] };
+const REFUSED = { ok: false, errors: ["invalid question-card/v1 payload"] } as const;
 
 describe("a card codec built from the kit", () => {
   test("accepts a well-formed card and hands back the snapshot it validated", () => {
