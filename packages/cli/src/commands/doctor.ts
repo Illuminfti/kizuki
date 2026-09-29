@@ -493,6 +493,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(
     `derived search=${derived.search.rebuilt_at ?? "never"} docs=${derived.search.doc_count} graph=${derived.graph.rebuilt_at ?? "never"} docs=${derived.graph.doc_count}`,
   );
+  io.out(report.serve.stores.vector_layer.detail);
   const writers = report.serve.stores.writers;
   io.out(
     `writers loop=${writers.loop} correction=${writers.correction} import=${writers.import} revert=${writers.revert}`,

@@ -13,12 +13,12 @@ import { inspectPurgeHealth, listPurgeRecoveryReceipts, resumePurge } from "../l
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { createDurableWriteBudget } from "./budget-ledger";
-import { loadServeConfig } from "./config";
+import { embedBackfillPeriod, loadServeConfig } from "./config";
 import { composeBrief, repairBriefPages, type BriefRepair } from "./brief";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { createFileNotifier, briefPath } from "./notifier-file";
-import { recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
-import { initServe, listSchedules } from "./schema";
+import { coalesceNoopReceipt, recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
+import { applyRailPeriod, initServe, listSchedules } from "./schema";
 import {
   InjectedCrash,
   emptyRunTotals,
@@ -276,7 +276,15 @@ async function runPurgeSweep(
   };
 }
 
-async function runEmbedBackfill(hooks: AnyRailHooks | undefined): Promise<Partial<RunReceipt>> {
+async function runEmbedBackfill(
+  db: Database,
+  vaultPath: string,
+  now: string,
+  hooks: AnyRailHooks | undefined,
+): Promise<Partial<RunReceipt>> {
+  // Without an embedding port the rail backs off to a long period; configuring
+  // one pulls the next run forward again.
+  applyRailPeriod(db, "embed-backfill", embedBackfillPeriod(vaultPath), now);
   const backlog = hooks?.embedding_backlog ?? 0;
   if (backlog === 0) {
     return { status: "ok" };
@@ -446,7 +454,7 @@ async function runRailImpl(
           partial = await runPurgeSweep(db, vaultPath, hooks, started);
           break;
         case "embed-backfill":
-          partial = await runEmbedBackfill(hooks);
+          partial = await runEmbedBackfill(db, vaultPath, started, hooks);
           break;
         case "brief":
           partial = await runBrief(db, vaultPath, started, hooks?.model_ref ?? null);
@@ -507,6 +515,8 @@ async function runRailImpl(
         typeof item === "string" ? item : redactReceiptError(item),
       ),
     };
+    // A scheduled run that did nothing advances its schedule without a receipt.
+    if (options.crashAfter === undefined && coalesceNoopReceipt(db, vaultPath, receipt)) return receipt;
     persistRunReceipt(db, vaultPath, receipt, {
       ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
       ...(rail === "brief" ? { artifactPath: briefPath(vaultPath, dayOf(started)) } : {}),

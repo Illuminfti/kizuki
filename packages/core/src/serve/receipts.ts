@@ -15,6 +15,8 @@ import { REDACTION_KINDS } from "../producer/scrub";
 import { loadServeConfig } from "./config";
 import {
   InjectedCrash,
+  NOOP_RECEIPT_HEARTBEAT_S,
+  RUN_RECEIPT_JOURNAL_MAX_BYTES,
   RUN_RECEIPTS_PATH,
   emptyRunTotals,
   isRailId,
@@ -372,23 +374,59 @@ function redactReceipt(receipt: RunReceipt): RunReceipt {
   };
 }
 
+/** Attach the compare-and-advance intent for the rail's next due slot. */
+function withScheduleTransition(db: Database, vaultPath: string, receipt: RunReceipt): RunReceipt {
+  if (!isRailId(receipt.rail)) return receipt;
+  const row = db.query<{ next_run_at: string | null; period_s: number }, [string]>("SELECT next_run_at,period_s FROM schedules WHERE rail=?").get(receipt.rail);
+  if (row === null) return receipt;
+  const scheduled = receipt.execution?.trigger === "scheduled";
+  const previous = row.next_run_at;
+  const briefHour = receipt.rail === "brief" ? loadServeConfig(vaultPath).brief_hour : null;
+  const next = nextScheduleSlot(scheduled ? receipt.execution!.due_at! : receipt.finished_at, row.period_s, briefHour);
+  return { ...receipt, schedule_transition: { previous_due_at: previous, next_run_at: next, period_s: row.period_s, brief_hour: briefHour } };
+}
+
+/** A run that changed nothing, reported nothing and failed at nothing. */
+export function isNoopReceipt(receipt: RunReceipt): boolean {
+  const counters = [
+    receipt.events_synced, receipt.events_stored, receipt.events_duplicate, receipt.events_self_skipped,
+    receipt.claims_extracted, receipt.claims_written, receipt.claims_deduped, receipt.claims_superseded,
+    receipt.records_skipped ?? 0, receipt.canon_writes, receipt.canon_reverts,
+    receipt.model.calls, receipt.model.unavailable, receipt.model.input_tokens, receipt.model.output_tokens,
+    receipt.retrieval.upserts, receipt.retrieval.removals, receipt.retrieval.pending_ops,
+  ];
+  return receipt.status === "ok" && receipt.stopped === null && receipt.errors.length === 0 &&
+    receipt.oversized === undefined && receipt.retrieval.degraded.length === 0 &&
+    Object.keys(receipt.claims_rejected).length === 0 && counters.every((count) => count === 0);
+}
+
+/**
+ * Coalesce a scheduled no-op run into its rail's last no-op receipt: the schedule
+ * still advances, but the journal gains a receipt only for the first idle run
+ * after activity and then at most once per heartbeat. Returns true when the
+ * receipt was not persisted. Manual and once runs, the brief (which writes a
+ * page) and every non-idle run always persist.
+ */
+export function coalesceNoopReceipt(db: Database, vaultPath: string, receipt: RunReceipt): boolean {
+  if (receipt.rail === "brief" || receipt.execution?.trigger !== "scheduled" || !isNoopReceipt(receipt)) return false;
+  const row = db.query<{ report: string }, [string]>(
+    "SELECT report FROM run_receipts WHERE rail = ? ORDER BY finished_at DESC, run_id DESC LIMIT 1",
+  ).get(receipt.rail);
+  let last: RunReceipt | null = null;
+  try { last = row === null ? null : parseRunReceipt(JSON.parse(row.report)); } catch { last = null; }
+  if (last === null || !isNoopReceipt(last) ||
+      Date.parse(receipt.finished_at) - Date.parse(last.finished_at) >= NOOP_RECEIPT_HEARTBEAT_S * 1000) return false;
+  db.transaction(() => applyScheduleTransition(db, vaultPath, withScheduleTransition(db, vaultPath, receipt))).immediate();
+  return true;
+}
+
 export function persistRunReceipt(
   db: Database,
   vaultPath: string,
   receipt: RunReceipt,
   options: { crashAfter?: CrashPoint; artifactPath?: string } = {},
 ): void {
-  receipt = redactReceipt(receipt);
-  if (isRailId(receipt.rail)) {
-    const row = db.query<{ next_run_at: string | null; period_s: number }, [string]>("SELECT next_run_at,period_s FROM schedules WHERE rail=?").get(receipt.rail);
-    if (row !== null) {
-      const scheduled = receipt.execution?.trigger === "scheduled";
-      const previous = row.next_run_at;
-      const briefHour = receipt.rail === "brief" ? loadServeConfig(vaultPath).brief_hour : null;
-      const next = nextScheduleSlot(scheduled ? receipt.execution!.due_at! : receipt.finished_at, row.period_s, briefHour);
-      receipt = { ...receipt, schedule_transition: { previous_due_at: previous, next_run_at: next, period_s: row.period_s, brief_hour: briefHour } };
-    }
-  }
+  receipt = withScheduleTransition(db, vaultPath, redactReceipt(receipt));
   if (options.artifactPath !== undefined) {
     mkdirSync(dirname(options.artifactPath), { recursive: true, mode: 0o700 });
     if (!existsSync(options.artifactPath)) {
@@ -449,26 +487,45 @@ export function recoverRunJournal(db: Database, vaultPath: string): string[] {
   return recovered;
 }
 
+/**
+ * Bound the receipt journal by age and size. Receipts older than `cutoff` go,
+ * then the oldest survivors go until the journal fits `maxBytes`; the JSONL
+ * file is rewritten from the surviving rows and the dropped rows are deleted.
+ */
 export function pruneRunReceipts(
   db: Database,
   vaultPath: string,
   cutoff: string,
+  maxBytes: number = RUN_RECEIPT_JOURNAL_MAX_BYTES,
 ): { deleted: number; rewritten: number } {
-  const kept = listRunReceipts(db).filter((receipt) => receipt.finished_at >= cutoff);
-  const deleted = db
-    .query<{ n: number }, [string]>(
-      "SELECT COUNT(*) AS n FROM run_receipts WHERE finished_at < ?",
+  const before = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()?.n ?? 0;
+  const rows = db
+    .query<{ run_id: string; report: string }, [string]>(
+      "SELECT run_id, report FROM run_receipts WHERE finished_at >= ? ORDER BY finished_at DESC, run_id DESC",
     )
-    .get(cutoff)?.n ?? 0;
-  db.query("DELETE FROM run_receipts WHERE finished_at < ?").run(cutoff);
+    .all(cutoff);
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const row of rows) {
+    let valid = false;
+    try { valid = parseRunReceipt(JSON.parse(row.report)) !== null; } catch { valid = false; }
+    if (!valid) continue;
+    bytes += Buffer.byteLength(row.report) + 1;
+    if (bytes > maxBytes) break;
+    kept.push(row.report);
+  }
+  kept.reverse();
+  const oldestKept = kept.length === 0 ? null : (JSON.parse(kept[0]!) as { finished_at: string; run_id: string });
+  db.transaction(() => {
+    if (oldestKept === null) db.query("DELETE FROM run_receipts").run();
+    else db.query("DELETE FROM run_receipts WHERE finished_at < ? OR (finished_at = ? AND run_id < ?)")
+      .run(oldestKept.finished_at, oldestKept.finished_at, oldestKept.run_id);
+  }).immediate();
   const path = runReceiptsPath(vaultPath);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(
-    path,
-    kept.map((receipt) => `${JSON.stringify(receipt)}\n`).join(""),
-    { mode: 0o600 },
-  );
-  return { deleted, rewritten: kept.length };
+  writeFileSync(path, kept.map((report) => `${report}\n`).join(""), { mode: 0o600 });
+  const after = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()?.n ?? 0;
+  return { deleted: before - after, rewritten: kept.length };
 }
 
 export function orphanJournalReceipts(db: Database, vaultPath: string): string[] {

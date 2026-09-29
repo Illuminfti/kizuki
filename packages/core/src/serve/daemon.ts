@@ -5,7 +5,7 @@ import { canonRecoveryNextStep, readCanonRecoveryHold } from "../canon/stage-rec
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import nodeProcess from "node:process";
-import { loadServeConfig } from "./config";
+import { embedBackfillPeriod, loadServeConfig } from "./config";
 import { startServeHttp } from "./http";
 import type { ServeHttpHandle } from "./http";
 import {
@@ -167,6 +167,7 @@ export async function runServeDaemon(
   // The journal is replayed and the lease held, so no pending receipt still
   // expects the old period.
   applyRailPeriod(db, "sync", config.sync_period_s, process.now());
+  applyRailPeriod(db, "embed-backfill", embedBackfillPeriod(vaultPath), process.now());
   const httpEnabled = options.http ?? config.http;
   if (httpEnabled) {
     const retrieval = options.retrieval ?? options.hooks?.claims?.retrieval;

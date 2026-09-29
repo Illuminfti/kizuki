@@ -12,7 +12,7 @@ import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
 import { tableExists } from "../ledger/schema";
 import { inspectPurgeHealth } from "../ledger/purge";
 import { listCanonPagesReport } from "../vault/pages";
-import { loadConfiguredModelRef, loadServeConfig } from "./config";
+import { loadConfiguredEmbeddingPort, loadConfiguredModelRef, loadServeConfig } from "./config";
 import { readServeIntent } from "./intent";
 import { serviceFile } from "./service-files";
 import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
@@ -26,6 +26,7 @@ import {
   CALIBRATION_BAND,
   CONFIDENCE_SPREAD_MIN,
   DEFAULT_RAILS,
+  DOCTOR_RECEIPT_LIMIT,
   EMPTY_STREAK,
   RETRIEVAL_SLA_SECONDS,
   RUN_RECEIPT_RETENTION_DAYS,
@@ -95,10 +96,15 @@ function railDoctor(
   now: string,
   expectLiveness: boolean,
   wait_s: number,
+  /** The schedule's last run: coalesced idle runs advance it without a receipt. */
+  lastRunAt: string | null,
+  /** A rail with nothing to do by configuration is not down for producing nothing. */
+  idleByDesign: boolean,
 ): RailDoctor {
   const forRail = receipts.filter((receipt) => receipt.rail === rail);
   const last = forRail.at(-1) ?? null;
-  const age = ageSeconds(last?.finished_at ?? null, now);
+  const lastActiveAt = [last?.finished_at ?? null, lastRunAt].reduce((a, b) => (a === null || (b !== null && b > a) ? b : a), null);
+  const age = ageSeconds(lastActiveAt, now);
   let empty = 0;
   for (let index = forRail.length - 1; index >= 0; index -= 1) {
     const receipt = forRail[index];
@@ -108,8 +114,8 @@ function railDoctor(
   const grace = period_s + wait_s;
   const stale = age !== null && age > 2 * period_s + grace;
   const failed = last?.status === "failed";
-  const emptyDown = empty >= EMPTY_STREAK;
-  const neverRan = last === null && expectLiveness;
+  const emptyDown = empty >= EMPTY_STREAK && !idleByDesign;
+  const neverRan = last === null && lastActiveAt === null && expectLiveness;
   let status: RailDoctor["status"] = "ok";
   let reason: string | null = null;
   if (neverRan) {
@@ -477,6 +483,7 @@ function storeDoctor(
   }
   if (!purge.ok) degraded.push("purge-unhealthy");
   degraded.push("identity-authority-unavailable");
+  const embeddingPort = loadConfiguredEmbeddingPort(vaultPath);
   const search = readDerivedMeta(db, "search");
   const graph = readDerivedMeta(db, "graph");
   return {
@@ -485,6 +492,9 @@ function storeDoctor(
     pending_purge_ops: pendingPurge,
     oldest_purge_op_age_s: ageSeconds(oldestPurge, now),
     embedding_throughput_docs_per_s: embeddingThroughputFromReceipts(receipts),
+    vector_layer: embeddingPort === null
+      ? { state: "off", detail: "vector layer: off (no embedding model configured)" }
+      : { state: "configured", detail: `vector layer: configured (${embeddingPort})` },
     orphan_run_receipts: orphanJournalReceipts(db, vaultPath),
     derived: {
       search: {
@@ -525,7 +535,8 @@ export function inspectServeDoctor(
         detail: "supervisor: none (loop runs only while you run it)",
       };
   const since = new Date(Date.parse(now) - RUN_RECEIPT_RETENTION_DAYS * 86_400_000).toISOString();
-  const receipts = listRunReceipts(db, { since });
+  const receipts = listRunReceipts(db, { since, limit: DOCTOR_RECEIPT_LIMIT });
+  const embeddingPort = loadConfiguredEmbeddingPort(vaultPath);
   const expectLive = expectRailLiveness(intent, supervisor);
   const schedules = new Map(listSchedules(db).map((row) => [row.rail, row]));
   const config = loadServeConfig(vaultPath);
@@ -538,6 +549,8 @@ export function inspectServeDoctor(
       now,
       expectLive,
       syncPassWait(config.extraction),
+      schedule?.last_run_at ?? null,
+      spec.rail === "embed-backfill" && embeddingPort === null,
     );
   });
   const usedToday = receipts

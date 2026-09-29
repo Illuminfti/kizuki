@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { isPlainObject } from "../util/validate";
 import {
   DEFAULT_EXTRACTION_CONFIG,
+  DEFAULT_RAILS,
   DEFAULT_SERVE_CONFIG,
+  EMBED_BACKFILL_IDLE_PERIOD_S,
   EXTRACTION_BOUNDS,
   SYNC_PERIOD_BOUNDS,
   type ExtractionConfig,
@@ -60,6 +62,32 @@ export function loadConfiguredModelRef(vaultPath: string): string | null {
     ? llm["id"]
     : "kizuki.llm.openai-compatible";
   return `${port}:${model}`;
+}
+
+/**
+ * The vault's `[ports] embedding` selection, or null when no embedding port is
+ * configured. Absence and `kizuki.embedding.none` both mean the vector layer is off.
+ */
+export function loadConfiguredEmbeddingPort(vaultPath: string): string | null {
+  const path = serveConfigPath(vaultPath);
+  if (!existsSync(path)) return null;
+  let parsed: unknown;
+  try {
+    parsed = Bun.TOML.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(parsed) || !isPlainObject(parsed["ports"])) return null;
+  const value = parsed["ports"]["embedding"];
+  const id = isPlainObject(value) ? value["id"] : value;
+  return typeof id === "string" && id.length > 0 && id !== "kizuki.embedding.none" ? id : null;
+}
+
+/** The embed-backfill period for this vault: its schedule default when a port is configured, else a long back-off. */
+export function embedBackfillPeriod(vaultPath: string): number {
+  return loadConfiguredEmbeddingPort(vaultPath) === null
+    ? EMBED_BACKFILL_IDLE_PERIOD_S
+    : (DEFAULT_RAILS.find((spec) => spec.rail === "embed-backfill")?.period_s ?? EMBED_BACKFILL_IDLE_PERIOD_S);
 }
 
 export function loadServeConfig(vaultPath: string): ServeConfig {
