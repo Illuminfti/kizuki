@@ -17,6 +17,7 @@ export const WORLD_MIGRATION_BASE = CURSOR_STORE_MIGRATION_VERSION;
 
 export const WORLD_MIGRATION_VERSIONS = {
   // slot: view
+  view: 36,
   // slot: known
   // slot: consol
   // slot: ident

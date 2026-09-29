@@ -10,6 +10,9 @@ setDefaultTimeout(60_000);
 const helpers = createHelpers();
 afterEach(helpers.cleanup);
 
+/** The cache tables the view work adds; every rebuild puts them back in their initial state. */
+const VIEW_TABLES = ["world_view_partitions", "world_view_tokens", "world_view_token_deps", "world_resume_handles"];
+
 const PRELOAD = resolve(import.meta.dir, "world-tables-preload.ts");
 const MAIN = resolve(import.meta.dir, "../src/main.ts");
 
@@ -48,7 +51,10 @@ test("rebuild --layer world resets derived and cache tables and leaves authority
 
   const rebuilt = runWithSyntheticTables(setup.env, "rebuild", "--layer", "world", "--json");
   expect(rebuilt.exitCode, rebuilt.stdout + rebuilt.stderr).toBe(0);
-  expect(JSON.parse(rebuilt.stdout).data).toEqual({ layer: "world", tables: ["world_synth_summary", "world_synth_slots"] });
+  expect(JSON.parse(rebuilt.stdout).data).toEqual({
+    layer: "world",
+    tables: [...VIEW_TABLES, "world_synth_summary", "world_synth_slots"],
+  });
 
   const after = openLedger(ledgerPath);
   try {
@@ -61,13 +67,13 @@ test("rebuild --layer world resets derived and cache tables and leaves authority
   expect(query()).toEqual(hitsBefore);
 });
 
-test("rebuild --layer world with no derived world tables succeeds and reports none", () => {
+test("rebuild --layer world with only the shipped cache tables succeeds and lists them", () => {
   const setup = helpers.tempVault();
   const text = helpers.runCli(setup.env, "rebuild", "--layer", "world");
   expect(text.exitCode, text.stderr).toBe(0);
-  expect(text.stdout.trim()).toBe("world_tables_reset=0");
+  expect(text.stdout.trim()).toBe(`world_tables_reset=${VIEW_TABLES.length}`);
   const json = helpers.runCli(setup.env, "rebuild", "--layer", "world", "--json");
-  expect(JSON.parse(json.stdout).data).toEqual({ layer: "world", tables: [] });
+  expect(JSON.parse(json.stdout).data).toEqual({ layer: "world", tables: VIEW_TABLES });
 });
 
 test("rebuild --layer world refuses a retrieval port and a budget option", () => {

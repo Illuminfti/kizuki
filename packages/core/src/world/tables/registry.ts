@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { LedgerStoreError } from "../../ledger/errors";
 import { tableColumns, tableExists } from "../../ledger/schema";
 import { WORLD_TABLE_COLUMNS, type WorldTable } from "../schema";
+import { WORLD_VIEW_TABLE_SPECS } from "./views";
 import { WORLD_MIGRATION_BASE } from "./versions";
 
 /**
@@ -90,6 +91,7 @@ const LEDGER_32_TABLES: readonly WorldTableSpec[] = (
 export const WORLD_TABLE_SPECS: readonly WorldTableSpec[] = [
   ...LEDGER_32_TABLES,
   // slot: view
+  ...WORLD_VIEW_TABLE_SPECS,
   // slot: known
   // slot: consol
   // slot: ident
