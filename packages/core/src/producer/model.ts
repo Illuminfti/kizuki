@@ -383,16 +383,21 @@ export function planModelExtraction(rawInput: ProduceInput): ModelExtractionPlan
 
 export type CallOutcome =
   | { kind: "ok"; response: LlmResponse }
-  | { kind: "rejected"; reason: RejectReason; diagnostic: ProducerDiagnostic }
+  /** `usage` is what the provider billed for the response the port refused, when it said. */
+  | { kind: "rejected"; reason: RejectReason; diagnostic: ProducerDiagnostic; usage?: LlmResponse["usage"] }
   | { kind: "unavailable"; reason: string; diagnostic: ProducerDiagnostic };
+
+function billed(error: PortError): { usage?: LlmResponse["usage"] } {
+  return error.usage === undefined ? {} : { usage: error.usage };
+}
 
 export function classifyLlmError(error: unknown): Exclude<CallOutcome, { kind: "ok" }> {
   if (!(error instanceof PortError)) return { kind: "unavailable", reason: "llm error", diagnostic: { stage: "transport", rule: "unavailable" } };
   if (error.code === "not_supported" && error.message === "rejected: tool_call_in_response") {
-    return { kind: "rejected", reason: "tool_call_in_response", diagnostic: { stage: "response", rule: "tool_call" } };
+    return { kind: "rejected", reason: "tool_call_in_response", diagnostic: { stage: "response", rule: "tool_call" }, ...billed(error) };
   }
   for (const rule of ["bad_response", "unsupported_metadata", "response_refused", "response_truncated", "response_incomplete", "response_too_large"] as const) {
-    if (error.code === "unavailable" && error.message === `rejected: ${rule}`) return { kind: "rejected", reason: "schema_invalid", diagnostic: { stage: "response", rule } };
+    if (error.code === "unavailable" && error.message === `rejected: ${rule}`) return { kind: "rejected", reason: "schema_invalid", diagnostic: { stage: "response", rule }, ...billed(error) };
   }
   let diagnostic: ProducerDiagnostic = { stage: "transport", rule: "unavailable" };
   if (error.code === "timeout") diagnostic = { stage: "transport", rule: "timeout" };
@@ -502,6 +507,8 @@ export function createModelProducerPort(
           return { status: "unavailable", reason: outcome.reason, usage, diagnostic: outcome.diagnostic };
         }
         if (outcome.kind === "rejected") {
+          usage.input_tokens += outcome.usage?.input_tokens ?? 0;
+          usage.output_tokens += outcome.usage?.output_tokens ?? 0;
           return { status: "rejected", reason: outcome.reason, usage, diagnostic: outcome.diagnostic };
         }
         usage.input_tokens += outcome.response.usage.input_tokens;
