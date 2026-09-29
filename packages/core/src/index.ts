@@ -715,10 +715,15 @@ export {
   previewPurge,
   readHolds,
   resolvePurgeConnectorId,
+  resumePendingPurges,
   resumePurge,
   runPurge,
   verifyPurge,
 } from "./ledger/purge";
+export { PURGE_STORE_NAMES } from "./ledger/purge-stores";
+export type { PurgeErasure, PurgeStoreName, PurgeStoreProof } from "./ledger/purge-stores";
+export { findPurgeSuppression, liftPurgeSuppressions, listPurgeSuppressions } from "./ledger/purge-suppression";
+export type { PurgeSuppression } from "./ledger/purge-suppression";
 export type {
   CanonHold,
   PurgeErrorCode,
@@ -727,6 +732,7 @@ export type {
   PurgeHealthFailure,
   PurgeOp,
   PurgeOperationResult,
+  PendingPurgeReport,
   PurgeOutcome,
   PurgePhaseOptions,
   PurgePreview,

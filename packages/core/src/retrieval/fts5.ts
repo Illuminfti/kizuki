@@ -153,6 +153,8 @@ export class Fts5RetrievalPort implements RetrievalPort {
     try {
       this.db.exec("PRAGMA busy_timeout = 0");
       this.db.exec("PRAGMA journal_mode = WAL");
+      // Freed pages must not keep the text of documents purge later removes.
+      this.db.exec("PRAGMA secure_delete = ON");
       initFts5RetrievalStore(this.db);
       chmodSync(dbPath, 0o600);
       this.ensureEngineJson();
@@ -428,7 +430,18 @@ export class Fts5RetrievalPort implements RetrievalPort {
         this.db.query<never, [string]>(`DELETE FROM ${table} WHERE ${condition}`).run(values);
       }
     }).immediate();
+    if (byProvenance) this.sealErasedEvidence();
     return { processed: ids.length };
+  }
+
+  /**
+   * Erasure by provenance is the purge path. Older FTS5 segments and earlier
+   * revisions keep the removed tokens until the index is rebuilt and the file
+   * compacted, so purge does both before it reports absence.
+   */
+  private sealErasedEvidence(): void {
+    this.db.exec("INSERT INTO search_docs(search_docs) VALUES ('rebuild')");
+    for (const step of ["PRAGMA wal_checkpoint(TRUNCATE)", "VACUUM", "PRAGMA wal_checkpoint(TRUNCATE)"]) this.db.exec(step);
   }
 
   async verifyAbsent(ids: readonly string[]): Promise<AbsenceProof> {

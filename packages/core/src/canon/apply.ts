@@ -770,7 +770,8 @@ export function applyPurgeRewrite(
     page_action: action,
     before_hash: existing.hash,
     after_hash: expectedAfter,
-    archive_path: archiveRelPath(input.rel_path, receiptId),
+    // The predecessor is purged text: keeping an archive copy would keep it on disk.
+    archive_path: null,
     writer: "loop",
     producer: "deterministic",
     model_ref: null,
@@ -991,12 +992,13 @@ export function publishOrdinaryCanonIntent(scope: VaultMutationScope, io: CanonI
   }
   const cap = grantCanonWrite(intent.receipt.writer, intent.receipt.receipt_id, io.vault_path, files);
   const path = join(io.vault_path, intent.receipt.page_path);
+  const erasePrior = intent.receipt.kind === "purge_rewrite";
   const page = after === null ? { data: {}, body: "" } : parseFrontmatter(after.toString("utf8"));
   const outcome = after === null
-    ? writePage(cap, path, page, { delete: true, expected_hash: hashBytes(before!), recovery: true })
+    ? writePage(cap, path, page, { delete: true, expected_hash: hashBytes(before!), recovery: true, erase_prior: erasePrior })
     : before === null
       ? writePage(cap, path, page, { recovery: true })
-      : writePage(cap, path, page, { revision: true, expected_hash: hashBytes(before), recovery: true });
+      : writePage(cap, path, page, { revision: true, expected_hash: hashBytes(before), recovery: true, erase_prior: erasePrior });
   if (outcome.after_hash !== intent.receipt.after_hash || outcome.archive_path !== intent.receipt.archive_path) recoveryFailure("page_changed", intent.receipt.receipt_id);
 }
 

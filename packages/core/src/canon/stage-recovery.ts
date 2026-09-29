@@ -287,6 +287,12 @@ export function eraseCanonStageTraces(files: CanonFiles, db: Database, vaultPath
   return erased;
 }
 
+/** Receipts whose recovery records or quarantined bytes should already be gone. Read-only. */
+export function residualStageTraces(db: Database, vaultPath: string): string[] {
+  const candidates = new Set([...readCanonStageRecoveries(vaultPath).map(item => item.receipt_id), ...quarantinedReceipts(vaultPath)]);
+  return [...candidates].filter(receiptId => tracesPurged(db, receiptId)).sort();
+}
+
 export function readCanonStageRecoveries(vaultPath: string, receiptId?: string): CanonStageRecoveryRecord[] {
   let files: CanonFiles | undefined;
   try {
