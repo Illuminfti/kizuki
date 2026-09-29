@@ -40,6 +40,36 @@
   claims, names `kizuki serve run doctor-sweep` while any are pending, and no
   longer lists them among leftover skipped rows.
 
+### Model configuration and consent
+
+- Source consent now states a retention class. `egress.external_retention`
+  accepts `zero_retention`, `logged_no_training`, `logged_and_trained` (strictest
+  to loosest) and `provider_managed`. A grant names the loosest class it accepts,
+  the configured model declares its class in `[ports.llm] retention`, and text is
+  sent only when the declared class is at least as strict as the accepted one. An
+  undeclared model counts as `logged_and_trained`. Existing `provider_managed`
+  grants keep working and keep their digests. `kizuki connect status`, its
+  `--json` (`egress.declared_retention`) and `kizuki doctor` show the class next
+  to each egress line.
+- `[ports.llm]` accepts `temperature` (0 to 2), `json_mode` (sends
+  `response_format` `json_object`) and `retention`; each is sent or applied only
+  when configured, so the default request body is unchanged. `retention =
+  "zero_retention"` is refused unless `[ports.llm.provider]` sets `zdr = true` and
+  `allow_fallbacks = false` (or the endpoint is loopback);
+  `logged_no_training` needs `data_collection = "deny"` or `zdr = true`.
+- The llm transport turns off Bun's five-minute fetch cutoff, so `timeout_ms`
+  above 300000 is honoured.
+- The typed extraction prompt keeps its fixed instructions and the predicate and
+  vocabulary registry in one system message that is identical across requests;
+  the user message holds only per-request fenced data, so serving models can
+  reuse the shared prefix.
+- A configured System One judge is model egress: events are sent only when the
+  source grant names the judge's exact endpoint and model, and are held
+  otherwise.
+- `scripts/evaluate-extraction-model.ts` scores a real model on the synthetic
+  fixture, refuses a non-loopback endpoint without `--allow-remote`, and labels
+  the result as a fixture measurement, never a model-quality claim.
+
 ### Operator safety
 
 - `serve status`, `serve --install`, `serve --uninstall` and doctor no longer

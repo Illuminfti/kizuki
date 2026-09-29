@@ -18,9 +18,48 @@ port; the receipted writer owns canon. Tests use a loopback fake endpoint.
 | `base_url` | yes (openai-compatible) | `http` or `https` only. No userinfo, query, or fragment. |
 | `model` | yes (openai-compatible) | Wire model id, sent as `model`. |
 | `secret_ref` | no | `env:` or `file:` only. A literal key is a startup failure. |
-| `timeout_ms` | no | Default `60000`. |
+| `timeout_ms` | no | Default `60000`, at most `600000`. It is the only limit on a request: the transport turns off Bun's own five-minute fetch cutoff, so a value above `300000` is honoured. |
 | `max_retries` | no | Default `2`, at most `8`. Bounded retries for network failures, timeouts and HTTP 429/502/503/504 share the request deadline. |
 | `reasoning_effort` | no | `none`, `minimal`, `low`, `medium` or `high`, sent as the chat-completions `reasoning_effort`. Absent sends nothing. Hidden reasoning counts against the output reservation, so a lower effort leaves more of it for the answer. Providers accept different subsets; an unsupported value is refused by the provider. |
+| `temperature` | no | A number from `0` to `2`, sent as `temperature`. Absent sends nothing and the provider default (often 0.8 to 1.0) applies. Extraction wants `0`. |
+| `json_mode` | no | `true` sends `response_format: {"type": "json_object"}`. Absent or `false` sends nothing. The endpoint must support it; one that does not refuses the request. |
+| `retention` | no | The class the owner declares for this destination: `zero_retention`, `logged_no_training` or `logged_and_trained`. Never sent on the wire. Source consent compares it with the class each grant accepts (see the [retention classes](#retention-classes)). Absent means undeclared, which counts as `logged_and_trained`. |
+
+The request body carries `temperature`, `response_format` and `provider` only when they are configured, so a config that sets none of them sends the same bytes as before.
+
+### Retention classes
+
+A declaration is only as strong as what the request asks for. Unless `base_url`
+is a loopback address, where nothing leaves the machine:
+
+- `zero_retention` needs `[ports.llm.provider]` with `zdr = true` and
+  `allow_fallbacks = false`, so the router cannot fall back to an endpoint that
+  keeps prompts.
+- `logged_no_training` needs `data_collection = "deny"` or `zdr = true`.
+- `logged_and_trained` needs nothing; it is the loosest claim.
+
+Anything else is a startup failure. The declaration is the owner's statement, not
+proof: Kizuki cannot see what a provider does with a prompt.
+
+Classes are ordered from strictest to loosest: `zero_retention`,
+`logged_no_training`, `logged_and_trained`. A source grant states the loosest
+class it accepts in `egress.external_retention` (the same three values, plus the
+older `provider_managed`, which accepts any model). Text is sent to the model
+only when the model's declared class is at least as strict as the class the
+grant accepts. A model that declares nothing counts as `logged_and_trained`, so a
+grant that accepts only `zero_retention` or `logged_no_training` holds its events
+until the configuration declares a class that satisfies it. A grant that names
+`provider_managed` keeps working unchanged. The declared class is part of the
+model binding, so changing it re-checks deferred work.
+
+A configured `kizuki.systemone.jev` judge is sent the same events and the
+extracted claims, so it is model egress too. The serving host treats it as a
+second destination of the producer: events are sent only when the source grant's
+`egress` names the judge's exact endpoint (`<base_url>/systemone`) and model, and
+the judge declares no retention class, so the grant must accept
+`logged_and_trained` or `provider_managed`. A grant names one destination, so a
+judge at a different destination than the extraction model holds those events
+instead of sending them; nothing is kept as an empty result.
 
 ### Provider privacy controls (`[ports.llm.provider]`)
 
@@ -56,8 +95,9 @@ zdr = true
 Kizuki forwards these controls; the router enforces them. Kizuki cannot see or
 prove what a provider does with a prompt, and an endpoint that ignores
 `provider` ignores the request. The controls are not part of the model binding
-that source consent names: consent binds the endpoint and model, so tightening
-or loosening the table does not invalidate a grant. The controls choose among the
+that source consent names: consent binds the endpoint, the model and the declared
+retention class, so tightening or loosening the table does not invalidate a grant,
+but a declared class the table cannot back is refused at startup. The controls choose among the
 providers behind the endpoint the owner already consented to; they never change
 where the request is sent. `kizuki connect status` shows the controls each
 grant would run under, so a loosened table is visible.
