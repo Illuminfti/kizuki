@@ -374,7 +374,10 @@ then fails with `vault ledger not ready` before reporting counts. Explicit
 init also refuses a ledger below its existing floor. Missing or bounded
 malformed private legacy marks remain unsealed until a successful write. After a folder import, expect live claims; the writer
 still needs a model before those claims become pages. Loop creates land
-under `auto/`; human pages stay where they are.
+under `auto/`; human pages stay where they are. A later claim for a target
+that was already written under `auto/` edits that page instead of failing, and
+the daemon's daily briefs (`dashboards/brief-YYYY-MM-DD.md`) count as machine
+origin.
 
 Doctor validates existing configuration and credentials without constructing a
 model runtime. Pending model or connection-state journals remain untouched and

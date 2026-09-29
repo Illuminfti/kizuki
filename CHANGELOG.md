@@ -36,8 +36,25 @@
   provider controls the configured model requests. `--json` reports `egress`;
   `connect status --source KEY` reports it too.
 
+- `kizuki version` identifies the exact build. A release package prints
+  `VERSION source=<source revision> built=<UTC time>` from values compiled in by
+  `build:release`; a run from source prints `VERSION dev`. Anything that
+  parsed the whole line as a bare version number should read the first word.
+- `docs/upgrade.md`: a runbook for upgrading an installed package in place
+  (stage the new version directory, file-level backup with `sqlite3 .backup`,
+  install from the new real path, verify, roll back), with a scripted test that
+  upgrades and rolls back a fixture package over a fixture vault.
+- Release smoke runs `kizuki world --operation find_concepts --json` and an MCP
+  `world_view` call against the built package, and checks that `kizuki version`
+  matches the package's `BUILD.json` revision.
+
 ### Fixed
 
+- The daily brief is stamped private when it names a page that ever received a
+  private receipt (a repair never lowers it), says when rail failure groups
+  were omitted, and the brief repair also rewrites the run-id
+  stub a failed brief run leaves behind, skips oversized files, and names the
+  day of a page it could not repair.
 - Structural claim deduplication now requires overlapping validity. A claim
   with the same key, polarity and object but a disjoint or merely adjacent
   validity window is stored as its own claim instead of being merged into an
@@ -62,26 +79,31 @@
 - The MCP adapter no longer runs schema repair writes when it starts on a
   current ledger, so a long writer no longer delays or refuses startup.
 
-### Added
-
-- `kizuki version` identifies the exact build. A release package prints
-  `VERSION source=<source revision> built=<UTC time>` from values compiled in by
-  `build:release`; a run from source prints `VERSION dev`. Anything that
-  parsed the whole line as a bare version number should read the first word.
-- `docs/upgrade.md`: a runbook for upgrading an installed package in place
-  (stage the new version directory, file-level backup with `sqlite3 .backup`,
-  install from the new real path, verify, roll back), with a scripted test that
-  upgrades and rolls back a fixture package over a fixture vault.
-- Release smoke runs `kizuki world --operation find_concepts --json` and an MCP
-  `world_view` call against the built package, and checks that `kizuki version`
-  matches the package's `BUILD.json` revision.
-
 ### Changed
 
 - A refused `kizuki export` now names the sources that block it and the exact
   grant or revocation command that clears each one, instead of a bare
   `source_export_denied`. The consent rule is unchanged: export still needs the
   `export` purpose on every source.
+- The canon writer now updates a page the loop already materialised. A claim
+  whose target was written earlier under the machine-origin `auto/` prefix used
+  to be planned as a create and fail with `page ... already exists` on every
+  pass, so later claims for that target never landed. The arbiter now finds the
+  page under `auto/` and edits it through the receipted writer, before and
+  after hashes included. A page at the target's own path still wins.
+- The daily brief is now a bounded summary of what changed since the previous
+  brief: new, updated, corrected and undone canon pages, rail runs that
+  failed, degraded or stopped, and the extraction backlog (live claims not yet
+  written, ledger events past the extraction cursor, deferred inputs). It is
+  never just boilerplate, and its page carries valid frontmatter with
+  `sources: []`.
+- Daemon-written briefs are classified as machine origin in `kizuki doctor`
+  and in retrieval candidates; other pages under `dashboards/` stay human.
+- A daemon-written brief that fails the page schema, such as one an older
+  build wrote without `sources`, is rewritten by the next brief or doctor-sweep
+  run through the same notifier, keeping its body. The run receipt records
+  `pages_repaired`. A page that cannot be rewritten degrades the run with
+  `brief-repair-failed` and is tried again on the next sweep.
 
 ## 1.0.2 (2026-09-24)
 

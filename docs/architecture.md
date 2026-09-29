@@ -217,8 +217,16 @@ and refuses to write canon while another process holds the writer lease.
 
 Rails on this revision: connector sync, retrieval sweep, purge sweep, embed
 backfill, daily brief (file notifier into `dashboards/`), doctor sweep,
-journal prune. Every scheduled run writes a receipt; stale receipts are
-reported as failures. Telegram / email / webhook notifiers are accepted
+journal prune. The brief summarises what changed since the previous brief:
+canon pages created, updated, corrected or undone, rail runs that failed or
+degraded, and the extraction backlog. The brief and doctor-sweep rails also
+rewrite a daemon-written brief that fails the page schema (or holds only the
+run id a failed brief run left behind) and record the count as `pages_repaired`
+on the run receipt; a page that cannot be repaired degrades the run and names
+its day. The run receipt is the record for this repair: daemon brief pages are
+not canon and carry no canon receipt. A brief that names a private page
+is itself stamped private. Every scheduled run writes a receipt;
+stale receipts are reported as failures. Telegram / email / webhook notifiers are accepted
 design behind `kizuki.notifier/v1`; the shipped notifier is the file writer.
 
 ## Security

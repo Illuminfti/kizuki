@@ -175,6 +175,28 @@ describe("resolveTarget", () => {
     });
   });
 
+  test("rule 2: an explicit target also finds the page the loop materialised under auto/", async () => {
+    const { db, io } = fixture();
+    const eventId = putEvent(db);
+    const loose = { subject: null, subjects: [] as string[], predicate: null, object: null };
+    const created = write(io, await storeClaim(db, eventId, loose), {
+      decision: { action: "create", rel_path: "auto/people/grace.md" },
+    });
+    const later = await storeClaim(db, eventId, { ...loose, body: "Grace now leads partnerships." });
+    expect(resolveTarget(io, later)).toEqual({
+      action: "edit",
+      page_id: expect.any(String),
+      rel_path: created.page_path,
+      reason: "explicit",
+    });
+
+    // A page at the human path still wins over the machine-origin copy.
+    write(io, await storeClaim(db, eventId, { ...loose, body: "Human page." }), {
+      decision: { action: "create", rel_path: "people/grace.md" },
+    });
+    expect(resolveTarget(io, later)).toMatchObject({ rel_path: "people/grace.md" });
+  });
+
   test("rule 3: a claim that won a conflict supersedes on the loser's page", async () => {
     const { db, io } = fixture();
     const sources = twoSources(db);
