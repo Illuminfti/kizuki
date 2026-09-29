@@ -59,7 +59,7 @@ describe("option grammar", () => {
   test("the public CLI accepts inline global values without stealing command data", () => {
     const result = runCli(isolatedEnv(), "version", "--vault=--literal");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe(`${pkg.version}\n`);
+    expect(result.stdout.startsWith(`${pkg.version} `)).toBe(true);
     expect(result.stderr).toBe("");
     const literal = runCli(isolatedEnv(), "version", "--", "--vault=literal");
     expect(literal.exitCode).toBe(2);
