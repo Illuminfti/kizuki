@@ -384,6 +384,50 @@ Current `packages/core/src/ledger/db.ts` already applies ledger versions 17, 18,
 
 World-model implementation must allocate fresh versions through the existing serialized migration process after integration. This note does not choose or reserve the next version.
 
+## Shipped subset and migration allocation for the world-model expansion
+
+<!-- world-shipped-subset -->
+
+Status: the first list is current fact, checked against the code on 2026-09-29. The deferral and the allocation are Proposed. Nothing in this section is a migration, and none of it changes the historical-baseline note above.
+
+### What shipped
+
+The accepted slice of decision D22 (items a and b) built a small part of this appendix under different names and numbers. The live migration chain in `packages/core/src/ledger/db.ts` is the authority.
+
+- ledger 31 is applied by `applyClaimV2TablesV31`: the claim-v2 semantic, support and support-event tables (`claim_v2_semantics`, `claim_v2_support`, `claim_v2_support_events`) with their indexes.
+- ledger 32 is applied by `applyWorldTables`: the identity bookkeeping (`claim_occurrences`, `semantic_handles`, `semantic_bindings`, `semantic_allocations`), `world_authorization_namespaces`, the wire-ref table `world_wire_refs` with its five typed target tables (object, claim, admission, event version, principal), the `is_world_typed` column on claims, the `support_origin` column on support rows, and the revocation and erasure triggers.
+- ledger 33 is applied by `applyWorldCanonV33`: typed canon receipts in `canon_receipts`, the `kizuki.canon-receipt/v2` codec with retained and erased arms, `own_id_origin` on typed receipts only, and the prior-receipt chain.
+
+At this head the component versions are claims 3, canon 5, purge 5 and serve 9, and the backup schema is `kizuki.backup/v3`.
+
+### What did not ship
+
+These parts of the appendix are not shipped. They are deferred: the accepted slice does not need them, no owner decision records a decision to build them, and decision D22 item (g) separately keeps the storage ports out of 1.0. Recording the deferral as a decision is proposed as `PD-DEFERRAL` in the [proposed decision rows](../docs/world/decisions-proposed.md).
+
+- Purge 6 receipt authority is deferred. The purge component stays at version 5.
+- The per-row `id_origin` columns on events, claims and the other authority rows are deferred. Only typed canon receipts carry an origin, as `own_id_origin`.
+- The `claims_v4` table rebuild is deferred. The claims component stays at version 3, and world claims are marked by the `is_world_typed` column.
+- `core_authority_commits` is deferred and is not needed: known-at history uses the recorded-time sequence table of [Amendment 1 of RFC 0004](0004-living-epistemic-world-model.md#amendment-1-recorded-time-sequence-history-replaces-core_authority_commits).
+- Backup versions 4 to 6 and serve version 10 are deferred. View tokens, partitions and resume handles are cache-class ledger tables and are never exported.
+
+A test reads the code and fails if Purge 6, `core_authority_commits` or `claims_v4` appears, so this list cannot go stale unnoticed.
+
+### Allocation for the world-model expansion
+
+The numbers below are the expected merge order on 2026-09-29. They are not reservations. A version is claimed at merge time, contiguously, in `world/tables/versions.ts`, which is the only file that holds migration numbers of 34 and above once the schema plumbing has landed. Before then no world-model migration is added. Schema packets merge in numeric order and each is small and lands before its feature packets. An intermediate integration head is never deployed to a real vault; the production upgrade is one hop from ledger 33 to the final number under a separate owner authorization.
+
+| Version | Owner | Purpose | Class | Tables |
+| --- | --- | --- | --- | --- |
+| 34 | view tokens (VIEW) | Scoped view tokens, per-principal partitions and quotas, token dependency rows and resume handles. Never exported, empty after restore, cleared by a world rebuild, erased by purge through foreign keys and triggers | cache | `world_view_partitions`, `world_view_tokens`, `world_view_token_deps`, `world_resume_handles` |
+| 35 | known-at history (KNOWN) | Append-only claim lifecycle history with a monotone sequence and clamped recorded time, and a per-claim marker of where history is complete. Erased with claim purge; coverage advances on survivors | authority | `claim_lifecycle_history`, `claim_history_coverage` |
+| 36 | consolidation (CONSOL) | Derived summaries keyed by handle and basis digest, their support basis and a bounded job queue. Not exported; a wipe yields pending; purge and revocation erase it | derived | `world_consolidation`, `world_consolidation_basis`, `world_consolidation_jobs` |
+| 37 | identity (IDENT), conditional | Receipted identity controls and component effects, built only if a spike shows owner-authority assertions cannot carry merge, separation and undo. If unneeded the number is released before 38 to 40 are claimed and they move down by one | authority | `identity_receipts`, `identity_component_effects` |
+| 38 | attention (ATTN) | Attention dispositions and delivery idempotency keys. Exported, erased on purge, never touches claim authority | bookkeeping | `world_attention_state` |
+| 39 | typed refs (REFS), owner-gated | Widen the closed kind check of `world_wire_refs` with typed target tables, by a table rebuild under the writer hold. The fallback drops and recreates the table and invalidates issued refs | authority | `world_wire_refs`, typed target tables |
+| 40 | forecasts (FCST), owner-gated | Append-only forecast journal with frozen inputs and resolutions. Exported, with a purge hook. Not created unless the owner accepts the forecast schema | authority | `world_forecasts`, `world_forecast_inputs`, `world_forecast_resolutions` |
+
+Renumbering: if other work lands k migrations before the first schema packet, every entry moves up by k in `world/tables/versions.ts` in one commit and in-flight branches rebase. Nothing else keys on a number, and the contiguity and backup-version tests fail on a missed step. If 37, 39 or 40 is not built, later numbers stay lower. The classes are those of [Amendment 7 of RFC 0004](0004-living-epistemic-world-model.md#amendment-7-attention-and-forecast-record-classes).
+
 ## Identifier origin and accepted native restore
 
 Allocator origin is an immutable fact recorded on the existing authoritative

@@ -17,7 +17,7 @@ const APPENDIX_B_PATH = "rfcs/0004-domain-contracts.md";
 const DECISIONS_PATH = "docs/world/decisions-proposed.md";
 const PROGRAM_PATH = "docs/world-model-program.md";
 
-const EM_DASH = "—";
+const EM_DASH = String.fromCharCode(0x2014);
 const MACHINE_PATH_FRAGMENTS = ["/hom" + "e/", "/da" + "ta/", "/Us" + "ers/"];
 
 const AMENDMENT_TITLES = [
