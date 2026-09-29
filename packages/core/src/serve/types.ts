@@ -133,6 +133,10 @@ export interface RunModelReport {
   readonly answered?: number;
   /** How the pass's final request ended. Absent on older receipts and passes without a request. */
   readonly last_request?: "answered" | "failed";
+  /** Requests in a row, across passes, the model's answer was refused; absent when the last request was answered. */
+  readonly consecutive_rejections?: number;
+  /** The diagnostic rule (or reject reason) of that latest refusal, for example `response_truncated`. */
+  readonly last_rejection_rule?: string;
   readonly calls: number;
   readonly input_tokens: number;
   readonly output_tokens: number;
@@ -232,6 +236,10 @@ export interface ExtractionConfig {
   readonly max_output_tokens: number;
   /** Seconds after which a pass starts no further step; the request in flight finishes. */
   readonly max_pass_seconds: number;
+  /** Model requests per UTC day, rejected ones included; the pass that finds it spent stops as `model:budget_day`. */
+  readonly max_calls_per_day: number;
+  /** Output tokens the provider billed per UTC day, rejected responses included; spent means `model:budget_day`. */
+  readonly max_output_tokens_per_day: number;
 }
 
 /** Inclusive bounds; an out-of-range or non-integer value keeps its default. */
@@ -241,6 +249,8 @@ export const EXTRACTION_BOUNDS = {
   max_input_tokens: { min: 2_000, max: 32_000 },
   max_output_tokens: { min: 1_024, max: MAX_V2_OUTPUT_TOKENS },
   max_pass_seconds: { min: 30, max: 600 },
+  max_calls_per_day: { min: 1, max: 100_000 },
+  max_output_tokens_per_day: { min: 1_024, max: 1_000_000_000 },
 } as const satisfies Record<keyof ExtractionConfig, { min: number; max: number }>;
 
 export const DEFAULT_EXTRACTION_CONFIG: ExtractionConfig = {
@@ -249,6 +259,8 @@ export const DEFAULT_EXTRACTION_CONFIG: ExtractionConfig = {
   max_input_tokens: 8_000,
   max_output_tokens: 8_192,
   max_pass_seconds: 60,
+  max_calls_per_day: 1_000,
+  max_output_tokens_per_day: 4_000_000,
 };
 
 export interface ServeConfig {

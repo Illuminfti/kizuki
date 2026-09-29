@@ -466,6 +466,7 @@ describe("write pass", () => {
     });
     expect(rejected.model).toEqual({
       answered: 0, last_request: "failed", calls: 1, input_tokens: 7, output_tokens: 0, unavailable: 0, wall_ms: expect.any(Number),
+      consecutive_rejections: 1, last_rejection_rule: "schema_invalid",
     });
     expect(rejected.claims_rejected).toEqual({ schema_invalid: 1 });
 

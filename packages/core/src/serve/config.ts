@@ -31,6 +31,8 @@ function extraction(table: Record<string, unknown>): ExtractionConfig {
     max_input_tokens: bounded("max_input_tokens"),
     max_output_tokens: bounded("max_output_tokens"),
     max_pass_seconds: bounded("max_pass_seconds"),
+    max_calls_per_day: bounded("max_calls_per_day"),
+    max_output_tokens_per_day: bounded("max_output_tokens_per_day"),
   };
 }
 
