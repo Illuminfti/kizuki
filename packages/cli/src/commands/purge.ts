@@ -1,12 +1,17 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   PurgeError,
+  liftPurgeSuppressions,
+  listPurgeSuppressions,
   previewPurge,
   resolvePurgeConnectorId,
   runPurge,
   resumePurge,
 } from "@kizuki/core";
-import type { PurgeFilter, PurgePreview } from "@kizuki/core";
+import type { PurgeFilter, PurgeOutcome, PurgePreview } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
+import { listHostConnections } from "../connections";
 import { withReadVault, withVault } from "../context";
 import { refreshAndPublishDerived } from "../derived";
 import { jsonEnvelope } from "../output";
@@ -60,16 +65,35 @@ function printPreview(io: CliIo, preview: PurgePreview): void {
   }
 }
 
+/** Paths where a just-purged source record is still present at its source. */
+function stillAtSource(
+  ctx: { db: Parameters<typeof listPurgeSuppressions>[0]; store: Parameters<typeof listHostConnections>[1] },
+  outcome: PurgeOutcome,
+): string[] {
+  const receipts = new Set(outcome.receipts.map((receipt) => receipt.receipt_id));
+  const found = new Set<string>();
+  for (const record of listPurgeSuppressions(ctx.db)) {
+    if (!receipts.has(record.receipt_id)) continue;
+    for (const { state } of listHostConnections(ctx.db, ctx.store, record.connector_id)) {
+      const root = state?.config.path;
+      if (root === undefined) continue;
+      const path = join(root, record.source_record_id);
+      if (existsSync(path)) found.add(path);
+    }
+  }
+  return [...found].sort();
+}
+
 export const PURGE_SCHEMA = {
-  options: ["--event", "--subject", "--source", "--connector", "--record", "--reason", "--verify"],
-  flags: ["--include-aliases", "--json", "--dry-run", "--confirm", "--allow-empty"],
+  options: ["--event", "--subject", "--source", "--connector", "--record", "--reason", "--verify", "--lift-suppression"],
+  flags: ["--include-aliases", "--json", "--dry-run", "--confirm", "--allow-empty", "--suppressions"],
   irreversible: true,
 } as const satisfies CommandHelpSchema;
 
 export const purgeCommand: Command = {
   name: "purge",
   usage:
-    "purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json]",
+    "purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json] | purge --suppressions [--json] | purge --lift-suppression RECEIPT [--json]",
   summary:
     "physically delete matching events, hold affected pages, and prove absence",
   schema: PURGE_SCHEMA,
@@ -83,6 +107,39 @@ export const purgeCommand: Command = {
     const dryRun = parsed.flags.has("--dry-run");
     const confirm = parsed.flags.has("--confirm");
     const allowEmpty = parsed.flags.has("--allow-empty");
+
+    const liftId = parsed.options.get("--lift-suppression");
+    const listing = parsed.flags.has("--suppressions");
+    if (liftId !== undefined || listing) {
+      if (
+        (liftId !== undefined && listing) ||
+        ["--event", "--subject", "--source", "--connector", "--record", "--reason", "--verify"].some((name) => parsed.options.has(name)) ||
+        parsed.flags.has("--include-aliases") || dryRun || confirm || allowEmpty
+      ) {
+        throw new UsageError(this.usage);
+      }
+      if (liftId === undefined) {
+        return withReadVault(io, async (ctx) => {
+          const records = listPurgeSuppressions(ctx.db);
+          if (asJson) io.out(jsonEnvelope("purge", "ok", { suppressions: records }));
+          else if (records.length === 0) io.out("no purged source record is being refused");
+          else {
+            for (const record of records) {
+              io.out(`${record.connector_id}  ${record.source_record_id}  purge ${record.receipt_id}  ${record.purged_at}`);
+            }
+            io.out("lift with: kizuki purge --lift-suppression RECEIPT");
+          }
+          return 0;
+        });
+      }
+      return withVault(io, async (ctx) => {
+        const lifted = liftPurgeSuppressions(ctx.db, liftId, new Date().toISOString());
+        if (asJson) io.out(jsonEnvelope("purge", lifted.length > 0 ? "ok" : "error", { lifted }));
+        else if (lifted.length > 0) io.out(`lifted ${plural(lifted.length, "suppression")}; the next sync may capture those source records again`);
+        if (lifted.length === 0) io.err(`no active suppression for purge ${liftId}`);
+        return lifted.length > 0 ? 0 : 1;
+      });
+    }
 
     const verifyId = parsed.options.get("--verify");
     if (verifyId !== undefined) {
@@ -126,9 +183,14 @@ export const purgeCommand: Command = {
               `${pad(op.store, 23)} checked ${proof?.checked ?? 0}  found ${proof?.found.length ?? 0}   ${op.state}   provenance checked ${proof?.provenance.checked ?? 0}  found ${proof?.provenance.found.length ?? 0}`,
             );
           }
+          for (const proof of report.stores) {
+            io.out(
+              `${pad(proof.store, 23)} checked ${proof.checked}  found ${proof.found.length}   ${proof.found.length === 0 ? "clean" : `still holds ${proof.found.join(", ")}`}`,
+            );
+          }
           const hold = report.hold_lifted ? "hold lifted" : "hold remains";
           io.out(
-            `${pad("canon", 23)} pages rewritten ${report.pages_rewritten}    ${hold}`,
+            `${pad("canon rewrite", 23)} pages rewritten ${report.pages_rewritten}    ${hold}`,
           );
           for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
           if (!report.ok) {
@@ -235,12 +297,14 @@ export const purgeCommand: Command = {
         // refresh the counts never reconcile and every later read reports
         // index-behind-ledger.
         const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval);
+        const present = stillAtSource(ctx, outcome);
         if (asJson) {
           io.out(
             jsonEnvelope("purge", "ok", {
               ...outcome,
               irreversible_events: true,
               undo_restores_canon_only: true,
+              source_records_still_present: present,
             }, { degraded: derived.degraded }),
           );
         } else {
@@ -256,7 +320,16 @@ export const purgeCommand: Command = {
           for (const op of outcome.purge_ops) {
             io.out(`op ${op.store} state=${op.state}`);
           }
+          const erased = outcome.erased;
+          io.out(
+            `erased ${plural(erased.claims, "claim")}, ${plural(erased.proposals, "proposal")}, ${plural(erased.archive_copies.length, "archive file")}${erased.archive_copies.length > 0 ? `: ${erased.archive_copies.join(", ")}` : ""}; ledger files ${erased.database_sealed ? "compacted" : "not compacted, run kizuki purge --verify to retry"}`,
+          );
           for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
+          for (const path of present) {
+            io.err(
+              `warning: the source record still exists at ${path}. Remove it or move it out of the source, or a later sync will refuse it. Allow it again with: kizuki purge --lift-suppression ${outcome.receipts[0]?.receipt_id ?? "RECEIPT"}`,
+            );
+          }
         }
         return 0;
       } catch (error) {

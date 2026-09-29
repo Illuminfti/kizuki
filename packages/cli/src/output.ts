@@ -67,6 +67,7 @@ export function formatRunCounts(result: RunResult): string {
   return [
     `events_stored=${result.stored}`,
     `duplicates=${result.duplicates}`,
+    ...(result.suppressed === undefined ? [] : [`suppressed=${result.suppressed}`]),
     `proposals_created=${result.proposals_created}`,
     `withdrawn=${result.withdrawn}`,
     `retractions_filed=${result.retractions_filed}`,

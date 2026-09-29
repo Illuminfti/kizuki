@@ -91,6 +91,9 @@ export const syncCommand: Command = {
             io.out(
               `${selected.connection.connector_id} source=${selected.connection.source_key} ${formatRunCounts(result)}`,
             );
+            if (result.suppressed !== undefined) {
+              io.err(`notice: ${result.suppressed} source record(s) purged earlier were refused; see: kizuki purge --suppressions`);
+            }
             for (const text of result.errors) {
               io.err(`error: ${text}`);
               failed = true;
