@@ -6,6 +6,7 @@ import { connectCommand } from "./connect";
 import { contextCommand } from "./context";
 import { doctorCommand } from "./doctor";
 import { exportCommand } from "./export";
+import { hookCommand } from "./hook";
 import { importCommand } from "./import";
 import { rebuildCommand } from "./rebuild";
 import { recoverCommand } from "./recover";
@@ -31,6 +32,8 @@ export interface CliIo {
   out(line: string): void;
   err(line: string): void;
   prompt(question: string, opts?: { secret?: boolean }): Promise<string>;
+  /** Piped standard input, at most `maxBytes`; empty on a terminal. Absent in fixtures with no input. */
+  readStdin?(maxBytes: number): Promise<string>;
 }
 
 export interface CommandHelpSchema {
@@ -63,6 +66,7 @@ export const COMMANDS: readonly Command[] = [
   undoCommand,
   queryCommand,
   contextCommand,
+  hookCommand,
   worldCommand,
   doctorCommand,
   serveCommand,

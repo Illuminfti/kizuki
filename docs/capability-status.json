@@ -26,6 +26,14 @@
       "test": "packages/cli/test/models.test.ts"
     },
     {
+      "id": "cli.hook",
+      "status": "shipped",
+      "doc": "docs/cli.md",
+      "heading": "hook",
+      "implementation": "packages/cli/src/commands/hook.ts",
+      "test": "packages/cli/test/hook.test.ts"
+    },
+    {
       "id": "cli.doctor",
       "status": "shipped",
       "doc": "docs/cli.md",
