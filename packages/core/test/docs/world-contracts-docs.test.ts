@@ -496,7 +496,15 @@ test("every predicate named in the amendments and Appendix B is declared in the 
 });
 
 test("the appendix predicates that extend the shipped registry keep the existing rows unchanged", () => {
-  const shipped = read("packages/core/src/contracts/world-vocabulary.ts");
+  // The shipped rows live in the registry, one module per kind.
+  const shipped = [
+    "world-vocabulary.ts",
+    "world-kinds.ts",
+    "world-vocab/concept.ts",
+    "world-vocab/learning.ts",
+  ]
+    .map((file) => read(`packages/core/src/contracts/${file}`))
+    .join("\n");
   const body = appendixB.replace(/```[\s\S]*?```/g, "");
   for (const id of [
     "concept.label",

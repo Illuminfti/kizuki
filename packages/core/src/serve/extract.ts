@@ -21,6 +21,7 @@ import { validateEventOrigin, requireExternalEvents, SelfOriginError } from "../
 import { CHARS_PER_TOKEN, EXTRACT_BATCH, MODEL_PRODUCER_ID, planModelExtraction, planModelExtractionV2 } from "../producer";
 import { escapeFenceText } from "../producer/fence";
 import { prepareWorldDrafts, type WorldDraftInsert, type WorldDrafts } from "../producer/world-drafts";
+import { notePendingClassification, worldAssertionViolation, type PendingClassifications } from "../world/registry-check";
 import { canonicalJson } from "../util/hash";
 import { worldSuppliedReferences } from "./world-supplied";
 import {
@@ -493,10 +494,17 @@ function journalWorldDrafts(
       })),
     };
   });
+  // Drafts are judged as they will be filed: in order, each seeing the classifications before it.
+  const pending: PendingClassifications = new Map();
   return prepareWorldDrafts(decision.response, decision.input, {
     events: contextEvents,
     supplied_refs: supplied.refs,
     model_ref: modelRef,
+    admits: semantic => {
+      if (worldAssertionViolation(db, semantic, { pending }) !== null) return false;
+      notePendingClassification(pending, semantic);
+      return true;
+    },
   });
 }
 /**

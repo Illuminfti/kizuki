@@ -52,6 +52,12 @@ export interface WorldDraftContext {
   /** Host-created capability map; keys are request-local supplied handles only. */
   readonly supplied_refs: ReadonlyMap<string, QualifiedSuppliedRef>;
   readonly model_ref: string | null;
+  /**
+   * The host's last word on a resolved assertion, asked once per claim in
+   * response order. A refusal drops the claim like any other invalid one, so
+   * a draft the writer would refuse cannot wedge the decision it belongs to.
+   */
+  readonly admits?: (semantic: ClaimV2Assertion) => boolean;
 }
 
 function anchorKey(anchor: TextAnchor): string {
@@ -161,7 +167,7 @@ export function prepareWorldDrafts(
       temporal_basis: claim.temporal_basis,
       anchors: claim.anchors,
     };
-    if (!validateClaimV2Semantic(semantic).ok) {
+    if (!validateClaimV2Semantic(semantic).ok || context.admits?.(semantic) === false) {
       dropped.push({ reason: "invalid_claim", id: claim.id });
       return [];
     }
