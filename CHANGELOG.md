@@ -12,6 +12,14 @@
   unknown or revoked agent and an invalid grant are refused without changes.
 - The app's agent setup offers `world_view` among the read tools and an
   owner-correction relay choice that defaults to off.
+- Gmail, Google Calendar and X sign-in work on a headless server. When no
+  browser can be opened, or with the new `--no-browser` flag, the CLI prints the
+  authorization address to stderr with the loopback callback port and an
+  `ssh -L PORT:127.0.0.1:PORT <host>` tunnel command, and keeps waiting for the
+  callback. Previously the address was never shown and sign-in failed.
+- `kizuki connect ics --url https://...` enrolls an https calendar feed with
+  ETag-validated re-reads, as its own source and behind separate source
+  consent.
 - Model prompts are scrubbed of obvious secrets before they leave for a model
   endpoint. PEM blocks, JWTs, `sk-`, `ghp_`, `github_pat_`, `xox` and `AKIA`
   tokens, `Authorization: Bearer` values, `NAME=value` assignments whose name
@@ -89,6 +97,8 @@
   changes.
 - The MCP adapter no longer runs schema repair writes when it starts on a
   current ledger, so a long writer no longer delays or refuses startup.
+- The connector catalog no longer labels Gmail or IMAP a local source, and
+  `kizuki.import-beacon` has a title instead of its raw id.
 - The embed-backfill rail no longer wakes every minute when no embedding port
   is configured: it backs off to an hour and returns to a minute when the
   service starts or on its next run after `[ports] embedding` names a port.

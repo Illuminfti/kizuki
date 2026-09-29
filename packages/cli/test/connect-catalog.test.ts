@@ -30,6 +30,18 @@ describe("connect catalog", () => {
     expect(result.stdout).toContain("CLI wired; project app credentials missing");
   });
 
+  test("account sign-in sources are not called local and every source has a title", () => {
+    const result = h.runCli(h.isolatedEnv(), "connect", "--json");
+    const sources = JSON.parse(result.stdout).data.sources as Array<{ id: string; name: string; mode: string }>;
+    const byId = new Map(sources.map((source) => [source.id, source]));
+    for (const id of ["kizuki.gmail", "kizuki.google-calendar", "kizuki.x", "kizuki.imap", "kizuki.telegram"]) {
+      expect(byId.get(id)?.mode).toBe("native account sign-in");
+    }
+    expect(byId.get("kizuki.ics")?.mode).toBe("local source");
+    for (const source of sources) expect(source.name).not.toBe(source.id);
+    expect(byId.get("kizuki.import-beacon")?.name).toBe("Beacon agent-run import");
+  });
+
   test("status starts empty and names an enrolled local source without reading secrets", () => {
     const { env, notes } = h.tempVault();
     expect(h.runCli(env, "connect", "status").stdout).toContain("No sources connected yet.");
