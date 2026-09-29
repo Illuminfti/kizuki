@@ -359,6 +359,15 @@ the command stops with `lease_held`, naming the process that holds the writer
 lease and stating that running the same command again resumes from the last
 checkpoint. `database is locked` is not an error this CLI reports.
 
+`backfill`, `sync` and `import` are long writers. While they run they record
+themselves as the running ingest, so the daemon and `doctor` can name them as the
+holder, and while a serve daemon is running they release the ledger between
+commits: after every 250 ms of writing they leave it free for 150 ms, which is
+long enough for a waiting rail to take it. Without a daemon they do not slow
+down. The daemon, for its part, treats a ledger it cannot outwait as a skipped
+pass and never exits for it; see [the service
+lifecycle](service-lifecycle.md#the-daemon-and-owner-commands-share-one-ledger).
+
 ## query
 
 ```text
@@ -730,8 +739,10 @@ pass as `model:budget_day`, and a model that refuses requests for different
 records alike stops it as `model:systemic_rejection` and is not asked again
 until a persisted wait is over; see
 [rejected responses](extraction-budgets.md#rejected-responses-and-daily-budgets). A pass never holds the vault writer across a model
-request, and `kizuki serve stop` or a signal ends it before its next request
-as `serve:stop_requested`. See [extraction budgets](extraction-budgets.md#owner-throughput-settings).
+request, and `kizuki serve stop` or a signal aborts a request in flight and ends
+the pass as `serve:stop_requested`. A pass that meets a ledger another writer
+holds is skipped as `ledger:lease_held` and retried with backoff. See
+[extraction budgets](extraction-budgets.md#owner-throughput-settings).
 
 A record too large for one typed request is extracted one segment per request.
 One that cannot be split, such as a single token longer than a request, is
