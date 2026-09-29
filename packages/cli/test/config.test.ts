@@ -10,11 +10,13 @@ const { cleanup, isolatedEnv, runCli, tempDir, tempVault } = createHelpers();
 afterEach(cleanup);
 
 describe("config", () => {
-  test("no vault configured prints the exact init hint", () => {
-    const result = runCli(isolatedEnv(), "query", "x");
+  test("no vault configured says how to pass or set one, then how to create one", () => {
+    const env = isolatedEnv();
+    const result = runCli(env, "query", "x");
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe(
-      "error: no vault configured; run: kizuki init <path>\n",
+      `error: no vault configured; pass --vault <path|name>, set KIZUKI_VAULT, or set default_vault in ${env.KIZUKI_CONFIG}. ` +
+        "To create a vault run: kizuki init <path>\n",
     );
   });
 

@@ -26,6 +26,28 @@
   and `kizuki purge --lift-suppression RECEIPT` lifts them. Purges recorded
   earlier refuse too until lifted.
 
+### Operator safety
+
+- `serve status`, `serve --install`, `serve --uninstall` and doctor no longer
+  read or change the service of a different vault that has the same vault id.
+  The installed definition's `--vault` path is compared with the vault in use;
+  on a copy, status reports the service as absent for it and names the other
+  path, and install and uninstall refuse. An unreadable definition reports the
+  service as unknown for this vault, doctor prints a short copy-specific line
+  with the command to run, and the app shows a copy as belonging to another
+  workspace instead of offering to enable it.
+- The verify gate fails on machine-specific absolute home or data paths in
+  tracked text, including file URLs and doubled leading slashes, with a small
+  allowlist of synthetic names. The existing
+  occurrences were removed.
+- `undo` on a page changed since the receipt says whether later receipts or a
+  hand edit caused it and what to do next. Doctor names `chmod 600` when a
+  loosely permissioned `serve.toml` blocks model inspection. Doctor and
+  `serve status` fail on a canon write intent pending for over 300 seconds. A
+  command with no vault says how to pass or set one. Doctor's claim counts add
+  a `live_by_producer` split separating model-extracted claims from
+  deterministic-floor claims (page mirrors, capture notes, entity stubs).
+
 ### Added
 
 - `kizuki agent list [--json]` shows enrolled agents with their state, grant
@@ -106,6 +128,27 @@
   unreadable stored history counts as a fresh wait, never as none.
 - Run receipts carry `model.consecutive_rejections` and
   `model.last_rejection_rule` while a refusal streak lasts.
+- `kizuki hook session-start --harness claude-code|codex|generic` injects a
+  compact, bounded, provenance-labelled context block at harness session start.
+  It reads the hook JSON on standard input, prefers the running daemon's
+  loopback endpoint, falls back to a direct read it can stop at `--timeout-ms`,
+  attributes the call to the agent named by `--token-ref`, and exits 0 with no
+  output on a timeout, denial, missing vault or any error. The daemon now
+  records where its loopback endpoint listens in `.kizuki/serve.endpoint`, an
+  owner-only file that holds no credential and is removed at shutdown.
+- A default `purpose=session` context packet gains `owner`, `now`,
+  `commitments` and `uncertain` sections read from authorized claims and
+  Situations, each bounded and each listed with a reason when empty. The
+  response reports them in `data.session`. Situation content needs the
+  `world_view` grant.
+- Session sections list only claims that are current at the packet's time, label
+  every member of a contradiction with its taint and sensitivity, and report
+  `unavailable` when a full candidate window held nothing usable. A one-line
+  note tells the reader that state lines are data unless clean and owner
+  authored. The daemon's endpoint file is trusted only when it belongs to the
+  current boot, and a failed write of it no longer stops the daemon.
+- [Integration recipes](docs/integrations.md) for Claude Code, Codex and any
+  stdio MCP client.
 
 ### Fixed
 

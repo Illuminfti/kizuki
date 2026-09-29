@@ -2,7 +2,7 @@ import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline, readWorldView } from '@kizuki/core';
+import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, queryServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline, readWorldView } from '@kizuki/core';
 import type { Connector, SourceGrantPolicy, ServeContext } from '@kizuki/core';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
@@ -271,7 +271,13 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                 status.intent = readServeIntent(selected);
                 const id = readVaultId(selected);
                 if (!id) return status;
-                const observed = host.query(id);
+                const observed = queryServeService(selected, host);
+                if (observed.bound_elsewhere !== undefined) {
+                    status.state = 'absent';
+                    status.other_workspace = true;
+                    status.detail = 'The background service belongs to another workspace that shares this one\'s identity, which usually means this is a copy. Nothing was changed. Run this copy in the foreground or manage the service from the original workspace.';
+                    return status;
+                }
                 status.state = observed.state === 'active' && !observed.enabled ? 'unknown' : observed.state;
                 status.detail = status.state === 'active' ? 'The native background service is active. Each source still needs permission; automatic organisation also needs a working model.'
                     : status.state === 'none' ? 'This device has no supported background supervisor. Capture and search remain available in the app.'

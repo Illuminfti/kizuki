@@ -168,6 +168,17 @@ describe("supervisor failure rendering", () => {
     expect(supervisorFailureLine("rail loop: down", status())).toBe("rail loop: down");
   });
 
+  test("a vault copy gets a short line naming the other vault and the command to run here", () => {
+    const copy = "/synthetic/copy", original = "/synthetic/original";
+    const line = supervisorFailureLine("supervisor absent", status({
+      state: "absent", unit: null, enabled: false, bound_elsewhere: original,
+      detail: `absent for this vault: the service for this vault id serves another vault at ${original}`,
+    }), null, copy);
+    expect(line).toBe(`supervisor service serves another vault at ${original}; this vault is a copy, so run the loop here: ${INVOCATION} serve --vault ${copy}`);
+    expect(line).not.toContain("state=");
+    expect(line).not.toContain("enabled=");
+  });
+
   test("an unqueryable supervisor still says so rather than borrowing a state", () => {
     const line = supervisorFailureLine("supervisor unknown",
       status({ state: "unknown", detail: "supervisor state could not be queried" }));

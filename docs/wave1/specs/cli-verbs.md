@@ -224,7 +224,8 @@ export function resolveVault(
   override: string | null,
 ): string;
 // order: --vault → $KIZUKI_VAULT → config.default_vault → throw
-//   "no vault configured; run: kizuki init <path>". A --vault value without a "/" is a name looked
+//   "no vault configured; pass --vault <path|name>, set KIZUKI_VAULT, or set default_vault in <config>. To create a vault run:
+//   kizuki init <path>". A --vault value without a "/" is a name looked
 //   up in config.vaults (unknown name → error listing known names); otherwise a path (resolved absolute).
 export function assertVault(path: string): string; // `.kizuki/` and `archive/` markers, as today
 export function openVaultDb(vaultPath: string): Database; // openLedger(<vault>/.kizuki/kizuki.db); initStaging(db); initSearch(db)

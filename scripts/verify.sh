@@ -118,6 +118,39 @@ assert_safe_tracked_text() {
   return "$status"
 }
 
+assert_no_machine_paths() {
+  local records_file
+  local prefilter
+  local status=0
+  records_file="$(mktemp)" || status=$?
+  if ((status != 0)); then
+    printf 'verification failed: tracked scanner temporary-file allocation exited %d\n' "$status" >&2
+    return "$status"
+  fi
+  prefilter="$(bun "$verify_script_dir/verify-machine-paths.ts" --prefilter)" || status=$?
+  if ((status != 0)); then
+    rm -f -- "$records_file"
+    printf 'verification failed: machine-path prefilter exited %d\n' "$status" >&2
+    return "$status"
+  fi
+  if git grep --no-color -I -n -z -E "$prefilter" >"$records_file"; then
+    if bun "$verify_script_dir/verify-machine-paths.ts" <"$records_file"; then
+      status=0
+    else
+      status=$?
+    fi
+  else
+    status=$?
+    if ((status == 1)); then
+      status=0
+    else
+      printf 'verification failed: machine-path producer exited %d\n' "$status" >&2
+    fi
+  fi
+  rm -f -- "$records_file"
+  return "$status"
+}
+
 assert_required_commands() {
   local cmd
   for cmd in bun git grep bash; do
@@ -133,6 +166,7 @@ assert_required_helpers() {
   for path in \
     "$verify_script_dir/verify-attribution.ts" \
     "$verify_script_dir/verify-tracked-text.ts" \
+    "$verify_script_dir/verify-machine-paths.ts" \
     "$verify_script_dir/verify-history.ts" \
     "$verify_script_dir/verify-network.ts" \
     "$verify_script_dir/verify-secrets.ts" \
@@ -279,6 +313,8 @@ main() {
   assert_no_match "attributed identifier outside public documentation" git grep -I -n -i -E "$attributed_identifier_re" -- . ':(exclude)README.md' ':(exclude)docs/upstream-policy.md'
   assert_exact_attribution_spelling README.md docs/upstream-policy.md
   gate denylist-tracked
+  assert_no_machine_paths
+  gate machine-paths
 
   write_reachable_commit_records "$commit_records"
   sanitize_historical_commit_records "$commit_records" "$commit_messages"

@@ -14,6 +14,7 @@ export const SERVE_INTENT_PATH = ".kizuki/serve-intent";
 export const VAULT_ID_PATH = ".kizuki/vault-id";
 export const SERVE_PID_PATH = ".kizuki/serve.pid";
 export const SERVE_TOKEN_PATH = ".kizuki/serve.token";
+export const SERVE_ENDPOINT_PATH = ".kizuki/serve.endpoint";
 
 export const HEARTBEAT_SECONDS = 10;
 export const LEASE_RECLAIM_HEARTBEATS = 3;
@@ -310,6 +311,8 @@ export interface SupervisorStatus {
   readonly unit: string | null;
   readonly enabled: boolean;
   readonly detail: string;
+  /** Set when this vault id's service definition launches a different vault: the path of that vault. */
+  readonly bound_elsewhere?: string;
 }
 
 /** How the supervisor says the unit's last run ended, in its own words:

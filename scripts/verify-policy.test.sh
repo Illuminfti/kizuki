@@ -47,7 +47,7 @@ for missing_command in bun git grep bash; do
 done
 
 # Failed scratch-file allocation must stop before invoking a tracked scanner.
-for helper in assert_safe_tracked_paths assert_safe_tracked_text; do
+for helper in assert_safe_tracked_paths assert_safe_tracked_text assert_no_machine_paths; do
   for errexit in on off; do
     (
       mktemp() { return 73; }
@@ -509,6 +509,51 @@ for malformed in '' 'missing separators' 'file\x00invalid\x00text\n' 'file\x0012
     exit 1
   fi
 done
+
+# Machine-specific absolute paths in tracked text fail the gate; synthetic names pass.
+machine_path_root="$fixture_root/machine-paths"
+mkdir -p "$machine_path_root"
+git -C "$machine_path_root" init -q
+printf 'ordinary text\n' >"$machine_path_root/fixture.txt"
+git -C "$machine_path_root" add fixture.txt
+check_machine_path() {
+  local expected="$1" text="$2" observed
+  printf '%s\n' "$text" >"$machine_path_root/fixture.txt"
+  if (cd "$machine_path_root"; assert_no_machine_paths) >"$fixture_root/machine-result.log" 2>&1; then
+    observed=0
+  else
+    observed=$?
+  fi
+  if ((observed != expected)); then
+    printf 'policy test failed: machine-path expected %d, received %d for %s\n' "$expected" "$observed" "$text" >&2
+    cat "$fixture_root/machine-result.log" >&2
+    exit 1
+  fi
+}
+check_machine_path 0 'no paths here'
+check_machine_path 0 'cd /ho''me/user/kizuki'
+check_machine_path 0 'archive/data/account.js'
+check_machine_path 1 'cd /ho''me/deploy/kizuki'
+check_machine_path 1 'worktree /da''ta/worktrees/main'
+check_machine_path 1 'C:\Us''ers\jane\notes'
+if (git() { return 23; }; assert_no_machine_paths) >/dev/null 2>&1; then
+  machine_status=0
+else
+  machine_status=$?
+fi
+if ((machine_status != 23)); then
+  printf 'policy test failed: machine-path producer failure was masked\n' >&2
+  exit 1
+fi
+if (git() { printf 'invalid records'; }; assert_no_machine_paths) >/dev/null 2>&1; then
+  machine_status=0
+else
+  machine_status=$?
+fi
+if ((machine_status != 2)); then
+  printf 'policy test failed: machine-path validator failure was masked\n' >&2
+  exit 1
+fi
 
 expect_policy_status() {
   local expected="$1" label="$2" status=0

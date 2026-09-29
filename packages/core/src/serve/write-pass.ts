@@ -50,6 +50,7 @@ import {
 import { isProducerV2, type ExtractionProducerPort } from "./extract-v2";
 import { backoffRemaining, readRejections, recordRejection, writeRejections } from "./extract-rejections";
 import { redactReceiptError } from "./receipts";
+import { runWorldJobs } from "./world-jobs";
 
 /** One sync pass never materializes more than this many unwritten claims. */
 const WRITE_PASS_LIMIT = 32;
@@ -362,6 +363,12 @@ export async function runWritePass(
     // The next pass writes canon; a stop, a held write or a busy writer ends this one now.
     if (tally.stopped === STOP_REQUESTED || tally.stopped === "recovery:held" || tally.stopped === "lock:busy") return result();
   }
+  const jobs = await runWorldJobs({
+    db, vaultPath, now: options.now ?? (() => new Date().toISOString()),
+    stopRequested: options.stopRequested ?? (() => false), modelConfigured: modelConfigured(options),
+  });
+  tally.errors.push(...jobs.errors);
+  if (jobs.stopped) { tally.stopped = STOP_REQUESTED; return result(); }
   // No model configured: claims stay live and unwritten; doctor says so.
   if (!modelConfigured(options)) return result();
   const written = await holdWriter(io, (scope, owned) => {

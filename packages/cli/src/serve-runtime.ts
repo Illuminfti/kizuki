@@ -35,6 +35,7 @@ import { chatCompletionsUrl, parseOpenAiCompatibleConfig, parseSystemOneJevConfi
 import type { ReasoningEffort } from "@kizuki/llm";
 import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
 import { DERIVED_PASS_RECORDS, tryRefreshDerived } from "./derived";
+import { serveTomlModeHint } from "./config-custody";
 import { embeddingConfigured } from "./retrieval-runtime";
 import { tokenResolver } from "./secrets";
 import { loadSystemOneBinding } from "./vault-config";
@@ -215,7 +216,11 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
   let document: ReturnType<typeof readAppModelConfiguration>;
   try {
     document = readAppModelConfiguration(options.vaultPath, value => { parseLlmSelection(value); });
-  } catch { runtimeError("configuration snapshot unavailable"); }
+  } catch {
+    const hint = serveTomlModeHint(options.vaultPath);
+    if (hint !== null) options.err(hint);
+    runtimeError("configuration snapshot unavailable");
+  }
   const selected = parseLlmSelection(document.llm);
   let secret: string | null = null;
   if (selected.secret_ref !== null) {

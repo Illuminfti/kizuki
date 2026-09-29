@@ -66,7 +66,11 @@ owner path. `review`, `promote`, and `reject` stay retired.
 Use synthetic fixtures only. Never commit credentials, personal records,
 private endpoints, or estate identifiers. The denylist in `scripts/verify.sh`
 fails the gate on forbidden identifiers in tracked text and reachable commit
-messages.
+messages. `scripts/verify-machine-paths.ts` also fails it on absolute home or
+data paths (for example `/home/<name>/...`, `/Users/<name>/...` or
+`/data/<name>`) in tracked text. Write a placeholder such as `<vault>`, or one
+of the synthetic names it allows (`user`, `ada`, `stranger`, `owner`,
+`example`).
 
 ## Tests
 

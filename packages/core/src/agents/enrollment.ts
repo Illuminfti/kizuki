@@ -531,3 +531,22 @@ export function authenticateAgentCredential(db: Database, tokenRef: string): Pri
     } finally { directory.close(); }
   } catch { return null; }
 }
+
+/**
+ * The bearer token in one enrolled credential file, for a client that calls the
+ * daemon instead of opening the ledger. The daemon still authenticates it; a
+ * missing, unsafe or unrecognized file yields null.
+ */
+export function readAgentCredentialToken(tokenRef: string): string | null {
+  try {
+    if (typeof tokenRef !== "string" || !tokenRef.startsWith("file:") || !absolutePath(tokenRef.slice(5))) return null;
+    const raw = tokenRef.slice(5);
+    if (SQLITE_FILENAMES.has(basename(raw))) return null;
+    const directory = openCredentialDirectory(dirname(raw));
+    try {
+      const held = directory.inspect(basename(raw));
+      if (held === null) return null;
+      try { return parseEnvelope(held.bytes)?.token ?? null; } finally { held.close(); }
+    } finally { directory.close(); }
+  } catch { return null; }
+}

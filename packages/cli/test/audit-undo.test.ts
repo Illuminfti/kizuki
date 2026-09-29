@@ -4,7 +4,7 @@ import type { CliIo } from "../src/commands";
 import type { Key } from "../../tui/src/keys";
 import type { Terminal } from "../../tui/src/terminal";
 import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { accept, undoReceipt, applyCanonWrite, createBudgetTracker, insertClaim, resolveTarget } from "@kizuki/core";
 import type { CaptureEventInput, Claim, InsertClaimInput } from "@kizuki/core";
@@ -266,6 +266,25 @@ describe("kizuki audit and undo", () => {
     const again = runCli(setup.env, "undo", written.editedId);
     expect(again.exitCode).toBe(1);
     expect(again.stderr).toContain("already reverted");
+  });
+
+  test("undo on a hand-edited page and on a superseded receipt print the next step", async () => {
+    const setup = tempVault();
+    const written = await writeGracePage(setup.vault);
+    const page = join(setup.vault, written.pagePath);
+
+    const superseded = runCli(setup.env, "undo", written.createdId);
+    expect(superseded.exitCode).toBe(1);
+    expect(superseded.stderr).toContain(`later receipts: ${written.editedId}`);
+    expect(superseded.stderr).toContain(`kizuki undo ${written.createdId} --cascade`);
+
+    writeFileSync(page, `${readFileSync(page, "utf8")}\nHand edit.\n`);
+    const drifted = runCli(setup.env, "undo", written.editedId, "--cascade");
+    expect(drifted.exitCode).toBe(1);
+    expect(drifted.stderr).toContain("edited outside kizuki");
+    expect(drifted.stderr).toContain("Put the page back to that version by hand");
+    expect(drifted.stderr).toContain("--cascade only reverses later receipts, and there are none");
+    expect(readFileSync(page, "utf8")).toContain("Hand edit.");
   });
 
   test("help lists audit and undo with their usage", () => {

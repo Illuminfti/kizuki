@@ -339,7 +339,7 @@
       "license": "MIT",
       "notice": "Kizuki-owned playbook. Covered by the repository LICENSE. No upstream file is copied.",
       "canonical": ".agents/skills/oracle-backlog/SKILL.md",
-      "sha256": "f4ac5461d30c9ce192785dabda422fb073dd7a9523c0ce1e186fbcbfd9586791",
+      "sha256": "3779c348b782e719328baea858b94158a3c8b1f944d32ddb065ab4f50b550638",
       "hosts": [
         {
           "path": ".claude/skills/oracle-backlog/SKILL.md",

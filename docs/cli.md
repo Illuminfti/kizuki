@@ -17,7 +17,10 @@ Global option: `--vault <path|name>` on every verb. User config is
 an unset environment fails closed instead of writing beside the working
 directory. Vault aliases are `[A-Za-z][A-Za-z0-9_-]{0,63}`. Writes are
 atomic under a lock. Port, model, budget, and sensitivity selection live
-in `<vault>/.kizuki/serve.toml` and appear in `doctor`.
+in `<vault>/.kizuki/serve.toml` and appear in `doctor`. The vault comes from
+`--vault`, else `$KIZUKI_VAULT`, else `default_vault` in the user config. With
+none of these a command exits with the three ways to set one and the
+`kizuki init <path>` command that creates a vault.
 
 Value options also accept `--key=value`, including `--vault=PATH`. Use that
 form when a value starts with `--`; everything after the first `=` is the
@@ -375,7 +378,11 @@ files, or claim that hybrid retrieval ran. Unknown engine IDs still refuse.
 usage: kizuki doctor [--json] [--integrity]
 ```
 
-Vault path, event count, claim counts (filed/live/written/unwritten), live
+Vault path, event count, claim counts (filed/live/written/unwritten) with a
+`live_by_producer` split on the same line that separates `model_extracted`
+claims from `deterministic_floor` (claims the deterministic floor staged
+without a model: imported page mirrors, verbatim capture notes and entity
+stubs; JSON: `claims.by_producer`), live
 claim ids (for `tell --claim`), leftover skipped rows, connections,
 checkpoints (with the first error of each source's last run as `last_error`),
 derived-index freshness, writer ROLE stamps, machine vs human
@@ -456,6 +463,13 @@ backfill run sets, beside `last_run_clean`. The closing `next:` line follows fro
 the structured top failure of a failed report and never suggests `kizuki tell`;
 for a down rail it points at `kizuki serve status`, which only reads.
 
+Doctor names the fix when it can. A `serve.toml` that is not mode 600 stops the
+model configuration from being read; the report then names the file's mode and
+the `chmod 600` command instead of only saying the inspection is unavailable.
+A canon write intent pending for more than 300 seconds fails doctor and
+`serve status` with the pending receipt and `kizuki recover --json`; a write
+that is still in flight is not flagged.
+
 Doctor validates existing configuration and credentials without constructing a
 model runtime. Pending model or connection-state journals remain untouched and
 make the report degraded; inspecting the vault does not authorize recovery or
@@ -481,7 +495,16 @@ usage: kizuki context [--purpose session|recall|correction|audit] [--budget N] [
 ```
 
 Purpose-scoped compilation of canon, graph, timeline, and working-knowledge
-claims with provenance stamps and a token budget. Same engine as MCP
+claims with provenance stamps and a token budget. A default `--purpose session`
+packet starts with four bounded sections that answer what a fresh agent asks:
+`owner` (identity facts with owner authority), `now` (current Situations and
+recently recorded changes), `commitments` (open commitments) and `uncertain`
+(contradictions and hedged statements). Each is read from authorized claims and
+the world model and never inferred. An empty section is listed under
+`not recorded` with its reason (`none_recorded`, `not_granted`, `unavailable` or
+`budget`), and `--json` reports the same in `data.session`. The four sections
+use at most half of the room after the header. Situations need the `world_view`
+grant. Other purposes are unchanged. Same engine as MCP
 `context_packet`. Does not write canon. Empty packets keep the machine header
 on stdout and offer a next step on stderr. If gathering fails, the CLI returns
 exit 1 and reports `degraded` in JSON instead of presenting the header as a
@@ -498,6 +521,39 @@ not a grant. Grant-bound clamping and denial stay in Core.
 Claims and derived statements follow the live grant and
 [context privacy rules](context-privacy.md), including fail-closed provenance
 and bounded audit coverage.
+
+## hook
+
+Status: shipped
+
+```text
+usage: kizuki hook session-start --harness claude-code|codex|generic [--budget N] [--timeout-ms MS] [--token-ref env:VAR|file:/absolute/path] [--direct] [--verbose]
+```
+
+Prints a compact, bounded, provenance-labelled context block
+for a harness that runs a command at session start. It reads the harness's
+hook JSON on standard input (only the working directory's last segment becomes
+the search query), asks the running daemon's loopback endpoint for a
+`context_packet` with `purpose=session`, falls back to a direct read in a child
+process it can stop at the deadline, and prints the block. `--harness
+claude-code` and `--harness codex` print
+`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":...}}`;
+`--harness generic` prints the plain text. Quoted and taint labels stay on the
+lines. `--budget` is 50 to 2000 tokens (default 450) and `--timeout-ms` is 100
+to 60000 (default 2500). `--token-ref` reads as an enrolled agent, so the call is
+audited under that agent's name; without it the hook reads as the owner. The
+reference is a file or an environment variable, never the token itself.
+
+It exits 0 and prints nothing on a timeout, a denied or revoked credential, a
+missing or uninitialized vault, an empty result or any other error. An empty
+vault prints no block. `--verbose` writes one line naming the class of failure
+to standard error and never a path, token or captured text. `--direct` reads in
+the current process without contacting the daemon; its deadline cannot interrupt
+a read already running. A misconfigured command is silent and exits 0 too, and
+out-of-range numbers are clamped to their bounds, so a settings typo never
+fails a session. The hook writes nothing and
+contacts only the loopback daemon. See [integrations](integrations.md) for
+Claude Code, Codex and generic recipes.
 
 ## world
 
@@ -563,7 +619,13 @@ noncanonical tokens are usage errors before the vault is opened.
 usage: kizuki undo <receipt_id> [--cascade]
 ```
 
-Restores prior canon bytes from a write receipt.
+Restores prior canon bytes from a write receipt. Undo only restores a page that
+still matches what the receipt wrote. When a later receipt changed the page, the
+refusal lists those receipts and names `kizuki undo <receipt_id> --cascade`,
+which reverses them newest first. When nothing later explains the change, the
+page was edited outside Kizuki: the refusal says so and tells you to put the
+page back to the receipt's version by hand, or keep your edit and leave the
+receipt as it is. `--cascade` cannot help there, and the refusal says why.
 
 ## audit
 

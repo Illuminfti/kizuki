@@ -6,3 +6,7 @@ export { search, searchResult, toFtsQuery } from "./search";
 export { timeline } from "./query";
 /** Raw graph neighbor helper for tests. Adapters query through `serveGraph`. */
 export { neighbors } from "./graph";
+/** Registers synthetic world table specs until the returned disposer runs. */
+export { registerWorldTableSpecs } from "./world/tables/registry";
+/** Registers synthetic world jobs until the returned disposer runs. */
+export { registerWorldJobs } from "./serve/world-jobs";

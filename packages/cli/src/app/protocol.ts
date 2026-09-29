@@ -12,6 +12,8 @@ export interface AppServiceStatus {
     state: SupervisorState;
     detail: string;
     checked_at: string;
+    /** True when the native service belongs to another workspace with the same identity, so enabling here would be refused. */
+    other_workspace?: true;
 }
 export const APP_API_PREFIX = '/app/v1/';
 export interface AppError {
