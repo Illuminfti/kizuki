@@ -32,14 +32,18 @@ export interface HealthData {
   pages: {
     /** Pages this principal may read. */
     servable: number;
-    /** The four below are owner only. */
+    /** The following diagnostics are owner only. */
     total?: number;
     active?: number;
     labeled?: number;
     /** Pages carrying a taint stamp: an unstamped page is served to nobody. */
     stamped?: number;
     held?: number;
+    /** Page files the walk could not read or parse; none of them is served. */
+    withheld?: number;
   };
+  /** Unreadable paths and problems are owner only. */
+  withheld_pages?: { path: string; problem: string }[];
   /** Events this principal may read. */
   events: number;
   /**
@@ -224,7 +228,12 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
             servable,
             held: index.pages.filter((page) => index.holds.has(page.relPath))
               .length,
+            withheld: index.withheld.length,
           },
+          withheld_pages:
+            ctx.principal.kind === "owner"
+              ? index.withheld.map((entry) => ({ path: entry.relPath, problem: entry.reason }))
+              : [],
           events: count(ctx.db),
           live_claims: countClaims(ctx.db, { status: "live" }),
           pending_retrieval_ops: countPendingRetrievalOps(ctx.db),

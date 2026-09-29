@@ -5,7 +5,7 @@ import type { RetrievalAuthority } from "../contracts/retrieval";
 import { readDerivedHolds } from "../derived-holds";
 import { readDerivedMeta } from "../derived-meta";
 import { tableExists } from "../ledger/schema";
-import { sourceServingSql, type SourcePurpose } from "../ledger/source-grants";
+import { sourceServingSql, type SourceServingScope } from "../ledger/source-grants";
 import { ceilingSql, instantBoundPair, instantPairSql, requireCeiling } from "../query/sql";
 import { placeholders } from "../util/sql";
 import type { DocScope } from "./indexer";
@@ -158,7 +158,7 @@ function searchPlan(
   query: string,
   opts: Omit<SearchOptions, "ceiling">,
   ceiling: number | null,
-  source?: { owner: boolean; purpose?: SourcePurpose },
+  source?: SourceServingScope,
   offset?: number,
 ): SearchPlan {
   const ftsQuery = toFtsQuery(validQueryText(query));
@@ -297,7 +297,7 @@ export function searchAuditCandidates(
   db: Database,
   query: string,
   opts: Omit<SearchOptions, "ceiling"> & {
-    source?: { owner: boolean; purpose?: SourcePurpose };
+    source?: SourceServingScope;
     /** Ranked-window skip for serving. Absent from SearchOptions and public search(). */
     offset?: number;
   },

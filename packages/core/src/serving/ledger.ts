@@ -2,7 +2,8 @@ import type { Database } from "bun:sqlite";
 import { liveEventIds } from "../ledger/ledger";
 import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
 import type { ServeContext } from "./types";
-import { authorize } from "../agents";
+import { authorize, denyClassesOf } from "../agents";
+import { classesByEvent, classesOfEvents } from "../ledger/event-classes";
 import type { AuditDenial, DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import { previewText, timeline } from "../query/timeline";
 import type { TimelineEntry, TimelineOptions } from "../query/timeline";
@@ -22,6 +23,8 @@ export interface ServableEvent {
   occurred_at: string;
   sensitivity: string;
   subjects: string[];
+  /** Content classes stamped on the event; absent until read from the ledger. */
+  classes?: readonly string[];
 }
 
 export interface QuotedSource extends ServableEvent {
@@ -63,6 +66,7 @@ export function readServableEvents(
   ]);
   const facts = new Map<string, ServableEvent>();
   for (const group of chunks([...live])) {
+    const classes = classesByEvent(db, group);
     const rows = db
       .query<ServableEventRow, string[]>(
         `SELECT event_id, kind, occurred_at,
@@ -78,6 +82,7 @@ export function readServableEvents(
         occurred_at: row.occurred_at,
         sensitivity: row.sensitivity,
         subjects: subjectIds(row.subjects),
+        classes: classes.get(row.event_id) ?? [],
       };
       facts.set(row.event_id, event);
       facts.set(retrievalDocId("event", row.event_id), event);
@@ -97,6 +102,7 @@ export function eventServable(facts: ServableEvent): Servable {
     type: facts.kind,
     subjects: facts.subjects,
     occurred_at: facts.occurred_at,
+    ...(facts.classes === undefined ? {} : { classes: facts.classes }),
   };
 }
 
@@ -111,7 +117,13 @@ export function eventDecision(
   const original = asSensitivity(facts.sensitivity);
   const label = original === null || ctx === undefined ? original : sourceSensitivity(ctx.db, [facts.event_id], original);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
-  const decision = authorize(grant, { ...eventServable(facts), sensitivity: label });
+  // Facts read straight from the ledger carry their classes; a timeline row
+  // does not, so a caller with a context looks them up rather than skip the check.
+  const known: ServableEvent =
+    facts.classes === undefined && ctx !== undefined
+      ? { ...facts, classes: classesOfEvents(ctx.db, [facts.event_id]) }
+      : facts;
+  const decision = authorize(grant, { ...eventServable(known), sensitivity: label });
   return decision.allow
     ? { allow: true, sensitivity: label }
     : { allow: false, reason: decision.reason };
@@ -185,6 +197,7 @@ export function collectAuthorizedTimeline(
       source: {
         owner: ctx.principal.kind === "owner",
         purpose: ctx.sourcePurpose ?? "recall",
+        deny_classes: denyClassesOf(grant),
       },
       ...(grantSubjects === undefined ? {} : { subjects: grantSubjects }),
       ...(grantKinds === undefined ? {} : { kinds: grantKinds }),

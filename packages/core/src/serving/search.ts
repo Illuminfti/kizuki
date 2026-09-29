@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { denyClassesOf } from "../agents";
 import type { AuditDenial, AuditItem, Grant } from "../agents";
 import { canonReadGeneration } from "../canon/write-intent";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
@@ -237,6 +238,7 @@ export async function serveSearch(
       source: {
         owner: ctx.principal.kind === "owner",
         purpose: ctx.sourcePurpose ?? "recall",
+        deny_classes: denyClassesOf(grant),
       },
     };
     const degraded = new Set<string>();
