@@ -13,6 +13,7 @@ import {
   type RebuildBudget,
   type RetrievalPort,
 } from "@kizuki/core";
+import { rebuildWorldLayer } from "@kizuki/core/internal";
 import { parseArguments, UsageError } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
@@ -33,7 +34,7 @@ export const REBUILD_SCHEMA = {
     "--max-source-bytes": String(DEFAULT_REBUILD_BUDGET.max_source_bytes),
   },
   bounds: {
-    "--layer": "all|search|graph",
+    "--layer": "all|search|graph|world",
     "--max-records": "N",
     "--max-entries": "N",
     "--max-source-bytes": "N",
@@ -70,9 +71,9 @@ function nextConfiguredEmbeddingSpace(vaultPath: string): string | null {
 export const rebuildCommand: Command = {
   name: "rebuild",
   usage:
-    "rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm]" +
+    "rebuild [--layer all|search|graph|world] [--port ID] [--prune-old] [--confirm]" +
     " [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]",
-  summary: "rebuild configured retrieval and the lexical floor, or prune inactive retrieval stores",
+  summary: "rebuild configured retrieval and the lexical floor, reset derived world tables, or prune inactive retrieval stores",
   schema: REBUILD_SCHEMA,
   async run(io, args) {
     const parsed = parseArguments(args, {
@@ -83,10 +84,13 @@ export const rebuildCommand: Command = {
     const pruneOld = parsed.flags.has("--prune-old");
     const portId = parsed.options.get("--port");
     const confirm = parsed.flags.has("--confirm");
-    if (parsed.positionals.length > 0 || (layer !== "all" && layer !== "graph" && layer !== "search")) {
-      throw new UsageError("rebuild supports --layer all, search, or graph; other partial layers are not implemented");
+    if (parsed.positionals.length > 0 || (layer !== "all" && layer !== "graph" && layer !== "search" && layer !== "world")) {
+      throw new UsageError("rebuild supports --layer all, search, graph, or world; other partial layers are not implemented");
     }
     const budget = parseBudget(parsed.options);
+    if (layer === "world" && Object.keys(budget).length > 0) {
+      throw new UsageError("rebuild --layer world takes no budget option");
+    }
     if (pruneOld && (parsed.options.has("--layer") || portId !== undefined || confirm ||
         Object.keys(budget).length > 0)) {
       throw new UsageError("rebuild --prune-old cannot be combined with --layer, --port, --confirm, or a budget option");
@@ -105,7 +109,7 @@ export const rebuildCommand: Command = {
       let selected: RetrievalPort | undefined;
       let embedding: EmbeddingPort | undefined;
       try {
-        if (layer === "search" || layer === "graph") {
+        if (layer === "search" || layer === "graph" || layer === "world") {
           if (portId !== undefined) {
             throw new PortError(
               "config_invalid",
@@ -145,6 +149,11 @@ export const rebuildCommand: Command = {
             portId,
             embedding === undefined ? {} : { embedding },
           );
+        }
+        if (layer === "world") {
+          const world = rebuildWorldLayer(ctx.db);
+          io.out(parsed.flags.has("--json") ? jsonEnvelope("rebuild", "ok", world) : `world_tables_reset=${world.tables.length}`);
+          return 0;
         }
         const result = await rebuildRetrieval(ctx.db, ctx.vaultPath, selected, { layer, budget });
         if (layer === "all" || layer === "search") refreshDerived(ctx.db, ctx.vaultPath);

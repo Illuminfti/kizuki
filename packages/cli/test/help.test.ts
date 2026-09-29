@@ -510,7 +510,7 @@ describe("help", () => {
       };
       expect(body.data.name).toBe("rebuild");
       expect(body.data.usage).toBe(
-        "rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm]" +
+        "rebuild [--layer all|search|graph|world] [--port ID] [--prune-old] [--confirm]" +
           " [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]",
       );
       expect(body.data.options).toEqual([
@@ -530,7 +530,7 @@ describe("help", () => {
         "--max-source-bytes": "67108864",
       });
       expect(body.data.bounds).toEqual({
-        "--layer": "all|search|graph",
+        "--layer": "all|search|graph|world",
         "--max-records": "N",
         "--max-entries": "N",
         "--max-source-bytes": "N",
@@ -538,7 +538,7 @@ describe("help", () => {
       expect(body.data.irreversible).toBe(false);
     }
     const rendered = runCli(env, "rebuild", "--help").stdout;
-    expect(rendered).toContain("--layer  all|search|graph  default all");
+    expect(rendered).toContain("--layer  all|search|graph|world  default all");
     expect(rendered).toContain("--max-records  N  default 1000000");
     expect(rendered).toContain("--max-entries  N  default 200000");
     expect(rendered).toContain("--max-source-bytes  N  default 67108864");
