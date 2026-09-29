@@ -16,6 +16,7 @@ import { createDurableWriteBudget } from "./budget-ledger";
 import { embedBackfillPeriod, loadServeConfig } from "./config";
 import { composeBrief, repairBriefPages, type BriefRepair } from "./brief";
 import { parseFrontmatter } from "../vault/frontmatter";
+import { inspectServeDoctor } from "./doctor";
 import { createFileNotifier, briefPath } from "./notifier-file";
 import { coalesceNoopReceipt, recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
 import { applyRailPeriod, initServe, listSchedules } from "./schema";
@@ -327,15 +328,35 @@ async function runBrief(
   return { status: "ok", ...repairReport(await repairBriefPages(vaultPath)) };
 }
 
-async function runDoctorSweep(db: Database, vaultPath: string, now: string): Promise<Partial<RunReceipt>> {
+/** The most failures one sweep receipt names, so a broken vault cannot grow the journal. */
+const SWEEP_FAILURES = 8;
+
+/**
+ * The sweep reports what `kizuki doctor` would fail on, less what only the
+ * service's supervisor can know, so an `ok` sweep never sits beside a failed
+ * doctor. Its own degradation is not a rail fault: see `railDoctor`.
+ */
+async function runDoctorSweep(
+  db: Database,
+  vaultPath: string,
+  hooks: AnyRailHooks | undefined,
+  now: string,
+): Promise<Partial<RunReceipt>> {
   const health = inspectPurgeHealth(db, now);
   const recovery = inspectCanonRecovery(db);
+  const doctor = inspectServeDoctor(db, vaultPath, {
+    now,
+    host_checks: false,
+    model_ref: hooks?.model_ref ?? null,
+    embedding_configured: hooks?.embedding_backlog !== undefined,
+  });
   const errors = [
     ...(health.ok ? [] : ["purge-unhealthy"]),
     ...(recovery.pending || recovery.projection_pending > 0 ? ["canon-recovery-pending"] : []),
-  ];
+    ...doctor.failures.map(redactReceiptError),
+  ].slice(0, SWEEP_FAILURES);
   const repair = repairReport(await repairBriefPages(vaultPath));
-  const allErrors = [...errors, ...(repair.errors ?? [])];
+  const allErrors = [...errors, ...(repair.errors ?? [])].slice(0, SWEEP_FAILURES);
   return {
     ...repair,
     status: allErrors.length === 0 ? "ok" : "degraded",
@@ -465,7 +486,7 @@ async function runRailImpl(
           partial = await runBrief(db, vaultPath, started, hooks?.model_ref ?? null);
           break;
         case "doctor-sweep":
-          partial = await runDoctorSweep(db, vaultPath, started);
+          partial = await runDoctorSweep(db, vaultPath, hooks, started);
           break;
         case "journal-prune":
           partial = runJournalPrune(db, vaultPath, started, config.journal_retention_days);

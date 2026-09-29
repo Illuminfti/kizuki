@@ -241,12 +241,12 @@ test("a private interval filling a hole is not removed to invent a public gap", 
   expect((await md(f, "reader-public"))).not.toContain("gap key=");
 });
 
-test("identity authority is unavailable without withholding model-free claims", async () => {
+test("packets carry no identity-authority flag and still serve model-free claims", async () => {
   const f = await fixture();
   await claim(f, "visible");
   const response = await packet(f, "reader-public");
   expect(response.data?.packet_md).toContain("visible");
-  expect(response.data?.retrieval_degraded).toContain("identity-authority-unavailable");
+  expect(response.data?.retrieval_degraded ?? []).not.toContain("identity-authority-unavailable");
 });
 
 test("claims cannot inject a new context section through an object newline", async () => {
@@ -314,7 +314,7 @@ test.each([
 });
 
 
-test("oversized persisted provenance fails closed while identity remains degraded", async () => {
+test("oversized persisted provenance fails closed", async () => {
   const f = await fixture();
   const visible = await claim(f, "visible");
   const invalid = await claim(f, "oversized-provenance", { subject: "person:bob", subjects: ["person:bob"] });
@@ -323,5 +323,5 @@ test("oversized persisted provenance fails closed while identity remains degrade
   const text = (await md(f, "reader-public"));
   expect(text).toContain(visible.claim_id);
   expect(text).not.toContain("oversized-provenance");
-  expect((await packet(f, "reader-public")).data?.retrieval_degraded).toContain("identity-authority-unavailable");
+  expect((await packet(f, "reader-public")).data?.retrieval_degraded ?? []).not.toContain("identity-authority-unavailable");
 });

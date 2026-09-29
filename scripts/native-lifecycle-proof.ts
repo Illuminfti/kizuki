@@ -202,10 +202,10 @@ function originalSteps(value: unknown,platform:string): { steps:Row[];units:stri
     if(id==="native-api-failed-activation-rolls-back"){const e=row(s.evidence,"failure,unit_sha256,recovery_journal_exists,boundary");str(e.failure,4096);hash(e.unit_sha256);need(e.recovery_journal_exists===false);str(e.boundary,512);}
     if(id==="deliberately-stopped"){const e=row(s.evidence,"unit_exists,intent");need(e.unit_exists===false&&e.intent==="opted-out");}
     if(id==="installed-rails-healthy"){
-      const e=row(s.evidence,"exit_code,doctor_ok,canon_writing,failures,identity_degraded,rails,diagnostics");need(e.exit_code===0&&e.doctor_ok===true&&e.canon_writing==="off"&&list(e.failures,16).length===0);
+      const e=row(s.evidence,"exit_code,doctor_ok,canon_writing,failures,stores_degraded,rails,diagnostics");need(e.exit_code===0&&e.doctor_ok===true&&e.canon_writing==="off"&&list(e.failures,16).length===0);
       const d=row(e.diagnostics,"complete,truncated,error,receipts");need(d.complete===true&&d.truncated===false&&d.error===null);
       const rails=list(e.rails,8).map(v=>row(v,"rail,status,reason"));need(rails.length===RAIL_IDS.length&&RAIL_IDS.every(id=>rails.filter(r=>r.rail===id&&r.status==="ok"&&r.reason===null).length===1));
-      list(e.identity_degraded,16).forEach(v=>str(v));
+      list(e.stores_degraded,16).forEach(v=>str(v));
       const reads=list(d.receipts,32).map(v=>row(v,"rail,status,finished_at,current_instance,errors,retrieval_degraded"));
       need(RAIL_IDS.every(id=>reads.some(r=>r.rail===id&&r.current_instance===true)),"native-lifecycle-rail-coverage");for(const r of reads){str(r.rail);time(r.finished_at);need(typeof r.current_instance==="boolean");list(r.errors,16);list(r.retrieval_degraded,16);if(r.current_instance)need(r.status==="ok"&&(r.errors as unknown[]).length===0&&(r.retrieval_degraded as unknown[]).length===0);}
     }

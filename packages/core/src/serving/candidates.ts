@@ -406,9 +406,6 @@ export async function collectPieces(
         block: `- gap key=${inline(gap.claim_key.slice(0, 12))} after=${inline(gap.after)} before=${inline(gap.before)}\n`,
       });
     }
-    // Identity authority is retired for every request in A0. Do not probe its
-    // legacy API: there is no usable capability to discover at runtime.
-    nominated.degraded.push("identity-authority-unavailable");
     withheld.push(...reader.denied.values());
   }
 

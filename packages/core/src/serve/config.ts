@@ -43,6 +43,9 @@ function text(value: unknown, fallback: string): string {
 /**
  * A configured model is a non-empty `[ports.llm] model` that is not `none`.
  * Absence stays off: doctor must not infer a model from a leftover receipt.
+ * The value is `port:model` without the endpoint host, so it says that a model
+ * is configured but is not the reference the port stamps on run receipts; the
+ * host that builds the port supplies that one (`configured_model_ref`).
  */
 export function loadConfiguredModelRef(vaultPath: string): string | null {
   const path = serveConfigPath(vaultPath);

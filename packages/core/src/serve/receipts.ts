@@ -285,9 +285,8 @@ const MODEL_RUN_HISTORY_SQL = `SELECT report, run_id, finished_at FROM run_recei
   ORDER BY finished_at DESC, run_id DESC LIMIT ?`;
 
 /** A bounded raw sync window; identity and outcome classification happen after normalization. */
-export function readModelRunHistory(db: Database, since: string): ModelRunHistory {
+export function readModelRunHistory(db: Database, since: string, limit = 10_000): ModelRunHistory {
   if (!tableExists(db, "run_receipts")) return { receipts: [], truncated: false };
-  const limit = 10_000;
   const rows = db.query<{ report: string; run_id: string; finished_at: string }, [string, number]>(
     MODEL_RUN_HISTORY_SQL,
   ).all(since, limit + 1);
@@ -302,6 +301,36 @@ export function readModelRunHistory(db: Database, since: string): ModelRunHistor
       } catch { return null; }
     }),
   };
+}
+
+/** Newest embed-backfill runs `readEmbeddingReceipts` looks through: a day at the default period. */
+const EMBEDDING_SCAN_ROWS = 1_500;
+
+/**
+ * The newest embed-backfill runs that embedded something, found among the
+ * newest `EMBEDDING_SCAN_ROWS` runs. The rail runs every minute and most runs
+ * embed nothing, so a window of newest runs would lose the measurement; the
+ * filter runs in SQLite and only `limit` rows are parsed.
+ */
+export function readEmbeddingReceipts(db: Database, since: string, limit: number): RunReceipt[] {
+  if (!tableExists(db, "run_receipts")) return [];
+  return db
+    .query<{ report: string }, [string, number]>(
+      `SELECT report FROM (
+         SELECT report, finished_at, run_id FROM run_receipts
+          WHERE rail = 'embed-backfill' AND status = 'ok' AND finished_at >= ?
+          ORDER BY finished_at DESC, run_id DESC LIMIT ${EMBEDDING_SCAN_ROWS})
+        WHERE json_extract(report, '$.retrieval.upserts') > 0
+        ORDER BY finished_at DESC, run_id DESC LIMIT ?`,
+    )
+    .all(since, limit)
+    .reverse()
+    .flatMap((row) => {
+      try {
+        const receipt = parseRunReceipt(JSON.parse(row.report));
+        return receipt === null ? [] : [receipt];
+      } catch { return []; }
+    });
 }
 
 export function getRunReceipt(db: Database, runId: string): RunReceipt | null {
