@@ -547,7 +547,7 @@ export function inspectServeDoctor(
   const oversized = oversizedDoctor(db);
   const pages: CanonPageReport =
     options.page_walk === false
-      ? { pages: [], skipped: [], truncated: false }
+      ? { pages: [], skipped: [], truncated: false, signatures: new Map() }
       : listCanonPagesReport(vaultPath);
   const quarantined = quarantineDoctor(db, now);
   const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
