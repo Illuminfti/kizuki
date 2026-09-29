@@ -25,6 +25,20 @@
   receipt. `kizuki purge --suppressions` lists the refusals
   and `kizuki purge --lift-suppression RECEIPT` lifts them. Purges recorded
   earlier refuse too until lifted.
+- Chat, session and email records no longer file one capture-note claim each
+  onto a single per-day `captures/<connector>/<day>` page. That page was
+  recomposed from all of its live claims on every write and outgrew the canon
+  page limit on a busy day. Their text stays in the ledger, so search,
+  timeline and context read it with no model, and typed extraction turns it
+  into claims when a model is configured. Markdown, wiki and other page-kind
+  events keep their capture notes.
+- The doctor sweep closes out the capture notes earlier revisions filed for
+  such records: each unwritten one becomes `skipped` with reason
+  `message_capture_fanout`, is never deleted, creates no canon page, and is
+  counted as `captures_skipped` on the run receipt. Doctor reports them on a
+  `capture fan-out` line (JSON `claims.capture_fanout`), apart from unwritten
+  claims, names `kizuki serve run doctor-sweep` while any are pending, and no
+  longer lists them among leftover skipped rows.
 
 ### Operator safety
 
