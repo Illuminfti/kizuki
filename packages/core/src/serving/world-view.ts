@@ -61,6 +61,8 @@ export type WorldReadInput =
   | {
       readonly operation: "find_concepts" | "find_situations";
       readonly label: string;
+      /** The `cursor` of the previous page; absent for the first page. */
+      readonly cursor?: string;
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
     }
@@ -213,11 +215,17 @@ export function readWorldView(
     throw new WorldViewError();
   const discovery =
     operation === "find_concepts" || operation === "find_situations";
+  const paged = discovery && Object.hasOwn(input, "cursor");
   const expected = discovery
-    ? ["operation", "label", "valid", "knownAt"]
+    ? ["operation", "label", "valid", "knownAt", ...(paged ? ["cursor"] : [])]
     : ["operation", operation, "valid", "knownAt"];
   if (!exact(input, expected)) throw new WorldViewError();
   const anchor = discovery ? null : parseRef(input[operation], "object");
+  if (
+    paged &&
+    (typeof input.cursor !== "string" || !isWorldWireToken(input.cursor))
+  )
+    throw new WorldViewError();
   if (
     discovery
       ? typeof input.label !== "string" || input.label.length > 200
@@ -246,8 +254,11 @@ export function readWorldView(
     const handle =
       anchor === null ? null : resolveWorldObject(ctx.db, ns, anchor.token);
     if (!discovery && handle === null) return { status: "not_found" };
+    // A cursor is an object reference this principal was issued for the last match of the previous page.
+    const after = paged ? resolveWorldObject(ctx.db, ns, input.cursor as string) : null;
+    if (paged && after === null) throw new WorldViewError();
     const data = discovery
-      ? discoverWorld(ctx, ns, kind, input.label as string, valid)
+      ? discoverWorld(ctx, ns, kind, input.label as string, valid, after)
       : projectWorldCard(ctx, ns, handle!, kind, valid);
     if (data === null) return { status: "not_found" };
     if (Buffer.byteLength(JSON.stringify(data), "utf8") > 256 * 1024)
@@ -275,30 +286,34 @@ export function serveWorldView(
   ctx: ServeContext,
   args: Record<string, unknown>,
 ): WorldViewEnvelope {
+  // The gate is not wrapped in a transaction: a refusal rolls back everything
+  // inside one, and the audit row and rate reservation of a denied call must
+  // outlive the refusal. The projection opens its own transaction, so a failed
+  // projection still issues no references.
+  const envelope = gate(
+    ctx,
+    "world_view",
+    auditArguments(args),
+    ({ ctx: live }): Served<WorldReadResult> => {
+      try {
+        return {
+          canon: [],
+          quoted: [],
+          withheld: [],
+          data: readWorldView(live, args),
+        };
+      } catch (error) {
+        if (error instanceof WorldViewError)
+          throw new ServeError(
+            "invalid_arguments",
+            "invalid arguments: world_view",
+          );
+        throw error;
+      }
+    },
+  );
   return ctx.db
     .transaction((): WorldViewEnvelope => {
-      const envelope = gate(
-        ctx,
-        "world_view",
-        auditArguments(args),
-        ({ ctx: live }): Served<WorldReadResult> => {
-          try {
-            return {
-              canon: [],
-              quoted: [],
-              withheld: [],
-              data: readWorldView(live, args),
-            };
-          } catch (error) {
-            if (error instanceof WorldViewError)
-              throw new ServeError(
-                "invalid_arguments",
-                "invalid arguments: world_view",
-              );
-            throw error;
-          }
-        },
-      );
       const principal = resolvePrincipal(ctx.db, ctx.principal);
       if (principal === null)
         throw new ServeError("unknown_agent", "unknown agent");

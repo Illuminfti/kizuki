@@ -31,10 +31,12 @@ import { withReadVault } from "../context";
 import type { ReadVaultContext } from "../context";
 import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
 import { clean, errorText, jsonEnvelope } from "../output";
+import { embeddingConfigured } from "../retrieval-runtime";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
-import { inspectModelBinding, type ModelBindingSummary } from "../serve-runtime";
+import { configuredModelBinding, inspectModelBinding, type ModelBindingSummary } from "../serve-runtime";
 import { serveSupervisorHost } from "../service-host";
 import { supervisorFailureLine } from "../service-custody";
+import { nextStep } from "./doctor-next";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 const HEALTH_DEADLINE_MS = 3_000;
@@ -52,7 +54,14 @@ interface DoctorConnection {
   errors: number;
   /** Why the last run failed, first reason only; null when it did not. */
   last_error: string | null;
+  /** A backfill run reached its end. Only a backfill run sets it, so a source that is only synced keeps it false. */
   backfill_complete: boolean;
+  /**
+   * The last run recorded no error. Not a claim about what is left upstream:
+   * the checkpoint keeps no cursor exhaustion, so a clean run says the source
+   * answered, not that it has nothing more to give.
+   */
+  last_run_clean: boolean;
   problem: string | null;
 }
 
@@ -299,6 +308,7 @@ async function collect(
       errors: checkpoint?.last_result.errors.length ?? 0,
       last_error: scrubDetail(checkpoint?.last_result.errors[0] ?? null),
       backfill_complete: checkpoint?.backfill_complete === true,
+      last_run_clean: checkpoint !== null && checkpoint.last_result.errors.length === 0,
     };
     if (host.state === null) {
       connections.push({
@@ -417,10 +427,15 @@ async function collect(
       problems.push({ page: "-", error: "model configuration inspection unavailable" });
     }
   }
+  // Without the daemon's secret this process cannot bind the model, but the
+  // reference is still known, and the daemon's receipts are filed under it.
+  const configuredModel = boundModel ?? configuredModelBinding(ctx.vaultPath);
   const serve = inspectServeDoctor(ctx.db, vaultPath, {
     supervisor: host,
     model_ref: boundModel?.model_ref ?? null,
     reasoning_effort: boundModel?.reasoning_effort ?? null,
+    embedding_configured: embeddingConfigured(vaultPath),
+    ...(configuredModel === null ? {} : { configured_model_ref: configuredModel.model_ref }),
   });
   const ok =
     vault.counts.invalid === 0 &&
@@ -493,15 +508,35 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(
     `derived search=${derived.search.rebuilt_at ?? "never"} docs=${derived.search.doc_count} graph=${derived.graph.rebuilt_at ?? "never"} docs=${derived.graph.doc_count}`,
   );
+  io.out(report.serve.stores.vector_layer.detail);
+  const stores = report.serve.stores;
+  if (stores.skipped_pages_total > 0) {
+    io.out(`index-degraded: ${stores.skipped_pages_total} canon file(s) cannot be indexed`);
+    for (const page of stores.skipped_pages) io.out(`skipped ${clean(page.path)} (${page.reason})`);
+    const hidden = stores.skipped_pages_total - stores.skipped_pages.length;
+    if (hidden > 0) io.out(`skipped ... and ${hidden} more`);
+  }
+  if (stores.held_pages > 0) {
+    io.out(`index-degraded: ${stores.held_pages} canon page(s) are held out of the index by an open hold or write; kizuki rebuild does not clear them`);
+  }
+  if (stores.pages_truncated) {
+    io.out("canon walk truncated: the skipped-file list above may be incomplete");
+  }
+  if (stores.skipped_pages_total === 0 && stores.held_pages === 0) {
+    // Incremental refreshes do not restamp a layer, so a fixed page leaves the old stamp behind.
+    for (const layer of ["search", "graph"] as const) {
+      const stamp = derived[layer];
+      if (stamp.status !== null && stamp.status !== "ok" && stamp.skipped_count > 0) {
+        io.out(`derived ${layer} stamp is ${stamp.status} with ${stamp.skipped_count} skipped, but no canon file is skipped or held now; the stamp may be stale; kizuki rebuild --layer ${layer} re-evaluates it`);
+      }
+    }
+  }
   const writers = report.serve.stores.writers;
   io.out(
     `writers loop=${writers.loop} correction=${writers.correction} import=${writers.import} revert=${writers.revert}`,
   );
   const origin = report.serve.stores.origin;
   io.out(`origin machine=${origin.machine} human=${origin.human}`);
-  if (report.serve.stores.degraded.includes("identity-authority-unavailable")) {
-    io.out("identity authority: unavailable");
-  }
   const calibration = report.serve.calibration;
   io.out(
     `calibration write_rate=${calibration.write_rate === null ? "-" : calibration.write_rate.toFixed(3)} spread=${calibration.confidence_spread === null ? "-" : calibration.confidence_spread.toFixed(3)} failures=${calibration.failures.length}`,
@@ -522,7 +557,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   }
   for (const item of report.connections) {
     const reason = item.last_error === null ? "" : ` last_error=${JSON.stringify(item.last_error)}`;
-    const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors} backfill_complete=${item.backfill_complete ? "yes" : "no"}${reason}`;
+    const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors} last_run_clean=${item.last_run_clean ? "yes" : "no"}${reason}`;
     io.out(item.problem === null ? line : `${line} ${item.problem}`);
   }
   io.out(`receipts=${report.receipts} orphans=${report.orphans.length}`);
@@ -542,6 +577,10 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   }
   io.out(report.serve.supervisor.detail);
   io.out(report.serve.model.detail);
+  io.out(report.serve.extraction.detail);
+  for (const source of report.serve.egress) {
+    io.out(`egress source=${source.source_key} connector=${source.connector_id} host=${clean(source.endpoint_host)} model=${clean(source.model)} retention=${source.retention} (the provider keeps sent text under its own policy)`);
+  }
   if (report.model_config_error !== null) io.out(`model configuration invalid: ${report.model_config_error}`);
   io.out(report.serve.throughput.detail);
   io.out(report.serve.oversized.detail);
@@ -553,12 +592,6 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     io.out(`serve-failure ${supervisorFailureLine(failure, report.serve.supervisor, report.serve.supervisor_exit, report.vault)}`);
   }
   io.out(`status=${report.ok ? "ok" : "failed"}`);
-  const firstLive = report.live_claims[0];
-  if (firstLive !== undefined) {
-    io.out(`next: kizuki tell "<statement>" --claim ${firstLive.claim_id}`);
-  } else if (report.filed_claims.length > 0) {
-    io.out(
-      "next: leftover skipped claims are not live; tell --claim needs a live claim. the writer is off until a model is configured.",
-    );
-  }
+  const next = nextStep(report);
+  if (next !== null) io.out(next);
 }

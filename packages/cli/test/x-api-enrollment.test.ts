@@ -285,7 +285,7 @@ test('occupied registered callback refuses before browser, provider and connecti
   } finally { await server.stop(true); }
 });
 
-for (const fault of ['browser', 'state', 'provider', 'account', 'publication'] as const) test(`X ${fault} failure preserves the existing source and closes its listener`, async () => {
+for (const fault of ['state', 'provider', 'account', 'publication'] as const) test(`X ${fault} failure preserves the existing source and closes its listener`, async () => {
   const setup = h.tempVault(), o = await owner(setup); await runXApiConnect(o.io, options, () => {}, o.create, o.open);
   const { db, store } = ledger(setup);
   const before = listConnections(db)[0]!, bytes = store.read(before)!;
@@ -295,7 +295,6 @@ for (const fault of ['browser', 'state', 'provider', 'account', 'publication'] a
   if (fault === 'publication') db.exec("CREATE TRIGGER synthetic_x_publication_failure BEFORE UPDATE ON connections BEGIN SELECT RAISE(ABORT, 'SYNTHETIC_PRIVATE_PUBLICATION_ERROR'); END");
   try {
     await expect(runXApiConnect(retry.io, { ...options, source: before.source_key }, () => {}, retry.create, async raw => {
-      if (fault === 'browser') throw Error('SYNTHETIC_PRIVATE_BROWSER_ERROR');
       if (fault === 'state') { const callback = new URL(retry.redirect); callback.searchParams.set('code', 'synthetic-code'); callback.searchParams.set('state', 'wrong-state'); await fetch(callback); }
       else await retry.open(raw);
     })).rejects.toThrow('sign-in did not complete');
@@ -303,6 +302,23 @@ for (const fault of ['browser', 'state', 'provider', 'account', 'publication'] a
     expect(retry.output.join('\n')).not.toContain('SYNTHETIC_PRIVATE'); await expect(fetch(retry.redirect)).rejects.toThrow();
     expect(readdirSync(join(setup.vault, '.kizuki/connections')).filter(name => name.endsWith('.state'))).toHaveLength(1);
   } finally { if (fault === 'publication') db.exec('DROP TRIGGER synthetic_x_publication_failure'); db.close(); }
+});
+
+for (const noBrowser of [false, true]) test(`X sign-in ${noBrowser ? 'with --no-browser' : 'with a failing opener'} prints the address and tunnel hint, then completes from the callback`, async () => {
+  const setup = h.tempVault(), o = await owner(setup);
+  let opens = 0;
+  const flow = runXApiConnect(o.io, { ...options, noBrowser }, () => {}, o.create, async () => { opens++; throw Error('SYNTHETIC_PRIVATE_BROWSER_ERROR'); });
+  const port = new URL(o.redirect).port;
+  for (let i = 0; i < 300 && !o.output.join('\n').includes('ssh -L'); i++) await Bun.sleep(10);
+  const printed = o.output.find(line => line.startsWith('https://x.com/i/oauth2/authorize'));
+  expect(printed).toBeDefined();
+  expect(o.output.join('\n')).toContain(`ssh -L ${port}:127.0.0.1:${port} <host>`);
+  expect(o.output.join('\n')).not.toContain('SYNTHETIC_PRIVATE');
+  const callback = new URL(o.redirect); callback.searchParams.set('code', 'synthetic-code'); callback.searchParams.set('state', new URL(printed!).searchParams.get('state')!);
+  await fetch(callback).catch(() => undefined); // the listener may close before the page is read
+  expect(await flow).toBe(0);
+  expect(opens).toBe(noBrowser ? 0 : 1);
+  await expect(fetch(o.redirect)).rejects.toThrow();
 });
 
 test('reauthorization refuses changed selection and ignores environment overrides of v2 public configuration', async () => {

@@ -35,6 +35,7 @@ import { chatCompletionsUrl, parseOpenAiCompatibleConfig, parseSystemOneJevConfi
 import type { ReasoningEffort } from "@kizuki/llm";
 import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
 import { DERIVED_PASS_RECORDS, tryRefreshDerived } from "./derived";
+import { embeddingConfigured } from "./retrieval-runtime";
 import { tokenResolver } from "./secrets";
 import { loadSystemOneBinding } from "./vault-config";
 
@@ -166,12 +167,20 @@ export interface ModelBindingSummary {
   readonly reasoning_effort: ReasoningEffort | null;
 }
 
+function bindingSummary(selected: LlmSelection): ModelBindingSummary {
+  const configured = parseOpenAiCompatibleConfig(selected.config);
+  return {
+    model_ref: modelRef(selected.id, configured.model, endpointHost(configured.base_url)),
+    reasoning_effort: configured.reasoning_effort,
+  };
+}
+
 /** Validate the held configuration and credential without port/runtime initialization. */
 export async function inspectModelBinding(vaultPath: string, env: Record<string, string | undefined>): Promise<ModelBindingSummary | null> {
   const document = readAppModelConfiguration(vaultPath, value => { parseLlmSelection(value); }, { reconcile: false });
   const selected = parseLlmSelection(document.llm);
   if (selected.id === NONE_LLM_ID) return null;
-  const configured = parseOpenAiCompatibleConfig(selected.config);
+  const summary = bindingSummary(selected);
   if (selected.secret_ref !== null) {
     if (classifyAppModelCredential(vaultPath, selected.secret_ref) === "env") {
       await tokenResolver(selected.secret_ref, env)(selected.secret_ref);
@@ -181,10 +190,20 @@ export async function inspectModelBinding(vaultPath: string, env: Record<string,
   if (readAppModelConfiguration(vaultPath, value => { parseLlmSelection(value); }, { reconcile: false }).revision !== document.revision) {
     runtimeError("configuration changed during inspection");
   }
-  return {
-    model_ref: modelRef(selected.id, configured.model, endpointHost(configured.base_url)),
-    reasoning_effort: configured.reasoning_effort,
-  };
+  return summary;
+}
+
+/**
+ * The configured model named the way its port names it, host included, without
+ * resolving any credential. A shell that lacks the daemon's secret still knows
+ * the reference the daemon's run receipts carry. Null when no model is
+ * configured or the configuration does not parse.
+ */
+export function configuredModelBinding(vaultPath: string): ModelBindingSummary | null {
+  try {
+    const selected = parseLlmSelection(readAppModelConfiguration(vaultPath, value => { parseLlmSelection(value); }, { reconcile: false }).llm);
+    return selected.id === NONE_LLM_ID ? null : bindingSummary(selected);
+  } catch { return null; }
 }
 
 async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; producer?: ProducerPort | ProducerV2Port; systemone?: SystemOnePort }> {
@@ -301,6 +320,7 @@ export async function createServeRuntime(options: ServeRuntimeOptions): Promise<
   return {
     hooks: {
       model_ref: binding?.llm.model_ref ?? null,
+      embedding_configured: embeddingConfigured(options.vaultPath),
       ...(binding?.producer === undefined ? {} : { producer: binding.producer }),
       claims,
       sync: async () => {

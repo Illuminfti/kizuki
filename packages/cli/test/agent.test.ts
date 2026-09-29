@@ -65,7 +65,7 @@ test.if(process.env.GITHUB_ACTIONS === "true" && process.platform === "linux" &&
 
 test("agent rejects missing, ambiguous and unsupported arguments without initializing a vault", () => {
   const env = isolatedEnv(), root = tempDir(), before = fingerprint(root);
-  for (const args of [[], ["add"], ["add", "helper"], ["list"], ["revoke", "helper", "extra"],
+  for (const args of [[], ["add"], ["add", "helper"], ["list", "helper"], ["grant", "helper"], ["revoke", "helper", "extra"],
     ["revoke", "helper", "--grant", "private-marker"], ["add", "helper", "--owner"], ["revoke", "helper", "--json", "--json"]]) {
     const output = runCli(env, "--vault", join(root, "absent"), "agent", ...args, "--json");
     expect(output.exitCode).toBe(2);

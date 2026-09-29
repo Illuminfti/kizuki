@@ -1,4 +1,4 @@
-import { XApiConnector, createXApiConnector, inspectXApiState, type XApiConfig, createMarkdownFolderConnector, MARKDOWN_FOLDER_CONNECTOR_ID, MAX_FILES, LEGACY_EVENTS_AUTH_MODES, LEGACY_EVENTS_CONNECTOR_ID, LEGACY_WIKI_AUTH_MODES, LEGACY_WIKI_CONNECTOR_ID, REGISTRY, getConnector, createLegacyWikiConnector, type MarkdownFolderConfig, type MarkdownFolderDeps, type LegacyWikiConfig, type LegacyWikiDeps, type LegacyWikiIdentity } from "@kizuki/connectors";
+import { parseIcsState, XApiConnector, createXApiConnector, inspectXApiState, type XApiConfig, createMarkdownFolderConnector, MARKDOWN_FOLDER_CONNECTOR_ID, MAX_FILES, LEGACY_EVENTS_AUTH_MODES, LEGACY_EVENTS_CONNECTOR_ID, LEGACY_WIKI_AUTH_MODES, LEGACY_WIKI_CONNECTOR_ID, REGISTRY, getConnector, createLegacyWikiConnector, type MarkdownFolderConfig, type MarkdownFolderDeps, type LegacyWikiConfig, type LegacyWikiDeps, type LegacyWikiIdentity } from "@kizuki/connectors";
 import { xApiClient, xApiRequiredFields, xApiStateConfig } from "./x-api";
 import type { ConnectionStateReader } from "@kizuki/core";
 import { GoogleCalendarConnector, createGoogleCalendarConnector, inspectGoogleCalendarState, type GoogleCalendarConnectorConfig } from "@kizuki/connector-google-calendar";
@@ -6,7 +6,7 @@ import { googleCalendarClient, googleCalendarRequiredFields, googleCalendarState
 import { GmailConnector, createGmailConnector, inspectGmailState, type GmailConnectorConfig } from "@kizuki/connector-gmail";
 import { gmailClient, gmailRequiredFields, gmailStateConfig } from "./gmail";
 import type { Database } from "bun:sqlite";
-import { isAbsolute, resolve } from "node:path";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type {
   Connector,
   Connection,
@@ -357,6 +357,7 @@ const PORTABLE_PATH_IDS = Object.freeze([
   "kizuki.import-beacon",
   "kizuki.import-whatsapp", "kizuki.import-pocket", "kizuki.import-omnivore",
   "kizuki.import-x-archive", "kizuki.screenpipe",
+  "kizuki.claude-code-sessions", "kizuki.codex-sessions",
 ]);
 export function portableLocalAdapter(): import("@kizuki/core").PortableLocalAdapter {
   for (const id of PORTABLE_PATH_IDS) {
@@ -433,6 +434,12 @@ export class DuplicateSourceError extends ConnectionError {
   constructor() { super("source_already_enrolled; select its existing --source KEY to reauthorize; source consent is unchanged"); }
 }
 
+/** URL-mode calendar state is connector-owned bytes; path-mode state is host state. */
+function isIcsUrlState(bytes: Uint8Array): boolean {
+  try { parseIcsState(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); return true; }
+  catch { return false; }
+}
+
 function verifyAccountEnrollment(connectorId: string): Parameters<typeof enrollConnection>[4] {
   const identity = connectorId === "kizuki.gmail"
     ? (bytes: Uint8Array) => JSON.stringify([inspectGmailState(bytes).account_id])
@@ -440,7 +447,9 @@ function verifyAccountEnrollment(connectorId: string): Parameters<typeof enrollC
       ? (bytes: Uint8Array) => { const state = inspectGoogleCalendarState(bytes); return JSON.stringify([state.account_id, state.calendar_id]); }
       : connectorId === "kizuki.x"
         ? (bytes: Uint8Array) => { const state = inspectXApiState(bytes); return JSON.stringify([state.account_id, state.app_digest, state.selection]); }
-        : undefined;
+        : connectorId === "kizuki.ics"
+          ? (bytes: Uint8Array) => isIcsUrlState(bytes) ? new TextDecoder().decode(bytes) : null
+          : undefined;
   if (identity === undefined) return undefined;
   return (candidate, existing) => {
     const selected = identity(candidate);
@@ -519,6 +528,12 @@ function inspectConnection(
         state: null,
         problem: "connection state is missing",
       };
+    }
+    // Path-mode and URL-mode calendar state share one ref shape, so telling them apart
+    // reads the owner-only bytes in memory here (as IMAP and Telegram do); nothing is printed or fetched.
+    const icsRef = connection.secret_refs[0];
+    if (connection.connector_id === "kizuki.ics" && icsRef !== undefined && isIcsUrlState(bytes)) {
+      return { connection, state: { schema: HOST_STATE_SCHEMA, connector_id: connection.connector_id, config: { secret_ref: icsRef } }, problem: null };
     }
     return {
       connection,
@@ -610,6 +625,20 @@ export function blocksEnrollment(state: HealthState): boolean {
 function inspectionSafePersister(db: Database, store: ConnectionStateReader, connection: Connection): ReturnType<typeof createStatePersister>["persist"] {
   if (store instanceof ConnectionStateStore) return createStatePersister(db, store, connection).persist;
   return async () => { throw new ConnectionError("connector state mutation requires an explicit write context"); };
+}
+
+const SESSION_CONNECTOR_IDS = ["kizuki.claude-code-sessions", "kizuki.codex-sessions"];
+
+/**
+ * Coding sessions run inside the vault hold Kizuki's own recalled memory, so
+ * the connector skips them. The vault is taken from the open ledger at load
+ * time and never stored in the portable connection state.
+ */
+function withVaultExclusion(id: string, config: HostConnectionState["config"], db: Database): unknown {
+  if (!SESSION_CONNECTOR_IDS.includes(id)) return config;
+  const file = db.filename;
+  if (typeof file !== "string" || basename(file) !== "kizuki.db" || basename(dirname(file)) !== ".kizuki") return config;
+  return { ...config, exclude_cwd: [dirname(dirname(resolve(file)))] };
 }
 
 export async function loadConnector(
@@ -718,7 +747,7 @@ export async function loadConnector(
   const wiki = selected.connection.connector_id === LEGACY_WIKI_CONNECTOR_ID;
   const connector = factory(
     selected.connection.connector_id,
-    selected.state.config,
+    withVaultExclusion(selected.connection.connector_id, selected.state.config, db),
     telegram
       ? { persist: inspectionSafePersister(db, store, selected.connection) }
       : markdown
@@ -739,7 +768,7 @@ export async function loadConnector(
     : "secret_ref" in config
       ? config.secret_ref
       : undefined;
-  if (telegram || selected.connection.connector_id === "kizuki.imap") {
+  if (telegram || selected.connection.connector_id === "kizuki.imap" || (selected.connection.connector_id === "kizuki.ics" && ref !== undefined)) {
     const state = store.read(selected.connection);
     if (state === null) throw new ConnectionError(`${selected.connection.connector_id} connection state is missing`);
     try {

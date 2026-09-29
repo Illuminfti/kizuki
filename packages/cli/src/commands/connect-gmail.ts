@@ -6,12 +6,14 @@ import { ConnectionError, DuplicateSourceError, closeHostConnector, enrollSigned
 import { withVault } from '../context';
 import { jsonEnvelope } from '../output';
 import { consentHint } from '../source-consent';
+import { headlessBrowserOpener } from '../headless-sign-in';
 import { gmailClient, gmailFields, openGmailBrowser, type GmailFactory } from '../gmail';
 import type { CliIo } from './index';
 export interface GmailEnrollmentOptions {
     source?: string | undefined;
     newSource?: boolean | undefined;
     fields?: string | undefined;
+    noBrowser?: boolean | undefined;
     sensitivity?: Sensitivity | undefined;
     json: boolean;
 }
@@ -20,7 +22,7 @@ export async function runGmailConnect(io: CliIo, options: GmailEnrollmentOptions
     // Configuration refusal precedes terminal checks, prompts, browser or provider I/O.
     const client = await gmailClient(io.env), fields = gmailFields(options.fields);
     if (!io.stdinIsTTY || !io.stderrIsTTY)
-        throw new UsageError('connect gmail --fields FIELDS [--source KEY | --new-source] [--json] (interactive desktop terminal required)');
+        throw new UsageError('connect gmail --fields FIELDS [--source KEY | --new-source] [--no-browser] [--json] (interactive terminal required)');
     return withVault(io, async (ctx) => {
         const existing = listHostConnections(ctx.db, ctx.store, 'kizuki.gmail', { includeDisconnected: true });
         if (existing.some(item => item.state === null))
@@ -38,10 +40,10 @@ export async function runGmailConnect(io: CliIo, options: GmailEnrollmentOptions
             throw new ConnectionError('Gmail reauthorization must preserve its selected fields and pending history. Use the existing fields; changing source projection is unsupported.');
         const connector = create({ client, fields, ...(identity ? { expected_account: identity.account_id } : {}) }, { ...(previous ? { previousState: previous } : {}) });
         checkSensitivity(ctx.db, connector.manifest(), options.sensitivity, selected?.connection);
-        io.err('Gmail will open your system browser for read-only mail access and account identity. Selected data and protected OAuth state stay in this vault. No send/modify access; attachment bodies unsupported. Enrollment captures no history and source consent is separate. Press Ctrl-C to cancel.');
+        io.err('Gmail will open your system browser, or print an address to open on another device if none opens or with --no-browser, for read-only mail access and account identity. Selected data and protected OAuth state stay in this vault. No send/modify access; attachment bodies unsupported. Enrollment captures no history and source consent is separate. Press Ctrl-C to cancel.');
         let connection: Connection;
         try {
-            connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, { prompt: async () => { throw new ConnectionError('Gmail does not request pasted keys or authorization codes.'); }, notify: () => { }, openUrl }, options.source, assertSameGmailIdentity, options.newSource);
+            connection = await enrollSignedInConnection(ctx.db, ctx.store, connector, { prompt: async () => { throw new ConnectionError('Gmail does not request pasted keys or authorization codes.'); }, notify: () => { }, openUrl: headlessBrowserOpener(io, openUrl, options.noBrowser) }, options.source, assertSameGmailIdentity, options.newSource);
         }
         catch (error) {
             if (error instanceof DuplicateSourceError) throw error;

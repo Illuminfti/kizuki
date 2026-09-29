@@ -21,7 +21,8 @@ import { LedgerMigrationRequiredError, withVault } from "../context";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 import { serveSupervisorHost } from "../service-host";
-import { createServeRuntime, inspectModelBinding } from "../serve-runtime";
+import { embeddingConfigured } from "../retrieval-runtime";
+import { configuredModelBinding, createServeRuntime, inspectModelBinding } from "../serve-runtime";
 import { runServiceCustodyBroker, startServiceCustody, ServiceCustodyError, type ServiceCustodyHandle } from "@kizuki/core/internal";
 import { custodyUnavailableMessage, launchServiceCustodyBroker, serviceStartupExit } from "../service-custody";
 import { isAbsolute, resolve } from "node:path";
@@ -126,10 +127,13 @@ export const serveCommand: Command = {
         // The same local, no-network check doctor runs, so both show one model
         // line. A binding that cannot be inspected stays reported as unverified.
         const model = await inspectModelBinding(ctx.vaultPath, io.env).catch(() => null);
+        const configured = model ?? configuredModelBinding(ctx.vaultPath);
         const doctor = inspectServeDoctor(ctx.db, ctx.vaultPath, {
           supervisor: host,
           model_ref: model?.model_ref ?? null,
           reasoning_effort: model?.reasoning_effort ?? null,
+          embedding_configured: embeddingConfigured(ctx.vaultPath),
+          ...(configured === null ? {} : { configured_model_ref: configured.model_ref }),
         });
         const pid = readServePid(ctx.vaultPath);
         const body = { pid, supervisor, doctor };

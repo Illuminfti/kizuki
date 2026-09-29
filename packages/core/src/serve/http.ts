@@ -1,5 +1,5 @@
 import { withDeadline } from "../util/deadline";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { join } from "node:path";
@@ -56,13 +56,19 @@ function writeToken(vaultPath: string, token: string): string {
   return path;
 }
 
+/** Digest both sides so the compare takes the same time for any length or shared prefix. */
+export function sameToken(presented: string, minted: string): boolean {
+  const digest = (value: string) => createHash("sha256").update(value).digest();
+  return timingSafeEqual(digest(presented), digest(minted));
+}
+
 function principalFor(
   db: ServeContext["db"],
   minted: string,
   presented: string | null,
 ): Principal | null {
   if (presented === null) return null;
-  if (presented === minted) return OWNER;
+  if (sameToken(presented, minted)) return OWNER;
   return authenticate(db, presented);
 }
 
@@ -210,7 +216,7 @@ async function appRequest(request: Request, origin: string, token: string, optio
   if (request.method !== "POST" || !/^\/app\/v1\/[a-z_]+$/.test(url.pathname)) return error(404, "not_found");
   if (presentedOrigin !== origin) return error(403, "origin_refused");
   const presented = bearer(request);
-  if (presented === null || Buffer.byteLength(presented) !== Buffer.byteLength(token) || !timingSafeEqual(Buffer.from(presented), Buffer.from(token))) return error(401, "unauthorized");
+  if (presented === null || !sameToken(presented, token)) return error(401, "unauthorized");
   if (request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return error(400, "invalid_request");
   try {
     const reader = request.body?.getReader();

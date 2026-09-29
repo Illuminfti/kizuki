@@ -7,15 +7,18 @@ import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { SINGLE_SOURCE_CAP } from "../claims/authority";
 import { countPendingRetrievalOps } from "../claims/store";
 import { readDerivedMeta } from "../derived-meta";
+import { readDerivedHolds } from "../derived-holds";
 import { inspectConnectionStateRecovery } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
 import { tableExists } from "../ledger/schema";
 import { inspectPurgeHealth } from "../ledger/purge";
-import { listCanonPagesReport } from "../vault/pages";
-import { loadConfiguredModelRef, loadServeConfig } from "./config";
+import { listCanonPagesReport, type CanonPageReport } from "../vault/pages";
+import { loadConfiguredModelRef, loadEmbeddingSelection, loadServeConfig, type EmbeddingSelection } from "./config";
+import { ageSeconds, railDoctor, syncPassWait } from "./doctor-rails";
+import { egressDoctor, extractionDoctor } from "./doctor-extraction";
 import { readServeIntent } from "./intent";
 import { serviceFile } from "./service-files";
-import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
+import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readEmbeddingReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
 import { sha256Hex } from "../util/hash";
 import { listSchedules } from "./schema";
 import { countOversizedRecords, RETRY_SKIPPED_COMMAND } from "./extract-oversized";
@@ -26,20 +29,21 @@ import {
   CALIBRATION_BAND,
   CONFIDENCE_SPREAD_MIN,
   DEFAULT_RAILS,
-  EMPTY_STREAK,
+  DOCTOR_RAIL_RECEIPTS,
+  DOCTOR_SKIPPED_PAGES,
+  DOCTOR_SYNC_RECEIPTS,
   RETRIEVAL_SLA_SECONDS,
   RUN_RECEIPT_RETENTION_DAYS,
   type CalibrationBandsReason,
   type CalibrationDoctor,
-  type ExtractionConfig,
   type ModelDoctor,
-  type RailDoctor,
   type RailId,
   type RunReceipt,
   type ServeConfig,
   type ServeDoctorReport,
   type ServeIntent,
   type StoreDoctor,
+  type TopFailure,
   type SupervisorLastExit,
   type ThroughputDoctor,
   type OversizedDoctor,
@@ -52,90 +56,27 @@ export interface ServeDoctorOptions {
   readonly model_ref?: string | null;
   /** The bound port's owner-configured reasoning effort; null sends none. */
   readonly reasoning_effort?: string | null;
-  /** Raw config intent is shown as unverified until a host binds its port. */
+  /**
+   * The configured model's reference as its port builds it, host included, so
+   * the daemon's receipts can be matched from a process that cannot bind the
+   * model. Raw config intent is shown as unverified until a host binds its port.
+   */
   readonly configured_model_ref?: string | null;
-}
-
-function ageSeconds(from: string | null, now: string): number | null {
-  if (from === null) return null;
-  const start = Date.parse(from);
-  const end = Date.parse(now);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-  return Math.max(0, Math.floor((end - start) / 1000));
-}
-
-function produced(receipt: RunReceipt): boolean {
-  return (
-    receipt.events_stored > 0 ||
-    receipt.claims_written > 0 ||
-    receipt.canon_writes > 0 ||
-    receipt.retrieval.upserts > 0 ||
-    receipt.retrieval.removals > 0 ||
-    // A retrieval sweep with nothing outstanding finished its whole job. Only
-    // a sweep that leaves work behind is an unproductive pass.
-    (receipt.rail === "retrieval-sweep" &&
-      receipt.status === "ok" &&
-      receipt.retrieval.pending_ops === 0)
-  );
-}
-
-/**
- * Rails run one at a time, so every rail can wait behind a sync pass. A
- * multi-request pass may take its time budget plus the request in flight; the
- * one-request pass is covered by the ordinary grace period.
- */
-function syncPassWait(extraction: ExtractionConfig): number {
-  return extraction.max_calls_per_pass > 1 ? extraction.max_pass_seconds : 0;
-}
-
-function railDoctor(
-  rail: RailId,
-  receipts: RunReceipt[],
-  period_s: number,
-  now: string,
-  expectLiveness: boolean,
-  wait_s: number,
-): RailDoctor {
-  const forRail = receipts.filter((receipt) => receipt.rail === rail);
-  const last = forRail.at(-1) ?? null;
-  const age = ageSeconds(last?.finished_at ?? null, now);
-  let empty = 0;
-  for (let index = forRail.length - 1; index >= 0; index -= 1) {
-    const receipt = forRail[index];
-    if (receipt === undefined || produced(receipt)) break;
-    empty += 1;
-  }
-  const grace = period_s + wait_s;
-  const stale = age !== null && age > 2 * period_s + grace;
-  const failed = last?.status === "failed";
-  const emptyDown = empty >= EMPTY_STREAK;
-  const neverRan = last === null && expectLiveness;
-  let status: RailDoctor["status"] = "ok";
-  let reason: string | null = null;
-  if (neverRan) {
-    status = "down";
-    reason = "no receipt";
-  } else if (stale && expectLiveness) {
-    status = "down";
-    reason = `stale ${age}s (period ${period_s}s)`;
-  } else if (failed) {
-    status = "down";
-    reason = "last run failed";
-  } else if (emptyDown && expectLiveness) {
-    status = "down";
-    reason = `empty streak ${empty}`;
-  } else if (last === null) {
-    status = "idle";
-  }
-  return {
-    rail,
-    last_receipt_at: last?.finished_at ?? null,
-    age_s: age,
-    period_s,
-    status,
-    reason,
-    empty_streak: empty,
-  };
+  /** True when an embedding port is configured; only then does embed-backfill have work to judge. */
+  readonly embedding_configured?: boolean;
+  /**
+   * False skips the walk of every canon page. The walk parses each page, so a
+   * caller inside the daemon's event loop or one that reads a single field
+   * turns it off; the skipped-page and origin fields are then empty. Defaults
+   * to true.
+   */
+  readonly page_walk?: boolean;
+  /**
+   * False when the caller runs inside the service: its supervisor, intent and
+   * liveness are the service's own to know, so they are neither checked nor a
+   * failure. Defaults to true.
+   */
+  readonly host_checks?: boolean;
 }
 
 function stdev(values: number[]): number | null {
@@ -370,8 +311,18 @@ function modelDoctor(
     receipts.lastIndexOf(null) > lastAttemptIndex || (history.truncated && lastAttempt === undefined);
   const unavailable = current.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
   const effort = on ? reasoningEffort ?? null : null;
+  // A pass that made no request neither extends nor ends the run of failures.
+  let consecutiveFailures = 0;
+  for (const receipt of latestFirst) {
+    if (modelFailure(receipt) !== null) consecutiveFailures += 1;
+    else if (receipt.model.calls > 0) break;
+  }
+  // This process cannot bind the model, so the daemon's own receipts are the
+  // evidence; "unverified" is only for a configured model no daemon ever ran.
+  const daemonSeen = unverified && current.length > 0;
+  const daemonView = `daemon last_success=${lastOk?.finished_at ?? "never"}${lastFailure === null ? "" : ` last_failure=${lastFailure.detail} at ${lastFailure.at}`} consecutive_failures=${consecutiveFailures}`;
   return {
-    canon_writing: on ? "on" : unverified ? "unverified" : "off",
+    canon_writing: on ? "on" : daemonSeen ? "configured" : unverified ? "unverified" : "off",
     model_ref: on ? displayRef : null,
     reasoning_effort: effort,
     last_success_at: lastOk?.finished_at ?? null,
@@ -381,12 +332,15 @@ function modelDoctor(
     history_unverified: historyUnverified,
     history_truncated: history.truncated,
     unavailable,
+    consecutive_failures: consecutiveFailures,
     budget: {
       canon_writes_per_run: { used: lastRunUsed, limit: configCanonRun },
       canon_writes_per_day: { used: usedToday, limit: configCanonDay },
     },
     detail: (on
       ? `canon writing: on (${displayRef}, reasoning_effort=${effort ?? "provider-default"}); last_success=${lastOk?.finished_at ?? "never"} unavailable=${unavailable}${lastFailure === null ? "" : `; last_failure=${lastFailure.detail} (at ${lastFailure.at})`}`
+      : daemonSeen
+        ? `canon writing: configured; ${daemonView}`
       : unverified
         ? "canon writing: unverified (model configured but not bound by the running host)"
       : "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)") +
@@ -424,8 +378,7 @@ function countWriterRoles(db: Database): StoreDoctor["writers"] {
   return writers;
 }
 
-function countOriginPages(vaultPath: string): StoreDoctor["origin"] {
-  const report = listCanonPagesReport(vaultPath);
+function countOriginPages(report: CanonPageReport): StoreDoctor["origin"] {
   let machine = 0;
   let human = 0;
   for (const relPath of [
@@ -438,11 +391,21 @@ function countOriginPages(vaultPath: string): StoreDoctor["origin"] {
   return { machine, human };
 }
 
+function vectorLayer(embedding: EmbeddingSelection): StoreDoctor["vector_layer"] {
+  switch (embedding.state) {
+    case "off": return { state: "off", detail: "vector layer: off (no embedding model configured)" };
+    case "configured": return { state: "configured", detail: `vector layer: configured (${embedding.id})` };
+    case "invalid": return { state: "invalid", detail: `vector layer: invalid (${embedding.message})` };
+  }
+}
+
 function storeDoctor(
   db: Database,
   vaultPath: string,
   now: string,
-  receipts: RunReceipt[],
+  embeddingReceipts: RunReceipt[],
+  pages: CanonPageReport,
+  embedding: EmbeddingSelection,
 ): StoreDoctor {
   const pendingRetrieval = countPendingRetrievalOps(db);
   const oldestRetrieval =
@@ -476,7 +439,11 @@ function storeDoctor(
     degraded.push("retrieval-ops-stale");
   }
   if (!purge.ok) degraded.push("purge-unhealthy");
-  degraded.push("identity-authority-unavailable");
+  // Skipped and held documents are what make an index degraded; a stamp that
+  // says so after the last of them was fixed is stale, and both are empty.
+  const held = readDerivedHolds(db).paths.size;
+  if (pages.skipped.length > 0 || held > 0) degraded.push("index-degraded");
+  if (pages.truncated) degraded.push("canon-walk-truncated");
   const search = readDerivedMeta(db, "search");
   const graph = readDerivedMeta(db, "graph");
   return {
@@ -484,20 +451,29 @@ function storeDoctor(
     oldest_retrieval_op_age_s: oldestRetrievalAge,
     pending_purge_ops: pendingPurge,
     oldest_purge_op_age_s: ageSeconds(oldestPurge, now),
-    embedding_throughput_docs_per_s: embeddingThroughputFromReceipts(receipts),
+    embedding_throughput_docs_per_s: embeddingThroughputFromReceipts(embeddingReceipts),
+    vector_layer: vectorLayer(embedding),
     orphan_run_receipts: orphanJournalReceipts(db, vaultPath),
     derived: {
       search: {
         rebuilt_at: search?.rebuilt_at ?? null,
         doc_count: search?.doc_count ?? 0,
+        status: search?.status ?? null,
+        skipped_count: search?.skipped_count ?? 0,
       },
       graph: {
         rebuilt_at: graph?.rebuilt_at ?? null,
         doc_count: graph?.doc_count ?? 0,
+        status: graph?.status ?? null,
+        skipped_count: graph?.skipped_count ?? 0,
       },
     },
+    skipped_pages: pages.skipped.slice(0, DOCTOR_SKIPPED_PAGES).map((page) => ({ path: page.relPath, reason: page.code })),
+    skipped_pages_total: pages.skipped.length,
+    held_pages: held,
+    pages_truncated: pages.truncated,
     writers: countWriterRoles(db),
-    origin: countOriginPages(vaultPath),
+    origin: countOriginPages(pages),
     degraded,
   };
 }
@@ -525,31 +501,36 @@ export function inspectServeDoctor(
         detail: "supervisor: none (loop runs only while you run it)",
       };
   const since = new Date(Date.parse(now) - RUN_RECEIPT_RETENTION_DAYS * 86_400_000).toISOString();
-  const receipts = listRunReceipts(db, { since });
-  const expectLive = expectRailLiveness(intent, supervisor);
+  const hostChecks = options.host_checks !== false;
+  const expectLive = hostChecks && expectRailLiveness(intent, supervisor);
   const schedules = new Map(listSchedules(db).map((row) => [row.rail, row]));
   const config = loadServeConfig(vaultPath);
-  const rails = DEFAULT_RAILS.map((spec) => {
-    const schedule = schedules.get(spec.rail);
-    return railDoctor(
-      spec.rail,
-      receipts,
-      schedule?.period_s ?? spec.period_s,
-      now,
-      expectLive,
-      syncPassWait(config.extraction),
-    );
-  });
-  const usedToday = receipts
-    .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
-    .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
-  const lastSync = receipts.findLast((receipt) => receipt.rail === "sync");
-  const lastRunUsed = lastSync?.budget.canon_writes_per_run?.used ?? lastSync?.canon_writes ?? 0;
+  const embedding = loadEmbeddingSelection(vaultPath);
   const modelRef = options.model_ref ?? null;
   const configuredModelRef = options.configured_model_ref ?? loadConfiguredModelRef(vaultPath);
-  const modelHistory = modelRef || configuredModelRef ? readModelRunHistory(db, since) : { receipts: [], truncated: false };
+  const modelConfigured = Boolean(modelRef || configuredModelRef);
+  // Bounded reads: the newest sync passes, and the newest runs of every other
+  // rail. A week of receipts is mostly no-op maintenance runs that judge nothing.
+  const syncHistory = readModelRunHistory(db, since, DOCTOR_SYNC_RECEIPTS);
+  const syncReceipts = syncHistory.receipts.filter((receipt): receipt is RunReceipt => receipt !== null);
+  const work = { db, model_configured: modelConfigured, embedding_configured: options.embedding_configured ?? embedding.state === "configured" };
+  const rails = DEFAULT_RAILS.map((spec) => railDoctor(
+    spec.rail,
+    spec.rail === "sync" ? syncReceipts : listRunReceipts(db, { rail: spec.rail, since, limit: DOCTOR_RAIL_RECEIPTS }),
+    schedules.get(spec.rail)?.period_s ?? spec.period_s,
+    now,
+    expectLive,
+    syncPassWait(config.extraction),
+    work,
+    schedules.get(spec.rail)?.last_run_at ?? null,
+  ));
+  const usedToday = syncReceipts
+    .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
+    .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
+  const lastSync = syncReceipts.at(-1);
+  const lastRunUsed = lastSync?.budget.canon_writes_per_run?.used ?? lastSync?.canon_writes ?? 0;
   const model = modelDoctor(
-    modelHistory,
+    modelConfigured ? syncHistory : { receipts: [], truncated: false },
     modelRef,
     options.reasoning_effort,
     configuredModelRef,
@@ -558,24 +539,35 @@ export function inspectServeDoctor(
     config.canon_writes_per_run,
     lastRunUsed,
   );
-  const skipped = receipts.reduce((sum, receipt) => sum + (receipt.records_skipped ?? 0), 0);
+  const skipped = syncReceipts.reduce((sum, receipt) => sum + (receipt.records_skipped ?? 0), 0);
   const throughput = throughputDoctor(config, schedules.get("sync")?.period_s ?? config.sync_period_s, skipped);
   const oversized = oversizedDoctor(db);
-  const stores = storeDoctor(db, vaultPath, now, receipts);
-  const cal = calibration(db, receipts, now);
-  const failures: string[] = [];
-  if (model.current_failure !== null) failures.push(`${model.current_failure.detail} (at ${model.current_failure.at})`);
-  if (model.history_unverified) failures.push("model history unverified; the latest current-model attempt cannot be established from retained receipts");
-  if (intent === "unknown") failures.push("service intent unavailable or invalid");
-  else if (intent !== "installed" && (supervisor.enabled || supervisor.state === "active")) {
-    failures.push("supervisor active or enabled without installed intent");
+  const pages: CanonPageReport =
+    options.page_walk === false
+      ? { pages: [], skipped: [], truncated: false }
+      : listCanonPagesReport(vaultPath);
+  const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
+  const cal = calibration(db, syncReceipts, now);
+  const extraction = extractionDoctor(db, syncReceipts, model.canon_writing !== "off");
+  const { egress, failures: egressFailures } = egressDoctor(db);
+  const found: { text: string; top: TopFailure }[] = [];
+  const fail = (text: string, kind: TopFailure["kind"] = "other", rail: RailId | null = null): void => {
+    found.push({ text, top: { kind, rail } });
+  };
+  if (model.current_failure !== null) fail(`${model.current_failure.detail} (at ${model.current_failure.at})`, "model");
+  if (model.history_unverified) fail("model history unverified; the latest current-model attempt cannot be established from retained receipts");
+  if (hostChecks && intent === "unknown") fail("service intent unavailable or invalid", "service");
+  else if (hostChecks && intent !== "installed" && (supervisor.enabled || supervisor.state === "active")) {
+    fail("supervisor active or enabled without installed intent", "service");
   }
-  try {
-    if (serviceFile(join(vaultPath, ".kizuki", "service-change.json")) !== null) failures.push("service change recovery pending");
-  } catch { failures.push("service recovery state unavailable"); }
+  if (hostChecks) {
+    try {
+      if (serviceFile(join(vaultPath, ".kizuki", "service-change.json")) !== null) fail("service change recovery pending", "service");
+    } catch { fail("service recovery state unavailable", "service"); }
+  }
   let supervisorExit: SupervisorLastExit | null = null;
-  if (intent === "installed" && (supervisor.state !== "active" || !supervisor.enabled)) {
-    failures.push(`supervisor ${supervisor.state}${supervisor.state === "active" ? " but not enabled" : ""}`);
+  if (hostChecks && intent === "installed" && (supervisor.state !== "active" || !supervisor.enabled)) {
+    fail(`supervisor ${supervisor.state}${supervisor.state === "active" ? " but not enabled" : ""}`, "service");
     // The unit's own last exit decides the command that restarts it.
     if (supervisor.state !== "active" && options.supervisor?.lastExit !== undefined) {
       try { supervisorExit = options.supervisor.lastExit(ensureVaultId(vaultPath)); } catch { supervisorExit = null; }
@@ -583,38 +575,40 @@ export function inspectServeDoctor(
   }
   for (const rail of rails) {
     if (rail.status === "down" && rail.reason !== null) {
-      failures.push(`rail ${rail.rail}: ${rail.reason}`);
+      fail(`rail ${rail.rail}: ${rail.reason}`, "rail", rail.rail);
     }
   }
-  failures.push(...cal.failures);
+  for (const text of [...cal.failures, ...egressFailures]) fail(text);
   if (stores.orphan_run_receipts.length > 0) {
-    failures.push(`orphan run receipts ${stores.orphan_run_receipts.length}`);
+    fail(`orphan run receipts ${stores.orphan_run_receipts.length}`);
   }
   try {
     const recovery = inspectConnectionStateRecovery(join(vaultPath, ".kizuki"));
     if (recovery.unresolved.length > 0) {
-      failures.push(`connection state journals unresolved ${recovery.unresolved.length}`);
+      fail(`connection state journals unresolved ${recovery.unresolved.length}`);
     }
     if (recovery.quarantined.length > 0) {
-      failures.push(`connection state journals quarantined ${recovery.quarantined.length}`);
+      fail(`connection state journals quarantined ${recovery.quarantined.length}`);
     }
   } catch {
-    failures.push("connection state recovery inspection unavailable");
+    fail("connection state recovery inspection unavailable");
   }
   for (const item of inspectConnections(db, { includeDisconnected: true })) {
     if (!item.ok) {
-      failures.push(`connection ${item.connector_id} unreadable`);
+      fail(`connection ${item.connector_id} unreadable`);
     }
   }
   for (const item of inspectCheckpoints(db)) {
     if (!item.ok) {
-      failures.push(`checkpoint ${item.connector_id} unreadable`);
+      fail(`checkpoint ${item.connector_id} unreadable`);
     }
   }
   if (stores.degraded.includes("retrieval-ops-stale")) {
-    failures.push("retrieval_ops older than SLA");
+    fail("retrieval_ops older than SLA");
   }
-  failures.push(...inspectPageIndex(db));
+  for (const text of inspectPageIndex(db)) fail(text);
+  const failures = found.map((item) => item.text);
+
 
   return {
     supervisor,
@@ -622,12 +616,15 @@ export function inspectServeDoctor(
     intent,
     rails,
     model,
+    extraction,
+    egress,
     throughput,
     oversized,
     stores,
     calibration: cal,
     ok: failures.length === 0,
     failures,
+    top_failure: found[0]?.top ?? null,
   };
 }
 
@@ -640,7 +637,7 @@ function oversizedDoctor(db: Database): OversizedDoctor {
 }
 
 function throughputDoctor(config: ServeConfig, syncPeriod: number, recordsSkipped: number): ThroughputDoctor {
-  const { max_calls_per_pass, records_per_request, max_input_tokens, max_output_tokens, max_pass_seconds } = config.extraction;
+  const { max_calls_per_pass, records_per_request, max_input_tokens, max_output_tokens, max_pass_seconds, max_calls_per_day, max_output_tokens_per_day } = config.extraction;
   const pending = syncPeriod === config.sync_period_s ? "" : ` configured_sync_period_s=${config.sync_period_s} (applies at service start)`;
   return {
     sync_period_s: syncPeriod,
@@ -650,8 +647,10 @@ function throughputDoctor(config: ServeConfig, syncPeriod: number, recordsSkippe
     max_input_tokens,
     max_output_tokens,
     max_pass_seconds,
+    max_calls_per_day,
+    max_output_tokens_per_day,
     records_skipped: recordsSkipped,
-    detail: `throughput sync_period_s=${syncPeriod} max_calls_per_pass=${max_calls_per_pass} records_per_request=${records_per_request} max_input_tokens=${max_input_tokens} max_output_tokens=${max_output_tokens} max_pass_seconds=${max_pass_seconds} records_skipped=${recordsSkipped}${pending}`,
+    detail: `throughput sync_period_s=${syncPeriod} max_calls_per_pass=${max_calls_per_pass} records_per_request=${records_per_request} max_input_tokens=${max_input_tokens} max_output_tokens=${max_output_tokens} max_pass_seconds=${max_pass_seconds} max_calls_per_day=${max_calls_per_day} max_output_tokens_per_day=${max_output_tokens_per_day} records_skipped=${recordsSkipped}${pending}`,
   };
 }
 

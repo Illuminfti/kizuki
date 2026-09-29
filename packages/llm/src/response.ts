@@ -71,6 +71,15 @@ function badResponse(): never {
   throw new PortError("unavailable", BAD_RESPONSE, false);
 }
 
+/** The provider's usage block when it is well formed; a refusal never depends on it. */
+function billedUsage(value: unknown): LlmUsage | undefined {
+  try {
+    return value === undefined ? undefined : readUsage(value);
+  } catch {
+    return undefined;
+  }
+}
+
 function readUsage(value: unknown): LlmUsage {
   if (value === undefined) {
     return { input_tokens: 0, output_tokens: 0 };
@@ -141,7 +150,16 @@ export function parseChatCompletion(
   const choices = body["choices"];
   if (!Array.isArray(choices) || choices.length === 0) badResponse();
   // Validate every choice: a later tool payload invalidates the whole response.
-  const texts = choices.map(readChoiceText);
+  // A response refused whole was still billed, so its usage rides on the refusal.
+  let texts: string[];
+  try {
+    texts = choices.map(readChoiceText);
+  } catch (error) {
+    if (!(error instanceof PortError)) throw error;
+    const usage = billedUsage(body["usage"]);
+    if (usage === undefined) throw error;
+    throw new PortError(error.code, error.message, error.retryable, { usage, cause: error });
+  }
 
   const model =
     typeof body["model"] === "string" && body["model"].length > 0

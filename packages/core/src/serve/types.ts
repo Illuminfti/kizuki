@@ -18,8 +18,28 @@ export const SERVE_TOKEN_PATH = ".kizuki/serve.token";
 export const HEARTBEAT_SECONDS = 10;
 export const LEASE_RECLAIM_HEARTBEATS = 3;
 export const EMPTY_STREAK = 5;
+/** Consecutive degraded or stopped runs after which a rail is down. */
+export const DEGRADED_STREAK = 5;
 export const RETRIEVAL_SLA_SECONDS = 900;
+/** Newest receipts doctor reads per rail; a longer streak reads as "at least" this many. */
+export const DOCTOR_RAIL_RECEIPTS = 200;
+/** Newest sync receipts doctor reads for model, calibration and throughput. A week at the default period is under 700. */
+export const DOCTOR_SYNC_RECEIPTS = 2_000;
+/** Most events doctor counts past the extract cursor; more reads as "at least". */
+export const EXTRACT_BACKLOG_CAP = 10_000;
+/** Most skipped canon files doctor names. */
+export const DOCTOR_SKIPPED_PAGES = 16;
 export const RUN_RECEIPT_RETENTION_DAYS = 7;
+/** Size ceiling for `run-receipts.jsonl` after a journal prune, oldest receipts dropped first. */
+export const RUN_RECEIPT_JOURNAL_MAX_BYTES = 8 * 1024 * 1024;
+/** A scheduled run that did nothing appends a receipt at most this often per rail. */
+export const NOOP_RECEIPT_HEARTBEAT_S = 60 * 60;
+/** Period of the embed-backfill rail while no embedding port is configured. */
+export const EMBED_BACKFILL_IDLE_PERIOD_S = 60 * 60;
+/** The newest receipts one doctor pass reads. */
+export const DOCTOR_RECEIPT_LIMIT = 5_000;
+/** The newest bytes of `run-receipts.jsonl` one doctor pass scans for orphans. */
+export const DOCTOR_JOURNAL_TAIL_BYTES = 1024 * 1024;
 /**
  * Steady-state keep ratio, chosen against a vault whose corpus already
  * absorbs drafts: RFC 0002 E4 measured 69.9% kept against a 33-50% target,
@@ -123,9 +143,15 @@ export interface RunModelReport {
   readonly answered?: number;
   /** How the pass's final request ended. Absent on older receipts and passes without a request. */
   readonly last_request?: "answered" | "failed";
+  /** Requests in a row, across passes, the model's answer was refused; absent when the last request was answered. */
+  readonly consecutive_rejections?: number;
+  /** The diagnostic rule (or reject reason) of that latest refusal, for example `response_truncated`. */
+  readonly last_rejection_rule?: string;
   readonly calls: number;
   readonly input_tokens: number;
   readonly output_tokens: number;
+  /** Secrets scrubbed from outbound prompts this pass, per kind. Absent when none were. */
+  readonly redacted?: Readonly<Record<string, number>>;
   readonly unavailable: number;
   readonly wall_ms: number;
   readonly model_ref: string | null;
@@ -192,6 +218,8 @@ export interface RunReceipt {
    * or rejected on their own twice in a row. Absent on older receipts.
    */
   readonly records_skipped?: number;
+  /** Daemon-written brief pages the brief or doctor-sweep rail rewrote to pass the page schema. Absent when none. */
+  readonly pages_repaired?: number;
   readonly canon_writes: number;
   readonly canon_reverts: number;
   readonly model: RunModelReport;
@@ -218,6 +246,10 @@ export interface ExtractionConfig {
   readonly max_output_tokens: number;
   /** Seconds after which a pass starts no further step; the request in flight finishes. */
   readonly max_pass_seconds: number;
+  /** Model requests per UTC day, rejected ones included; the pass that finds it spent stops as `model:budget_day`. */
+  readonly max_calls_per_day: number;
+  /** Output tokens the provider billed per UTC day, rejected responses included; spent means `model:budget_day`. */
+  readonly max_output_tokens_per_day: number;
 }
 
 /** Inclusive bounds; an out-of-range or non-integer value keeps its default. */
@@ -227,6 +259,8 @@ export const EXTRACTION_BOUNDS = {
   max_input_tokens: { min: 2_000, max: 32_000 },
   max_output_tokens: { min: 1_024, max: MAX_V2_OUTPUT_TOKENS },
   max_pass_seconds: { min: 30, max: 600 },
+  max_calls_per_day: { min: 1, max: 100_000 },
+  max_output_tokens_per_day: { min: 1_024, max: 1_000_000_000 },
 } as const satisfies Record<keyof ExtractionConfig, { min: number; max: number }>;
 
 export const DEFAULT_EXTRACTION_CONFIG: ExtractionConfig = {
@@ -235,6 +269,8 @@ export const DEFAULT_EXTRACTION_CONFIG: ExtractionConfig = {
   max_input_tokens: 8_000,
   max_output_tokens: 8_192,
   max_pass_seconds: 60,
+  max_calls_per_day: 1_000,
+  max_output_tokens_per_day: 4_000_000,
 };
 
 export interface ServeConfig {
@@ -291,11 +327,21 @@ export interface RailDoctor {
   readonly period_s: number;
   readonly status: "ok" | "down" | "idle";
   readonly reason: string | null;
+  /** Trailing runs that had pending work and produced nothing. Always 0 for a schedule-driven rail. */
   readonly empty_streak: number;
+  /** Trailing runs that ended degraded or stopped. */
+  readonly degraded_streak: number;
+  /** Work waiting for the rail now, bounded. 0 for a schedule-driven rail. */
+  readonly pending_work: number;
 }
 
 export interface ModelDoctor {
-  readonly canon_writing: "on" | "off" | "unverified";
+  /**
+   * `on`: this process bound the model. `configured`: a model is configured
+   * but this process cannot bind it, and the line reports what the daemon's
+   * run receipts show. `unverified`: configured with no daemon receipts.
+   */
+  readonly canon_writing: "on" | "configured" | "off" | "unverified";
   readonly model_ref: string | null;
   /** Configured reasoning effort of the bound model; null when none is sent. */
   readonly reasoning_effort: string | null;
@@ -309,8 +355,43 @@ export interface ModelDoctor {
   /** Historical last_success, last_failure and counts describe only the selected receipt window. */
   readonly history_truncated: boolean;
   readonly unavailable: number;
+  /** Newest-first count of model attempts that failed before the first that did not. */
+  readonly consecutive_failures: number;
   readonly budget: Readonly<Record<string, { used: number; limit: number }>>;
   readonly detail: string;
+}
+
+/** Extraction progress: what waits past the extract cursor and when a claim last came out. */
+export interface ExtractionDoctor {
+  /** Events past the extract cursor that a granted source would send to the model, capped at `EXTRACT_BACKLOG_CAP`. */
+  readonly backlog_events: number;
+  readonly backlog_capped: boolean;
+  /** When a model-produced claim was last recorded; null when none was. */
+  readonly last_extracted_at: string | null;
+  /** Newest-first count of sync passes whose only failure was a truncated response. */
+  readonly consecutive_rejections: number;
+  /** What to change when responses keep being truncated; null otherwise. */
+  readonly hint: string | null;
+  readonly detail: string;
+}
+
+/** A source whose events may go to a model endpoint, and on what terms. */
+export interface EgressDoctor {
+  readonly source_key: string;
+  readonly connector_id: string;
+  readonly endpoint_host: string;
+  readonly model: string;
+  readonly retention: "provider_managed";
+}
+
+/** One derived layer as its last rebuild stamped it. */
+export interface DerivedDoctor {
+  readonly rebuilt_at: string | null;
+  readonly doc_count: number;
+  /** The stamp's status; null when the layer was never stamped. */
+  readonly status: string | null;
+  /** Documents the stamp says it skipped. */
+  readonly skipped_count: number;
 }
 
 export interface StoreDoctor {
@@ -320,11 +401,24 @@ export interface StoreDoctor {
   readonly oldest_purge_op_age_s: number | null;
   /** Successful embed-backfill docs/s, or null when doctor has no measured throughput. */
   readonly embedding_throughput_docs_per_s: number | null;
+  /** Whether an embedding port is configured; the vector layer is off without one and invalid when the selection cannot bind. */
+  readonly vector_layer: { readonly state: "off" | "configured" | "invalid"; readonly detail: string };
   readonly orphan_run_receipts: string[];
   readonly derived: {
-    readonly search: { rebuilt_at: string | null; doc_count: number };
-    readonly graph: { rebuilt_at: string | null; doc_count: number };
+    readonly search: DerivedDoctor;
+    readonly graph: DerivedDoctor;
   };
+  /** Canon files the derived layers cannot index, bounded. Empty when every page indexes. */
+  readonly skipped_pages: readonly { readonly path: string; readonly reason: string }[];
+  /** Total skipped canon files, including those past the bound. */
+  readonly skipped_pages_total: number;
+  /**
+   * Canon pages held out of the derived indexes by an open hold or an
+   * unfinished write. A rebuild does not clear them; finishing the write does.
+   */
+  readonly held_pages: number;
+  /** The canon walk hit its file or byte cap, so the skipped list may be short. */
+  readonly pages_truncated: boolean;
   readonly writers: {
     readonly loop: number;
     readonly correction: number;
@@ -384,6 +478,17 @@ export interface OversizedDoctor {
   readonly detail: string;
 }
 
+/**
+ * The failure the report leads with, as data: what a next-step hint switches
+ * on, so it never has to read the failure text. `rail` is set for a rail
+ * failure. `model` is a failing model attempt, `service` the supervisor,
+ * intent or recovery state.
+ */
+export interface TopFailure {
+  readonly kind: "model" | "rail" | "service" | "other";
+  readonly rail: RailId | null;
+}
+
 export interface ServeDoctorReport {
   readonly supervisor: SupervisorStatus;
   /** Read only for an installed unit that is not running; null otherwise. */
@@ -391,12 +496,16 @@ export interface ServeDoctorReport {
   readonly intent: ServeIntent | "unknown";
   readonly rails: RailDoctor[];
   readonly model: ModelDoctor;
+  readonly extraction: ExtractionDoctor;
+  readonly egress: EgressDoctor[];
   readonly throughput: ThroughputDoctor;
   readonly oversized: OversizedDoctor;
   readonly stores: StoreDoctor;
   readonly calibration: CalibrationDoctor;
   readonly ok: boolean;
   readonly failures: string[];
+  /** The kind of `failures[0]`; null when there is no failure. */
+  readonly top_failure: TopFailure | null;
 }
 
 export class InjectedCrash extends Error {

@@ -17,15 +17,15 @@ setDefaultTimeout(30_000);
 const healthAt = "2026-09-07T00:00:00.000Z";
 function healthyStatus() {
   return { schema: "kizuki.cli.serve/v1", status: "ok", data: { pid: 501, doctor: { ok: true, failures: [],
-    model: { canon_writing: "off", model_ref: null }, stores: { degraded: ["identity-authority-unavailable"] },
+    model: { canon_writing: "off", model_ref: null }, stores: { degraded: [] },
     rails: RAIL_IDS.map(rail => ({ rail, status: "ok", reason: null, last_receipt_at: healthAt })) } } };
 }
 const healthyDiagnostics = () => ({ complete: true, truncated: false, error: null,
   receipts: RAIL_IDS.map(rail => ({ rail, status: "ok", finished_at: healthAt, current_instance: true, errors: [] as string[], retrieval_degraded: [] as string[] })) });
 
-test("fresh empty no-model rails pass while fixed identity degradation stays visible", () => {
+test("fresh empty no-model rails pass and report no store degradation", () => {
   const result = installedRailsHealth({ exit_code: 0, stdout: JSON.stringify(healthyStatus()), stderr: "" }, healthyDiagnostics(), healthAt, Date.parse(healthAt));
-  expect(result.passed).toBe(true); expect(result.evidence).toMatchObject({ doctor_ok: true, canon_writing: "off", identity_degraded: ["identity-authority-unavailable"] });
+  expect(result.passed).toBe(true); expect(result.evidence).toMatchObject({ doctor_ok: true, canon_writing: "off", stores_degraded: [] });
 });
 
 function freshNativeHealth() {

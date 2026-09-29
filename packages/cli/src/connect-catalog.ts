@@ -7,6 +7,7 @@ import { withReadVault } from "./context";
 import { clean, jsonEnvelope, table } from "./output";
 import type { CliIo } from "./commands";
 import { INVOCATION } from "./runtime";
+import { egressDestination, egressRetention, egressView } from "./egress-view";
 
 const TITLES: Record<string, string> = {
   "kizuki.beeper": "Beeper Desktop",
@@ -18,8 +19,11 @@ const TITLES: Record<string, string> = {
   "kizuki.import-omnivore": "Omnivore export",
   "kizuki.import-x-archive": "X archive export",
   "kizuki.import-legacy-wiki": "Markdown wiki migration",
+  "kizuki.import-beacon": "Beacon agent-run import",
   "kizuki.import-legacy-events": "Event history migration",
   "kizuki.screenpipe": "Screenpipe",
+  "kizuki.claude-code-sessions": "Claude Code sessions",
+  "kizuki.codex-sessions": "Codex sessions",
   "kizuki.ics": "Calendar (ICS)",
   "kizuki.x": "X own-post browser sign-in",
   "kizuki.gmail": "Gmail read-only browser sign-in",
@@ -56,11 +60,11 @@ export function printConnectorCatalog(io: CliIo, json: boolean): number {
   const sources = Object.keys(REGISTRY).sort().map((id) => ({
     id,
     name: TITLES[id] ?? id,
-    mode: id === "kizuki.x" ? "native account sign-in" : id === "kizuki.google-calendar" ? "native account sign-in" : id === "kizuki.telegram" ? "native account sign-in" : id === "kizuki.beeper" ? "local app" : id.includes("import-") ? "export import" :
+    mode: id === "kizuki.x" ? "native account sign-in" : id === "kizuki.google-calendar" ? "native account sign-in" : id === "kizuki.telegram" || id === "kizuki.gmail" || id === "kizuki.imap" ? "native account sign-in" : id === "kizuki.beeper" ? "local app" : id === "kizuki.ics" ? "local file or https feed" : id.includes("import-") ? "export import" :
       enrollable.has(id) ? "local source" : "account sign-in",
     available: enrollable.has(id) && (id !== "kizuki.x" || xConfigured) && (id !== "kizuki.google-calendar" || /^[A-Za-z0-9._-]{1,512}$/.test(io.env.KIZUKI_GOOGLE_CALENDAR_CLIENT_ID ?? "")) && (id !== "kizuki.telegram" || appCredentials() !== null) && (id !== "kizuki.gmail" || /^[A-Za-z0-9._-]{1,512}$/.test(io.env.KIZUKI_GMAIL_CLIENT_ID ?? "")),
     cli_enrollable: enrollable.has(id),
-    detail: id === "kizuki.x" ? "CLI wired; public native app, exact registered loopback callback, explicit fields/history start, usage credits and separate source consent required; real-account qualification pending" : id === "kizuki.google-calendar" ? "CLI wired; operator desktop client, canonical calendar, explicit fields, browser sign-in and separate source consent required; real-account qualification pending" : id === "kizuki.gmail" ? "CLI wired; operator desktop-client configuration, explicit fields, browser sign-in and separate source consent required" : id === "kizuki.telegram" && appCredentials() === null ? "CLI wired; project app credentials missing" : ["kizuki.import-legacy-events", "kizuki.import-legacy-wiki"].includes(id) ? "local export and explicit mapping required; source consent required before capture" : enrollable.has(id) ? "ready to connect" : "not yet available from this CLI",
+    detail: id === "kizuki.x" ? "CLI wired; public native app, exact registered loopback callback, explicit fields/history start, usage credits and separate source consent required; --no-browser prints the sign-in address for a headless server; real-account qualification pending" : id === "kizuki.google-calendar" ? "CLI wired; operator desktop client, canonical calendar, explicit fields, browser sign-in (--no-browser prints the address for a headless server) and separate source consent required; real-account qualification pending" : id === "kizuki.gmail" ? "CLI wired; operator desktop-client configuration, explicit fields, browser sign-in (--no-browser prints the address for a headless server) and separate source consent required" : id === "kizuki.ics" ? "ready to connect; a local file with --source or an https feed with --url" : id === "kizuki.telegram" && appCredentials() === null ? "CLI wired; project app credentials missing" : ["kizuki.import-legacy-events", "kizuki.import-legacy-wiki"].includes(id) ? "local export and explicit mapping required; source consent required before capture" : enrollable.has(id) ? "ready to connect" : "not yet available from this CLI",
   }));
   if (json) {
     io.out(jsonEnvelope("connect", "ok", { sources, not_enrollable: NOT_ENROLLABLE }));
@@ -102,6 +106,7 @@ export async function printConnectionStatus(io: CliIo, json: boolean): Promise<n
         source_key: row.source_key,
         state: row.disconnected_at !== null ? "disconnected" : host.state === null ? "needs attention" : "enrolled",
         consent: grant?.status ?? "required",
+        egress: egressView(ctx.vaultPath, grant),
         revision: grant?.revision ?? 0,
         purge_blockers: grant?.purge_blockers ?? [],
         sensitivity: policy?.default_sensitivity ?? "not recorded",
@@ -117,8 +122,8 @@ export async function printConnectionStatus(io: CliIo, json: boolean): Promise<n
       io.out(`Choose a source: ${INVOCATION} connect`);
     } else {
       for (const line of table([
-        ["Connector", "Source", "State", "Consent", "Privacy", "Last run", "Stored", "Errors"],
-        ...connections.map((row) => [clean(row.connector_id), row.source_key, row.state, row.consent, row.sensitivity,
+        ["Connector", "Source", "State", "Consent", "Privacy", "Egress", "Retention", "Last run", "Stored", "Errors"],
+        ...connections.map((row) => [clean(row.connector_id), row.source_key, row.state, row.consent, row.sensitivity, clean(egressDestination(row.egress)), clean(egressRetention(row.egress)),
           row.last_run === null ? "not synced yet" : clean(row.last_run), `${row.stored}`, `${row.errors}`]),
       ])) io.out(line);
       io.out(`Refresh: ${INVOCATION} sync`);

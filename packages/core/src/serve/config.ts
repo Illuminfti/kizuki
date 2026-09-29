@@ -1,9 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isPlainObject } from "../util/validate";
 import {
   DEFAULT_EXTRACTION_CONFIG,
+  DEFAULT_RAILS,
   DEFAULT_SERVE_CONFIG,
+  EMBED_BACKFILL_IDLE_PERIOD_S,
   EXTRACTION_BOUNDS,
   SYNC_PERIOD_BOUNDS,
   type ExtractionConfig,
@@ -29,6 +31,8 @@ function extraction(table: Record<string, unknown>): ExtractionConfig {
     max_input_tokens: bounded("max_input_tokens"),
     max_output_tokens: bounded("max_output_tokens"),
     max_pass_seconds: bounded("max_pass_seconds"),
+    max_calls_per_day: bounded("max_calls_per_day"),
+    max_output_tokens_per_day: bounded("max_output_tokens_per_day"),
   };
 }
 
@@ -39,6 +43,9 @@ function text(value: unknown, fallback: string): string {
 /**
  * A configured model is a non-empty `[ports.llm] model` that is not `none`.
  * Absence stays off: doctor must not infer a model from a leftover receipt.
+ * The value is `port:model` without the endpoint host, so it says that a model
+ * is configured but is not the reference the port stamps on run receipts; the
+ * host that builds the port supplies that one (`configured_model_ref`).
  */
 export function loadConfiguredModelRef(vaultPath: string): string | null {
   const path = serveConfigPath(vaultPath);
@@ -60,6 +67,52 @@ export function loadConfiguredModelRef(vaultPath: string): string | null {
     ? llm["id"]
     : "kizuki.llm.openai-compatible";
   return `${port}:${model}`;
+}
+
+/** Embedding port ids a vault may select; the host binds exactly these. */
+export const EMBEDDING_PORT_IDS: readonly string[] = ["kizuki.embedding.none", "kizuki.embedding.gguf"];
+const EMBEDDING_CONFIG_BYTES = 65_536;
+
+/** The vault's `[ports] embedding` selection. `off` covers absence and `kizuki.embedding.none`. */
+export type EmbeddingSelection =
+  | { readonly state: "off" | "configured"; readonly id: string; readonly config: Record<string, unknown> }
+  | { readonly state: "invalid"; readonly message: string; readonly id?: string };
+
+/**
+ * The one reader of `[ports] embedding`, shared by the CLI's port binding, the
+ * embed rail's period and doctor. It validates against the known ids, so a typo
+ * is `invalid` here exactly where the host would refuse to bind it.
+ */
+export function loadEmbeddingSelection(vaultPath: string): EmbeddingSelection {
+  const off: EmbeddingSelection = { state: "off", id: "kizuki.embedding.none", config: {} };
+  const path = serveConfigPath(vaultPath);
+  if (!existsSync(path)) return off;
+  let parsed: unknown;
+  try {
+    if (statSync(path).size > EMBEDDING_CONFIG_BYTES) throw new Error("oversized config");
+    parsed = Bun.TOML.parse(readFileSync(path, "utf8"));
+  } catch {
+    return { state: "invalid", message: "embedding configuration is unreadable" };
+  }
+  if (!isPlainObject(parsed)) return { state: "invalid", message: "embedding configuration is invalid" };
+  const ports = parsed["ports"];
+  if (ports === undefined) return off;
+  if (!isPlainObject(ports)) return { state: "invalid", message: "ports must be a table" };
+  const value = ports["embedding"];
+  if (value === undefined) return off;
+  const table = isPlainObject(value) ? value : { id: value };
+  const id = table["id"];
+  if (typeof id !== "string" || id.length === 0) return { state: "invalid", message: "embedding must select an id" };
+  if (!EMBEDDING_PORT_IDS.includes(id)) return { state: "invalid", message: "unknown embedding port", id };
+  const { id: _id, ...config } = table;
+  return { state: id === "kizuki.embedding.none" ? "off" : "configured", id, config };
+}
+
+/** The embed-backfill period for this vault: its schedule default only while an embedding port is configured, else a long back-off. */
+export function embedBackfillPeriod(vaultPath: string): number {
+  return loadEmbeddingSelection(vaultPath).state === "configured"
+    ? (DEFAULT_RAILS.find((spec) => spec.rail === "embed-backfill")?.period_s ?? EMBED_BACKFILL_IDLE_PERIOD_S)
+    : EMBED_BACKFILL_IDLE_PERIOD_S;
 }
 
 export function loadServeConfig(vaultPath: string): ServeConfig {

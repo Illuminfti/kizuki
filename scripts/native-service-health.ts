@@ -7,7 +7,7 @@ import { requireRegularFile } from "./release-artifacts";
 
 type CommandResult = { exit_code: number; stdout: string; stderr: string };
 const strings = (value: unknown): string[] => Array.isArray(value)
-  ? value.slice(0, 16).map(item => item === "identity-authority-unavailable" ? item : typeof item === "string" ? redactReceiptText(item).slice(0, 240) : "invalid diagnostic") : [];
+  ? value.slice(0, 16).map(item => typeof item === "string" ? redactReceiptText(item).slice(0, 240) : "invalid diagnostic") : [];
 type RailDiagnostic = {
   rail: string; status: string; finished_at: string; current_instance: boolean;
   errors: string[]; retrieval_degraded: string[];
@@ -78,7 +78,7 @@ export function installedRailsHealth(status: CommandResult, diagnostics: NativeR
       model.canon_writing === "off" && model.model_ref === null && fresh && diagnostics.complete && !diagnostics.truncated && diagnostics.error === null &&
       diagnostics.receipts.filter(row => row.current_instance).every(row => row.status === "ok" && row.errors.length === 0 && row.retrieval_degraded.length === 0);
     return { passed, evidence: { exit_code: status.exit_code, doctor_ok: doctor.ok === true, canon_writing: model.canon_writing === "off" ? "off" : "unexpected",
-      failures: strings(doctor.failures), identity_degraded: strings(stores.degraded), rails: rails.slice(0, 8).map(row => isPlainObject(row) ? {
+      failures: strings(doctor.failures), stores_degraded: strings(stores.degraded), rails: rails.slice(0, 8).map(row => isPlainObject(row) ? {
         rail: strings([row.rail])[0], status: strings([row.status])[0], reason: row.reason === null ? null : strings([row.reason])[0],
       } : { invalid: true }), diagnostics } };
   } catch (error) { return { passed: false, evidence: { exit_code: status.exit_code, error: redactReceiptError(error), diagnostics } }; }

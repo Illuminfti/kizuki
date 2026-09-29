@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PLACEHOLDER_CREDENTIALS_MESSAGE } from "../packages/connector-telegram/src/app-credentials";
-import { COMPILED_CREDENTIAL_GROUPS, packagedQuickStart, resolveCompiledCredentials, type CredentialGroup } from "./build-release";
+import { COMPILED_CREDENTIAL_GROUPS, buildMetadataDefines, packagedQuickStart, resolveCompiledCredentials, type CredentialGroup } from "./build-release";
 import { checksumManifest, parseBuildInfoValue } from "./release-artifacts";
 import { distributionFixture } from "./release-package-fixture";
 import { BUN_DISTRIBUTION_PIN } from "./release-notices";
@@ -151,4 +151,43 @@ test("BUILD.json accepts only an ascending list of credential names", () => {
     [1], [`KIZUKI_${"A".repeat(200)}`], Array.from({ length: 17 }, (_, index) => `KIZUKI_N${index}`)]) {
     expect(() => parseBuildInfoValue({ ...base, compiled_credentials: invalid })).toThrow("invalid shape");
   }
+});
+
+const VERSION_PROBE = `import { versionCommand } from ${JSON.stringify(join(import.meta.dir, "../packages/cli/src/commands/version.ts"))};
+const lines: string[] = [];
+const code = await versionCommand.run({ out: (line: string) => lines.push(line), err: () => {} } as never, []);
+process.stdout.write(lines.join("\\n") + "\\n");
+process.exit(code);
+`;
+
+test("a binary compiled with the release build metadata identifies its exact build", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "kizuki-build-metadata-"));
+  try {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const builtAt = new Date("2026-01-02T03:04:05.000Z");
+    const version = (JSON.parse(readFileSync(join(import.meta.dir, "../packages/cli/package.json"), "utf8")) as { version: string }).version;
+    const entrypoint = join(directory, "probe.ts");
+    writeFileSync(entrypoint, VERSION_PROBE, "utf8");
+    // A subprocess compiles: the in-process bundler can miss relative imports once other modules are loaded.
+    const build = (name: string, define: Record<string, string>) => {
+      const binary = join(directory, name);
+      const flags = Object.entries(define).flatMap(([key, value]) => ["--define", `${key}=${value}`]);
+      const compiled = Bun.spawnSync([process.execPath, "build", entrypoint, "--compile", "--outfile", binary, ...flags], { stdout: "pipe", stderr: "pipe" });
+      if (compiled.exitCode !== 0) throw new Error(`probe build failed: ${compiled.stderr.toString()}`);
+      return Bun.spawnSync([binary], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", KIZUKI_BUILD_SHA: "f".repeat(40) }, stdout: "pipe", stderr: "pipe" });
+    };
+    const release = build("kizuki-release", { KIZUKI_COMPILED: "true", ...buildMetadataDefines(sha, builtAt) });
+    expect(release.exitCode).toBe(0);
+    // A run-time environment variable cannot rename a build.
+    expect(release.stdout.toString()).toBe(`${version} source=${sha} built=2026-01-02T03:04:05.000Z\n`);
+    const unlabelled = build("kizuki-unlabelled", { KIZUKI_COMPILED: "true" });
+    expect(unlabelled.stdout.toString()).toBe(`${version} dev\n`);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
+test("build metadata refuses a partial revision and an invalid time", () => {
+  expect(() => buildMetadataDefines("abc123", new Date())).toThrow("full source revision");
+  expect(() => buildMetadataDefines("a".repeat(40), new Date(Number.NaN))).toThrow("valid build time");
 });

@@ -4,6 +4,7 @@ import { parseExtractResponseV2, PRODUCER_V2_CONTRACT, type ProducerV2ParseInput
 import { assertPortContract } from "../contracts/ports";
 import { cloneExactJson, isPlainObject } from "../util/validate";
 import { readProducerDiagnostic } from "./diagnostics";
+import { REDACTION_KINDS } from "./scrub";
 import { MAX_CLAIMS_PER_RESPONSE, MAX_EVENT_ID_CHARS, MAX_EVENT_IDS_PER_CLAIM, MAX_PREDICATE_CHARS, MAX_SUBJECT_CHARS, parseExtractResponse } from "./schema";
 /** Local validation metadata, never accepted from a producer's wire result. */
 
@@ -31,12 +32,25 @@ function invalidResult(): ValidatedProduceResult {
     } };
 }
 
+function readRedacted(value: unknown): Record<string, number> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const counts: Record<string, number> = {};
+  for (const [kind, count] of Object.entries(value)) {
+    if (!(REDACTION_KINDS as readonly string[]).includes(kind) || !integer(count) || count < 1) return undefined;
+    counts[kind] = count;
+  }
+  return Object.keys(counts).length === 0 ? undefined : counts;
+}
+
 function readUsage(value: unknown): ModelUsage | undefined {
-  if (!isPlainObject(value) || !exact(value, ["calls", "input_tokens", "output_tokens"]) ||
+  if (!isPlainObject(value) || !exact(value, ["calls", "input_tokens", "output_tokens"], ["redacted"]) ||
     !integer(value.calls) || !integer(value.input_tokens) || !integer(value.output_tokens)) {
     return undefined;
   }
-  return { calls: value.calls, input_tokens: value.input_tokens, output_tokens: value.output_tokens };
+  const usage = { calls: value.calls, input_tokens: value.input_tokens, output_tokens: value.output_tokens };
+  if (value.redacted === undefined) return usage;
+  const redacted = readRedacted(value.redacted);
+  return redacted === undefined ? undefined : { ...usage, redacted };
 }
 
 function eventIds(value: unknown): value is string[] {

@@ -258,7 +258,7 @@ the original semantic payload or key.
 ## Identity authority, receipts, and lifecycle
 
 A0 makes unsafe mutation and unavailable alias reads explicit typed refusals;
-packet and doctor report a fixed identity limitation. Ordinary purge uses raw
+alias reads refuse with `identity_unsupported`; packets and doctor no longer repeat that fixed limitation as a flag. Ordinary purge uses raw
 refs; alias expansion refuses until complete authority can be checked. Bounded
 legacy parsing must cover restoration, event/source erasure, and verification.
 An incident endpoint is erased even if its old evidence list is forged.

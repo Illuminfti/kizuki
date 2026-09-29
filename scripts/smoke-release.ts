@@ -42,6 +42,24 @@ function runJson(command: string, args: string[], env: Record<string, string>): 
   return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };
 }
 
+/**
+ * A world_view envelope for an empty concept discovery: a no-model vault admits no Concepts. The
+ * imported note is not consolidated either, so the read must say so (incomplete, with a
+ * pending_consolidation gap) rather than claim the empty answer is complete.
+ */
+function requireConceptDiscovery(envelope: unknown, surface: string): void {
+  const view = envelope as { schema?: string; tool?: string; data?: { schema?: string; operation?: string;
+    result?: { status?: string; data?: { schema?: string; matches?: unknown; coverage?: { status?: string; gaps?: unknown } } } } };
+  const data = view.data?.result?.data;
+  if (view.schema !== "kizuki.envelope/v2" || view.tool !== "world_view" || view.data?.schema !== "kizuki.world-view/v1" ||
+      view.data.operation !== "find_concepts" || view.data.result?.status !== "incomplete" ||
+      data?.schema !== "kizuki.concept-matches/v1" || !Array.isArray(data.matches) ||
+      data.coverage?.status !== "partial" || !Array.isArray(data.coverage.gaps) ||
+      !data.coverage.gaps.includes("pending_consolidation")) {
+    throw new Error(`${surface} world find_concepts smoke failed`);
+  }
+}
+
 const rootTemp = mkdtempSync(join(tmpdir(), "kizuki-release-smoke-"));
 try {
   const vault = join(rootTemp, "vault");
@@ -56,7 +74,10 @@ try {
   mkdirSync(notes, { recursive: true });
   writeFileSync(join(notes, "note.md"), "Ada met Grace at the library.\n", "utf8");
 
-  if (!run(cli, ["version"], env).includes(version)) throw new Error("wrong CLI version");
+  // The binary identifies its exact build: BUILD.json's revision, and a compiled-in build time.
+  const versionLine = run(cli, ["version"], env).trim();
+  const identity = versionLine.match(/^(\S+) source=([0-9a-f]{40}) built=(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)$/);
+  if (identity === null || identity[1] !== version || identity[2] !== build.source_sha) throw new Error("CLI version does not identify the packaged build");
   const help = run(cli, ["--help"], env);
   if (!help.includes("usage: kizuki")) throw new Error("CLI help missing");
   for (const argv of Object.values(PACKAGED_CLI_COMMANDS)) {
@@ -113,6 +134,10 @@ try {
   ) throw new Error("doctor did not report a healthy imported no-model vault");
   const context = run(cli, ["context", "--query", "Ada", "--vault", vault], env);
   if (!context.includes("Ada")) throw new Error("imported note is missing from compiled context");
+  const world = JSON.parse(runJson(cli, ["world", "--operation", "find_concepts", "--json", "--vault", vault], env).stdout) as
+    { schema?: string; status?: string; data?: unknown };
+  if (world.schema !== "kizuki.cli.world/v1" || world.status !== "ok") throw new Error("compiled world command smoke failed");
+  requireConceptDiscovery(world.data, "compiled CLI");
   run(cli, ["serve", "--once", "--no-http", "--vault", vault], env);
   const exported = join(rootTemp, "export");
   const restored = join(rootTemp, "restored");
@@ -168,9 +193,14 @@ try {
     agentRequests[0]!,
     agentRequests[1]!,
     '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
+    '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"world_view","arguments":{"operation":"find_concepts","label":"","valid":{"kind":"all"},"knownAt":{"kind":"current"}}}}',
   ]);
   if (ownerSession.code !== 0) throw new Error("owner MCP smoke failed");
   if (!ownerSession.output.includes('"tools"')) throw new Error("MCP tools/list did not respond");
+  const ownerResponses = ownerSession.output.trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as { id?: number; result?: { isError?: boolean; structuredContent?: unknown } });
+  const worldResponse = ownerResponses.find(response => response.id === 3)?.result;
+  if (worldResponse === undefined || worldResponse.isError === true) throw new Error("MCP world_view smoke failed");
+  requireConceptDiscovery(worldResponse.structuredContent, "compiled MCP");
 
   verifyPackageDirectory(release, build);
   process.stdout.write(`release smoke passed: ${release}\n`);

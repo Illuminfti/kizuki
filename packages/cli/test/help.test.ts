@@ -152,10 +152,10 @@ describe("help", () => {
     expect(result.stderr).toContain("bun packages/cli/src/main.ts help query");
   });
 
-  test("version prints the package version field", () => {
+  test("a source run prints the package version and the dev marker", () => {
     const result = runCli(isolatedEnv(), "version");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("1.0.2\n");
+    expect(result.stdout).toBe("1.0.2 dev\n");
   });
 
   test("query --help names defaults, bounds, flags, and exit codes", () => {
@@ -853,8 +853,9 @@ describe("help", () => {
         "--fields",
         "--calendar",
         "--history-start",
+        "--url",
       ]);
-      expect(body.data.flags).toEqual(["--list", "--json", "--new-source"]);
+      expect(body.data.flags).toEqual(["--list", "--json", "--new-source", "--no-browser"]);
       expect(body.data.irreversible).toBe(false);
     }
     const text = runCli(env, "connect", "--help");
@@ -862,6 +863,8 @@ describe("help", () => {
     expect(text.stdout).toContain("--token-ref");
     expect(text.stdout).toContain("--json");
     expect(text.stdout).toContain("--new-source");
+    expect(text.stdout).toContain("--no-browser");
+    expect(text.stdout).toContain("--url");
     for (const [args, diagnostic] of [
       [["connect", "--nope"], "unknown option --nope"],
       [["connect", "--json", "--json"], "repeated flag --json"],

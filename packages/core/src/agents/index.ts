@@ -19,6 +19,7 @@ export type {
   AuditRow,
   DenyReason,
   Grant,
+  GrantOperation,
   LifecycleAction,
   Principal,
   Sensitivity,
@@ -32,6 +33,7 @@ export {
   authenticate,
   countAgents,
   getAgent,
+  inspectAgents,
   listAgents,
   listQuarantinedAgents,
   resolvePrincipal,
@@ -39,8 +41,10 @@ export {
   rotateToken,
   setGrant,
 } from "./identity";
+export type { AgentInventoryEntry } from "./identity";
 export {
   AgentEnrollmentError,
+  amendAgentGrant,
   authenticateAgentCredential,
   enrollAgent,
   previewAgentEnrollment,
@@ -48,6 +52,8 @@ export {
 } from "./enrollment";
 export type {
   AgentEnrollmentErrorCode,
+  AgentGrantRequest,
+  AgentGrantResult,
   AgentEnrollmentRequest,
   AgentEnrollmentResult,
 } from "./enrollment";

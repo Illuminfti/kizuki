@@ -1,18 +1,22 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import {
   AgentEnrollmentError,
+  amendAgentGrant,
   enrollAgent,
+  inspectAgents,
   previewAgentEnrollment,
   revokeAgentEnrollment,
   type AgentEnrollmentErrorCode,
   type AgentEnrollmentResult,
+  type AgentGrantResult,
+  type AgentInventoryEntry,
   type Grant,
 } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { configPath, readConfig } from "../config";
-import { resolveVault } from "../context";
-import { AGENT_REVOKE_SCHEMA } from "../option-schema";
-import { jsonEnvelope } from "../output";
+import { resolveVault, withReadVault } from "../context";
+import { AGENT_GRANT_SCHEMA, AGENT_LIST_SCHEMA, AGENT_REVOKE_SCHEMA } from "../option-schema";
+import { jsonEnvelope, table } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 export const AGENT_SCHEMA = {
@@ -20,7 +24,7 @@ export const AGENT_SCHEMA = {
   flags: ["--dry-run", "--json"],
 } as const satisfies CommandHelpSchema;
 
-const USAGE = "agent add NAME --grant FILE --token-ref file:/absolute/path --operation-id ID [--dry-run] [--json] | agent revoke NAME [--json]";
+const USAGE = "agent add NAME --grant FILE --token-ref file:/absolute/path --operation-id ID [--dry-run] [--json] | agent grant NAME --grant FILE --operation-id ID [--json] | agent list [--json] | agent revoke NAME [--json]";
 const MAX_GRANT_BYTES = 32 * 1024;
 
 const MESSAGES: Record<AgentEnrollmentErrorCode, string> = {
@@ -36,6 +40,7 @@ const MESSAGES: Record<AgentEnrollmentErrorCode, string> = {
   enrollment_busy: "The vault is busy or preview requires a stable checkpoint without journal sidecars. Retry the same operation ID and request.",
   recovery_required: "Enrollment is incomplete and its credential is inactive. Preserve the file; revoke the pending name before using a new operation ID and destination.",
   enrollment_unavailable: "Enrollment could not be reconciled. Retry the same operation ID and request before starting another setup.",
+  unknown_agent: "No active agent has this name. Revoked and unfinished setups cannot be amended; list agents to check the name.",
 };
 
 /** Bounded input parsing only. Core validates every grant field and meaning. */
@@ -81,21 +86,55 @@ function describe(result: AgentEnrollmentResult, revoke: boolean): string {
   return `Agent ${result.name}: ${result.status}; authority=${result.authority}; credential=${result.credential}.`;
 }
 
+function scope(items: readonly string[] | null): string {
+  return items === null ? "all" : items.length === 0 ? "none" : items.join(",");
+}
+
+/** Everything an owner needs to judge an agent's reach in one row; no credential fields exist here. */
+function summaryRow(agent: AgentInventoryEntry): string[] {
+  const grant = agent.grant;
+  return [agent.name, agent.state, `epoch ${agent.grant_epoch}`, ...(grant === null ? ["grant unreadable"] : [
+    `ceiling=${grant.ceiling}`, `tools=${grant.tools.length === 0 ? "none" : grant.tools.join(",")}`,
+    `types=${scope(grant.types)}`, `subjects=${scope(grant.subjects)}`, `rate=${grant.rate_limit_per_minute}/min`,
+    `relay=${grant.relay_owner_corrections ? "on" : "off"}`,
+  ])];
+}
+
+async function listAgents(io: CliIo, json: boolean): Promise<number> {
+  let agents: AgentInventoryEntry[];
+  try { agents = await withReadVault(io, async ctx => inspectAgents(ctx.db)); }
+  catch { throw new AgentEnrollmentError("vault_unavailable"); }
+  if (json) io.out(jsonEnvelope("agent", "ok", { agents }));
+  else io.out(agents.length === 0 ? "No agents are enrolled." : table(agents.map(summaryRow)).join("\n"));
+  return 0;
+}
+
+function describeGrant(result: AgentGrantResult): string {
+  return `Agent ${result.name}: grant ${result.replayed ? "already amended" : "amended"}; grant epoch ${result.grant_epoch}. Its credential is unchanged.`;
+}
+
 export const agentCommand: Command = {
   name: "agent",
   usage: USAGE,
-  summary: "connect a scoped agent through a private credential file, or revoke its access",
+  summary: "connect a scoped agent, list agents, amend a grant in place, or revoke access",
   schema: AGENT_SCHEMA,
   async run(io, args): Promise<number> {
     const json = args.includes("--json");
     try {
       const action = args[0];
-      if (action !== "add" && action !== "revoke") throw new UsageError(USAGE);
-      const parsed = parseArguments(args.slice(1), action === "add" ? {
-        options: [...AGENT_SCHEMA.options], flags: [...AGENT_SCHEMA.flags],
-      } : { options: [...AGENT_REVOKE_SCHEMA.options], flags: [...AGENT_REVOKE_SCHEMA.flags] });
-      if (parsed.positionals.length !== 1) throw new UsageError(USAGE);
+      if (action !== "add" && action !== "revoke" && action !== "grant" && action !== "list") throw new UsageError(USAGE);
+      const schema = { add: AGENT_SCHEMA, grant: AGENT_GRANT_SCHEMA, list: AGENT_LIST_SCHEMA, revoke: AGENT_REVOKE_SCHEMA }[action];
+      const parsed = parseArguments(args.slice(1), { options: [...schema.options], flags: [...schema.flags] });
+      if (parsed.positionals.length !== (action === "list" ? 0 : 1)) throw new UsageError(USAGE);
+      if (action === "list") return await listAgents(io, json);
       const name = parsed.positionals[0]!;
+      if (action === "grant") {
+        const grantPath = parsed.options.get("--grant"), operationId = parsed.options.get("--operation-id");
+        if (grantPath === undefined || operationId === undefined) throw new UsageError(USAGE);
+        const amended = amendAgentGrant(selectedVault(io), { name, grant: readGrant(grantPath), operation_id: operationId });
+        io.out(json ? jsonEnvelope("agent", "ok", amended) : describeGrant(amended));
+        return 0;
+      }
       let result: AgentEnrollmentResult;
       if (action === "revoke") {
         result = revokeAgentEnrollment(selectedVault(io), name);

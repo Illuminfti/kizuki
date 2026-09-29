@@ -14,6 +14,26 @@ export const MAX_RETRIES = 8;
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high"] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
+/**
+ * Routing controls passed through, unchanged, as the request's `provider`
+ * object. OpenAI-compatible routers that understand it (OpenRouter is the
+ * reference) use it to refuse providers that log prompts or lack zero data
+ * retention. Kizuki forwards these; the router enforces them.
+ */
+export interface ProviderPrivacy {
+  readonly data_collection?: "allow" | "deny";
+  readonly zdr?: boolean;
+  readonly allow_fallbacks?: boolean;
+  readonly order?: readonly string[];
+  readonly only?: readonly string[];
+  readonly ignore?: readonly string[];
+}
+
+const PROVIDER_LISTS = ["order", "only", "ignore"] as const;
+const PROVIDER_KEYS = new Set<string>(["data_collection", "zdr", "allow_fallbacks", ...PROVIDER_LISTS]);
+const PROVIDER_NAME = /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,63}$/;
+const MAX_PROVIDER_LIST = 32;
+
 export interface OpenAiCompatibleLlmConfig {
   readonly base_url: string;
   readonly model: string;
@@ -22,6 +42,8 @@ export interface OpenAiCompatibleLlmConfig {
   readonly max_retries: number;
   /** Sent only when configured; absent leaves reasoning to the provider's default. */
   readonly reasoning_effort: ReasoningEffort | null;
+  /** Sent only when configured; absent leaves provider routing to the router's default. */
+  readonly provider?: ProviderPrivacy;
 }
 
 const ALLOWED_KEYS = new Set([
@@ -31,6 +53,7 @@ const ALLOWED_KEYS = new Set([
   "timeout_ms",
   "max_retries",
   "reasoning_effort",
+  "provider",
 ]);
 
 function configError(message: string): never {
@@ -123,6 +146,36 @@ function parseReasoningEffort(value: unknown): ReasoningEffort | null {
   return value as ReasoningEffort;
 }
 
+function parseProvider(value: unknown): ProviderPrivacy | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) configError("provider must be a table");
+  const provider: { -readonly [K in keyof ProviderPrivacy]: ProviderPrivacy[K] } = {};
+  for (const key of Object.keys(value)) {
+    if (!PROVIDER_KEYS.has(key)) configError(`unknown provider key ${key}`);
+  }
+  const dataCollection = value["data_collection"];
+  if (dataCollection !== undefined) {
+    if (dataCollection !== "allow" && dataCollection !== "deny") configError("provider.data_collection must be allow or deny");
+    provider.data_collection = dataCollection;
+  }
+  for (const key of ["zdr", "allow_fallbacks"] as const) {
+    const flag = value[key];
+    if (flag === undefined) continue;
+    if (typeof flag !== "boolean") configError(`provider.${key} must be a boolean`);
+    provider[key] = flag;
+  }
+  for (const key of PROVIDER_LISTS) {
+    const list = value[key];
+    if (list === undefined) continue;
+    if (!Array.isArray(list) || list.length === 0 || list.length > MAX_PROVIDER_LIST ||
+      !list.every((name): name is string => typeof name === "string" && PROVIDER_NAME.test(name))) {
+      configError(`provider.${key} must be a list of provider names`);
+    }
+    provider[key] = [...list];
+  }
+  return Object.keys(provider).length === 0 ? undefined : provider;
+}
+
 export function parseOpenAiCompatibleConfig(
   value: unknown,
 ): OpenAiCompatibleLlmConfig {
@@ -149,6 +202,7 @@ export function parseOpenAiCompatibleConfig(
     }
   }
 
+  const provider = parseProvider(value["provider"]);
   return {
     base_url: url.href.replace(/\/+$/, ""),
     model: value["model"],
@@ -156,5 +210,6 @@ export function parseOpenAiCompatibleConfig(
     timeout_ms: parseTimeout(value["timeout_ms"]),
     max_retries: parseRetries(value["max_retries"]),
     reasoning_effort: parseReasoningEffort(value["reasoning_effort"]),
+    ...(provider === undefined ? {} : { provider }),
   };
 }

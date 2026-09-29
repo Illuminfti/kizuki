@@ -2,7 +2,7 @@ import { pendingWorldCanonClaims, worldCanonTarget } from "../canon/world-materi
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
 import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
-import { settleWriteReservations } from "./budget-ledger";
+import { addDailyBudget, budgetDay, readDailyBudget, settleWriteReservations } from "./budget-ledger";
 import { recoverCanonWritesOwned } from "../canon/recovery";
 import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { tableExists } from "../ledger/schema";
@@ -42,11 +42,13 @@ import {
   mineLiveDrafts,
   producedClaimInput,
   readDurableExtractBatch,
+  requeuePassedOverRecords,
   requireAtomicExtractReplay,
   type DurableExtractBatch,
   type MineResult,
 } from "./extract";
 import { isProducerV2, type ExtractionProducerPort } from "./extract-v2";
+import { backoffRemaining, readRejections, recordRejection, writeRejections } from "./extract-rejections";
 import { redactReceiptError } from "./receipts";
 
 /** One sync pass never materializes more than this many unwritten claims. */
@@ -55,6 +57,12 @@ const WRITE_PASS_LIMIT = 32;
 const WRITE_PASS_SCAN = 256;
 /** A stop request or signal ends the pass at the next extraction step. */
 export const STOP_REQUESTED = "serve:stop_requested";
+/** Different records refused alike: the model, not the records, is at fault. The pass waits and skips nothing more. */
+export const SYSTEMIC_REJECTION = "model:systemic_rejection";
+/** The day's model call or output token budget is spent. */
+export const BUDGET_DAY = "model:budget_day";
+const DAILY_CALLS = "model_calls_per_day";
+const DAILY_OUTPUT_TOKENS = "model_output_tokens_per_day";
 /** An answered request waits this long for a writer another operation holds before it is discarded. */
 const SETTLE_WAIT_MS = 5_000;
 const SETTLE_POLL_MS = 25;
@@ -98,6 +106,12 @@ interface ProduceMetrics {
   rejected: Record<string, number>;
   /** Requests the model answered with a usable response. */
   answered: number;
+  /** Secrets scrubbed from outbound prompts, per kind. */
+  redacted: Record<string, number>;
+  /** The refusal streak the pass ends with, from the durable history; absent once the model has answered. */
+  rejection?: { consecutive: number; rule: string };
+  /** Why the day's budget kept a request from leaving; the pass then stops as `model:budget_day`. */
+  budget_spent?: string;
   /**
    * The pass's latest request. A pass is judged by how it ended: a rejection a
    * later request answered past stays counted, but it is not the pass's failure.
@@ -113,7 +127,7 @@ interface RequestOutcome {
 }
 
 function emptyMetrics(): ProduceMetrics {
-  return { calls: 0, input_tokens: 0, output_tokens: 0, unavailable: 0, wall_ms: 0, rejected: {}, answered: 0 };
+  return { calls: 0, input_tokens: 0, output_tokens: 0, unavailable: 0, wall_ms: 0, rejected: {}, answered: 0, redacted: {} };
 }
 
 function count(metrics: ProduceMetrics, reason: string): void {
@@ -128,6 +142,7 @@ function observe(metrics: ProduceMetrics, validated: ValidatedProduceResult<Extr
   metrics.calls += result.usage.calls;
   metrics.input_tokens += result.usage.input_tokens;
   metrics.output_tokens += result.usage.output_tokens;
+  for (const [kind, redacted] of Object.entries(result.usage.redacted ?? {})) metrics.redacted[kind] = (metrics.redacted[kind] ?? 0) + redacted;
   const diagnostic = result.status === "ok" ? undefined : readProducerDiagnostic(result.diagnostic);
   metrics.last = {
     answered: result.status === "ok",
@@ -148,10 +163,14 @@ function observe(metrics: ProduceMetrics, validated: ValidatedProduceResult<Extr
   }
 }
 
+const NOT_SENT = { calls: 0, input_tokens: 0, output_tokens: 0 } as const;
+
 function observedProducer(
   producer: ExtractionProducerPort,
   metrics: ProduceMetrics,
   record: (result?: ExtractionProduceResult) => void,
+  /** Why no request may leave now, or null. Read before every request. */
+  spent: () => string | null,
 ): ExtractionProducerPort {
   if (isProducerV2(producer)) {
     const observed: ProducerV2Port = {
@@ -160,6 +179,8 @@ function observedProducer(
       health: () => producer.health(),
       close: () => producer.close(),
       async produce(input) {
+        const held = spent();
+        if (held !== null) { metrics.budget_spent = held; return { status: "unavailable", reason: "unavailable", usage: NOT_SENT }; }
         const started = performance.now();
         record();
         const validated = await invokeProducerV2(producer, input);
@@ -175,6 +196,8 @@ function observedProducer(
     health: () => producer.health(),
     close: () => producer.close(),
     async produce(input) {
+      const held = spent();
+      if (held !== null) { metrics.budget_spent = held; return { status: "unavailable", reason: "unavailable", usage: NOT_SENT }; }
       const started = performance.now();
       // Commit intent before crossing the asynchronous external-effect boundary.
       record();
@@ -194,11 +217,13 @@ function metricResult(metrics: ProduceMetrics): Pick<WritePassResult, "claims_re
     claims_rejected: metrics.rejected,
     model: {
       ...(last?.diagnostic === undefined ? {} : { diagnostic: last.diagnostic }),
+      ...(metrics.rejection === undefined ? {} : { consecutive_rejections: metrics.rejection.consecutive, last_rejection_rule: metrics.rejection.rule }),
       ...(last?.usage_unknown === undefined ? {} : { usage_unknown: true }),
       ...(last === undefined ? {} : { answered: metrics.answered, last_request: last.answered ? "answered" as const : "failed" as const }),
       calls: metrics.calls,
       input_tokens: metrics.input_tokens,
       output_tokens: metrics.output_tokens,
+      ...(Object.keys(metrics.redacted).length === 0 ? {} : { redacted: metrics.redacted }),
       unavailable: metrics.unavailable,
       wall_ms: metrics.wall_ms,
     },
@@ -451,6 +476,7 @@ interface ExtractionPass {
   readonly metrics: ProduceMetrics;
   readonly model_ref: string | null;
   readonly limits: ExtractionConfig;
+  readonly clock: () => string;
   /** Counts claims an answered request carried that journaling declined, in the run's totals. */
   readonly decline: (dropped: readonly DroppedDraftV2[]) => void;
 }
@@ -465,24 +491,46 @@ async function runExtraction(
 ): Promise<void> {
   const { db } = io;
   const runId = options.run_id ?? ulid();
+  const clock = options.now ?? (() => new Date().toISOString());
+  const limits = options.extraction ?? DEFAULT_EXTRACTION_CONFIG;
   let produced = 0;
   const recordUsage = (report: ReturnType<typeof metricResult>): void => {
     db.query("INSERT INTO extract_usage(run_id,model_ref,metrics,created_at,holder_pid) VALUES (?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET metrics=excluded.metrics").run(
       runId, options.model_ref ?? null, JSON.stringify({ ...report, claims_extracted: produced }), new Date().toISOString(), process.pid,
     );
   };
+  // The day's spend is durable and charged before a request leaves, so a kill
+  // mid-call still counts the call; output tokens are charged from the answer.
+  const spent = (): string | null => {
+    const day = budgetDay(clock());
+    const calls = readDailyBudget(db, day, DAILY_CALLS);
+    if (calls >= limits.max_calls_per_day) return `max_calls_per_day=${limits.max_calls_per_day} is spent for ${day}`;
+    const tokens = readDailyBudget(db, day, DAILY_OUTPUT_TOKENS);
+    if (tokens >= limits.max_output_tokens_per_day) return `max_output_tokens_per_day=${limits.max_output_tokens_per_day} is spent for ${day}`;
+    return null;
+  };
   const observed = observedProducer(producer, metrics, (result) => {
     // One row per run carries the pass's running totals. Before each request
     // it already charges that request as the pass's unanswered last one, so a
     // kill mid-call is still counted and reported as interrupted.
-    if (result !== undefined) produced += producedCount(result);
+    if (result === undefined) addDailyBudget(db, budgetDay(clock()), DAILY_CALLS, 1);
+    else {
+      produced += producedCount(result);
+      // A legacy producer makes several requests per produce; the first was charged when it left.
+      const extraCalls = Number.isSafeInteger(result.usage.calls) ? Math.max(0, result.usage.calls - 1) : 0;
+      if (extraCalls > 0) addDailyBudget(db, budgetDay(clock()), DAILY_CALLS, extraCalls);
+      const billed = result.usage.output_tokens;
+      addDailyBudget(db, budgetDay(clock()), DAILY_OUTPUT_TOKENS, Number.isSafeInteger(billed) && billed > 0 ? billed : 0);
+      // An answer, even an empty one, ends the refusal streak; what it passed over stays passed over.
+      if (result.status === "ok") { writeRejections(db, null); delete metrics.rejection; }
+    }
     recordUsage(result === undefined
       ? metricResult({ ...metrics, calls: metrics.calls + 1, last: { answered: false, usage_unknown: true } })
       : metricResult(metrics));
-  });
+  }, spent);
   const pass: ExtractionPass = {
     io, db, claims, producer, observed, metrics,
-    model_ref: options.model_ref ?? null, limits: options.extraction ?? DEFAULT_EXTRACTION_CONFIG,
+    model_ref: options.model_ref ?? null, limits, clock,
     decline(dropped) {
       if (dropped.length === 0) return;
       for (const draft of dropped) count(metrics, draft.reason);
@@ -490,18 +538,24 @@ async function runExtraction(
       recordUsage(metricResult(metrics));
     },
   };
-  const clock = options.now ?? (() => new Date().toISOString());
   const started = Date.parse(clock());
+  const history = readRejections(db, clock());
+  if (history !== null) metrics.rejection = { consecutive: history.consecutive, rule: history.rule };
+  const waiting = backoffRemaining(history, clock());
+  if (history !== null && waiting !== null) {
+    tally.stopped = SYSTEMIC_REJECTION;
+    tally.errors.push(systemicNotice(history.consecutive, history.rule, waiting));
+    return;
+  }
   // Every step files its decision and advances the cursor before the next
   // one starts, so a kill loses at most the request in flight.
-  let retrying = false;
   for (let taken = 0; taken < pass.limits.max_calls_per_pass; taken++) {
     if (options.stopRequested?.() === true) { tally.stopped = STOP_REQUESTED; return; }
     // A spent pass starts no further step; the next pass resumes from the cursor.
     if (taken > 0 && Date.parse(clock()) - started >= pass.limits.max_pass_seconds * 1_000) return;
     let outcome: StepOutcome;
     try {
-      outcome = await extractionStep(pass, retrying);
+      outcome = await extractionStep(pass);
     } catch (error) {
       if (!(error instanceof DurableExtractAuthorizationError)) throw error;
       tally.stopped = `source:${error.code}`;
@@ -510,28 +564,36 @@ async function runExtraction(
     tally.claims_extracted += outcome.extracted;
     tally.claims_deduped += outcome.deduped;
     tally.claims_superseded += outcome.superseded;
-    tally.records_skipped += outcome.skipped;
+    // Records passed over while the model was failing alike are queued again, not skipped.
+    tally.records_skipped = Math.max(0, tally.records_skipped + outcome.skipped - outcome.requeued);
     tally.oversized.segments += outcome.segments;
     tally.oversized.skipped += outcome.oversized_skipped;
     tally.errors.push(...outcome.errors);
     tally.stopped = outcome.stopped;
+    // The refusal history changed after this step's request was recorded.
+    if (metrics.calls > 0 && metrics.last?.usage_unknown !== true) recordUsage(metricResult(metrics));
     if (outcome.next === "stop") return;
-    retrying = outcome.next === "retry";
   }
+}
+
+function systemicNotice(consecutive: number, rule: string, until: string): string {
+  return `model refused ${consecutive} requests in a row (${rule}); backing off until ${until}`;
 }
 
 interface StepOutcome {
   /**
-   * `continue` after durable progress; `retry` after a rejected response to a
+   * `continue` after durable progress, or after a rejected response to a
    * request that was sent, which the next step asks again for its first record
    * alone; `stop` when nothing is left or the next step could only repeat this one.
    */
-  readonly next: "continue" | "retry" | "stop";
+  readonly next: "continue" | "stop";
   readonly extracted: number;
   readonly deduped: number;
   readonly superseded: number;
   /** Records passed over for good, each with its reason in `errors`. */
   readonly skipped: number;
+  /** Skipped records queued again because the model, not they, was at fault. */
+  readonly requeued: number;
   /** Segments of a record too large for one request that this step settled. */
   readonly segments: number;
   /** Records too large for one request passed over with a retry receipt. */
@@ -541,7 +603,7 @@ interface StepOutcome {
 }
 
 const settled = (next: StepOutcome["next"], fields: Partial<Omit<StepOutcome, "next">> = {}): StepOutcome =>
-  ({ next, extracted: 0, deduped: 0, superseded: 0, skipped: 0, segments: 0, oversized_skipped: 0, stopped: null, errors: [], ...fields });
+  ({ next, extracted: 0, deduped: 0, superseded: 0, skipped: 0, requeued: 0, segments: 0, oversized_skipped: 0, stopped: null, errors: [], ...fields });
 
 /** A provider that still refuses after the port's bounded retries ends the pass as a typed stop. */
 function modelStop(reason: string, diagnostic: ProducerDiagnostic | undefined): string {
@@ -554,8 +616,8 @@ function modelStop(reason: string, diagnostic: ProducerDiagnostic | undefined): 
  * or make at most one extraction request and settle its outcome. The request
  * runs without the canon writer; filing and the cursor take it briefly after.
  */
-async function extractionStep(pass: ExtractionPass, retrying: boolean): Promise<StepOutcome> {
-  const { io, db, claims, producer, observed, metrics, model_ref, limits } = pass;
+async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
+  const { io, db, claims, producer, observed, metrics, model_ref, limits, clock } = pass;
   const replay = await holdWriter(io, async () => {
     const pending = readDurableExtractBatch(db, producer);
     if (pending === null) return null;
@@ -568,8 +630,10 @@ async function extractionStep(pass: ExtractionPass, retrying: boolean): Promise<
   if (!replay.held) return settled("stop", { stopped: replay.stopped });
   if (replay.value !== null) return replay.value;
   const sent = metrics.calls, earlier = metrics.last;
-  // A retried request carries only the first record of the one it repeats.
-  const request = retrying ? { ...limits, records_per_request: 1 } : limits;
+  // A request after a refusal carries only the first record of the one it repeats.
+  // The decision is durable, so it holds at one step per pass as well.
+  const history = readRejections(db, clock());
+  const request = history?.narrow == null ? limits : { ...limits, records_per_request: 1 };
   const mined = isProducerV2(observed)
     ? await mineLiveDrafts(db, observed, request)
     : await mineLiveDrafts(db, observed, request);
@@ -578,20 +642,57 @@ async function extractionStep(pass: ExtractionPass, retrying: boolean): Promise<
   const diagnostic = fresh === undefined ? [] : [formatProducerDiagnostic(fresh)];
   switch (mined.mined.status) {
     case "unavailable":
+      if (metrics.budget_spent !== undefined) return settled("stop", { stopped: BUDGET_DAY, errors: [`model budget: ${metrics.budget_spent}`] });
       return settled("stop", { stopped: modelStop(mined.mined.reason, fresh), errors: diagnostic });
     case "rejected": {
       const errors = [mined.mined.reason, ...diagnostic];
       // A refusal before sending, such as a legacy request over its budget, repeats identically.
       if (metrics.calls === sent) return settled("stop", { errors });
-      // A nondeterministic model often answers the same record well on a second, smaller request.
-      if (!retrying) return settled("retry", { errors });
-      if (mined.model_inputs?.length !== 1) return settled("stop", { errors });
-      // A record rejected on its own twice is passed over, so it cannot hold every later one.
-      const { segment, ...whole } = mined;
-      const twice = { ...whole, mined: { status: "skipped" as const, reason: "rejected on its own twice" } };
-      // A segment keeps its record's filed prefix: the skip receipt lets `serve retry-skipped` resume there.
-      return advance(pass, segment === undefined ? twice
-        : { ...twice, skipped: { event_id: segment.event_id, chars: segment.chars, done: segment.start } }, errors);
+      const head = mined.model_inputs?.[0]?.event_id;
+      if (head === undefined) return settled("stop", { errors });
+      const rule = fresh !== undefined && "rule" in fresh ? String(fresh.rule) : mined.mined.reason;
+      const refused = recordRejection(history, { head, rule, single: mined.model_inputs?.length === 1 }, clock());
+      metrics.rejection = { consecutive: refused.state.consecutive, rule };
+      switch (refused.action.kind) {
+        // A nondeterministic model often answers the same record well on a second, smaller request.
+        case "narrow":
+          writeRejections(db, refused.state);
+          // A request that could not be narrowed would only repeat itself.
+          return settled(history?.narrow === head ? "stop" : "continue", { errors });
+        // Different records fail alike: the model is at fault. Nothing more is skipped, and those
+        // passed over while it failed go back on the queue for when it answers.
+        case "trip": {
+          const requeue = refused.action.requeue;
+          const held = await holdWriter(io, () => db.transaction(() => {
+            const requeued = requeuePassedOverRecords(db, requeue);
+            writeRejections(db, refused.state);
+            return requeued;
+          }).immediate());
+          if (!held.held) return settled("stop", { stopped: held.stopped, errors });
+          const wait = systemicNotice(refused.state.consecutive, rule, refused.state.backoff_until!);
+          return settled("stop", { stopped: SYSTEMIC_REJECTION, requeued: held.value, errors: [...errors, wait] });
+        }
+        case "skip": {
+          // A record rejected on its own twice is passed over, so it cannot hold every later one.
+          const { segment, ...whole } = mined;
+          const twice = { ...whole, mined: { status: "skipped" as const, reason: "rejected on its own twice" } };
+          // A segment keeps its record's filed prefix: the skip receipt lets `serve retry-skipped` resume there.
+          const outcome = await advance(pass, segment === undefined ? twice
+            : { ...twice, skipped: { event_id: segment.event_id, chars: segment.chars, done: segment.start } }, errors);
+          // A segment skipped with a receipt is retried with `serve retry-skipped`, never through the streak.
+          if (outcome.next !== "continue") return outcome;
+          writeRejections(db, segment === undefined ? refused.state
+            : { ...refused.state, passed_over: refused.state.passed_over.filter(id => id !== head) });
+          // After a trip the skip is final and the pass waits, so a run of poison records drains one per wait.
+          if (!refused.action.pause) return outcome;
+          const wait = systemicNotice(refused.state.consecutive, rule, refused.state.backoff_until!);
+          return { ...outcome, next: "stop", stopped: SYSTEMIC_REJECTION, errors: [...outcome.errors, wait] };
+        }
+        default: {
+          const _exhaustive: never = refused.action;
+          return _exhaustive;
+        }
+      }
     }
     case "skipped":
       return advance(pass, mined);

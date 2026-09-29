@@ -95,13 +95,17 @@ export type PortFactory<T> = (ctx: PortContext) => T | Promise<T>;
 export class PortError extends Error {
   override readonly name = "PortError";
 
+  /** Tokens the provider billed for a response the port then refused; absent when it reported none. */
+  readonly usage?: { readonly input_tokens: number; readonly output_tokens: number };
+
   constructor(
     readonly code: PortErrorCode,
     message: string,
     readonly retryable: boolean,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly usage?: { readonly input_tokens: number; readonly output_tokens: number } },
   ) {
     super(message, options);
+    if (options?.usage !== undefined) this.usage = options.usage;
   }
 }
 

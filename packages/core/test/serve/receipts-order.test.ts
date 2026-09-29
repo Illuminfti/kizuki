@@ -53,7 +53,7 @@ test("new model failures remain visible beyond the receipt cap and through log p
     const doctor = inspectServeDoctor(db, path, { model_ref: model, now: "2026-09-05T00:00:03Z" });
     expect(doctor.model.current_failure?.detail).toContain("unsupported metadata");
     expect(doctor.ok).toBe(false);
-    expect(pruneRunReceipts(db, path, "2026-09-05T00:00:00Z").rewritten).toBe(10_000);
+    expect(pruneRunReceipts(db, path, "2026-09-05T00:00:00Z").rewritten).toBe(10_001);
     expect(readRunReceiptsLog(path).at(-1)?.run_id).toBe("latest-model-failure");
   } finally { db.close(); }
 });

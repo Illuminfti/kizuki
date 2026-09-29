@@ -9,6 +9,7 @@ import { getClaim, listClaims, reviveUncontestedSkipped } from "../../src/claims
 import type { ProduceResult, ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
 import { createDurableWriteBudget } from "../../src/serve/budget-ledger";
+import { listDailyBudget } from "../../src/serve/budget-ledger";
 import { runRail } from "../../src/serve/rails";
 import { readExtractCursor } from "../../src/serve/extract";
 import { runWritePass } from "../../src/serve/write-pass";
@@ -451,6 +452,22 @@ describe("write pass", () => {
     db.close();
   });
 
+  test("a legacy producer that makes several requests per produce charges each to the daily call budget", async () => {
+    const { path, db } = vault();
+    putEvent(db, { source_record_id: "legacy-calls" });
+    const day = new Date().toISOString().slice(0, 10);
+    await runWritePass(db, path, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+      model_ref: "kizuki.llm.openai-compatible:synthetic@local",
+      claims: { db },
+      producer: stubProducer({ status: "ok", claims: [], usage: { calls: 3, input_tokens: 5, output_tokens: 7 } }),
+    });
+    const used = Object.fromEntries(listDailyBudget(db, day).map((row) => [row.name, row.used]));
+    expect(used["model_calls_per_day"]).toBe(3);
+    expect(used["model_output_tokens_per_day"]).toBe(7);
+    db.close();
+  });
+
   test("write-pass receipts preserve rejected and dropped model outcomes", async () => {
     const { path, db } = vault();
     putEvent(db, { source_record_id: "metrics" });
@@ -466,6 +483,7 @@ describe("write pass", () => {
     });
     expect(rejected.model).toEqual({
       answered: 0, last_request: "failed", calls: 1, input_tokens: 7, output_tokens: 0, unavailable: 0, wall_ms: expect.any(Number),
+      consecutive_rejections: 1, last_rejection_rule: "schema_invalid",
     });
     expect(rejected.claims_rejected).toEqual({ schema_invalid: 1 });
 

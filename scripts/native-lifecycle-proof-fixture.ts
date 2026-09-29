@@ -16,7 +16,7 @@ export function lifecycleFixture(expected: NativeLifecycleIdentity): any {
   set("private-unit",{unit:unit("original"),mode:384,sha256:h("unit")});
   set("deliberately-stopped",{unit_exists:false,intent:"opted-out"});
   set("native-api-failed-activation-rolls-back",{failure:"synthetic expected activation failure",unit_sha256:h("unit"),recovery_journal_exists:false,boundary:"synthetic native activation rollback"});
-  set("installed-rails-healthy",{exit_code:0,doctor_ok:true,canon_writing:"off",failures:[],identity_degraded:[],rails:RAIL_IDS.map(rail=>({rail,status:"ok",reason:null})),diagnostics:{complete:true,truncated:false,error:null,receipts:RAIL_IDS.map(rail=>({rail,status:"ok",finished_at:"2026-09-07T00:01:02Z",current_instance:true,errors:[],retrieval_degraded:[]}))}});
+  set("installed-rails-healthy",{exit_code:0,doctor_ok:true,canon_writing:"off",failures:[],stores_degraded:[],rails:RAIL_IDS.map(rail=>({rail,status:"ok",reason:null})),diagnostics:{complete:true,truncated:false,error:null,receipts:RAIL_IDS.map(rail=>({rail,status:"ok",finished_at:"2026-09-07T00:01:02Z",current_instance:true,errors:[],retrieval_degraded:[]}))}});
   steps.splice(steps.findIndex(s=>s.id==="uninstall-before-stopped-read"),0,{id:mac?"launchd-graceful-exit":"systemd-graceful-exit",passed:true,evidence:{...command}});
   if(mac)steps.splice(steps.findIndex(s=>s.id==="crash-restarts-new-instance"),0,{id:"uninstrumented-repeat-install",passed:true,evidence:{...command}},{id:"repeat-install-replaces-process",passed:true,evidence:active("uninstrumented")});
   set("native-user-manager-available",{command:mac?"launchctl print gui/<uid>":"systemctl --user show --property=Version",exit_code:0});

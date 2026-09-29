@@ -30,6 +30,7 @@ import { isNonEmptyString, isPlainObject } from "../util/validate";
 import { escapeFenceText, hasFenceLeak, hasParsedFenceLeak, newFenceNonce } from "./fence";
 import { buildExtractionMessages } from "./prompt";
 import { admitExtractedClaims } from "./systemone-admit";
+import { scrubCounting, scrubText, type RedactionCounts } from "./scrub";
 import {
   MAX_EVENT_ID_CHARS,
   containsVerbatimCapture,
@@ -337,6 +338,8 @@ interface PlannedModelCall {
   readonly nonce: string;
   readonly messages: readonly LlmMessage[];
   readonly max_output_tokens: number;
+  /** What the scrubber removed from this call's prompt, per kind. */
+  readonly redacted: RedactionCounts;
 }
 
 type BudgetDiagnostic = Extract<ProducerDiagnostic, { stage: "budget" }>;
@@ -360,31 +363,41 @@ export function planModelExtraction(rawInput: ProduceInput): ModelExtractionPlan
     const subjects = new Map<string, SubjectRef>();
     for (const event of batch.events) for (const subject of event.subjects) subjects.set(subject.subject_id, subject);
     const nonce = newFenceNonce();
-    const messages = buildExtractionMessages({ events: batch.events, subjects: [...subjects.values()],
-      known_claims: input.context.known_claims.filter(claim => claim.subject !== null && subjects.has(claim.subject)),
+    const redacted: RedactionCounts = {};
+    const scrub = (text: string): string => scrubCounting(redacted, text);
+    const scrubSubject = (subject: SubjectRef): SubjectRef => subject.display_name === undefined ? subject : { ...subject, display_name: scrub(subject.display_name) };
+    const messages = buildExtractionMessages({
+      events: batch.events.map(event => ({ ...event, text: scrub(event.text), subjects: event.subjects.map(scrubSubject) })),
+      subjects: [...subjects.values()],
+      known_claims: input.context.known_claims.filter(claim => claim.subject !== null && subjects.has(claim.subject)).map(claim => ({ ...claim, object: claim.object === null ? null : scrub(claim.object) })),
       predicates: input.context.predicates }, nonce);
     inputReserved += estimateTokens(messages);
     if (inputReserved > input.budget.max_input_tokens) return reject("max_input_tokens", inputReserved, input.budget.max_input_tokens);
     const maxOutput = Math.min(EXTRACT_MAX_OUTPUT_TOKENS, input.budget.max_output_tokens - outputReserved);
     if (maxOutput < 1) return reject("max_output_tokens", outputReserved + 1, input.budget.max_output_tokens);
     outputReserved += maxOutput;
-    calls.push({ events: batch.events, nonce, messages, max_output_tokens: maxOutput });
+    calls.push({ events: batch.events, nonce, messages, max_output_tokens: maxOutput, redacted });
   }
   return { status: "ready", input, calls };
 }
 
 export type CallOutcome =
   | { kind: "ok"; response: LlmResponse }
-  | { kind: "rejected"; reason: RejectReason; diagnostic: ProducerDiagnostic }
+  /** `usage` is what the provider billed for the response the port refused, when it said. */
+  | { kind: "rejected"; reason: RejectReason; diagnostic: ProducerDiagnostic; usage?: LlmResponse["usage"] }
   | { kind: "unavailable"; reason: string; diagnostic: ProducerDiagnostic };
+
+function billed(error: PortError): { usage?: LlmResponse["usage"] } {
+  return error.usage === undefined ? {} : { usage: error.usage };
+}
 
 export function classifyLlmError(error: unknown): Exclude<CallOutcome, { kind: "ok" }> {
   if (!(error instanceof PortError)) return { kind: "unavailable", reason: "llm error", diagnostic: { stage: "transport", rule: "unavailable" } };
   if (error.code === "not_supported" && error.message === "rejected: tool_call_in_response") {
-    return { kind: "rejected", reason: "tool_call_in_response", diagnostic: { stage: "response", rule: "tool_call" } };
+    return { kind: "rejected", reason: "tool_call_in_response", diagnostic: { stage: "response", rule: "tool_call" }, ...billed(error) };
   }
   for (const rule of ["bad_response", "unsupported_metadata", "response_refused", "response_truncated", "response_incomplete", "response_too_large"] as const) {
-    if (error.code === "unavailable" && error.message === `rejected: ${rule}`) return { kind: "rejected", reason: "schema_invalid", diagnostic: { stage: "response", rule } };
+    if (error.code === "unavailable" && error.message === `rejected: ${rule}`) return { kind: "rejected", reason: "schema_invalid", diagnostic: { stage: "response", rule }, ...billed(error) };
   }
   let diagnostic: ProducerDiagnostic = { stage: "transport", rule: "unavailable" };
   if (error.code === "timeout") diagnostic = { stage: "transport", rule: "timeout" };
@@ -486,6 +499,7 @@ export function createModelProducerPort(
         const batchSubjects = new Set(batch.events.flatMap(event => event.subjects.map(subject => subject.subject_id)));
         const outcome = await callModel(llm, batch.messages, batch.max_output_tokens, config.deadline_ms);
         usage.calls += 1;
+        for (const [kind, count] of Object.entries(batch.redacted)) usage.redacted = { ...usage.redacted, [kind]: (usage.redacted?.[kind] ?? 0) + count };
         if (outcome.kind === "unavailable") {
           // A transport failure is not an empty call.  Preserve the charged
           // attempt in the receipt so an unavailable model cannot masquerade
@@ -493,6 +507,8 @@ export function createModelProducerPort(
           return { status: "unavailable", reason: outcome.reason, usage, diagnostic: outcome.diagnostic };
         }
         if (outcome.kind === "rejected") {
+          usage.input_tokens += outcome.usage?.input_tokens ?? 0;
+          usage.output_tokens += outcome.usage?.output_tokens ?? 0;
           return { status: "rejected", reason: outcome.reason, usage, diagnostic: outcome.diagnostic };
         }
         usage.input_tokens += outcome.response.usage.input_tokens;
@@ -585,7 +601,7 @@ export function createModelProducerPort(
 
       const admitted = await admitExtractedClaims(
         claims,
-        plan.input.events,
+        plan.input.events.map(event => ({ ...event, text: scrubText(event.text).text })),
         systemone,
         config.deadline_ms,
       );

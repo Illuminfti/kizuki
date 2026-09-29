@@ -1,9 +1,8 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   bindLocalSourcePort,
-  isPlainObject,
   loadConfiguredRetrieval,
+  loadEmbeddingSelection,
   PortError,
   PortRegistry,
 } from "@kizuki/core";
@@ -14,9 +13,6 @@ import {
   EMBEDDED_RETRIEVAL_DESCRIPTOR,
   registerEmbeddedRetrieval,
 } from "@kizuki/retrieval-pg";
-
-const CONFIG_REL = join(".kizuki", "serve.toml");
-const CONFIG_BYTES = 65_536;
 
 export interface ConfiguredEmbedding {
   id: string;
@@ -43,31 +39,24 @@ function hostContext(
 
 /** Shared selection for CLI rebuild; opening the engine is a host concern. */
 export function loadConfiguredEmbedding(vaultPath: string): ConfiguredEmbedding {
-  const path = join(vaultPath, CONFIG_REL);
-  const fallback = { id: "kizuki.embedding.none", config: {} };
-  if (!existsSync(path)) return fallback;
-  let parsed: unknown;
+  const selection = loadEmbeddingSelection(vaultPath);
+  if (selection.state === "invalid") {
+    throw new PortError("config_invalid", selection.id === undefined ? selection.message : `${selection.message} ${selection.id}`, false);
+  }
+  return { id: selection.id, config: selection.config };
+}
+
+/**
+ * Whether the vault configures an embedding port: the one fact doctor, `serve
+ * status` and the daemon's sweep share to decide if `embed-backfill` has work.
+ * An unreadable selection counts as not configured; rebuild names the refusal.
+ */
+export function embeddingConfigured(vaultPath: string): boolean {
   try {
-    if (statSync(path).size > CONFIG_BYTES) throw new Error("oversized config");
-    parsed = Bun.TOML.parse(readFileSync(path, "utf8"));
+    return loadConfiguredEmbedding(vaultPath).id !== "kizuki.embedding.none";
   } catch {
-    throw new PortError("config_invalid", "embedding configuration is unreadable", false);
+    return false;
   }
-  if (!isPlainObject(parsed)) throw new PortError("config_invalid", "embedding configuration is invalid", false);
-  if (parsed["ports"] === undefined) return fallback;
-  if (!isPlainObject(parsed["ports"])) throw new PortError("config_invalid", "ports must be a table", false);
-  const value = parsed["ports"]["embedding"];
-  if (value === undefined) return fallback;
-  const table = isPlainObject(value) ? value : { id: value };
-  const id = table["id"];
-  if (typeof id !== "string" || id.length === 0) {
-    throw new PortError("config_invalid", "embedding must select an id", false);
-  }
-  if (id !== "kizuki.embedding.none" && id !== "kizuki.embedding.gguf") {
-    throw new PortError("config_invalid", `unknown embedding port ${id}`, false);
-  }
-  const { id: _id, ...config } = table;
-  return { id, config };
 }
 
 export async function openConfiguredEmbedding(vaultPath: string): Promise<EmbeddingPort | undefined> {

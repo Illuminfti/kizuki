@@ -1,4 +1,5 @@
 import { AUTHORITY_TIERS, ENVELOPE_SCHEMA, PAGE_TAINTS, TOOLS } from "@kizuki/core";
+import type { Tool } from "@kizuki/core";
 import { z } from "zod";
 
 /**
@@ -10,6 +11,7 @@ const SENSITIVITY = z.enum(["public", "personal", "private"]);
 const ID = z.string().min(1).max(64);
 const RFC3339 = z.string().min(20).max(40);
 const AUTHORITY = z.enum(Object.keys(AUTHORITY_TIERS) as [string, ...string[]]);
+// Named, so `tools/list` states it once per tool rather than once per chunk kind.
 const SUBJECT_LABEL = z.strictObject({
   subject: z.string(),
   display_name: z.string().nullable(),
@@ -19,7 +21,7 @@ const SUBJECT_LABEL = z.strictObject({
     authority: AUTHORITY,
     sources: z.array(z.string()).min(1).max(64),
   })).min(1).max(32),
-});
+}).meta({ id: "SubjectLabel" });
 
 /**
  * Every field the engine puts on a chunk is described here. The objects are
@@ -75,6 +77,23 @@ export const ENVELOPE_SHAPE = z.strictObject({
   source_policy: SOURCE_POLICY.optional(),
   data: z.record(z.string(), z.unknown()).optional(),
 });
+
+/** The tools whose `canon` and `quoted` lists can hold chunks. Every other tool always answers []. */
+const CARRIES_CANON: readonly Tool[] = ["search", "get_page", "query_entities", "context_packet"];
+const CARRIES_QUOTED: readonly Tool[] = ["search", "timeline", "context_packet"];
+const NO_CHUNKS = z.array(z.never()).max(0);
+
+/**
+ * What one tool advertises. Stating the tool and the lists it can fill, rather
+ * than the union over all ten, is most of what keeps `tools/list` small.
+ */
+export function envelopeFor(tool: Tool) {
+  return ENVELOPE_SHAPE.extend({
+    tool: z.literal(tool),
+    ...(CARRIES_CANON.includes(tool) ? {} : { canon: NO_CHUNKS }),
+    ...(CARRIES_QUOTED.includes(tool) ? {} : { quoted: NO_CHUNKS }),
+  });
+}
 
 export const SEARCH_INPUT = z.strictObject({
   query: z.string().min(1).max(512),
@@ -234,21 +253,24 @@ const WORLD_KNOWN_AT = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("snapshot"), ref: WORLD_SNAPSHOT_REF }),
 ]);
 
-export const WORLD_VIEW_INPUT = z.union([
-  z.strictObject({operation:z.enum(["find_concepts","find_situations"]),label:z.string().max(200),valid:WORLD_VALID,knownAt:WORLD_KNOWN_AT}),
-  z.strictObject({
-    operation: z.literal("situation"),
-    situation: WORLD_OBJECT_REF,
-    valid: WORLD_VALID,
-    knownAt: WORLD_KNOWN_AT,
-  }),
-  z.strictObject({
-    operation: z.literal("concept"),
-    concept: WORLD_OBJECT_REF,
-    valid: WORLD_VALID,
-    knownAt: WORLD_KNOWN_AT,
-  }),
-]);
+const WORLD_OPERATIONS = ["find_concepts", "find_situations", "concept", "situation"] as const;
+
+/**
+ * One object, not a union of three: the SDK advertises only an object shape,
+ * and a union of objects reaches `tools/list` as an empty schema a client
+ * cannot call. Which fields an operation takes is the engine's judgement, made
+ * on every call, so a mismatch is refused there and audited. An omitted
+ * `label`, `valid` or `knownAt` takes the default the description advertises.
+ */
+export const WORLD_VIEW_INPUT = z.strictObject({
+  operation: z.enum(WORLD_OPERATIONS),
+  label: z.string().max(200).default(""),
+  cursor: WIRE_TOKEN.optional(),
+  concept: WORLD_OBJECT_REF.optional(),
+  situation: WORLD_OBJECT_REF.optional(),
+  valid: WORLD_VALID.default({ kind: "all" }),
+  knownAt: WORLD_KNOWN_AT.default({ kind: "current" }),
+});
 
 const worldRef = <K extends string>(kind:K) => z.strictObject({kind:z.literal(kind),token:z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/)});
 const worldEvidence=z.strictObject({admission:worldRef("admission"),eventVersion:worldRef("event_version"),span:z.union([
@@ -276,7 +298,7 @@ const worldData=z.union([
   z.strictObject({schema:z.literal("kizuki.concept-card/v1"),concept:worldNode("concept"),...worldCommon,definitions:z.array(worldRelation).max(256),relations:z.array(worldRelation).max(256),
     learning:z.array(z.strictObject({facet:z.enum(["exposure","explanation","application","demonstration"]),assertion:worldRelation,assistance:z.enum(["assisted","unassisted","unknown"]),assistanceEvidence:z.array(worldRelation).max(256)})).max(256)}),
   z.strictObject({schema:z.literal("kizuki.situation-card/v1"),situation:worldNode("situation"),...worldCommon,objective:worldRelation.nullable(),participants:z.array(WORLD_OBJECT_REF).max(256),commitments:z.array(worldRelation).max(256),blocker:worldRelation.nullable(),recentChange:worldRelation.nullable(),uncertainty:z.array(worldRelation).max(256)}),
-  z.strictObject({schema:z.enum(["kizuki.concept-matches/v1","kizuki.situation-matches/v1"]),matches:z.array(z.strictObject({ref:WORLD_OBJECT_REF,labels:z.array(z.string().max(400)).max(256)})).max(32),coverage:worldCoverage}),
+  z.strictObject({schema:z.enum(["kizuki.concept-matches/v1","kizuki.situation-matches/v1"]),matches:z.array(z.strictObject({ref:WORLD_OBJECT_REF,labels:z.array(z.string().max(400)).max(256)})).max(32),cursor:WIRE_TOKEN.nullable(),coverage:worldCoverage}),
 ]);
 export const WORLD_ENVELOPE_SHAPE={schema:z.literal("kizuki.envelope/v2"),tool:z.literal("world_view"),principal:worldRef("principal"),at:z.string(),canon:z.array(z.never()).max(0),quoted:z.array(z.never()).max(0),
   data:z.union([z.strictObject({status:z.literal("not_found")}),z.strictObject({schema:z.literal("kizuki.world-view/v1"),operation:z.enum(["concept","situation","find_concepts","find_situations"]),result:z.union([
@@ -284,3 +306,39 @@ export const WORLD_ENVELOPE_SHAPE={schema:z.literal("kizuki.envelope/v2"),tool:z
     z.strictObject({status:z.literal("incomplete"),data:worldData,reasons:z.array(worldGaps).max(5)}),
     z.strictObject({status:z.literal("unavailable"),reason:z.enum(["storage","history","budget"])}),
   ])})])};
+
+/**
+ * The whole envelope grammar. Written out, its cards run to about 140 KB of
+ * JSON Schema, which every client would download on every `tools/list`; so the
+ * server holds each world_view answer to this before it leaves, and
+ * advertises the smaller shape below.
+ */
+export const WORLD_ENVELOPE = z.strictObject(WORLD_ENVELOPE_SHAPE);
+
+/** The card grammar is named by `schema` and left to `kizuki.concept-card/v1` and its siblings. */
+export const WORLD_ENVELOPE_LISTED = {
+  schema: z.literal("kizuki.envelope/v2"),
+  tool: z.literal("world_view"),
+  principal: worldRef("principal"),
+  at: z.string(),
+  canon: z.array(z.never()).max(0),
+  quoted: z.array(z.never()).max(0),
+  data: z.union([
+    z.strictObject({ status: z.literal("not_found") }),
+    z.strictObject({
+      schema: z.literal("kizuki.world-view/v1"),
+      operation: z.enum(WORLD_OPERATIONS),
+      result: z.strictObject({
+        status: z.enum(["current", "incomplete", "unavailable"]),
+        view: z.strictObject({ status: z.literal("not_issued") }).optional(),
+        data: z
+          .looseObject({
+            schema: z.enum(["kizuki.concept-card/v1", "kizuki.situation-card/v1", "kizuki.concept-matches/v1", "kizuki.situation-matches/v1"]),
+          })
+          .optional(),
+        reasons: z.array(worldGaps).max(5).optional(),
+        reason: z.enum(["storage", "history", "budget"]).optional(),
+      }),
+    }),
+  ]),
+};

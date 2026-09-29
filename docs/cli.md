@@ -101,6 +101,17 @@ An import runs alongside the serve daemon: see
 
 Google Calendar supports `connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments [--source KEY | --new-source] [--json]`. Operator desktop app configuration and separate source consent are required; see [the native Calendar contract and limits](google-calendar.md). Use `--fields none` for baseline metadata and event-resource identity only. `primary` is refused; existing account/calendar/fields and recovery state are preserved during reauthorization.
 
+Gmail, Google Calendar and X sign-in work on a headless server. When no system
+browser opens (the opener is missing or fails) or with `--no-browser`, sign-in
+prints the authorization address to stderr with the loopback callback port and
+an `ssh -L PORT:127.0.0.1:PORT <host>` tunnel command, keeps waiting for the
+callback and times out cleanly if it never arrives; see
+[headless sign-in](connect.md#sign-in-on-a-headless-server).
+`connect ics --url https://...` enrolls an https calendar feed as its own
+source (ETag-validated re-reads; source consent is separate and required before
+capture). `--url` cannot be combined with `--source`, and `--no-browser` is
+refused for other connectors.
+
 Gmail and Google Calendar accept `--new-source` for explicit additional enrollment; it cannot be combined with `--source KEY`. Duplicate account identities (Calendar: account plus canonical calendar) refuse even if fields differ or prior consent is revoked. Existing-source reauthorization preserves checkpoints and recovery state. New sources require separate grants; see the provider docs for bounds and refusal semantics.
 
 ```text
@@ -109,10 +120,11 @@ usage: kizuki connect [--list|status] [--json]
        kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]
        kizuki connect imap [--source KEY] [--sensitivity public|personal|private]
        kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]
-       kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--json]
-       kizuki connect recover-x-api --source KEY --fields relationships,links,media|none --history-start RFC3339 [--json]
-       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--sensitivity public|personal|private] [--json]
-       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--sensitivity public|personal|private] [--json]
+       kizuki connect ics --url https://HOST/PATH.ics [--sensitivity public|personal|private] [--json]
+       kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--no-browser] [--json]
+       kizuki connect recover-x-api --source KEY --fields relationships,links,media|none --history-start RFC3339 [--no-browser] [--json]
+       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--no-browser] [--sensitivity public|personal|private] [--json]
+       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--no-browser] [--sensitivity public|personal|private] [--json]
 ```
 
 Browse sources, inspect saved sync status, or enroll a source. Local Beeper
@@ -127,6 +139,11 @@ Gmail and Google Calendar use operator desktop clients and browser sign-in;
 see the flags above and [connection setup](connect.md). Other account sign-in
 connectors except X own-post API are not enrollable through this CLI. None of these sign-in paths
 are live-account qualified.
+
+`connect claude-code-sessions --source PATH` and `connect codex-sessions --source
+PATH` enroll a folder of coding-agent transcripts as a none-mode local source;
+see [Coding-session transcripts](connect.md#coding-session-transcripts) for what
+is captured, what is dropped and the recommended consent policy.
 
 Sensitivity is optional: trusted connector runs resolve each valid event
 against that connection's default, floor, owner label, and source hint.
@@ -206,6 +223,13 @@ the extraction cursor. Restoring the required purpose, fields, and exact
 destination lets a later pass file the original decision under its original
 model reference; source purge removes affected pending derived work.
 Export requires the explicit `export` purpose and refuses pending revocations.
+A refused export names each source that blocks it (at most five, then a count)
+and the fix: a source without the purpose gets the `connect grant` command with
+its current revision, and a revoked source with its purge pending gets the
+`connect resume-revocation` command. To make export work, add `"export"` to the
+purposes of each named source and grant the edited policy at that revision.
+Export never widens a grant by itself, and a backup that must not depend on
+grants is the file-level copy in the [upgrade runbook](upgrade.md).
 
 ```bash
 kizuki connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id grant-1
@@ -227,6 +251,61 @@ complete**. Any remaining payload or canon blocker remains explicit; retry canno
 regranted while its purge is pending. `purge=complete` is reported only from the
 native completed state with no blockers. Local revocation does not delete the
 upstream account or source file.
+
+### Model egress and retention
+
+On the `[ports.llm]` extraction path, a source's text leaves the machine only
+when its active grant names a model endpoint and model (`egress` other than
+`local_only`) and that endpoint and model are the configured `[ports.llm]`
+model. `kizuki connect status` shows, for every source, that path only:
+
+- **Egress**: `none` (no active consent), `local only`, or the endpoint host and
+  model the grant names. A grant whose model is not the configured one is marked
+  `(not the configured model)`; it cannot send anything until the configuration
+  matches it.
+- **Retention**: `none`, or `provider-managed`, the only retention stance a
+  grant can record, followed by the provider controls the configured model asks
+  the router to enforce (`[ports.llm.provider]`, for example
+  `data_collection=deny zdr=true`) or `no provider controls requested`. Kizuki
+  cannot see what a provider retains; the stance says who manages it, not that
+  retention is off.
+
+`connect status --json` reports the same view as `egress` on each connection
+(`destination`, `host`, `model`, `retention`, `provider_controls`,
+`configured`), and `connect status --source KEY` adds it to the consent line and
+JSON. Provider controls are not part of the model binding that consent names;
+see [`@kizuki/llm`](../packages/llm/README.md#provider-privacy-controls-portsllmprovider).
+
+Before an extraction prompt reaches the `[ports.llm]` endpoint, it is scrubbed
+of obvious secrets. Each match is replaced by `[redacted:<kind>]`, where kind is:
+
+| Kind | What it matches |
+| --- | --- |
+| `pem` | A `-----BEGIN ...-----` block through its `END` line, or to the end of the text when unterminated. |
+| `jwt` | Three dot-separated base64url segments starting `eyJ`. |
+| `api_token` | `sk-`, `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`, `github_pat_`, `xox[abposr]-`, `AKIA` and `ASIA` shapes above a minimum length. |
+| `bearer` | The value of an `Authorization: Bearer` header. |
+| `secret_assignment` | The value (four or more characters) of a `NAME=value` assignment whose name contains `secret`, `token`, `password`, `passwd` or `api_key`. The name stays. |
+| `seed_phrase` | A run of 12 or more lowercase words of three to eight letters, separated by spaces, commas or single line breaks, that has a 12-word stretch with fewer than two common English function words. The whole run is redacted, so a phrase inside a sentence, one of 24 words, or one with a lead-in word such as `seed` or `phrase` is caught. A capital letter, digit, other punctuation, a blank line or a word of nine or more letters ends a run. |
+
+The scrubber is a heuristic backstop with no dependency, not a guarantee. It
+does not know your secrets: an unrecognized shape, a numbered or capitalized
+phrase, a password in prose or a short value passes through. A `token=` value
+of fewer than eight digits is treated as a counter and kept. A prose run that
+resembles a mnemonic, or a long list of plain lowercase words, is redacted. The ledger is never changed; only the copy
+sent to the model is. The model's anchors into scrubbed text are moved back onto
+the original record. The per-kind counts appear as `model.redacted` in each run
+receipt, and are absent when nothing was redacted.
+
+**Known limit: the admission judge is a separate destination.** When
+`[ports.systemone]` is configured, the extraction-path admission judge (typed
+and legacy) receives the same scrubbed extraction text at its own `base_url`
+(the default host is `api.typesafe.ai`), not at the `[ports.llm]` endpoint. That
+destination is not named by source consent, is not covered by
+`[ports.llm.provider]`, and is not shown by `connect status` or its `--json`
+`egress`. Scrubbing applies to it; the egress and retention view does not.
+Leave `[ports.systemone]` unset to keep extraction text on the `[ports.llm]`
+destination alone. The judge the reflex path uses is not scrubbed.
 
 ## backfill / sync
 
@@ -301,8 +380,11 @@ claim ids (for `tell --claim`), leftover skipped rows, connections,
 checkpoints (with the first error of each source's last run as `last_error`),
 derived-index freshness, writer ROLE stamps, machine vs human
 origin counts, calibration/liveness probes, receipts, holds, serve rails,
-and `canon writing: on|off`. Off when no model is configured. The default
-report runs SQLite `quick_check` and samples ledger events. `--integrity`
+a `vector layer:` line (`off (no embedding model configured)` or
+`configured (<port id>)` or `invalid (<reason>)`, read from `[ports] embedding`; JSON reports it as
+`serve.stores.vector_layer`), and `canon writing: on|configured|unverified|off`. Off when no model is
+configured. The default report runs SQLite `quick_check` and samples ledger
+events. `--integrity`
 also runs `PRAGMA integrity_check` on the vault ledger; JSON then reports
 that result in `ledger.integrity_check` (otherwise `null`). Exit 1 when
 the report is not ok. Successful CLI writes seal `.kizuki/ledger-mark` with
@@ -312,7 +394,67 @@ then fails with `vault ledger not ready` before reporting counts. Explicit
 init also refuses a ledger below its existing floor. Missing or bounded
 malformed private legacy marks remain unsealed until a successful write. After a folder import, expect live claims; the writer
 still needs a model before those claims become pages. Loop creates land
-under `auto/`; human pages stay where they are.
+under `auto/`; human pages stay where they are. A later claim for a target
+that was already written under `auto/` edits that page instead of failing, and
+the daemon's daily briefs (`dashboards/brief-YYYY-MM-DD.md`) count as machine
+origin.
+
+### What doctor says about the loop
+
+A rail is judged by the work it has, not by whether its last runs changed
+anything. It is down when it never ran, went stale, last failed, ended its last
+five runs degraded or stopped without making progress, or ran five times in a
+row with work waiting and produced nothing. Work waiting means, for `sync`: events past the extract
+cursor that a source with a model grant would send, live claims the writer has
+not written, and consented sources no run has reached (the first two only when
+a model is configured, because extraction and canon writing need one). For
+`retrieval-sweep` it means pending retrieval operations. For `embed-backfill`
+it is the backlog the rail reports on its own receipts, and only when an
+embedding port is configured. `brief`, `journal-prune`, `doctor-sweep` and
+`purge-sweep` run on a schedule and are judged by staleness and failure only
+(a stale or failed run, or the degraded streak). The degraded or stopped
+streak applies to every rail except `doctor-sweep`, and only while the newest
+receipt is not stale. A degraded run that applied retrieval records or removals,
+or left fewer pending operations than the run before it, is a catch-up pass and
+does not count, and neither does a sync pass that extracted or deduplicated
+claims or skipped records: those shrink the backlog even when nothing new is
+filed. The reasons a rail reports in `retrieval.degraded` are named like errors.
+An idle rail is healthy however many runs changed nothing. The reason names the
+cause: the failed run's error, the error most of the degraded or stopped runs
+share, or the work that is waiting. The `doctor-sweep` rail records what
+`serve status` would fail on, except what only the supervisor can know, as its
+receipt's errors and marks itself `degraded`, so it never reads `ok` beside a
+failed report. Its own degraded runs are not a fault of the rail. Doctor reads
+the newest 2,000 sync receipts and the newest 200 of every other rail.
+
+The model line reports the model the way the daemon's receipts do. From a shell
+that lacks the daemon's secret, doctor cannot bind the model, so it prints what
+the daemon did:
+
+```text
+canon writing: configured; daemon last_success=<ts|never> last_failure=<reason> at <ts> consecutive_failures=N
+```
+
+It says `unverified` only when the daemon has left no receipts for the
+configured model. The `extraction` line shows the events waiting past the
+extract cursor for a granted source (counted up to 10,000, shown as `N+`) and
+`last_extracted_at`, the time a model claim was last recorded. When three
+passes in a row were rejected as truncated, it adds the change to make: set
+`[ports.llm] reasoning_effort` or raise `[extraction] max_output_tokens`. An
+`egress` line names, for every source whose text may go to a model, the
+endpoint host, the model and `retention=provider_managed`, which means the
+provider keeps sent text under its own policy. When canon files cannot be
+indexed, doctor prints `index-degraded` with the skipped paths (the first 16)
+and their total; a canon page held out of the index by an open hold or write is
+listed as `index-degraded` too, and a truncated canon walk is said aloud. The
+`index-degraded` flag on query and context responses follows the derived stamp,
+so it stays until the next `kizuki rebuild`. Each connection shows
+`last_run_clean=yes|no`: the last run recorded no error. It does not say that
+nothing is left to fetch, because the checkpoint does not keep whether the
+source was exhausted. `--json` keeps `backfill_complete`, which only a finished
+backfill run sets, beside `last_run_clean`. The closing `next:` line follows from
+the structured top failure of a failed report and never suggests `kizuki tell`;
+for a down rail it points at `kizuki serve status`, which only reads.
 
 Doctor validates existing configuration and credentials without constructing a
 model runtime. Pending model or connection-state journals remain untouched and
@@ -361,14 +503,44 @@ and bounded audit coverage.
 
 ```text
 usage: kizuki world --operation situation|concept --ref TOKEN [--json]
-usage: kizuki world --operation find_concepts|find_situations [--label TEXT] [--json]
+usage: kizuki world --operation find_concepts|find_situations [--label TEXT] [--cursor TOKEN] [--json]
 ```
 
 Discover currently authorized Concepts and Situations, then use the returned
 32-byte base64url object token for an exact lookup. The optional label filter is
-a Unicode case-sensitive substring. Homonyms remain separate objects.
+a case-insensitive substring: both sides are folded with Unicode normalization
+and case folding, so `bayesian`, `BAYESIAN` and `Bayesian` match alike and
+`STRASSE` matches `Straße`. Homonyms remain separate objects.
 
-CLI, MCP `world_view` and loopback HTTP `/v1/world_view` (plus
+Discovery returns at most 32 matches per page. When more remain, the result
+carries a `cursor` (the `--json` field is null on the last page) and the plain
+output ends with `More matches: --cursor TOKEN`. Repeat the same command with
+`--cursor TOKEN` for the next page. A cursor is an opaque token bound to the
+current principal and grant, like an object token; an unknown one is a usage
+error, and `--cursor` is valid only for discovery. MCP `world_view` and loopback
+HTTP `/v1/world_view` take the same optional `cursor` input for
+`find_concepts` and `find_situations` and return `cursor` (null on the last
+page) beside `matches`.
+
+Coverage is not assumed complete. Discovery and cards report `partial` with
+these gaps, computed only from sources the current grant can read (a source the
+grant hides never changes the result or its wording):
+
+- `coverage`: a readable source has not finished importing its history, or its
+  last capture run reported an error or could not be read. A source with no
+  recorded capture run adds no gap.
+- `pending_consolidation`: a readable source whose grant permits extraction has
+  events this caller can read that the extraction rail has not consumed, including events held in
+  its deferred queue. An empty discovery in that state is `partial`, not
+  complete: absence here does not mean the vault holds no such Concept.
+- `traversal_limit`: more matches follow on another page (the `cursor` is then
+  set), one request spent its scan budget before reaching the end of the vault
+  (the `cursor` resumes there), or one object hit a bounded read limit.
+
+In the MCP and HTTP result, `partial` coverage is returned as status
+`incomplete` with the gaps as `reasons`.
+
+CLI, MCP `world_view` (whose `label`, `valid` and `knownAt` may be omitted) and loopback HTTP `/v1/world_view` (plus
 `/v1/mcp/world_view`) use the same Core projection over admitted claims and
 currently eligible support. Cards include evidence, confidence, uncertainty and
 coverage. Unknown, foreign, erased or inaccessible tokens return `not_found`.
@@ -418,25 +590,46 @@ Always-on loop. HTTP is loopback unless `--no-http`. `init` installs the
 user service when a supervisor exists. The CLI still runs when the daemon is
 down. Before a rail writes canon, `serve` binds the selected LLM port from
 `[ports.llm]`; a model name by itself never enables writes. `kizuki doctor`
-reports a complete binding as `on` and an incomplete configuration as
-`unverified`. The optional `[ports.llm] reasoning_effort` (`none`,
+reports a binding this process made as `on`. Where it cannot bind the model, it
+reports `configured` with the daemon's own last success and failure from its
+run receipts, or `unverified` when the daemon has left none. The optional `[ports.llm] reasoning_effort` (`none`,
 `minimal`, `low`, `medium` or `high`) is sent with each model request;
 `doctor` and `serve status` show it next to the bound model, and `doctor`
-names an invalid value. Rails hold the ledger only for the length of one batch; they
+names an invalid value. The optional `[ports.llm.provider]` table
+(`data_collection`, `zdr`, `order`, `only`, `ignore`, `allow_fallbacks`) is
+passed through to OpenAI-compatible routers; see
+[Model egress and retention](#model-egress-and-retention). Rails hold the ledger only for the length of one batch; they
 never keep a write transaction open across a network or model call, so owner
 verbs keep working while the loop runs. See
 [Running commands while the daemon writes](#running-commands-while-the-daemon-writes).
+
+Idle rails do not fill the receipt journal. A scheduled run that did nothing
+(status `ok`, no counters, no errors) still advances its schedule but appends a
+receipt only for the first idle run after activity and then at most once an hour
+per rail; the brief, manual runs and `serve --once` always append one. Doctor
+reads a rail's liveness from the schedule as well as its receipts. The
+`embed-backfill` rail runs every minute only while an embedding port is
+configured; without one it backs off to an hour, applied when the service starts
+and re-checked on each run, and doctor does not call it down for producing
+nothing. Doctor counts an idle rail's empty streak in elapsed periods, so coalescing does not slow that alarm. A new embedding selection is applied when the service starts and on the embed rail's next run. The `journal-prune` rail drops receipts older than
+`[serve] journal_retention_days` (default 7) and then the oldest until
+`run-receipts.jsonl` fits 8 MiB. Doctor reads at most the newest 5,000 receipts and scans at most the newest 1 MiB of the journal for orphans.
 
 The sync rail runs every 15 minutes and makes one extraction request per pass
 unless `serve.toml` says otherwise: `[serve] sync_period_s` sets the period,
 applied to the persisted schedule when the service starts, and `[extraction]`
 sets `max_calls_per_pass`, `records_per_request`, `max_input_tokens`,
-`max_output_tokens` and `max_pass_seconds`. `serve status` and `doctor` print
-the effective values and the records skipped in the doctor window on a
-`throughput` line; `--json` reports them as `throughput` in the serve doctor
-report. A model that still answers HTTP 429 after the port's bounded retries
-stops the pass as `model:rate_limited`, and the next pass resumes from the
-durable extraction cursor. A pass never holds the vault writer across a model
+`max_output_tokens`, `max_pass_seconds` and the daily budgets
+`max_calls_per_day` and `max_output_tokens_per_day`. `serve status` and
+`doctor` print the effective values and the records skipped in the doctor
+window on a `throughput` line; `--json` reports them as `throughput` in the
+serve doctor report. A model that still answers HTTP 429 after the port's
+bounded retries stops the pass as `model:rate_limited`, and the next pass
+resumes from the durable extraction cursor. A spent daily budget stops the
+pass as `model:budget_day`, and a model that refuses requests for different
+records alike stops it as `model:systemic_rejection` and is not asked again
+until a persisted wait is over; see
+[rejected responses](extraction-budgets.md#rejected-responses-and-daily-budgets). A pass never holds the vault writer across a model
 request, and `kizuki serve stop` or a signal ends it before its next request
 as `serve:stop_requested`. See [extraction budgets](extraction-budgets.md#owner-throughput-settings).
 
@@ -454,8 +647,8 @@ bounded number of records, commits each batch, and records its position, so an
 interrupted pass still leaves the next one less to do. The pass reports what it
 indexed as `retrieval.upserts` and what remains as `retrieval.pending_ops`; it
 is `ok` only when nothing remains, and reports `derived-index-behind` while the
-index is still behind. A sweep with nothing outstanding is a complete pass, not
-an idle one, so it does not accrue an empty streak in `serve status`.
+index is still behind. A sweep with nothing outstanding is a healthy pass, and
+only a sweep that keeps leaving work behind is reported down.
 
 ## models
 
@@ -531,6 +724,8 @@ Dumps vault files and ledger tables into an empty directory as
 `kizuki.backup/v3`. The destination must sit outside the source vault.
 Agent identities, grants, authentication audit, enrollment receipts and `.kizuki`
 credential files are excluded. Restored vaults require explicit agent enrollment.
+Every enrolled source must grant the `export` purpose first; see
+[Source consent](#source-consent) for the refusal and the grant change it names.
 
 ## restore
 
@@ -644,7 +839,12 @@ and are not reached by purge.
 usage: kizuki version
 ```
 
-Prints the `@kizuki/cli` package version (`1.0.0` on this revision).
+Prints the `@kizuki/cli` package version and the build it came from on one
+line. A release package prints `VERSION source=<40 hex source revision>
+built=<UTC time>`; both values are compiled in by `build:release` (the revision
+is also `source_sha` in the package's `BUILD.json`) and no environment variable
+changes them. A run from source prints `VERSION dev`. To move an installed
+package to a newer one and back, follow the [upgrade runbook](upgrade.md).
 
 ## MCP (not a CLI verb)
 
@@ -672,15 +872,42 @@ live writer outlasts is refused as `busy` with `retry_after_seconds`, never as
 a lock error, and the identical call succeeds on retry. Startup names the
 holder rather than reporting a healthy vault as unopenable.
 
+Opening the adapter does not write to a ledger that is already current: the
+schema is checked with reads, so a long writer such as a rebuild does not make
+startup wait or fail. A ledger that needs repair is repaired on open, as
+before. A session ends when stdin closes.
+
+`tools/list` names only the tools the principal's current grant allows (the
+owner sees all ten), read from the store on every listing, and stays under
+40 KB. A call to a tool the grant excludes still reaches the engine, which
+refuses and audits it. `world_view` advertises one object: `operation`
+(`find_concepts`, `find_situations`, `concept` or `situation`), `label`
+(default empty), the `concept` or `situation` object token, `valid` (default
+`{"kind":"all"}`) and `knownAt` (default `{"kind":"current"}`), so
+`{"operation":"find_concepts"}` alone is a complete call. The engine checks
+which fields an operation takes; a mismatch is refused as `invalid_arguments`
+and audited like a denied call. The full card grammar is not advertised; the
+server checks every answer against it before returning it.
+
+Within one adapter process, canon reads (`search`, `get_page`, `query_entities`,
+`context_packet`, `system_health`) keep the parsed pages and their resolved
+authority between calls. A page is read again when its file changes, and
+authority is resolved again when the receipt history changes, so a canon write
+or an edit on disk is visible to the next call. `system_health` still checks
+every page against the principal's grant on each call.
+
 ## agent
 
 ```text
 usage: kizuki agent add NAME --grant FILE --token-ref file:/absolute/path --operation-id ID [--dry-run] [--json]
+       kizuki agent grant NAME --grant FILE --operation-id ID [--json]
+       kizuki agent list [--json]
        kizuki agent revoke NAME [--json]
 ```
 
 Enroll a scoped agent with a complete explicit grant and a private credential
-file, or revoke its access. The parent directory must already exist and have
+file, list enrolled agents, replace an enrolled agent's grant in place, or
+revoke its access. The parent directory must already exist and have
 private owner custody. Credential delivery requires native local filesystem
 custody; a missing native helper reports `unsupported_platform`. Preview validates an existing vault without creating an identity,
 credential or configuration. An older ledger reports `migration_required`
@@ -696,6 +923,23 @@ Invalid arguments or grants exit 2; conflicts and incomplete setup exit 1.
 Cancellation may retain an inactive partial file. See the
 [agent enrollment guide](agent-enrollment.md) for the complete grant, recovery
 states and MCP connection example.
+
+`agent list` prints one row per stored agent: name, state (`active`, `revoked`
+or `quarantined`), grant epoch and a grant summary (ceiling, tools, type and
+subject scope, rate limit, owner-correction relay). `--json` returns the same
+rows with the full grant under `kizuki.cli.agent/v1`. It reads the ledger
+without writing, and it never prints a credential, a token hash or a credential
+path.
+
+`agent grant` replaces the whole grant of an enrolled agent from a grant file
+with the same eight required fields as `agent add`. The agent keeps its
+credential and existing MCP sessions: the next tool call reads the new grant,
+and the grant epoch rises by one with an `agent.grant` audit row. The same
+operation ID with the same request replays and reports the current epoch;
+the same ID with a different request or an enrollment operation ID exits 1 with
+`operation_conflict`. An unknown, revoked or unfinished agent exits 1 with
+`unknown_agent`; an invalid or incomplete grant exits 2 with `invalid_grant`.
+Nothing changes on any refusal.
 
 ## Not CLI verbs
 
@@ -778,7 +1022,7 @@ Ordinary capture and `connect x-api` then refuse with
 `credential_recovery_required`.
 
 Use `connect recover-x-api --source KEY --fields FIELDS --history-start RFC3339`
-from an interactive desktop terminal to obtain a new browser grant. Supply the
+from an interactive terminal to obtain a new browser grant (`--no-browser` prints the address on a headless server). Supply the
 source's existing fields and history start. Recovery preserves the pending state
 until the new grant verifies the same account, app and selection and publishes
 against the exact original source state. Failed or competing recovery preserves

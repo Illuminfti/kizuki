@@ -12,12 +12,14 @@ import type { ProducerV2Port } from "../contracts/producer-v2";
 import { inspectPurgeHealth, listPurgeRecoveryReceipts, resumePurge } from "../ledger/purge";
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
-import { serializePage } from "../vault/frontmatter";
 import { createDurableWriteBudget } from "./budget-ledger";
-import { loadServeConfig } from "./config";
+import { embedBackfillPeriod, loadServeConfig } from "./config";
+import { composeBrief, repairBriefPages, type BriefRepair } from "./brief";
+import { parseFrontmatter } from "../vault/frontmatter";
+import { inspectServeDoctor } from "./doctor";
 import { createFileNotifier, briefPath } from "./notifier-file";
-import { recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
-import { initServe, listSchedules } from "./schema";
+import { coalesceNoopReceipt, recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
+import { applyRailPeriod, initServe, listSchedules } from "./schema";
 import {
   InjectedCrash,
   emptyRunTotals,
@@ -54,6 +56,12 @@ interface RailHooksBase {
   readonly claims?: ClaimsIo;
   readonly model_ref?: string | null;
   readonly embedding_backlog?: number;
+  /**
+   * True when the vault configures an embedding port. The host sets it from
+   * the same configuration `kizuki doctor` reads, so the sweep judges
+   * `embed-backfill` by the rule the report does.
+   */
+  readonly embedding_configured?: boolean;
 }
 
 export interface RailHooks extends RailHooksBase {
@@ -275,7 +283,15 @@ async function runPurgeSweep(
   };
 }
 
-async function runEmbedBackfill(hooks: AnyRailHooks | undefined): Promise<Partial<RunReceipt>> {
+async function runEmbedBackfill(
+  db: Database,
+  vaultPath: string,
+  now: string,
+  hooks: AnyRailHooks | undefined,
+): Promise<Partial<RunReceipt>> {
+  // Without an embedding port the rail backs off to a long period; configuring
+  // one pulls the next run forward again.
+  applyRailPeriod(db, "embed-backfill", embedBackfillPeriod(vaultPath), now);
   const backlog = hooks?.embedding_backlog ?? 0;
   if (backlog === 0) {
     return { status: "ok" };
@@ -291,60 +307,68 @@ async function runEmbedBackfill(hooks: AnyRailHooks | undefined): Promise<Partia
   };
 }
 
-function renderBrief(now: string, extra: string[]): string {
-  const day = dayOf(now);
-  return serializePage({
-    data: {
-      id: `rollup:brief-${day}`,
-      title: `Daily brief ${day}`,
-      type: "rollup",
-      status: "active",
-      sensitivity: "personal",
-      taint: "clean",
-      // Rendered from rail state, not from ledger events: the honest
-      // provenance is an explicit empty list, declared in `parsePageSources`.
-      sources: [],
-      "x-brief-producer": "deterministic",
-    },
-    body: [
-      `# Brief ${day}`,
-      "",
-      "The loop writes canon. There is no review queue.",
-      "Correction is `kizuki tell` / MCP `correct`. Audit and undo stay in the TUI.",
-      "",
-      ...extra.map((line) => `- ${line}`),
-      "",
-    ].join("\n"),
-  });
+/** A repaired page is counted on the run; one that cannot be repaired degrades it and names its day. */
+function repairReport(repair: BriefRepair): Partial<RunReceipt> {
+  return {
+    ...(repair.repaired === 0 ? {} : { pages_repaired: repair.repaired }),
+    ...(repair.failed === 0 ? {} : { status: "degraded", errors: repair.failed_days.map((day) => `brief-repair-failed:${day}`) }),
+  };
 }
 
 async function runBrief(
+  db: Database,
   vaultPath: string,
   now: string,
-  extra: string[],
+  modelRef: string | null,
 ): Promise<Partial<RunReceipt>> {
   const notifier = createFileNotifier(vaultPath);
   const day = dayOf(now);
+  const body = composeBrief(db, now, modelRef);
   await notifier.notify({
     notification_id: day,
     title: `brief:${day}`,
-    body: renderBrief(now, extra),
-    sensitivity: "personal",
+    body,
+    sensitivity: parseFrontmatter(body).data["sensitivity"] === "private" ? "private" : "personal",
     provenance: [],
   });
-  return { status: "ok" };
+  return { status: "ok", ...repairReport(await repairBriefPages(vaultPath)) };
 }
 
-async function runDoctorSweep(db: Database, now: string): Promise<Partial<RunReceipt>> {
+/** The most failures one sweep receipt names, so a broken vault cannot grow the journal. */
+const SWEEP_FAILURES = 8;
+
+/**
+ * The sweep reports what `kizuki doctor` would fail on, less what only the
+ * service's supervisor can know, so an `ok` sweep never sits beside a failed
+ * doctor. Its own degradation is not a rail fault: see `railDoctor`.
+ */
+async function runDoctorSweep(
+  db: Database,
+  vaultPath: string,
+  hooks: AnyRailHooks | undefined,
+  now: string,
+): Promise<Partial<RunReceipt>> {
   const health = inspectPurgeHealth(db, now);
   const recovery = inspectCanonRecovery(db);
+  const doctor = inspectServeDoctor(db, vaultPath, {
+    now,
+    host_checks: false,
+    // The sweep runs inside the daemon's event loop and reads no page fields.
+    page_walk: false,
+    model_ref: hooks?.model_ref ?? null,
+    embedding_configured: hooks?.embedding_configured === true,
+  });
   const errors = [
     ...(health.ok ? [] : ["purge-unhealthy"]),
     ...(recovery.pending || recovery.projection_pending > 0 ? ["canon-recovery-pending"] : []),
-  ];
+    ...doctor.failures.map(redactReceiptError),
+  ].slice(0, SWEEP_FAILURES);
+  const repair = repairReport(await repairBriefPages(vaultPath));
+  const allErrors = [...errors, ...(repair.errors ?? [])].slice(0, SWEEP_FAILURES);
   return {
-    status: errors.length === 0 ? "ok" : "degraded",
-    errors,
+    ...repair,
+    status: allErrors.length === 0 ? "ok" : "degraded",
+    errors: allErrors,
   };
 }
 
@@ -361,6 +385,11 @@ function runJournalPrune(
 
 const activeRuns = new Set<string>();
 
+/**
+ * Run one rail and resolve to its receipt. A scheduled run that did nothing is
+ * coalesced: the schedule advances and the returned receipt is not persisted,
+ * so look it up in `run_receipts` before relying on its `run_id`.
+ */
 export function runRail(
   db: Database,
   vaultPath: string,
@@ -459,15 +488,13 @@ async function runRailImpl(
           partial = await runPurgeSweep(db, vaultPath, hooks, started);
           break;
         case "embed-backfill":
-          partial = await runEmbedBackfill(hooks);
+          partial = await runEmbedBackfill(db, vaultPath, started, hooks);
           break;
         case "brief":
-          partial = await runBrief(vaultPath, started, [
-            `canon writing: ${hooks?.model_ref ? `on (${hooks.model_ref})` : "off (no model configured — connectors, ledger, search, timeline and undo still work)"}`,
-          ]);
+          partial = await runBrief(db, vaultPath, started, hooks?.model_ref ?? null);
           break;
         case "doctor-sweep":
-          partial = await runDoctorSweep(db, started);
+          partial = await runDoctorSweep(db, vaultPath, hooks, started);
           break;
         case "journal-prune":
           partial = runJournalPrune(db, vaultPath, started, config.journal_retention_days);
@@ -522,6 +549,8 @@ async function runRailImpl(
         typeof item === "string" ? item : redactReceiptError(item),
       ),
     };
+    // A scheduled run that did nothing advances its schedule without a receipt.
+    if (options.crashAfter === undefined && coalesceNoopReceipt(db, vaultPath, receipt)) return receipt;
     persistRunReceipt(db, vaultPath, receipt, {
       ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
       ...(rail === "brief" ? { artifactPath: briefPath(vaultPath, dayOf(started)) } : {}),

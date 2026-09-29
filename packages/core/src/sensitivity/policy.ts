@@ -58,6 +58,8 @@ const CONNECTOR_SOURCE_CLASS: Readonly<Record<string, SourceClass>> = {
   "kizuki.imap": "email",
   "kizuki.ics": "calendar",
   "kizuki.screenpipe": "local_files",
+  "kizuki.claude-code-sessions": "agent_session",
+  "kizuki.codex-sessions": "agent_session",
 };
 
 export function sourceClassForConnector(

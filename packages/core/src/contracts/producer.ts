@@ -46,6 +46,8 @@ export interface ModelUsage {
   readonly calls: number;
   readonly input_tokens: number;
   readonly output_tokens: number;
+  /** Secrets scrubbed from the outbound prompt, per kind. Absent when nothing was redacted. */
+  readonly redacted?: Readonly<Record<string, number>>;
 }
 
 export type DiagnosticShape = "undefined" | "null" | "array" | "object" | "string" | "number" | "boolean" | "other";

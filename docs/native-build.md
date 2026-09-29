@@ -67,8 +67,10 @@ an operator holding a registered pair can supply them without rebuilding.
 `compiled_credentials` describes the build, not the run.
 
 `bun run smoke:release` exercises the built package with a synthetic vault. It
-proves version/help, init with `--no-service`, Markdown import, query, context
-packet, one no-HTTP serve pass, and MCP initialization plus `tools/list`.
+proves version (the printed source revision must equal `source_sha` in
+`BUILD.json`), help, init with `--no-service`, Markdown import, query, context
+packet, `world --operation find_concepts --json`, one no-HTTP serve pass, and
+MCP initialization plus `tools/list` and a `world_view` `find_concepts` call.
 
 `bun run proof:artifact -- --report /tmp/kizuki-artifact-proof` copies the
 checksummed package out of the checkout, uses a clean home and Kizuki config,

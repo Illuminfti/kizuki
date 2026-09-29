@@ -1,9 +1,15 @@
 import type { Database } from "bun:sqlite";
 import {
   appendFileSync,
+  closeSync,
   existsSync,
+  fstatSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -11,9 +17,13 @@ import { tableExists } from "../ledger/schema";
 import { isPlainObject } from "../util/validate";
 import { sha256Hex } from "../util/hash";
 import { readProducerDiagnostic } from "../producer/diagnostics";
+import { REDACTION_KINDS } from "../producer/scrub";
 import { loadServeConfig } from "./config";
 import {
+  DOCTOR_JOURNAL_TAIL_BYTES,
   InjectedCrash,
+  NOOP_RECEIPT_HEARTBEAT_S,
+  RUN_RECEIPT_JOURNAL_MAX_BYTES,
   RUN_RECEIPTS_PATH,
   emptyRunTotals,
   isRailId,
@@ -132,6 +142,9 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     ...(typeof value["records_skipped"] === "number" && Number.isFinite(value["records_skipped"])
       ? { records_skipped: value["records_skipped"] }
       : {}),
+    ...(typeof value["pages_repaired"] === "number" && Number.isFinite(value["pages_repaired"])
+      ? { pages_repaired: value["pages_repaired"] }
+      : {}),
     canon_writes: numberOr(value["canon_writes"], totals.canon_writes),
     canon_reverts: numberOr(value["canon_reverts"], totals.canon_reverts),
     model: {
@@ -139,10 +152,14 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
       ...(modelRefDigest === undefined ? {} : { model_ref_sha256: modelRefDigest }),
       ...(model["usage_unknown"] === true ? { usage_unknown: true } : {}),
       ...(typeof model["answered"] === "number" && Number.isFinite(model["answered"]) ? { answered: model["answered"] } : {}),
+      ...(typeof model["consecutive_rejections"] === "number" && Number.isSafeInteger(model["consecutive_rejections"]) && model["consecutive_rejections"] > 0
+        && typeof model["last_rejection_rule"] === "string" && model["last_rejection_rule"].length <= 64
+        ? { consecutive_rejections: model["consecutive_rejections"], last_rejection_rule: model["last_rejection_rule"] } : {}),
       ...(model["last_request"] === "answered" || model["last_request"] === "failed" ? { last_request: model["last_request"] } : {}),
       calls: numberOr(model["calls"], 0),
       input_tokens: numberOr(model["input_tokens"], 0),
       output_tokens: numberOr(model["output_tokens"], 0),
+      ...redactedOf(model["redacted"]),
       unavailable: numberOr(model["unavailable"], 0),
       wall_ms: numberOr(model["wall_ms"], 0),
       model_ref: typeof model["model_ref"] === "string" ? model["model_ref"] : null,
@@ -190,6 +207,16 @@ export function canonicalReceiptContent(value: unknown): string {
 
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** Known redaction kinds with positive counts; absent on receipts from before the scrubber. */
+function redactedOf(value: unknown): { redacted?: Record<string, number> } {
+  if (!isPlainObject(value)) return {};
+  const counts = Object.fromEntries(REDACTION_KINDS.flatMap(kind => {
+    const count = value[kind];
+    return typeof count === "number" && Number.isFinite(count) && count > 0 ? [[kind, count]] : [];
+  }));
+  return Object.keys(counts).length === 0 ? {} : { redacted: counts };
 }
 
 /** Select the newest matching receipts, then return them in chronological order. */
@@ -258,9 +285,8 @@ const MODEL_RUN_HISTORY_SQL = `SELECT report, run_id, finished_at FROM run_recei
   ORDER BY finished_at DESC, run_id DESC LIMIT ?`;
 
 /** A bounded raw sync window; identity and outcome classification happen after normalization. */
-export function readModelRunHistory(db: Database, since: string): ModelRunHistory {
+export function readModelRunHistory(db: Database, since: string, limit = 10_000): ModelRunHistory {
   if (!tableExists(db, "run_receipts")) return { receipts: [], truncated: false };
-  const limit = 10_000;
   const rows = db.query<{ report: string; run_id: string; finished_at: string }, [string, number]>(
     MODEL_RUN_HISTORY_SQL,
   ).all(since, limit + 1);
@@ -275,6 +301,36 @@ export function readModelRunHistory(db: Database, since: string): ModelRunHistor
       } catch { return null; }
     }),
   };
+}
+
+/** Newest embed-backfill runs `readEmbeddingReceipts` looks through: a day at the default period. */
+const EMBEDDING_SCAN_ROWS = 1_500;
+
+/**
+ * The newest embed-backfill runs that embedded something, found among the
+ * newest `EMBEDDING_SCAN_ROWS` runs. The rail runs every minute and most runs
+ * embed nothing, so a window of newest runs would lose the measurement; the
+ * filter runs in SQLite and only `limit` rows are parsed.
+ */
+export function readEmbeddingReceipts(db: Database, since: string, limit: number): RunReceipt[] {
+  if (!tableExists(db, "run_receipts")) return [];
+  return db
+    .query<{ report: string }, [string, number]>(
+      `SELECT report FROM (
+         SELECT report, finished_at, run_id FROM run_receipts
+          WHERE rail = 'embed-backfill' AND status = 'ok' AND finished_at >= ?
+          ORDER BY finished_at DESC, run_id DESC LIMIT ${EMBEDDING_SCAN_ROWS})
+        WHERE json_extract(report, '$.retrieval.upserts') > 0
+        ORDER BY finished_at DESC, run_id DESC LIMIT ?`,
+    )
+    .all(since, limit)
+    .reverse()
+    .flatMap((row) => {
+      try {
+        const receipt = parseRunReceipt(JSON.parse(row.report));
+        return receipt === null ? [] : [receipt];
+      } catch { return []; }
+    });
 }
 
 export function getRunReceipt(db: Database, runId: string): RunReceipt | null {
@@ -292,10 +348,11 @@ export function getRunReceipt(db: Database, runId: string): RunReceipt | null {
   }
 }
 
-export function readRunReceiptsLog(vaultPath: string): RunReceipt[] {
+/** The journal's receipts; with `tailBytes`, only those in the newest that many bytes. */
+export function readRunReceiptsLog(vaultPath: string, tailBytes?: number): RunReceipt[] {
   const path = runReceiptsPath(vaultPath);
   if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
+  return readJournalText(path, tailBytes)
     .split("\n")
     .flatMap((line) => {
       if (line.trim().length === 0) return [];
@@ -304,6 +361,23 @@ export function readRunReceiptsLog(vaultPath: string): RunReceipt[] {
       const parsed = parseRunReceipt(value);
       return parsed === null ? [] : [parsed];
     });
+}
+
+function readJournalText(path: string, tailBytes: number | undefined): string {
+  if (tailBytes === undefined) return readFileSync(path, "utf8");
+  const fd = openSync(path, "r");
+  try {
+    const size = fstatSync(fd).size;
+    if (size <= tailBytes) return readFileSync(fd, "utf8");
+    const buffer = Buffer.alloc(tailBytes);
+    readSync(fd, buffer, 0, tailBytes, size - tailBytes);
+    const text = buffer.toString("utf8");
+    // The window starts mid-line; drop the partial first line.
+    const firstBreak = text.indexOf("\n");
+    return firstBreak === -1 ? "" : text.slice(firstBreak + 1);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function appendJsonl(vaultPath: string, receipt: RunReceipt): void {
@@ -357,23 +431,59 @@ function redactReceipt(receipt: RunReceipt): RunReceipt {
   };
 }
 
+/** Attach the compare-and-advance intent for the rail's next due slot. */
+function withScheduleTransition(db: Database, vaultPath: string, receipt: RunReceipt): RunReceipt {
+  if (!isRailId(receipt.rail)) return receipt;
+  const row = db.query<{ next_run_at: string | null; period_s: number }, [string]>("SELECT next_run_at,period_s FROM schedules WHERE rail=?").get(receipt.rail);
+  if (row === null) return receipt;
+  const scheduled = receipt.execution?.trigger === "scheduled";
+  const previous = row.next_run_at;
+  const briefHour = receipt.rail === "brief" ? loadServeConfig(vaultPath).brief_hour : null;
+  const next = nextScheduleSlot(scheduled ? receipt.execution!.due_at! : receipt.finished_at, row.period_s, briefHour);
+  return { ...receipt, schedule_transition: { previous_due_at: previous, next_run_at: next, period_s: row.period_s, brief_hour: briefHour } };
+}
+
+/** A run that changed nothing, reported nothing and failed at nothing. */
+export function isNoopReceipt(receipt: RunReceipt): boolean {
+  const counters = [
+    receipt.events_synced, receipt.events_stored, receipt.events_duplicate, receipt.events_self_skipped,
+    receipt.claims_extracted, receipt.claims_written, receipt.claims_deduped, receipt.claims_superseded,
+    receipt.records_skipped ?? 0, receipt.canon_writes, receipt.canon_reverts,
+    receipt.model.calls, receipt.model.unavailable, receipt.model.input_tokens, receipt.model.output_tokens,
+    receipt.retrieval.upserts, receipt.retrieval.removals, receipt.retrieval.pending_ops,
+  ];
+  return receipt.status === "ok" && receipt.stopped === null && receipt.errors.length === 0 &&
+    receipt.oversized === undefined && receipt.retrieval.degraded.length === 0 &&
+    Object.keys(receipt.claims_rejected).length === 0 && counters.every((count) => count === 0);
+}
+
+/**
+ * Coalesce a scheduled no-op run into its rail's last no-op receipt: the schedule
+ * still advances, but the journal gains a receipt only for the first idle run
+ * after activity and then at most once per heartbeat. Returns true when the
+ * receipt was not persisted. Manual and once runs, the brief (which writes a
+ * page) and every non-idle run always persist.
+ */
+export function coalesceNoopReceipt(db: Database, vaultPath: string, receipt: RunReceipt): boolean {
+  if (receipt.rail === "brief" || receipt.execution?.trigger !== "scheduled" || !isNoopReceipt(receipt)) return false;
+  const row = db.query<{ report: string }, [string]>(
+    "SELECT report FROM run_receipts WHERE rail = ? ORDER BY finished_at DESC, run_id DESC LIMIT 1",
+  ).get(receipt.rail);
+  let last: RunReceipt | null = null;
+  try { last = row === null ? null : parseRunReceipt(JSON.parse(row.report)); } catch { last = null; }
+  if (last === null || !isNoopReceipt(last) ||
+      Date.parse(receipt.finished_at) - Date.parse(last.finished_at) >= NOOP_RECEIPT_HEARTBEAT_S * 1000) return false;
+  db.transaction(() => applyScheduleTransition(db, vaultPath, withScheduleTransition(db, vaultPath, receipt))).immediate();
+  return true;
+}
+
 export function persistRunReceipt(
   db: Database,
   vaultPath: string,
   receipt: RunReceipt,
   options: { crashAfter?: CrashPoint; artifactPath?: string } = {},
 ): void {
-  receipt = redactReceipt(receipt);
-  if (isRailId(receipt.rail)) {
-    const row = db.query<{ next_run_at: string | null; period_s: number }, [string]>("SELECT next_run_at,period_s FROM schedules WHERE rail=?").get(receipt.rail);
-    if (row !== null) {
-      const scheduled = receipt.execution?.trigger === "scheduled";
-      const previous = row.next_run_at;
-      const briefHour = receipt.rail === "brief" ? loadServeConfig(vaultPath).brief_hour : null;
-      const next = nextScheduleSlot(scheduled ? receipt.execution!.due_at! : receipt.finished_at, row.period_s, briefHour);
-      receipt = { ...receipt, schedule_transition: { previous_due_at: previous, next_run_at: next, period_s: row.period_s, brief_hour: briefHour } };
-    }
-  }
+  receipt = withScheduleTransition(db, vaultPath, redactReceipt(receipt));
   if (options.artifactPath !== undefined) {
     mkdirSync(dirname(options.artifactPath), { recursive: true, mode: 0o700 });
     if (!existsSync(options.artifactPath)) {
@@ -434,31 +544,67 @@ export function recoverRunJournal(db: Database, vaultPath: string): string[] {
   return recovered;
 }
 
+/**
+ * Bound the receipt journal by age and size. Receipts older than `cutoff` go,
+ * then the oldest survivors go until the journal fits `maxBytes`, but the newest
+ * valid in-window receipt always stays. The surviving rows replace the JSONL file
+ * atomically before the dropped rows are deleted, so a crash between the two
+ * leaves at worst rows the journal no longer names, never journal rows the
+ * ledger cannot replay.
+ */
 export function pruneRunReceipts(
   db: Database,
   vaultPath: string,
   cutoff: string,
+  maxBytes: number = RUN_RECEIPT_JOURNAL_MAX_BYTES,
 ): { deleted: number; rewritten: number } {
-  const kept = listRunReceipts(db).filter((receipt) => receipt.finished_at >= cutoff);
-  const deleted = db
-    .query<{ n: number }, [string]>(
-      "SELECT COUNT(*) AS n FROM run_receipts WHERE finished_at < ?",
+  const before = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()?.n ?? 0;
+  const rows = db
+    .query<{ run_id: string; report: string }, [string]>(
+      "SELECT run_id, report FROM run_receipts WHERE finished_at >= ? ORDER BY finished_at DESC, run_id DESC",
     )
-    .get(cutoff)?.n ?? 0;
-  db.query("DELETE FROM run_receipts WHERE finished_at < ?").run(cutoff);
+    .all(cutoff);
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const row of rows) {
+    let valid = false;
+    try { valid = parseRunReceipt(JSON.parse(row.report)) !== null; } catch { valid = false; }
+    if (!valid) continue;
+    bytes += Buffer.byteLength(row.report) + 1;
+    if (kept.length > 0 && bytes > maxBytes) break;
+    kept.push(row.report);
+  }
+  kept.reverse();
+  const oldestKept = kept.length === 0 ? null : (JSON.parse(kept[0]!) as { finished_at: string; run_id: string });
   const path = runReceiptsPath(vaultPath);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(
-    path,
-    kept.map((receipt) => `${JSON.stringify(receipt)}\n`).join(""),
-    { mode: 0o600 },
-  );
-  return { deleted, rewritten: kept.length };
+  const staged = `${path}.tmp`;
+  const fd = openSync(staged, "w", 0o600);
+  try {
+    writeFileSync(fd, kept.map((report) => `${report}\n`).join(""));
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(staged, path);
+  db.transaction(() => {
+    if (oldestKept === null) db.query("DELETE FROM run_receipts WHERE finished_at < ?").run(cutoff);
+    else db.query("DELETE FROM run_receipts WHERE finished_at < ? OR (finished_at = ? AND run_id < ?)")
+      .run(oldestKept.finished_at, oldestKept.finished_at, oldestKept.run_id);
+  }).immediate();
+  const after = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()?.n ?? 0;
+  return { deleted: before - after, rewritten: kept.length };
 }
 
+/**
+ * Receipts the journal names that the ledger lacks, among the newest
+ * `DOCTOR_JOURNAL_TAIL_BYTES` of the file. An orphan is appended at the end
+ * before its row is written, so the tail is where any live one sits; older
+ * lines are the prune rail's to bound.
+ */
 export function orphanJournalReceipts(db: Database, vaultPath: string): string[] {
   const orphans: string[] = [];
-  for (const receipt of readRunReceiptsLog(vaultPath)) {
+  for (const receipt of readRunReceiptsLog(vaultPath, DOCTOR_JOURNAL_TAIL_BYTES)) {
     if (getRunReceipt(db, receipt.run_id) === null) {
       orphans.push(receipt.run_id);
     }

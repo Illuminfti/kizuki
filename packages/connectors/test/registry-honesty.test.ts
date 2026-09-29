@@ -41,6 +41,8 @@ function registeredSurface(): string[] {
 
 const REGISTERED_SURFACE = [
   "kizuki.beeper kizuki.connector/v1 minor=1 lease=false package=@kizuki/connector-beeper supports=backfill+sync+tombstones+fixture",
+  "kizuki.claude-code-sessions kizuki.connector/v1 minor=1 lease=false package=@kizuki/connector-agent-sessions supports=backfill+sync+fixture",
+  "kizuki.codex-sessions kizuki.connector/v1 minor=1 lease=false package=@kizuki/connector-agent-sessions supports=backfill+sync+fixture",
   "kizuki.gmail kizuki.connector/v1 minor=1 lease=false package=@kizuki/connector-gmail supports=backfill+sync+tombstones+fixture+sign_in",
   "kizuki.google-calendar kizuki.connector/v1 minor=1 lease=false package=@kizuki/connector-google-calendar supports=backfill+sync+tombstones+fixture+sign_in",
   "kizuki.ics kizuki.connector/v1 minor=1 lease=false package=@kizuki/connector-ics supports=backfill+sync+tombstones+fixture+sign_in",

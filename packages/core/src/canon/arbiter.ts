@@ -4,6 +4,7 @@ import { AUTHORITY_TIERS } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
 import { findPageById } from "../vault/pages";
 import { CanonWriteError } from "./errors";
+import { machineOriginPath } from "./origin";
 export { assertPageRelPath } from "./paths";
 import type { PageCandidate } from "./receipts";
 import { latestReceiptForPage, listCanonReceipts } from "./receipts";
@@ -141,9 +142,20 @@ function boundPage(io: CanonIo, claim: Claim): ResolvedPage | null {
   return null;
 }
 
+/**
+ * The loop writes the pages it creates under the machine-origin prefix, so a
+ * target that was materialised earlier lives at `auto/<target>.md`, not at the
+ * path the target names. Looking there too keeps later claims for the same
+ * target editing that page instead of trying to create it again.
+ */
 function explicitPage(io: CanonIo, claim: Claim): ResolvedPage | null {
   if (claim.target === null) return null;
-  return resolvePageById(io, claim.target) ?? pageAt(io, pageRelPath(claim));
+  const relPath = pageRelPath(claim);
+  return (
+    resolvePageById(io, claim.target) ??
+    pageAt(io, relPath) ??
+    pageAt(io, machineOriginPath(relPath))
+  );
 }
 
 interface Supersession {

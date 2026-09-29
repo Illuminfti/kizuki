@@ -94,12 +94,41 @@ const AGENT_REVOKE_HELP: HelpTopic = {
   schema: AGENT_REVOKE_SCHEMA,
 };
 
+export const AGENT_GRANT_SCHEMA = {
+  options: ["--grant", "--operation-id"],
+  flags: ["--json"],
+} as const satisfies CommandHelpSchema;
+
+const AGENT_GRANT_HELP: HelpTopic = {
+  name: "agent grant",
+  usage: "agent grant NAME --grant FILE --operation-id ID [--json]",
+  summary: "replace an enrolled agent's grant in place; its credential keeps working",
+  schema: AGENT_GRANT_SCHEMA,
+};
+
+export const AGENT_LIST_SCHEMA = {
+  options: [],
+  flags: ["--json"],
+} as const satisfies CommandHelpSchema;
+
+const AGENT_LIST_HELP: HelpTopic = {
+  name: "agent list",
+  usage: "agent list [--json]",
+  summary: "list enrolled agents with their grant summary; never a credential",
+  schema: AGENT_LIST_SCHEMA,
+};
+
 export function lookupCommandHelp(
   verb: string,
   rest: readonly string[],
 ): HelpTopic | undefined {
   if (rest.length !== 1) return undefined;
-  if (verb === "agent" && rest[0] === "revoke") return AGENT_REVOKE_HELP;
+  if (verb === "agent") {
+    if (rest[0] === "revoke") return AGENT_REVOKE_HELP;
+    if (rest[0] === "grant") return AGENT_GRANT_HELP;
+    if (rest[0] === "list") return AGENT_LIST_HELP;
+    return undefined;
+  }
   if (verb !== "connect") return undefined;
   const action = rest[0];
   if (action !== "grant" && action !== "revoke" && action !== "resume-revocation") {

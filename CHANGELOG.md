@@ -1,5 +1,243 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `kizuki agent list [--json]` shows enrolled agents with their state, grant
+  epoch and grant summary, and never a credential. `kizuki agent grant NAME
+  --grant FILE --operation-id ID` replaces an enrolled agent's grant in place:
+  the credential and running MCP sessions keep working, the grant epoch rises
+  with an audit row, and a retry of the same operation ID is idempotent. An
+  unknown or revoked agent and an invalid grant are refused without changes.
+- The app's agent setup offers `world_view` among the read tools and an
+  owner-correction relay choice that defaults to off.
+- Gmail, Google Calendar and X sign-in work on a headless server. When no
+  browser can be opened, or with the new `--no-browser` flag, the CLI prints the
+  authorization address to stderr with the loopback callback port and an
+  `ssh -L PORT:127.0.0.1:PORT <host>` tunnel command, and keeps waiting for the
+  callback. Previously the address was never shown and sign-in failed.
+- `kizuki connect ics --url https://...` enrolls an https calendar feed with
+  ETag-validated re-reads, as its own source and behind separate source
+  consent. `--url env:VAR` reads the address from an environment variable so it
+  stays out of shell history.
+- Model prompts are scrubbed of obvious secrets before they leave for a model
+  endpoint. PEM blocks, JWTs, `sk-`, `ghp_`, `github_pat_`, `xox` and `AKIA`
+  tokens, `Authorization: Bearer` values, `NAME=value` assignments whose name
+  contains `secret`, `token`, `password` or `api_key`, and runs of 12 or more
+  lowercase words that read as a mnemonic are replaced by `[redacted:<kind>]` in the typed and legacy
+  extraction prompts and in the text a configured judge sees. The ledger is not
+  changed; the model's anchors are mapped back onto the original record. Run
+  receipts carry the per-kind count as `model.redacted`. The scrubber is a
+  documented heuristic, not a guarantee. It covers the `[ports.llm]` extraction
+  path and the text its admission judge receives. A configured
+  `[ports.systemone]` judge is a separate destination at its own `base_url`: it
+  is not named by source consent, not covered by `[ports.llm.provider]`, and not
+  shown by `connect status` or `--json` egress. The judge the reflex path uses
+  is not scrubbed.
+- `[ports.llm.provider]` passes an allow-listed `provider` object
+  (`data_collection`, `zdr`, `order`, `only`, `ignore`, `allow_fallbacks`) to
+  OpenAI-compatible routers, for example `data_collection = "deny"` and
+  `zdr = true`. Unknown keys are refused. The table is not part of the model
+  binding that source consent names.
+- `kizuki connect status` shows each source's egress destination (endpoint
+  host and model, `local only`, or `none`) and retention stance, with the
+  provider controls the configured model requests. `--json` reports `egress`;
+  `connect status --source KEY` reports it too.
+
+- `kizuki version` identifies the exact build. A release package prints
+  `VERSION source=<source revision> built=<UTC time>` from values compiled in by
+  `build:release`; a run from source prints `VERSION dev`. Anything that
+  parsed the whole line as a bare version number should read the first word.
+- `docs/upgrade.md`: a runbook for upgrading an installed package in place
+  (stage the new version directory, file-level backup with `sqlite3 .backup`,
+  install from the new real path, verify, roll back), with a scripted test that
+  upgrades and rolls back a fixture package over a fixture vault.
+- Release smoke runs `kizuki world --operation find_concepts --json` and an MCP
+  `world_view` call against the built package, and checks that `kizuki version`
+  matches the package's `BUILD.json` revision.
+- `kizuki connect claude-code-sessions --source PATH` and `kizuki connect
+  codex-sessions --source PATH` capture the text turns of Claude Code and Codex
+  session transcripts as private `message` events, so decisions and changes of
+  direction made in a coding session reach the ledger. Both read a local folder
+  offline through one shared parser (`@kizuki/connector-agent-sessions`).
+  Thinking, tool inputs and tool results are never captured; secret-shaped
+  strings, terminal escapes and bidirectional controls are removed before
+  capture; turns carrying Kizuki's own context packet are skipped. A pass reads
+  only files modified since its watermark and resumes mid-file inside the 8 KiB
+  cursor bound. No tombstones are emitted. See
+  [Coding-session transcripts](docs/connect.md#coding-session-transcripts).
+- `[extraction] max_calls_per_day` (1 to 100,000, default 1,000) and
+  `max_output_tokens_per_day` (1,024 to 1,000,000,000, default 4,000,000)
+  bound model spend per UTC day, rejected requests included. A pass that finds
+  one spent makes no request and stops as `model:budget_day`. The `throughput`
+  line in `doctor` and `serve status` shows both.
+- A systemic-rejection breaker: when three different records are rejected the
+  same way in a row, the pass stops as `model:systemic_rejection`, backs off
+  (15 minutes, doubling to 6 hours, stored durably) and asks again with one
+  single-record probe. Records passed over during the streak go back on the
+  deferred queue and are not counted as skipped in that pass. A probe refused
+  alone twice skips that record for good and doubles the wait, so a run of
+  poison records drains one per wait instead of wedging extraction. An
+  unreadable stored history counts as a fresh wait, never as none.
+- Run receipts carry `model.consecutive_rejections` and
+  `model.last_rejection_rule` while a refusal streak lasts.
+
+### Fixed
+
+- The daily brief is stamped private when it names a page that ever received a
+  private receipt (a repair never lowers it), says when rail failure groups
+  were omitted, and the brief repair also rewrites the run-id
+  stub a failed brief run leaves behind, skips oversized files, and names the
+  day of a page it could not repair.
+- `max_calls_per_day` now charges every request a legacy producer makes for one
+  record, not one per record.
+- Structural claim deduplication now requires overlapping validity. A claim
+  with the same key, polarity and object but a disjoint or merely adjacent
+  validity window is stored as its own claim instead of being merged into an
+  earlier one, and it no longer raises authority through cross-connector
+  corroboration. Overlapping windows still corroborate.
+- The standing HTTP endpoint compares its bearer token in constant time.
+- MCP `world_view` can be called from its advertised schema. `tools/list` now
+  lists the operation and its fields with their defaults, so
+  `{"operation":"find_concepts"}` alone works, where the schema used to be
+  empty.
+- MCP `tools/list` is about 33 KB instead of about 185 KB: `world_view`
+  advertises a summary of its answer (the server still checks every answer
+  against the whole grammar) and each tool states only the result lists it can
+  fill.
+- MCP `tools/list` names only the tools the principal's grant allows.
+- Denied and invalid `world_view` calls are audited and count toward the rate
+  limit; the audit row used to roll back with the refusal.
+- Served canon reads (MCP tools and the loopback host) no longer parse the
+  whole vault on every call. Parsed pages and their resolved authority are kept
+  for the life of the process and refreshed when a file or the receipt history
+  changes.
+- The MCP adapter no longer runs schema repair writes when it starts on a
+  current ledger, so a long writer no longer delays or refuses startup.
+- The connector catalog no longer labels Gmail or IMAP a local source, and
+  `kizuki.import-beacon` has a title instead of its raw id.
+- The embed-backfill rail no longer wakes every minute when no embedding port
+  is configured: it backs off to an hour and returns to a minute when the
+  service starts or on its next run after `[ports] embedding` names a port.
+  `kizuki doctor` prints `vector layer: off (no embedding model configured)`,
+  `vector layer: configured (<port id>)` or `vector layer: invalid (<reason>)`
+  for an id the host cannot bind, and an idle embed rail is no longer reported
+  down for producing nothing. The CLI and doctor read `[ports] embedding`
+  through one validator.
+- A scheduled run that did nothing no longer appends a run receipt per tick. The
+  first idle run after activity is receipted, later ones only advance the
+  schedule, with at most one idle receipt an hour per rail. Doctor takes rail
+  liveness from the schedule as well as receipts and counts the empty streak in
+  elapsed periods, so its sensitivity is unchanged. The fixture qualification
+  observer credits an idle slot from the schedule row and accepts the embed
+  rail's back-off period. The daemon's receipt count includes only receipts it
+  persisted.
+- `journal-prune` bounds `run-receipts.jsonl` by size as well as age (oldest
+  receipts dropped past 8 MiB, rows and file kept in step), and no longer
+  rewrites the journal from only the newest 10,000 rows. The prune always keeps
+  the newest receipt and replaces the file atomically before deleting rows.
+  Doctor reads at most the newest 5,000 run receipts and scans the newest 1 MiB
+  of the journal for orphans.
+- A rejected request no longer stalls the queue head at the default one step
+  per pass. The narrowed retry, the first record alone, is now stored with the
+  extraction cursor, so the next pass sends it and a record rejected on its own
+  twice is skipped through the existing skip path.
+- A model that rejects every request no longer makes `max_calls_per_pass` of 2
+  or more skip the whole ledger without claims.
+- A response rejected whole, including `finish_reason=length`, now records the
+  input and output tokens the provider billed in receipts and usage rows
+  instead of zero.
+- World reads no longer claim completeness they do not have. `kizuki world`,
+  MCP `world_view` and HTTP `/v1/world_view` now report `partial` coverage with
+  a `coverage` gap when a source the caller can read has unfinished history
+  import or a failed last capture run, and with a `pending_consolidation` gap
+  when a readable, extraction-granted source has events extraction has not yet
+  consumed. An empty discovery in that state is `partial` instead of
+  `complete_for_query`. Sources and events the grant hides never affect the
+  result.
+- Label search in `find_concepts` and `find_situations` is case-insensitive with
+  Unicode folding, and is paginated: the previous 32-match cap is now the page
+  size, and results carry an opaque `cursor` (null on the last page) that
+  `kizuki world --cursor`, MCP and HTTP accept. One request examines at most a
+  fixed number of handles; past that it returns a cursor with a `traversal_limit`
+  gap rather than scanning the whole vault.
+- `kizuki doctor` reports `status=failed` only for real failures and names
+  them. An idle rail with no pending work is healthy: the empty streak counts
+  only runs that had work waiting (extract backlog past the cursor for a
+  granted source, unwritten live claims, consented sources no run has reached,
+  pending retrieval operations), and `brief`, `journal-prune`, `doctor-sweep`,
+  `purge-sweep` and an unconfigured `embed-backfill` are judged by staleness and
+  failure only. A rail whose last five runs ended degraded or stopped, without
+  applying retrieval work or shrinking its pending count, is down with the error
+  most of them share (including the codes a rail reports in `retrieval.degraded`),
+  and a failed rail says why it failed. A bounded catch-up pass that drains a
+  large index backlog is progress, not a fault, and so is extraction that
+  answered but filed no new claim (deduplicated drafts, skipped records). The
+  degraded streak applies to every rail except `doctor-sweep`, and only while
+  the newest receipt is not stale, so an uninstalled service stops failing.
+- The model line reflects the daemon, not whether the doctor process can
+  resolve the model secret. The configured model reference now carries its
+  `@host` exactly as run receipts record it, so from a shell without the secret
+  doctor prints `canon writing: configured; daemon last_success=... last_failure=...
+  consecutive_failures=N` and says `unverified` only when the daemon left no
+  receipts. `doctor` gains an `extraction` line (backlog past the extract cursor,
+  `last_extracted_at`, and the setting to change after repeated truncation) and
+  an `egress` line per source that sends text to a model (endpoint host, model,
+  retention).
+- The constant `identity authority: unavailable` line and the
+  `identity-authority-unavailable` entry in every context packet's degraded list
+  are gone. Doctor lists the canon files the index cannot read, and reports
+  `index-degraded` only while one exists.
+- The closing `next:` line follows from the top failure and no longer suggests
+  `kizuki tell` for a failed report.
+- Connections show `last_run_clean` (the last run recorded no error) instead of
+  `backfill_complete=no` forever for a source that is only synced. It makes no
+  claim about what is left upstream, because the checkpoint keeps no cursor
+  exhaustion. `doctor --json` keeps `backfill_complete` beside it.
+- Doctor reports a canon page held out of the index by an open hold or write as
+  `index-degraded` (a rebuild does not clear it), says when the canon walk was
+  truncated, and words a degraded stamp with nothing skipped or held as possibly
+  stale. The `index-degraded` flag on query and context responses still follows
+  the derived stamp; it clears at the next `kizuki rebuild`, not on an
+  incremental refresh.
+- The failure a report leads with is now structured (`top_failure`), so the
+  `next:` hint no longer reads failure text, and a down rail's hint points at
+  the read-only `kizuki serve status` instead of running the rail.
+- The daemon, `kizuki doctor` and `kizuki serve status` read whether an
+  embedding port is configured from the same configuration, so the
+  `doctor-sweep` receipt judges `embed-backfill` as doctor does. The sweep and
+  `kizuki rebuild` no longer walk every canon page to read one field.
+- Doctor reads the newest 2,000 sync receipts and the newest 200 of each other
+  rail instead of a week of receipts, and the `doctor-sweep` rail now records
+  the failures doctor would report, so its status matches.
+
+### Changed
+
+- A refused `kizuki export` now names the sources that block it and the exact
+  grant or revocation command that clears each one, instead of a bare
+  `source_export_denied`. The consent rule is unchanged: export still needs the
+  `export` purpose on every source.
+- The canon writer now updates a page the loop already materialised. A claim
+  whose target was written earlier under the machine-origin `auto/` prefix used
+  to be planned as a create and fail with `page ... already exists` on every
+  pass, so later claims for that target never landed. The arbiter now finds the
+  page under `auto/` and edits it through the receipted writer, before and
+  after hashes included. A page at the target's own path still wins.
+- The daily brief is now a bounded summary of what changed since the previous
+  brief: new, updated, corrected and undone canon pages, rail runs that
+  failed, degraded or stopped, and the extraction backlog (live claims not yet
+  written, ledger events past the extraction cursor, deferred inputs). It is
+  never just boilerplate, and its page carries valid frontmatter with
+  `sources: []`.
+- Daemon-written briefs are classified as machine origin in `kizuki doctor`
+  and in retrieval candidates; other pages under `dashboards/` stay human.
+- A daemon-written brief that fails the page schema, such as one an older
+  build wrote without `sources`, is rewritten by the next brief or doctor-sweep
+  run through the same notifier, keeping its body. The run receipt records
+  `pages_repaired`. A page that cannot be rewritten degrades the run with
+  `brief-repair-failed` and is tried again on the next sweep.
+
 ## 1.0.2 (2026-09-24)
 
 ### Added

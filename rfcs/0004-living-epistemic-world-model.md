@@ -2,6 +2,7 @@
 
 Status: **Accepted as a minimal slice** (owner decision D22, 2026-09-18): `DurableObservation`, the world-vocabulary registry, `ConceptCard`, a minimal `SituationCard`, and `readWorldView` with the `concept` and `situation` operations, exposed through the `world_view` seam. Everything else in this RFC remains Proposed and is not implemented by that acceptance. Original date: 2026-09-05.
 Owner: Kizuki core. Design packet: #481.
+Amendment record: the [Amendments](#amendments) at the end of this document list each proposed deviation. Domain contracts for the later kinds and operations: [Appendix B](0004-domain-contracts.md). Storage and codec: [Appendix A](0004-world-storage.md). Every amendment stays Proposed until the owner records a decision.
 Frozen source and evaluation baseline: `a96c5f4a4455d22fb4b40537c308c6d019a36d0d`.
 Reviewed integration base: `ad7ecca9902a97ac40fb8b28438df56c6d27a54e` (2026-09-06).
 The fixture pin deliberately preserves the earlier evaluation comparison; it
@@ -1388,3 +1389,131 @@ must be resolved before the affected implementation becomes public. They are
 not permission to continue the incomplete durable-rich schema by implication.
 No release, deployment, account grant, inference spend or GitHub merge authority
 comes from this design document.
+
+## Amendments
+
+Every amendment below is Proposed. This record was written on 2026-09-29, before the world-model expansion code depends on it. It changes no status line above, accepts nothing and edits no row of the [decision log](../docs/decision-log.md). Each amendment names the text it changes, the new rule and the reason. Draft decision rows for the owner are in [proposed decision rows](../docs/world/decisions-proposed.md); the owner records or rejects them. Where an amendment needs a new schema, predicate or codec, [Appendix B](0004-domain-contracts.md) defines it. Until an amendment is recorded, the text above it stays the binding proposal and an implementation that follows the amendment says so in its own document.
+
+### Amendment 1: Recorded-time sequence history replaces core_authority_commits
+
+**Changes:** [Time, perspective and longitudinal truth](#time-perspective-and-longitudinal-truth), where every admission and state transition records `admittedAt` plus a transaction `admissionSeq`, and the ledger 17 table `core_authority_commits` with the lifecycle tables that key on it in [the relational authority of Appendix A](0004-world-storage.md#proposed-relational-authority) and [its bitemporal lifecycle section](0004-world-storage.md#bitemporal-lifecycle-and-loss-coverage).
+
+**New rule:** Known-at history is an append-only table, `claim_lifecycle_history`, filled by database triggers on `claims` for world-typed rows. Each row holds the claim, the transition (before and after status), the causing receipt when there is one, a monotone sequence and a recorded time clamped to the last committed value. A per-claim row in `claim_history_coverage` records where complete history begins. The cutoff is the pair `(recorded_at, seq)` and the inequality in the section above is unchanged: a transition is visible when it was recorded before the cutoff time, or at that time with a sequence at or below the cutoff sequence. The sequence stays internal and never appears in a wire value, a token or a fingerprint. A claim recorded before the table exists reports history `baseline_only`; a cutoff older than the coverage bound is `unavailable` with reason `history`; the past is never reconstructed from `asserted_at` and `retracted_at`. Physical purge deletes the purged claim's history rows and advances coverage on surviving claims. A test enumerates every code path that changes a claim status (assert, supersede, retract, undo or reinstate, relive, purge and the claim-v2 commit), and export, restore and rebuild must reproduce identical history. The admission-level recorded position in this RFC is the sequence of the transition that first asserts the admission. `core_authority_commits`, the per-row origin columns and the `claims_v4` rebuild are outside this path and are deferred, as recorded in [the shipped subset section of Appendix A](0004-world-storage.md#shipped-subset-and-migration-allocation-for-the-world-model-expansion).
+
+**Reason:** `core_authority_commits` depends on Purge 6 and on origin columns that did not ship. Undo rewrites the `status` column of `claims` in place, so exact history cannot be replayed from the existing columns. The history table gives the known-at, snapshot and history reads exactly the ordering this RFC already requires, with the same clamp and tie-break, on tables that exist.
+
+**Status:** Proposed. Draft rows: `PD-HISTORY` for the rule and `PD-DEFERRAL` for the deferred Appendix A items.
+
+### Amendment 2: Adapters send the v2 selector on behalf of scoped clients
+
+**Changes:** [Exact adapter selector and nested v2 output](#exact-adapter-selector-and-nested-v2-output), where a scoped principal with a missing or v1 selector receives the fixed `unsupported_contract`, and [Explicit envelope, packet and surface migration](#explicit-envelope-packet-and-surface-migration), where built-in adapters request v2 explicitly without saying who supplies the selector for a model-driven client.
+
+**New rule:** For a token principal, the built-in adapters supply `response_contract: "kizuki.envelope/v2"` themselves: the stdio MCP server, the loopback HTTP wrapper, the CLI option default and, where one ships, the session-start hook. The calling model never has to name the selector, and a freshly enrolled agent completes a context read and a world read without selecting v1. An explicit selector from a caller is still judged by the selector table: a nested, conflicting, unknown or v1 selector for a scoped principal is refused with the fixed `unsupported_contract` before candidate discovery. A session-start hook, where one ships, prints nothing and states a skip reason when v2 is unsupported. Core's own refusal of a missing or v1 selector for scoped principals is the last packet of the envelope work and merges only after the owner accepts the compatibility break. Until then a direct caller that bypasses the adapters can still receive v1; the built-in adapters no longer do. Owner v1 output is unchanged.
+
+**Reason:** The RFC says adapters request v2 explicitly but leaves the caller of an MCP tool to supply the selector, which a model will not do reliably. Injection by the adapter makes the safe path the default and stages the one compatibility break behind an owner decision.
+
+**Status:** Proposed. Draft row: `PD-ENV`.
+
+### Amendment 3: View partitions are reserved at enrolment
+
+**Changes:** [Scoped revisions, views and differences](#scoped-revisions-views-and-differences), where partition capacity is reserved by "explicit principal enrollment/config in the owner plane" and an unreserved principal receives `not_issued`.
+
+**New rule:** Each owner-plane act that creates or changes a principal reserves that principal's partition in the same act: owner bootstrap, agent add, app enrolment and grant amendment. At most 64 partitions and 256 MiB of retained payload exist per vault. The 65th and later principals receive complete reads with view `not_issued`, and no existing reservation is ever displaced. A failure to reserve or to issue a token degrades to `not_issued`, never to an error, and the read stays correct. Hidden source activity, background work and other principals never consume or free a reservation. Deleting or revoking a principal ends its reservation and erases its tokens.
+
+**Reason:** The RFC treats reservation as an explicit owner-plane act; enrolment and grant amendment are those acts. Without reserving there, every agent stays unreserved and never sees `unchanged`, a diff or a resume handle.
+
+**Status:** Proposed. Draft row: `PD-PART`.
+
+### Amendment 4: Resume handle contract
+
+**Changes:** [Scoped revisions, views and differences](#scoped-revisions-views-and-differences) defines view and snapshot tokens but no portable resume handle, although [decision D22](../docs/decision-log.md) item (d) requires a "revision-pinned, non-authority-carrying resume handle that clips to the resuming principal's grant and reports the clipping in coverage".
+
+**New rule:** [ResumeHandle in Appendix B](0004-domain-contracts.md#resumehandle) defines it. In short: a handle is 32 random bytes with only its SHA-256 stored, lives 24 hours, and at most 16 are active per issuer. It is minted by the `share` operation and redeemed by the `resume` operation by any authenticated principal that holds the `world_view` grant, under that principal's own grant and namespace. It carries no authority and no data. The only grant-derived disclosure is one coverage gap, `coverage`, added exactly when the redeemer's scope is narrower than the issuer's scope at issue time. Unknown, expired, unreadable-by-the-redeemer and revoked-issuer handles all answer the same fixed bytes. Handles are cache class: never exported and empty after restore.
+
+**Reason:** D22 requires the handle but this RFC never specified its lifetime, quota, redemption rule or disclosure, so implementers would each invent one. The single clipped bit is the smallest disclosure that satisfies the decision.
+
+**Status:** Proposed. Draft row: `PD-RESUME`.
+
+### Amendment 5: Summary basis servability
+
+**Changes:** [Exact proposed semantic contracts](#exact-proposed-semantic-contracts), which calls a summary "optional derived prose, with complete authorized admission support", and [Storage selected by queries and integrity](#storage-selected-by-queries-and-integrity), where loss of any contributing admission holds affected outputs.
+
+**New rule:** A summary is derived text, never a claim and never owner authority. It is stored with its basis: the digest of the exact eligible support set it was built from. It is served only to a principal whose current eligible support digest equals that stored basis digest. A basis that is a strict subset of the reader's own eligible support is stale: the summary is null and the coverage gap is `stale_dependencies`. A basis wider than the reader's authorization is never served: the summary is null and coverage is partial. A summary that has not been built yet is null with the gap `pending_consolidation`. Hidden-only evidence never toggles the presence, gap or timing of a summary for a narrower principal. Derived summary tables are wiped by a world rebuild, after which reads answer `pending_consolidation`; purge and revocation erase the rows and any queued request.
+
+**Reason:** "Complete authorized admission support" does not say what happens when the reader's support is narrower or wider than the basis the summary was built from, or when new evidence arrives after the build. The digest comparison decides all three without a hidden-state oracle.
+
+**Status:** Proposed. Draft row: `PD-CONSOLIDATION`.
+
+### Amendment 6: Outcomes through propose
+
+**Changes:** [Exact adapter selector and nested v2 output](#exact-adapter-selector-and-nested-v2-output), where `propose` and `correct` keep their existing grants and a type that needs the rich writer stays unsupported, and [Worked longitudinal examples and expected observations](#worked-longitudinal-examples-and-expected-observations), where outcome-evidence semantics "precede #492's external receipt ingestion".
+
+**New rule:** Execution outcomes enter only through the existing `propose` tool as registered legacy claims with the predicates `outcome.self_report`, `outcome.provider_ack`, `outcome.observation` and `outcome.review`, defined in [the Outcome contract of Appendix B](0004-domain-contracts.md#outcome). No new tool and no typed execution-receipt arm is added; the tool count stays ten and the write tools stay exactly `propose` and `correct` (D14). Independent support requires a different principal and a different provenance source than the reporter; a forwarded copy or the reporter's own second claim adds none. The older predicates `outcome.reached` and `outcome.missed` stay readable as self reports. Outcome evidence moves usefulness only. It never changes a claim's truth confidence and never overrides an owner correction. A grant without `propose`, a subject outside the grant or missing provenance is refused before mutation and leaves an audit row.
+
+**Reason:** The legacy predicate registry already holds `outcome.reached` and `outcome.missed`, and `propose` already accepts registered predicates with event provenance for agent principals. A typed receipt arm would need the rich writer this RFC keeps unsupported.
+
+**Status:** Proposed. Draft row: `PD-OUTCOME`.
+
+### Amendment 7: Attention and forecast record classes
+
+**Changes:** [Capture, consolidation, reads and optional analysis](#capture-consolidation-reads-and-optional-analysis), which allows analysis only as "an explicit bounded model request labeled analysis, with no action authority" and defines no attention or forecast record, and the table ownership described in [Appendix A](0004-world-storage.md#proposed-relational-authority).
+
+**New rule:** Every world table declares one class. Authority tables are exported, restored and have a purge hook. Bookkeeping tables are exported and erased on purge and never touch claim authority. Derived tables are never exported, are empty after restore and are cleared by a world rebuild. Cache tables are runtime only and are reinitialised on restore. Attention dispositions (dismiss, snooze, delivery keys) are bookkeeping. The forecast journal is an append-only authority-class journal with a purge hook; it is not canon, not a belief store and never contributes to a claim's confidence. Counterfactual and hypothesis forecasts are analysis records that never appear in current-world reads. The first forecast slice makes no model call. Contracts are in [Attention](0004-domain-contracts.md#attention) and [Forecast](0004-domain-contracts.md#forecast).
+
+**Reason:** This RFC has no attention or forecast contract, and the lifecycle of each new table (export, restore, rebuild, purge) has to be decided before a migration is written.
+
+**Status:** Proposed. Draft rows: `PD-ATTENTION` and `PD-FORECAST`.
+
+### Amendment 8: The world_view operation family and describe
+
+**Changes:** [Exact proposed semantic contracts](#exact-proposed-semantic-contracts), where `WorldReadInput` is exactly `find_concepts`, `concept` and `history`, and [Exact adapter selector and nested v2 output](#exact-adapter-selector-and-nested-v2-output), where `world_view` is "a proposed extension of the existing Core/MCP/loopback tool registry" with those three read operations.
+
+**New rule:** `world_view` is one tool over a registered family of operations. Each operation declares its name, exact closed input keys, closed parse, data schema id and the surfaces that render it. The common keys are `operation`, `valid` and `knownAt`, plus `priorView` for operations that issue views. Later operations (evidence, history, share, resume, slice, diff, atlas, attention, forecast and the domain kinds) are added by registering them, never by editing a shared switch. The `describe` operation returns `kizuki.world-describe/v1`: the registered kinds (id, state `shipped` or `dark`, population path), the registered operations (name, input keys, result schema ids) and the vocabulary version. It carries no counts and no claim data, is byte-identical for every principal holding the `world_view` grant, and never lists an unregistered kind. The tool count stays ten and the write tools stay two. Every operation rides the existing `world_view` grant and the source `recall` purpose, so no stored grant is widened and the inert public grant of D18 is unchanged. The four operations that exist today keep byte-identical output.
+
+**Reason:** The RFC fixes three operations in a union, so each new kind would edit the same parser and schema. A registry makes a new operation new files, and `describe` tells an agent which kinds can have data at all, so nobody is sent looking for data that cannot exist.
+
+**Status:** Proposed. Draft row: `PD-OPFAMILY`.
+
+### Amendment 9: Quoted evidence travels in the quoted channel
+
+**Changes:** `EnvelopeV2` and `QuotedChunkV2` in [Exact adapter selector and nested v2 output](#exact-adapter-selector-and-nested-v2-output), which give the envelope a `quoted` array but define no world-read operation that returns source text.
+
+**New rule:** The `evidence` operation of `world_view` returns quoted span text only in the envelope `quoted` array as `QuotedChunkV2` entries with `tainted: true`. Span text never appears in `data` or in `canon`. The span is resolved under the caller's current grant and is checked against the retained version's text hash; a mismatch answers `not_found`. A hidden, denied, wrong-namespace, erased or purged target answers the same `not_found` bytes. Until typed refs for scoped chunks land, quoted chunks use only the event-version and admission wire kinds that exist today. Slices, cards and diffs carry evidence refs, never quoted text.
+
+**Reason:** Evidence is attacker-controlled input and must stay apart from trusted structured data. The envelope already has the separate channel; this amendment says the evidence operation must use it.
+
+**Status:** Proposed. Draft row: `PD-EVIDENCE`.
+
+### Amendment 10: Write-boundary order independence
+
+**Changes:** [Small versioned registry](#small-versioned-registry), which says validation "rejects invalid endpoint shapes before admission".
+
+**New rule:** The write-time validator is independent of arrival order. An endpoint that no claim has classified yet is accepted. Only a contradiction with a classification that is already known is refused, with the deterministic codes `world_endpoint_kind`, `world_object_kind`, `world_vocabulary_value` and `world_polarity`, and, for predicates declared acyclic, `world_cycle`. A projection surfaces only classified endpoints. Claims stored before enforcement stay readable and are counted on the read side, never thrown on. Existing registry rows are pinned: a test fails if the meaning of an existing predicate changes without a new registry identifier.
+
+**Reason:** Endpoint classification is itself a claim, so a validator that demands classification first would make extraction order decide whether a valid pair of claims is accepted.
+
+**Status:** Proposed. Draft row: `PD-WRITE-ORDER`.
+
+### Amendment 11: Identity subset
+
+**Changes:** [Identity: six different things](#identity-six-different-things), which states that an identity merge "adds an accepted, receipted same-as relationship over raw refs under A1", and the RFC 0003 A1 row of [Authority and compatibility decisions](#authority-and-compatibility-decisions).
+
+**New rule:** Concept identity is claim-based. An owner merge is an owner-authority positive `concept.same_as` assertion and an owner separation is an owner-authority negative one, both written through `correct` with the existing receipts and undo. A model `concept.same_as` merges only with at least two independent supports. `concept.distinguished_from` or an owner separation blocks autonomous merging. Name equality, co-occurrence and embedding similarity never decide identity. Clusters are read per principal from live claims and are bounded to 256 members and 1,024 edges; overflow returns partial with the gap `traversal_limit`, and an owner merge that would overflow is refused whole. The requested handle stays the anchor and no global representative exists. The heavier A1 tables (identity receipts, component effects and a component fence) are built only if a spike shows owner-authority assertions cannot carry merge, separation and undo.
+
+| Predicate | Endpoints and cardinality | Interpretation |
+| --- | --- | --- |
+| `concept.same_as` | Concept to Concept; many | A claimed identity of two Concept nodes in the stated perspective; never a rewrite of either node |
+
+**Reason:** The claim-based route keeps merges receipted, reversible and non-rewriting using tables and receipts that exist, and it reserves no migration. The spike exists so the A1 tables are built only on evidence.
+
+**Status:** Proposed. Draft row: `PD-IDENT`.
+
+### Amendment 12: Situation vocabulary in the shipped registry
+
+**Changes:** [Small versioned registry](#small-versioned-registry), which says the first registry "implements only Concept classification, names, definitions and the following relations/facets".
+
+**New rule:** This records what decision D22 item (b) accepted. The shipped `kizuki.world-vocabulary/v1` registry also classifies `world/situation` and holds the Situation predicates listed in [the Situation v2 contract](0004-domain-contracts.md#situation-v2). The Situation card v1 stays byte-identical. A richer card is a new opt-in schema id, never a change to v1. Additional kinds are added one at a time to the same registry identifier: each is registered but not offered to the extraction model until a held-out extraction check passes, and existing rows are pinned.
+
+**Reason:** The code and this RFC disagreed: the RFC named only Concept rows while the accepted slice shipped Situation. Recording it keeps the registry table honest before more kinds are added to it.
+
+**Status:** Proposed. Draft row: `PD-SITUATION`.

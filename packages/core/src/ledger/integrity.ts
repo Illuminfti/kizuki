@@ -341,3 +341,23 @@ export function inspectLedgerHealth(
     failures,
   };
 }
+
+/**
+ * The ledger is complete enough to serve from without repairing anything: the
+ * migrated schema is current and the surfaces that opening once repaired are
+ * all present. Reads only, and creates no object.
+ */
+export function assertServableLedger(db: Database, expectedVersion: number): void {
+  assertLedgerSchema(db, expectedVersion);
+  // These authoritative surfaces used to be silently repaired by initAgents,
+  // initServe and initCanon. Reads require them, without creating any object.
+  for (const query of [
+    "SELECT agent_id, quarantined_at, quarantine_reason FROM agents LIMIT 0",
+    "SELECT relay_owner_corrections, grant_epoch FROM agent_grants LIMIT 0",
+    "SELECT audit_id, served_count, denied_count, grant_epoch FROM agent_audit LIMIT 0",
+    "SELECT * FROM canon_receipts LIMIT 0", "SELECT * FROM page_index LIMIT 0",
+    "SELECT * FROM canon_source_erasure_intents LIMIT 0", "SELECT * FROM claims LIMIT 0",
+    "SELECT * FROM schedules LIMIT 0", "SELECT * FROM run_receipts LIMIT 0",
+    "SELECT input_ids, integrity, outcome, batch_mode, model_inputs, deferred_inputs FROM extract_batches LIMIT 0",
+  ]) db.query(query).all();
+}
