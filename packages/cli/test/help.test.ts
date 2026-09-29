@@ -559,7 +559,7 @@ describe("help", () => {
     const extra = runCli(env, "rebuild", "extra");
     expect(extra.exitCode).toBe(2);
     expect(extra.stdout).toBe("");
-    expect(extra.stderr).toContain("error: rebuild supports --layer all, search, or graph");
+    expect(extra.stderr).toContain("error: rebuild supports --layer all, search, graph, or world");
     expect(extra.stderr).toContain("usage: kizuki rebuild");
     // Eight CLI subprocesses, two fewer than before. The explicit deadline
     // matches the other subprocess-heavy suites; process startup, not this
