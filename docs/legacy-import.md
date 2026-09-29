@@ -32,8 +32,16 @@ an unknown key: a typo that quietly changed which pages were labelled private
 would be the worst failure this code could have, so every key is checked.
 
 The mapping is hashed (canonical JSON, keys sorted at every depth) and the
-hash travels with each event. Reformatting the file changes nothing;
-changing a mapped value re-runs the affected pages.
+hash travels with each event as `mapping_hash`, for the record. Reformatting
+the file changes nothing. Each wiki event also carries `plan_sha256`, a digest
+of what the migration decided about that page: its text, labels, target and
+fields, and not the mapping's hash or a file time. A changed mapping re-emits
+exactly the pages whose digest changed, so a mapping edit that decides nothing
+new, and the revert of any edit, emit no events for the pages they leave
+alone. A page keeps the target it was first emitted with, so a mapping edit
+never places a second copy of a page; a new `dir` mapping applies to pages
+added afterwards. Pages an earlier release stored carry no digest and are
+trusted until the page itself changes.
 
 A page the changed mapping no longer imports — an excluded type, or a path the
 `ignore` list now matches — is withdrawn on the next run: the wiki importer
@@ -41,6 +49,41 @@ emits a tombstone carrying `excluded_by_mapping`, which retracts the proposal
 the earlier run filed. The file itself is untouched, and the record does not
 claim a deletion that never happened. A page the walk could not read is
 neither imported nor withdrawn — it stays in the cursor until a run can tell.
+
+### The wiki follows its source
+
+A sync brings the ledger to where the wiki is, in both directions:
+
+- **Restore and revert are new state.** The ledger stores an event once per
+  content hash, so a page that comes back after a deletion, or returns to text
+  it had before, would otherwise be dropped as a duplicate. When the source
+  record has earlier events and a page is emitted because its state changed,
+  the event carries `revision_epoch`, the count of events the record already
+  has. The staged page carries it as `x-source-revision`, so the claim is a new
+  claim, not a repeat of the old one. A record the ledger already holds
+  unchanged is not emitted, so the next sync after a restore emits nothing.
+  When a returned page's earlier deletion archived its canon page, the
+  writer's sync pass reverts that archive receipt while the page still holds
+  the bytes the archive left; a page changed since stays as it is.
+- **A rename is one event.** A page that vanishes while a new page appears with
+  exactly the same bytes is a rename when that pairing is unique (one vanished
+  name and one new name for those bytes; empty files never pair). The new page
+  is emitted once with `moved_from` naming the old path and the old page's
+  target, so it stays the same page: no new page identity and no archived
+  copy. The old path gets no tombstone; the ledger treats it as moved from
+  then on. Two identical files that both move are not guessed at, and are
+  withdrawn and re-added as before.
+- **A mass withdrawal is held, not applied.** When one pass would withdraw
+  more than the larger of 20 pages and 20 percent of the source's pages, it
+  emits no tombstones and ends `unavailable` with the typed state
+  `mass_withdrawal_held: N of M`. An emptied root, an unmounted volume or a
+  half-restored tree is the likely cause. The hold appears as `hold` on the
+  source in `kizuki connect status` and in `kizuki doctor` (which then fails),
+  and clears when the next sync no longer needs it. If the wiki really lost
+  those pages, release it once with
+  `kizuki sync import-legacy-wiki --source KEY --confirm-withdrawals N`, where
+  N is the reported count; a pass that would withdraw more than N stays held.
+  The release covers that run only.
 
 ## Wiki mapping
 
