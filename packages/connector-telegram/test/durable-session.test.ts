@@ -53,7 +53,7 @@ test("close fences a delayed native history result and never logs out", async ()
   api.messages = async function* (...args) { await wait; yield* original(...args); };
   const port = new TelegramConnector({ state_ref: STATE_REF }, { api: () => api, credentials: () => FIXTURE_CREDENTIALS, persist: async () => {} });
   await port.connect(async () => new TextDecoder().decode(state()));
-  const reading = port.backfill(null); await Promise.resolve();
+  const reading = port.backfill(null, { cursor_store: new Map() }); await Promise.resolve();
   await port.close(); release(); await expect(reading).rejects.toThrow("closed");
   expect(api.calls.some(c => c.method === "logOut")).toBe(false);
 });
@@ -64,13 +64,17 @@ test("partial history persists provider wait before returning its resumable chec
   const deps = { credentials: () => FIXTURE_CREDENTIALS, now: () => now, persist: async (bytes: Uint8Array) => { saved = bytes; } };
   const port = new TelegramConnector({ state_ref: STATE_REF }, { ...deps, api: () => api });
   await port.connect(async () => new TextDecoder().decode(saved)); api.floodAfter(0, 120);
-  const partial = await port.backfill(null);
+  const store = new Map<string, string>();
+  const partial = await port.backfill(null, { cursor_store: store });
+  for (const [key, value] of Object.entries(partial.cursor_store ?? {})) {
+    if (value !== null) store.set(key, value);
+  }
   expect(partial.events.length).toBeGreaterThan(0); expect(partial.cursor).not.toBeNull();
   expect(parseState(saved).retry_not_before).toBe("2026-09-05T12:02:00.000Z");
   await port.close(); now += 120_001;
   const restart = new TelegramConnector({ state_ref: STATE_REF }, { ...deps, api: () => new ScriptedTelegramApi(account) });
   await restart.connect(async () => new TextDecoder().decode(saved));
-  const resumed = await restart.backfill(partial.cursor); await restart.close();
+  const resumed = await restart.backfill(partial.cursor, { cursor_store: store }); await restart.close();
   const prior = new Set(partial.events.map(event => event.source_record_id));
   expect(resumed.events.every(event => !prior.has(event.source_record_id))).toBe(true);
 });

@@ -30,6 +30,7 @@ export class ScriptedTelegramApi implements TelegramApi {
   #signInFloods = 0;
   #listingFlood: number | null = null;
   #probeFlood: number | null = null;
+  #latency: { ms: number; wait: (ms: number) => Promise<void> } | null = null;
 
   constructor(account: ScriptedAccount, session: string = FIXTURE_SESSION) {
     this.#account = account;
@@ -95,6 +96,7 @@ export class ScriptedTelegramApi implements TelegramApi {
     this.#record("dialogs", [limit]);
     this.#assertReachable();
     this.#assertAuthorized();
+    await this.#latency?.wait(this.#latency.ms);
     const listingFlood = this.#listingFlood;
     if (listingFlood !== null) {
       this.#listingFlood = null;
@@ -112,6 +114,7 @@ export class ScriptedTelegramApi implements TelegramApi {
     this.#record("messages", [peer_id, query]);
     this.#assertReachable();
     this.#assertAuthorized();
+    await this.#latency?.wait(this.#latency.ms);
     this.#messageCalls += 1;
     const flood = this.#account.flood;
     const floods =
@@ -186,6 +189,14 @@ export class ScriptedTelegramApi implements TelegramApi {
   /** Puts back everything `hideDialog` took out, in its original order. */
   showDialogs(): void {
     this.#account.dialogs.push(...this.#hidden.splice(0));
+  }
+
+  /**
+   * Every `dialogs()` and `messages()` call waits `ms` first. `wait` is the
+   * caller's: a test advances a virtual clock there instead of sleeping.
+   */
+  latency(ms: number, wait: (ms: number) => Promise<void>): void {
+    this.#latency = { ms, wait };
   }
 
   /** Arms one wait report on the next authorization probe. */

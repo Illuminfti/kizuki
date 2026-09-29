@@ -4,7 +4,7 @@ import {
   fixtureAccount,
 } from "../src/fixture";
 import type { TelegramMessage } from "../src/api";
-import { connected, drain, rejection } from "./helpers";
+import { connected, dialogsOf, drain, rejection } from "./helpers";
 
 const NON_SERVICE = 12;
 
@@ -36,13 +36,13 @@ function busyAccount(count: number) {
 test("the first batch seeds every dialog it listed", async () => {
   const built = await connected();
   const batch = await built.connector.backfill(null);
-  const cursor = parseCursor(batch.cursor as string);
-  expect(Object.keys(cursor.dialogs).sort()).toEqual([
+  const dialogs = dialogsOf(built);
+  expect(Object.keys(dialogs).sort()).toEqual([
     "-100777",
     "-42",
     "1002",
   ]);
-  expect(cursor.dialogs["1002"]).toEqual({
+  expect(dialogs["1002"]).toEqual({
     peer_type: "user",
     last_id: 5,
     exhausted: true,
@@ -90,9 +90,9 @@ test("resuming after a reported wait replays nothing and misses nothing", async 
   const first = await built.connector.backfill(null);
   expect(first.events).toHaveLength(1);
   expect(first.events[0]?.source_record_id).toBe("-100777:20");
-  const stopped = parseCursor(first.cursor as string);
-  expect(stopped.dialogs["-100777"]?.last_id).toBe(20);
-  expect(stopped.dialogs["-42"]?.last_id).toBe(0);
+  const stopped = dialogsOf(built);
+  expect(stopped["-100777"]?.last_id).toBe(20);
+  expect(stopped["-42"]?.last_id).toBe(0);
 
   // Inside the wait the connector spends nothing: asking again is how a pause
   // becomes a longer one. It says so rather than answering with the empty
@@ -158,7 +158,7 @@ test("a dialog the account stopped listing does not finish the backfill", async 
   const built = await connected({ account: pair(400) });
   const first = await built.connector.backfill(null);
   expect(first.events).toHaveLength(BATCH_LIMIT);
-  expect(parseCursor(first.cursor as string).dialogs["1003"]?.last_id).toBe(100);
+  expect(dialogsOf(built)["1003"]?.last_id).toBe(100);
 
   // A listing only changes what a walk sees when the walk starts again, so
   // this is the next run rather than the next batch.
@@ -167,7 +167,7 @@ test("a dialog the account stopped listing does not finish the backfill", async 
   const second = await resumed.backfill(first.cursor);
   const stalled = parseCursor(second.cursor as string);
   expect(second.events).toEqual([]);
-  expect(stalled.dialogs["1003"]).toEqual({
+  expect(dialogsOf(built)["1003"]).toEqual({
     peer_type: "user",
     last_id: 100,
     exhausted: false,
@@ -224,7 +224,7 @@ test("a page holding only skipped records never looks like a drained source", as
   // An empty batch is how this connector says it has nothing left to give, so
   // a page it emits nothing from has to be read past rather than returned.
   expect(first.events).toHaveLength(3);
-  expect(parseCursor(first.cursor as string).dialogs["-42"]).toEqual({
+  expect(dialogsOf(built)["-42"]).toEqual({
     peer_type: "group",
     last_id: BATCH_LIMIT + 3,
     exhausted: true,
@@ -264,7 +264,7 @@ test("an edit made while the backfill ran is still re-emitted after it", async (
 
   const first = await built.connector.backfill(null);
   expect(first.events).toHaveLength(BATCH_LIMIT);
-  expect(parseCursor(first.cursor as string).dialogs["1"]).toEqual({
+  expect(dialogsOf(built)["1"]).toEqual({
     peer_type: "user",
     last_id: 400,
     exhausted: true,
