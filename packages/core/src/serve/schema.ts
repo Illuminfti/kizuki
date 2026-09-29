@@ -4,6 +4,7 @@ import {
   DEFAULT_RAILS,
   SERVE_SCHEMA_VERSION,
   type RailId,
+  type RailSpec,
   type ScheduleRow,
 } from "./types";
 
@@ -130,12 +131,13 @@ export function initServe(db: Database): void {
   }).immediate();
 }
 
-export function seedSchedules(db: Database): void {
+/** Seed the shipped schedule, or the given rails' schedules. Existing rows are left alone. */
+export function seedSchedules(db: Database, rails: readonly RailSpec[] = DEFAULT_RAILS): void {
   const insert = db.query(
     `INSERT OR IGNORE INTO schedules (rail, period_s, jitter_s, enabled)
      VALUES (?, ?, ?, 1)`,
   );
-  for (const spec of DEFAULT_RAILS) {
+  for (const spec of rails) {
     insert.run(spec.rail, spec.period_s, spec.jitter_s);
   }
 }
@@ -156,7 +158,11 @@ export function applyRailPeriod(db: Database, rail: RailId, periodSeconds: numbe
   }).immediate();
 }
 
-export function listSchedules(db: Database): ScheduleRow[] {
+/** The schedule rows of the rails `known` accepts: the shipped rails unless the caller knows more. */
+export function listSchedules(
+  db: Database,
+  known: (rail: RailId) => boolean = (rail) => DEFAULT_RAILS.some((spec) => spec.rail === rail),
+): ScheduleRow[] {
   if (!tableExists(db, "schedules")) return [];
   return db
     .query<
@@ -175,9 +181,7 @@ export function listSchedules(db: Database): ScheduleRow[] {
         ORDER BY rail`,
     )
     .all()
-    .filter((row): row is typeof row & { rail: RailId } =>
-      DEFAULT_RAILS.some((spec) => spec.rail === row.rail),
-    )
+    .filter((row) => known(row.rail))
     .map((row) => ({
       rail: row.rail,
       period_s: row.period_s,

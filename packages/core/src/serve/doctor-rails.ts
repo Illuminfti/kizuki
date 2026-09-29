@@ -4,6 +4,8 @@ import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
 import { tableExists } from "../ledger/schema";
 import { readExtractCursor } from "./extract";
+import type { PendingWork } from "./rail-definition";
+import { railDefinition } from "./rail-registry";
 import {
   DEGRADED_STREAK,
   EMPTY_STREAK,
@@ -27,12 +29,6 @@ export interface WorkContext {
   readonly model_configured: boolean;
   /** Only a configured embedding port gives embed-backfill work to do. */
   readonly embedding_configured: boolean;
-}
-
-interface PendingWork {
-  readonly count: number;
-  /** What the count is made of, for the reason a rail is down. */
-  readonly detail: string;
 }
 
 /**
@@ -117,56 +113,56 @@ function retrievalOps(db: Database, limit: number, asOf: string): number {
   );
 }
 
+/** The creation time of the oldest unwritten live claim, scanned once per doctor pass. */
+const oldestUnwritten = new WeakMap<WorkContext, string | null>();
+
+/**
+ * Sync work: sources no run has reached, and, with a bound model, the
+ * extract backlog and unwritten claims. Counting unwritten claims scans every
+ * live claim, so a caller that judges many past instants gets a 0/1 answer
+ * from one scan of the oldest unwritten claim instead.
+ */
+export function syncPendingWork(context: WorkContext, limit: number, asOf: string): PendingWork {
+  const { db } = context;
+  const parts: [string, number][] = [["due sources", dueSources(db, limit, asOf)]];
+  if (context.model_configured) {
+    parts.push(["extract backlog", extractBacklog(db, Math.min(limit, EXTRACT_BACKLOG_CAP), asOf)]);
+    let unwritten: number;
+    if (asOf === NOW) unwritten = countUnwrittenLiveClaims(db, asOf);
+    else {
+      if (!oldestUnwritten.has(context)) oldestUnwritten.set(context, oldestUnwrittenLiveClaimAt(db));
+      const since = oldestUnwritten.get(context) ?? null;
+      unwritten = since !== null && since <= asOf ? 1 : 0;
+    }
+    parts.push(["unwritten claims", unwritten]);
+  }
+  return summarize(parts);
+}
+
+export function retrievalPendingWork(context: WorkContext, limit: number, asOf: string): PendingWork {
+  return summarize([["pending retrieval ops", retrievalOps(context.db, limit, asOf)]]);
+}
+
+/** The rail reports its own backlog on each receipt; the ledger has none. */
+export function embedPendingWork(context: WorkContext): PendingWork | null {
+  return context.embedding_configured ? { count: 0, detail: "" } : null;
+}
+
 /**
  * Work waiting for a rail at `asOf`, up to `limit`, or null for a rail that
- * runs on a schedule and has no backlog to work down. Schedule-driven rails
- * (brief, journal-prune, doctor-sweep, purge-sweep, and embed-backfill with no
+ * runs on a schedule and has no backlog to work down. Such rails (brief,
+ * journal-prune, doctor-sweep, purge-sweep, and embed-backfill with no
  * embedding port) are judged by staleness and failure only: a run that changes
  * nothing is their normal outcome.
- *
- * Counting unwritten claims scans every live claim. A caller that judges many
- * past instants passes `unwrittenSince`, the creation time of the oldest
- * unwritten claim (one scan), and gets the same answer as a 0/1 count.
  */
 export function pendingWork(
   context: WorkContext,
   rail: RailId,
   limit: number,
   asOf: string = NOW,
-  unwrittenSince?: string | null,
 ): PendingWork | null {
-  const { db } = context;
-  switch (rail) {
-    case "sync": {
-      const parts: [string, number][] = [
-        ["due sources", dueSources(db, limit, asOf)],
-      ];
-      if (context.model_configured) {
-        parts.push([
-          "extract backlog",
-          extractBacklog(db, Math.min(limit, EXTRACT_BACKLOG_CAP), asOf),
-        ]);
-        parts.push([
-          "unwritten claims",
-          unwrittenSince === undefined
-            ? countUnwrittenLiveClaims(db, asOf)
-            : unwrittenSince !== null && unwrittenSince <= asOf
-              ? 1
-              : 0,
-        ]);
-      }
-      return summarize(parts);
-    }
-    case "retrieval-sweep":
-      return summarize([
-        ["pending retrieval ops", retrievalOps(db, limit, asOf)],
-      ]);
-    case "embed-backfill":
-      // The rail reports its own backlog on each receipt; the ledger has none.
-      return context.embedding_configured ? { count: 0, detail: "" } : null;
-    default:
-      return null;
-  }
+  const definition = railDefinition(rail);
+  return definition?.expects_output === true ? definition.doctor(context, limit, asOf) : null;
 }
 
 function summarize(parts: readonly [string, number][]): PendingWork {
@@ -291,11 +287,6 @@ export function railDoctor(
   let empty = 0;
   let streakStart: string | null = null;
   if (workNow !== null) {
-    // One scan for the oldest unwritten claim answers every run's as-of check.
-    const unwrittenSince =
-      rail === "sync" && context.model_configured
-        ? oldestUnwrittenLiveClaimAt(context.db)
-        : undefined;
     // The verdict needs EMPTY_STREAK; twice that reports "at least" without
     // walking a whole window of receipts.
     for (
@@ -314,8 +305,7 @@ export function railDoctor(
       // or backlog the run itself reported.
       const hadWork =
         receipt.retrieval.pending_ops > 0 ||
-        (pendingWork(context, rail, 1, receipt.started_at, unwrittenSince)
-          ?.count ?? 0) > 0;
+        (pendingWork(context, rail, 1, receipt.started_at)?.count ?? 0) > 0;
       if (!hadWork) break;
       empty += 1;
       streakStart = receipt.finished_at;
@@ -353,7 +343,7 @@ export function railDoctor(
     const why = runErrors(last)[0];
     reason = cap(`last run failed${why === undefined ? "" : `: ${why}`}`);
   } else if (
-    rail !== "doctor-sweep" &&
+    railDefinition(rail)?.degrades_on_findings !== true &&
     !stale &&
     badRuns.length >= DEGRADED_STREAK
   ) {

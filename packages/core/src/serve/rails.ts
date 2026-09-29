@@ -7,7 +7,7 @@ import type { Database } from "bun:sqlite";
 import { skipCaptureFanoutClaims } from "../claims/capture-fanout";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
-import type { BudgetTracker } from "../canon/budget";
+import { BudgetExhausted, type BudgetTracker } from "../canon/budget";
 import type { ProducerPort } from "../contracts/producer";
 import type { ProducerV2Port } from "../contracts/producer-v2";
 import { inspectPurgeHealth, listPurgeRecoveryReceipts, resumePurge } from "../ledger/purge";
@@ -18,20 +18,22 @@ import { embedBackfillPeriod, loadServeConfig } from "./config";
 import { composeBrief, repairBriefPages, type BriefRepair } from "./brief";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { inspectServeDoctor } from "./doctor";
-import { createFileNotifier, briefPath } from "./notifier-file";
+import { createFileNotifier } from "./notifier-file";
 import { CAPTURE_REPAIR_RECEIPT_PENDING, stageCaptureRepairReceipt, coalesceNoopReceipt, recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
-import { applyRailPeriod, initServe, listSchedules } from "./schema";
+import { applyRailPeriod, initServe } from "./schema";
+import { railDefinition, railSchedules, seedRailSchedules } from "./rail-registry";
+import type { RailRunContext } from "./rail-definition";
 import {
   InjectedCrash,
+  ServeDaemonError,
   emptyRunTotals,
   type CrashPoint,
-  type ExtractionConfig,
   type RailId,
   type RunReceipt,
   type RunExecution,
 } from "./types";
 import { runWritePass } from "./write-pass";
-import { LegacyExtractReconciliationError, requireAtomicExtractReplay } from "./extract";
+import { LegacyExtractReconciliationError } from "./extract";
 
 export interface RailSyncResult {
   readonly events_synced: number;
@@ -74,7 +76,7 @@ export interface RailHooksV2 extends RailHooksBase {
   readonly producer?: ProducerPort | ProducerV2Port;
 }
 
-type AnyRailHooks = RailHooks | RailHooksV2;
+export type AnyRailHooks = RailHooks | RailHooksV2;
 
 /** One host binding, owned and released by exactly one rail attempt. */
 export interface RailRuntime {
@@ -139,7 +141,7 @@ function nextHourUtc(now: string, hour: number): string {
 
 export function dueRails(db: Database, now: string): RailId[] {
   const due: RailId[] = [];
-  for (const schedule of listSchedules(db)) {
+  for (const schedule of railSchedules(db)) {
     if (!schedule.enabled) continue;
     if (schedule.next_run_at === null || schedule.next_run_at <= now) {
       due.push(schedule.rail);
@@ -148,16 +150,8 @@ export function dueRails(db: Database, now: string): RailId[] {
   return due;
 }
 
-async function runSyncRail(
-  db: Database,
-  vaultPath: string,
-  budget: BudgetTracker,
-  extraction: ExtractionConfig,
-  hooks: AnyRailHooks | undefined,
-  runId: string,
-  now: () => string,
-  stopRequested: (() => boolean) | undefined,
-): Promise<Partial<RunReceipt>> {
+export async function runSyncRail(context: RailRunContext): Promise<Partial<RunReceipt>> {
+  const { db, vault_path: vaultPath, budget, hooks, run_id: runId, now, stop_requested: stopRequested } = context;
   const synced =
     hooks?.sync === undefined
       ? {
@@ -170,7 +164,7 @@ async function runSyncRail(
       : await hooks.sync();
   const written = await runWritePass(db, vaultPath, {
     budget,
-    extraction,
+    extraction: context.config.extraction,
     ...(stopRequested === undefined ? {} : { stopRequested }),
     run_id: runId,
     now,
@@ -226,10 +220,14 @@ async function refreshDerivedOnce(hooks: AnyRailHooks | undefined): Promise<Rail
   }
 }
 
-async function runRetrievalSweep(
-  db: Database,
-  hooks: AnyRailHooks | undefined,
-): Promise<Partial<RunReceipt>> {
+export async function runRetrievalSweep(context: RailRunContext): Promise<Partial<RunReceipt>> {
+  const { db, hooks } = context;
+  if (inspectCanonRecovery(db).projection_pending > 0) {
+    const result = await retryCanonProjectionObligations({ db, vault_path: context.vault_path,
+      ...(hooks?.claims?.retrieval === undefined ? {} : { retrieval: hooks.claims.retrieval }),
+    });
+    if (result.pending > 0) throw new Error("canon projection recovery pending");
+  }
   // Catch-up does not depend on a claims port, so it runs either way.
   const refreshed = await refreshDerivedOnce(hooks);
   const ops =
@@ -252,12 +250,8 @@ async function runRetrievalSweep(
   };
 }
 
-async function runPurgeSweep(
-  db: Database,
-  vaultPath: string,
-  hooks: AnyRailHooks | undefined,
-  now: string,
-): Promise<Partial<RunReceipt>> {
+export async function runPurgeSweep(context: RailRunContext): Promise<Partial<RunReceipt>> {
+  const { db, vault_path: vaultPath, hooks, started_at: now } = context;
   const pending = listPurgeRecoveryReceipts(db);
   let removals = 0;
   const errors: string[] = [];
@@ -284,12 +278,8 @@ async function runPurgeSweep(
   };
 }
 
-async function runEmbedBackfill(
-  db: Database,
-  vaultPath: string,
-  now: string,
-  hooks: AnyRailHooks | undefined,
-): Promise<Partial<RunReceipt>> {
+export async function runEmbedBackfill(context: RailRunContext): Promise<Partial<RunReceipt>> {
+  const { db, vault_path: vaultPath, hooks, started_at: now } = context;
   // Without an embedding port the rail backs off to a long period; configuring
   // one pulls the next run forward again.
   applyRailPeriod(db, "embed-backfill", embedBackfillPeriod(vaultPath), now);
@@ -316,12 +306,9 @@ function repairReport(repair: BriefRepair): Partial<RunReceipt> {
   };
 }
 
-async function runBrief(
-  db: Database,
-  vaultPath: string,
-  now: string,
-  modelRef: string | null,
-): Promise<Partial<RunReceipt>> {
+export async function runBrief(context: RailRunContext): Promise<Partial<RunReceipt>> {
+  const { db, vault_path: vaultPath, started_at: now } = context;
+  const modelRef = context.hooks?.model_ref ?? null;
   const notifier = createFileNotifier(vaultPath);
   const day = dayOf(now);
   const body = composeBrief(db, now, modelRef);
@@ -343,14 +330,8 @@ const SWEEP_FAILURES = 8;
  * service's supervisor can know, so an `ok` sweep never sits beside a failed
  * doctor. Its own degradation is not a rail fault: see `railDoctor`.
  */
-async function runDoctorSweep(
-  db: Database,
-  vaultPath: string,
-  hooks: AnyRailHooks | undefined,
-  now: string,
-  runId: string,
-  execution: RunExecution,
-): Promise<Partial<RunReceipt>> {
+export async function runDoctorSweep(context: RailRunContext): Promise<Partial<RunReceipt>> {
+  const { db, vault_path: vaultPath, hooks, started_at: now, run_id: runId, execution } = context;
   const health = inspectPurgeHealth(db, now);
   const recovery = inspectCanonRecovery(db);
   const doctor = inspectServeDoctor(db, vaultPath, {
@@ -400,14 +381,9 @@ function closeCaptureFanout(db: Database, vaultPath: string, now: string, runId:
   }
 }
 
-function runJournalPrune(
-  db: Database,
-  vaultPath: string,
-  now: string,
-  retentionDays: number,
-): Partial<RunReceipt> {
-  const cutoff = new Date(Date.parse(now) - retentionDays * 86_400_000).toISOString();
-  pruneRunReceipts(db, vaultPath, cutoff);
+export function runJournalPrune(context: RailRunContext): Partial<RunReceipt> {
+  const cutoff = new Date(Date.parse(context.started_at) - context.config.journal_retention_days * 86_400_000).toISOString();
+  pruneRunReceipts(context.db, context.vault_path, cutoff);
   return { status: "ok" };
 }
 
@@ -451,6 +427,8 @@ async function runRailImpl(
   rail: RailId,
   options: AnyRunRailOptions,
 ): Promise<RunReceipt> {
+  const definition = railDefinition(rail);
+  if (definition === undefined) throw new ServeDaemonError("unknown_rail", `no rail is registered as ${JSON.stringify(rail)}`);
   const runId = ulid();
   activeRuns.add(runId);
   try {
@@ -471,9 +449,10 @@ async function runRailImpl(
       }
       // A failed preflight may append this run's audit receipt only. In particular,
       // do not import older receipt/usage journals before validating a sync decision.
-      if (rail === "sync") requireAtomicExtractReplay(db);
+      definition.preflight?.(db);
       initServe(db);
-      if (rail !== "purge-sweep" && rail !== "doctor-sweep" && inspectCanonRecovery(db).pending) {
+      seedRailSchedules(db);
+      if (definition.recover_canon !== false && inspectCanonRecovery(db).pending) {
         // Writer-held mode: a held write blocks only new canon writes, so the
         // rails that ingest, index or prune keep running around it.
         try { recoverCanonWrites({ db, vault_path: vaultPath }); }
@@ -502,39 +481,16 @@ async function runRailImpl(
         catch { throw new Error("rail runtime acquisition failed"); }
       }
       hooks = withResolvedModel(runtime?.hooks ?? options.hooks);
-      if (rail === "retrieval-sweep" && inspectCanonRecovery(db).projection_pending > 0) {
-        const result = await retryCanonProjectionObligations({ db, vault_path: vaultPath,
-          ...(hooks?.claims?.retrieval === undefined ? {} : { retrieval: hooks.claims.retrieval }),
-        });
-        if (result.pending > 0) throw new Error("canon projection recovery pending");
-      }
-      switch (rail) {
-        case "sync":
-          partial = await runSyncRail(db, vaultPath, budget, config.extraction, hooks, runId, now, options.stopRequested);
-          break;
-        case "retrieval-sweep":
-          partial = await runRetrievalSweep(db, hooks);
-          break;
-        case "purge-sweep":
-          partial = await runPurgeSweep(db, vaultPath, hooks, started);
-          break;
-        case "embed-backfill":
-          partial = await runEmbedBackfill(db, vaultPath, started, hooks);
-          break;
-        case "brief":
-          partial = await runBrief(db, vaultPath, started, hooks?.model_ref ?? null);
-          break;
-        case "doctor-sweep":
-          partial = await runDoctorSweep(db, vaultPath, hooks, started, runId, execution);
-          break;
-        case "journal-prune":
-          partial = runJournalPrune(db, vaultPath, started, config.journal_retention_days);
-          break;
-      }
+      partial = await definition.run({
+        db, vault_path: vaultPath, run_id: runId, execution, started_at: started, now, config, budget, hooks,
+        stop_requested: options.stopRequested,
+      });
     } catch (error) {
       if (error instanceof InjectedCrash) { interrupted = true; throw error; }
-      partial = { status: "failed", errors: [redactReceiptError(error)],
-        ...(error instanceof LegacyExtractReconciliationError ? { stopped: error.code } : {}) };
+      partial = error instanceof BudgetExhausted
+        ? { status: "stopped", stopped: error.stopped }
+        : { status: "failed", errors: [redactReceiptError(error)],
+          ...(error instanceof LegacyExtractReconciliationError ? { stopped: error.code } : {}) };
     } finally {
       // Close before publication so failure cannot leave a successful receipt.
       // This also releases the binding before any journal persistence can fail.
@@ -586,7 +542,7 @@ async function runRailImpl(
     if (options.crashAfter === undefined && coalesceNoopReceipt(db, vaultPath, receipt)) return receipt;
     persistRunReceipt(db, vaultPath, receipt, {
       ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
-      ...(rail === "brief" ? { artifactPath: briefPath(vaultPath, dayOf(started)) } : {}),
+      ...(definition.artifact === undefined ? {} : { artifactPath: definition.artifact(vaultPath, dayOf(started)) }),
     });
     const published = getRunReceipt(db, runId);
     if (published === null) throw new Error("persisted run receipt unavailable");
@@ -609,7 +565,12 @@ export async function runServeOnce(
   vaultPath: string,
   options: AnyRunRailOptions & { rails?: RailId[] } = {},
 ): Promise<RunReceipt[]> {
-  const rails = options.rails ?? listSchedules(db).filter((row) => row.enabled).map((row) => row.rail);
+  if (options.rails === undefined) {
+    // A rail registered after the vault opened has no schedule row until it is seeded.
+    initServe(db);
+    seedRailSchedules(db);
+  }
+  const rails = options.rails ?? railSchedules(db).filter((row) => row.enabled).map((row) => row.rail);
   const receipts: RunReceipt[] = [];
   for (const rail of rails) {
     receipts.push(await runRailImpl(db, vaultPath, rail, options));

@@ -21,6 +21,7 @@ import { REDACTION_KINDS } from "../producer/scrub";
 import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-scope";
 import { pidAlive, readBootId } from "./leases";
 import { loadServeConfig } from "./config";
+import { isRailId, railDefinition } from "./rail-registry";
 import {
   DOCTOR_JOURNAL_TAIL_BYTES,
   InjectedCrash,
@@ -28,7 +29,6 @@ import {
   RUN_RECEIPT_JOURNAL_MAX_BYTES,
   RUN_RECEIPTS_PATH,
   emptyRunTotals,
-  isRailId,
   type CrashPoint,
   type RunReceipt,
   type RunExecution,
@@ -458,6 +458,12 @@ function redactReceipt(receipt: RunReceipt): RunReceipt {
   };
 }
 
+/** The UTC hour a rail's due slot is pinned to, or null for a rail that runs on a fixed period. */
+function slotHour(vaultPath: string, rail: string): number | null {
+  const pinned = railDefinition(rail)?.slot_hour;
+  return pinned === undefined ? null : pinned(loadServeConfig(vaultPath));
+}
+
 /** Attach the compare-and-advance intent for the rail's next due slot. */
 function withScheduleTransition(db: Database, vaultPath: string, receipt: RunReceipt): RunReceipt {
   if (!isRailId(receipt.rail)) return receipt;
@@ -465,7 +471,7 @@ function withScheduleTransition(db: Database, vaultPath: string, receipt: RunRec
   if (row === null) return receipt;
   const scheduled = receipt.execution?.trigger === "scheduled";
   const previous = row.next_run_at;
-  const briefHour = receipt.rail === "brief" ? loadServeConfig(vaultPath).brief_hour : null;
+  const briefHour = slotHour(vaultPath, receipt.rail);
   const next = nextScheduleSlot(scheduled ? receipt.execution!.due_at! : receipt.finished_at, row.period_s, briefHour);
   return { ...receipt, schedule_transition: { previous_due_at: previous, next_run_at: next, period_s: row.period_s, brief_hour: briefHour } };
 }
@@ -488,11 +494,11 @@ export function isNoopReceipt(receipt: RunReceipt): boolean {
  * Coalesce a scheduled no-op run into its rail's last no-op receipt: the schedule
  * still advances, but the journal gains a receipt only for the first idle run
  * after activity and then at most once per heartbeat. Returns true when the
- * receipt was not persisted. Manual and once runs, the brief (which writes a
- * page) and every non-idle run always persist.
+ * receipt was not persisted. Manual and once runs, a rail that writes an
+ * artifact (the brief's page) and every non-idle run always persist.
  */
 export function coalesceNoopReceipt(db: Database, vaultPath: string, receipt: RunReceipt): boolean {
-  if (receipt.rail === "brief" || receipt.execution?.trigger !== "scheduled" || !isNoopReceipt(receipt)) return false;
+  if (railDefinition(receipt.rail)?.artifact !== undefined || receipt.execution?.trigger !== "scheduled" || !isNoopReceipt(receipt)) return false;
   const row = db.query<{ report: string }, [string]>(
     "SELECT report FROM run_receipts WHERE rail = ? ORDER BY finished_at DESC, run_id DESC LIMIT 1",
   ).get(receipt.rail);
@@ -544,7 +550,7 @@ function applyScheduleTransition(db: Database, vaultPath: string, receipt: RunRe
   if (transition === undefined) return; // Legacy records have no recoverable slot intent.
   if (!isRailId(receipt.rail) || parseTransition(transition) === undefined) throw new Error("invalid receipt schedule transition");
   const row = db.query<{ period_s: number; next_run_at: string | null; last_run_at: string | null }, [string]>("SELECT period_s,next_run_at,last_run_at FROM schedules WHERE rail=?").get(receipt.rail);
-  const briefHour = receipt.rail === "brief" ? loadServeConfig(vaultPath).brief_hour : null;
+  const briefHour = slotHour(vaultPath, receipt.rail);
   const scheduled = receipt.execution?.trigger === "scheduled";
   if (row === null || row.period_s !== transition.period_s || briefHour !== transition.brief_hour ||
       (scheduled && transition.previous_due_at !== null && transition.previous_due_at !== receipt.execution!.due_at) ||

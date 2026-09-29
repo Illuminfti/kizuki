@@ -21,7 +21,7 @@ import { readServeIntent } from "./intent";
 import { serviceFile } from "./service-files";
 import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readEmbeddingReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
 import { sha256Hex } from "../util/hash";
-import { listSchedules } from "./schema";
+import { listRails, railSchedules } from "./rail-registry";
 import { countOversizedRecords, RETRY_SKIPPED_COMMAND } from "./extract-oversized";
 import type { SupervisorHost } from "./supervisor";
 import { queryServeService } from "./supervisor";
@@ -29,7 +29,6 @@ import { ensureVaultId } from "./vault-id";
 import {
   CALIBRATION_BAND,
   CONFIDENCE_SPREAD_MIN,
-  DEFAULT_RAILS,
   DOCTOR_RAIL_RECEIPTS,
   DOCTOR_SKIPPED_PAGES,
   DOCTOR_SYNC_RECEIPTS,
@@ -504,7 +503,7 @@ export function inspectServeDoctor(
   const since = new Date(Date.parse(now) - RUN_RECEIPT_RETENTION_DAYS * 86_400_000).toISOString();
   const hostChecks = options.host_checks !== false;
   const expectLive = hostChecks && expectRailLiveness(intent, supervisor);
-  const schedules = new Map(listSchedules(db).map((row) => [row.rail, row]));
+  const schedules = new Map(railSchedules(db).map((row) => [row.rail, row]));
   const config = loadServeConfig(vaultPath);
   const embedding = loadEmbeddingSelection(vaultPath);
   const modelRef = options.model_ref ?? null;
@@ -515,15 +514,16 @@ export function inspectServeDoctor(
   const syncHistory = readModelRunHistory(db, since, DOCTOR_SYNC_RECEIPTS);
   const syncReceipts = syncHistory.receipts.filter((receipt): receipt is RunReceipt => receipt !== null);
   const work = { db, model_configured: modelConfigured, embedding_configured: options.embedding_configured ?? embedding.state === "configured" };
-  const rails = DEFAULT_RAILS.map((spec) => railDoctor(
-    spec.rail,
-    spec.rail === "sync" ? syncReceipts : listRunReceipts(db, { rail: spec.rail, since, limit: DOCTOR_RAIL_RECEIPTS }),
-    schedules.get(spec.rail)?.period_s ?? spec.period_s,
+  const rails = listRails().map((rail) => railDoctor(
+    rail.id,
+    // The model, calibration and throughput sections read the same sync receipts.
+    rail.id === "sync" ? syncReceipts : listRunReceipts(db, { rail: rail.id, since, limit: DOCTOR_RAIL_RECEIPTS }),
+    schedules.get(rail.id)?.period_s ?? rail.period_s,
     now,
     expectLive,
     syncPassWait(config.extraction),
     work,
-    schedules.get(spec.rail)?.last_run_at ?? null,
+    schedules.get(rail.id)?.last_run_at ?? null,
   ));
   const usedToday = syncReceipts
     .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
