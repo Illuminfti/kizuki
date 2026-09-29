@@ -65,6 +65,9 @@ describe("option schema", () => {
     expect(topic?.schema).toBe(AGENT_REVOKE_SCHEMA);
     expect([...AGENT_REVOKE_SCHEMA.options]).toEqual([]);
     expect([...AGENT_REVOKE_SCHEMA.flags]).toEqual(["--json"]);
+    expect(lookupCommandHelp("agent", ["grant"])?.usage).toBe("agent grant NAME --grant FILE --operation-id ID [--json]");
+    expect(lookupCommandHelp("agent", ["list"])?.usage).toBe("agent list [--json]");
+    expect(lookupCommandHelp("agent", ["constructor"])).toBeUndefined();
     expect(lookupCommandHelp("agent", ["add"])).toBeUndefined();
     expect(lookupCommandHelp("agent", ["revoke", "extra"])).toBeUndefined();
     expect(lookupCommandHelp("agent", [])).toBeUndefined();
