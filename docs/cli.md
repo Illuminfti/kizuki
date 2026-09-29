@@ -741,6 +741,10 @@ connection. A connection that is not exhausted stops at its committed cursor,
 the run receipt carries `has_more`, the write pass and the derived refresh still
 run, and the next pass resumes there, so a large first backfill does not hold
 the other rails; `serve stop` and SIGTERM end the pass within one batch.
+Records with no text, no letter or digit, or fewer than 12 letters and digits
+are passed over before any model request and counted by reason in the receipt's
+`records_prefiltered`; see
+[records with nothing to extract](extraction-budgets.md#records-with-nothing-to-extract).
 
 A record too large for one typed request is extracted one segment per request.
 One that cannot be split, such as a single token longer than a request, is

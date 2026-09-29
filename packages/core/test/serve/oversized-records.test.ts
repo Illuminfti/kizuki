@@ -331,8 +331,9 @@ test("a record without text is passed over without a request instead of refusing
   const [e0, , e2] = f.eventIds as [string, string, string];
   const model = segmentModelProducer(f.vault);
   const receipt = await sync(f, model.producer);
-  expect(model.requests.map((request) => request.event_ids)).toEqual([[e0], [e2]]);
-  expect(receipt).toMatchObject({ status: "ok", errors: [], claims_extracted: 2 });
+  // The prefilter passes the empty record over, so its neighbours share one request.
+  expect(model.requests.map((request) => request.event_ids)).toEqual([[e0, e2]]);
+  expect(receipt).toMatchObject({ status: "ok", errors: [], claims_extracted: 2, records_prefiltered: { empty: 1 } });
   expect(receipt.oversized).toBeUndefined();
   expect(endsAt(readExtractCursor(f.db), e2)).toBe(true);
   expect(oversizedRows(f.db)).toEqual([]);

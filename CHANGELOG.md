@@ -413,6 +413,15 @@
   pass within one batch and skip the derived refresh until the next start.
   `kizuki sync [connector]` and `kizuki backfill` still drain to exhaustion;
   `kizuki sync --once` takes the rail's slice.
+- Extraction skips records with nothing to extract before any model request:
+  no text at all (`empty`), no letter or digit (`no_words`, such as emoji or
+  punctuation) and fewer than 12 letters and digits (`too_short`; each Han,
+  kana or hangul character counts four). The cursor moves past them, they are
+  not deferred, and the run receipt counts them by reason in
+  `records_prefiltered`. Such a step makes no request and no longer uses one of
+  the pass's `max_calls_per_pass` steps, so a chat backfill of short messages
+  passes over thousands per pass, still bounded by `max_pass_seconds`. The
+  records stay in the ledger for search, timeline and context.
 
 ## 1.0.2 (2026-09-24)
 

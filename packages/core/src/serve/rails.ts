@@ -229,6 +229,7 @@ async function runSyncRail(
     claims_superseded: written.claims_superseded,
     claims_rejected: written.claims_rejected,
     records_skipped: written.records_skipped,
+    ...(Object.keys(written.records_prefiltered).length === 0 ? {} : { records_prefiltered: written.records_prefiltered }),
     canon_writes: written.canon_writes,
     model: { ...written.model, model_ref: hooks?.model_ref ?? null },
     ...(written.oversized.segments + written.oversized.skipped === 0 ? {} : { oversized: written.oversized }),

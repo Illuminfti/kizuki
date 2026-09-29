@@ -221,6 +221,11 @@ export interface RunReceipt {
    * or rejected on their own twice in a row. Absent on older receipts.
    */
   readonly records_skipped?: number;
+  /**
+   * Records extraction passed over before any model request because they carry
+   * no extractable content, counted by reason. Absent when none were.
+   */
+  readonly records_prefiltered?: Readonly<Record<string, number>>;
   /** Daemon-written brief pages the brief or doctor-sweep rail rewrote to pass the page schema. Absent when none. */
   readonly pages_repaired?: number;
   /** Capture notes of conversational events the doctor-sweep closed out as skipped. Absent when none. */

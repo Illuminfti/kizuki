@@ -73,7 +73,8 @@ A value outside its range, a fraction or a string keeps that key's default.
   purged, or the model is unavailable. Steps that make no request, such as
   advancing over records a source grant does not cover or skipping a record,
   still count toward the limit, so the default pass is the same single step as
-  before.
+  before. The exception is a step that only passes over records with nothing
+  to extract; see [records with nothing to extract](#records-with-nothing-to-extract).
 - **Time per pass.** Once `max_pass_seconds` have passed, the pass starts no
   further step; the request in flight finishes and is filed, and the next pass
   resumes from the cursor. Rails run one at a time, so this bounds how long a
@@ -144,6 +145,31 @@ decision whose previous cursor must equal the committed one. Concurrent
 requests would have to be planned against state that does not exist yet and
 thrown away whenever an earlier request fails, and filing would no longer
 follow a single order.
+
+## Records with nothing to extract
+
+Before it plans a request, the loop passes over records a model could not turn
+into a claim. The check is deterministic and looks only at the record's text:
+
+| Reason | Record |
+| --- | --- |
+| `empty` | No text at all, such as an attachment or a service notice on its own. |
+| `no_words` | Text with no letter or digit, such as emoji or punctuation. |
+| `too_short` | Fewer than 12 letters and digits, such as `ok`, `thanks!` or `12:30`. Each Han, kana or hangul character counts four. |
+
+The cursor moves past such a record without a request, and it is not queued
+for later the way a record a source grant does not yet cover is. The pass's
+run receipt counts them by reason in `records_prefiltered`, and only for
+records its committed cursor passed: a step that reads more records than one
+request takes counts the rest when a later step passes them. The ledger keeps
+every record, so search, timeline, context and a source purge are unaffected.
+
+A step that only passes over such records makes no request, so it does not use
+one of the `max_calls_per_pass` steps, and a pass keeps going through them
+until it reaches a record worth a request, the end of the ledger, a stop
+request or `max_pass_seconds`. A chat backfill of short messages therefore
+costs no model calls and moves at the speed of the ledger, not one step per
+pass. The rule is fixed in the build; there is no setting for it.
 
 ## Rejected responses and daily budgets
 
