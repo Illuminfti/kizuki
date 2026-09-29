@@ -4,7 +4,7 @@ import { COMMANDS } from "./commands/index";
 import type { CliIo, Command } from "./commands/index";
 import { printCommandHelp, printRootHelp, usageLines } from "./help";
 import { lookupCommandHelp } from "./option-schema";
-import { errorText } from "./output";
+import { errorText, writeAll } from "./output";
 import { createInterface } from "node:readline/promises";
 import {
   isRetiredOwnerGateVerb,
@@ -155,10 +155,10 @@ async function dispatch(argv: string[]): Promise<number> {
     stdoutIsTTY: process.stdout.isTTY === true,
     stderrIsTTY: process.stderr.isTTY === true,
     out(line) {
-      process.stdout.write(`${line}\n`);
+      writeAll(1, `${line}\n`);
     },
     err(line) {
-      process.stderr.write(`${line}\n`);
+      writeAll(2, `${line}\n`);
     },
     async readStdin(maxBytes) {
       if (process.stdin.isTTY === true) return "";
@@ -276,10 +276,10 @@ if (import.meta.main) {
     process.exit(await dispatch(Bun.argv.slice(2)));
   } catch (error) {
     if (error instanceof UsageError) {
-      process.stderr.write(`error: ${error.message}\nusage: kizuki <verb> [options]\n`);
+      writeAll(2, `error: ${error.message}\nusage: kizuki <verb> [options]\n`);
       process.exit(2);
     } else {
-      process.stderr.write(`error: ${errorText(error)}\n`);
+      writeAll(2, `error: ${errorText(error)}\n`);
       process.exit(1);
     }
   }
