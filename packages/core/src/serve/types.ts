@@ -14,6 +14,7 @@ export const SERVE_INTENT_PATH = ".kizuki/serve-intent";
 export const VAULT_ID_PATH = ".kizuki/vault-id";
 export const SERVE_PID_PATH = ".kizuki/serve.pid";
 export const SERVE_TOKEN_PATH = ".kizuki/serve.token";
+export const SERVE_ENDPOINT_PATH = ".kizuki/serve.endpoint";
 
 export const HEARTBEAT_SECONDS = 10;
 export const LEASE_RECLAIM_HEARTBEATS = 3;

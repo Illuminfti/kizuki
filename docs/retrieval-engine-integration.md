@@ -102,7 +102,11 @@ Current `context_packet` can accept optional `hooks` naming `session_start`,
 `lifecycle.mode=pull_only` and lists every requested hook as unsupported. It
 does not implement, qualify, or invent host hooks, compaction recovery, or
 session-end capture. Omitting `hooks` keeps the previous packet data shape.
-This is not L06, MI-01, or Stage A completion.
+This is not L06, MI-01, or Stage A completion. The separate CLI command
+`kizuki hook session-start` is a client-side adapter that pulls one session
+packet at session start for harnesses that document a SessionStart hook; it
+does not change this negotiation, add turn or compaction hooks, or qualify any
+client version. See [integrations](integrations.md).
 
 Stage one reuses current context packets and enrollment without waiting for the
 whole world model. Stage two consumes #489/#490 after their contracts are

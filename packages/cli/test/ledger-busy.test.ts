@@ -47,7 +47,7 @@ test("import and query both complete while another writer holds the ledger", asy
   const setup = tempVault();
   const holder = await holdWriteLock(setup.vault, 1_500);
   try {
-    const [imported, queried] = await Promise.all([
+    const [imported, firstQuery] = await Promise.all([
       runCliAsync(
         setup.env,
         "import",
@@ -59,9 +59,15 @@ test("import and query both complete while another writer holds the ledger", asy
       runCliAsync(setup.env, "query", "kernel", "--degraded"),
     ]);
     expect(imported.stderr).not.toContain("database is locked");
+    expect(firstQuery.stderr).not.toContain("database is locked");
+    expect(imported.exitCode, imported.stderr).toBe(0);
+    // A query that overlaps the import's own consent write is told to retry; that refusal is the contract, a lock error is not.
+    const queried =
+      firstQuery.exitCode !== 0 && firstQuery.stderr.includes("changed during request; retry")
+        ? await runCliAsync(setup.env, "query", "kernel", "--degraded")
+        : firstQuery;
     expect(queried.stderr).not.toContain("database is locked");
-    expect(imported.exitCode).toBe(0);
-    expect(queried.exitCode).toBe(0);
+    expect(queried.exitCode, queried.stderr).toBe(0);
   } finally {
     await holder.release();
   }

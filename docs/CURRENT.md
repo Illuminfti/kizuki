@@ -56,6 +56,13 @@ discovery says so and points at `kizuki doctor`. Discovery and cards report
 run, or has unconsumed extraction backlog; label search is case-insensitive
 and paginated by cursor.
 
+A default session context packet starts with `owner`, `now`, `commitments`
+and `uncertain` sections read from authorized claims and Situations, each empty
+with an explicit reason when the data does not exist. `kizuki hook
+session-start` delivers that packet to Claude Code, Codex or any command-running
+harness at session start and prints nothing on any failure; see
+[integrations](integrations.md).
+
 The public CLI including `app`, a Linux x64 baseline local native package, file ingest, FTS
 query, doctor, tell/undo/audit, serve loopback, context packets, and MCP stdio
 adapter. Capture never writes canon. Local files and exports are enrollable;

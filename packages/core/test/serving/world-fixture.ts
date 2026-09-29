@@ -8,6 +8,7 @@ import { WORLD_ADMISSION_SCHEMA } from "../../src/contracts/world-admission";
 import { registerConnection } from "../../src/ledger/connections";
 import { accept } from "../../src/ledger/ledger";
 import { setSourceGrant } from "../../src/ledger/source-grants";
+import type { SourcePurpose } from "../../src/ledger/source-grants";
 import { readWorldView } from "../../src/serving/world-view";
 import { seedConnectorSensitivity } from "../../src/sensitivity/store";
 import { ulid } from "../../src/util/ulid";
@@ -25,6 +26,7 @@ export async function worldFixture(
     perspectiveEvidence?: boolean;
     retrieval?: RetrievalPort;
     occurrence?: boolean;
+    purposes?: SourcePurpose[];
   } = {},
 ) {
   const sourceKey = options.sourceKey ?? ulid(),
@@ -47,7 +49,7 @@ export async function worldFixture(
       expected_revision: 0,
       operation_id: `grant-${sourceKey}`,
       policy: {
-        purposes: ["capture", "derive", "recall", "correction", "export"],
+        purposes: options.purposes ?? ["capture", "derive", "recall", "correction", "export"],
         allowed_fields: ["text", "subjects", "metadata", "attachments"],
         retention: "persistent_owned_until_revoked",
         egress: "local_only",

@@ -25,7 +25,7 @@ import {
 import { ENTITY_TYPES } from "./entities";
 import { collectAuthorizedTimeline } from "./ledger";
 import { retrievalCandidates, retrievalGraphCandidates } from "./retrieval";
-import type { PacketSection } from "./sections";
+import type { PacketSection, SessionSection } from "./sections";
 import type { CanonChunk, QuotedChunk, ServeContext } from "./types";
 
 const CANON_EXCERPT = 600;
@@ -107,7 +107,7 @@ export function boundCanonAtom(
 }
 
 /** Keep every claim-controlled scalar on its stamped line. */
-function inline(value: string): string {
+export function inline(value: string): string {
   return JSON.stringify(value).slice(1, -1).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
 
@@ -115,9 +115,22 @@ function confidenceLabel(value: number): string {
   return value.toFixed(2);
 }
 
+/** One stamped working-knowledge line; every claim-controlled scalar stays escaped. */
+export function claimLine(claim: Claim): string {
+  const object = claim.object ?? "";
+  return (
+    `- [claim:${inline(claim.claim_id)}] c=${confidenceLabel(claim.confidence)}` +
+    ` s=${claim.sensitivity} taint=${claim.taint} auth=${claim.authority} status=${claim.status}` +
+    ` polarity=${claim.polarity} valid_from=${inline(claim.valid_from)} valid_to=${inline(claim.valid_to ?? "null")}` +
+    ` :: ${inline(claim.subject ?? "-")} ${inline(claim.predicate ?? "-")} ${JSON.stringify(object)}\n`
+  );
+}
+
 /** One renderable unit of a packet, with the chunk the envelope reports. */
 export interface Piece {
-  section: PacketSection;
+  section: PacketSection | SessionSection;
+  /** Explains an empty session section; served by no count. */
+  placeholder?: true;
   heading: string;
   block: string;
   canon?: CanonChunk;
@@ -160,7 +173,7 @@ function loadWorkingClaims(db: Database, wanted: string[] | undefined, canRead: 
   return out;
 }
 
-function loadSubjectConflicts(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean) {
+export function loadSubjectConflicts(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean) {
   if (wanted === undefined || wanted.length === 0) {
     return listLiveConflicts(db, { limit: 8, canRead });
   }
@@ -176,7 +189,7 @@ function loadSubjectConflicts(db: Database, wanted: string[] | undefined, canRea
   return out;
 }
 
-function loadSubjectGaps(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean) {
+export function loadSubjectGaps(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean) {
   if (wanted === undefined || wanted.length === 0) {
     return listValidityGaps(db, { limit: 8, canRead });
   }
@@ -375,16 +388,10 @@ export async function collectPieces(
     const reader = claimReader(ctx.db, grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
     const live = loadWorkingClaims(ctx.db, wanted, reader.canRead);
     for (const claim of live) {
-      const object = claim.object ?? "";
-      const line =
-        `- [claim:${inline(claim.claim_id)}] c=${confidenceLabel(claim.confidence)}` +
-        ` s=${claim.sensitivity} taint=${claim.taint} auth=${claim.authority} status=${claim.status}` +
-        ` polarity=${claim.polarity} valid_from=${inline(claim.valid_from)} valid_to=${inline(claim.valid_to ?? "null")}` +
-        ` :: ${inline(claim.subject ?? "-")} ${inline(claim.predicate ?? "-")} ${JSON.stringify(object)}\n`;
       pieces.push({
         section: "claims",
         heading: "## working knowledge",
-        block: line,
+        block: claimLine(claim),
         audit: reader.auditClaim(claim.claim_id),
       });
     }
