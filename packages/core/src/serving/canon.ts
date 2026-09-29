@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+import type { Database } from "bun:sqlite";
 import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
 import { canonPageRecoveryPending, canonReadGeneration } from "../canon/write-intent";
 import { authorize, sensitivity } from "../agents";
@@ -7,12 +9,15 @@ import { canonAuthorities } from "../canon/authority";
 import { purgeDiscoveryPending } from "../derived-holds";
 import { eventIdFromReference } from "../retrieval/ids";
 import { isHeld, readHolds } from "../ledger/purge";
+import { tableExists } from "../ledger/schema";
 import {
+  createCanonPageCache,
   fatalCanonSkips,
   isLiveCanonPage,
   listCanonPagesReport,
   stringArray,
 } from "../vault/pages";
+import type { CanonPageCache } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
 import { assessLivePageEvidence, type LivePageEvidence } from "../vault/provenance";
 import { PAGE_TAINTS } from "../vault/schema";
@@ -64,7 +69,71 @@ export class CanonUnreadableError extends Error {
 }
 
 /**
- * One vault walk and one hold read per served call. A page that cannot be
+ * What one adapter process remembers about one vault between served calls: the
+ * parsed pages, and the authority each page's bytes resolved to under one
+ * state of the receipt history. Both are validated on every call, so a canon
+ * write, an edit on disk or a purge is visible to the next call.
+ */
+interface VaultMemo {
+  pages: CanonPageCache;
+  authorityStamp: string;
+  authority: Map<string, { contentHash: string; tier: AuthorityTier }>;
+}
+
+/** A process serves one vault; a few more cover tests and multi-vault hosts. */
+const MEMO_VAULTS = 4;
+const memos = new Map<string, VaultMemo>();
+
+function vaultMemo(vaultPath: string): VaultMemo {
+  const key = resolve(vaultPath);
+  const known = memos.get(key);
+  if (known !== undefined) return known;
+  if (memos.size >= MEMO_VAULTS) memos.delete(memos.keys().next().value!);
+  const created: VaultMemo = { pages: createCanonPageCache(), authorityStamp: "", authority: new Map() };
+  memos.set(key, created);
+  return created;
+}
+
+/**
+ * The receipt history a page's authority is resolved from. Every canon write,
+ * recovery, withdrawal and purge advances the read generation; the counts
+ * additionally cover history that arrives without it.
+ */
+function receiptStamp(db: Database): string {
+  const receipts = db
+    .query<{ n: number; head: number }, []>("SELECT count(*) AS n, coalesce(max(rowid), 0) AS head FROM canon_receipts")
+    .get()!;
+  const purges = db.query<{ n: number }, []>("SELECT count(*) AS n FROM event_purges").get()!.n;
+  const lineage = tableExists(db, "canon_source_survivor_lineage")
+    ? db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_source_survivor_lineage").get()!.n
+    : 0;
+  return `${canonReadGeneration(db)}:${receipts.n}:${receipts.head}:${purges}:${lineage}`;
+}
+
+/** Resolves only the pages whose bytes, or the receipt history, changed since the last call. */
+function resolveAuthorities(db: Database, memo: VaultMemo, pages: readonly CanonPage[]): Map<string, AuthorityTier> {
+  const stamp = receiptStamp(db);
+  if (memo.authorityStamp !== stamp) {
+    memo.authority = new Map();
+    memo.authorityStamp = stamp;
+  }
+  const stale = pages.filter((page) => memo.authority.get(page.relPath)?.contentHash !== page.contentHash);
+  const resolved = stale.length === 0 ? new Map<string, AuthorityTier>() : canonAuthorities(db, stale);
+  // Rebuilt from the current pages, so a deleted page's entry does not linger.
+  const next = new Map<string, { contentHash: string; tier: AuthorityTier }>();
+  const tiers = new Map<string, AuthorityTier>();
+  for (const page of pages) {
+    const tier = resolved.get(page.relPath) ?? memo.authority.get(page.relPath)!.tier;
+    next.set(page.relPath, { contentHash: page.contentHash, tier });
+    tiers.set(page.relPath, tier);
+  }
+  memo.authority = next;
+  return tiers;
+}
+
+/**
+ * One vault walk and one hold read per served call; a file the walk finds
+ * unchanged is not read again (see `VaultMemo`). A page that cannot be
  * read, parsed, or uniquely identified makes the whole read refuse: serving
  * a silently short list would under-report canon without anyone noticing.
  * Schema-invalid and oversized files are withheld and reported by doctor.
@@ -72,7 +141,8 @@ export class CanonUnreadableError extends Error {
 export function loadCanon(ctx: ServeContext): CanonIndex {
   const generation = canonReadGeneration(ctx.db);
   assertCanonReadAdmission(ctx);
-  const report = listCanonPagesReport(ctx.vaultPath);
+  const memo = vaultMemo(ctx.vaultPath);
+  const report = listCanonPagesReport(ctx.vaultPath, memo.pages);
   const fatal = fatalCanonSkips(report.skipped);
   if (fatal.length > 0) {
     throw new CanonUnreadableError(fatal);
@@ -92,7 +162,7 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
     byId,
     byPath,
     holds: new Set(readHolds(ctx.db).map((hold) => hold.page_path)),
-    authority: canonAuthorities(ctx.db, report.pages),
+    authority: resolveAuthorities(ctx.db, memo, report.pages),
   };
 }
 

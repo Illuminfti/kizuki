@@ -36,6 +36,38 @@ export interface SkippedPage {
   code: ScanFailureCode;
 }
 
+/**
+ * What a walk learned from one file's bytes, remembered against the file's
+ * stat signature so an unchanged file is not read and parsed again.
+ */
+interface ParsedFile {
+  signature: string;
+  contentHash: string;
+  data: Record<string, unknown>;
+  body: string;
+  /** First schema error, so an unchanged file is not validated again. */
+  invalid: string | null;
+}
+
+/**
+ * A caller-owned memo of parsed pages for one vault. It is a speed-up only:
+ * a walk with and without it returns the same report.
+ */
+export interface CanonPageCache {
+  files: Map<string, ParsedFile>;
+}
+
+export function createCanonPageCache(): CanonPageCache {
+  return { files: new Map() };
+}
+
+/**
+ * A file changed within this window of being read may change again in the
+ * same filesystem timestamp tick and keep its size, which its stat signature
+ * cannot show. Such a file is read again on the next walk.
+ */
+const RACY_WINDOW_MS = 2_000;
+
 export interface CanonPageReport {
   pages: CanonPage[];
   skipped: SkippedPage[];
@@ -81,6 +113,9 @@ interface WalkState {
   files: number;
   bytes: number;
   truncated: boolean;
+  cache: CanonPageCache | null;
+  /** Files remembered by this walk; replaces the cache when the walk ends. */
+  remembered: Map<string, ParsedFile>;
 }
 
 function withholdDuplicate(
@@ -115,13 +150,17 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
   state.files += 1;
 
   let size: number;
+  let signature: string;
+  let changedMs: number;
   try {
-    const stat = lstatSync(path);
+    const stat = lstatSync(path, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isFile()) {
       state.skipped.push(skip(relPath, "unreadable", "unreadable: not a regular file"));
       return;
     }
-    size = stat.size;
+    size = Number(stat.size);
+    changedMs = Number((stat.mtimeNs > stat.ctimeNs ? stat.mtimeNs : stat.ctimeNs) / 1_000_000n);
+    signature = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
   } catch (error) {
     state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
     return;
@@ -141,21 +180,41 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     return;
   }
 
-  let parsed: ReturnType<typeof parseFrontmatter>;
-  let contentHash: string;
-  try {
-    const bytes = readFileSync(path);
-    state.bytes += bytes.byteLength;
-    contentHash = hashBytes(bytes);
-    parsed = parseFrontmatter(bytes.toString("utf8"));
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      state.skipped.push(skip(relPath, "parse", error.message));
+  const remembered = state.cache?.files.get(path);
+  let file: ParsedFile;
+  if (remembered?.signature === signature) {
+    file = remembered;
+    state.bytes += size;
+  } else {
+    const readAtMs = Date.now();
+    try {
+      const bytes = readFileSync(path);
+      state.bytes += bytes.byteLength;
+      const parsed = parseFrontmatter(bytes.toString("utf8"));
+      file = {
+        // An empty signature never matches: see RACY_WINDOW_MS.
+        signature: changedMs + RACY_WINDOW_MS > readAtMs ? "" : signature,
+        contentHash: hashBytes(bytes),
+        data: parsed.data,
+        body: parsed.body,
+        invalid: validatePage(parsed.data)[0] ?? null,
+      };
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        state.skipped.push(skip(relPath, "parse", error.message));
+        return;
+      }
+      state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
       return;
     }
-    state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
-    return;
   }
+  // A remembered file hands out a copy: no caller can change what the next
+  // walk is given.
+  const parsed = state.cache === null
+    ? file
+    : { data: structuredClone(file.data), body: file.body };
+  if (state.cache !== null && file.signature !== "") state.remembered.set(path, file);
+  const { contentHash } = file;
 
   const rawId = parsed.data["id"];
   const id = typeof rawId === "string" && rawId.length > 0 ? rawId : null;
@@ -168,9 +227,8 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     state.seen.set(id, relPath);
   }
 
-  const errors = validatePage(parsed.data);
-  if (errors.length > 0) {
-    state.skipped.push(skip(relPath, "invalid", errors[0] ?? "invalid page"));
+  if (file.invalid !== null) {
+    state.skipped.push(skip(relPath, "invalid", file.invalid));
     return;
   }
   if (id === null) {
@@ -241,7 +299,10 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
   }
 }
 
-export function listCanonPagesReport(vaultPath: string): CanonPageReport {
+export function listCanonPagesReport(
+  vaultPath: string,
+  cache?: CanonPageCache,
+): CanonPageReport {
   const state: WalkState = {
     pages: [],
     skipped: [],
@@ -249,8 +310,11 @@ export function listCanonPagesReport(vaultPath: string): CanonPageReport {
     files: 0,
     bytes: 0,
     truncated: false,
+    cache: cache ?? null,
+    remembered: new Map(),
   };
   walk(state, vaultPath, vaultPath, 0);
+  if (cache !== undefined) cache.files = state.remembered;
   state.skipped.sort((left, right) => compareName(left.relPath, right.relPath));
   return { pages: state.pages, skipped: state.skipped, truncated: state.truncated };
 }
