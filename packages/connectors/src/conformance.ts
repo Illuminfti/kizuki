@@ -9,6 +9,8 @@ import {
   isSecretRef,
   isSensitivity,
   isPlainObject,
+  cursorStoreDeltaError,
+  cursorStoreOverflow,
   policyFromManifest,
   validateEventInput,
 } from "@kizuki/core";
@@ -16,6 +18,7 @@ import type {
   Connector,
   Cursor,
   Manifest,
+  RunContext,
   SecretResolver,
   SignInIo,
   SyncBatch,
@@ -25,8 +28,21 @@ import { InMemoryLedger } from "./ledger";
 import { resolveSensitivity } from "./sensitivity";
 import { errorMessage } from "./util";
 
+/**
+ * The host as a connector sees it. A connector declaring
+ * `capabilities.cursor_store: "host"` is lent the committed side map on every
+ * call and each batch's delta is applied afterwards, as the host does when the
+ * checkpoint advances. Hooks that drive the connector themselves call these
+ * instead of the connector, so the side map follows the cursor they hold.
+ */
+export interface ConformanceHost {
+  backfill(cursor: Cursor | null): Promise<SyncBatch>;
+  sync(cursor: Cursor | null): Promise<SyncBatch>;
+}
+
 export interface TombstoneConformanceHooks {
-  prepare(): Promise<Cursor | null>;
+  /** `host` keeps the side map across `prepare` and the sync that follows. */
+  prepare(host: ConformanceHost): Promise<Cursor | null>;
   mutate(): Promise<void>;
 }
 
@@ -63,6 +79,70 @@ const CAPABILITY_METHODS = {
   purge: "purgeSource",
   fixture: "fixture",
 } as const;
+
+class HostLease implements ConformanceHost {
+  private store = new Map<string, string>();
+
+  constructor(
+    private readonly connector: Connector,
+    private readonly hosted: boolean,
+  ) {}
+
+  /** A lease holding the same committed map, so a replay cannot move the original. */
+  fork(): HostLease {
+    const copy = new HostLease(this.connector, this.hosted);
+    copy.store = new Map(this.store);
+    return copy;
+  }
+
+  backfill(cursor: Cursor | null): Promise<SyncBatch> {
+    return this.run((context) => this.connector.backfill(cursor, context));
+  }
+
+  sync(cursor: Cursor | null): Promise<SyncBatch> {
+    return this.run((context) => this.connector.sync(cursor, context));
+  }
+
+  private async run(
+    call: (context: RunContext | undefined) => Promise<SyncBatch>,
+  ): Promise<SyncBatch> {
+    const context = this.hosted
+      ? { cursor_store: new Map(this.store) }
+      : undefined;
+    const batch = await call(context);
+    this.commit(batch);
+    return batch;
+  }
+
+  private commit(batch: unknown): void {
+    if (!isPlainObject(batch)) return;
+    const delta = batch["cursor_store"];
+    if (delta === undefined) return;
+    if (!this.hosted) {
+      throw new Error(
+        "batch carries cursor_store without the manifest capability",
+      );
+    }
+    if (batch["status"] === "unavailable") return;
+    const problem =
+      cursorStoreDeltaError(delta) ??
+      cursorStoreOverflow(
+        this.store,
+        delta as Readonly<Record<string, string | null>>,
+      );
+    if (problem !== null) throw new Error(problem);
+    for (const [key, value] of Object.entries(
+      delta as Record<string, string | null>,
+    )) {
+      if (value === null) this.store.delete(key);
+      else this.store.set(key, value);
+    }
+  }
+}
+
+function leaseFor(connector: Connector, manifest: Manifest): HostLease {
+  return new HostLease(connector, manifest.capabilities.cursor_store === "host");
+}
 
 export async function runConformance(
   connector: Connector,
@@ -143,7 +223,9 @@ async function runConformanceChecks(
   if (manifest.capabilities.backfill) {
     try {
       inspectBatch(
-        await timed("backfill(null)", () => connector.backfill(null)),
+        await timed("backfill(null)", () =>
+          leaseFor(connector, manifest).backfill(null),
+        ),
         "backfill(null)",
         manifest,
         failures,
@@ -164,7 +246,9 @@ async function runConformanceChecks(
   if (manifest.capabilities.sync) {
     try {
       inspectBatch(
-        await timed("sync(null)", () => connector.sync(null)),
+        await timed("sync(null)", () =>
+          leaseFor(connector, manifest).sync(null),
+        ),
         "sync(null)",
         manifest,
         failures,
@@ -232,13 +316,17 @@ async function runConformanceChecks(
   if (manifest.capabilities.backfill && opts.backfillTwice !== false) {
     try {
       const first = inspectBatch(
-        await timed("first backfill", () => connector.backfill(null)),
+        await timed("first backfill", () =>
+          leaseFor(connector, manifest).backfill(null),
+        ),
         "first backfill",
         manifest,
         failures,
       );
       const second = inspectBatch(
-        await timed("second backfill", () => connector.backfill(null)),
+        await timed("second backfill", () =>
+          leaseFor(connector, manifest).backfill(null),
+        ),
         "second backfill",
         manifest,
         failures,
@@ -282,10 +370,11 @@ async function runConformanceChecks(
 
   if (manifest.capabilities.tombstones && opts.tombstone !== undefined) {
     try {
-      const cursor = await opts.tombstone.prepare();
+      const host = leaseFor(connector, manifest);
+      const cursor = await opts.tombstone.prepare(host);
       await opts.tombstone.mutate();
       const batch = inspectBatch(
-        await timed("tombstone sync", () => connector.sync(cursor)),
+        await timed("tombstone sync", () => host.sync(cursor)),
         "tombstone sync",
         manifest,
         failures,
@@ -376,6 +465,10 @@ function parseManifest(raw: unknown, failures: string[]): Manifest | undefined {
       if (typeof capabilities[capability] !== "boolean") {
         failures.push(`manifest.capabilities.${capability}: must be boolean`);
       }
+    }
+    const hosted = capabilities["cursor_store"];
+    if (hosted !== undefined && hosted !== "host") {
+      failures.push('manifest.capabilities.cursor_store: must be "host" when present');
     }
   }
   if (
@@ -492,16 +585,21 @@ async function checkPagination(
   let cursor: Cursor | null = null;
   let pages = 0;
   let firstCursor: Cursor | null | undefined;
+  const lease = leaseFor(connector, manifest);
+  let afterFirst: HostLease | undefined;
   try {
     while (pages < MAX_PAGES) {
       const batch = inspectBatch(
-        await timed(`page ${pages}`, () => connector.backfill(cursor)),
+        await timed(`page ${pages}`, () => lease.backfill(cursor)),
         `page ${pages}`,
         manifest,
         failures,
       );
       if (batch === undefined) return;
-      if (pages === 0) firstCursor = batch.cursor;
+      if (pages === 0) {
+        firstCursor = batch.cursor;
+        afterFirst = lease.fork();
+      }
       const fresh = batch.events.filter(
         (event) => !seen.has(event.source_record_id),
       );
@@ -528,13 +626,17 @@ async function checkPagination(
   if (firstCursor !== undefined && firstCursor !== null) {
     try {
       const replayed = inspectBatch(
-        await timed("cursor replay", () => connector.backfill(firstCursor)),
+        await timed("cursor replay", () =>
+          (afterFirst ?? leaseFor(connector, manifest)).fork().backfill(firstCursor),
+        ),
         "cursor replay",
         manifest,
         failures,
       );
       const original = inspectBatch(
-        await timed("cursor replay again", () => connector.backfill(firstCursor)),
+        await timed("cursor replay again", () =>
+          (afterFirst ?? leaseFor(connector, manifest)).fork().backfill(firstCursor),
+        ),
         "cursor replay again",
         manifest,
         failures,
@@ -553,7 +655,9 @@ async function checkPagination(
 
   if (manifest.cursor_schema !== null && manifest.cursor_schema !== undefined) {
     try {
-      await timed("corrupt cursor", () => connector.backfill(CORRUPT_CURSOR));
+      await timed("corrupt cursor", () =>
+        leaseFor(connector, manifest).backfill(CORRUPT_CURSOR),
+      );
       failures.push("pagination: a corrupt cursor was accepted");
     } catch (error) {
       if (errorCode(error) === undefined) {
@@ -573,7 +677,10 @@ async function checkUnavailable(
   const checkpoint = hooks.checkpoint ?? null;
   try {
     const batch = await timed("unavailable backfill", () =>
-      hooks.connector.backfill(checkpoint),
+      new HostLease(
+        hooks.connector,
+        hooks.connector.manifest().capabilities.cursor_store === "host",
+      ).backfill(checkpoint),
     );
     if (batch.events.length === 0 && batch.cursor !== checkpoint) {
       failures.push(
@@ -703,7 +810,9 @@ async function checkRevoke(
     // Typed health failure after revoke is honest.
   }
   try {
-    await timed("backfill after revoke", () => connector.backfill(null));
+    await timed("backfill after revoke", () =>
+      leaseFor(connector, manifest).backfill(null),
+    );
     failures.push("revoke: backfill still succeeded after access ended");
   } catch (error) {
     if (errorCode(error) === undefined) {

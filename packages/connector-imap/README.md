@@ -117,6 +117,7 @@ gaps and near 3,400 at 30 percent. The store holds 1 MiB for all of an
 account's folders together, roughly 400,000 messages at 30 percent gaps; a
 mailbox past that is refused with
 `cursor_store would exceed 1048576 bytes` until a date floor brings it under.
+`kizuki doctor` shows that refusal as the source's last error.
 A checkpoint written by the first version still reads and moves its folders to
 the store on the next batch.
 

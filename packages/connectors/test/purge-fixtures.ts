@@ -87,8 +87,10 @@ export async function telegramPurgeFixture(): Promise<PurgeConformanceFixture> {
     await connector.connect(async () => new TextDecoder().decode(encodeState({ schema: "kizuki.telegram-state/v1", user_id: "1001",
       session: "fixture-session-token-not-a-real-credential" })));
     let cursor: string | null = null;
+    const store = new Map<string, string>();
     for (let page = 0; page < 100; page++) {
-      const batch = await connector.backfill(cursor); cursor = batch.cursor;
+      const batch = await connector.backfill(cursor, { cursor_store: new Map(store) }); cursor = batch.cursor;
+      for (const [key, value] of Object.entries(batch.cursor_store ?? {})) { if (value === null) store.delete(key); else store.set(key, value); }
       if (batch.events.length === 0) break;
       if (page === 99) throw new Error("synthetic history did not finish");
     }

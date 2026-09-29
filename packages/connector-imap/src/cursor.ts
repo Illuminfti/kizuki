@@ -100,10 +100,10 @@ export function encodeFolder(entry: ImapFolderCursor): string {
 function parseJson(text: string, what: string): unknown {
   try {
     return JSON.parse(text) as unknown;
-  } catch (error) {
-    throw new KizukiError("parse_error", `kizuki.imap: malformed ${what}`, {
-      cause: error,
-    });
+  } catch {
+    // A JSON parser quotes the token it stopped on, and stored entries are
+    // mailbox-derived text: the cause stays out of run output and logs.
+    throw new KizukiError("parse_error", `kizuki.imap: malformed ${what}`);
   }
 }
 

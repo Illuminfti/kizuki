@@ -770,7 +770,7 @@ export type {
   ConnectionRunStatus,
   Inspected,
 } from "./ledger/connections";
-export { readCursorStore } from "./ledger/cursor-store";
+export { cursorStoreDeltaError, cursorStoreOverflow, readCursorStore } from "./ledger/cursor-store";
 export { scopedSecretResolver } from "./ledger/secret-scope";
 export { assertConnectorBrowserUrl, guardedSignInIo } from "./ledger/sign-in-guard";
 export { DeadlineError, withDeadline } from "./util/deadline";

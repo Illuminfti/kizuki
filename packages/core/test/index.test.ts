@@ -288,6 +288,8 @@ describe("public surface", () => {
       "createServeSurfacePort",
       "createStatePersister",
       "createVaultFts5Port",
+      "cursorStoreDeltaError",
+      "cursorStoreOverflow",
       "decodeRemoteValue",
       "describeSupervisorNone",
       "detectSupervisorKind",

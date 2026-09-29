@@ -179,9 +179,13 @@ is refused before any event of the batch is stored. A connector that did not
 declare the capability is called exactly as before and a delta from it is
 refused. The wire cursor should still change whenever the map does (Telegram
 and IMAP carry a digest of it), because the runner treats an unchanged cursor
-as no progress. The map is derived resume state kept in the ledger table
-`connector_cursor_store` (ledger version 34); it is not exported, and a
-restored connection re-enrols with a new source key as before.
+as no progress. The map is operational resume state kept in the ledger table
+`connector_cursor_store` (ledger version 34). It is not derived from the
+ledger and cannot be rebuilt from it, it is not exported, and it is safe to
+lose: the connector walks again and the ledger dedupes what it already holds.
+The one map is shared by `backfill` and `sync`, so the host does not check a
+cursor's digest against it. A restored connection re-enrols with a new
+source key as before.
 
 ## Storage
 

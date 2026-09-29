@@ -158,7 +158,8 @@ with many gaps (deleted or archived mail leaves holes in the UID sequence)
 still checkpoints. That list is capped at 1 MiB per source across all
 folders, which holds on the order of 400,000 messages at 30 percent gaps; past
 that a batch is refused with `cursor_store would exceed 1048576 bytes`, and a
-date floor is the way to bring a larger mailbox under it.
+date floor is the way to bring a larger mailbox under it. `kizuki doctor` shows
+the refusal as the source's last error.
 
 Background sync, backfill and doctor check source capture permission before
 opening provider transport. An explicit enrollment or reconnect can validate
