@@ -21,6 +21,13 @@ export type {
   BeeperCursor,
 } from "@kizuki/connector-beeper";
 export {
+  CLAUDE_CODE_SESSIONS_CONNECTOR_ID,
+  CODEX_SESSIONS_CONNECTOR_ID,
+  createClaudeCodeSessionsConnector,
+  createCodexSessionsConnector,
+} from "@kizuki/connector-agent-sessions";
+export type { AgentSessionsConfig } from "@kizuki/connector-agent-sessions";
+export {
   SCREENPIPE_CONNECTOR_ID,
   ScreenpipeConnector,
   ScreenpipeConnectorError,

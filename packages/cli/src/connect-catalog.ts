@@ -21,6 +21,8 @@ const TITLES: Record<string, string> = {
   "kizuki.import-legacy-wiki": "Markdown wiki migration",
   "kizuki.import-legacy-events": "Event history migration",
   "kizuki.screenpipe": "Screenpipe",
+  "kizuki.claude-code-sessions": "Claude Code sessions",
+  "kizuki.codex-sessions": "Codex sessions",
   "kizuki.ics": "Calendar (ICS)",
   "kizuki.x": "X own-post browser sign-in",
   "kizuki.gmail": "Gmail read-only browser sign-in",

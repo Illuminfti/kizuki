@@ -10,7 +10,9 @@ import os from "node:os";
 import path from "node:path";
 import {
   CHATGPT_IMPORT_CONNECTOR_ID,
+  CLAUDE_CODE_SESSIONS_CONNECTOR_ID,
   CLAUDE_IMPORT_CONNECTOR_ID,
+  CODEX_SESSIONS_CONNECTOR_ID,
   ICS_CONNECTOR_ID,
   IMAP_CONNECTOR_ID,
   LEGACY_EVENTS_CONNECTOR_ID,
@@ -50,6 +52,7 @@ import {
   statusUnavailableConnector,
   unlabeledEventsConnector,
   untypedSignInCancelConnector,
+  writeSessionsFixtureTree,
 } from "../src/testkit";
 import type { ConformanceResult } from "../src/testkit";
 import { fixtureJsonl as jsonlFixture } from "../src/import-legacy-events/fixture";
@@ -79,6 +82,8 @@ interface Layout {
   chatGpt: string;
   claude: string;
   screenpipe: string;
+  claudeSessions: string;
+  codexSessions: string;
   whatsapp: string;
   pocket: string;
   omnivore: string;
@@ -98,6 +103,8 @@ function layoutFor(root: string): Layout {
     chatGpt: path.join(root, "chatgpt.json"),
     claude: path.join(root, "claude.json"),
     screenpipe: path.join(root, "screenpipe.sqlite"),
+    claudeSessions: path.join(root, "claude-sessions"),
+    codexSessions: path.join(root, "codex-sessions"),
     whatsapp: path.join(root, "whatsapp"),
     pocket: path.join(root, "pocket.csv"),
     omnivore: path.join(root, "omnivore"),
@@ -217,6 +224,16 @@ function batteryFor(
           settle_seconds: 0,
         }),
         { unavailable: missingPath(SCREENPIPE_CONNECTOR_ID) },
+      ),
+    [CLAUDE_CODE_SESSIONS_CONNECTOR_ID]: () =>
+      runConformance(
+        getConnector(CLAUDE_CODE_SESSIONS_CONNECTOR_ID, { path: layout.claudeSessions }),
+        { unavailable: missingPath(CLAUDE_CODE_SESSIONS_CONNECTOR_ID) },
+      ),
+    [CODEX_SESSIONS_CONNECTOR_ID]: () =>
+      runConformance(
+        getConnector(CODEX_SESSIONS_CONNECTOR_ID, { path: layout.codexSessions }),
+        { unavailable: missingPath(CODEX_SESSIONS_CONNECTOR_ID) },
       ),
     [WHATSAPP_IMPORT_CONNECTOR_ID]: () =>
       runConformance(
@@ -418,6 +435,8 @@ async function seedExports(layout: Layout): Promise<void> {
     await writeFile(target, content);
   }
   await writeXFixtureArchive(layout.xArchive);
+  await writeSessionsFixtureTree(layout.claudeSessions, "claude-code");
+  await writeSessionsFixtureTree(layout.codexSessions, "codex");
   for (const file of LEGACY_WIKI_FIXTURE.files) {
     const target = path.join(layout.wiki, file.relpath);
     await mkdir(path.dirname(target), { recursive: true });

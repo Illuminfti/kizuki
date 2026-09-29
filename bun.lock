@@ -28,6 +28,12 @@
         "@kizuki/tui": "workspace:*",
       },
     },
+    "packages/connector-agent-sessions": {
+      "name": "@kizuki/connector-agent-sessions",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
     "packages/connector-beeper": {
       "name": "@kizuki/connector-beeper",
       "dependencies": {
@@ -87,6 +93,7 @@
     "packages/connectors": {
       "name": "@kizuki/connectors",
       "dependencies": {
+        "@kizuki/connector-agent-sessions": "workspace:*",
         "@kizuki/connector-beeper": "workspace:*",
         "@kizuki/connector-gmail": "workspace:*",
         "@kizuki/connector-google-calendar": "workspace:*",
@@ -158,6 +165,8 @@
     "@hono/node-server": ["@hono/node-server@2.1.1", "", { "peerDependencies": { "hono": "^4" } }, "sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg=="],
 
     "@kizuki/cli": ["@kizuki/cli@workspace:packages/cli"],
+
+    "@kizuki/connector-agent-sessions": ["@kizuki/connector-agent-sessions@workspace:packages/connector-agent-sessions"],
 
     "@kizuki/connector-beeper": ["@kizuki/connector-beeper@workspace:packages/connector-beeper"],
 

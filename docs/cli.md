@@ -128,6 +128,11 @@ see the flags above and [connection setup](connect.md). Other account sign-in
 connectors except X own-post API are not enrollable through this CLI. None of these sign-in paths
 are live-account qualified.
 
+`connect claude-code-sessions --source PATH` and `connect codex-sessions --source
+PATH` enroll a folder of coding-agent transcripts as a none-mode local source;
+see [Coding-session transcripts](connect.md#coding-session-transcripts) for what
+is captured, what is dropped and the recommended consent policy.
+
 Sensitivity is optional: trusted connector runs resolve each valid event
 against that connection's default, floor, owner label, and source hint.
 Hints cannot lower the connection policy. A legacy connection without a

@@ -28,6 +28,7 @@ export {
   FIXTURE_NOW,
   seedFixtureDatabase,
 } from "@kizuki/connector-screenpipe/testkit";
+export { writeFixtureTree as writeSessionsFixtureTree } from "@kizuki/connector-agent-sessions/testing";
 export {
   POCKET_FIXTURE_EXPORT,
 } from "./import-pocket";

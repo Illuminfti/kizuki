@@ -6,7 +6,7 @@ import { googleCalendarClient, googleCalendarRequiredFields, googleCalendarState
 import { GmailConnector, createGmailConnector, inspectGmailState, type GmailConnectorConfig } from "@kizuki/connector-gmail";
 import { gmailClient, gmailRequiredFields, gmailStateConfig } from "./gmail";
 import type { Database } from "bun:sqlite";
-import { isAbsolute, resolve } from "node:path";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type {
   Connector,
   Connection,
@@ -357,6 +357,7 @@ const PORTABLE_PATH_IDS = Object.freeze([
   "kizuki.import-beacon",
   "kizuki.import-whatsapp", "kizuki.import-pocket", "kizuki.import-omnivore",
   "kizuki.import-x-archive", "kizuki.screenpipe",
+  "kizuki.claude-code-sessions", "kizuki.codex-sessions",
 ]);
 export function portableLocalAdapter(): import("@kizuki/core").PortableLocalAdapter {
   for (const id of PORTABLE_PATH_IDS) {
@@ -612,6 +613,20 @@ function inspectionSafePersister(db: Database, store: ConnectionStateReader, con
   return async () => { throw new ConnectionError("connector state mutation requires an explicit write context"); };
 }
 
+const SESSION_CONNECTOR_IDS = ["kizuki.claude-code-sessions", "kizuki.codex-sessions"];
+
+/**
+ * Coding sessions run inside the vault hold Kizuki's own recalled memory, so
+ * the connector skips them. The vault is taken from the open ledger at load
+ * time and never stored in the portable connection state.
+ */
+function withVaultExclusion(id: string, config: HostConnectionState["config"], db: Database): unknown {
+  if (!SESSION_CONNECTOR_IDS.includes(id)) return config;
+  const file = db.filename;
+  if (typeof file !== "string" || basename(file) !== "kizuki.db" || basename(dirname(file)) !== ".kizuki") return config;
+  return { ...config, exclude_cwd: [dirname(dirname(resolve(file)))] };
+}
+
 export async function loadConnector(
   selected: HostConnection,
   store: ConnectionStateReader,
@@ -718,7 +733,7 @@ export async function loadConnector(
   const wiki = selected.connection.connector_id === LEGACY_WIKI_CONNECTOR_ID;
   const connector = factory(
     selected.connection.connector_id,
-    selected.state.config,
+    withVaultExclusion(selected.connection.connector_id, selected.state.config, db),
     telegram
       ? { persist: inspectionSafePersister(db, store, selected.connection) }
       : markdown
