@@ -31,6 +31,8 @@ that a provider application or account does not exist.
 | `kizuki.import-legacy-wiki` | estate import | [legacy import](legacy-import.md) |
 | `kizuki.import-legacy-events` | estate import | [legacy import](legacy-import.md) |
 | `kizuki.screenpipe` | offline SQLite | [Screenpipe](#screenpipe) |
+| `kizuki.claude-code-sessions` | local transcript folder | [Coding-session transcripts](#coding-session-transcripts) |
+| `kizuki.codex-sessions` | local transcript folder | [Coding-session transcripts](#coding-session-transcripts) |
 | `kizuki.ics` | local ICS file | [ICS calendar file](#ics-calendar-file) |
 | `kizuki.beeper` | local app token | [Beeper Desktop](#beeper-desktop) |
 | `kizuki.imap` | interactive sign-in | [IMAP email](#imap-email) |
@@ -283,6 +285,109 @@ kizuki connect screenpipe --source ~/.screenpipe/db.sqlite
 This is not live HTTP and needs no token. See the
 [Screenpipe connector README](../packages/connector-screenpipe/README.md) for
 schema bounds and limits.
+
+## Coding-session transcripts
+
+Two connectors read the transcripts a coding agent writes to disk, so the
+decisions and changes of direction made in a session reach the ledger. They
+share one parser and differ only in the file format they expect:
+
+| Connector | Folder to point at | Format |
+| --- | --- | --- |
+| `kizuki.claude-code-sessions` | the Claude Code projects folder | one JSONL file per session |
+| `kizuki.codex-sessions` | the Codex sessions folder | one rollout JSONL file per session |
+
+```bash
+kizuki connect claude-code-sessions --source /absolute/path/to/projects
+kizuki connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id sessions-grant
+kizuki backfill claude-code-sessions
+kizuki sync claude-code-sessions
+```
+
+The source is a directory, read offline: nothing is fetched, no account or
+token is involved, and the connector never writes to it. Enrollment refuses a
+path that is not a readable directory. Until a source grant exists, capture is
+refused (`source_capture_denied`). This policy authorizes local capture and
+recall of the captured text and its provenance, with no model call:
+
+```json
+{
+  "purposes": ["capture", "recall", "session", "derive"],
+  "allowed_fields": ["text", "subjects", "metadata"],
+  "retention": "persistent_owned_until_revoked",
+  "egress": "local_only",
+  "sensitivity_floor": "private"
+}
+```
+
+Adding `extract` to `purposes` is a separate decision that names the exact
+model destination; see [source consent](cli.md#source-consent). Without it,
+sessions are searchable and servable but produce no concepts or situations.
+The daemon's sync rail refreshes an enrolled source on its period.
+
+### What is captured
+
+Each user prompt and each assistant message with text becomes one `message`
+event, labeled `private` unless the source policy says otherwise. Its
+`source_record_id` is the session id plus the record's own id (for Codex, plus
+the line number). Its subjects are the speaker role and a project id derived
+from a hash of the working directory, with the directory's base name for
+display. Its metadata carries the session id, branch, entrypoint, source file
+and line, the names (never the inputs) of the tools used in that turn, and a
+count of anything redacted.
+
+- Only text is captured. Thinking, tool inputs and tool results are dropped,
+  because that is where file contents, environment dumps and web pages land.
+  There is no switch to include them.
+- Subagent folders and sidechain records are skipped. The library option
+  `include_subagents` reads them.
+- Text is cut at 32 KiB (`text_truncated` in metadata).
+- Terminal escapes, control characters, bidirectional controls, zero-width
+  characters and invisible tag characters are removed before capture
+  (`text_sanitized` in metadata). A turn that is empty after that is skipped.
+- Secret-shaped strings are replaced by `[redacted:KIND]` before capture,
+  because the ledger is append-only: private keys, API and access tokens, JWTs,
+  `Authorization` headers, URL credentials, and `NAME=value` assignments for
+  names that say secret, token, password, key or credential. The scrubber is a
+  set of patterns, not a guarantee; treat the source as private.
+- Transcript text is evidence, never instruction. A prompt that tells an agent
+  to ignore its rules arrives as ordinary quoted text.
+- Kizuki does not capture itself. A turn containing a Kizuki context packet is
+  skipped, Kizuki's own MCP tools are never named, and sessions whose working
+  directory is inside the vault are skipped. The host adds the vault at run
+  time and does not store its path in the connection. The library option
+  `exclude_cwd` lists further directories to skip.
+- Metadata `source_file` is the transcript file name only, so the encoded
+  working directory in a Claude Code folder name is not recorded.
+
+### How a pass works
+
+The cursor holds one watermark and a position, not a per-file map, so it stays
+inside the cursor bound however many files exist. A pass reads only files
+modified since the watermark, less a two-minute overlap, in modification-time
+order, and a large pass resumes mid-file from the last line it consumed. A
+file that changed is read again from its first line and the ledger
+deduplicates what it already has. `backfill` and `sync` are the same walk.
+
+### Limits
+
+- The connector emits no tombstones. A transcript that disappears, for example
+  through the harness's retention, is not a deletion, and a rewritten or
+  truncated file never retracts what was captured. `kizuki purge --connector
+  ID` physically removes captured evidence.
+- A file that grows is captured up to its last complete line; an unterminated
+  final line is read on the pass after it is finished.
+- Links, pipes, directories deeper than four levels and over-long names are
+  never read. `kizuki doctor` reports the connection as degraded with the
+  counts. Files over 512 MiB and lines over 4 MiB are skipped too, and so are
+  records the parser does not recognize (for example Codex record types other
+  than session metadata and messages); those are counted per run and visible
+  to library callers in `health().detail`, and are not persisted.
+- A file copied in with an old modification time is not noticed until it
+  changes. A resumed session that copies earlier records into a new file
+  is captured again, with the new file recorded as their source.
+- Only the current Codex rollout format, with a session record first and each
+  message wrapped in a response item, is read.
 
 ## File exports and estate importers
 

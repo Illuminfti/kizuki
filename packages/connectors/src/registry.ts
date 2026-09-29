@@ -1,3 +1,11 @@
+import {
+  AGENT_SESSIONS_CURSOR_SCHEMA,
+  CLAUDE_CODE_SESSIONS_CONNECTOR_ID,
+  CODEX_SESSIONS_CONNECTOR_ID,
+  createClaudeCodeSessionsConnector,
+  createCodexSessionsConnector,
+} from "@kizuki/connector-agent-sessions";
+import type { AgentSessionsConfig } from "@kizuki/connector-agent-sessions";
 import { GOOGLE_CALENDAR_CONNECTOR_ID, GOOGLE_CALENDAR_CURSOR_SCHEMA, createGoogleCalendarConnector, type GoogleCalendarConnectorConfig } from "@kizuki/connector-google-calendar";
 import {
   PORT_CONTRACTS,
@@ -316,6 +324,25 @@ enroll(
     sensitivity_floor: "personal",
   },
 );
+for (const [id, create] of [
+  [CLAUDE_CODE_SESSIONS_CONNECTOR_ID, createClaudeCodeSessionsConnector],
+  [CODEX_SESSIONS_CONNECTOR_ID, createCodexSessionsConnector],
+] as const) {
+  enroll(
+    id,
+    ["backfill", "sync", "fixture"],
+    "@kizuki/connector-agent-sessions",
+    (config) => create(config as AgentSessionsConfig),
+    {
+      contract_minor: 1,
+      implementation: "@kizuki/connector-agent-sessions",
+      allowed_egress: [],
+      cursor_schema: AGENT_SESSIONS_CURSOR_SCHEMA,
+      default_sensitivity: "private",
+      sensitivity_floor: "personal",
+    },
+  );
+}
 enroll(
   MARKDOWN_FOLDER_CONNECTOR_ID,
   ["backfill", "sync", "tombstones", "fixture"],
@@ -489,6 +516,10 @@ export function getConnector(
 export function getConnector(
   id: typeof TELEGRAM_CONNECTOR_ID,
   config: TelegramConnectorConfig,
+): Connector;
+export function getConnector(
+  id: typeof CLAUDE_CODE_SESSIONS_CONNECTOR_ID | typeof CODEX_SESSIONS_CONNECTOR_ID,
+  config: AgentSessionsConfig,
 ): Connector;
 export function getConnector(
   id: typeof MARKDOWN_FOLDER_CONNECTOR_ID,

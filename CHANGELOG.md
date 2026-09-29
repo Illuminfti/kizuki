@@ -47,6 +47,17 @@
 - Release smoke runs `kizuki world --operation find_concepts --json` and an MCP
   `world_view` call against the built package, and checks that `kizuki version`
   matches the package's `BUILD.json` revision.
+- `kizuki connect claude-code-sessions --source PATH` and `kizuki connect
+  codex-sessions --source PATH` capture the text turns of Claude Code and Codex
+  session transcripts as private `message` events, so decisions and changes of
+  direction made in a coding session reach the ledger. Both read a local folder
+  offline through one shared parser (`@kizuki/connector-agent-sessions`).
+  Thinking, tool inputs and tool results are never captured; secret-shaped
+  strings, terminal escapes and bidirectional controls are removed before
+  capture; turns carrying Kizuki's own context packet are skipped. A pass reads
+  only files modified since its watermark and resumes mid-file inside the 8 KiB
+  cursor bound. No tombstones are emitted. See
+  [Coding-session transcripts](docs/connect.md#coding-session-transcripts).
 
 ### Fixed
 
