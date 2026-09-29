@@ -244,7 +244,7 @@ export function canonChunk(
   })) throw new ServeError("held", "canon evidence unavailable");
   return {
     page_id: page.id,
-    path: page.relPath,
+    path: redactorOf(index.sourceContext).text(page.relPath),
     title: redactorOf(index.sourceContext).text(stringField(page, "title") ?? ""),
     type: stringField(page, "type") ?? "",
     sensitivity: decision.sensitivity,

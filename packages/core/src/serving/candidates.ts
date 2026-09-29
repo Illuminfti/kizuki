@@ -112,7 +112,7 @@ export function boundCanonAtom(
 
 /** Keep every claim-controlled scalar on its stamped line. */
 export function inline(value: string): string {
-  return JSON.stringify(stripInvisible(value)).slice(1, -1).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  return JSON.stringify(stripInvisible(value)).slice(1, -1).replace(/\u0085/g, "\\u0085").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
 
 function confidenceLabel(value: number): string {
@@ -126,7 +126,7 @@ export function claimLine(claim: Claim): string {
     `- [claim:${inline(claim.claim_id)}] c=${confidenceLabel(claim.confidence)}` +
     ` s=${claim.sensitivity} taint=${claim.taint} auth=${claim.authority} status=${claim.status}` +
     ` polarity=${claim.polarity} valid_from=${inline(claim.valid_from)} valid_to=${inline(claim.valid_to ?? "null")}` +
-    ` :: ${inline(claim.subject ?? "-")} ${inline(claim.predicate ?? "-")} ${JSON.stringify(object)}\n`
+    ` :: ${inline(claim.subject ?? "-")} ${inline(claim.predicate ?? "-")} "${inline(object)}"\n`
   );
 }
 

@@ -1,5 +1,5 @@
 import { authorize } from "../agents";
-import type { DenyReason, Grant, Servable } from "../agents";
+import type { AuditDenial, DenyReason, Grant, Servable } from "../agents";
 import { getClaim, listClaims } from "../claims/store";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
 import { claimReader } from "./claims";
@@ -22,10 +22,11 @@ export interface CorrectTarget {
   world_claim?: { readonly kind: "claim"; readonly token: string };
 }
 
-function refuse(field: string, rule: string): ServeError {
+function refuse(field: string, rule: string, denials: AuditDenial[] = []): ServeError {
   return new ServeError(
     "invalid_arguments",
     `invalid arguments: ${field}: ${rule}`,
+    { denials },
   );
 }
 
@@ -59,13 +60,26 @@ export interface Resolved {
  * caller may not read is the same one: neither existence nor tier can be
  * probed by guessing an id, a key or a subject. The owner sees every claim.
  */
-function visibleTo(ctx: ServeContext): (claim: Claim) => boolean {
+function visibleTo(ctx: ServeContext, hidden: AuditDenial[] = []): (claim: Claim) => boolean {
   if (ctx.principal.kind === "owner") return () => true;
   const grant = ctx.principal.grant;
   const reader = claimReader(ctx.db, grant, { owner: false, purpose: "correction" });
-  return (claim) =>
-    (sourcePolicyEpoch(ctx.db) === 0 || reader.canRead(claim)) &&
-    authorize(grant, claimServable(claim)).allow;
+  const sourcePolicy = sourcePolicyEpoch(ctx.db) > 0;
+  return (claim) => {
+    // The real reason goes to the owner's audit row, never to the caller.
+    if (sourcePolicy && !reader.canRead(claim)) {
+      hidden.push({ id: claim.claim_id, reason: "held" });
+      return false;
+    }
+    const decision = authorize(grant, claimServable(claim));
+    if (!decision.allow) hidden.push({ id: claim.claim_id, reason: decision.reason });
+    return decision.allow;
+  };
+}
+
+/** True when `claim` is inside what `ctx.principal` could have read; the replay path uses it too. */
+export function claimVisibleTo(ctx: ServeContext, claim: Claim): boolean {
+  return visibleTo(ctx)(claim);
 }
 
 export function resolve(
@@ -82,14 +96,15 @@ export function resolve(
     throw refuse("target", "name exactly one of claim_id, claim_key, subject");
   }
 
-  const visible = visibleTo(ctx);
+  const hidden: AuditDenial[] = [];
+  const visible = visibleTo(ctx, hidden);
   if (target.claim_id !== undefined) {
     const claim = getClaim(
       ctx.db,
       identifier("target.claim_id", target.claim_id),
     );
     if (claim === null || claim.status !== "live" || !visible(claim)) {
-      throw refuse("target.claim_id", "names no live claim");
+      throw refuse("target.claim_id", "names no live claim", hidden);
     }
     if (claim.claim_key === null) {
       throw refuse(
@@ -111,7 +126,7 @@ export function resolve(
       filter: visible,
     });
     if (claims.length === 0) {
-      throw refuse("target.claim_key", "names no live claim");
+      throw refuse("target.claim_key", "names no live claim", hidden);
     }
     return { target, claims };
   }
@@ -127,7 +142,7 @@ export function resolve(
     filter: visible,
   });
   if (claims.length === 0) {
-    throw refuse("target.subject", "names no live keyed claim");
+    throw refuse("target.subject", "names no live keyed claim", hidden);
   }
   if (claims.length === MAX_CANDIDATES) {
     throw refuse("target.subject", "names too many live claims to resolve");

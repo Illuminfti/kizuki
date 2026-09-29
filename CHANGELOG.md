@@ -317,6 +317,13 @@
   cannot read exactly as they refuse one that does not exist, so neither
   existence nor tier can be probed. A denied task capture no longer reports
   `reason: "denied"`.
+- A claim object or a task-capture value with a Unicode line separator can no
+  longer start a packet line of its own, and the packet hash covers the served
+  path. `world_view` labels lengthened by redaction are cut back to the schema
+  bound, `system_health` for an agent reports `counts_capped` when its counts
+  stop at the bound and derives connections without that bound, and an unreadable
+  provenance or correction target is refused generically while the owner's audit
+  row keeps the real reason.
 
 ### Changed
 

@@ -148,3 +148,27 @@ test("world_view labels are redacted over stdio and the strict output schema acc
   expect(found.content[0]!.text).not.toContain("w".repeat(12));
   expect(envelopeOf(found)["redacted"]).toEqual({ secret_assignment: 1 });
 });
+
+test("a label near the bound made of secret assignments still passes the strict schema for an agent", async () => {
+  fixture = mcpFixture();
+  const label = "DB_PASSWORD=abcd ".repeat(11).trim();
+  await worldFixture(fixture.db, { label });
+  const agent = await connectClient(fixture.agent("reader-private"), open);
+  const owner = await connectClient(fixture.owner(), open);
+  const args = {
+    operation: "find_concepts",
+    label: "",
+    valid: { kind: "all" },
+    knownAt: { kind: "current" },
+  };
+  for (const client of [agent, owner]) {
+    const found = await call(client, "world_view", args);
+    expect(found.isError ?? false).toBe(false);
+  }
+  const served = envelopeOf(await call(agent, "world_view", args)) as unknown as {
+    data: { result: { data: { matches: { labels: string[] }[] } } };
+  };
+  const [served0] = served.data.result.data.matches[0]!.labels;
+  expect(Array.from(served0!).length).toBeLessThanOrEqual(400);
+  expect(served0).toContain("[redacted:secret_assignment]");
+});

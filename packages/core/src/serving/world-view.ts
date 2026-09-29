@@ -28,6 +28,7 @@ import { isPlainObject } from "../util/validate";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
 import type { RedactionCounts } from "./redact";
+import { clampWorldData } from "./world-clamp";
 import { ServeError } from "./types";
 import type { ServeContext } from "./types";
 
@@ -228,7 +229,7 @@ export function serveWorldView(
         canon: [],
         quoted: [],
         ...(envelope.redacted === undefined ? {} : { redacted: envelope.redacted }),
-        data: envelope.data!,
+        data: clampWorldData(envelope.data!),
       };
     })
     .immediate();

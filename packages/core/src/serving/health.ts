@@ -71,15 +71,47 @@ export interface HealthData {
       retractions_filed: number;
     } | null;
   }[];
+  /** Present for an agent when `events` or `live_claims` stopped at the bound one call counts to. */
+  counts_capped?: true;
   /** Owner only. */
   agents?: { total: number; revoked: number; quarantined: number };
 }
 
 /** A bound on what one health call counts, so the call stays cheap on a large ledger. */
 const AGENT_VIEW_CAP = 100_000;
+const CONNECTOR_PAGE = 500;
+
+/** Whether `grant` can read at least one live event of `connectorId`. The scan is bounded like the counts. */
+function connectorReadable(ctx: ServeContext, connectorId: string): boolean {
+  const grant = ctx.principal.grant;
+  let after: { occurred_at: string; event_id: string } | undefined;
+  for (let seen = 0; seen < AGENT_VIEW_CAP; seen += CONNECTOR_PAGE) {
+    const page = timelineSelection(ctx.db, {
+      ceiling: grant.ceiling,
+      limit: CONNECTOR_PAGE,
+      connector_id: connectorId,
+      source: { owner: false, purpose: "recall" },
+      ...(after === undefined ? {} : { after }),
+      ...(grant.subjects === null ? {} : { subjects: [...grant.subjects] }),
+      ...(grant.types === null ? {} : { kinds: [...grant.types] }),
+    });
+    if (page.length === 0) return false;
+    const facts = readServableEvents(ctx.db, page.map((row) => row.event_id));
+    for (const row of page) {
+      const event = facts.get(row.event_id);
+      if (event !== undefined && eventDecision(grant, event, ctx).allow) return true;
+    }
+    if (page.length < CONNECTOR_PAGE) return false;
+    const last = page[page.length - 1]!;
+    const lastFacts = facts.get(last.event_id);
+    if (lastFacts === undefined) return false;
+    after = { occurred_at: lastFacts.occurred_at, event_id: last.event_id };
+  }
+  return false;
+}
 
 /** What `grant` can read of the ledger and the claim store, and the connectors that feed it. */
-function readableView(ctx: ServeContext): { events: number; connectors: Set<string>; claims: number } {
+function readableView(ctx: ServeContext): { events: number; connectors: Set<string>; claims: number; capped: boolean } {
   const grant = ctx.principal.grant;
   const selected = timelineSelection(ctx.db, {
     ceiling: grant.ceiling,
@@ -89,17 +121,20 @@ function readableView(ctx: ServeContext): { events: number; connectors: Set<stri
     ...(grant.types === null ? {} : { kinds: [...grant.types] }),
   });
   const facts = readServableEvents(ctx.db, selected.map((row) => row.event_id));
-  const connectors = new Set<string>();
   let events = 0;
   for (const row of selected) {
     const event = facts.get(row.event_id);
     if (event === undefined || !eventDecision(grant, event, ctx).allow) continue;
     events += 1;
-    connectors.add(row.connector_id);
   }
   const reader = claimReader(ctx.db, grant, { owner: false, purpose: "recall" });
   const claims = listClaims(ctx.db, { status: "live", limit: AGENT_VIEW_CAP, filter: reader.canRead }).length;
-  return { events, connectors, claims };
+  // Connections do not depend on the count window: each connector is asked on its own.
+  const connectors = new Set<string>();
+  for (const connection of listConnections(ctx.db)) {
+    if (connectorReadable(ctx, connection.connector_id)) connectors.add(connection.connector_id);
+  }
+  return { events, connectors, claims, capped: selected.length >= AGENT_VIEW_CAP || claims >= AGENT_VIEW_CAP };
 }
 
 export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
@@ -140,6 +175,7 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
             pages: { servable },
             events: view.events,
             live_claims: view.claims,
+            ...(view.capped ? { counts_capped: true as const } : {}),
             connections: listConnections(ctx.db)
               .filter((connection) => view.connectors.has(connection.connector_id))
               .map(({ connector_id, source_key }) => ({ connector_id, source_key })),

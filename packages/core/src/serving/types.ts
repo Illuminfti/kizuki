@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { DenyReason, Principal, Sensitivity, Tool } from "../agents";
+import type { AuditDenial, DenyReason, Principal, Sensitivity, Tool } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
 import type { RetrievalPort } from "../contracts/retrieval";
 import type { PageTaint } from "../vault/schema";
@@ -101,14 +101,21 @@ export class ServeError extends Error {
   override name = "ServeError";
   readonly code: DenyReason;
   readonly retry_after_seconds: number | null;
+  /**
+   * What the owner's audit row records beside the code. The caller is never
+   * told: a refusal that must answer alike for an absent id and an unreadable
+   * one keeps the real reason here.
+   */
+  readonly denials: AuditDenial[];
 
   constructor(
     code: DenyReason,
     message: string,
-    opts: { retry_after_seconds?: number; cause?: unknown } = {},
+    opts: { retry_after_seconds?: number; cause?: unknown; denials?: AuditDenial[] } = {},
   ) {
     super(message, "cause" in opts ? { cause: opts.cause } : {});
     this.code = code;
     this.retry_after_seconds = opts.retry_after_seconds ?? null;
+    this.denials = opts.denials ?? [];
   }
 }

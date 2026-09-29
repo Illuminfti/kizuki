@@ -292,11 +292,11 @@ function failed(
   error: unknown,
 ): never {
   const bag = boundedArguments(args);
-  const record = (reason: DenyReason): void => {
-    updateAudit(live.db, auditId, bag, [], [{ id: `tool:${tool}`, reason }]);
+  const record = (reason: DenyReason, extra: AuditDenial[] = []): void => {
+    updateAudit(live.db, auditId, bag, [], boundedForAudit([{ id: `tool:${tool}`, reason }, ...extra]));
   };
   if (error instanceof ServeError) {
-    record(error.code);
+    record(error.code, error.denials);
     throw error;
   }
   if (isLedgerBusy(error)) {

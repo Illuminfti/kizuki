@@ -27,7 +27,8 @@ const MAX_LINES = 24;
 const MAX_PER_KIND = 8;
 const MAX_TEXT = 200;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
-const FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+/** Controls, plus every line break a renderer honours besides "\n", so a value cannot open a packet line. */
+const FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u0085\u2028\u2029]/;
 
 export interface TaskAttachment {
   status: "current" | "incomplete" | "unavailable";
@@ -108,6 +109,7 @@ function parseRecord(
 ): { ok: true; sections: Record<TaskKind, string[]> } | { ok: false; reason: "unparsed" | "bounds" } {
   if (FORBIDDEN.test(text)) return { ok: false, reason: "unparsed" };
   const lines = text.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+  if (lines.some((line) => line.includes("\r"))) return { ok: false, reason: "unparsed" };
   if (lines[0] !== TASK_MARKER) return { ok: false, reason: "unparsed" };
   const body = lines.slice(1);
   if (body.length === 0 || body.length > MAX_LINES) {

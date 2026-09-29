@@ -147,7 +147,7 @@ Redaction runs on the whole text before an excerpt, preview or expansion window
 is cut, so a secret is not left half visible, and before a packet is packed, so
 the packet's token estimate stays exact. Offsets and totals in a `timeline`
 expansion are counted in the served text, not the stored capture; its
-`integrity` digest is still the stored capture's.
+`integrity` digest is still the stored capture's, taken over the raw text.
 
 Two rules apply to every principal, the owner included. Unicode tag characters
 and bidirectional controls are removed from served text, before the scrubber
@@ -158,19 +158,27 @@ title or path stays on one line, so a body line that imitates a stamp such as
 real stamp.
 
 `system_health` for an agent counts only the pages, events and claims its grant
-can read and lists only the connections that feed that view. Vault-wide totals,
+can read and lists only the connections that feed that view. Each count stops at
+100,000; when it does, the answer carries `counts_capped: true`. Vault-wide totals,
 agent counts, runtime and index details, and connection run results are owner
 only. `correct`, `propose` provenance and a `context_packet` task capture refuse
 an id the agent may not read with the same answer as an absent id.
 
 Limits. The scrubber recognizes only the shapes above; it is a heuristic
-backstop and not a guarantee, and a credential in another shape is served. It
-does not reach a credential an agent already knows or text the agent sends in.
-A `redacted` count reports spans replaced
-while the response was assembled, so it can include a span in a result that was
-then dropped. `world_view` evidence spans are offsets into the stored capture
-and carry no text. Redaction narrows what is served; the grant, sensitivity
-ceiling and source consent still decide what an agent may read at all.
+backstop and not a guarantee, and a credential in another shape is served. The
+assignment form is `NAME=value` only: the YAML and JSON forms such as
+`"password": "x"` are not detected. It does not reach a credential an agent
+already knows or text the agent sends in. A `redacted` count reports spans
+replaced while the response was assembled, so it can include a span in a result
+that was then dropped. The `integrity` digest is a hash of the raw stored text,
+so an agent holding the redacted text can test a guess at a short redacted value
+against it offline. `world_view` evidence spans are offsets into the stored
+capture, not the served text, so a span cited by `world_view` can open the wrong
+window through `timeline` once an earlier secret in that capture was replaced.
+A `world_view` label or literal that redaction lengthened is cut back to the
+length the grammar allows. Redaction narrows what is served; the grant,
+sensitivity ceiling and source consent still decide what an agent may read at
+all.
 
 ## Retry and revoke
 

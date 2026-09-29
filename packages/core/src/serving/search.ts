@@ -86,9 +86,8 @@ function classify(
         continue;
       }
       seen.add(hit.doc_id);
-      result.canon.push(
-        canonChunk(index, page, decision, excerptOf(page.body, 600, index.sourceContext).excerpt, page.body.length > 600),
-      );
+      const { excerpt, truncated } = excerptOf(page.body, 600, index.sourceContext);
+      result.canon.push(canonChunk(index, page, decision, excerpt, truncated));
       continue;
     }
 
