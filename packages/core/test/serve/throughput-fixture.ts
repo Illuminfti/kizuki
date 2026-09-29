@@ -198,11 +198,12 @@ export function fixtureProducer(
  * own bounded retries, exactly as the OpenAI-compatible port reports it,
  * "truncated" for a response cut off at its output reservation ("truncated_billed"
  * when the provider reported its usage, as a real one does), and
- * "malformed" for a completion whose text is not a typed response.
+ * "malformed" for a completion whose text is not a typed response, and
+ * "aborted" for a request the daemon's stop ended in flight.
  */
 export function scriptedModelProducer(
   vault: string,
-  reply: (request: number, eventIds: readonly string[]) => "ok" | "rate_limited" | "truncated" | "truncated_billed" | "malformed",
+  reply: (request: number, eventIds: readonly string[]) => "ok" | "rate_limited" | "truncated" | "truncated_billed" | "malformed" | "aborted",
 ): { producer: ProducerV2Port; requests: string[][]; prompts: string[] } {
   const requests: string[][] = [];
   const prompts: string[] = [];
@@ -231,6 +232,8 @@ export function scriptedModelProducer(
       const scripted = reply(requests.length, ids);
       if (scripted === "rate_limited")
         throw new PortError("unavailable", "http 429", true);
+      if (scripted === "aborted")
+        throw new PortError("unavailable", "model request aborted", false);
       if (scripted === "truncated")
         throw new PortError("unavailable", "rejected: response_truncated", false);
       if (scripted === "truncated_billed")

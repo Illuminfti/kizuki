@@ -24,6 +24,7 @@ import { serveSupervisorHost } from "../service-host";
 import { embeddingConfigured } from "../retrieval-runtime";
 import { configuredModelBinding, createServeRuntime, inspectModelBinding } from "../serve-runtime";
 import { runServiceCustodyBroker, startServiceCustody, ServiceCustodyError, type ServiceCustodyHandle } from "@kizuki/core/internal";
+import { untilLedgerFree } from "../startup-wait";
 import { custodyUnavailableMessage, launchServiceCustodyBroker, serviceStartupExit } from "../service-custody";
 import { isAbsolute, resolve } from "node:path";
 
@@ -95,7 +96,7 @@ export const serveCommand: Command = {
         return mode === "--service-custody" ? serviceStartupExit(error.reason) : 1;
       }
     }
-    try { return await withVault(io, async (ctx) => {
+    const start = (): Promise<number> => withVault(io, async (ctx) => {
       const kind = detectSupervisorKind(io.env);
       const host = serveSupervisorHost(io.env, ctx.vaultPath);
 
@@ -205,7 +206,7 @@ export const serveCommand: Command = {
           : {}),
         process: thisProcess(),
         log: line => io.err(line),
-        acquireRuntime: () => createServeRuntime({ ...ctx, env: io.env, err: io.err, configurationErrorMode: "disable-model" }),
+        acquireRuntime: ({ signal }) => createServeRuntime({ ...ctx, env: io.env, err: io.err, configurationErrorMode: "disable-model", signal }),
         ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
       });
       if (parsed.flags.has("--json")) {
@@ -228,6 +229,9 @@ export const serveCommand: Command = {
       if (result.http !== null) await result.http.stop();
       return 0;
     }, { retrieval: verb === "status" || verb === "stop" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required" });
+    // The long-running loop outwaits a held ledger; every other verb reports it.
+    const daemon = verb === undefined && !["--once", "--install", "--uninstall"].some(flag => parsed.flags.has(flag));
+    try { return await (daemon ? untilLedgerFree(start, { log: line => io.err(line) }) : start());
     } catch (error) {
       // An older sealed ledger needs the explicit init migration. Restarting
       // the installed unit cannot change that, so it exits as a refusal.

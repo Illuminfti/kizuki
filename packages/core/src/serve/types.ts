@@ -62,6 +62,15 @@ export const CONFIDENCE_SPREAD_MIN = 0.02;
 
 export const WRITER_LEASE = "writer";
 
+/** A rail that met a writer it could not outwait stops with this typed reason and retries with backoff. */
+export const LEDGER_LEASE_HELD_STOP = "ledger:lease_held";
+
+/** First and longest wait after a pass met a ledger another process holds; each further skip doubles it. */
+export const LEDGER_HELD_BACKOFF_MIN_MS = 1_000;
+export const LEDGER_HELD_BACKOFF_MAX_MS = 30_000;
+/** How often a running rail looks for a queued `serve stop`. */
+export const STOP_WATCH_MS = 500;
+
 export const RAIL_IDS = [
   "sync",
   "retrieval-sweep",

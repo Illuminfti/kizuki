@@ -12,6 +12,7 @@ import {
   bindSourceModelPort,
   bindEpochZeroProducerPort,
   sourcePolicyEpoch,
+  isLedgerBusy,
   isPlainObject,
   registerModelProducerPort,
   registerModelProducerV2Port,
@@ -148,6 +149,8 @@ async function syncConnections(
         }
       } finally { await closeHostConnector(connector); }
     } catch (error) {
+      // A held ledger is the whole pass's skip, not this connector's failure.
+      if (isLedgerBusy(error)) throw error;
       if (errors.length < MAX_SYNC_ERRORS) {
         errors.push(`connector ${selected.connection.connector_id} sync unavailable: ${redactReceiptError(error)}`);
       }
@@ -165,6 +168,8 @@ interface ServeRuntimeOptions {
   readonly err: (line: string) => void;
   /** Strict by default; the daemon can retain its useful local capture floor. */
   readonly configurationErrorMode?: "throw" | "disable-model";
+  /** Aborts every model and judge request of this runtime, so a daemon stop never waits one out. */
+  readonly signal?: AbortSignal;
 }
 
 /** What doctor and serve status show about a bindable model. Never the credential. */
@@ -234,11 +239,14 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
   }
   const registry = new PortRegistry();
   registerLlmPorts(registry);
-  const llm = (await registry.bindFromConfig<LlmPort>(
+  const boundLlm = (await registry.bindFromConfig<LlmPort>(
     "llm",
     { llm: selected.id },
     portContext(options.vaultPath, "llm", selected.id, selected.config, selected.secret_ref, secret, options.err),
   )).port;
+  const { signal } = options;
+  const llm: LlmPort = signal === undefined ? boundLlm
+    : { ...boundLlm, complete: (request) => boundLlm.complete({ ...request, signal }) };
   let producer: ProducerPort | ProducerV2Port | undefined;
   let systemone: SystemOnePort | undefined;
   try {
@@ -263,11 +271,13 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
         }
         parseSystemOneJevConfig(config);
         registerSystemOnePorts(registry);
-        systemone = (await registry.bindFromConfig<SystemOnePort>(
+        const boundJudge = (await registry.bindFromConfig<SystemOnePort>(
           "systemone",
           { systemone: SYSTEMONE_JEV_ID },
           portContext(options.vaultPath, "systemone", SYSTEMONE_JEV_ID, config, secretRef, systemoneSecret, options.err),
         )).port;
+        systemone = signal === undefined ? boundJudge
+          : { ...boundJudge, evaluate: (request) => boundJudge.evaluate({ ...request, signal }) };
       }
       // Epoch-zero journals predate typed source support. Keep their declared
       // v1 producer/draft codec end-to-end; the modern, source-bound route is
