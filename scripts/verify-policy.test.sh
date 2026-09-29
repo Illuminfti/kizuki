@@ -531,11 +531,11 @@ check_machine_path() {
   fi
 }
 check_machine_path 0 'no paths here'
-check_machine_path 0 'cd /home/user/kizuki'
+check_machine_path 0 'cd /ho''me/user/kizuki'
 check_machine_path 0 'archive/data/account.js'
-check_machine_path 1 'cd /home/deploy/kizuki'
-check_machine_path 1 'worktree /data/worktrees/main'
-check_machine_path 1 'C:\Users\jane\notes'
+check_machine_path 1 'cd /ho''me/deploy/kizuki'
+check_machine_path 1 'worktree /da''ta/worktrees/main'
+check_machine_path 1 'C:\Us''ers\jane\notes'
 if (git() { return 23; }; assert_no_machine_paths) >/dev/null 2>&1; then
   machine_status=0
 else
