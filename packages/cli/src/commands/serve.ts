@@ -146,6 +146,7 @@ export const serveCommand: Command = {
           io.out(doctor.model.detail);
           io.out(doctor.throughput.detail);
           io.out(doctor.oversized.detail);
+          io.out(doctor.quarantined.detail);
         }
         return doctor.ok ? 0 : 1;
       }

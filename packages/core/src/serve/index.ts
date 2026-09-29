@@ -31,6 +31,7 @@ export type {
   LeaseRow,
   ModelDoctor,
   OversizedDoctor,
+  QuarantineDoctor,
   RailDoctor,
   RailId,
   RailSpec,

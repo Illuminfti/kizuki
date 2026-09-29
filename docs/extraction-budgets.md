@@ -42,6 +42,9 @@ max_output_tokens = 8192   # 1024..16384; typed extraction only, reasoning inclu
 max_pass_seconds = 60      # 30..600; no step starts after this many seconds
 max_calls_per_day = 1000   # 1..100000; model requests per UTC day, rejected ones included
 max_output_tokens_per_day = 4000000  # 1024..1000000000; billed output tokens per UTC day
+
+[budget]
+canon_writes_per_run = 32  # 0..10000; canon pages one sync pass may write
 ```
 
 A value outside its range, a fraction or a string keeps that key's default.
@@ -92,18 +95,23 @@ A value outside its range, a fraction or a string keeps that key's default.
 - **Memory.** Each step reuses the connection's cached statements and finalizes
   the ones it prepares itself, so a long pass does not accumulate statements
   or heap. Canon writing after extraction keeps its own limits, including at
-  most 32 canon writes per pass.
+  most `canon_writes_per_run` canon writes per pass (see
+  [canon writes per pass](#canon-writes-per-pass)).
 - **The writer during a pass.** A pass holds the vault writer only for local
-  durable work: filing a step's decision and cursor, and the canon writes that
-  end the pass. It never holds it across a model request, so owner verbs that
-  need the writer, such as `undo`, `tell`, purge and `kizuki serve stop`, go
-  through while a request is in flight. An answer that arrives after a purge or
+  durable work: filing a step's decision and cursor, and each canon write. It
+  takes and releases the writer for every page, and stays away from it for a
+  moment between pages, so an owner verb that needs the writer, such as `undo`,
+  `tell`, purge and `kizuki serve stop`, goes through after at most one page.
+  `kizuki tell` and `kizuki undo` wait up to 30 seconds for a write in progress
+  before they report `writer_busy`. The pass never holds the writer across a
+  model request either. An answer that arrives after a purge or
   another pass changed its inputs or the cursor is discarded, never filed. An
   answer waits up to five seconds for a writer another operation holds; after
   that the pass stops as `lock:busy` and the next one asks again.
 - **Stopping.** `kizuki serve stop`, SIGTERM and SIGINT end a pass before its
-  next step. The request in flight finishes and is filed, canon writing waits
-  for the next start, and the receipt stops as `serve:stop_requested`. The
+  next step, and before the next canon page. The request in flight finishes and
+  is filed, the page being written finishes, later pages wait for the next
+  start, and the receipt stops as `serve:stop_requested`. The
   service's stop timeout therefore needs to cover one request, not a pass.
 - **Model health.** A pass is judged by how it ended. The receipt's
   `model.answered` counts the requests the model answered, and
@@ -127,6 +135,34 @@ decision whose previous cursor must equal the committed one. Concurrent
 requests would have to be planned against state that does not exist yet and
 thrown away whenever an earlier request fails, and filing would no longer
 follow a single order.
+
+## Canon writes per pass
+
+After extraction the pass writes canon one page at a time, up to
+`[budget] canon_writes_per_run` pages (default 32; the daily ceiling
+`canon_writes_per_day` still applies). A pass that reaches the number ends as
+`ok` and the next pass continues, so a vault with a long queue can raise it
+and one with a slow model can lower it. `doctor --json` reports it as
+`serve.model.budget.canon_writes_per_run.limit`.
+
+A write costs the page written, not the vault: it assesses that page's
+evidence only and refreshes the graph edges of that page and of the pages
+that link to it. The graph keeps the pages it last projected in the ledger's
+derived tables, so one write no longer walks the vault or assesses every
+page. A file added, removed or rewritten outside the writer is noticed by a
+stat scan and takes one full walk, which fills those tables again.
+
+A typed page group that fails a pass is named in the receipt with its handle
+and page path, for example `page <handle> at auto/world/<handle>.md`. After
+three failed passes in a row the page is set aside for 24 hours: later passes
+skip it, so groups behind it are written, and the receipt says
+`set aside until <time>`. When the day is over the page is tried once more; a
+failure sets it aside for another day, a success forgets it.
+`kizuki doctor` and `kizuki serve status` print `quarantined typed pages=N`,
+and doctor adds a `quarantined` line with the path, handle, failed passes, end
+of the wait and last error of each. A set-aside page is not a service failure.
+The state is one `rail_cursors` row per handle, so it survives a restart and a
+backup.
 
 ## Rejected responses and daily budgets
 
@@ -316,6 +352,7 @@ under the current authorization checks.
 Use the repository's pinned Bun version:
 
 ```bash
+bun test packages/core/test/serve/write-pass-release.test.ts packages/core/test/serve/write-pass-stuck.test.ts packages/core/test/canon/write-scaling.test.ts packages/core/test/graph/registry-refresh.test.ts packages/cli/test/tell-writer-busy.test.ts
 bun test packages/core/test/serve/extraction-budget.test.ts packages/core/test/serve/extraction-throughput.test.ts packages/core/test/serve/extraction-rejections.test.ts packages/core/test/serve/oversized-records.test.ts packages/core/test/producer/model.test.ts packages/core/test/source-model-egress.test.ts
 bun test packages/llm/test/openai-compatible.test.ts packages/cli/test/serve/extraction-throughput.test.ts packages/cli/test/serve/oversized-records.test.ts
 bun test packages/core/test

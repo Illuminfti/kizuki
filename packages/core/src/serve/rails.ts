@@ -153,6 +153,7 @@ async function runSyncRail(
   vaultPath: string,
   budget: BudgetTracker,
   extraction: ExtractionConfig,
+  canonWritesPerPass: number,
   hooks: AnyRailHooks | undefined,
   runId: string,
   now: () => string,
@@ -171,6 +172,7 @@ async function runSyncRail(
   const written = await runWritePass(db, vaultPath, {
     budget,
     extraction,
+    canon_writes_per_pass: canonWritesPerPass,
     ...(stopRequested === undefined ? {} : { stopRequested }),
     run_id: runId,
     now,
@@ -510,7 +512,7 @@ async function runRailImpl(
       }
       switch (rail) {
         case "sync":
-          partial = await runSyncRail(db, vaultPath, budget, config.extraction, hooks, runId, now, options.stopRequested);
+          partial = await runSyncRail(db, vaultPath, budget, config.extraction, config.canon_writes_per_run, hooks, runId, now, options.stopRequested);
           break;
         case "retrieval-sweep":
           partial = await runRetrievalSweep(db, hooks);

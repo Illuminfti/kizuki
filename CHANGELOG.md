@@ -377,6 +377,26 @@
   loaded machine does not fail tests at Bun's 5-second default. A test's own
   explicit timeout is unchanged. The CLI test helper kills a child process that
   has not exited after 90 seconds and fails that test with a clear message.
+- A canon write costs the page written, not the vault. It assessed the live
+  evidence of every page, several times, walked the vault and rewrote every
+  graph edge, so a page took many seconds at production size and the
+  writer was held throughout. It now assesses that page's evidence and
+  projects the edges of that page and of the pages that link to it, from the
+  graph's own record of the pages; a stat scan of the vault notices any other
+  file that changed and takes one full walk. A test with 4,000 live pages
+  writes a page in the time of 200 and reads only the written page's sources.
+- The sync pass writes canon one page at a time. It takes and releases the
+  writer for every page and reads a stop request between pages, so a stop ends
+  it after the page in progress. `kizuki tell` and `kizuki undo` wait up to 30
+  seconds for the writer instead of failing `writer_busy` at once.
+- `[budget] canon_writes_per_run` in `serve.toml` now sets how many canon pages
+  one pass writes (default 32, as before). It was capped at 32 whatever its
+  value.
+- A typed page group that fails three passes in a row is set aside for 24
+  hours, with its handle and path in the receipt, so groups behind it are
+  written instead of starving once 32 are stuck. `kizuki doctor` and
+  `kizuki serve status` print `quarantined typed pages=N`.
+
 - A refused `kizuki export` now names the sources that block it and the exact
   grant or revocation command that clears each one, instead of a bare
   `source_export_denied`. The consent rule is unchanged: export still needs the

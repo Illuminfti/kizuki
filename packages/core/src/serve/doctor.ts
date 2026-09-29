@@ -23,6 +23,7 @@ import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readE
 import { sha256Hex } from "../util/hash";
 import { listSchedules } from "./schema";
 import { countOversizedRecords, RETRY_SKIPPED_COMMAND } from "./extract-oversized";
+import { listQuarantinedPages } from "./write-quarantine";
 import type { SupervisorHost } from "./supervisor";
 import { queryServeService } from "./supervisor";
 import { ensureVaultId } from "./vault-id";
@@ -48,6 +49,7 @@ import {
   type SupervisorLastExit,
   type ThroughputDoctor,
   type OversizedDoctor,
+  type QuarantineDoctor,
   type SupervisorStatus,
 } from "./types";
 
@@ -547,6 +549,7 @@ export function inspectServeDoctor(
     options.page_walk === false
       ? { pages: [], skipped: [], truncated: false }
       : listCanonPagesReport(vaultPath);
+  const quarantined = quarantineDoctor(db, now);
   const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
   const cal = calibration(db, syncReceipts, now);
   const extraction = extractionDoctor(db, syncReceipts, model.canon_writing !== "off");
@@ -623,6 +626,7 @@ export function inspectServeDoctor(
     egress,
     throughput,
     oversized,
+    quarantined,
     stores,
     calibration: cal,
     ok: failures.length === 0,
@@ -637,6 +641,12 @@ function oversizedDoctor(db: Database): OversizedDoctor {
   const retry = skipped === 0 ? null : RETRY_SKIPPED_COMMAND;
   return { segmenting, skipped, retry,
     detail: `oversized records segmenting=${segmenting} skipped=${skipped}${retry === null ? "" : ` retry: ${retry}`}` };
+}
+
+/** A set-aside page is the writer's own decision, retried after a day; it is listed, not a failure. */
+function quarantineDoctor(db: Database, now: string): QuarantineDoctor {
+  const pages = listQuarantinedPages(db, now).map(({ handle, path, attempts, reason, until }) => ({ handle, path, attempts, reason, until }));
+  return { pages, detail: `quarantined typed pages=${pages.length}` };
 }
 
 function throughputDoctor(config: ServeConfig, syncPeriod: number, recordsSkipped: number): ThroughputDoctor {

@@ -494,6 +494,18 @@ export interface TopFailure {
   readonly rail: RailId | null;
 }
 
+/** Typed pages the canon writer set aside after repeated failures; not a failure of the service. */
+export interface QuarantineDoctor {
+  readonly pages: readonly {
+    readonly handle: string;
+    readonly path: string;
+    readonly attempts: number;
+    readonly reason: string;
+    readonly until: string;
+  }[];
+  readonly detail: string;
+}
+
 export interface ServeDoctorReport {
   readonly supervisor: SupervisorStatus;
   /** Read only for an installed unit that is not running; null otherwise. */
@@ -505,6 +517,7 @@ export interface ServeDoctorReport {
   readonly egress: EgressDoctor[];
   readonly throughput: ThroughputDoctor;
   readonly oversized: OversizedDoctor;
+  readonly quarantined: QuarantineDoctor;
   readonly stores: StoreDoctor;
   readonly calibration: CalibrationDoctor;
   readonly ok: boolean;

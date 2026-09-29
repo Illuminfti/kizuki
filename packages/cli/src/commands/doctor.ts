@@ -602,6 +602,10 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   if (report.model_config_error !== null) io.out(`model configuration invalid: ${report.model_config_error}`);
   io.out(report.serve.throughput.detail);
   io.out(report.serve.oversized.detail);
+  io.out(report.serve.quarantined.detail);
+  for (const page of report.serve.quarantined.pages) {
+    io.out(`quarantined ${page.path} handle=${page.handle} failed_passes=${page.attempts} until=${page.until} last_error=${JSON.stringify(page.reason)}`);
+  }
   for (const rail of report.serve.rails) {
     const extra = rail.reason === null ? "" : ` ${rail.reason}`;
     io.out(`rail ${rail.rail} status=${rail.status}${extra}`);

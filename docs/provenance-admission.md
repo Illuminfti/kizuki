@@ -17,6 +17,14 @@ withdraws incoming relations to unrecorded active pages, including known
 aliases during an incomplete scan. Purge-held aliases remain suppressed even
 for inactive pages. Other inactive pages leave ordinary unresolved prose links
 unchanged. Page identity and owner bytes remain available to the arbiter.
+Refreshing one written page reads that page's evidence and the graph's record
+of the other pages (`graph_pages`, `graph_links`, `graph_files`), which every
+full walk replaces and a purge clears; while the vault's stat signatures still
+match it, no other page is assessed, and a changed file makes the next write
+walk again. Incoming relations that resolve differently because of the page
+(a title now shared, a new page a link can reach, an archived page) are
+projected again with it, so the result equals a full rebuild after a complete
+walk.
 Schema-only FTS recovery restores ledger rows and withholds canon companion
 rows until a rebuild supplies a current page snapshot.
 
