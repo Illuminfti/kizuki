@@ -15,6 +15,7 @@ import { ulid } from "../util/ulid";
 import { createDurableWriteBudget } from "./budget-ledger";
 import { loadServeConfig } from "./config";
 import { composeBrief, repairBriefPages, type BriefRepair } from "./brief";
+import { parseFrontmatter } from "../vault/frontmatter";
 import { createFileNotifier, briefPath } from "./notifier-file";
 import { recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
 import { initServe, listSchedules } from "./schema";
@@ -291,11 +292,11 @@ async function runEmbedBackfill(hooks: AnyRailHooks | undefined): Promise<Partia
   };
 }
 
-/** A repaired page is receipted on the run; one that cannot be repaired degrades it. */
+/** A repaired page is counted on the run; one that cannot be repaired degrades it and names its day. */
 function repairReport(repair: BriefRepair): Partial<RunReceipt> {
   return {
     ...(repair.repaired === 0 ? {} : { pages_repaired: repair.repaired }),
-    ...(repair.failed === 0 ? {} : { status: "degraded", errors: ["brief-repair-failed"] }),
+    ...(repair.failed === 0 ? {} : { status: "degraded", errors: repair.failed_days.map((day) => `brief-repair-failed:${day}`) }),
   };
 }
 
@@ -307,11 +308,12 @@ async function runBrief(
 ): Promise<Partial<RunReceipt>> {
   const notifier = createFileNotifier(vaultPath);
   const day = dayOf(now);
+  const body = composeBrief(db, now, modelRef);
   await notifier.notify({
     notification_id: day,
     title: `brief:${day}`,
-    body: composeBrief(db, now, modelRef),
-    sensitivity: "personal",
+    body,
+    sensitivity: parseFrontmatter(body).data["sensitivity"] === "private" ? "private" : "personal",
     provenance: [],
   });
   return { status: "ok", ...repairReport(await repairBriefPages(vaultPath)) };

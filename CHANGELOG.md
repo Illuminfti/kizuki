@@ -15,6 +15,11 @@
 
 ### Fixed
 
+- The daily brief is stamped private when it names a page that ever received a
+  private receipt (a repair never lowers it), says when rail failure groups
+  were omitted, and the brief repair also rewrites the run-id
+  stub a failed brief run leaves behind, skips oversized files, and names the
+  day of a page it could not repair.
 - Structural claim deduplication now requires overlapping validity. A claim
   with the same key, polarity and object but a disjoint or merely adjacent
   validity window is stored as its own claim instead of being merged into an

@@ -226,6 +226,59 @@ describe("daily brief", () => {
     }
   });
 
+  test("a brief that names a private page is itself private", async () => {
+    const f = fixture();
+    try {
+      await f.runBrief(PREVIOUS_BRIEF);
+      f.at("2026-09-28T09:00:00.000Z");
+      write(
+        f.io,
+        await storeClaim(f.db, putEvent(f.db), {
+          ...LOOSE,
+          target: "medical/secret-diagnosis",
+          sensitivity: "private",
+        }),
+      );
+      const receiptSensitivity = f.db
+        .query<{ sensitivity: string }, []>(
+          "SELECT sensitivity FROM canon_receipts WHERE page_path = 'medical/secret-diagnosis.md'",
+        )
+        .get()?.sensitivity;
+      expect(receiptSensitivity).toBe("private");
+      const { text } = await f.runBrief(TODAY);
+      const parsed = parseFrontmatter(text);
+      expect(text).toContain("medical/secret-diagnosis.md");
+      expect(parsed.data["sensitivity"]).toBe("private");
+      expect(validatePage(parsed.data)).toEqual([]);
+      // A quiet later brief names nothing private and stays personal.
+      const quiet = await f.runBrief("2026-10-05T07:00:00.000Z");
+      expect(parseFrontmatter(quiet.text).data["sensitivity"]).toBe("personal");
+      expect(quiet.text).not.toContain("secret-diagnosis");
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test("rail failures past the group limit say how many were omitted", async () => {
+    const f = fixture();
+    try {
+      await f.runBrief(PREVIOUS_BRIEF);
+      for (let index = 0; index < 13; index += 1) {
+        railFailure(
+          f.vault,
+          f.db,
+          `rail-${String(index).padStart(2, "0")}`,
+          `2026-09-28T13:${String(index).padStart(2, "0")}:00.000Z`,
+          "boom",
+        );
+      }
+      const { text } = await f.runBrief(TODAY);
+      expect(text).toContain("- and 3 more rail groups");
+    } finally {
+      f.db.close();
+    }
+  });
+
   test("a quiet day still reports real state and never a boilerplate-only page", async () => {
     const f = fixture();
     try {
@@ -372,7 +425,7 @@ describe("brief page repair", () => {
       chmodSync(path, 0o664);
       const sweep = await runRail(f.db, f.vault, "doctor-sweep", { now: () => TODAY });
       expect(sweep.status).toBe("degraded");
-      expect(sweep.errors).toEqual(["brief-repair-failed"]);
+      expect(sweep.errors).toEqual(["brief-repair-failed:2026-09-17"]);
       expect(sweep.pages_repaired).toBeUndefined();
       expect(invalidBriefs(f)).toEqual(["dashboards/brief-2026-09-17.md"]);
 
@@ -380,6 +433,65 @@ describe("brief page repair", () => {
       const retry = await runRail(f.db, f.vault, "doctor-sweep", { now: () => "2026-09-29T08:00:00.000Z" });
       expect(retry.status).toBe("ok");
       expect(retry.pages_repaired).toBe(1);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test("a repair never lowers a private brief to personal", async () => {
+    const f = fixture();
+    try {
+      const path = seedLegacy(
+        f.vault,
+        "brief-2026-09-22.md",
+        LEGACY_BRIEF.replace("2026-09-17", "2026-09-22").replace(
+          'sensitivity: "personal"',
+          'sensitivity: "private"',
+        ),
+      );
+      const sweep = await runRail(f.db, f.vault, "doctor-sweep", { now: () => TODAY });
+      expect(sweep.pages_repaired).toBe(1);
+      const repaired = parseFrontmatter(readFileSync(path, "utf8"));
+      expect(repaired.data["sensitivity"]).toBe("private");
+      expect(validatePage(repaired.data)).toEqual([]);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test("a run-id stub left by a brief run that died early is rewritten", async () => {
+    const f = fixture();
+    try {
+      const path = seedLegacy(
+        f.vault,
+        "brief-2026-09-20.md",
+        "01J8ZQ4M7T3V9K2W5X6Y7Z8A9B\n",
+      );
+      expect(invalidBriefs(f)).toEqual(["dashboards/brief-2026-09-20.md"]);
+      const sweep = await runRail(f.db, f.vault, "doctor-sweep", { now: () => TODAY });
+      expect(sweep.pages_repaired).toBe(1);
+      const repaired = parseFrontmatter(readFileSync(path, "utf8"));
+      expect(repaired.data["id"]).toBe("rollup:brief-2026-09-20");
+      expect(validatePage(repaired.data)).toEqual([]);
+      expect(repaired.body).toContain("stopped before it wrote its summary");
+      expect(invalidBriefs(f)).toEqual([]);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  test("an oversized brief-named file is not read or rewritten", async () => {
+    const f = fixture();
+    try {
+      const path = seedLegacy(
+        f.vault,
+        "brief-2026-09-21.md",
+        `${LEGACY_BRIEF.replace("2026-09-17", "2026-09-21")}${"x".repeat(300 * 1024)}\n`,
+      );
+      const before = readFileSync(path, "utf8");
+      const sweep = await runRail(f.db, f.vault, "doctor-sweep", { now: () => TODAY });
+      expect(sweep.pages_repaired).toBeUndefined();
+      expect(readFileSync(path, "utf8")).toBe(before);
     } finally {
       f.db.close();
     }

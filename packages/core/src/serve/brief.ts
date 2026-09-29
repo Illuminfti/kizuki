@@ -17,12 +17,16 @@ const RAIL_GROUP_LIMIT = 10;
 const DETAIL_CHARS = 160;
 const DAY_MS = 86_400_000;
 
+type BriefSensitivity = "personal" | "private";
+
 interface CanonChange {
   readonly label: string;
   /** Distinct pages, exact. */
   readonly pages: number;
   /** Most recent first, at most `LIST_LIMIT`. */
   readonly listed: readonly string[];
+  /** Pages in `pages` that ever received a private receipt. */
+  readonly private_pages: number;
 }
 
 interface RailProblem {
@@ -36,8 +40,12 @@ interface RailProblem {
 interface BriefFacts {
   readonly since: string;
   readonly until: string;
+  /** The brief names page paths, so it is as sensitive as the most sensitive page it names. */
+  readonly sensitivity: BriefSensitivity;
   readonly changes: readonly CanonChange[];
   readonly problems: readonly RailProblem[];
+  /** Rail groups past `RAIL_GROUP_LIMIT` that the list does not show. */
+  readonly problems_omitted: number;
   readonly unwritten_claims: number;
   readonly events_past_cursor: number;
   readonly deferred_inputs: number;
@@ -89,6 +97,10 @@ function windowStart(db: Database, day: string, until: string): string {
   return new Date(Date.parse(until) - DAY_MS).toISOString();
 }
 
+/** A page that ever received a private receipt: naming it makes the brief private. */
+const PRIVATE_PATHS =
+  "page_path IN (SELECT page_path FROM canon_receipts WHERE sensitivity = 'private')";
+
 function canonChanges(
   db: Database,
   since: string,
@@ -103,6 +115,12 @@ function canonChanges(
           `SELECT count(DISTINCT page_path) AS n FROM canon_receipts WHERE ${range}`,
         )
         .get(since, until)?.n ?? 0;
+    const privatePages =
+      db
+        .query<{ n: number }, [string, string]>(
+          `SELECT count(DISTINCT page_path) AS n FROM canon_receipts WHERE ${range} AND ${PRIVATE_PATHS}`,
+        )
+        .get(since, until)?.n ?? 0;
     const listed = db
       .query<{ page_path: string }, [string, string, number]>(
         `SELECT page_path FROM canon_receipts WHERE ${range}
@@ -110,7 +128,7 @@ function canonChanges(
       )
       .all(since, until, LIST_LIMIT)
       .map((row) => row.page_path);
-    return { label, pages, listed };
+    return { label, pages, listed, private_pages: privatePages };
   });
 }
 
@@ -118,8 +136,8 @@ function railProblems(
   db: Database,
   since: string,
   until: string,
-): RailProblem[] {
-  if (!tableExists(db, "run_receipts")) return [];
+): { problems: RailProblem[]; omitted: number } {
+  if (!tableExists(db, "run_receipts")) return { problems: [], omitted: 0 };
   const groups = db
     .query<
       { rail: string; status: string; runs: number; last_at: string },
@@ -129,8 +147,18 @@ function railProblems(
         WHERE finished_at > ? AND finished_at <= ? AND status <> 'ok'
         GROUP BY rail, status ORDER BY runs DESC, rail, status LIMIT ?`,
     )
-    .all(since, until, RAIL_GROUP_LIMIT);
-  return groups.map((group) => {
+    .all(since, until, RAIL_GROUP_LIMIT + 1);
+  const omitted =
+    groups.length <= RAIL_GROUP_LIMIT
+      ? 0
+      : (db
+          .query<{ n: number }, [string, string]>(
+            `SELECT count(*) AS n FROM (SELECT 1 FROM run_receipts
+              WHERE finished_at > ? AND finished_at <= ? AND status <> 'ok'
+              GROUP BY rail, status)`,
+          )
+          .get(since, until)?.n ?? 0) - RAIL_GROUP_LIMIT;
+  const problems = groups.slice(0, RAIL_GROUP_LIMIT).map((group) => {
     const row = db
       .query<{ report: string }, [string, string, string]>(
         "SELECT report FROM run_receipts WHERE rail = ? AND status = ? AND finished_at = ? LIMIT 1",
@@ -146,6 +174,7 @@ function railProblems(
     }
     return { ...group, detail };
   });
+  return { problems, omitted };
 }
 
 function count(db: Database, sql: string, ...bindings: string[]): number {
@@ -173,11 +202,17 @@ function eventsPastCursor(db: Database): number {
 function gatherFacts(db: Database, now: string): BriefFacts {
   const until = instant(now);
   const since = windowStart(db, until.slice(0, 10), until);
+  const rails = railProblems(db, since, until);
+  const changes = canonChanges(db, since, until);
   return {
     since,
     until,
-    changes: canonChanges(db, since, until),
-    problems: railProblems(db, since, until),
+    sensitivity: changes.some((change) => change.private_pages > 0)
+      ? "private"
+      : "personal",
+    changes,
+    problems: rails.problems,
+    problems_omitted: rails.omitted,
     unwritten_claims: countUnwrittenLiveClaims(db),
     events_past_cursor: eventsPastCursor(db),
     deferred_inputs: tableExists(db, "extract_deferred_inputs")
@@ -244,6 +279,11 @@ function briefBody(
     );
   }
 
+  if (facts.problems_omitted > 0)
+    lines.push(
+      `- and ${plural(facts.problems_omitted, "more rail group", "more rail groups")}`,
+    );
+
   lines.push(
     "",
     "## Backlog",
@@ -262,13 +302,16 @@ function briefBody(
   return lines.join("\n");
 }
 
-function briefData(day: string): Record<string, string | string[]> {
+function briefData(
+  day: string,
+  sensitivity: BriefSensitivity,
+): Record<string, string | string[]> {
   return {
     id: `rollup:brief-${day}`,
     title: `Daily brief ${day}`,
     type: "rollup",
     status: "active",
-    sensitivity: "personal",
+    sensitivity,
     taint: "clean",
     // Rendered from rail and canon state, not from ledger events: the honest
     // provenance is an explicit empty list, declared in `parsePageSources`.
@@ -284,9 +327,10 @@ export function composeBrief(
   modelRef: string | null,
 ): string {
   const day = now.slice(0, 10);
+  const facts = gatherFacts(db, now);
   return serializePage({
-    data: briefData(day),
-    body: briefBody(day, gatherFacts(db, now), modelRef),
+    data: briefData(day, facts.sensitivity),
+    body: briefBody(day, facts, modelRef),
   });
 }
 
@@ -295,14 +339,36 @@ export interface BriefRepair {
   readonly repaired: number;
   /** Pages that needed it and could not be rewritten; the next sweep tries again. */
   readonly failed: number;
+  /** Days of the failed pages, sorted, at most `REPAIR_DAYS_LIMIT`. */
+  readonly failed_days: readonly string[];
+}
+
+const REPAIR_DAYS_LIMIT = 5;
+/** A daemon brief is a few KB; anything larger was edited by hand and is left alone. */
+const REPAIR_MAX_BYTES = 256 * 1024;
+/** What the run receipt writer leaves at a brief path when the rail died before writing. */
+const RUN_ID_STUB = /^[0-9A-HJKMNP-TV-Z]{26}\s*$/;
+
+function stubBody(day: string): string {
+  return [
+    `# Brief ${day}`,
+    "",
+    "The brief run for this day stopped before it wrote its summary.",
+    "The next brief covers this window.",
+    "",
+  ].join("\n");
 }
 
 /**
  * Rewrites daemon-written brief pages that fail the page schema (an older
  * build omitted `sources`) through the same notifier that wrote them, keeping
- * their body. A page the daemon did not write, or whose frontmatter cannot be
- * read at all, is left for its owner. A busy canon writer defers the page to
- * the next sweep; any other refusal is counted as failed.
+ * their body. A file holding only the run id the receipt writer leaves behind
+ * when the brief rail died early is rewritten with a short stub body. A page
+ * the daemon did not write, an oversized file, or one whose frontmatter cannot
+ * be read is left for its owner. A busy canon writer defers the page to the
+ * next sweep; any other refusal is counted as failed and its day is named.
+ * The run receipt carries the count and the failed days; daemon brief pages
+ * are not canon and have no canon receipt.
  */
 export async function repairBriefPages(vaultPath: string): Promise<BriefRepair> {
   const directory = join(vaultPath, "dashboards");
@@ -310,36 +376,50 @@ export async function repairBriefPages(vaultPath: string): Promise<BriefRepair> 
   try {
     names = readdirSync(directory).sort();
   } catch {
-    return { repaired: 0, failed: 0 };
+    return { repaired: 0, failed: 0, failed_days: [] };
   }
   const notifier = createFileNotifier(vaultPath);
   let repaired = 0;
-  let failed = 0;
+  const failedDays: string[] = [];
   for (const name of names) {
     if (!isDaemonBriefPath(`dashboards/${name}`)) continue;
     const day = name.slice("brief-".length, -".md".length);
-    let page: ReturnType<typeof parseFrontmatter>;
+    let body: string;
+    let sensitivity: BriefSensitivity = "personal";
     try {
       const path = join(directory, name);
-      if (!lstatSync(path).isFile()) continue;
-      page = parseFrontmatter(readFileSync(path, "utf8"));
+      const stat = lstatSync(path);
+      if (!stat.isFile() || stat.size > REPAIR_MAX_BYTES) continue;
+      const text = readFileSync(path, "utf8");
+      if (RUN_ID_STUB.test(text)) {
+        body = stubBody(day);
+      } else {
+        const page = parseFrontmatter(text);
+        if (page.data["id"] !== `rollup:brief-${day}`) continue;
+        if (validatePage(page.data).length === 0 && parsePageSources(page.data).ok) continue;
+        body = page.body;
+        // A rewrite never lowers what the page already declared.
+        if (page.data["sensitivity"] === "private") sensitivity = "private";
+      }
     } catch {
       continue;
     }
-    if (page.data["id"] !== `rollup:brief-${day}`) continue;
-    if (validatePage(page.data).length === 0 && parsePageSources(page.data).ok) continue;
     try {
       await notifier.notify({
         notification_id: day,
         title: `brief:${day}`,
-        body: serializePage({ data: briefData(day), body: page.body }),
-        sensitivity: "personal",
+        body: serializePage({ data: briefData(day, sensitivity), body }),
+        sensitivity,
         provenance: [],
       });
       repaired += 1;
     } catch (error) {
-      if (!(error instanceof PortError && error.retryable)) failed += 1;
+      if (!(error instanceof PortError && error.retryable)) failedDays.push(day);
     }
   }
-  return { repaired, failed };
+  return {
+    repaired,
+    failed: failedDays.length,
+    failed_days: failedDays.slice(0, REPAIR_DAYS_LIMIT),
+  };
 }
