@@ -8,6 +8,7 @@ import {
   count,
   countClaims,
   countUnwrittenLiveClaims,
+  countLiveClaimsByProducer,
   countWrittenLiveClaims,
   doctorVault,
   getCanonReceiptRecord,
@@ -22,7 +23,7 @@ import {
   readHolds,
   readVaultId,
 } from "@kizuki/core";
-import type { ClaimStatus } from "@kizuki/core";
+import type { ClaimStatus, LiveClaimProducers } from "@kizuki/core";
 import { readSqliteRuntime } from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
@@ -93,6 +94,8 @@ interface DoctorReport {
     filed: number;
     written: number;
     unwritten: number;
+    /** Live claims by producer: model extraction versus deterministic page mirrors. */
+    by_producer: LiveClaimProducers;
   };
   live_claims: DoctorClaim[];
   filed_claims: DoctorClaim[];
@@ -475,6 +478,7 @@ async function collect(
       filed: countClaims(ctx.db, { status: "skipped" }),
       written: countWrittenLiveClaims(ctx.db),
       unwritten: countUnwrittenLiveClaims(ctx.db),
+      by_producer: countLiveClaimsByProducer(ctx.db),
     },
     live_claims: liveClaims,
     filed_claims: filedClaims,
@@ -505,6 +509,10 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   );
   io.out(
     `claims live=${report.claims.live} filed=${report.claims.filed} written=${report.claims.written} unwritten=${report.claims.unwritten} superseded=${report.claims.superseded} skipped=${report.claims.skipped} purged=${report.claims.purged}`,
+  );
+  const producers = report.claims.by_producer;
+  io.out(
+    `claim producers model_extracted=${producers.model} imported_page_mirrors=${producers.deterministic} owner=${producers.owner} agent=${producers.agent}`,
   );
   const derived = report.serve.stores.derived;
   io.out(

@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { embeddingThroughputFromReceipts } from "../retrieval/reembed";
 import { inspectPageIndex } from "../canon";
+import { staleCanonIntentFailure } from "./canon-intent-health";
 import { isMachineOriginPath } from "../canon/origin";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { SINGLE_SOURCE_CAP } from "../claims/authority";
@@ -608,8 +609,9 @@ export function inspectServeDoctor(
     fail("retrieval_ops older than SLA");
   }
   for (const text of inspectPageIndex(db)) fail(text);
+  const staleIntent = staleCanonIntentFailure(db, now);
+  if (staleIntent !== null) fail(staleIntent);
   const failures = found.map((item) => item.text);
-
 
   return {
     supervisor,

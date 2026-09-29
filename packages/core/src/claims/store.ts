@@ -773,6 +773,28 @@ export function countClaims(
   );
 }
 
+export interface LiveClaimProducers {
+  /** Claims a model extracted from event text. */
+  readonly model: number;
+  /** Claims the deterministic floor staged from imported pages and captured notes, not model output. */
+  readonly deterministic: number;
+  readonly owner: number;
+  readonly agent: number;
+}
+
+/** Live claims by who produced them, so a mirror of an imported page is never counted as extracted memory. */
+export function countLiveClaimsByProducer(db: Database): LiveClaimProducers {
+  const counts = { model: 0, deterministic: 0, owner: 0, agent: 0 };
+  if (!tableExists(db, "claims")) return counts;
+  for (const row of db.query<{ producer: string; n: number }, []>(
+    "SELECT producer, count(*) AS n FROM claims WHERE status = 'live' GROUP BY producer",
+  ).all()) {
+    if (row.producer === "model" || row.producer === "deterministic" || row.producer === "owner") counts[row.producer] += row.n;
+    else if (row.producer.startsWith("agent:")) counts.agent += row.n;
+  }
+  return counts;
+}
+
 /**
  * Live writable claims the receipted writer has not yet materialized. `asOf`
  * counts only claims created by then, so a past run can be judged against the
