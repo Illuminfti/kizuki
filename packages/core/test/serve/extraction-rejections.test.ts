@@ -183,11 +183,11 @@ test("a model that rejects every request makes the default pass stop instead of 
   }
   // Three different records rejected the same way is the model, not the records.
   expect(stops).toContain("model:systemic_rejection");
-  expect(skipped.reduce((sum, count) => sum + count, 0)).toBeLessThanOrEqual(2);
+  // Two records passed over before the breaker tripped are queued again; a probe after the wait skips at most one.
+  expect(skipped.reduce((sum, count) => sum + count, 0)).toBeLessThanOrEqual(3);
   // Two records were passed over and one narrowed before the third showed it: five requests.
   expect(trippedAfter).toBeLessThanOrEqual(6);
   expect(modelClaims(f.db)).toBe(0);
-  const [head] = f.eventIds as [string];
   // Nothing was lost: a healthy model still gets every record, the ones passed over first.
   const healthy = port(() => "ok");
   minute += 24 * 60;
@@ -200,8 +200,10 @@ test("a model that rejects every request makes the default pass stop instead of 
       at(minute),
     );
   }
-  expect(modelClaims(f.db)).toBe(6);
-  expect(healthy.requests.flat()).toContain(head);
+  // The probe after the first wait skipped one record for good; every other record was extracted.
+  expect(modelClaims(f.db)).toBe(5);
+  // The records passed over before the trip were asked for again; only the probe's skip is gone.
+  expect(healthy.requests.flat().length).toBeGreaterThanOrEqual(5);
 });
 
 test("systemic rejection at max_calls_per_pass 2 or more stops the pass with a typed reason, records nothing as skipped and backs off", async () => {
@@ -234,22 +236,64 @@ test("systemic rejection at max_calls_per_pass 2 or more stops the pass with a t
   expect(model.requests.length).toBe(sent);
   expect(waiting.errors.join(" ")).toContain("backing off");
 
-  // After the wait one probe goes out; it fails, nothing is skipped, and the wait doubles.
+  // After the wait a probe goes out for one record alone. Refused twice it is skipped for good, the
+  // pass stops, and the wait doubles: a failing model costs at most one record per wait.
   const probe = await pass(f, model.producer, settings, at(20));
-  expect(probe.model.calls).toBe(1);
+  expect(model.requests.slice(sent)).toEqual([[e0], [e0]]);
+  expect(probe.model.calls).toBe(2);
   expect(probe.stopped).toBe("model:systemic_rejection");
-  expect(probe.records_skipped).toBe(0);
+  expect(probe.records_skipped).toBe(1);
+  expect(readRejections(f.db, at(20))).toMatchObject({ trips: 2, backoff_until: at(50) });
   const beforeRetry = model.requests.length;
   await pass(f, model.producer, settings, at(20 + 20));
   expect(model.requests.length).toBe(beforeRetry);
 
-  // Once the model answers, every record is extracted, including the ones passed over first.
+  // Once the model answers, every record but the one the probe skipped is extracted, including the
+  // ones passed over before the trip.
   const healthy = port(() => "ok");
   for (let index = 0; index < 4; index++)
     await pass(f, healthy.producer, settings, at(24 * 60 + index * 10));
-  expect(modelClaims(f.db)).toBe(10);
+  expect(modelClaims(f.db)).toBe(9);
   const late = await pass(f, healthy.producer, settings, at(24 * 60 + 100));
   expect(late.model.calls).toBe(0);
+});
+
+test("three adjacent poison records drain one per wait and the healthy records behind them are extracted", async () => {
+  for (const settings of [DEFAULT_EXTRACTION_CONFIG, limits({ max_calls_per_pass: 8 })]) {
+    const f = fixture(8);
+    const poison = new Set((f.eventIds as readonly string[]).slice(0, 3));
+    // A request holding any of the first three records is refused as truncated; a healthy model answers the rest.
+    const model = port((ids) => (ids.some((id) => poison.has(id)) ? "truncated" : "ok"));
+    let minute = 0;
+    const stops = new Set<string | null>();
+    // Each pass is a fresh probe: the clock always moves past the longest wait.
+    for (let index = 0; index < 60 && modelClaims(f.db) < 5; index++) {
+      minute += 7 * 60;
+      stops.add((await pass(f, model.producer, settings, at(minute))).stopped);
+    }
+    expect(modelClaims(f.db)).toBe(5);
+    // The breaker did trip on the way: the visible stop is what let the records drain.
+    expect(stops.has("model:systemic_rejection")).toBe(true);
+    // The three poison records were passed over for good, and nothing else was.
+    expect(f.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM claims WHERE producer = 'model'").get()?.n).toBe(5);
+    expect(readRejections(f.db, at(minute))).toBeNull();
+  }
+});
+
+test("a stored refusal history that cannot be read holds the model back instead of clearing the wait", async () => {
+  const f = fixture(3);
+  const model = port(() => "ok");
+  f.db.query("INSERT OR REPLACE INTO rail_cursors(rail,source_key,cursor,updated_at) VALUES ('kizuki.producer.model','extract-rejections',?,?)").run("{broken", at(0));
+  const held = await pass(f, model.producer, DEFAULT_EXTRACTION_CONFIG, at(1));
+  expect(held.stopped).toBe("model:systemic_rejection");
+  expect(held.model.calls).toBe(0);
+  expect(model.requests).toEqual([]);
+  const still = await pass(f, model.producer, DEFAULT_EXTRACTION_CONFIG, at(10));
+  expect(still.model.calls).toBe(0);
+  // The wait is stored, so it ends: after it the model is asked and its answer clears the history.
+  const after = await pass(f, model.producer, DEFAULT_EXTRACTION_CONFIG, at(20));
+  expect(after.model.calls).toBe(1);
+  expect(readRejections(f.db, at(20))).toBeNull();
 });
 
 test("a record a rejection was blamed on is not lost when the model turns out to be at fault", async () => {
@@ -479,7 +523,7 @@ test("the refusal history narrows, skips on the second refusal alone, and trips 
   expect(one.action).toEqual({ kind: "narrow" });
   expect(one.state).toMatchObject({ consecutive: 1, narrow: "A", heads: ["A"], passed_over: [] });
   const two = refuse(one.state, "A", true);
-  expect(two.action).toEqual({ kind: "skip" });
+  expect(two.action).toEqual({ kind: "skip", pause: false });
   expect(two.state).toMatchObject({ consecutive: 2, narrow: null, passed_over: ["A"] });
   const three = refuse(two.state, "B", false);
   expect(three.action).toEqual({ kind: "narrow" });
@@ -487,11 +531,14 @@ test("the refusal history narrows, skips on the second refusal alone, and trips 
   expect(four.state.passed_over).toEqual(["A", "B"]);
   const trip = refuse(four.state, "C", false);
   expect(trip.action).toEqual({ kind: "trip", requeue: ["A", "B"] });
-  expect(trip.state).toMatchObject({ narrow: null, passed_over: [], trips: 1, backoff_until: at(15) });
-  // A probe that fails again trips again with a longer wait and lists nothing new.
-  const probe = recordRejection(trip.state, { head: "A", rule: "response_truncated", single: false }, at(15));
-  expect(probe.action).toEqual({ kind: "trip", requeue: [] });
-  expect(probe.state).toMatchObject({ trips: 2, backoff_until: at(15 + 30) });
+  // A trip is a pause: the three heads are forgotten and the probe after the wait is asked for alone.
+  expect(trip.state).toMatchObject({ narrow: "C", heads: [], passed_over: [], trips: 1, backoff_until: at(15) });
+  // The probe is refused alone twice: skipped for good, the wait doubles, and nothing is queued again.
+  const probe = recordRejection(trip.state, { head: "A", rule: "response_truncated", single: true }, at(15));
+  expect(probe.action).toEqual({ kind: "narrow" });
+  const skip = recordRejection(probe.state, { head: "A", rule: "response_truncated", single: true }, at(16));
+  expect(skip.action).toEqual({ kind: "skip", pause: true });
+  expect(skip.state).toMatchObject({ trips: 2, heads: [], passed_over: [], narrow: null, backoff_until: at(16 + 30) });
   // A different rule is a different failure: the count starts again.
   const other = refuse(two.state, "B", false, "bad_response");
   expect(other.state).toMatchObject({ consecutive: 1, rule: "bad_response", passed_over: [], heads: ["B"] });
@@ -501,17 +548,22 @@ test("the refusal history narrows, skips on the second refusal alone, and trips 
   expect(backoffRemaining(null, at(0))).toBeNull();
 });
 
-test("the refusal history round-trips, clears, and reads unreadable rows as no history", () => {
+test("the refusal history round-trips, clears, and reads unreadable rows as a stored backoff", () => {
   const f = fixture(0);
-  expect(readRejections(f.db)).toBeNull();
+  expect(readRejections(f.db, at(0))).toBeNull();
   const { state } = recordRejection(null, { head: "A", rule: "response_truncated", single: false }, at(0));
   writeRejections(f.db, state);
-  expect(readRejections(f.db)).toEqual(state);
+  expect(readRejections(f.db, at(0))).toEqual(state);
   writeRejections(f.db, null);
-  expect(readRejections(f.db)).toBeNull();
+  expect(readRejections(f.db, at(0))).toBeNull();
   for (const bad of ["not json", "[]", '{"consecutive":0}', JSON.stringify({ ...state, heads: "A" }), JSON.stringify({ ...state, backoff_until: "soon" })]) {
     f.db.query("INSERT OR REPLACE INTO rail_cursors(rail,source_key,cursor,updated_at) VALUES ('kizuki.producer.model','extract-rejections',?,?)").run(bad, at(0));
-    expect(readRejections(f.db)).toBeNull();
+    // Fail closed: a present but unreadable row is a fresh wait, stored so it can end.
+    const waiting = readRejections(f.db, at(0));
+    expect(waiting).toMatchObject({ rule: "unreadable_state", trips: 1, backoff_until: at(15) });
+    expect(backoffRemaining(waiting, at(14))).toBe(at(15));
+    expect(readRejections(f.db, at(30))).toEqual(waiting);
+    expect(backoffRemaining(readRejections(f.db, at(30)), at(15))).toBeNull();
   }
 });
 

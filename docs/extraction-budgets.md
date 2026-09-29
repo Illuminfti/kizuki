@@ -136,20 +136,30 @@ The provider still billed it.
   zero tokens; the request itself is always counted.
 - **Systemic breaker.** A record rejected on its own twice is skipped, but the
   same rejection for three different records in a row, with no answer between
-  them, means the model is failing, not the records. The pass then stops as
+  them, means the model may be failing, not the records. The pass then stops as
   `model:systemic_rejection` and skips nothing further. Records passed over
   since the streak began are put back on the deferred queue, so they are
-  decided again once the model answers, and the receipt does not count them in
-  `records_skipped`. Rejections that differ, such as a truncated response
-  followed by a malformed one, do not add up. Any answered request ends the
-  streak.
-- **Backoff.** After the breaker trips no request leaves for 15 minutes, then
-  30, 60 and so on up to 6 hours while it keeps tripping. The wait is stored
-  with the extraction cursor, so it survives restarts. A pass inside the wait
-  makes no request and stops as `model:systemic_rejection` with a receipt error
-  that names when it ends; the first request after it is one probe, and a
-  probe that is rejected again doubles the wait.
-- **Daily budgets.** `max_calls_per_day` counts model requests and
+  decided again once the model answers, and the pass's receipt does not count
+  them in `records_skipped`. Receipts of earlier passes already reported those
+  skips: `records_skipped` is a per-pass tally, so a total summed across
+  receipts can include records a later trip queued again. Rejections that
+  differ, such as a truncated response followed by a malformed one, do not add
+  up. Any answered request ends the streak.
+- **Backoff and probes.** After the breaker trips no request leaves for 15
+  minutes, then 30, 60 and so on up to 6 hours. The wait is stored with the
+  extraction cursor, so it survives restarts. A pass inside the wait makes no
+  request and stops as `model:systemic_rejection` with a receipt error that
+  names when it ends. A trip is a pause, not a verdict: it forgets the three
+  records it counted, and the first request after the wait is a probe for one
+  record alone. The probe record is narrowed and, refused alone twice, skipped
+  for good; the pass then stops and the wait doubles. A run of poison records
+  therefore drains at most one record per wait, and the first answered request
+  ends the streak and resets the wait. A model that fails everything costs the
+  same bound: one record per wait, at most a handful per day at the cap. A
+  stored history that cannot be read is treated as a fresh 15 minute wait, never
+  as no history, so a damaged row cannot lift a backoff.
+- **Daily budgets.** `max_calls_per_day` counts model requests (a legacy producer that makes
+  several requests per record charges each one) and
   `max_output_tokens_per_day` counts output tokens the provider billed, per
   UTC day, across every pass and including rejected responses. Each is checked
   before a request leaves; the pass that finds one spent makes no request and

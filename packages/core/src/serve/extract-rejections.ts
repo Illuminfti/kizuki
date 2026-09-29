@@ -6,7 +6,8 @@ import { MODEL_PRODUCER_ID } from "../producer";
 /**
  * What extraction has learned from refused answers, kept across passes so a
  * pass at one request never forgets its predecessor. One row in `rail_cursors`
- * beside the extraction cursor; a lost or unreadable row reads as no history.
+ * beside the extraction cursor. A missing row is no history; a row that is
+ * present but unreadable is treated as a fresh backoff, never as a clean slate.
  */
 const REJECTIONS_KEY = "extract-rejections";
 
@@ -15,6 +16,8 @@ export const SYSTEMIC_REJECTION_RECORDS = 3;
 const BACKOFF_BASE_MS = 15 * 60_000;
 const BACKOFF_CAP_MS = 6 * 60 * 60_000;
 const MAX_LISTED = SYSTEMIC_REJECTION_RECORDS;
+/** The rule a stored history reports when its row could not be read. */
+export const UNREADABLE_RULE = "unreadable_state";
 
 export interface RejectionState {
   /** Refused requests in a row, across passes, since the model last answered. */
@@ -23,13 +26,13 @@ export interface RejectionState {
   readonly rule: string;
   /** Distinct first records of those requests, up to the systemic limit. */
   readonly heads: readonly string[];
-  /** The first record of the request last refused, to be asked for alone next. */
+  /** The first record of the request last refused, to be asked for alone next. After a trip it is a placeholder that only forces a single-record probe. */
   readonly narrow: string | null;
   /** Records passed over during this streak, queued again if the streak proves systemic. */
   readonly passed_over: readonly string[];
   /** No request leaves before this instant; set while the streak is judged systemic. */
   readonly backoff_until: string | null;
-  /** Times the streak has been judged systemic, doubling each wait. */
+  /** Times the streak has been judged systemic or paused, doubling each wait. Above zero the streak is probing. */
   readonly trips: number;
 }
 
@@ -37,8 +40,12 @@ export interface RejectionState {
 export type RejectionAction =
   /** Ask for the first record alone next. */
   | { readonly kind: "narrow" }
-  /** The record was refused on its own twice: pass over it. */
-  | { readonly kind: "skip" }
+  /**
+   * The record was refused on its own twice: pass over it. While probing after
+   * a trip `pause` is set: the skip is final, at most one per wait, and the pass
+   * stops with a longer wait.
+   */
+  | { readonly kind: "skip"; readonly pause: boolean }
   /** Different records fail alike: stop, wait, and queue the records passed over in this streak again. */
   | { readonly kind: "trip"; readonly requeue: readonly string[] };
 
@@ -47,9 +54,26 @@ const strings = (value: unknown): value is string[] =>
   value.length <= MAX_LISTED &&
   value.every((item) => typeof item === "string" && item.length <= 64);
 
-export function readRejections(db: Database): RejectionState | null {
+export function readRejections(db: Database, now: string): RejectionState | null {
   const raw = readRailCursor(db, MODEL_PRODUCER_ID, REJECTIONS_KEY);
   if (raw === null) return null;
+  const parsed = parseRejections(raw);
+  if (parsed !== null) return parsed;
+  // A truncated or hand-edited row must not clear a wait it may have held: start a fresh, stored one.
+  const state: RejectionState = {
+    consecutive: 1,
+    rule: UNREADABLE_RULE,
+    heads: [],
+    narrow: null,
+    passed_over: [],
+    backoff_until: new Date(Date.parse(now) + rejectionBackoffMs(1)).toISOString(),
+    trips: 1,
+  };
+  writeRailCursor(db, MODEL_PRODUCER_ID, REJECTIONS_KEY, JSON.stringify(state));
+  return state;
+}
+
+function parseRejections(raw: string): RejectionState | null {
   try {
     const value: unknown = JSON.parse(raw);
     if (!isPlainObject(value)) return null;
@@ -159,24 +183,34 @@ export function recordRejection(
       ? base.heads
       : [...base.heads, head];
   const next = { ...base, consecutive: base.consecutive + 1, heads };
+  const wait = (trips: number): string =>
+    new Date(Date.parse(now) + rejectionBackoffMs(trips)).toISOString();
+  // A streak that has already tripped is a probe: every wait it serves ends in one solo request.
+  const probing = base.trips > 0;
   if (heads.length >= SYSTEMIC_REJECTION_RECORDS) {
     const trips = base.trips + 1;
-    const backoff_until = new Date(
-      Date.parse(now) + rejectionBackoffMs(trips),
-    ).toISOString();
+    // A trip pauses the verdict rather than making it final: the next request after the wait is a
+    // single record, and the three heads are forgotten so a run of poison records can drain.
     return {
-      state: { ...next, narrow: null, passed_over: [], backoff_until, trips },
+      state: { ...next, heads: [], narrow: head, passed_over: [], backoff_until: wait(trips), trips },
       action: { kind: "trip", requeue: base.passed_over },
     };
   }
   if (single && base.narrow === head) {
+    if (probing) {
+      const trips = base.trips + 1;
+      return {
+        state: { ...next, heads: [], narrow: null, passed_over: [], backoff_until: wait(trips), trips },
+        action: { kind: "skip", pause: true },
+      };
+    }
     return {
       state: {
         ...next,
         narrow: null,
         passed_over: [...base.passed_over, head].slice(-MAX_LISTED),
       },
-      action: { kind: "skip" },
+      action: { kind: "skip", pause: false },
     };
   }
   return { state: { ...next, narrow: head }, action: { kind: "narrow" } };

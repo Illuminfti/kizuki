@@ -66,8 +66,11 @@
 - A systemic-rejection breaker: when three different records are rejected the
   same way in a row, the pass stops as `model:systemic_rejection`, backs off
   (15 minutes, doubling to 6 hours, stored durably) and asks again with one
-  probe request. Records passed over during the streak go back on the deferred
-  queue and are not counted as skipped.
+  single-record probe. Records passed over during the streak go back on the
+  deferred queue and are not counted as skipped in that pass. A probe refused
+  alone twice skips that record for good and doubles the wait, so a run of
+  poison records drains one per wait instead of wedging extraction. An
+  unreadable stored history counts as a fresh wait, never as none.
 - Run receipts carry `model.consecutive_rejections` and
   `model.last_rejection_rule` while a refusal streak lasts.
 
@@ -78,6 +81,8 @@
   were omitted, and the brief repair also rewrites the run-id
   stub a failed brief run leaves behind, skips oversized files, and names the
   day of a page it could not repair.
+- `max_calls_per_day` now charges every request a legacy producer makes for one
+  record, not one per record.
 - Structural claim deduplication now requires overlapping validity. A claim
   with the same key, polarity and object but a disjoint or merely adjacent
   validity window is stored as its own claim instead of being merged into an

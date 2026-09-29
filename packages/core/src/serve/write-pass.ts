@@ -516,7 +516,11 @@ async function runExtraction(
     if (result === undefined) addDailyBudget(db, budgetDay(clock()), DAILY_CALLS, 1);
     else {
       produced += producedCount(result);
-      addDailyBudget(db, budgetDay(clock()), DAILY_OUTPUT_TOKENS, result.usage.output_tokens);
+      // A legacy producer makes several requests per produce; the first was charged when it left.
+      const extraCalls = Number.isSafeInteger(result.usage.calls) ? Math.max(0, result.usage.calls - 1) : 0;
+      if (extraCalls > 0) addDailyBudget(db, budgetDay(clock()), DAILY_CALLS, extraCalls);
+      const billed = result.usage.output_tokens;
+      addDailyBudget(db, budgetDay(clock()), DAILY_OUTPUT_TOKENS, Number.isSafeInteger(billed) && billed > 0 ? billed : 0);
       // An answer, even an empty one, ends the refusal streak; what it passed over stays passed over.
       if (result.status === "ok") { writeRejections(db, null); delete metrics.rejection; }
     }
@@ -535,7 +539,7 @@ async function runExtraction(
     },
   };
   const started = Date.parse(clock());
-  const history = readRejections(db);
+  const history = readRejections(db, clock());
   if (history !== null) metrics.rejection = { consecutive: history.consecutive, rule: history.rule };
   const waiting = backoffRemaining(history, clock());
   if (history !== null && waiting !== null) {
@@ -628,7 +632,7 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
   const sent = metrics.calls, earlier = metrics.last;
   // A request after a refusal carries only the first record of the one it repeats.
   // The decision is durable, so it holds at one step per pass as well.
-  const history = readRejections(db);
+  const history = readRejections(db, clock());
   const request = history?.narrow == null ? limits : { ...limits, records_per_request: 1 };
   const mined = isProducerV2(observed)
     ? await mineLiveDrafts(db, observed, request)
@@ -676,11 +680,13 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
           const outcome = await advance(pass, segment === undefined ? twice
             : { ...twice, skipped: { event_id: segment.event_id, chars: segment.chars, done: segment.start } }, errors);
           // A segment skipped with a receipt is retried with `serve retry-skipped`, never through the streak.
-          if (outcome.next === "continue") {
-            writeRejections(db, segment === undefined ? refused.state
-              : { ...refused.state, passed_over: refused.state.passed_over.filter(id => id !== head) });
-          }
-          return outcome;
+          if (outcome.next !== "continue") return outcome;
+          writeRejections(db, segment === undefined ? refused.state
+            : { ...refused.state, passed_over: refused.state.passed_over.filter(id => id !== head) });
+          // After a trip the skip is final and the pass waits, so a run of poison records drains one per wait.
+          if (!refused.action.pause) return outcome;
+          const wait = systemicNotice(refused.state.consecutive, rule, refused.state.backoff_until!);
+          return { ...outcome, next: "stop", stopped: SYSTEMIC_REJECTION, errors: [...outcome.errors, wait] };
         }
         default: {
           const _exhaustive: never = refused.action;
