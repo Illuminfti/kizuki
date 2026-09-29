@@ -206,6 +206,13 @@ the extraction cursor. Restoring the required purpose, fields, and exact
 destination lets a later pass file the original decision under its original
 model reference; source purge removes affected pending derived work.
 Export requires the explicit `export` purpose and refuses pending revocations.
+A refused export names each source that blocks it (at most five, then a count)
+and the fix: a source without the purpose gets the `connect grant` command with
+its current revision, and a revoked source with its purge pending gets the
+`connect resume-revocation` command. To make export work, add `"export"` to the
+purposes of each named source and grant the edited policy at that revision.
+Export never widens a grant by itself, and a backup that must not depend on
+grants is the file-level copy in the [upgrade runbook](upgrade.md).
 
 ```bash
 kizuki connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id grant-1
@@ -531,6 +538,8 @@ Dumps vault files and ledger tables into an empty directory as
 `kizuki.backup/v3`. The destination must sit outside the source vault.
 Agent identities, grants, authentication audit, enrollment receipts and `.kizuki`
 credential files are excluded. Restored vaults require explicit agent enrollment.
+Every enrolled source must grant the `export` purpose first; see
+[Source consent](#source-consent) for the refusal and the grant change it names.
 
 ## restore
 
@@ -644,7 +653,12 @@ and are not reached by purge.
 usage: kizuki version
 ```
 
-Prints the `@kizuki/cli` package version (`1.0.0` on this revision).
+Prints the `@kizuki/cli` package version and the build it came from on one
+line. A release package prints `VERSION source=<40 hex source revision>
+built=<UTC time>`; both values are compiled in by `build:release` (the revision
+is also `source_sha` in the package's `BUILD.json`) and no environment variable
+changes them. A run from source prints `VERSION dev`. To move an installed
+package to a newer one and back, follow the [upgrade runbook](upgrade.md).
 
 ## MCP (not a CLI verb)
 

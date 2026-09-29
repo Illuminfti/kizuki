@@ -23,7 +23,7 @@ import { mineLiveDrafts } from "../src/serve/extract";
 import { claimInput, FixtureVectorPort } from "./claims/helpers";
 import type { ProducerPort, ProduceInput } from "../src/contracts/producer";
 import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -249,6 +249,88 @@ describe("source policy consumer boundaries", () => {
       expect(() => exportVault(db, dir, backup + "-denied")).toThrow(
         "source_export_denied",
       );
+    } finally {
+      db.close();
+    }
+  });
+  test("a refused export names the source and the grant change, and the changed grant restores round-trip", () => {
+    const { db, dir, a, b } = setup();
+    try {
+      setSourceGrant(db, {
+        source_key: a,
+        expected_revision: 0,
+        operation_id: "grant-a-without-export",
+        policy: { ...policy(), purposes: ["capture", "recall", "session", "derive"] },
+      });
+      grant(db, b);
+      accept(db, event(), { source: { source_key: a, expected_revision: 1 } });
+      const backup = join(dir, "..", `${a}-owner-backup`);
+      dirs.push(backup);
+      const restored = join(dir, "..", `${a}-owner-restored`);
+      dirs.push(restored);
+      let message = "";
+      try {
+        exportVault(db, dir, backup);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toStartWith("source_export_denied: ");
+      expect(message).toContain(`source ${a} does not grant the export purpose`);
+      expect(message).toContain(`kizuki connect grant --source ${a} --policy POLICY.json --expected-revision 1`);
+      expect(message).not.toContain(b);
+      expect(existsSync(backup)).toBe(false);
+
+      setSourceGrant(db, {
+        source_key: a,
+        expected_revision: 1,
+        operation_id: "grant-a-export",
+        policy: policy(),
+      });
+      expect(exportVault(db, dir, backup).complete).toBe(true);
+      restoreVault(backup, restored);
+      const copy = openLedger(join(restored, ".kizuki", "kizuki.db"));
+      try {
+        expect(copy.query("SELECT count(*) AS n FROM events").get()).toEqual({ n: 1 });
+        expect(inspectSourceGrant(copy, a)!.policy.purposes).toContain("export");
+      } finally {
+        copy.close();
+      }
+    } finally {
+      db.close();
+    }
+  });
+  test("a refused export bounds how many sources it names and points a revoked source at its purge", () => {
+    const { db, dir, a } = setup();
+    try {
+      const keys = [a];
+      for (let index = 0; index < 6; index++) {
+        const key = ulid();
+        registerConnection(db, "kizuki.fixture", key);
+        keys.push(key);
+      }
+      for (const key of keys) {
+        setSourceGrant(db, {
+          source_key: key,
+          expected_revision: 0,
+          operation_id: `grant-${key}`,
+          policy: { ...policy(), purposes: ["capture", "recall"] },
+        });
+      }
+      const refused = () => {
+        try {
+          exportVault(db, dir, join(dir, "..", `${a}-refused`));
+        } catch (error) {
+          return (error as Error).message;
+        }
+        return "";
+      };
+      const many = refused();
+      expect(many.match(/does not grant the export purpose/g)).toHaveLength(5);
+      expect(many).toEndWith("; and 2 more");
+      revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "revoke-a" });
+      const revoked = refused();
+      expect(revoked).toContain(`source ${a} is revoked and its purge is pending`);
+      expect(revoked).toContain(`kizuki connect resume-revocation --source ${a} --operation-id revoke-a`);
     } finally {
       db.close();
     }

@@ -57,6 +57,27 @@ test("owner grants explicit policy, retries original intent across processes, an
   expect(h.runCli(f.env, "export", "--out", join(f.root, "purged-export")).exitCode).toBe(0);
 }, 15_000);
 
+test("the owner backup path: a refused export names the grant change, and the changed grant exports, verifies and restores", () => {
+  const f = enrolled();
+  expect(command(f, "grant", "--policy", f.file, "--expected-revision", "0", "--operation-id", "owner-grant").exitCode).toBe(0);
+  expect(h.runCli(f.env, "backfill", "markdown-folder").exitCode).toBe(0);
+  const out = join(f.root, "owner-backup");
+  const refused = h.runCli(f.env, "export", "--out", out);
+  expect(refused.exitCode).toBe(1);
+  expect(refused.stderr).toContain(`source_export_denied: source ${f.key} does not grant the export purpose`);
+  expect(refused.stderr).toContain(`kizuki connect grant --source ${f.key} --policy POLICY.json --expected-revision 1`);
+  // Following the message exactly is the whole owner path.
+  writeFileSync(f.file, JSON.stringify({ ...policy, purposes: [...policy.purposes, "export"] }));
+  expect(command(f, "grant", "--policy", f.file, "--expected-revision", "1", "--operation-id", "owner-export-grant").exitCode).toBe(0);
+  const exported = h.runCli(f.env, "export", "--out", out);
+  expect(exported.exitCode, exported.stderr).toBe(0);
+  expect(h.runCli(f.env, "restore", "--from", out, "--verify").exitCode).toBe(0);
+  const restored = join(f.root, "owner-restored");
+  const restore = h.runCli(f.env, "restore", "--from", out, "--into", restored);
+  expect(restore.exitCode, restore.stderr).toBe(0);
+  expect(h.runCli(f.env, "query", "acme", "--degraded", "--vault", restored).stdout).toContain("ada met grace");
+});
+
 test("import can receive explicit consent before content capture", () => {
   const f = h.tempVault();
   const denied = h.runCli(f.env, "import", "markdown-folder", "--source", f.notes);

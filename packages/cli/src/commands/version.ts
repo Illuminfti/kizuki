@@ -1,5 +1,6 @@
 import pkg from "../../package.json" with { type: "json" };
 import { UsageError, parseArguments } from "../args";
+import { describeBuild } from "../build-info";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 export const VERSION_SCHEMA = {
@@ -10,7 +11,7 @@ export const VERSION_SCHEMA = {
 export const versionCommand: Command = {
   name: "version",
   usage: "version",
-  summary: "print the CLI package version",
+  summary: "print the CLI version with its source revision and build time",
   schema: VERSION_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     const parsed = parseArguments(args, {
@@ -18,7 +19,7 @@ export const versionCommand: Command = {
       flags: [...VERSION_SCHEMA.flags],
     });
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
-    io.out(pkg.version);
+    io.out(describeBuild(pkg.version));
     return 0;
   },
 };

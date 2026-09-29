@@ -152,10 +152,10 @@ describe("help", () => {
     expect(result.stderr).toContain("bun packages/cli/src/main.ts help query");
   });
 
-  test("version prints the package version field", () => {
+  test("a source run prints the package version and the dev marker", () => {
     const result = runCli(isolatedEnv(), "version");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("1.0.2\n");
+    expect(result.stdout).toBe("1.0.2 dev\n");
   });
 
   test("query --help names defaults, bounds, flags, and exit codes", () => {

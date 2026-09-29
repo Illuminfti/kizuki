@@ -22,6 +22,27 @@
   corroboration. Overlapping windows still corroborate.
 - The standing HTTP endpoint compares its bearer token in constant time.
 
+### Added
+
+- `kizuki version` identifies the exact build. A release package prints
+  `VERSION source=<source revision> built=<UTC time>` from values compiled in by
+  `build:release`; a run from source prints `VERSION dev`. Anything that
+  parsed the whole line as a bare version number should read the first word.
+- `docs/upgrade.md`: a runbook for upgrading an installed package in place
+  (stage the new version directory, file-level backup with `sqlite3 .backup`,
+  install from the new real path, verify, roll back), with a scripted test that
+  upgrades and rolls back a fixture package over a fixture vault.
+- Release smoke runs `kizuki world --operation find_concepts --json` and an MCP
+  `world_view` call against the built package, and checks that `kizuki version`
+  matches the package's `BUILD.json` revision.
+
+### Changed
+
+- A refused `kizuki export` now names the sources that block it and the exact
+  grant or revocation command that clears each one, instead of a bare
+  `source_export_denied`. The consent rule is unchanged: export still needs the
+  `export` purpose on every source.
+
 ## 1.0.2 (2026-09-24)
 
 ### Added
