@@ -188,6 +188,34 @@
   run through the same notifier, keeping its body. The run receipt records
   `pages_repaired`. A page that cannot be rewritten degrades the run with
   `brief-repair-failed` and is tried again on the next sweep.
+- `kizuki doctor` reports `status=failed` only for real failures and names
+  them. An idle rail with no pending work is healthy: the empty streak counts
+  only runs that had work waiting (extract backlog past the cursor for a
+  granted source, unwritten live claims, consented sources no run has reached,
+  pending retrieval operations), and `brief`, `journal-prune`, `doctor-sweep`,
+  `purge-sweep` and an unconfigured `embed-backfill` are judged by staleness and
+  failure only. A rail whose last five runs ended degraded or stopped is down
+  with the error most of them share, and a failed rail says why it failed.
+- The model line reflects the daemon, not whether the doctor process can
+  resolve the model secret. The configured model reference now carries its
+  `@host` exactly as run receipts record it, so from a shell without the secret
+  doctor prints `canon writing: configured; daemon last_success=... last_failure=...
+  consecutive_failures=N` and says `unverified` only when the daemon left no
+  receipts. `doctor` gains an `extraction` line (backlog past the extract cursor,
+  `last_extracted_at`, and the setting to change after repeated truncation) and
+  an `egress` line per source that sends text to a model (endpoint host, model,
+  retention).
+- The constant `identity authority: unavailable` line and the
+  `identity-authority-unavailable` entry in every context packet's degraded list
+  are gone. Doctor lists the canon files the index cannot read, and reports
+  `index-degraded` only while one exists.
+- The closing `next:` line follows from the top failure and no longer suggests
+  `kizuki tell` for a failed report.
+- Connections show `caught_up` instead of `backfill_complete=no` forever for a
+  source that is only synced. `doctor --json` keeps `backfill_complete` beside it.
+- Doctor reads the newest 2,000 sync receipts and the newest 200 of each other
+  rail instead of a week of receipts, and the `doctor-sweep` rail now records
+  the failures doctor would report, so its status matches.
 
 ## 1.0.2 (2026-09-24)
 
