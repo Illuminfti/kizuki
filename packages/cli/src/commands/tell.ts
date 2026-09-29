@@ -1,9 +1,10 @@
-import { CorrectError, OWNER, correct, isWorldWireToken, serveCorrect } from "@kizuki/core";
+import { CorrectError, OWNER, ServeError, correct, isWorldWireToken, serveCorrect } from "@kizuki/core";
 import type { CorrectArgs, WorldReadResult } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
 import { tryRefreshDerived } from "../derived";
 import { clean, jsonEnvelope } from "../output";
+import { DEFAULT_WRITER_WAIT_SECONDS, parseWriterWait, waitForWriter } from "../writer-wait";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 const MODES = ["replace_object", "retract", "reclassify_mode"] as const;
@@ -15,6 +16,7 @@ export const TELL_SCHEMA = {
     "--world-claim",
     "--since",
     "--until",
+    "--wait",
     "--mode",
     "--object",
     "--object-ref",
@@ -23,9 +25,11 @@ export const TELL_SCHEMA = {
     "--refresh-concept-ref",
   ],
   flags: ["--dry-run", "--json", "--verbose"],
+  defaults: { "--wait": String(DEFAULT_WRITER_WAIT_SECONDS) },
   bounds: {
     "--since": "TIME",
     "--until": "TIME",
+    "--wait": "SECONDS",
     "--mode": MODES.join("|"),
     "--object": "up to 400 characters",
     "--object-ref": "32-byte base64url object token",
@@ -59,10 +63,17 @@ function renderRefreshed(view: WorldReadResult): string[] {
   ];
 }
 
+function writerBusy(error: unknown): boolean {
+  return (
+    (error instanceof CorrectError && error.code === "writer_busy") ||
+    (error instanceof ServeError && error.message.includes("canon writer is busy"))
+  );
+}
+
 export const tellCommand: Command = {
   name: "tell",
   usage:
-    'tell "<statement>" [--claim CLAIM_ID|--world-claim TOKEN] [--mode replace_object|retract|reclassify_mode] [--object TEXT|--object-ref TOKEN|--object-vocabulary ID] [--perspective-mode suggested|hypothetical|questioned] [--refresh-concept-ref TOKEN] [--since TIME] [--until TIME] [--dry-run] [--json] [--verbose]',
+    'tell "<statement>" [--claim CLAIM_ID|--world-claim TOKEN] [--mode replace_object|retract|reclassify_mode] [--object TEXT|--object-ref TOKEN|--object-vocabulary ID] [--perspective-mode suggested|hypothetical|questioned] [--refresh-concept-ref TOKEN] [--since TIME] [--until TIME] [--wait SECONDS] [--dry-run] [--json] [--verbose]',
   summary: "correct a claim; rewrite affected canon in the same pass",
   schema: TELL_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -98,11 +109,12 @@ export const tellCommand: Command = {
       (refresh !== undefined && !isWorldWireToken(refresh))
     )
       throw new UsageError(this.usage);
+    const wait = parseWriterWait(parsed.options.get("--wait"));
 
     return withVault(io, async (ctx) => {
       try {
         if (worldClaim !== undefined) {
-          const served = await serveCorrect(
+          const served = await waitForWriter(io, ctx.vaultPath, wait, writerBusy, () => serveCorrect(
             {
               db: ctx.db,
               vaultPath: ctx.vaultPath,
@@ -120,6 +132,7 @@ export const tellCommand: Command = {
               ...(refresh === undefined ? {} : { refresh_world: { operation: "concept" as const, concept: { kind: "object" as const, token: refresh } } }),
               ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
             },
+            ),
           );
           if (served.data === undefined) throw new CorrectError("target_required", "world claim correction was not recorded");
           const pending = served.data.recovery_pending !== undefined;
@@ -139,16 +152,18 @@ export const tellCommand: Command = {
           for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
           return pending ? 1 : 0;
         }
-        const result = await correct(
-          { db: ctx.db, vault_path: ctx.vaultPath, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) },
-          {
-            statement,
-            ...(claim === undefined ? {} : { target: { claim_id: claim } }),
-            ...(since === undefined && until === undefined
-              ? {}
-              : { scope: { ...(since === undefined ? {} : { since }), ...(until === undefined ? {} : { until }) } }),
-            ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
-          },
+        const result = await waitForWriter(io, ctx.vaultPath, wait, writerBusy, () =>
+          correct(
+            { db: ctx.db, vault_path: ctx.vaultPath, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) },
+            {
+              statement,
+              ...(claim === undefined ? {} : { target: { claim_id: claim } }),
+              ...(since === undefined && until === undefined
+                ? {}
+                : { scope: { ...(since === undefined ? {} : { since }), ...(until === undefined ? {} : { until }) } }),
+              ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
+            },
+          ),
         );
         const pending = result.recovery_pending !== undefined;
         const derived = pending ? { degraded: [] as string[] } : tryRefreshDerived(ctx.db, ctx.vaultPath);

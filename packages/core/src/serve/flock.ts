@@ -87,3 +87,18 @@ export function tryWriteFlock(vaultPath: string): WriteFlock | null {
     return null;
   }
 }
+
+/**
+ * The process the writer's diagnostic file names, so a refused caller can say
+ * who to wait for. Advisory only: ownership is the kernel lock, not this file.
+ */
+export function writerHolderPid(vaultPath: string): number | null {
+  try {
+    const raw = readFileSync(join(vaultPath, ".kizuki", "write-pass.lock"), "utf8").trim();
+    if (raw.length === 0 || raw.length > 512) return null;
+    const pid = /^\d+$/.test(raw) ? Number(raw) : (JSON.parse(raw) as { pid?: unknown }).pid;
+    return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}

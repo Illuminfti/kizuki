@@ -254,6 +254,7 @@ describe("help", () => {
         "--world-claim",
         "--since",
         "--until",
+        "--wait",
         "--mode",
         "--object",
         "--object-ref",
@@ -265,6 +266,7 @@ describe("help", () => {
       expect(body.data.bounds).toMatchObject({
         "--since": "TIME",
         "--until": "TIME",
+        "--wait": "SECONDS",
         "--mode": "replace_object|retract|reclassify_mode",
         "--perspective-mode": "suggested|hypothetical|questioned",
       });
@@ -277,6 +279,7 @@ describe("help", () => {
     expect(text.stdout).toContain("--until");
     expect(text.stdout).toContain("--mode");
     expect(text.stdout).toContain("--refresh-concept-ref");
+    expect(text.stdout).toContain("--wait");
     expect(text.stdout).toContain("--dry-run");
     expect(text.stdout).not.toContain("--about");
     expect(text.stdout).not.toContain("--page");
@@ -306,11 +309,12 @@ describe("help", () => {
         data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
       };
       expect(body.data.name).toBe("undo");
-      expect(body.data.options).toEqual([]);
+      expect(body.data.options).toEqual(["--wait"]);
       expect(body.data.flags).toEqual(["--cascade"]);
       expect(body.data.irreversible).toBe(false);
     }
     expect(runCli(env, "undo", "--help").stdout).toContain("--cascade");
+    expect(runCli(env, "undo", "--help").stdout).toContain("--wait");
     for (const [args, diagnostic] of [
       [["undo", "01JCRECEIPT000000000000000", "--nope"], "unknown option --nope"],
       [["undo", "01JCRECEIPT000000000000000", "--cascade", "--cascade"], "repeated flag --cascade"],
