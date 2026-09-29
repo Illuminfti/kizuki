@@ -109,6 +109,16 @@ export function resolveCompiledCredentials(
   return { names: names.sort(), define };
 }
 
+/**
+ * What `kizuki version` reports for a release binary. Both values are compiled
+ * in, never read from the environment at run time.
+ */
+export function buildMetadataDefines(sourceSha: string, builtAt: Date): Record<string, string> {
+  if (!/^[0-9a-f]{40}$/.test(sourceSha)) throw new Error("build metadata needs a full source revision");
+  if (Number.isNaN(builtAt.getTime())) throw new Error("build metadata needs a valid build time");
+  return { KIZUKI_BUILD_SHA: JSON.stringify(sourceSha), KIZUKI_BUILD_TIME: JSON.stringify(builtAt.toISOString()) };
+}
+
 export function packagedCommandLine(argv: readonly string[]): string {
   return `  ${argv.join(" ")}`;
 }
@@ -242,6 +252,7 @@ if (import.meta.main) {
     }
   }
   requireBuildState();
+  const metadata = buildMetadataDefines(sourceSha, new Date());
   const staging = mkdtempSync(join(dist, ".kizuki-release-"));
 
   const binaries = [
@@ -261,7 +272,7 @@ if (import.meta.main) {
           autoloadDotenv: false,
           autoloadBunfig: false,
         },
-        define: { KIZUKI_COMPILED: "true", ...credentials.define },
+        define: { KIZUKI_COMPILED: "true", ...metadata, ...credentials.define },
         metafile: true,
         plugins: [MIT_AES],
       });
