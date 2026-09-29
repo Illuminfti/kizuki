@@ -201,6 +201,20 @@
   now live in the host cursor store; the cursor schema is
   `kizuki.imap-cursor/v2` and v1 cursors still read and migrate. Marking the
   messages of a page as seen is one merge per page instead of one per message.
+- A long `kizuki backfill`, `sync` or `import` can no longer take the always-on
+  daemon down. The daemon treats a ledger held by another writer as a skipped
+  pass: the receipt stops as `ledger:lease_held` and names the holder, the rail
+  stays due, and the daemon backs off from 1 s to 30 s instead of exiting with
+  `lease_held` and spending the supervisor's start limit. The three commands
+  record themselves as the running ingest and, while a daemon runs, leave the
+  ledger free for 150 ms after every 250 ms of writing. A daemon started while a
+  writer holds the ledger waits and starts inside the same process. Doctor names
+  the holder after five skipped passes.
+- A stop no longer waits out a model request. `kizuki serve stop`, SIGTERM and
+  SIGINT abort the request in flight through the model transport, the pass
+  records `serve:stop_requested`, and the aborted request is not counted as a
+  model failure. The unit's `TimeoutStopSec` is derived from the connector
+  deadline plus a margin and no longer depends on the model timeout.
 - The daily brief is stamped private when it names a page that ever received a
   private receipt (a repair never lowers it), says when rail failure groups
   were omitted, and the brief repair also rewrites the run-id

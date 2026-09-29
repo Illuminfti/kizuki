@@ -1,6 +1,7 @@
 import { consentHint } from "../source-consent";
 import { closeHostConnector } from "../connections";
 import { runToCompletion } from "@kizuki/core";
+import { beginIngest } from "@kizuki/core/internal";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import { loadConnector, resolveConnectorId, selectConnection } from "../connections";
 import { withVault } from "../context";
@@ -36,15 +37,17 @@ export const backfillCommand: Command = {
       );
       const connector = await loadConnector(selected, ctx.store, ctx.db, io.env);
       try {
+        // Between commits the ingest leaves the ledger free for a running daemon.
+        using ingest = beginIngest(ctx.db, ctx.vaultPath);
         const result = await runToCompletion(
           ctx.db,
           connector,
           selected.connection.connector_id,
           selected.connection.source_key,
           "backfill",
-          { vault_path: ctx.vaultPath },
+          { vault_path: ctx.vaultPath, pace: ingest.pace },
         );
-        const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval);
+        const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval, ingest.pace);
         io.out(formatRunCounts(result));
         if (result.errors.includes("source_capture_denied")) io.err(consentHint(ctx.db, selected.connection.source_key));
         for (const text of result.errors) io.err(`error: ${text}`);
