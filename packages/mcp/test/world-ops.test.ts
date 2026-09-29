@@ -8,6 +8,7 @@ import { PING_SCHEMA, pingOp } from "../../core/test/serving/world-test-op";
 import { MCP_WORLD_OPS } from "../src/world/ops";
 import type { McpWorldOp } from "../src/world/ops";
 import { createServer } from "../src/server";
+import { buildWorldSurface } from "../src/world/surface";
 import { call, envelopeOf } from "./client";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
@@ -24,7 +25,7 @@ afterEach(async () => {
 
 const pingFragment: McpWorldOp = {
   name: "ping",
-  fields: { text: z.string().max(40) },
+  fields: { text: z.string().max(40).optional() },
   data: { [PING_SCHEMA]: { echo: z.string(), inTransaction: z.boolean() } },
   summary: 'ping echoes {text}',
 };
@@ -60,6 +61,14 @@ describe("the MCP fragments", () => {
       expect(fragment, op.name).toBeDefined();
       expect(Object.keys(fragment!.data).sort()).toEqual([...op.dataSchemas].sort());
     }
+  });
+});
+
+describe("the surface builder", () => {
+  test("refuses a field that would make every other operation fail, or one two operations declare differently", () => {
+    expect(() => buildWorldSurface([...MCP_WORLD_OPS, { ...pingFragment, fields: { text: z.string() } }])).toThrow(/optional or defaulted/);
+    expect(() => buildWorldSurface([...MCP_WORLD_OPS, { ...pingFragment, fields: { label: z.string().optional() } }])).toThrow(/more than once/);
+    expect(() => buildWorldSurface([...MCP_WORLD_OPS, pingFragment, pingFragment])).toThrow(/twice/);
   });
 });
 
@@ -106,7 +115,7 @@ describe("world_view as generated from the registry", () => {
     });
   });
 
-  test("a result the grammar does not describe is refused, not passed through", async () => {
+  test("an operation the core registers but no fragment advertises cannot be called through MCP", async () => {
     await withWorldOps([pingOp], async () => {
       const client = await connect();
       const answered = await call(client, "world_view", { operation: "ping", text: "hi" });
