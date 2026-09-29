@@ -361,6 +361,33 @@ estate really left unmarked, then re-import.
 `x-legacy-sensitivity` appears only where the mapping really did read a label,
 so a defaulted page never looks like a decision the previous system made.
 
+## Serving the labels you mapped
+
+Importing a label does not by itself change who may read the page. A source
+consented before this option stays at the connector default, `private`, however
+its pages are labelled. To have the labels you mapped decide the tier, regrant
+the source with a policy that sets both keys (see
+[source consent](cli.md#source-consent)):
+
+```json
+{
+  "purposes": ["capture", "recall", "derive"],
+  "allowed_fields": ["text", "subjects", "attachments", "metadata"],
+  "retention": "persistent_owned_until_revoked",
+  "egress": "local_only",
+  "sensitivity_floor": "personal",
+  "sensitivity_default": "personal"
+}
+```
+
+The next sync stores a page labelled `personal` as `personal`. A page labelled
+`private`, a page with no label, and a page whose frontmatter or label could not
+be read stay `private`, so the fail-closed rule holds. The floor for these
+importers is `personal`, so `public` is never reachable. To exclude machine
+output from an agent that otherwise reads private material, add `class_rules`
+for its paths and list `machine_exhaust` in that agent's `deny_classes`
+([withheld classes](agent-enrollment.md#withheld-classes)).
+
 ## Honest limits
 
 - **A credential-shaped field is dropped, not carried.** A frontmatter field

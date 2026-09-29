@@ -45,17 +45,66 @@ search results concerning the known subject `person:ada`:
 }
 ```
 
-All eight fields are required. Unknown fields and owner presets are refused.
+All eight fields above are required. One more field, `deny_classes`, is
+optional (see [Withheld classes](#withheld-classes)). Unknown fields and owner
+presets are refused.
 `relay_owner_corrections` also decides whether the agent's `world_view` reads
 include the owner's own corrections. Without it, a corrected world claim is
 absent from that agent's cards: the superseded value is withdrawn and the
 owner's replacement is not shown. Enable it for an assistant that should read
 the corrected world state.
 `null` for types or subjects means unrestricted along that dimension; `[]`
-allows none. The grant still applies the tool list, sensitivity ceiling, source
+allows none. A subject id is written as an importer's mapping wrote it, for
+example `"legacy-wiki:tessa vale"`: a lowercase namespace, a colon, then text
+that may hold single spaces and any printable character. Control characters,
+padding, runs of whitespace and ids longer than 128 characters are refused. The grant still applies the tool list, sensitivity ceiling, source
 consent and other Core policy. `since` and `until` filter evidence time; they do
-not expire the credential. An explicit grant does not change the inert defaults
+not expire the credential. A canon page is inside the window when every event
+it cites is; a page with one source outside it, or a source that cannot be
+read, stays withheld. `search` with a window still looks in the ledger only,
+because the search index holds no occurrence time for pages; `get_page` reads
+an in-window page. An explicit grant does not change the inert defaults
 of the existing Core `addAgent` API.
+
+## Withheld classes
+
+Kizuki stamps a deterministic class beside each event, outside the event's
+revision, so a stamp never changes what an event is:
+
+| class | set by |
+| --- | --- |
+| `credential` | capture, when the text or a metadata value matches the secret-pattern set the model-egress scrubber uses (PEM blocks, JWTs, provider tokens, `Authorization: Bearer` values, `NAME=value` assignments whose name contains `secret`, `token`, `password` or `api_key`, and mnemonic-like word runs) |
+| `machine_exhaust` | your source policy's `class_rules`, by path glob |
+
+A claim or page carries the classes of the events it cites, so one credential
+event withholds every page and claim built on it. `deny_classes` lists the
+classes a grant may not read; `search`, `timeline`, `get_page`, the graph,
+context packets and `world_view` all apply it, in the same SQL as the source
+policy where a query has one. When the field is absent the grant denies
+`credential`, so a grant written before classes existed tightens by that class
+and no other. A list you write replaces the default: `[]` reads everything,
+and `["machine_exhaust"]` reads credential-shaped evidence again. The owner
+always reads every class, and `OWNER_AGENT_GRANT` takes the default. The
+inert grant given to a new arbitrary agent is unchanged.
+
+```json
+{
+  "ceiling": "private",
+  "types": null,
+  "subjects": null,
+  "since": null,
+  "until": null,
+  "tools": ["search", "get_page", "timeline"],
+  "rate_limit_per_minute": 60,
+  "relay_owner_corrections": false,
+  "deny_classes": ["credential", "machine_exhaust"]
+}
+```
+
+The scanner is a heuristic backstop for the shapes it knows and nothing else.
+Classes are stamped when an event is captured and when its source policy
+changes, and a ledger upgraded to this version stamps every stored event once.
+`agent list` prints each grant's effective `deny=` list.
 
 ## Preview and enroll
 
@@ -104,8 +153,8 @@ kizuki --vault /absolute/vault agent grant assistant --grant agent-grant.json --
 prints a credential, a token hash or a credential path.
 
 `agent grant` replaces the agent's complete grant without revoking it or
-issuing a new credential. The grant file has the same eight required fields as
-enrollment, so to add `world_view` to a reader, save the full grant with
+issuing a new credential. The grant file has the same eight required fields, and the same optional
+`deny_classes`, as enrollment, so to add `world_view` to a reader, save the full grant with
 `"tools": ["search", "world_view"]`. To change owner-correction relay, change
 `relay_owner_corrections`. The credential file and running MCP sessions keep
 working; the next call authorizes against the new grant, and the grant epoch
