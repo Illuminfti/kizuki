@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Structural claim deduplication now requires overlapping validity. A claim
+  with the same key, polarity and object but a disjoint or merely adjacent
+  validity window is stored as its own claim instead of being merged into an
+  earlier one, and it no longer raises authority through cross-connector
+  corroboration. Overlapping windows still corroborate.
+
 ## 1.0.2 (2026-09-24)
 
 ### Added
