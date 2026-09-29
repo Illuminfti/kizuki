@@ -27,7 +27,7 @@ test("every design fixture file has exactly one registry entry and none is stale
 });
 
 test("a deferred entry names a known workstream owner", () => {
-  for (const [id, entry] of Object.entries(FIXTURE_STATUS)) {
+  for (const [id, entry] of [...Object.entries(FIXTURE_STATUS), ...Object.entries(ORACLE_ASSERTION_STATUS)]) {
     if (entry.status === "deferred") {
       expect(WORKSTREAM_KEYS as readonly string[], id).toContain(entry.owner);
     }
