@@ -12,10 +12,19 @@ import { WORLD_MIGRATION_BASE } from "./versions";
  *   cleared by `kizuki rebuild --layer world`.
  * - cache: runtime state that may hold sensitive tokens. Never exported,
  *   reinitialised on restore, cleared by `kizuki rebuild --layer world`.
+ *
+ * Authority and bookkeeping tables must name a purge path (cascade or trigger).
+ * A derived or cache table may declare `none`: purge does not touch it and only
+ * `rebuild --layer world` clears it, so a table that holds content of a purged
+ * source must name a cascade or trigger instead.
  */
 export type WorldTableClass = "authority" | "bookkeeping" | "derived" | "cache";
 
-/** How purge reaches the rows. Checked against the database for tables past the frozen ledger. */
+/**
+ * How purge reaches the rows. Cascade and trigger are checked against the
+ * database for tables past the frozen ledger. `none` is valid only for derived
+ * and cache tables.
+ */
 export type WorldErasure =
   | { readonly via: "cascade"; readonly parent: string }
   | { readonly via: "trigger"; readonly triggers: readonly string[] }
@@ -89,6 +98,17 @@ export const WORLD_TABLE_SPECS: readonly WorldTableSpec[] = [
   // slot: fcst
 ];
 
+/** Durable classes must reach purge; only derived and cache tables may opt out with `none`. */
+export function assertErasureDeclared(spec: WorldTableSpec): void {
+  if (
+    spec.erasure.via === "none" &&
+    (spec.class === "authority" || spec.class === "bookkeeping")
+  )
+    throw new Error(
+      `world table ${spec.name} is ${spec.class} and must declare a cascade or trigger erasure`,
+    );
+}
+
 let registered: readonly WorldTableSpec[] = [];
 
 /** Test seam behind `@kizuki/core/testing`: specs live until the returned disposer runs. */
@@ -97,6 +117,7 @@ export function registerWorldTableSpecs(
 ): () => void {
   const names = new Set(worldTableSpecs().map((spec) => spec.name));
   for (const spec of specs) {
+    assertErasureDeclared(spec);
     if (names.has(spec.name))
       throw new Error(`world table ${spec.name} is already registered`);
     names.add(spec.name);
@@ -139,21 +160,23 @@ export function createWorldTables(db: Database, ledgerVersion: number): void {
     if (spec.since <= ledgerVersion) spec.create?.(db);
 }
 
-/** Puts derived and cache tables in their initial state and returns the names it touched. */
+/**
+ * Puts derived and cache tables in their initial state and returns the names
+ * it touched, in registry order. Default clearing runs children first so a
+ * foreign key between derived tables never blocks it; custom `reset` hooks run
+ * afterwards in registry order and must not depend on that order.
+ */
 export function resetWorldTables(
   db: Database,
   ledgerVersion: number,
 ): string[] {
-  const reset: string[] = [];
-  for (const spec of resettableWorldTables(ledgerVersion)) {
-    if (spec.reset !== undefined) spec.reset(db);
-    else {
-      spec.create?.(db);
-      if (tableExists(db, spec.name)) db.exec(`DELETE FROM ${spec.name}`);
-    }
-    reset.push(spec.name);
-  }
-  return reset;
+  const specs = resettableWorldTables(ledgerVersion);
+  const standard = specs.filter((spec) => spec.reset === undefined);
+  for (const spec of standard) spec.create?.(db);
+  for (const spec of [...standard].reverse())
+    if (tableExists(db, spec.name)) db.exec(`DELETE FROM ${spec.name}`);
+  for (const spec of specs) spec.reset?.(db);
+  return specs.map((spec) => spec.name);
 }
 
 /**
@@ -174,7 +197,7 @@ export function assertWorldTableSchema(db: Database, expectedVersion: number): v
         ? db.query(`SELECT 1 FROM pragma_foreign_key_list(?) WHERE "table"=? AND on_delete='CASCADE'`).get(spec.name, erasure.parent) !== null
         : erasure.via === "trigger"
           ? erasure.triggers.every((name) => db.query("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?").get(name) !== null)
-          : true;
+          : spec.class === "derived" || spec.class === "cache";
     if (!reached) throw new LedgerStoreError("corrupt", `world storage erasure missing for ${spec.name}`);
   }
 }

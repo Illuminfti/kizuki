@@ -2790,7 +2790,9 @@ const worldStream = (table: string): string => `world/${table}.jsonl`;
 /**
  * Authority and bookkeeping tables import from their streams in registry order.
  * Derived and cache tables never stream: restore only initialises them. A
- * stream no registered table names is refused, never dropped.
+ * stream no registered table names is refused, never dropped. A stream of a
+ * registered table whose `since` is above the archive's ledger is ignored:
+ * archives relabelled to an older ledger keep the streams they were cut with.
  */
 function restoreWorldTables(db: Database, backup: string, manifest: ExportManifest): void {
   const tables = exportedWorldTables(manifest.schema_versions.ledger);

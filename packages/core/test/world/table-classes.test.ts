@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import type { Database } from "bun:sqlite";
 import {
   chmodSync,
@@ -21,10 +21,16 @@ import { accept } from "../../src/ledger/ledger";
 import { runPurge } from "../../src/ledger/purge";
 import { initVault } from "../../src/vault/init";
 import {
+  WORLD_TABLE_SPECS,
+  assertErasureDeclared,
   registerWorldTableSpecs,
   type WorldTableSpec,
 } from "../../src/world/tables/registry";
+import { rebuildWorldLayer } from "../../src/derived";
 import { validEvent } from "../fixtures";
+
+// Export and restore each open a real vault; bound them for a loaded host.
+setDefaultTimeout(60_000);
 
 const disposers: (() => void | Promise<void>)[] = [];
 
@@ -174,9 +180,16 @@ describe("backup ledger range", () => {
       join(import.meta.dir, "../../src/export.ts"),
       "utf8",
     );
-    expect(source).not.toMatch(
-      /versions\.ledger === \d+ \|\| versions\.ledger === \d+/,
+    const start = source.indexOf("function assertBackupFormat(");
+    const body = source.slice(start, source.indexOf("\nfunction ", start + 1));
+    expect(start).toBeGreaterThan(0);
+    expect(body).toContain("LEDGER_SCHEMA_VERSION");
+    const literals = [...body.matchAll(/ledger\s*(?:===|==)\s*(\d+)/g)].map(
+      (match) => Number(match[1]),
     );
+    expect(literals.filter((version) => version >= 21)).toEqual([]);
+    expect(body).not.toMatch(/\.includes\(\s*versions\.ledger\s*\)/);
+    expect(body).not.toMatch(/switch\s*\(\s*versions\.ledger\s*\)/);
   });
 
   test("a manifest newer than the current ledger is refused before any file is read", () => {
@@ -325,5 +338,86 @@ describe("derived and cache tables", () => {
     expect(copy.query("SELECT event_id FROM events").all()).toEqual([
       { event_id: one.event_id },
     ]);
+  });
+});
+
+describe("erasure declarations", () => {
+  test("every registered spec declares a purge path its class allows", () => {
+    for (const spec of WORLD_TABLE_SPECS) expect(() => assertErasureDeclared(spec)).not.toThrow();
+  });
+
+  test.each(["authority", "bookkeeping"] as const)(
+    "a %s table cannot opt out of purge",
+    (tableClass) => {
+      const spec = cascadeTable({
+        class: tableClass,
+        erasure: { via: "none", reason: "forgot" },
+      });
+      expect(() => registerWorldTableSpecs([spec])).toThrow("must declare a cascade or trigger erasure");
+    },
+  );
+
+  test("purge leaves a derived or cache table declared none alone, and only rebuild clears it", async () => {
+    const f = fixture();
+    register(derivedTable(), cacheTable());
+    derivedTable().create!(f.db);
+    cacheTable().create!(f.db);
+    const one = f.event("one");
+    f.db.query("INSERT INTO world_synth_summary(subject,summary) VALUES ('kettle','on')").run();
+    f.db.query("INSERT INTO world_synth_slots(slot,token) VALUES (7,'view-token')").run();
+    await runPurge(f.db, f.vault, { event_id: one.event_id }, "retire fixture");
+    expect(count(f.db, "world_synth_summary")).toBe(1);
+    expect(count(f.db, "world_synth_slots")).toBe(1);
+    rebuildWorldLayer(f.db);
+    expect(count(f.db, "world_synth_summary")).toBe(0);
+    expect(f.db.query("SELECT slot, token FROM world_synth_slots ORDER BY slot").all()).toEqual([
+      { slot: 0, token: null },
+      { slot: 1, token: null },
+    ]);
+  });
+});
+
+describe("derived tables linked by a foreign key", () => {
+  const parent = (): WorldTableSpec => ({
+    name: "world_synth_parent",
+    class: "derived",
+    since: LEDGER_SCHEMA_VERSION,
+    columns: ["id"],
+    erasure: { via: "none", reason: "rebuilt from authority" },
+    create: (db) => db.exec("CREATE TABLE IF NOT EXISTS world_synth_parent(id TEXT PRIMARY KEY) STRICT"),
+  });
+  const child = (): WorldTableSpec => ({
+    name: "world_synth_child",
+    class: "derived",
+    since: LEDGER_SCHEMA_VERSION,
+    columns: ["id", "parent_id"],
+    erasure: { via: "none", reason: "rebuilt from authority" },
+    create: (db) =>
+      db.exec(`CREATE TABLE IF NOT EXISTS world_synth_child(
+        id TEXT PRIMARY KEY,
+        parent_id TEXT NOT NULL REFERENCES world_synth_parent(id)) STRICT`),
+  });
+
+  test("rebuild --layer world clears the child before its parent", () => {
+    const f = fixture();
+    register(parent(), child());
+    parent().create!(f.db);
+    child().create!(f.db);
+    f.db.query("INSERT INTO world_synth_parent(id) VALUES ('p')").run();
+    f.db.query("INSERT INTO world_synth_child(id,parent_id) VALUES ('c','p')").run();
+    expect(rebuildWorldLayer(f.db).tables).toEqual(["world_synth_parent", "world_synth_child"]);
+    expect(count(f.db, "world_synth_parent")).toBe(0);
+    expect(count(f.db, "world_synth_child")).toBe(0);
+  });
+
+  test("restore creates both tables empty", () => {
+    const f = fixture();
+    register(parent(), child());
+    f.event("one");
+    exportVault(f.db, f.vault, f.backup);
+    restoreVault(f.backup, f.restored);
+    const copy = f.openRestored();
+    expect(count(copy, "world_synth_parent")).toBe(0);
+    expect(count(copy, "world_synth_child")).toBe(0);
   });
 });

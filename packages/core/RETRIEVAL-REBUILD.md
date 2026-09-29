@@ -1,13 +1,15 @@
 # Public authoritative retrieval rebuild
 
-`kizuki rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm] [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]` reconstructs derived retrieval
+`kizuki rebuild [--layer all|search|graph|world] [--port ID] [--prune-old] [--confirm] [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]` reconstructs derived retrieval
 from the named vault. `--layer all` rebuilds the configured retrieval store and
 the SQLite lexical/search/graph floor. With the default FTS selection, only the
 existing lexical floor is rebuilt; no second FTS store is opened. `--layer search`
 rebuilds only the SQLite lexical floor and does not refresh graph. `--layer graph`
 rebuilds only the SQLite graph floor and does not refresh search or the FTS
 index. Those partial layers do not open a configured retrieval engine, and `--port`
-is refused before the engine initializes. The legacy
+is refused before the engine initializes. `--layer world` resets the derived and
+cache world tables and touches no retrieval store; it takes no `--port` or budget
+option. The legacy
 floor indexes page and event rows; an optional retrieval port receives the
 validated projection, including readable live claims. The report identifies
 `backend` as `sqlite-floor` or `retrieval-port`.
