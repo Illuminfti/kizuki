@@ -121,6 +121,7 @@ const MAX_IDENTITY_BACKUP_ROW_BYTES = 131_072;
 const SOURCE_INVENTORY_BACKUP = "ledger/source_store_inventory.jsonl";
 const EXPORT_INVENTORY = "export-inventory.json";
 const MAX_INVENTORY_ENTRIES = 100_000;
+const SOURCE_EXPORT_REFUSALS_SHOWN = 5;
 const MAX_ERASURE_REPORT_BYTES = 2_000_000;
 const MAX_SOURCE_INVENTORY_ROW_BYTES = 6 * MAX_ERASURE_REPORT_BYTES + 1_024;
 const PURGE_HISTORY_COLUMNS = {
@@ -3357,9 +3358,19 @@ function assertSourceExport(db: Database): void {
   assertSourceInventoryIdentityErasure(db);
   if (db.query("SELECT 1 FROM canon_source_erasure_intents LIMIT 1").get() !== null) throw new Error("source_erasure_recovery_pending");
   if (sourcePolicyEpoch(db) === 0) return;
+  const refusals: string[] = [];
   for (const row of db.query<{ source_key: string }, []>("SELECT source_key FROM source_grants").iterate()) {
     const grant = inspectSourceGrant(db, row.source_key)!;
-    if (grant.status === "denied" || (grant.status === "active" && !grant.policy.purposes.includes("export"))) throw new Error("source_export_denied");
+    if (grant.status === "denied") {
+      refusals.push(`source ${grant.source_key} is revoked and its purge is pending; finish it with kizuki connect resume-revocation --source ${grant.source_key} --operation-id ${grant.revoke_operation ?? "REVOKE_OPERATION"}`);
+    } else if (grant.status === "active" && !grant.policy.purposes.includes("export")) {
+      refusals.push(`source ${grant.source_key} does not grant the export purpose; add "export" to its policy purposes and run kizuki connect grant --source ${grant.source_key} --policy POLICY.json --expected-revision ${grant.revision} --operation-id OPERATION`);
+    }
+  }
+  if (refusals.length > 0) {
+    const shown = refusals.slice(0, SOURCE_EXPORT_REFUSALS_SHOWN);
+    const more = refusals.length - shown.length;
+    throw new Error(`source_export_denied: ${shown.join("; ")}${more > 0 ? `; and ${more} more` : ""}`);
   }
   // A native correction can supersede a source claim that later gets erased.
   // The historical row keeps its relationship status and opaque identifier,
