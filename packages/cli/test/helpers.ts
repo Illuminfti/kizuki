@@ -116,12 +116,17 @@ export function createHelpers(options: { childTimeoutMs?: number } = {}): CliHel
       stdout: "pipe",
       timeout: childTimeoutMs,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
+    const startedAt = Date.now();
+    const drained = Promise.all([
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
-      child.exited,
     ]);
-    if (child.signalCode === "SIGKILL") throw timedOut(args);
+    const exitCode = await child.exited;
+    if (child.signalCode === "SIGKILL" && Date.now() - startedAt >= childTimeoutMs - 1_000) {
+      void drained.catch(() => undefined);
+      throw timedOut(args);
+    }
+    const [stdout, stderr] = await drained;
     return { exitCode, stderr, stdout };
   };
 

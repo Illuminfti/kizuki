@@ -166,6 +166,7 @@ describe("help", () => {
     expect(result.stdout).toContain("--scope  canon|ledger|all  default all");
     expect(result.stdout).toContain("--limit  1..50  default 20");
     expect(result.stdout).toContain("--degraded");
+    expect(result.stdout).toContain("--full-text");
     expect(result.stdout).toContain("Exit codes");
     expect(result.stdout).toContain("2  usage error");
     expect(result.stdout).not.toContain("Irreversible");
@@ -192,7 +193,7 @@ describe("help", () => {
     expect(body.status).toBe("ok");
     expect(body.data.name).toBe("query");
     expect(body.data.options).toEqual(["--scope", "--limit"]);
-    expect(body.data.flags).toEqual(["--json", "--degraded"]);
+    expect(body.data.flags).toEqual(["--json", "--degraded", "--full-text"]);
     expect(body.data.defaults).toEqual({ "--scope": "all", "--limit": "20" });
     expect(body.data.bounds).toEqual({ "--scope": "canon|ledger|all", "--limit": "1..50" });
     expect(body.data.irreversible).toBe(false);
