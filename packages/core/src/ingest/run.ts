@@ -55,6 +55,8 @@ export function sourceGrants(manifest: Manifest): ProducerGrants {
 }
 
 export interface RunResult {
+  /** Set only by a call that stopped on a slice limit or a stop request while the connector still had more to read. */
+  has_more?: true;
   stored: number;
   duplicates: number;
   /**
@@ -755,11 +757,26 @@ export async function runSync(
   return (await runConnector(db, connector, connector_id, source_key, "sync", context)).result;
 }
 
+/**
+ * A bounded share of a drain. A call under a slice reads at least one batch,
+ * then stops as soon as either limit is spent, leaving the connector's cursor
+ * where the last batch committed it so the next call resumes there.
+ */
+export interface DrainSlice {
+  max_batches?: number;
+  /** Milliseconds after which no further batch starts; the batch in flight finishes. */
+  deadline_ms?: number;
+}
+
 export interface RunToCompletionOptions {
   /** Upper bound on batches per call; exceeding it is an error, not a silent stop. */
   maxBatches?: number;
   /** Host-owned vault path, required when a source tombstone targets receipted canon. */
   vault_path?: string;
+  /** Yield with `has_more` instead of draining to exhaustion. */
+  slice?: DrainSlice;
+  /** Read before every batch; true ends the call with `has_more`. */
+  stopRequested?: () => boolean;
 }
 
 /** Batches beyond this are treated as a connector that will not settle. */
@@ -804,7 +821,15 @@ export async function runToCompletion(
     checkpointModeCursor(getCheckpoint(db, connector_id, source_key), mode);
   const total: RunResult = emptyResult(stored());
   const context = opts?.vault_path === undefined ? undefined : { vault_path: opts.vault_path };
+  const slice = opts?.slice;
+  const started = performance.now();
   for (let batch = 0; batch < maxBatches; batch += 1) {
+    if (opts?.stopRequested?.() === true) return { ...total, has_more: true };
+    // A slice always reads one batch, so a spent deadline cannot starve a source.
+    if (batch > 0 && slice !== undefined &&
+        (batch >= (slice.max_batches ?? Infinity) || performance.now() - started >= (slice.deadline_ms ?? Infinity))) {
+      return { ...total, has_more: true };
+    }
     const before = stored();
     const { result, terminal, continue_empty } = await runConnector(db, connector, connector_id, source_key, mode, context);
     absorb(total, result);
