@@ -13,6 +13,18 @@
 - The app's agent setup offers `world_view` among the read tools and an
   owner-correction relay choice that defaults to off.
 
+- `kizuki version` identifies the exact build. A release package prints
+  `VERSION source=<source revision> built=<UTC time>` from values compiled in by
+  `build:release`; a run from source prints `VERSION dev`. Anything that
+  parsed the whole line as a bare version number should read the first word.
+- `docs/upgrade.md`: a runbook for upgrading an installed package in place
+  (stage the new version directory, file-level backup with `sqlite3 .backup`,
+  install from the new real path, verify, roll back), with a scripted test that
+  upgrades and rolls back a fixture package over a fixture vault.
+- Release smoke runs `kizuki world --operation find_concepts --json` and an MCP
+  `world_view` call against the built package, and checks that `kizuki version`
+  matches the package's `BUILD.json` revision.
+
 ### Fixed
 
 - The daily brief is stamped private when it names a page that ever received a
@@ -43,20 +55,6 @@
   changes.
 - The MCP adapter no longer runs schema repair writes when it starts on a
   current ledger, so a long writer no longer delays or refuses startup.
-
-### Added
-
-- `kizuki version` identifies the exact build. A release package prints
-  `VERSION source=<source revision> built=<UTC time>` from values compiled in by
-  `build:release`; a run from source prints `VERSION dev`. Anything that
-  parsed the whole line as a bare version number should read the first word.
-- `docs/upgrade.md`: a runbook for upgrading an installed package in place
-  (stage the new version directory, file-level backup with `sqlite3 .backup`,
-  install from the new real path, verify, roll back), with a scripted test that
-  upgrades and rolls back a fixture package over a fixture vault.
-- Release smoke runs `kizuki world --operation find_concepts --json` and an MCP
-  `world_view` call against the built package, and checks that `kizuki version`
-  matches the package's `BUILD.json` revision.
 
 ### Changed
 
