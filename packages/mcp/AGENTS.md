@@ -46,12 +46,21 @@ own rather than sitting below it: the engine re-validates everything that
 does reach it, and the advertised bounds are a convenience for the client,
 not the enforcement point.
 
+`world_view` takes one object whose optional fields are filled with defaults by
+the SDK; which fields an operation takes is not something the SDK can state, so
+it is the engine's judgement. Those refusals reach the engine and are audited.
+The advertised `world_view` output is a summary: the handler holds every answer
+to the full grammar before returning it.
+
 ## Authority
 
 The context this package builds at startup is a starting point, not a
 capability. The engine re-reads the agent row and its grant on every call, so
 revoking an agent or narrowing its grant takes effect on the next tool call
-of an already connected session. Never cache a grant in this package.
+of an already connected session. Never cache a grant in this package. This
+covers `tools/list` too: it names the tools the grant allows at the moment of
+the listing, and a tool it leaves out is still refused, and audited, by the
+engine when called.
 
 One boundary is deliberate and worth knowing: the engine keys that re-read on
 the agent, not on the token, so rotating a token stops the next connection

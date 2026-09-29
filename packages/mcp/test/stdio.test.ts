@@ -5,7 +5,7 @@ import { openEmbeddedRetrievalPort } from "@kizuki/retrieval-pg";
 import type { CanonChunk } from "@kizuki/core";
 import { readSqliteRuntime } from "@kizuki/core/internal";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
-import { mcpFixture } from "./helpers";
+import { holdWriteLock, mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
@@ -113,6 +113,22 @@ describe("the stdio process entry", () => {
     expect(result.stderr.trim()).toBe(
       "kizuki-mcp ready principal=owner tools=10",
     );
+  });
+
+  test("a current ledger opens while another process holds the write lock, and the process still exits when stdin closes", async () => {
+    const running = live();
+    // Opening used to run schema repair, a write that waits its whole budget
+    // behind a long writer and then refuses to start.
+    const holder = await holdWriteLock(running.vaultPath, 120_000);
+    try {
+      const result = await run(["--vault", running.vaultPath, "--owner"], HANDSHAKE);
+      expect(result.code).toBe(0);
+      const answered = result.stdout.trim().split("\n").map((line) => (JSON.parse(line) as { id?: number }).id);
+      expect(answered.sort()).toEqual([1, 2]);
+      expect(result.stderr.trim()).toBe("kizuki-mcp ready principal=owner tools=10");
+    } finally {
+      await holder.release();
+    }
   });
 
   test("a configured busy engine keeps the authorized lexical floor while an explicit engine remains required", async () => {

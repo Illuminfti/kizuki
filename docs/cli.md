@@ -375,7 +375,7 @@ Discover currently authorized Concepts and Situations, then use the returned
 32-byte base64url object token for an exact lookup. The optional label filter is
 a Unicode case-sensitive substring. Homonyms remain separate objects.
 
-CLI, MCP `world_view` and loopback HTTP `/v1/world_view` (plus
+CLI, MCP `world_view` (whose `label`, `valid` and `knownAt` may be omitted) and loopback HTTP `/v1/world_view` (plus
 `/v1/mcp/world_view`) use the same Core projection over admitted claims and
 currently eligible support. Cards include evidence, confidence, uncertainty and
 coverage. Unknown, foreign, erased or inaccessible tokens return `not_found`.
@@ -685,6 +685,30 @@ adapter opens it with the same bounded busy timeout as the CLI. A call that a
 live writer outlasts is refused as `busy` with `retry_after_seconds`, never as
 a lock error, and the identical call succeeds on retry. Startup names the
 holder rather than reporting a healthy vault as unopenable.
+
+Opening the adapter does not write to a ledger that is already current: the
+schema is checked with reads, so a long writer such as a rebuild does not make
+startup wait or fail. A ledger that needs repair is repaired on open, as
+before. A session ends when stdin closes.
+
+`tools/list` names only the tools the principal's current grant allows (the
+owner sees all ten), read from the store on every listing, and stays under
+40 KB. A call to a tool the grant excludes still reaches the engine, which
+refuses and audits it. `world_view` advertises one object: `operation`
+(`find_concepts`, `find_situations`, `concept` or `situation`), `label`
+(default empty), the `concept` or `situation` object token, `valid` (default
+`{"kind":"all"}`) and `knownAt` (default `{"kind":"current"}`), so
+`{"operation":"find_concepts"}` alone is a complete call. The engine checks
+which fields an operation takes; a mismatch is refused as `invalid_arguments`
+and audited like a denied call. The full card grammar is not advertised; the
+server checks every answer against it before returning it.
+
+Within one adapter process, canon reads (`search`, `get_page`, `query_entities`,
+`context_packet`, `system_health`) keep the parsed pages and their resolved
+authority between calls. A page is read again when its file changes, and
+authority is resolved again when the receipt history changes, so a canon write
+or an edit on disk is visible to the next call. `system_health` still checks
+every page against the principal's grant on each call.
 
 ## agent
 

@@ -21,6 +21,23 @@
   earlier one, and it no longer raises authority through cross-connector
   corroboration. Overlapping windows still corroborate.
 - The standing HTTP endpoint compares its bearer token in constant time.
+- MCP `world_view` can be called from its advertised schema. `tools/list` now
+  lists the operation and its fields with their defaults, so
+  `{"operation":"find_concepts"}` alone works, where the schema used to be
+  empty.
+- MCP `tools/list` is about 33 KB instead of about 185 KB: `world_view`
+  advertises a summary of its answer (the server still checks every answer
+  against the whole grammar) and each tool states only the result lists it can
+  fill.
+- MCP `tools/list` names only the tools the principal's grant allows.
+- Denied and invalid `world_view` calls are audited and count toward the rate
+  limit; the audit row used to roll back with the refusal.
+- Served canon reads (MCP tools and the loopback host) no longer parse the
+  whole vault on every call. Parsed pages and their resolved authority are kept
+  for the life of the process and refreshed when a file or the receipt history
+  changes.
+- The MCP adapter no longer runs schema repair writes when it starts on a
+  current ledger, so a long writer no longer delays or refuses startup.
 
 ### Added
 

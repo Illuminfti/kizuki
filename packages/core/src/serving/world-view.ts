@@ -275,30 +275,34 @@ export function serveWorldView(
   ctx: ServeContext,
   args: Record<string, unknown>,
 ): WorldViewEnvelope {
+  // The gate is not wrapped in a transaction: a refusal rolls back everything
+  // inside one, and the audit row and rate reservation of a denied call must
+  // outlive the refusal. The projection opens its own transaction, so a failed
+  // projection still issues no references.
+  const envelope = gate(
+    ctx,
+    "world_view",
+    auditArguments(args),
+    ({ ctx: live }): Served<WorldReadResult> => {
+      try {
+        return {
+          canon: [],
+          quoted: [],
+          withheld: [],
+          data: readWorldView(live, args),
+        };
+      } catch (error) {
+        if (error instanceof WorldViewError)
+          throw new ServeError(
+            "invalid_arguments",
+            "invalid arguments: world_view",
+          );
+        throw error;
+      }
+    },
+  );
   return ctx.db
     .transaction((): WorldViewEnvelope => {
-      const envelope = gate(
-        ctx,
-        "world_view",
-        auditArguments(args),
-        ({ ctx: live }): Served<WorldReadResult> => {
-          try {
-            return {
-              canon: [],
-              quoted: [],
-              withheld: [],
-              data: readWorldView(live, args),
-            };
-          } catch (error) {
-            if (error instanceof WorldViewError)
-              throw new ServeError(
-                "invalid_arguments",
-                "invalid arguments: world_view",
-              );
-            throw error;
-          }
-        },
-      );
       const principal = resolvePrincipal(ctx.db, ctx.principal);
       if (principal === null)
         throw new ServeError("unknown_agent", "unknown agent");

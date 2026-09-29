@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { expect } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -145,6 +146,43 @@ export function mcpFixture(): McpFixture {
     dispose: () => {
       db.close();
       rmSync(vaultPath, { recursive: true, force: true });
+    },
+  };
+}
+
+const HOLDER = join(import.meta.dir, "../../core/test/ledger-busy-child.ts");
+
+export interface Holder {
+  release(): Promise<void>;
+}
+
+/** Another process holding the ledger write lock, as a serve rail batch does. */
+export async function holdWriteLock(
+  vaultPath: string,
+  holdMs: number,
+): Promise<Holder> {
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      HOLDER,
+      join(vaultPath, ".kizuki", "kizuki.db"),
+      String(holdMs),
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const reader = child.stdout.getReader();
+  let buffered = "";
+  while (!buffered.includes("\n")) {
+    const chunk = await reader.read();
+    if (chunk.done) throw new Error("write-lock holder ended before it held");
+    buffered += new TextDecoder().decode(chunk.value);
+  }
+  expect(buffered.split("\n")[0]).toBe("held");
+  reader.releaseLock();
+  return {
+    async release() {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      await child.exited;
     },
   };
 }
