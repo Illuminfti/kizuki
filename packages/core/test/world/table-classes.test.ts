@@ -245,7 +245,7 @@ describe("authority and bookkeeping tables", () => {
     );
   });
 
-  test("an archive whose stream postdates its ledger, or names no registered table, is refused", () => {
+  test("an archive stream that no registered table names is refused", () => {
     const f = fixture();
     register(cascadeTable());
     cascadeTable().create!(f.db);
