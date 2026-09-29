@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-outcome-replay-design.json");
@@ -29,7 +30,7 @@ function load(): Fixture {
 function replayErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-outcome-replay-design", example.status));
   if (example.id !== "duplicate-receipt-is-one-result") errors.push("unexpected example id");
   if (example.receipts.first.idempotency_key !== example.receipts.replay.idempotency_key) {
     errors.push("replay lost the idempotency key");

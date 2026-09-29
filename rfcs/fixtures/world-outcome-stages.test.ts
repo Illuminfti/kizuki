@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-outcome-stages-design.json");
@@ -35,7 +36,7 @@ function load(): Fixture {
 function stageErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-outcome-stages-design", example.status));
   if (example.id !== "agent-done-is-not-goal-achieved") errors.push("unexpected example id");
   const expected = ["agent_says_done", "provider_accepted", "observed_artifact", "goal_achieved"] as const;
   if (new Set(Object.values(example.stages).map((stage) => stage.kind)).size !== 4) {

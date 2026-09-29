@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-outcome-copy-design.json");
@@ -37,7 +38,7 @@ function load(): Fixture {
 function copyErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-outcome-copy-design", example.status));
   if (example.id !== "forwarded-copy-is-not-independent-support") errors.push("unexpected example id");
   if (example.observation.kind !== "attributable_observation") errors.push("observation kind drifted");
   if (!example.observation.independent_root) errors.push("attributable observation lost independent root");

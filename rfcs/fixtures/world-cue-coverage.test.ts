@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-cue-coverage-design.json");
@@ -40,7 +41,7 @@ function load(): Fixture {
 function coverageErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-cue-coverage-design", example.status));
   if (example.id !== "coverage-stale-failure-quiet-are-distinct") errors.push("unexpected example id");
   const kinds = Object.values(example.states).map((state) => state.kind);
   if (new Set(kinds).size !== 4) errors.push("cue states collapsed");

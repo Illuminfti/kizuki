@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-forecast-counterfactual-design.json");
@@ -33,7 +34,7 @@ function load(): Fixture {
 function counterfactualErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-forecast-counterfactual-design", example.status));
   if (example.id !== "counterfactual-is-not-current-world") errors.push("unexpected example id");
   if (example.current.view !== "current") errors.push("current view dropped");
   if (example.current.includes_counterfactual) errors.push("current view includes a counterfactual");

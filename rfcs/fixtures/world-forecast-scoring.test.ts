@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-forecast-scoring-design.json");
@@ -62,7 +63,7 @@ function validProbability(p: number): boolean {
 function scoringErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-forecast-scoring-design", example.status));
   if (example.result_class !== "illustrative") errors.push("illustrative numbers promoted to measured results");
   if (example.id !== "binary-forecast-scoring-and-usefulness") errors.push("unexpected example id");
   if (example.scoring.kind !== "binary_brier") errors.push("scoring kind drifted");
