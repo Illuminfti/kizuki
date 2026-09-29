@@ -114,6 +114,7 @@ async function syncConnections(
   vaultPath: string,
   store: Parameters<typeof listHostConnections>[1],
   env: Record<string, string | undefined>,
+  pace: (() => void) | undefined,
 ): Promise<RailSyncResult> {
   let events_synced = 0;
   let events_stored = 0;
@@ -133,7 +134,7 @@ async function syncConnections(
           selected.connection.connector_id,
           selected.connection.source_key,
           "sync",
-          { vault_path: vaultPath },
+          { vault_path: vaultPath, ...(pace === undefined ? {} : { pace }) },
         );
         events_stored += result.stored;
         events_duplicate += result.duplicates;
@@ -170,6 +171,8 @@ interface ServeRuntimeOptions {
   readonly configurationErrorMode?: "throw" | "disable-model";
   /** Aborts every model and judge request of this runtime, so a daemon stop never waits one out. */
   readonly signal?: AbortSignal;
+  /** A foreground caller's pacer, so its sync leaves the ledger free between commits for a running daemon. */
+  readonly pace?: () => void;
 }
 
 /** What doctor and serve status show about a bindable model. Never the credential. */
@@ -344,7 +347,7 @@ export async function createServeRuntime(options: ServeRuntimeOptions): Promise<
       ...(binding?.producer === undefined ? {} : { producer: binding.producer }),
       claims,
       sync: async () => {
-        const result = await syncConnections(options.db, options.vaultPath, options.store, options.env);
+        const result = await syncConnections(options.db, options.vaultPath, options.store, options.env, options.pace);
         return configurationUnavailable
           ? { ...result, errors: [...result.errors, "model configuration unavailable"] }
           : result;

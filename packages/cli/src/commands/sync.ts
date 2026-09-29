@@ -44,7 +44,8 @@ export const syncCommand: Command = {
       if (parsed.flags.has("--once")) {
         // Foreground automation deliberately composes the same capability
         // graph as `kizuki serve`; it is not a second ingest-only path.
-        const runtime = await createServeRuntime({ ...ctx, env: io.env, err: io.err });
+        using ingest = beginIngest(ctx.db, ctx.vaultPath);
+        const runtime = await createServeRuntime({ ...ctx, env: io.env, err: io.err, pace: ingest.pace });
         try {
           const receipt = await runRail(ctx.db, ctx.vaultPath, "sync", { hooks: runtime.hooks });
           io.out(`sync events_stored=${receipt.events_stored} duplicates=${receipt.events_duplicate} errors=${receipt.errors.length}`);
