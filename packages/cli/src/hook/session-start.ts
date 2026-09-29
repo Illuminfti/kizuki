@@ -40,6 +40,7 @@ export interface SessionStartOptions {
 const MAX_STDIN_BYTES = 64 * 1024;
 const MAX_RESPONSE_CHARS = 512 * 1024;
 const MAX_QUERY_CHARS = 200;
+const MAX_STDIN_WAIT_MS = 250;
 
 /** The claude-code and codex hooks share one documented SessionStart output shape. */
 export function formatHookOutput(harness: Harness, context: string): string {
@@ -192,7 +193,11 @@ export async function runSessionStart(io: CliIo, options: SessionStartOptions): 
   const started = Date.now();
   const remaining = (): number => options.timeoutMs - (Date.now() - started);
   try {
-    const raw = io.readStdin === undefined ? "" : await Promise.race([io.readStdin(MAX_STDIN_BYTES), sleep(remaining())]);
+    // A harness that leaves stdin open must not spend the whole deadline: the query is a nicety, the packet is the point.
+    const raw =
+      io.readStdin === undefined
+        ? ""
+        : await Promise.race([io.readStdin(MAX_STDIN_BYTES), sleep(Math.min(MAX_STDIN_WAIT_MS, remaining() / 4))]);
     const input = raw === "timeout" ? "" : raw;
     const query = projectQuery(input);
     const request = { purpose: "session", budget_tokens: options.budget, ...(query === undefined ? {} : { query }) };

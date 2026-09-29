@@ -179,7 +179,12 @@ export async function runServeDaemon(
       port: options.port ?? config.bind_port,
       ...(retrieval === undefined ? {} : { retrieval }),
     });
-    writeServeEndpoint(vaultPath, { host: http.host, port: http.port, instance_id: ownMarker.instance_id });
+    try {
+      writeServeEndpoint(vaultPath, { host: http.host, port: http.port, instance_id: ownMarker.instance_id });
+    } catch {
+      // The endpoint file is only a discovery hint for local clients; sync and http stay up without it.
+      (options.log ?? ((line: string) => { nodeProcess.stderr.write(`${line}\n`); }))("serve: endpoint hint could not be written; clients must find the daemon another way");
+    }
   }
 
 

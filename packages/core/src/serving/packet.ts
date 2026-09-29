@@ -26,7 +26,7 @@ import {
 import { ServeError } from "./types";
 import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
 import { PACKET_TOKENIZER_ID, packetTokens as tokens } from "./packet-tokenizer";
-import { collectSessionPieces } from "./session-sections";
+import { SESSION_STATE_NOTE, collectSessionPieces } from "./session-sections";
 import type { SessionEmptyReason, SessionReport } from "./session-sections";
 import { parseTaskArgs, readTaskAttachment } from "./task-sections";
 import type { TaskAttachment } from "./task-sections";
@@ -421,6 +421,7 @@ export async function serveContextPacket(
       const stateRoom = Math.floor((budget - headerTokens) * SESSION_STATE_SHARE);
       let stateBody = "";
       let heading = "";
+      let noted = false;
       let truncated = false;
       for (const piece of pieces) {
         if (
@@ -433,14 +434,21 @@ export async function serveContextPacket(
           // before a later in-scope chunk.
           continue;
         }
-        const prefix = piece.heading === heading ? "" : `${piece.heading}\n`;
         const isState = (SESSION_SECTIONS as readonly string[]).includes(piece.section);
-        if (isState && tokens(`${stateBody}${prefix}${piece.block}`) > stateRoom) {
-          // The session sections yield to canon and capture instead of ending the packet.
-          if (piece.placeholder !== true) {
-            truncated = true;
+        const note = isState && piece.placeholder !== true && !noted ? SESSION_STATE_NOTE : "";
+        const prefix = `${note}${piece.heading === heading ? "" : `${piece.heading}\n`}`;
+        if (isState && piece.placeholder === true) {
+          // A placeholder is one compact line that says why a section is empty, so it
+          // is not held to the state share: only the whole budget can drop it, and
+          // then the section reports `budget` rather than a reason the reader never saw.
+          if (tokens(`${header}${body}${prefix}${piece.block}`) > budget) {
             skipped.add(piece.section as SessionSection);
+            continue;
           }
+        } else if (isState && tokens(`${stateBody}${prefix}${piece.block}`) > stateRoom) {
+          // The session sections yield to canon and capture instead of ending the packet.
+          truncated = true;
+          skipped.add(piece.section as SessionSection);
           continue;
         }
         let chosen = piece;
@@ -474,6 +482,7 @@ export async function serveContextPacket(
         heading = chosen.heading;
         if (isState) {
           stateBody += `${prefix}${chosen.block}`;
+          if (chosen.placeholder !== true) noted = true;
           if (chosen.placeholder !== true) served[chosen.section as SessionSection] += 1;
         } else {
           sections[chosen.section as keyof typeof sections] += 1;

@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ServeProcessMarker } from "./daemon";
+import { readBootId } from "./leases";
 import { SERVE_ENDPOINT_PATH } from "./types";
 
 const SCHEMA = "kizuki.serve-endpoint/v1";
@@ -21,9 +22,14 @@ export function writeServeEndpoint(
   const path = join(vaultPath, SERVE_ENDPOINT_PATH);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const staged = `${path}.${crypto.randomUUID()}.tmp`;
-  writeFileSync(staged, `${JSON.stringify({ schema: SCHEMA, ...endpoint })}\n`, { mode: 0o600 });
-  chmodSync(staged, 0o600);
-  renameSync(staged, path);
+  try {
+    writeFileSync(staged, `${JSON.stringify({ schema: SCHEMA, ...endpoint })}\n`, { mode: 0o600 });
+    chmodSync(staged, 0o600);
+    renameSync(staged, path);
+  } catch (error) {
+    try { unlinkSync(staged); } catch { /* Nothing was staged. */ }
+    throw error;
+  }
 }
 
 export function clearServeEndpoint(vaultPath: string): void {
@@ -38,7 +44,8 @@ function alive(pid: number): boolean {
 /**
  * The endpoint of the daemon that is running now, or null. A file left by a
  * dead or replaced daemon is ignored: it must name the instance in `marker`
- * (the vault's current process marker), and that process must exist.
+ * (the vault's current process marker), the marker must come from this boot so
+ * a reused pid is not mistaken for the daemon, and that process must exist.
  */
 export function readServeEndpoint(vaultPath: string, marker: ServeProcessMarker | null): ServeEndpoint | null {
   try {
@@ -53,7 +60,7 @@ export function readServeEndpoint(vaultPath: string, marker: ServeProcessMarker 
     const { host, port, instance_id: instance } = fields;
     if (typeof host !== "string" || !LOOPBACK.has(host) || typeof port !== "number" ||
         !Number.isInteger(port) || port < 1 || port > 65_535 || typeof instance !== "string") return null;
-    if (marker === null || marker.instance_id !== instance || !alive(marker.pid)) return null;
+    if (marker === null || marker.instance_id !== instance || marker.boot_id !== readBootId() || !alive(marker.pid)) return null;
     return { host, port, url: `http://${host === "::1" ? "[::1]" : host}:${port}` };
   } catch {
     return null;

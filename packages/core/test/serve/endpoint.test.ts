@@ -1,9 +1,10 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openLedger } from "../../src/ledger/db";
+import { readBootId } from "../../src/serve/leases";
 import { initVault } from "../../src/vault/init";
 import { readServeProcessMarker, runServeDaemon } from "../../src/serve/daemon";
 import { clearServeEndpoint, readServeEndpoint, writeServeEndpoint } from "../../src/serve/endpoint";
@@ -29,7 +30,7 @@ afterEach(() => {
 const INSTANCE = "11111111-1111-4111-8111-111111111111";
 const marker = (over: Partial<{ pid: number; instance_id: string }> = {}) => ({
   pid: process.pid,
-  boot_id: "boot",
+  boot_id: readBootId(),
   instance_id: INSTANCE,
   ...over,
 });
@@ -41,8 +42,38 @@ test("an endpoint is served only while its own daemon instance is alive", () => 
   expect(readServeEndpoint(f.vault, null)).toBeNull();
   expect(readServeEndpoint(f.vault, marker({ instance_id: "22222222-2222-4222-8222-222222222222" }))).toBeNull();
   expect(readServeEndpoint(f.vault, marker({ pid: 2 ** 22 - 1 }))).toBeNull();
+  // A marker left by an earlier boot may name a pid some other process now holds.
+  expect(readServeEndpoint(f.vault, { ...marker(), boot_id: "an-earlier-boot" })).toBeNull();
   clearServeEndpoint(f.vault);
   expect(readServeEndpoint(f.vault, marker())).toBeNull();
+});
+
+test("a failed write leaves no staged file and the daemon survives it", async () => {
+  const f = fixture();
+  // A directory where the endpoint file goes makes the final rename fail.
+  mkdirSync(join(f.vault, SERVE_ENDPOINT_PATH), { recursive: true });
+  expect(() => writeServeEndpoint(f.vault, { host: "127.0.0.1", port: 1, instance_id: INSTANCE })).toThrow();
+  expect(readdirSync(join(f.vault, ".kizuki")).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+
+  f.db.query("UPDATE schedules SET enabled=0 WHERE rail <> 'sync'").run();
+  const lines: string[] = [];
+  let synced = false;
+  await runServeDaemon(f.db, f.vault, {
+    once: true,
+    rails: ["sync"],
+    log: (line) => lines.push(line),
+    acquireRuntime: async () => ({
+      hooks: {
+        sync: async () => {
+          synced = true;
+          return { events_synced: 0, events_stored: 0, events_duplicate: 0, events_self_skipped: 0, errors: [] };
+        },
+      },
+      close: async () => {},
+    }),
+  });
+  expect(synced).toBe(true);
+  expect(lines.join("\n")).toContain("endpoint hint could not be written");
 });
 
 test("an IPv6 loopback endpoint is a bracketed origin", () => {

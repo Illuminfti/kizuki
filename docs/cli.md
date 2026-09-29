@@ -535,7 +535,9 @@ missing or uninitialized vault, an empty result or any other error. An empty
 vault prints no block. `--verbose` writes one line naming the class of failure
 to standard error and never a path, token or captured text. `--direct` reads in
 the current process without contacting the daemon; its deadline cannot interrupt
-a read already running. Invalid arguments exit 2. The hook writes nothing and
+a read already running. A misconfigured command is silent and exits 0 too, and
+out-of-range numbers are clamped to their bounds, so a settings typo never
+fails a session. The hook writes nothing and
 contacts only the loopback daemon. See [integrations](integrations.md) for
 Claude Code, Codex and generic recipes.
 

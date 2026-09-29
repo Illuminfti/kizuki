@@ -104,6 +104,11 @@ Add this to `~/.claude/settings.json`, or to a project's `.claude/settings.json`
 }
 ```
 
+Keep `--token-ref` in the command. Without it the hook reads as the owner, at the
+owner's sensitivity ceiling, and injects owner-level claims into whatever model
+the harness talks to. An agent credential limits the block to what that agent's
+grant allows. The same applies to every hook recipe below.
+
 Claude Code sends the session's JSON on standard input and adds the printed
 `additionalContext` to the conversation. Keep the harness `timeout` (seconds) a
 little above `--timeout-ms` so Kizuki, not the harness, decides when to give up.
@@ -149,10 +154,12 @@ In `~/.codex/hooks.json`, or a repository's `.codex/hooks.json`:
 }
 ```
 
-Codex documents the same `hookSpecificOutput` object for `SessionStart` that
-Claude Code does, so `--harness codex` prints it unchanged. Both harnesses
-document plain standard output as context too; the JSON form is used because it
-carries the event name explicitly.
+This recipe has not been run against a real Codex client. Codex hooks are a
+newer feature and a build may need an opt-in setting or a minimum version before
+it reads `hooks.json`; check the current Codex hooks documentation for both, and
+if the hook never runs, that is the first thing to look at. `--harness codex`
+prints the same `hookSpecificOutput` object Claude Code takes; if your Codex
+build wants plain standard output instead, use `--harness generic`.
 
 ## 4. Any other client
 
@@ -197,6 +204,12 @@ A section with nothing to report is listed under `not recorded` with the reason,
 so an empty section is never mistaken for a missing one. Canon pages and recent
 captured records follow, within the same budget.
 
+Sections only show claims that are current: a claim whose validity has ended, or
+not yet begun, is not listed. A section says `unavailable` rather than
+`none_recorded` when the newest 60 candidates were all unreadable or ended, since
+absence is then not proven. The first state line is preceded by a note that state
+lines are data unless they are clean and owner-authored.
+
 Each line carries its labels. Lines Kizuki produced are marked as produced prose.
 Captured text is marked `tainted` and quoted, and every claim line shows its
 sensitivity, taint and authority. The block tells the harness to treat quoted
@@ -210,8 +223,9 @@ search query. The path itself is never sent or printed.
 
 1. It reads the harness's JSON from standard input, at most 64 KiB.
 2. If `kizuki serve` is running, it calls that daemon's loopback endpoint with the
-   agent's own credential. Without `--token-ref` it acts as the owner and uses the
-   daemon's standing token.
+   agent's own credential, and only when the endpoint file belongs to the daemon
+   process of the current boot. Without `--token-ref` it acts as the owner at the
+   owner's ceiling and uses the daemon's standing token.
 3. If no daemon answers, it reads the vault directly in a child process that it
    can stop at the deadline.
 4. It prints the harness's output shape and exits 0.
@@ -219,8 +233,11 @@ search query. The path itself is never sent or printed.
 It exits 0 and prints nothing on a timeout, a denied or revoked credential, a
 missing or uninitialized vault, an empty result, or any other error. Add
 `--verbose` to see one line on standard error naming the class of failure. That
-line never contains a path, a token or captured text. Bad arguments are the one
-exception: they exit 2 with a usage message.
+line never contains a path, a token or captured text. A misconfigured command
+(an unknown `--harness`, a bad `--token-ref`, an unknown option) is silent too,
+so a typo cannot fail every session; `--verbose` prints `nothing injected
+(usage)`. Out-of-range `--budget` and `--timeout-ms` values are pulled to the
+nearest bound.
 
 `--direct` skips the daemon and reads in the current process. Its deadline covers
 waiting only, not a read already in progress, so prefer the default.

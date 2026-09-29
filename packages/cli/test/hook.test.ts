@@ -9,6 +9,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { readBootId, runServeDaemon } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import type { Grant } from "@kizuki/core";
 import { createHelpers, fixtureConsent } from "./helpers";
 
@@ -35,7 +37,8 @@ interface HookRun {
 
 async function hook(
   env: Record<string, string | undefined>,
-  stdin: string,
+  /** null leaves the pipe open, the way a wrapper that never closes stdin does. */
+  stdin: string | null,
   ...args: string[]
 ): Promise<HookRun> {
   const spawnEnv: Record<string, string> = {};
@@ -60,13 +63,16 @@ async function hook(
       stderr: "pipe",
     },
   );
-  child.stdin.write(stdin);
-  void child.stdin.end();
+  if (stdin !== null) {
+    child.stdin.write(stdin);
+    void child.stdin.end();
+  }
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
     child.exited,
   ]);
+  if (stdin === null) void child.stdin.end();
   return { exitCode, stdout, stderr, ms: Date.now() - started };
 }
 
@@ -100,7 +106,7 @@ interface FakeDaemon {
 function fakeDaemon(
   vault: string,
   respond: () => Promise<Response> | Response,
-  options: { token?: string; instance?: string; pid?: number } = {},
+  options: { token?: string; instance?: string; pid?: number; boot?: string } = {},
 ): FakeDaemon {
   const requests: FakeDaemon["requests"] = [];
   const server = Bun.serve({
@@ -119,7 +125,7 @@ function fakeDaemon(
   const instance = options.instance ?? "11111111-1111-4111-8111-111111111111";
   writeFileSync(
     join(state, "serve.pid"),
-    `${JSON.stringify({ pid: options.pid ?? process.pid, boot_id: "boot", instance_id: instance })}\n`,
+    `${JSON.stringify({ pid: options.pid ?? process.pid, boot_id: options.boot ?? readBootId(), instance_id: instance })}\n`,
     { mode: 0o600 },
   );
   writeFileSync(
@@ -396,6 +402,86 @@ describe("hook session-start fails closed", () => {
 });
 
 describe("hook session-start and the daemon", () => {
+  test("a marker from another boot is not trusted with the bearer", async () => {
+    const setup = seededVault();
+    const daemon = fakeDaemon(setup.vault, () => packet(), { boot: "an-earlier-boot" });
+    try {
+      const run = await hook(setup.env, INPUT, "--harness", "generic", "--vault", setup.vault);
+      expect(run.exitCode, run.stderr).toBe(0);
+      expect(daemon.requests).toHaveLength(0);
+    } finally {
+      daemon.stop();
+    }
+  });
+
+  test("a stdin that never closes does not eat the deadline", async () => {
+    const setup = seededVault();
+    const daemon = fakeDaemon(setup.vault, () => packet());
+    try {
+      const run = await hook(
+        setup.env,
+        null,
+        "--harness",
+        "generic",
+        "--timeout-ms",
+        "20000",
+        "--vault",
+        setup.vault,
+      );
+      expect(run.exitCode, run.stderr).toBe(0);
+      expect(run.stdout).toContain("KIZUKI CONTEXT v1");
+      expect(daemon.requests).toHaveLength(1);
+      // No project name arrived, so the request carries none.
+      expect(daemon.requests[0]?.body).toEqual({ purpose: "session", budget_tokens: 450 });
+    } finally {
+      daemon.stop();
+    }
+  });
+
+  test("the real daemon announces itself, serves the packet, and the hook takes that path", async () => {
+    const setup = seededVault();
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    // The daemon's own HTTP handler is the only thing that sees a request; count what reaches it.
+    const served: { path: string; status: number }[] = [];
+    const realServe = Bun.serve;
+    (Bun as { serve: unknown }).serve = (options: Parameters<typeof Bun.serve>[0]) => {
+      const inner = (options as { fetch: (request: Request) => Promise<Response> | Response }).fetch;
+      return realServe({
+        ...options,
+        async fetch(request: Request) {
+          const response = await inner(request);
+          served.push({ path: new URL(request.url).pathname, status: response.status });
+          return response;
+        },
+      } as Parameters<typeof Bun.serve>[0]);
+    };
+    let run: HookRun | undefined;
+    try {
+      db.query("UPDATE schedules SET enabled=0 WHERE rail <> 'sync'").run();
+      await runServeDaemon(db, setup.vault, {
+        once: true,
+        rails: ["sync"],
+        acquireRuntime: async () => ({
+          hooks: {
+            sync: async () => {
+              expect(existsSync(join(setup.vault, ".kizuki", "serve.endpoint"))).toBe(true);
+              run = await hook(setup.env, INPUT, "--harness", "generic", "--vault", setup.vault);
+              return { events_synced: 0, events_stored: 0, events_duplicate: 0, events_self_skipped: 0, errors: [] };
+            },
+          },
+          close: async () => {},
+        }),
+      });
+    } finally {
+      (Bun as { serve: unknown }).serve = realServe;
+      db.close();
+    }
+    expect(run?.exitCode, run?.stderr).toBe(0);
+    expect(run?.stdout).toContain("KIZUKI CONTEXT v1");
+    expect(served).toEqual([{ path: "/v1/context_packet", status: 200 }]);
+    expect(existsSync(join(setup.vault, ".kizuki", "serve.endpoint"))).toBe(false);
+  });
+
   test("prefers the daemon, sends the project name and the owner bearer, and prints its packet", async () => {
     const setup = seededVault();
     const daemon = fakeDaemon(setup.vault, () => packet());
@@ -653,18 +739,44 @@ describe("hook usage", () => {
   test.each([
     [[]],
     [["--harness", "vim"]],
-    [["--harness", "generic", "--budget", "49"]],
-    [["--harness", "generic", "--budget", "2001"]],
-    [["--harness", "generic", "--timeout-ms", "99"]],
-    [["--harness", "generic", "--timeout-ms", "abc"]],
     [["--harness", "generic", "--token-ref", "relative/path"]],
     [["--harness", "generic", "extra"]],
     [["--harness", "generic", "--nope"]],
-  ])("rejects %j before touching any vault", async (args) => {
+  ])("a misconfigured command %j is silent and exits 0", async (args) => {
     const run = await hook(isolatedEnv(), INPUT, ...args);
-    expect(run.exitCode).toBe(2);
-    expect(run.stdout).toBe("");
-    expect(run.stderr).toContain("usage:");
+    expect({ code: run.exitCode, out: run.stdout, err: run.stderr }).toEqual({
+      code: 0,
+      out: "",
+      err: "",
+    });
+    const loud = await hook(isolatedEnv(), INPUT, ...args, "--verbose");
+    expect(loud.exitCode).toBe(0);
+    expect(loud.stdout).toBe("");
+    expect(loud.stderr).toContain("hook: nothing injected (usage)");
+  });
+
+  test.each([
+    ["--budget", "49"],
+    ["--budget", "2001"],
+    ["--budget", "abc"],
+    ["--timeout-ms", "99"],
+    ["--timeout-ms", "abc"],
+  ])("%s %s is clamped and the hook still prints", async (flag, value) => {
+    const setup = seededVault();
+    const run = await hook(
+      setup.env,
+      INPUT,
+      "--harness",
+      "generic",
+      flag,
+      value,
+      "--vault",
+      setup.vault,
+      ...(flag === "--timeout-ms" ? [] : ["--timeout-ms", "60000"]),
+    );
+    expect(run.exitCode, run.stderr).toBe(0);
+    expect(run.stderr).toBe("");
+    if (flag === "--budget" && value !== "49") expect(run.stdout).toContain("KIZUKI CONTEXT v1");
   });
 
   test("only session-start exists", () => {

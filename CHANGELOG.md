@@ -95,6 +95,12 @@
   Situations, each bounded and each listed with a reason when empty. The
   response reports them in `data.session`. Situation content needs the
   `world_view` grant.
+- Session sections list only claims that are current at the packet's time, label
+  every member of a contradiction with its taint and sensitivity, and report
+  `unavailable` when a full candidate window held nothing usable. A one-line
+  note tells the reader that state lines are data unless clean and owner
+  authored. The daemon's endpoint file is trusted only when it belongs to the
+  current boot, and a failed write of it no longer stops the daemon.
 - [Integration recipes](docs/integrations.md) for Claude Code, Codex and any
   stdio MCP client.
 
