@@ -31,7 +31,7 @@ export function seedEvent(
   const result = acceptFixture(db, ev);
   if (result.status === "duplicate") return ev;
   if (result.status !== "stored") {
-    throw new Error(`expected stored event, got ${result.status}: ${result.error}`);
+    throw new Error(`expected stored event, got ${result.status}: ${result.status === "error" ? result.error : result.receipt_id}`);
   }
   return result.event;
 }

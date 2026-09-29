@@ -48,6 +48,12 @@ export function sourceGrants(manifest: Manifest): ProducerGrants {
 export interface RunResult {
   stored: number;
   duplicates: number;
+  /**
+   * Records refused because an earlier purge removed them and the owner has not
+   * lifted it. A refusal advances the cursor: it is reported, not retried, and
+   * it is not persisted with the run.
+   */
+  suppressed?: number;
   errors: string[];
   proposals_created: number;
   withdrawn: number;
@@ -105,6 +111,10 @@ function processEvent(
     }
     if (accepted.status === "duplicate") {
       result.duplicates = 1;
+      return result;
+    }
+    if (accepted.status === "suppressed") {
+      result.suppressed = 1;
       return result;
     }
 
@@ -276,6 +286,7 @@ export function runBatch(
       const event = processEvent(db, input, grants, source, context);
       result.stored += event.stored;
       result.duplicates += event.duplicates;
+      if (event.suppressed !== undefined) result.suppressed = (result.suppressed ?? 0) + event.suppressed;
       result.errors.push(...event.errors);
       result.proposals_created += event.proposals_created;
       result.withdrawn += event.withdrawn;
@@ -647,7 +658,7 @@ async function runConnector(
     context,
   );
   const status: ConnectionRunStatus = processed.errors.length === 0 ? "ok" : "failed";
-  const result = persistRun(
+  const persisted = persistRun(
     db,
     connector_id,
     source_key,
@@ -658,6 +669,7 @@ async function runConnector(
     status,
     mode === "backfill" && status === "ok" && hasMore === false,
   );
+  const result = processed.suppressed === undefined ? persisted : { ...persisted, suppressed: processed.suppressed };
   return { result, terminal: status === "ok" && hasMore === false, continue_empty: status === "ok" && hasMore === true };
 }
 
@@ -692,12 +704,13 @@ export interface RunToCompletionOptions {
 export const DEFAULT_MAX_BATCHES = 10_000;
 
 function drained(result: RunResult): boolean {
-  return result.stored + result.duplicates + result.errors.length === 0;
+  return result.stored + result.duplicates + (result.suppressed ?? 0) + result.errors.length === 0;
 }
 
 function absorb(total: RunResult, batch: RunResult): void {
   total.stored += batch.stored;
   total.duplicates += batch.duplicates;
+  if (batch.suppressed !== undefined) total.suppressed = (total.suppressed ?? 0) + batch.suppressed;
   total.errors.push(...batch.errors);
   total.proposals_created += batch.proposals_created;
   total.withdrawn += batch.withdrawn;

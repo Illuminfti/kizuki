@@ -15,6 +15,7 @@ import { computeOriginBinding, nativeRequestDigest } from "./event-origin-bindin
 import { runImmediate } from "./busy";
 import { classifySqliteFailure, LedgerStoreError } from "./errors";
 import { LEDGER_ID_MAX, LEDGER_KIND_MAX, MAX_READ_SINCE, REPLAY_PAGE_SIZE } from "./limits";
+import { findPurgeSuppression } from "./purge-suppression";
 import { tableExists } from "./schema";
 import { placeholders } from "../util/sql";
 
@@ -23,6 +24,8 @@ export type AcceptErrorKind = "validation" | "infrastructure";
 export type AcceptResult =
   | { status: "stored"; event: CaptureEvent }
   | { status: "duplicate" }
+  /** The source record was purged earlier and the owner has not lifted the refusal. */
+  | { status: "suppressed"; receipt_id: string }
   | { status: "error"; error: string; kind: AcceptErrorKind };
 
 export interface AcceptDependencies {
@@ -115,6 +118,8 @@ export function accept(
 
     return runImmediate(db, (): AcceptResult => {
       if (deps.source !== undefined) { normalized = authorizeSourceCapture(db, normalized, deps.source); contentHash = computeContentHash(normalized); }
+      const suppressedBy = findPurgeSuppression(db, normalized.connector_id, normalized.source_record_id);
+      if (suppressedBy !== null) return { status: "suppressed", receipt_id: suppressedBy };
       const textHash = sha256Hex(normalized.text);
       let duplicate = db
         .query<EventRow, [string, string, string]>(
