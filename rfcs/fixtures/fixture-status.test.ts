@@ -4,7 +4,9 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   FIXTURE_STATUS,
+  ORACLE_ASSERTION_STATUS,
   WORKSTREAM_KEYS,
+  boundTestErrors,
   fixtureStatusErrors,
   type FixtureRegistry,
 } from "./status";
@@ -29,6 +31,12 @@ test("a deferred entry names a known workstream owner", () => {
     if (entry.status === "deferred") {
       expect(WORKSTREAM_KEYS as readonly string[], id).toContain(entry.owner);
     }
+  }
+});
+
+test("every executable entry, fixture or assertion, names a test file that exists", () => {
+  for (const [unit, entry] of [...Object.entries(FIXTURE_STATUS), ...Object.entries(ORACLE_ASSERTION_STATUS)]) {
+    if (entry.status === "executable") expect(boundTestErrors(entry.test, ROOT), unit).toEqual([]);
   }
 });
 
