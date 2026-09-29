@@ -31,8 +31,8 @@ const CONNECTOR = "world.writer";
  * reference in one source namespace, so a test names endpoints by plain
  * strings and never touches occurrence minting.
  */
-export function worldWriter(io: Omit<ClaimsIo, "db"> = {}) {
-  const db: Database = openLedger(":memory:");
+export function worldWriter(options: { readonly db?: Database; readonly io?: Omit<ClaimsIo, "db"> } = {}) {
+  const db: Database = options.db ?? openLedger(":memory:");
   const sourceKey = ulid();
   registerConnection(db, CONNECTOR, sourceKey);
   seedConnectorSensitivity(
@@ -110,7 +110,7 @@ export function worldWriter(io: Omit<ClaimsIo, "db"> = {}) {
     };
     const body = `${spec.predicate}: ${JSON.stringify(spec.object)}`;
     return insertClaim(
-      { db, ...io },
+      { db, ...options.io },
       {
         kind: "claim",
         body,
@@ -141,6 +141,6 @@ export function worldWriter(io: Omit<ClaimsIo, "db"> = {}) {
     /** Classify an endpoint the way extraction does: a positive, asserted world.kind claim. */
     classify: (subject: string, vocabulary: string) =>
       write({ subject, predicate: "world.kind", object: { vocabulary } }),
-    close: () => db.close(),
+    close: () => { if (options.db === undefined) db.close(); },
   };
 }

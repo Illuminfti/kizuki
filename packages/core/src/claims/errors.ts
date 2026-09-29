@@ -5,6 +5,10 @@ export const CLAIM_ERROR_CODES = [
   "schema_invalid",
   "unknown_predicate",
   "space_mismatch",
+  "world_endpoint_kind",
+  "world_object_kind",
+  "world_polarity",
+  "world_vocabulary_value",
 ] as const;
 export type ClaimErrorCode = (typeof CLAIM_ERROR_CODES)[number];
 

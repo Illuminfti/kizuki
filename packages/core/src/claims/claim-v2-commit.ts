@@ -32,6 +32,7 @@ import { ensureClaimOccurrences } from "./occurrences";
 import { getClaim } from "./store";
 import { parseWorldAdmission, completeWorldAnchors, type WorldAdmission } from "../contracts/world-admission";
 import { allocateWorldEndpoints } from "../world/allocation";
+import { validateWorldAssertionAgainstRegistry } from "../world/registry-check";
 import { WORLD_TABLES } from "../world/schema";
 import { tableColumns, tableExists } from "../ledger/schema";
 import { eventFromRow, type EventRow } from "../ledger/event-record";
@@ -344,6 +345,7 @@ export function commitClaimV2(
   if (supportOrigin === "native_owner") requireNativeOwnerSupport(db, input.support);
   else requireAdmittedSource(db, input.support, input.scope);
   if (suppliedWorld !== null && mapped.value.discriminator === "assertion") {
+    validateWorldAssertionAgainstRegistry(db, suppliedWorld.semantic);
     if(input.accepted_world===undefined) throw new ClaimError("schema_invalid","qualified world authority must come from the shared writer");
     const expectedAnchors=completeWorldAnchors(suppliedWorld.semantic);
     if(canonicalJson(expectedAnchors)!==canonicalJson(input.support.anchors))
