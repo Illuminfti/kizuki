@@ -776,13 +776,13 @@ export function countClaims(
 export interface LiveClaimProducers {
   /** Claims a model extracted from event text. */
   readonly model: number;
-  /** Claims the deterministic floor staged from imported pages and captured notes, not model output. */
+  /** Claims the deterministic floor staged without a model: page mirrors, capture notes and entity stubs. */
   readonly deterministic: number;
   readonly owner: number;
   readonly agent: number;
 }
 
-/** Live claims by who produced them, so a mirror of an imported page is never counted as extracted memory. */
+/** Live claims by who produced them, so floor output is never counted as model-extracted memory. */
 export function countLiveClaimsByProducer(db: Database): LiveClaimProducers {
   const counts = { model: 0, deterministic: 0, owner: 0, agent: 0 };
   if (!tableExists(db, "claims")) return counts;

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { resolveTarget } from "../../src/canon/arbiter";
 import { UndoError } from "../../src/canon/errors";
 import { getCanonReceipt, listCanonReceipts } from "../../src/canon/receipts";
-import { undoReceipt } from "../../src/canon/undo";
+import { pageChangedMessage, undoReceipt } from "../../src/canon/undo";
 import { retryCanonProjectionObligations, readCanonProjectionObligation } from "../../src/canon/projection-obligations";
 import { getClaim, supersedeLiveGroup } from "../../src/claims/store";
 import { ABSENT_PAGE_HASH } from "../../src/vault/write";
@@ -120,6 +120,14 @@ describe("undoReceipt", () => {
     expect(code(cascaded)).toBe("page_changed");
     expect(String(cascaded)).toContain("--cascade only reverses later receipts, and there are none");
     expect(getCanonReceipt(db, created.receipt_id)?.reverted_by).toBeNull();
+  });
+
+  test("a moved typed basis with matching page bytes names the step instead of a dead end", () => {
+    const message = pageChangedMessage("rcpt-1", [], false, false);
+    expect(message).toContain("page changed since receipt rcpt-1");
+    expect(message).toContain("typed basis");
+    expect(message).toContain("kizuki audit");
+    expect(message).not.toContain("later receipts: none");
   });
 
   test("undo refuses a receipt that is already reverted", async () => {

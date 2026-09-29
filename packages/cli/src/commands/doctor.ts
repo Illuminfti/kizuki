@@ -507,12 +507,10 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(
     `ledger schema=${report.ledger.schema_version ?? "-"} quick_check=${report.ledger.quick_check} sampled=${report.ledger.sampled_events}`,
   );
-  io.out(
-    `claims live=${report.claims.live} filed=${report.claims.filed} written=${report.claims.written} unwritten=${report.claims.unwritten} superseded=${report.claims.superseded} skipped=${report.claims.skipped} purged=${report.claims.purged}`,
-  );
   const producers = report.claims.by_producer;
   io.out(
-    `claim producers model_extracted=${producers.model} imported_page_mirrors=${producers.deterministic} owner=${producers.owner} agent=${producers.agent}`,
+    `claims live=${report.claims.live} filed=${report.claims.filed} written=${report.claims.written} unwritten=${report.claims.unwritten} superseded=${report.claims.superseded} skipped=${report.claims.skipped} purged=${report.claims.purged}` +
+      ` live_by_producer model_extracted=${producers.model} deterministic_floor=${producers.deterministic} owner=${producers.owner} agent=${producers.agent}`,
   );
   const derived = report.serve.stores.derived;
   io.out(

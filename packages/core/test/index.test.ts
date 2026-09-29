@@ -269,7 +269,7 @@ describe("public surface", () => {
       "count",
       "countCanonReceipts",
       "countClaims",
-    "countLiveClaimsByProducer",
+      "countLiveClaimsByProducer",
       "countRetrievalDocuments",
       "countSince",
       "countUnwrittenLiveClaims",

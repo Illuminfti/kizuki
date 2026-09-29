@@ -415,9 +415,13 @@ export function queryServeService(
   host: SupervisorHost,
 ): SupervisorStatus {
   let bound: string | null = null;
-  try { bound = serviceBoundElsewhere(vaultPath, host); } catch { /* An unreadable definition is judged by the supervisor query. */ }
+  try { bound = serviceBoundElsewhere(vaultPath, host); }
+  catch {
+    // Fail closed: a definition that cannot be read safely must not let another vault's unit read as this vault's.
+    return { kind: host.kind, state: "unknown", unit: null, enabled: false, detail: "service definition unreadable; not attributing a unit to this vault" };
+  }
   if (bound !== null) {
-    return { kind: host.kind, state: "absent", unit: null, enabled: false, detail: `absent for this vault: ${boundElsewhereMessage(bound, vaultPath)}` };
+    return { kind: host.kind, state: "absent", unit: null, enabled: false, detail: `absent for this vault: ${boundElsewhereMessage(bound, vaultPath)}`, bound_elsewhere: bound };
   }
   return host.query(ensureVaultId(vaultPath));
 }

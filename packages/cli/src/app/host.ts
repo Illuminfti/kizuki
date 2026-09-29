@@ -272,6 +272,12 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                 const id = readVaultId(selected);
                 if (!id) return status;
                 const observed = queryServeService(selected, host);
+                if (observed.bound_elsewhere !== undefined) {
+                    status.state = 'absent';
+                    status.other_workspace = true;
+                    status.detail = 'The background service belongs to another workspace that shares this one\'s identity, which usually means this is a copy. Nothing was changed. Run this copy in the foreground or manage the service from the original workspace.';
+                    return status;
+                }
                 status.state = observed.state === 'active' && !observed.enabled ? 'unknown' : observed.state;
                 status.detail = status.state === 'active' ? 'The native background service is active. Each source still needs permission; automatic organisation also needs a working model.'
                     : status.state === 'none' ? 'This device has no supported background supervisor. Capture and search remain available in the app.'

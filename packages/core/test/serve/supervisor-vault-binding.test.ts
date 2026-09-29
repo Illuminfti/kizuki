@@ -59,6 +59,7 @@ for (const kind of ["systemd", "launchd"] as const) {
     expect(status.enabled).toBe(false);
     expect(status.detail).toContain(w.original);
     expect(status.detail).toContain(`kizuki serve --vault ${copy}`);
+    expect(status.bound_elsewhere).toBe(w.original);
 
     expect(() => installServeService(copy, w.host)).toThrow(/serves another vault/);
     expect(() => uninstallServeService(copy, w.host)).toThrow(/serves another vault/);
@@ -70,6 +71,24 @@ for (const kind of ["systemd", "launchd"] as const) {
     expect(uninstallServeService(w.original, w.host).removed).toBe(true);
   });
 }
+
+test("an unreadable service definition is never attributed to this vault", () => {
+  const w = world();
+  installServeService(w.original, w.host);
+  const copy = w.copy();
+  const definition = systemdUnitPath(w.root, ensureVaultId(w.original));
+  const target = join(w.root, "elsewhere.service");
+  writeFileSync(target, readFileSync(definition));
+  rmSync(definition);
+  symlinkSync(target, definition);
+  const callsBefore = w.calls.length;
+  const status = queryServeService(copy, w.host);
+  expect(status.state).toBe("unknown");
+  expect(status.unit).toBeNull();
+  expect(status.enabled).toBe(false);
+  expect(status.detail).toContain("not attributing a unit to this vault");
+  expect(w.calls.length).toBe(callsBefore);
+});
 
 test("the owning vault is recognised through a symlinked path", () => {
   const w = world();

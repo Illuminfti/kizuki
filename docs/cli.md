@@ -378,10 +378,11 @@ files, or claim that hybrid retrieval ran. Unknown engine IDs still refuse.
 usage: kizuki doctor [--json] [--integrity]
 ```
 
-Vault path, event count, claim counts (filed/live/written/unwritten), a
-`claim producers` line that separates `model_extracted` claims from
-`imported_page_mirrors` (deterministic claims staged from imported pages and
-captured notes; JSON: `claims.by_producer`), live
+Vault path, event count, claim counts (filed/live/written/unwritten) with a
+`live_by_producer` split on the same line that separates `model_extracted`
+claims from `deterministic_floor` (claims the deterministic floor staged
+without a model: imported page mirrors, verbatim capture notes and entity
+stubs; JSON: `claims.by_producer`), live
 claim ids (for `tell --claim`), leftover skipped rows, connections,
 checkpoints (with the first error of each source's last run as `last_error`),
 derived-index freshness, writer ROLE stamps, machine vs human

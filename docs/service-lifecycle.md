@@ -35,8 +35,17 @@ supervisor. Run the loop on the copy in the foreground with
 `kizuki serve --vault <copy>`, or manage the service from the vault it serves.
 A definition that names no vault, or names a vault that no longer exists, is not
 treated as another live vault, so a moved vault can reinstall over it.
+A definition that cannot be read safely (for example a symlinked one) is
+reported as unknown for this vault, never as another vault's unit. The app
+shows the same state as a copy and does not offer to enable the service.
 `serve stop` acts on the stop marker inside the vault it is given, never on a
 supervisor unit.
+
+Known limit: a running vault that is copied byte for byte also copies its
+`.kizuki/serve.pid` marker. On the copy, `serve status` can print the original's
+pid and `serve stop` can answer `queued`, although the copy has no running loop.
+Nothing outside the copy is controlled, so treat those two lines as stale
+marker content until the loop runs on the copy.
 
 ## Restart limits and startup refusals
 

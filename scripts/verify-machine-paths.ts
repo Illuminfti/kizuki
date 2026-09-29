@@ -12,16 +12,21 @@ export const SYNTHETIC_HOME_NAMES: ReadonlySet<string> = new Set([
 const HOME_PATH = /(?<![\w./~$-])(?:\/home|\/Users)\/([A-Za-z0-9._-]+)/gu;
 const WINDOWS_HOME_PATH = /(?<![\w])[A-Za-z]:\\Users\\([A-Za-z0-9._-]+)/gu;
 const DATA_PATH = /(?<![\w./~$-])\/data\/[A-Za-z0-9._-]+/gu;
+// A file URL or a doubled leading slash hides the same root behind a slash the lookbehind above skips.
+const URL_HOME_PATH = /(?:[Ff][Ii][Ll][Ee]:\/{2,3}|(?<![\w./~$:-])\/{2})(?:home|Users)\/([A-Za-z0-9._-]+)/gu;
+const URL_DATA_PATH = /(?:[Ff][Ii][Ll][Ee]:\/{2,3}|(?<![\w./~$:-])\/{2})data\/[A-Za-z0-9._-]+/gu;
 
 /** The machine-specific absolute path fragments in one line of tracked text. */
 export function machinePathsIn(text: string): string[] {
   const found: string[] = [];
-  for (const pattern of [HOME_PATH, WINDOWS_HOME_PATH]) {
+  for (const pattern of [HOME_PATH, WINDOWS_HOME_PATH, URL_HOME_PATH]) {
     for (const match of text.matchAll(pattern)) {
       if (!SYNTHETIC_HOME_NAMES.has(match[1]!.toLowerCase())) found.push(match[0]);
     }
   }
-  for (const match of text.matchAll(DATA_PATH)) found.push(match[0]);
+  for (const pattern of [DATA_PATH, URL_DATA_PATH]) {
+    for (const match of text.matchAll(pattern)) found.push(match[0]);
+  }
   return found;
 }
 

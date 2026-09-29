@@ -8,17 +8,21 @@
   read or change the service of a different vault that has the same vault id.
   The installed definition's `--vault` path is compared with the vault in use;
   on a copy, status reports the service as absent for it and names the other
-  path, and install and uninstall refuse.
+  path, and install and uninstall refuse. An unreadable definition reports the
+  service as unknown for this vault, doctor prints a short copy-specific line
+  with the command to run, and the app shows a copy as belonging to another
+  workspace instead of offering to enable it.
 - The verify gate fails on machine-specific absolute home or data paths in
-  tracked text, with a small allowlist of synthetic names. The existing
+  tracked text, including file URLs and doubled leading slashes, with a small
+  allowlist of synthetic names. The existing
   occurrences were removed.
 - `undo` on a page changed since the receipt says whether later receipts or a
   hand edit caused it and what to do next. Doctor names `chmod 600` when a
   loosely permissioned `serve.toml` blocks model inspection. Doctor and
   `serve status` fail on a canon write intent pending for over 300 seconds. A
   command with no vault says how to pass or set one. Doctor's claim counts add
-  a `claim producers` line separating model-extracted claims from imported
-  page mirrors.
+  a `live_by_producer` split separating model-extracted claims from
+  deterministic-floor claims (page mirrors, capture notes, entity stubs).
 
 ### Added
 

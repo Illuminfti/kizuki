@@ -13,6 +13,12 @@ describe("machine path scanner", () => {
     `"${at("home", "deploy", ".config", "app")}"`,
     ["C:", "Users", "jane", "AppData"].join("\\"),
     `(${at("home", "jane", "notes")})`,
+    `open file://${at("home", "jane", "vault")}`,
+    `open file:/${at("home", "jane", "vault")}`,
+    `open FILE://${at("Users", "jane", "vault")}`,
+    `open file://${at("data", "kizuki-x")}`,
+    `run /${at("home", "jane", "vault")}`,
+    `run /${at("data", "kizuki-x")}`,
   ])("flags %s", (text) => {
     expect(machinePathsIn(text).length).toBeGreaterThan(0);
   });
@@ -29,6 +35,8 @@ describe("machine path scanner", () => {
     at("home", "<user>", "vault"),
     at("home", "$USER", "vault"),
     "file:///home/",
+    `file://${at("home", "user", "vault")}`,
+    "https://home/x and https://data/x",
     "the /home and /data directories",
   ])("allows %s", (text) => {
     expect(machinePathsIn(text)).toEqual([]);
