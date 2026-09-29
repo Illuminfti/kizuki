@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { KizukiError } from "@kizuki/core";
 import type { CaptureEventInput, Cursor } from "@kizuki/core";
 import { BATCH, walkMailboxes } from "../src/mailbox";
-import { decodeCursor } from "../src/cursor";
+import { loadCursor } from "../src/cursor";
 import { DEFAULT_MAX_MESSAGE_BYTES } from "../src/state";
 import type { ImapState } from "../src/state";
 import { FakeImapServer } from "../src/testing/fake-imap";
@@ -69,7 +69,29 @@ function state(
 }
 
 function deps(server: FakeImapServer, imapState: ImapState) {
-  return { dial: memoryDialer(server), state: imapState, now: NOW };
+  return {
+    dial: memoryDialer(server),
+    state: imapState,
+    now: NOW,
+    // The host's cursor store: filled by `walk` the way a committed checkpoint would.
+    store: new Map<string, string>(),
+  };
+}
+
+type WalkDeps = ReturnType<typeof deps>;
+
+function foldersOf(walkDeps: WalkDeps, cursor: Cursor | null) {
+  return loadCursor(cursor, walkDeps.store).folders;
+}
+
+/** One walk, then the host's commit: the delta joins the store, as it does with the checkpoint. */
+async function walk(walkDeps: WalkDeps, cursor: Cursor | null, mode: "backfill" | "sync") {
+  const result = await walkMailboxes(walkDeps, cursor, mode);
+  for (const [key, value] of Object.entries(result.batch.cursor_store ?? {})) {
+    if (value === null) walkDeps.store.delete(key);
+    else walkDeps.store.set(key, value);
+  }
+  return { ...result, folders: foldersOf(walkDeps, result.batch.cursor) };
 }
 
 function uidsOf(events: CaptureEventInput[]): number[] {
@@ -85,7 +107,7 @@ describe("backfill paging", () => {
     const sizes: number[] = [];
 
     for (let page = 0; page < 3; page += 1) {
-      const result = await walkMailboxes(walkDeps, cursor, "backfill");
+      const result = await walk(walkDeps, cursor, "backfill");
       sizes.push(result.batch.events.length);
       seen.push(...uidsOf(result.batch.events));
       cursor = result.batch.cursor;
@@ -101,18 +123,18 @@ describe("backfill paging", () => {
   test("a full page says there is more; a finished mailbox does not", async () => {
     const server = new FakeImapServer([folder("INBOX", 450)]);
     const walkDeps = deps(server, state(["INBOX"]));
-    const first = await walkMailboxes(walkDeps, null, "backfill");
+    const first = await walk(walkDeps, null, "backfill");
     expect(first.batch.events).toHaveLength(BATCH);
     expect(first.batch.has_more).toBe(true);
 
-    const second = await walkMailboxes(walkDeps, first.batch.cursor, "backfill");
+    const second = await walk(walkDeps, first.batch.cursor, "backfill");
     expect(second.batch.has_more).toBe(true);
 
-    const third = await walkMailboxes(walkDeps, second.batch.cursor, "backfill");
+    const third = await walk(walkDeps, second.batch.cursor, "backfill");
     expect(third.batch.events).toHaveLength(50);
     expect(third.batch.has_more).toBe(false);
 
-    const idle = await walkMailboxes(walkDeps, third.batch.cursor, "backfill");
+    const idle = await walk(walkDeps, third.batch.cursor, "backfill");
     expect(idle.batch.events).toEqual([]);
     expect(idle.batch.has_more).toBe(false);
     expect(idle.batch.cursor).toBe(third.batch.cursor);
@@ -121,10 +143,10 @@ describe("backfill paging", () => {
   test("a completed backfill returns an empty batch and an unchanged cursor", async () => {
     const server = new FakeImapServer([folder("INBOX", 3)]);
     const walkDeps = deps(server, state(["INBOX"]));
-    const first = await walkMailboxes(walkDeps, null, "backfill");
+    const first = await walk(walkDeps, null, "backfill");
     expect(first.batch.events).toHaveLength(3);
 
-    const second = await walkMailboxes(
+    const second = await walk(
       walkDeps,
       first.batch.cursor,
       "backfill",
@@ -136,8 +158,10 @@ describe("backfill paging", () => {
   test("backfill(null) twice yields the same first page", async () => {
     const server = new FakeImapServer([folder("INBOX", 5)]);
     const walkDeps = deps(server, state(["INBOX"]));
-    const first = await walkMailboxes(walkDeps, null, "backfill");
-    const again = await walkMailboxes(walkDeps, null, "backfill");
+    const first = await walk(walkDeps, null, "backfill");
+    // A host with no checkpoint has no map either.
+    walkDeps.store.clear();
+    const again = await walk(walkDeps, null, "backfill");
     expect(again.batch).toEqual(first.batch);
   });
 
@@ -146,7 +170,7 @@ describe("backfill paging", () => {
       folder("INBOX", 2),
       folder("Archive", 3, 9),
     ]);
-    const result = await walkMailboxes(
+    const result = await walk(
       deps(server, state(["INBOX", "Archive"])),
       null,
       "backfill",
@@ -162,7 +186,7 @@ describe("backfill paging", () => {
 
   test("captures a message above the size bound header-only", async () => {
     const server = new FakeImapServer([folder("INBOX", 2)]);
-    const result = await walkMailboxes(
+    const result = await walk(
       deps(server, state(["INBOX"], { max_message_bytes: 100 })),
       null,
       "backfill",
@@ -204,7 +228,7 @@ describe("backfill paging", () => {
         messages: [{ uid: 1, internaldate: "01-Mar-2026 08:00:00 +0000", raw }],
       },
     ]);
-    const result = await walkMailboxes(
+    const result = await walk(
       deps(server, state(["INBOX"], { max_message_bytes: 100 })),
       null,
       "backfill",
@@ -230,41 +254,41 @@ describe("sync", () => {
   test("pages new mail once uidnext grows", async () => {
     const server = new FakeImapServer([folder("INBOX", 2)]);
     const walkDeps = deps(server, state(["INBOX"]));
-    const first = await walkMailboxes(walkDeps, null, "backfill");
+    const first = await walk(walkDeps, null, "backfill");
     server.append("INBOX", "Subject: fresh\r\n\r\nnew mail\r\n");
 
-    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const second = await walk(walkDeps, first.batch.cursor, "sync");
     expect(uidsOf(second.batch.events)).toEqual([3]);
     expect(
-      decodeCursor(second.batch.cursor ?? "").folders["INBOX"]?.known,
+      second.folders["INBOX"]?.known,
     ).toBe("1:3");
   });
 
   test("emits one tombstone per expunged uid and shrinks the known set", async () => {
     const server = new FakeImapServer([folder("INBOX", 4)]);
     const walkDeps = deps(server, state(["INBOX"]));
-    const first = await walkMailboxes(walkDeps, null, "backfill");
+    const first = await walk(walkDeps, null, "backfill");
     server.expunge("INBOX", 2);
     server.expunge("INBOX", 3);
 
-    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const second = await walk(walkDeps, first.batch.cursor, "sync");
     expect(second.batch.events).toHaveLength(2);
     expect(second.batch.events.every((event) => event.deleted)).toBe(true);
     expect(uidsOf(second.batch.events)).toEqual([2, 3]);
     expect(second.batch.has_more).toBe(false);
     expect(
-      decodeCursor(second.batch.cursor ?? "").folders["INBOX"]?.known,
+      second.folders["INBOX"]?.known,
     ).toBe("1,4");
   });
 
   test("an expunge is still tombstoned when new mail arrives on the same walk", async () => {
     const server = new FakeImapServer([folder("INBOX", 4)]);
     const walkDeps = deps(server, state(["INBOX"]));
-    const first = await walkMailboxes(walkDeps, null, "backfill");
+    const first = await walk(walkDeps, null, "backfill");
     server.expunge("INBOX", 2);
     server.append("INBOX", "Subject: fresh\r\n\r\nnew mail\r\n");
 
-    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const second = await walk(walkDeps, first.batch.cursor, "sync");
     const tombstones = second.batch.events.filter((event) => event.deleted);
     const fresh = second.batch.events.filter((event) => !event.deleted);
     expect(tombstones.map((event) => event.source_record_id)).toEqual([
@@ -272,7 +296,7 @@ describe("sync", () => {
     ]);
     expect(uidsOf(fresh)).toEqual([5]);
     expect(
-      decodeCursor(second.batch.cursor ?? "").folders["INBOX"]?.known,
+      second.folders["INBOX"]?.known,
     ).toBe("1,3:5");
     expect(second.batch.has_more).toBe(false);
   });
@@ -280,10 +304,10 @@ describe("sync", () => {
   test("a uidvalidity reset tombstones the old ids then re-emits", async () => {
     const server = new FakeImapServer([folder("INBOX", 3)]);
     const walkDeps = deps(server, state(["INBOX"]));
-    const first = await walkMailboxes(walkDeps, null, "backfill");
+    const first = await walk(walkDeps, null, "backfill");
     server.resetUidValidity("INBOX");
 
-    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const second = await walk(walkDeps, first.batch.cursor, "sync");
     const tombstones = second.batch.events.filter((event) => event.deleted);
     const fresh = second.batch.events.filter((event) => !event.deleted);
     expect(tombstones.map((event) => event.source_record_id)).toEqual([
@@ -308,25 +332,25 @@ describe("sync", () => {
     const walkDeps = deps(server, state(["INBOX"]));
     server.withholdBody("INBOX", 2);
 
-    const first = await walkMailboxes(walkDeps, null, "backfill");
+    const first = await walk(walkDeps, null, "backfill");
     expect(uidsOf(first.batch.events)).toEqual([1, 3]);
     expect(first.notes).toEqual(["message bodies not returned: INBOX (1)"]);
 
     // The UID never entered `known`, so no tombstone claims it was deleted;
     // it waits on the retry list instead, which is the only handle left on it.
-    const held = decodeCursor(first.batch.cursor ?? "").folders["INBOX"];
+    const held = first.folders["INBOX"];
     expect(held?.known).toBe("1,3");
     expect(held?.pending).toBe("2");
 
-    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const second = await walk(walkDeps, first.batch.cursor, "sync");
     expect(second.batch.events).toEqual([]);
     expect(second.notes).toEqual(["message bodies not returned: INBOX (1)"]);
 
     server.restoreBody("INBOX", 2);
-    const third = await walkMailboxes(walkDeps, second.batch.cursor, "sync");
+    const third = await walk(walkDeps, second.batch.cursor, "sync");
     expect(uidsOf(third.batch.events)).toEqual([2]);
     expect(third.notes).toEqual([]);
-    const healed = decodeCursor(third.batch.cursor ?? "").folders["INBOX"];
+    const healed = third.folders["INBOX"];
     expect(healed?.known).toBe("1:3");
     expect(healed?.pending).toBe("");
   });
@@ -336,12 +360,12 @@ describe("sync", () => {
     const walkDeps = deps(server, state(["INBOX"]));
     server.withholdBody("INBOX", 3);
 
-    const first = await walkMailboxes(walkDeps, null, "backfill");
+    const first = await walk(walkDeps, null, "backfill");
     // One short of a full page: the withheld message produced no event.
     expect(first.batch.events).toHaveLength(BATCH - 1);
 
     server.restoreBody("INBOX", 3);
-    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const second = await walk(walkDeps, first.batch.cursor, "sync");
     // The retried hole comes out of the same budget as the new page, or a
     // walk could hand the runner more than one batch's worth of events.
     expect(second.batch.events.length).toBeLessThanOrEqual(BATCH);
@@ -354,17 +378,17 @@ describe("sync", () => {
     const walkDeps = deps(server, state(["INBOX"]));
     for (let uid = 1; uid <= holes; uid += 1) server.withholdBody("INBOX", uid);
 
-    const first = await walkMailboxes(walkDeps, null, "backfill");
+    const first = await walk(walkDeps, null, "backfill");
     expect(first.batch.events).toHaveLength(BATCH - holes);
-    const held = decodeCursor(first.batch.cursor ?? "").folders["INBOX"];
+    const held = first.folders["INBOX"];
     expect(held?.scan_from).toBe(BATCH + 1);
 
     for (let uid = 1; uid <= holes; uid += 1) server.restoreBody("INBOX", uid);
-    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const second = await walk(walkDeps, first.batch.cursor, "sync");
     // The retried events are charged once, not twice: a walk that retried a
     // hole used to make no scan progress at all on that call.
     expect(second.batch.events).toHaveLength(BATCH);
-    const advanced = decodeCursor(second.batch.cursor ?? "").folders["INBOX"];
+    const advanced = second.folders["INBOX"];
     expect(advanced?.scan_from).toBe(BATCH + holes + 1);
   });
 
@@ -385,23 +409,23 @@ describe("sync", () => {
     ]);
     const walkDeps = deps(server, state(["INBOX"]));
 
-    await expect(walkMailboxes(walkDeps, null, "backfill")).rejects.toMatchObject({
+    await expect(walk(walkDeps, null, "backfill")).rejects.toMatchObject({
       code: "protocol",
       message: expect.stringMatching(/RFC822\.SIZE/),
     });
 
     server.folders[0]!.messages[1] = second;
-    const retry = await walkMailboxes(walkDeps, null, "backfill");
+    const retry = await walk(walkDeps, null, "backfill");
     expect(uidsOf(retry.batch.events)).toEqual([1, 2]);
     expect(retry.batch.has_more).toBe(false);
-    expect(decodeCursor(retry.batch.cursor ?? "").folders["INBOX"]?.known).toBe(
+    expect(retry.folders["INBOX"]?.known).toBe(
       "1:2",
     );
-    expect(decodeCursor(retry.batch.cursor ?? "").folders["INBOX"]?.scan_from).toBe(
+    expect(retry.folders["INBOX"]?.scan_from).toBe(
       3,
     );
 
-    const again = await walkMailboxes(walkDeps, retry.batch.cursor, "sync");
+    const again = await walk(walkDeps, retry.batch.cursor, "sync");
     expect(again.batch.events).toEqual([]);
   });
 
@@ -410,16 +434,16 @@ describe("sync", () => {
     const walkDeps = deps(server, state(["INBOX"]));
     server.nilBody("INBOX", 2);
 
-    const first = await walkMailboxes(walkDeps, null, "backfill");
+    const first = await walk(walkDeps, null, "backfill");
     expect(uidsOf(first.batch.events)).toEqual([1, 3]);
     expect(first.notes).toEqual(["message bodies not returned: INBOX (1)"]);
     expect(first.batch.has_more).toBe(true);
-    const held = decodeCursor(first.batch.cursor ?? "").folders["INBOX"];
+    const held = first.folders["INBOX"];
     expect(held?.known).toBe("1,3");
     expect(held?.pending).toBe("2");
 
     server.restoreBody("INBOX", 2);
-    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const second = await walk(walkDeps, first.batch.cursor, "sync");
     expect(uidsOf(second.batch.events)).toEqual([2]);
     expect(second.notes).toEqual([]);
     expect(second.batch.has_more).toBe(false);
@@ -430,18 +454,18 @@ describe("sync", () => {
     const walkDeps = deps(server, state(["INBOX"]));
     server.withholdBody("INBOX", 2);
 
-    const first = await walkMailboxes(walkDeps, null, "backfill");
-    expect(decodeCursor(first.batch.cursor ?? "").folders["INBOX"]?.pending).toBe(
+    const first = await walk(walkDeps, null, "backfill");
+    expect(first.folders["INBOX"]?.pending).toBe(
       "2",
     );
 
     server.expunge("INBOX", 2);
-    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const second = await walk(walkDeps, first.batch.cursor, "sync");
     // Nothing was ever emitted for it, so its disappearance is not a deletion.
     expect(second.batch.events).toEqual([]);
     expect(second.notes).toEqual([]);
     expect(
-      decodeCursor(second.batch.cursor ?? "").folders["INBOX"]?.pending,
+      second.folders["INBOX"]?.pending,
     ).toBe("");
   });
 
@@ -456,7 +480,7 @@ describe("sync", () => {
       ),
     };
     const server = new FakeImapServer([wide], { fetchIgnoresRange: true });
-    const result = await walkMailboxes(
+    const result = await walk(
       deps(server, state(["INBOX"])),
       null,
       "backfill",
@@ -465,7 +489,7 @@ describe("sync", () => {
     // set scan_from past 5000 and mark the mailbox done, leaving 1..1000
     // unreachable for the life of the cursor.
     expect(result.batch.events).toEqual([]);
-    const entry = decodeCursor(result.batch.cursor ?? "").folders["INBOX"];
+    const entry = result.folders["INBOX"];
     expect(entry?.scan_from).toBe(1001);
     expect(entry?.known).toBe("");
     expect(entry?.done).toBe(true);
@@ -475,7 +499,7 @@ describe("sync", () => {
     const server = new FakeImapServer([folder("INBOX", 2)], {
       decorateBodySection: true,
     });
-    const result = await walkMailboxes(
+    const result = await walk(
       deps(server, state(["INBOX"])),
       null,
       "backfill",
@@ -489,28 +513,28 @@ describe("sync", () => {
     const walkDeps = deps(server, state(["INBOX"]));
     let cursor: Cursor | null = null;
     for (let page = 0; page < 2; page += 1) {
-      cursor = (await walkMailboxes(walkDeps, cursor, "backfill")).batch.cursor;
+      cursor = (await walk(walkDeps, cursor, "backfill")).batch.cursor;
     }
-    expect(decodeCursor(cursor ?? "").folders["INBOX"]?.known).toBe("1:300");
+    expect(foldersOf(walkDeps, cursor)["INBOX"]?.known).toBe("1:300");
 
     for (let uid = 1; uid <= 300; uid += 1) server.expunge("INBOX", uid);
 
-    const first = await walkMailboxes(walkDeps, cursor, "sync");
+    const first = await walk(walkDeps, cursor, "sync");
     expect(first.batch.events).toHaveLength(BATCH);
     expect(first.batch.events.every((event) => event.deleted)).toBe(true);
     expect(first.batch.has_more).toBe(true);
-    expect(decodeCursor(first.batch.cursor ?? "").folders["INBOX"]?.known).toBe(
+    expect(first.folders["INBOX"]?.known).toBe(
       "201:300",
     );
 
-    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const second = await walk(walkDeps, first.batch.cursor, "sync");
     expect(second.batch.events).toHaveLength(100);
     expect(uidsOf(second.batch.events)[0]).toBe(201);
-    expect(decodeCursor(second.batch.cursor ?? "").folders["INBOX"]?.known).toBe(
+    expect(second.folders["INBOX"]?.known).toBe(
       "",
     );
 
-    const third = await walkMailboxes(walkDeps, second.batch.cursor, "sync");
+    const third = await walk(walkDeps, second.batch.cursor, "sync");
     expect(third.batch.events).toEqual([]);
   });
 
@@ -519,11 +543,11 @@ describe("sync", () => {
     const walkDeps = deps(server, state(["INBOX"]));
     let cursor: Cursor | null = null;
     for (let page = 0; page < 2; page += 1) {
-      cursor = (await walkMailboxes(walkDeps, cursor, "backfill")).batch.cursor;
+      cursor = (await walk(walkDeps, cursor, "backfill")).batch.cursor;
     }
     server.resetUidValidity("INBOX");
 
-    const first = await walkMailboxes(walkDeps, cursor, "sync");
+    const first = await walk(walkDeps, cursor, "sync");
     expect(first.batch.events).toHaveLength(BATCH);
     expect(first.batch.events.every((event) => event.deleted)).toBe(true);
     expect(
@@ -534,7 +558,7 @@ describe("sync", () => {
       Array.from({ length: BATCH }, (_unused, index) => index + 1),
     );
 
-    const second = await walkMailboxes(walkDeps, first.batch.cursor, "sync");
+    const second = await walk(walkDeps, first.batch.cursor, "sync");
     const tombstones = second.batch.events.filter((event) => event.deleted);
     const fresh = second.batch.events.filter((event) => !event.deleted);
     expect(tombstones).toHaveLength(50);
@@ -546,7 +570,7 @@ describe("sync", () => {
   test("sync from a null cursor behaves like a fresh backfill", async () => {
     const server = new FakeImapServer([folder("INBOX", 2)]);
     const walkDeps = deps(server, state(["INBOX"]));
-    const result = await walkMailboxes(walkDeps, null, "sync");
+    const result = await walk(walkDeps, null, "sync");
     expect(result.batch.events).toHaveLength(2);
   });
 });
@@ -554,7 +578,7 @@ describe("sync", () => {
 describe("read-only discipline and failures", () => {
   test("uses EXAMINE and BODY.PEEK and never a mutating command", async () => {
     const server = new FakeImapServer([folder("INBOX", 2)]);
-    await walkMailboxes(deps(server, state(["INBOX"])), null, "backfill");
+    await walk(deps(server, state(["INBOX"])), null, "backfill");
     const log = server.received.join("\n");
     expect(log).toContain("EXAMINE");
     expect(log).toContain("BODY.PEEK[]");
@@ -567,18 +591,18 @@ describe("read-only discipline and failures", () => {
 
   test("never scans with an open-ended range", async () => {
     const server = new FakeImapServer([folder("INBOX", 2)]);
-    await walkMailboxes(deps(server, state(["INBOX"])), null, "backfill");
+    await walk(deps(server, state(["INBOX"])), null, "backfill");
     expect(server.received.join("\n")).not.toContain(":*");
   });
 
   test("a mid-walk failure propagates and leaves the caller's cursor valid", async () => {
     const server = new FakeImapServer([folder("INBOX", 3)]);
     const walkDeps = deps(server, state(["INBOX", "Missing"]));
-    const error = await walkMailboxes(walkDeps, null, "backfill").catch(
+    const error = await walk(walkDeps, null, "backfill").catch(
       (caught: unknown) => caught,
     );
     expect(error).toBeInstanceOf(KizukiError);
-    const fine = await walkMailboxes(
+    const fine = await walk(
       deps(server, state(["INBOX"])),
       null,
       "backfill",
@@ -590,7 +614,7 @@ describe("read-only discipline and failures", () => {
 describe("bytes on the wire", () => {
   test("an 8-bit body survives the literal framing intact", async () => {
     const server = fixtureServer();
-    const result = await walkMailboxes(
+    const result = await walk(
       deps(server, fixtureState()),
       null,
       "backfill",
@@ -599,5 +623,62 @@ describe("bytes on the wire", () => {
       (candidate) => candidate.source_record_id === "42:14:INBOX",
     );
     expect(event?.text).toBe("Café order\n\nUne pièce de résistance.");
+  });
+});
+
+describe("date floor", () => {
+  function dated(entries: Array<[number, string]>): FakeImapServer {
+    return new FakeImapServer([
+      {
+        wire: "INBOX",
+        attributes: ["\\HasNoChildren"],
+        uidvalidity: 5,
+        uidnext: entries.length + 1,
+        messages: entries.map(([uid, internaldate]) => ({
+          ...message(uid, `note ${uid}`),
+          internaldate,
+        })),
+      },
+    ]);
+  }
+
+  test("mail received before the floor is neither read nor remembered", async () => {
+    const server = dated([
+      [1, "15-Jan-2026 09:00:00 +0000"],
+      [2, "31-Jan-2026 23:59:59 +0000"],
+      [3, "01-Feb-2026 00:00:00 +0000"],
+      [4, "01-Mar-2026 08:00:00 +0000"],
+    ]);
+    const walkDeps = deps(server, state(["INBOX"], { since: "2026-02-01" }));
+    const result = await walk(walkDeps, null, "backfill");
+    expect(uidsOf(result.batch.events)).toEqual([3, 4]);
+    expect(result.folders["INBOX"]?.known).toBe("3:4");
+    expect(result.folders["INBOX"]?.done).toBe(true);
+    // The older bodies were never asked for.
+    const bodyFetches = server.received.filter((line) => line.includes("BODY.PEEK[]"));
+    expect(bodyFetches.join("\n")).not.toMatch(/FETCH [^ ]*\b[12]\b/);
+
+    // A later sync neither re-reads them nor tombstones them.
+    const later = await walk(walkDeps, result.batch.cursor, "sync");
+    expect(later.batch.events).toEqual([]);
+  });
+
+  test("the floor is read at UTC, whatever offset the server stamped", async () => {
+    const server = dated([
+      [1, "31-Jan-2026 23:30:00 -0100"],
+      [2, "01-Feb-2026 00:30:00 +0100"],
+    ]);
+    const result = await walk(deps(server, state(["INBOX"], { since: "2026-02-01" })), null, "backfill");
+    // 23:30 at -01:00 is 00:30 UTC on the 1st; 00:30 at +01:00 is 23:30 UTC on the 31st.
+    expect(uidsOf(result.batch.events)).toEqual([1]);
+  });
+
+  test("without a floor every message is read", async () => {
+    const server = dated([
+      [1, "15-Jan-2020 09:00:00 +0000"],
+      [2, "01-Mar-2026 08:00:00 +0000"],
+    ]);
+    const result = await walk(deps(server, state(["INBOX"])), null, "backfill");
+    expect(uidsOf(result.batch.events)).toEqual([1, 2]);
   });
 });
