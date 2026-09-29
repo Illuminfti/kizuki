@@ -106,7 +106,8 @@ the Beeper connector has synthetic coverage only. Revision resume for world
 views is not issued yet (fresh cards carry a `not_issued` view marker), and
 Atlas, forecasts, World Slice and Diff, outcomes and attention remain on the
 roadmap. A vault copied at file level while a canon write is pending refuses
-recovery with `receipt_stream_changed` instead of completing it.
+recovery with `receipt_stream_changed` instead of completing it; take
+`kizuki backup` of a running vault instead of copying its files.
 
 ## What still holds
 

@@ -40,6 +40,13 @@ source prints `VERSION dev` instead.
 
 ## 2. Back up the vault at file level
 
+For a running vault, prefer `"$OLD/kizuki" backup --out "$BACKUP" --vault "$VAULT"`.
+It takes the canon writer and never captures a half-finished canon write, which
+a file-level copy can, and `kizuki restore --from "$BACKUP" --into DIR` restores
+it. The file-level copy below is the rollback route because it keeps the
+credentials and agent identities that a snapshot leaves out, but taken while the
+service runs it can capture a half-finished canon write.
+
 The database is copied with the SQLite online backup, which is safe while the
 service runs. Everything else is copied with its modes preserved (`cp -a`; a
 plain recursive copy loses the owner-only modes and the restored vault is then

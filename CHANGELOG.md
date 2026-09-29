@@ -4,6 +4,13 @@
 
 ### Added
 
+- `kizuki backup --out DIR` snapshots a live vault: it takes the canon writer,
+  waits while a canon write is pending, takes an SQLite snapshot of the ledger,
+  copies canon and the receipt stream, and writes a hashed `kizuki.snapshot/v1`
+  manifest. It needs no `export` purpose, carries no credential and refuses
+  while a source revocation is purging. `kizuki restore` reads it and verifies
+  it with `--verify`.
+
 - `kizuki agent list [--json]` shows enrolled agents with their state, grant
   epoch and grant summary, and never a credential. `kizuki agent grant NAME
   --grant FILE --operation-id ID` replaces an enrolled agent's grant in place:
@@ -85,6 +92,13 @@
 
 ### Fixed
 
+- Export no longer refuses because of a disconnected source that holds no
+  exported event, and it checks each source's grant once instead of once per
+  claim and per event; a 3,000-event, 3-source vault exports in seconds where
+  a production-size vault took over an hour. `connect status`, `grant`,
+  `revoke` and `resume-revocation` now work on a disconnected source.
+- A restored vault recreates its receipt journal, so `kizuki doctor` reports
+  no orphans and status ok. Restore prints the agents to enroll again.
 - The daily brief is stamped private when it names a page that ever received a
   private receipt (a repair never lowers it), says when rail failure groups
   were omitted, and the brief repair also rewrites the run-id
