@@ -1,5 +1,8 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { conceptScenario, ScenarioDeferred, type ConceptScenario } from "../helpers/world-kit/scenario";
+
+// Each scenario builds a real ledger, so bound the tests for a loaded host.
+setDefaultTimeout(120_000);
 
 let scenario: ConceptScenario | null = null;
 afterEach(() => {

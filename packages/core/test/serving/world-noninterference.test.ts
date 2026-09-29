@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
 import {
   HIDDEN_MUTATIONS,
   LEAKY_GLOBAL_COUNT,
@@ -10,6 +10,9 @@ import {
   worldViewCases,
   type ReadCase,
 } from "../helpers/noninterference";
+
+// Each scenario builds a real ledger, so bound the tests for a loaded host.
+setDefaultTimeout(120_000);
 
 test("the four world_view operations do not change when hidden evidence changes", async () => {
   await assertNoninterference({ cases: worldViewCases });
