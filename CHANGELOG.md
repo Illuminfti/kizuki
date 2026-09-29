@@ -162,32 +162,6 @@
   `kizuki world --cursor`, MCP and HTTP accept. One request examines at most a
   fixed number of handles; past that it returns a cursor with a `traversal_limit`
   gap rather than scanning the whole vault.
-
-### Changed
-
-- A refused `kizuki export` now names the sources that block it and the exact
-  grant or revocation command that clears each one, instead of a bare
-  `source_export_denied`. The consent rule is unchanged: export still needs the
-  `export` purpose on every source.
-- The canon writer now updates a page the loop already materialised. A claim
-  whose target was written earlier under the machine-origin `auto/` prefix used
-  to be planned as a create and fail with `page ... already exists` on every
-  pass, so later claims for that target never landed. The arbiter now finds the
-  page under `auto/` and edits it through the receipted writer, before and
-  after hashes included. A page at the target's own path still wins.
-- The daily brief is now a bounded summary of what changed since the previous
-  brief: new, updated, corrected and undone canon pages, rail runs that
-  failed, degraded or stopped, and the extraction backlog (live claims not yet
-  written, ledger events past the extraction cursor, deferred inputs). It is
-  never just boilerplate, and its page carries valid frontmatter with
-  `sources: []`.
-- Daemon-written briefs are classified as machine origin in `kizuki doctor`
-  and in retrieval candidates; other pages under `dashboards/` stay human.
-- A daemon-written brief that fails the page schema, such as one an older
-  build wrote without `sources`, is rewritten by the next brief or doctor-sweep
-  run through the same notifier, keeping its body. The run receipt records
-  `pages_repaired`. A page that cannot be rewritten degrades the run with
-  `brief-repair-failed` and is tried again on the next sweep.
 - `kizuki doctor` reports `status=failed` only for real failures and names
   them. An idle rail with no pending work is healthy: the empty streak counts
   only runs that had work waiting (extract backlog past the cursor for a
@@ -237,6 +211,32 @@
 - Doctor reads the newest 2,000 sync receipts and the newest 200 of each other
   rail instead of a week of receipts, and the `doctor-sweep` rail now records
   the failures doctor would report, so its status matches.
+
+### Changed
+
+- A refused `kizuki export` now names the sources that block it and the exact
+  grant or revocation command that clears each one, instead of a bare
+  `source_export_denied`. The consent rule is unchanged: export still needs the
+  `export` purpose on every source.
+- The canon writer now updates a page the loop already materialised. A claim
+  whose target was written earlier under the machine-origin `auto/` prefix used
+  to be planned as a create and fail with `page ... already exists` on every
+  pass, so later claims for that target never landed. The arbiter now finds the
+  page under `auto/` and edits it through the receipted writer, before and
+  after hashes included. A page at the target's own path still wins.
+- The daily brief is now a bounded summary of what changed since the previous
+  brief: new, updated, corrected and undone canon pages, rail runs that
+  failed, degraded or stopped, and the extraction backlog (live claims not yet
+  written, ledger events past the extraction cursor, deferred inputs). It is
+  never just boilerplate, and its page carries valid frontmatter with
+  `sources: []`.
+- Daemon-written briefs are classified as machine origin in `kizuki doctor`
+  and in retrieval candidates; other pages under `dashboards/` stay human.
+- A daemon-written brief that fails the page schema, such as one an older
+  build wrote without `sources`, is rewritten by the next brief or doctor-sweep
+  run through the same notifier, keeping its body. The run receipt records
+  `pages_repaired`. A page that cannot be rewritten degrades the run with
+  `brief-repair-failed` and is tried again on the next sweep.
 
 ## 1.0.2 (2026-09-24)
 
