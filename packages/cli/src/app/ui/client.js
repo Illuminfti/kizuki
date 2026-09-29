@@ -265,9 +265,12 @@ async function correction(hit) {
     const targets = await api('correction_targets', { page_id: hit.id });
     if (!current()) return;
     const unsupported = targets.claims.filter(claim => claim.kind === 'world' && claim.target === null);
-    claims = targets.claims.filter(claim => claim.kind !== 'world' || claim.target !== null);
+    const isLinked = claim => claim.kind === 'world' && claim.target !== null && (claim.object_kind === 'node' || claim.object_kind === 'vocabulary');
+    const linked = targets.claims.filter(isLinked);
+    claims = targets.claims.filter(claim => (claim.kind !== 'world' || claim.target !== null) && !isLinked(claim));
     content.querySelector('.dialog-description').textContent = 'Choose one recorded belief. Corrections change your memory pages; quoted source information stays unchanged.';
     if (unsupported.length) content.append(el('details', { class: 'result-details' }, el('summary', {}, `${unsupported.length} recorded ${unsupported.length === 1 ? 'belief is' : 'beliefs are'} unavailable for correction`), el('p', {}, 'These assertions cannot be edited in this form yet. Nothing will be changed for them.'), ...unsupported.map(claim => el('blockquote', {}, claim.body))));
+    if (linked.length) content.append(el('details', { class: 'result-details' }, el('summary', {}, `${linked.length} recorded ${linked.length === 1 ? 'belief links' : 'beliefs link'} to another item or a fixed value`), el('p', {}, 'This form replaces text values. Correct these with kizuki tell, or ask your agent, so the link is kept or changed deliberately.'), ...linked.map(claim => el('blockquote', {}, claim.body))));
     if (!claims.length) { content.append(el('p', { class: 'status-note' }, 'No correctable beliefs are available for this page under your current permissions.')); focusDialog(content); return; }
     if (targets.truncated) content.append(el('p', { class: 'status-note' }, 'This list is limited. Additional beliefs may exist for this page.'));
     const form = el('form'); content.append(form);
@@ -278,7 +281,7 @@ async function correction(hit) {
     const selected = () => claims.find(claim => reference(claim) === choice.value);
     const showBelief = () => {
       const claim = selected(); beliefDetails.replaceChildren(); if (!claim) return;
-      beliefDetails.append(el('blockquote', {}, claim.body), el('dl', { class: 'grant-summary' }, el('div', {}, el('dt', {}, 'Current value'), el('dd', {}, claim.object))), el('details', { class: 'result-details' }, el('summary', {}, 'Belief details'), el('dl', { class: 'grant-summary' }, ...[['Subject', claim.subject], ['Relationship', claim.predicate], ['Belief reference', reference(claim)]].filter(([, item]) => item !== null).map(([label, item]) => el('div', {}, el('dt', {}, label), el('dd', {}, el('code', {}, item))))), el('p', {}, `Recorded authority: ${claim.authority} · Privacy: ${claim.sensitivity}`)));
+      beliefDetails.append(el('blockquote', {}, claim.body), el('dl', { class: 'grant-summary' }, el('div', {}, el('dt', {}, 'Current value'), el('dd', {}, claim.object)), ...(claim.kind === 'world' ? [el('div', {}, el('dt', {}, 'Held as'), el('dd', {}, `${claim.polarity === 'negative' ? 'Denied' : 'Recorded'}${claim.perspective_mode === 'asserted' ? '' : ` as ${claim.perspective_mode}`}. A correction keeps this.`))] : [])), el('details', { class: 'result-details' }, el('summary', {}, 'Belief details'), el('dl', { class: 'grant-summary' }, ...[['Subject', claim.subject], ['Relationship', claim.predicate], ['Belief reference', reference(claim)]].filter(([, item]) => item !== null).map(([label, item]) => el('div', {}, el('dt', {}, label), el('dd', {}, el('code', {}, item))))), el('p', {}, `Recorded authority: ${claim.authority} · Privacy: ${claim.sensitivity}`)));
     }; showBelief();
     const mode = el('select', { id: 'correction-mode' }, el('option', { value: 'deny' }, 'Deny this belief'), el('option', { value: 'replace' }, 'Replace its value')); mode.value = 'deny';
     const modeField = el('div', { class: 'form-field' }, el('label', { for: 'correction-mode' }, 'What should change?'), mode);

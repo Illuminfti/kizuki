@@ -4,20 +4,24 @@ import { join } from 'node:path';
 import { getClaim, inspectSourceGrant, setSourceGrant, readWorldView, OWNER } from '@kizuki/core';
 import { openLedger } from '@kizuki/core/testing';
 import { worldFixture } from '../../core/test/serving/world-fixture';
+import { readClaimV2Semantic } from '../../core/src/claims/claim-v2-commit';
 import { applyCanonWrite } from '../../core/src/canon/apply';
 import { budget } from '../../core/test/canon/helpers';
 import { worldCanonPath, worldClaimHandle } from '../../core/src/canon/world-materialization';
 import { startApp } from '../src/commands/app';
 import type { CliIo } from '../src/commands';
 import { createHelpers } from './helpers';
+import { correctionKit, type CorrectionKit } from '../../core/test/helpers/world-correct-kit';
 
 const h = createHelpers();
 afterEach(h.cleanup);
 
-async function fixture(occurrence = false) {
+async function fixture(occurrence = false, seed?: (kit: CorrectionKit) => Promise<void>) {
     const setup = h.tempVault(), dbPath = join(setup.vault, '.kizuki', 'kizuki.db');
     const db = openLedger(dbPath);
     const world = await worldFixture(db, { occurrence });
+    // More claims about the same subject, written before the page so the page carries them.
+    if (seed) await seed(correctionKit(db, setup.vault, { source: { connector: 'world.fixture', sourceKey: world.sourceKey } }));
     const path = worldCanonPath(worldClaimHandle(db, world.claims[0]!)!);
     applyCanonWrite({ db, vault_path: setup.vault }, world.claims.map(id => getClaim(db, id)!),
         { action: 'create', rel_path: path }, { writer: 'loop', budget: budget() });
@@ -138,5 +142,57 @@ test('valid opaque references to unsupported assertions and unknown references c
             expect((await f.done((await f.request('correct', input)).data.operation_id)).state).toBe('failed');
         }
         expect(f.nativeEvents()).toBe(0);
+    } finally { await f.close(); }
+});
+
+async function shapes(kit: CorrectionKit) {
+    await kit.write({ subject: 'topic:bayes', predicate: 'concept.example', object: { literal: 'Coin flips' }, polarity: 'negative' });
+    await kit.write({ subject: 'topic:bayes', predicate: 'concept.counterexample', object: { literal: 'Frequentist tests' }, mode: 'quoted', speaker: 'person:sam' });
+    await kit.write({ subject: 'topic:bayes', predicate: 'concept.example', object: { literal: 'Spam filters' }, context: ['project:mail'] });
+    await kit.write({ subject: 'topic:bayes', predicate: 'concept.requires', object: { subject: 'topic:prob' } });
+}
+
+test('the target list offers every shape the writer takes, states how it is held and names why it refuses the rest', async () => {
+    const f = await fixture(false, shapes);
+    try {
+        const targets = await f.request('correction_targets', { page_id: f.pageId });
+        expect(targets.ok).toBe(true);
+        const claims = targets.data.claims as Record<string, any>[];
+        const named = (predicate: string, pick: (claim: Record<string, any>) => boolean = () => true) =>
+            claims.find(claim => claim.predicate === predicate && pick(claim))!;
+        expect(named('concept.definition')).toMatchObject({ object_kind: 'literal', polarity: 'positive', perspective_mode: 'asserted', unsupported_reason: null });
+        const denied = named('concept.example', claim => claim.polarity === 'negative');
+        expect(denied).toMatchObject({ object: 'Coin flips', perspective_mode: 'asserted', unsupported_reason: null });
+        expect(denied.target.world_claim.kind).toBe('claim');
+        expect(named('concept.counterexample')).toMatchObject({ perspective_mode: 'quoted', unsupported_reason: null });
+        expect(named('concept.counterexample').target).not.toBeNull();
+        expect(named('concept.example', claim => claim.object === 'Spam filters').target).not.toBeNull();
+        expect(named('concept.requires')).toMatchObject({ object_kind: 'node', object: null, unsupported_reason: null });
+        expect(named('concept.requires').target).not.toBeNull();
+        const classification = named('world.kind');
+        expect(classification.target).toBeNull();
+        expect(classification.unsupported_reason).toBe('unsupported_assertion');
+        expect(classification.unsupported_code).toBe('classification_claim');
+        expect(claims.filter(claim => claim.target === null)).toEqual([classification]);
+    } finally { await f.close(); }
+});
+
+test('the App corrects a denied claim and the correction stays a denial', async () => {
+    const f = await fixture(false, shapes);
+    try {
+        const targets = await f.request('correction_targets', { page_id: f.pageId });
+        const denied = (targets.data.claims as Record<string, any>[]).find(claim => claim.polarity === 'negative')!;
+        const args = { target: denied.target, statement: 'Coin flips of a fair coin.' };
+        expect((await f.request('correction_preview', args)).ok).toBe(true);
+        expect(f.nativeEvents()).toBe(0);
+        const applied = await f.done((await f.request('correct', args)).data.operation_id);
+        expect(applied.state).toBe('succeeded');
+        expect(applied.result.rewritten_pages).toBe(1);
+        const db = openLedger(f.dbPath);
+        try {
+            const filed = db.query<{ claim_id: string }, []>("SELECT claim_id FROM claims WHERE is_world_typed=1 AND status='live' AND authority='owner_correction'").all();
+            expect(filed).toHaveLength(1);
+            expect(readClaimV2Semantic(db, filed[0]!.claim_id)).toMatchObject({ polarity: 'negative', object: { kind: 'literal', value: 'Coin flips of a fair coin.' } });
+        } finally { db.close(); }
     } finally { await f.close(); }
 });
