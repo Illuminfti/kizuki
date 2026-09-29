@@ -194,10 +194,13 @@ export async function runSessionStart(io: CliIo, options: SessionStartOptions): 
   const remaining = (): number => options.timeoutMs - (Date.now() - started);
   try {
     // A harness that leaves stdin open must not spend the whole deadline: the query is a nicety, the packet is the point.
-    const raw =
-      io.readStdin === undefined
-        ? ""
-        : await Promise.race([io.readStdin(MAX_STDIN_BYTES), sleep(Math.min(MAX_STDIN_WAIT_MS, remaining() / 4))]);
+    let raw: string | "timeout" = "";
+    if (io.readStdin !== undefined) {
+      const pending = io.readStdin(MAX_STDIN_BYTES);
+      raw = await Promise.race([pending, sleep(Math.min(MAX_STDIN_WAIT_MS, remaining() / 4))]);
+      // A stalled host fires the timer in the same turn that delivers the bytes; one more turn lets ready input win.
+      if (raw === "timeout") raw = await Promise.race([pending, sleep(0)]);
+    }
     const input = raw === "timeout" ? "" : raw;
     const query = projectQuery(input);
     const request = { purpose: "session", budget_tokens: options.budget, ...(query === undefined ? {} : { query }) };
