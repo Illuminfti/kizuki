@@ -1374,7 +1374,7 @@ function applyClaimInsert(
     authority: assigned.authority,
     confidence: assigned.confidence,
     sensitivity: labelClaimSensitivity(io.db, {
-      connector_ids: [...new Set(events.map((event) => event.connector_id))],
+      events,
       event_hints: loadEventSensitivityHints(io.db, input.provenance),
       ...(input.sensitivity === undefined
         ? {}

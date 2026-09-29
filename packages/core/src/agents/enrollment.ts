@@ -76,13 +76,17 @@ function normalizedGrant(value: unknown): Grant {
   try {
     if (value === null || typeof value !== "object" || Array.isArray(value)) fail("invalid_grant");
     const input = value as Record<string, unknown>, keys = Object.keys(input).sort();
-    const expected = ["ceiling", "rate_limit_per_minute", "relay_owner_corrections", "since", "subjects", "tools", "types", "until"];
+    const required = ["ceiling", "rate_limit_per_minute", "relay_owner_corrections", "since", "subjects", "tools", "types", "until"];
+    // `deny_classes` is the one optional field; leaving it out keeps the default denial.
+    const expected = "deny_classes" in input ? ["ceiling", "deny_classes", ...required.slice(1)] : required;
     if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index]) ||
       !Array.isArray(input.tools) || input.tools.length > TOOLS.length) fail("invalid_grant");
     // Validate bounded lists and strings before any serialization or copying.
     const grant = validateAgentGrant(input as unknown as Grant);
     const sorted = (items: readonly string[] | null) => items === null ? null : [...new Set(items)].sort();
-    const normalized = { ...grant, types: sorted(grant.types), subjects: sorted(grant.subjects), tools: sorted(grant.tools) as Grant["tools"] };
+    const { deny_classes: denied, ...rest } = grant;
+    const normalized: Grant = { ...rest, types: sorted(grant.types), subjects: sorted(grant.subjects), tools: sorted(grant.tools) as Grant["tools"],
+      ...(denied === undefined ? {} : { deny_classes: sorted(denied) as NonNullable<Grant["deny_classes"]> }) };
     if (Buffer.byteLength(JSON.stringify(normalized)) > MAX_GRANT_BYTES) fail("invalid_grant");
     return normalized;
   } catch { fail("invalid_grant"); }

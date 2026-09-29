@@ -17,7 +17,7 @@ import {
 } from "./resolve";
 import { initSensitivity } from "./schema";
 
-export type SensitivitySetBy = "manifest" | "connect";
+export type SensitivitySetBy = "manifest" | "connect" | "grant";
 
 export interface ConnectorSensitivity {
   connector_id: string;
@@ -38,7 +38,8 @@ interface ConnectorSensitivityRow {
 }
 
 function rowToRecord(row: ConnectorSensitivityRow): ConnectorSensitivity {
-  const setBy = row.set_by === "connect" ? "connect" : "manifest";
+  const setBy =
+    row.set_by === "connect" || row.set_by === "grant" ? row.set_by : "manifest";
   return {
     connector_id: row.connector_id,
     source_key: row.source_key,
@@ -177,7 +178,7 @@ export function raiseConnectorSensitivityFloor(
     ...current,
     floor: requested,
     default_sensitivity: stricter(current.default_sensitivity, requested),
-    set_by: "connect",
+    set_by: current.set_by === "grant" ? "grant" : "connect",
     at: stamped,
   };
   db.query(
@@ -193,6 +194,48 @@ export function raiseConnectorSensitivityFloor(
     next.source_key,
   );
   return next;
+}
+
+/**
+ * The owner's consent policy sets what an owner-mapped importer's labels may
+ * lower a source to. `requested` may not go below the connection's floor; a
+ * policy that leaves it out gives back the connector's class default.
+ */
+export function setGrantSensitivityDefault(
+  db: Database,
+  connection: { connector_id: string; source_key: string },
+  requested: Sensitivity | undefined,
+  at?: string,
+): ConnectorSensitivity {
+  const classPolicy = policyForConnector(connection.connector_id);
+  const current = seedConnectorSensitivity(db, connection, classPolicy, at);
+  let next: Sensitivity;
+  if (requested === undefined) {
+    if (current.set_by !== "grant") return current;
+    next = stricter(current.floor, classPolicy.default_sensitivity);
+  } else {
+    if (SENSITIVITY_ORDER[requested] < SENSITIVITY_ORDER[current.floor]) {
+      throw new SensitivityError(
+        "default_below_floor",
+        `sensitivity default ${requested} is below the connection floor ${current.floor}`,
+      );
+    }
+    next = requested;
+  }
+  const setBy: SensitivitySetBy = requested === undefined ? "manifest" : "grant";
+  if (next === current.default_sensitivity && setBy === current.set_by) return current;
+  const record: ConnectorSensitivity = {
+    ...current,
+    default_sensitivity: next,
+    set_by: setBy,
+    at: nowOf(at),
+  };
+  db.query(
+    `UPDATE connector_sensitivity
+        SET default_sensitivity = ?, set_by = ?, at = ?
+      WHERE connector_id = ? AND source_key = ?`,
+  ).run(record.default_sensitivity, record.set_by, record.at, record.connector_id, record.source_key);
+  return record;
 }
 
 export function applyConnectionSensitivity(
@@ -217,10 +260,36 @@ export function applyConnectionSensitivity(
   );
 }
 
+/** The policy one event carries: its own source's row, else the connector's strictest. */
+function eventPolicy(
+  db: Database,
+  event: { event_id: string; connector_id: string },
+): SensitivityPolicy {
+  const source = tableExists(db, "source_event_bindings")
+    ? db
+        .query<{ source_key: string }, [string]>(
+          "SELECT source_key FROM source_event_bindings WHERE event_id = ?",
+        )
+        .get(event.event_id)
+    : null;
+  const own =
+    source === null ? null : getConnectorSensitivity(db, event.connector_id, source.source_key);
+  if (own === null) return connectorSensitivityFor(db, event.connector_id);
+  return {
+    default_sensitivity: stricter(own.floor, own.default_sensitivity),
+    sensitivity_floor: own.floor,
+  };
+}
+
+/**
+ * A claim is labelled from the sources of its own provenance events, not from
+ * every source its connector has. One private source raises the claims that
+ * cite it and no others; a claim with no provenance is private.
+ */
 export function labelClaimSensitivity(
   db: Database,
   input: {
-    connector_ids: readonly string[];
+    events: readonly { event_id: string; connector_id: string }[];
     event_hints?: readonly unknown[];
     model_label?: unknown;
     owner_label?: unknown;
@@ -229,12 +298,12 @@ export function labelClaimSensitivity(
 ): SensitivityResolution {
   let floor: Sensitivity = "public";
   let connectorDefault: Sensitivity = "public";
-  if (input.connector_ids.length === 0) {
+  if (input.events.length === 0) {
     floor = "private";
     connectorDefault = "private";
   } else {
-    for (const connectorId of input.connector_ids) {
-      const policy = connectorSensitivityFor(db, connectorId);
+    for (const event of input.events) {
+      const policy = eventPolicy(db, event);
       floor = stricter(floor, policy.sensitivity_floor);
       connectorDefault = stricter(
         connectorDefault,

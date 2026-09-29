@@ -176,6 +176,7 @@ const OUT_OF_SCOPE: Record<DenyReason, string> = {
   type_out_of_scope: "the target is outside the grant",
   subject_out_of_scope: "the target is outside the grant",
   time_out_of_scope: "the target is outside the grant",
+  class_denied: "the target is outside the grant",
   held: "the target is held",
   tool_not_granted: "the target is outside the grant",
   unknown_agent: "the target is outside the grant",

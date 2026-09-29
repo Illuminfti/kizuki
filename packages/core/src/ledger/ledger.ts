@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { stampCredentialClass } from "./event-classes";
 import { authorizeSourceCapture, bindSourceEvent, type SourceAdmission } from "./source-grants";
 import { validateEventInput } from "../contracts/event";
 import type {
@@ -216,6 +217,7 @@ function insertBoundEvent(db: Database, input: CaptureEventInput, eventId: strin
     input.text, JSON.stringify(input.subjects), input.sensitivity_hint ?? null, input.deleted ? 1 : 0,
     JSON.stringify(input.attachments), JSON.stringify(input.metadata), identity.content_hash, acceptedAt, 2,
     identity.text_hash, origin, 1, kind, computeOriginBinding(identity, acceptedAt, kind, requestDigest));
+  stampCredentialClass(db, eventId, input);
 }
 
 /** Internal Core native operation. Public capture has no exemption parameter. */

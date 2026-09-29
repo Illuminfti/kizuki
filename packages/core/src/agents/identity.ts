@@ -6,7 +6,9 @@ import { sha256 } from "./hash";
 import { compareRfc3339, rfc3339Millis } from "./time";
 import {
   DEFAULT_GRANT,
+  EVENT_CLASSES,
   GRANT_SCOPE_TOKEN,
+  GRANT_SUBJECT_TOKEN,
   MAX_GRANT_SCOPE_ITEMS,
   MAX_GRANT_SCOPE_LENGTH,
   MAX_RATE_LIMIT_PER_MINUTE,
@@ -16,6 +18,7 @@ import {
 import type {
   Agent,
   AgentFinding,
+  EventClass,
   Grant,
   GrantOperation,
   Principal,
@@ -33,7 +36,7 @@ const AGENT_GRANT_SELECT = `
   SELECT a.agent_id, a.name, a.token_hash, a.created_at, a.revoked_at,
          a.quarantined_at, g.ceiling, g.types, g.subjects, g.since, g.until,
          g.tools, g.rate_limit_per_minute, g.relay_owner_corrections,
-         g.grant_epoch
+         g.grant_epoch, g.deny_classes
     FROM agents a
     JOIN agent_grants g ON g.agent_id = a.agent_id
 `;
@@ -57,6 +60,7 @@ interface AgentGrantRow extends AgentRow {
   rate_limit_per_minute: number;
   relay_owner_corrections: number;
   grant_epoch: number;
+  deny_classes: string | null;
 }
 
 export function hashAgentToken(token: string): string {
@@ -107,7 +111,12 @@ function parseStringArray(raw: string | null, field: string): string[] | null {
   return parsed;
 }
 
-function validateScope(value: unknown, field: string): string[] | null {
+function validateScope(
+  value: unknown,
+  field: string,
+  accepts: (entry: string) => boolean = (entry) =>
+    entry.length <= MAX_GRANT_SCOPE_LENGTH && GRANT_SCOPE_TOKEN.test(entry),
+): string[] | null {
   if (value === null) return null;
   if (!Array.isArray(value)) {
     throw new TypeError(`${field}: must be null or an array of non-empty strings`);
@@ -123,7 +132,7 @@ function validateScope(value: unknown, field: string): string[] | null {
     if (typeof entry !== "string" || entry.length === 0) {
       throw new TypeError(`${field}: must be null or an array of non-empty strings`);
     }
-    if (entry.length > MAX_GRANT_SCOPE_LENGTH || !GRANT_SCOPE_TOKEN.test(entry)) {
+    if (!accepts(entry)) {
       throw new TypeError(`${field}: contains an invalid scope token`);
     }
     if (seen.has(entry)) continue;
@@ -133,12 +142,37 @@ function validateScope(value: unknown, field: string): string[] | null {
   return unique;
 }
 
+/**
+ * A subject id as an importer's subject mapping writes it: a lowercase
+ * namespace, a colon, then the source's own text, which may hold spaces and any
+ * printable character. Control characters, padding and runs of whitespace stay
+ * out, so a token is exactly one id and never a pattern.
+ */
+function subjectToken(entry: string): boolean {
+  if (entry.length > MAX_GRANT_SCOPE_LENGTH) return false;
+  return GRANT_SCOPE_TOKEN.test(entry) || (GRANT_SUBJECT_TOKEN.test(entry) && !/\p{C}/u.test(entry));
+}
+
+function validateDenyClasses(value: unknown): EventClass[] | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !Array.isArray(value) ||
+    value.length > EVENT_CLASSES.length ||
+    !value.every((entry) => (EVENT_CLASSES as readonly unknown[]).includes(entry)) ||
+    new Set(value).size !== value.length
+  ) {
+    throw new TypeError(`deny_classes: must be a list of ${EVENT_CLASSES.join(" | ")}`);
+  }
+  return [...value] as EventClass[];
+}
+
 export function validateAgentGrant(grant: Grant): Grant {
   if (!Object.prototype.hasOwnProperty.call(SENSITIVITY_ORDER, grant.ceiling)) {
     throw new TypeError("ceiling: must be public, personal, or private");
   }
   const types = validateScope(grant.types, "types");
-  const subjects = validateScope(grant.subjects, "subjects");
+  const subjects = validateScope(grant.subjects, "subjects", subjectToken);
+  const denyClasses = validateDenyClasses(grant.deny_classes);
   if (
     !Array.isArray(grant.tools) ||
     !grant.tools.every(
@@ -181,6 +215,7 @@ export function validateAgentGrant(grant: Grant): Grant {
     tools: [...grant.tools],
     rate_limit_per_minute: grant.rate_limit_per_minute,
     relay_owner_corrections: grant.relay_owner_corrections,
+    ...(denyClasses === undefined ? {} : { deny_classes: denyClasses }),
   };
 }
 
@@ -212,6 +247,9 @@ function decodeGrant(row: AgentGrantRow): Grant {
     tools: tools as Tool[],
     rate_limit_per_minute: row.rate_limit_per_minute,
     relay_owner_corrections: row.relay_owner_corrections !== 0,
+    ...(row.deny_classes === null
+      ? {}
+      : { deny_classes: JSON.parse(row.deny_classes) as EventClass[] }),
   });
 }
 
@@ -241,7 +279,13 @@ function repairBase(row: AgentGrantRow): Grant {
     validateScope(parseStringArray(row.types, "types"), "types"),
   );
   const subjects = tryRead(() =>
-    validateScope(parseStringArray(row.subjects, "subjects"), "subjects"),
+    validateScope(parseStringArray(row.subjects, "subjects"), "subjects", subjectToken),
+  );
+  // A class list that will not decode withholds every class: closed, never open.
+  const denyClasses = tryRead(() =>
+    row.deny_classes === null
+      ? undefined
+      : validateDenyClasses(JSON.parse(row.deny_classes) as unknown),
   );
   const tools = tryRead(() => {
     const parsed = parseStringArray(row.tools, "tools");
@@ -277,6 +321,11 @@ function repairBase(row: AgentGrantRow): Grant {
         ? row.rate_limit_per_minute
         : 1,
     relay_owner_corrections: row.relay_owner_corrections === 1,
+    ...(denyClasses !== undefined
+      ? { deny_classes: denyClasses }
+      : row.deny_classes !== null
+        ? { deny_classes: [...EVENT_CLASSES] }
+        : {}),
   };
 }
 
@@ -334,12 +383,13 @@ export function writeAgentGrant(
 ): void {
   using statement = db.prepare<
     never,
-    [string, string, string | null, string | null, string | null, string | null, string, number, number, number, string]
+    [string, string, string | null, string | null, string | null, string | null, string, number, number, number, string, string | null]
   >(
     `INSERT INTO agent_grants
        (agent_id, ceiling, types, subjects, since, until, tools,
-        rate_limit_per_minute, relay_owner_corrections, grant_epoch, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        rate_limit_per_minute, relay_owner_corrections, grant_epoch, updated_at,
+        deny_classes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   statement.run(
     agentId,
@@ -353,6 +403,7 @@ export function writeAgentGrant(
     grant.relay_owner_corrections ? 1 : 0,
     epoch,
     at,
+    grant.deny_classes === undefined ? null : JSON.stringify(grant.deny_classes),
   );
 }
 
@@ -561,17 +612,21 @@ export function setGrantInTransaction(
   const row = grantRowByName(db, name);
   if (row === null) throw new Error(`agent ${name} does not exist`);
   const before = tryDecodeGrant(row);
-  const grant = mergeGrant(before ?? repairBase(row), patch);
+  const { deny_classes: kept, ...base } = before ?? repairBase(row);
+  // An owner amendment names the whole grant, so the optional field it leaves
+  // out is absent again and takes the default. A partial patch keeps it.
+  const grant = mergeGrant(operation === undefined && kept !== undefined ? { ...base, deny_classes: kept } : base, patch);
   const at = new Date().toISOString();
   const epoch = grantEpoch(row) + 1;
   db.query<
     never,
-    [string, string | null, string | null, string | null, string | null, string, number, number, number, string, string]
+    [string, string | null, string | null, string | null, string | null, string, number, number, number, string, string | null, string]
   >(
     `UPDATE agent_grants
         SET ceiling = ?, types = ?, subjects = ?, since = ?, until = ?,
             tools = ?, rate_limit_per_minute = ?,
-            relay_owner_corrections = ?, grant_epoch = ?, updated_at = ?
+            relay_owner_corrections = ?, grant_epoch = ?, updated_at = ?,
+            deny_classes = ?
       WHERE agent_id = ?`,
   ).run(
     grant.ceiling,
@@ -584,6 +639,7 @@ export function setGrantInTransaction(
     grant.relay_owner_corrections ? 1 : 0,
     epoch,
     at,
+    grant.deny_classes === undefined ? null : JSON.stringify(grant.deny_classes),
     row.agent_id,
   );
   db.query<never, [string]>(

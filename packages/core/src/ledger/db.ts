@@ -34,7 +34,8 @@ import { applyWorldTables } from "../world/schema";
 import { applyClaimV2TablesV31 } from "./migrations/claim-v2-v31";
 import { applyPurgeReingestV34 } from "./migrations/purge-reingest-v34";
 import { applyCursorStoreV35 } from "./migrations/cursor-store-v35";
-import { CURSOR_STORE_MIGRATION_VERSION, PURGE_REINGEST_MIGRATION_VERSION } from "../world/tables/versions";
+import { applyEventClassesV34 } from "./migrations/event-classes-v34";
+import { CURSOR_STORE_MIGRATION_VERSION, PURGE_REINGEST_MIGRATION_VERSION, EVENT_CLASSES_MIGRATION_VERSION } from "../world/tables/versions";
 
 interface Migration {
   version: number;
@@ -231,6 +232,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 33, apply: applyWorldCanonV33 },
   { version: PURGE_REINGEST_MIGRATION_VERSION, apply: applyPurgeReingestV34 },
   { version: CURSOR_STORE_MIGRATION_VERSION, apply: applyCursorStoreV35 },
+  { version: EVENT_CLASSES_MIGRATION_VERSION, apply: applyEventClassesV34 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

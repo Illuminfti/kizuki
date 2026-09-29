@@ -1,6 +1,8 @@
 export {
   AGENT_SCHEMA_VERSION,
+  DEFAULT_DENY_CLASSES,
   DEFAULT_GRANT,
+  EVENT_CLASSES,
   LIFECYCLE_ACTIONS,
   MAX_AUDIT_PAGE,
   MAX_RATE_LIMIT_PER_MINUTE,
@@ -8,6 +10,8 @@ export {
   OWNER_AGENT_GRANT,
   SENSITIVITY_ORDER,
   TOOLS,
+  denyClassesOf,
+  isEventClass,
   isSensitivity,
 } from "./types";
 export type {
@@ -18,6 +22,7 @@ export type {
   AuditPage,
   AuditRow,
   DenyReason,
+  EventClass,
   Grant,
   GrantOperation,
   LifecycleAction,

@@ -331,23 +331,20 @@ function resolveProvenance(db: Database, ids: readonly string[]): void {
 function loadEventFacts(
   db: Database,
   ids: readonly string[],
-): { connector_ids: string[]; hints: unknown[] } {
+): { events: { event_id: string; connector_id: string }[]; hints: unknown[] } {
   const lookup = db.query<
     { connector_id: string; sensitivity_hint: string | null },
     [string]
   >("SELECT connector_id, sensitivity_hint FROM events WHERE event_id = ?");
-  const connector_ids: string[] = [];
+  const events: { event_id: string; connector_id: string }[] = [];
   const hints: unknown[] = [];
-  const seen = new Set<string>();
   for (const id of uniqueStrings(ids)) {
     const row = lookup.get(id);
     if (row === null) continue;
     hints.push(row.sensitivity_hint);
-    if (seen.has(row.connector_id)) continue;
-    seen.add(row.connector_id);
-    connector_ids.push(row.connector_id);
+    events.push({ event_id: id, connector_id: row.connector_id });
   }
-  return { connector_ids, hints };
+  return { events, hints };
 }
 
 function resolveLabels(
@@ -361,7 +358,7 @@ function resolveLabels(
 } {
   const facts = loadEventFacts(db, provenance);
   const sensitivity = labelClaimSensitivity(db, {
-    connector_ids: facts.connector_ids,
+    events: facts.events,
     event_hints: facts.hints,
     ...(input.sensitivity === undefined
       ? {}
