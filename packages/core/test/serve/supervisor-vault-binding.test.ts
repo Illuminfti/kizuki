@@ -1,9 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initVault } from "../../src/vault/init";
 import { writeServeIntent } from "../../src/serve/intent";
+import { requestServeStop } from "../../src/serve/stop-control";
 import {
   installServeService, queryServeService, serviceBoundElsewhere, uninstallServeService, type SupervisorHost,
 } from "../../src/serve/supervisor";
@@ -100,4 +101,17 @@ test("a definition that names no vault is not attributed to another vault", () =
 test("supervisor none has no unit to confuse", () => {
   const w = world("none");
   expect(serviceBoundElsewhere(w.copy(), w.host)).toBeNull();
+});
+
+test("serve stop on a copy queues its request inside the copy only and never calls the supervisor", async () => {
+  const w = world();
+  installServeService(w.original, w.host);
+  const marker = JSON.stringify({ pid: process.pid, boot_id: "synthetic-boot", instance_id: "3f2b7c1e-9d4a-4c5b-8e6f-1a2b3c4d5e6f" }) + "\n";
+  writeFileSync(join(w.original, ".kizuki", "serve.pid"), marker, { mode: 0o600 });
+  const copy = w.copy();
+  const callsBefore = w.calls.length;
+  expect((await requestServeStop(copy)).status).toBe("queued");
+  expect(existsSync(join(copy, ".kizuki", "serve-stop.json"))).toBe(true);
+  expect(existsSync(join(w.original, ".kizuki", "serve-stop.json"))).toBe(false);
+  expect(w.calls.length).toBe(callsBefore);
 });

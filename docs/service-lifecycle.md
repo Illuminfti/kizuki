@@ -23,6 +23,21 @@ Installing over a failed systemd unit likewise resets that unit's failure
 record, and with it the start-limit count, after the stop and before the start,
 so a repeated install never fails with "start request repeated too quickly".
 
+## A copy of a vault does not own the service
+
+The unit name carries only the vault id, and a copy of a vault has the same id.
+`serve status`, `serve --install`, `serve --uninstall` and doctor therefore read
+the `--vault` path the installed definition launches and compare it with the
+vault being asked about. When that path is another existing vault with the same
+id, status reports the service as absent for this vault and names the other
+path, and install and uninstall refuse without touching the definition or the
+supervisor. Run the loop on the copy in the foreground with
+`kizuki serve --vault <copy>`, or manage the service from the vault it serves.
+A definition that names no vault, or names a vault that no longer exists, is not
+treated as another live vault, so a moved vault can reinstall over it.
+`serve stop` acts on the stop marker inside the vault it is given, never on a
+supervisor unit.
+
 ## Restart limits and startup refusals
 
 The systemd unit restarts on failure, at most `StartLimitBurst=5` starts per
