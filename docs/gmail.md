@@ -4,13 +4,13 @@ The CLI implements bounded read-only Gmail enrollment and capture through the ex
 
 An operator must supply an existing Google **Desktop app** client through `KIZUKI_GMAIL_CLIENT_ID`. If that client requires a secret, configure `KIZUKI_GMAIL_CLIENT_SECRET_REF=env:VARIABLE` or `file:/absolute/private/file` using the existing secret resolver. These are runtime configuration, never copied into vault config or SQLite. Missing configuration refuses before browser, prompts, or provider calls. This implementation does not register an application or create account grants for the operator.
 
-On a supported Linux or macOS desktop terminal:
+In a Linux or macOS terminal (add `--no-browser` on a headless server):
 
 ```
 kizuki connect gmail --fields text,subjects,headers,labels,attachments
 ```
 
-Select only the fields to persist. The flow opens the system browser at Google's fixed authorization endpoint, uses core PKCE and a loopback callback, and requests `openid`, `email`, and `gmail.readonly`. No pasted key/code flow, send scope, or modify scope is offered. Native launch uses fixed executable paths with no shell, a bounded wait, and no authorization URL in output. Unsupported/headless browser launch refuses; remote terminal browser forwarding is not implemented.
+Select only the fields to persist. The flow opens the system browser at Google's fixed authorization endpoint, uses core PKCE and a loopback callback, and requests `openid`, `email`, and `gmail.readonly`. No pasted key/code flow, send scope, or modify scope is offered. Native launch uses fixed executable paths with no shell, a bounded wait, and prints no authorization URL while the browser opens. When no browser can be opened, or with `--no-browser`, the address is printed to stderr with an `ssh -L` tunnel hint for the loopback callback and sign-in keeps waiting; see [headless sign-in](connect.md#sign-in-on-a-headless-server).
 
 The command stores OAuth state under a core-minted owner-only connection file and returns a source key. Enrollment captures no mail history. Use the existing explicit `connect grant --source KEY --policy FILE --expected-revision N --operation-id ID` workflow separately. Gmail output always includes provider/version/coverage metadata, so a compatible policy must permit `metadata`, plus any selected `text`, `subjects`, and `attachments` fields. Header/label selections are persisted within metadata. A narrowed incompatible grant refuses before app-secret resolution or provider transport; it is never widened automatically.
 
