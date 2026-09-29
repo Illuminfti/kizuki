@@ -87,7 +87,7 @@ function classify(
       }
       seen.add(hit.doc_id);
       result.canon.push(
-        canonChunk(index, page, decision, excerptOf(page.body, 600).excerpt, page.body.length > 600),
+        canonChunk(index, page, decision, excerptOf(page.body, 600, index.sourceContext).excerpt, page.body.length > 600),
       );
       continue;
     }
@@ -100,7 +100,7 @@ function classify(
       continue;
     }
     seen.add(hit.doc_id);
-    result.quoted.push(quotedChunk(quoted, decision.sensitivity));
+    result.quoted.push(quotedChunk(quoted, decision.sensitivity, index.sourceContext));
   }
 
   return result;

@@ -24,6 +24,7 @@ import {
 } from "./canon";
 import { ENTITY_TYPES } from "./entities";
 import { collectAuthorizedTimeline } from "./ledger";
+import { blockquote, oneLine, redactorOf, stripInvisible } from "./redact";
 import { retrievalCandidates, retrievalGraphCandidates } from "./retrieval";
 import type { PacketSection, SessionSection } from "./sections";
 import type { CanonChunk, QuotedChunk, ServeContext } from "./types";
@@ -41,17 +42,20 @@ const GRAPH_CHUNKS = 10;
 function canonBlock(chunk: CanonChunk): string {
   const origin = isMachineOriginPath(chunk.path) ? "machine" : "human";
   const stamps = `s=${chunk.sensitivity} taint=${chunk.taint} auth=${chunk.authority ?? "none"} origin=${origin}`;
+  const title = oneLine(chunk.title);
+  // The excerpt is page text and may imitate a stamp line; quoting every line
+  // keeps it from opening a packet line of its own (RFC 0002 10.5).
   return (
-    `- [page:${chunk.page_id}] ${stamps} :: ${chunk.title}\n` +
-    `### ${chunk.title} (${chunk.path}, ${stamps}) [page:${chunk.page_id}]\n` +
-    `${chunk.excerpt}\n`
+    `- [page:${chunk.page_id}] ${stamps} :: ${title}\n` +
+    `### ${title} (${oneLine(chunk.path)}, ${stamps}) [page:${chunk.page_id}]\n` +
+    `${blockquote(chunk.excerpt)}\n`
   );
 }
 
 function quotedBlock(chunk: QuotedChunk): string {
   return (
     `- [event:${chunk.event_id}] tainted src=${chunk.connector_id} ::\n` +
-    `> ${chunk.text} (ev:${chunk.event_id} ${chunk.connector_id} ${chunk.kind} ${chunk.occurred_at})\n`
+    `${blockquote(chunk.text)} (ev:${chunk.event_id} ${chunk.connector_id} ${chunk.kind} ${chunk.occurred_at})\n`
   );
 }
 
@@ -108,7 +112,7 @@ export function boundCanonAtom(
 
 /** Keep every claim-controlled scalar on its stamped line. */
 export function inline(value: string): string {
-  return JSON.stringify(value).slice(1, -1).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  return JSON.stringify(stripInvisible(value)).slice(1, -1).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
 
 function confidenceLabel(value: number): string {
@@ -271,7 +275,7 @@ export async function collectPieces(
       const decision = pageDecision(index, grant, page);
       if (!decision.allow) continue;
       packed.add(page.id);
-      const { excerpt, truncated } = excerptOf(page.body, CANON_EXCERPT);
+      const { excerpt, truncated } = excerptOf(page.body, CANON_EXCERPT, ctx);
       const chunk = canonChunk(index, page, decision, excerpt, truncated);
       pieces.push({
         section: "canon",
@@ -313,6 +317,7 @@ export async function collectPieces(
       const { excerpt, truncated } = excerptOf(
         collapseWhitespace(target.body),
         RELATED_EXCERPT,
+        ctx,
       );
       const chunk = canonChunk(liveIndex, target, decision, excerpt, truncated);
       pieces.push({
@@ -391,7 +396,9 @@ export async function collectPieces(
       pieces.push({
         section: "claims",
         heading: "## working knowledge",
-        block: claimLine(claim),
+        // The object is redacted before it is quoted, so a value in quotes
+        // still reads as a value to the scrubber.
+        block: claimLine({ ...claim, object: claim.object === null ? null : redactorOf(ctx).text(claim.object) }),
         audit: reader.auditClaim(claim.claim_id),
       });
     }

@@ -3,6 +3,7 @@ import type { DenyReason, Principal, Sensitivity, Tool } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
 import type { RetrievalPort } from "../contracts/retrieval";
 import type { PageTaint } from "../vault/schema";
+import type { RedactionCounts, Redactor } from "./redact";
 
 export const ENVELOPE_SCHEMA = "kizuki.envelope/v1" as const;
 
@@ -20,6 +21,8 @@ export interface ServeContext {
   retrieval?: RetrievalPort;
   /** A configured optional engine could not bind; reads use the deterministic floor. */
   retrievalUnavailable?: true | "configured-engine-unavailable";
+  /** Set by the gate for each call; text is served through it (see `redact.ts`). */
+  redactor?: Redactor;
 }
 
 export interface CanonChunk {
@@ -81,6 +84,8 @@ export type Envelope<T = undefined> = {
   /** Owner envelopes only. True when at least one match was withheld. */
   has_withheld?: true;
   source_policy?: { mode: "enforced"; epoch: number; legacy_unbound: "owner_only" };
+  /** Credential-shaped spans replaced in this response, per kind. Never the values. */
+  redacted?: RedactionCounts;
   data?: T;
 };
 

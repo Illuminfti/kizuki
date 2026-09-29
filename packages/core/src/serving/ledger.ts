@@ -4,12 +4,13 @@ import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants"
 import type { ServeContext } from "./types";
 import { authorize } from "../agents";
 import type { AuditDenial, DenyReason, Grant, Sensitivity, Servable } from "../agents";
-import { timeline } from "../query/timeline";
+import { previewText, timeline } from "../query/timeline";
 import type { TimelineEntry, TimelineOptions } from "../query/timeline";
 import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
 import type { SearchHit } from "../search/query";
 import { placeholders } from "../util/sql";
 import { asSensitivity } from "./canon";
+import { redactorOf } from "./redact";
 import type { QuotedChunk } from "./types";
 
 /** Bound on one `IN (...)` list, matching the graph layer's frontier chunk. */
@@ -119,6 +120,7 @@ export function eventDecision(
 export function quotedChunk(
   source: QuotedSource,
   sensitivity: Sensitivity,
+  ctx: ServeContext,
 ): QuotedChunk {
   return {
     event_id: source.event_id,
@@ -127,7 +129,7 @@ export function quotedChunk(
     occurred_at: source.occurred_at,
     sensitivity,
     subjects: source.subjects,
-    text: source.text,
+    text: redactorOf(ctx).text(source.text),
     tainted: true,
   };
 }
@@ -202,7 +204,12 @@ export function collectAuthorizedTimeline(
         withheld.push({ id: entry.event_id, reason: decision.reason });
         continue;
       }
-      quoted.push(quotedChunk(source, decision.sensitivity));
+      // The preview is cut from the redacted text, and only after the entry is
+      // authorized, so neither a cut secret nor a hidden row's secret shows.
+      const full = currentQuotedSource(ctx.db, entry.event_id);
+      if (full === null) continue;
+      const chunk = quotedChunk({ ...source, text: full.text }, decision.sensitivity, ctx);
+      quoted.push({ ...chunk, text: previewText(chunk.text) });
       if (quoted.length >= limit) break;
     }
     const last = entries[entries.length - 1];

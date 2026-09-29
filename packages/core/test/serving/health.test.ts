@@ -39,8 +39,8 @@ describe("serveHealth", () => {
     expect(data?.live_claims).toBe(7);
     // Nothing bound a retrieval port, so nothing is waiting on one.
     expect(data?.pending_retrieval_ops).toBe(0);
-    expect(data?.derived.search).not.toBeNull();
-    expect(data?.derived.graph).not.toBeNull();
+    expect(data?.derived?.search).not.toBeNull();
+    expect(data?.derived?.graph).not.toBeNull();
     expect(data?.agents).toEqual({ total: 11, revoked: 1, quarantined: 0 });
     expect(data?.runtime).toEqual(readSqliteRuntime(fixture.db));
   });
@@ -62,6 +62,12 @@ describe("serveHealth", () => {
     expect(data?.principal.name).toBe("reader-public");
     expect(data?.principal.ceiling).toBe("public");
     expect(data?.pages.servable).toBeLessThan(7);
+    // Vault-wide state is the owner's: an agent sees counts over its own view.
+    for (const owned of ["agents", "runtime", "derived", "pending_retrieval_ops"]) expect(data).not.toHaveProperty(owned);
+    expect(data?.pages).toEqual({ servable: data?.pages.servable ?? -1 });
+    expect(data?.connections).toEqual([{ connector_id: "fixture", source_key: fixture.sourceKey }]);
+    expect(data?.events).toBeLessThan(6);
+    expect(data?.events).toBeGreaterThan(0);
   });
 
   test("connections report checkpoint counts, never error strings", () => {
@@ -86,7 +92,7 @@ describe("serveHealth", () => {
     expect(json).not.toContain("kzk_");
     expect(json).not.toContain("file:");
     expect(json).not.toContain("env:");
-    expect(data?.runtime.schema).toBe("kizuki.sqlite-runtime/v1");
+    expect(data?.runtime?.schema).toBe("kizuki.sqlite-runtime/v1");
     expect(JSON.stringify({ ...data, runtime: { ...data?.runtime, schema: undefined } })).not.toContain("/");
   });
 

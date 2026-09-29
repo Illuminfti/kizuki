@@ -4,6 +4,7 @@ import type { AuditDenial } from "../agents";
 import { identifier } from "./arguments";
 import { eventDecision, currentQuotedSource } from "./ledger";
 import { packetTokens } from "./packet-tokenizer";
+import { redactorOf } from "./redact";
 import { ServeError } from "./types";
 import type { QuotedChunk, ServeContext } from "./types";
 
@@ -35,8 +36,7 @@ export interface TaskAttachment {
     | "constraints_absent"
     | "budget"
     | "bounds"
-    | "unparsed"
-    | "denied";
+    | "unparsed";
   /** SHA-256 of the current capture. Absent when the text is withheld. */
   integrity?: string;
   sections?: Record<TaskKind, string[]>;
@@ -238,8 +238,10 @@ export function readTaskAttachment(
   if (source === null) return { task: { status: "unavailable" }, block: "", quoted: [], withheld: [] };
   const decision = eventDecision(ctx.principal.grant, source, ctx);
   if (!decision.allow) {
+    // The same answer as an absent capture: the owner's audit row and count
+    // keep the reason, the caller learns nothing about what exists.
     return {
-      task: { status: "unavailable", reason: "denied" },
+      task: { status: "unavailable" },
       block: "",
       quoted: [],
       withheld: [{ id: args.event_id, reason: decision.reason }],
@@ -262,8 +264,12 @@ export function readTaskAttachment(
       withheld: [],
     };
   }
-  const packed = pack(args.event_id, integrity, parsed.sections, soFar, budget);
-  const sections = servedSections(parsed.sections, packed.included);
+  // Redact each line before it is packed, so the budget counts what is served.
+  const redactor = redactorOf(ctx);
+  const redacted = blankSections();
+  for (const kind of TASK_KINDS) redacted[kind] = parsed.sections[kind].map((value) => redactor.text(value));
+  const packed = pack(args.event_id, integrity, redacted, soFar, budget);
+  const sections = servedSections(redacted, packed.included);
   const task: TaskAttachment = {
     status: packed.status,
     ...(packed.reason === undefined ? {} : { reason: packed.reason }),

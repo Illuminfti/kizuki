@@ -1,6 +1,8 @@
 import { authorize } from "../agents";
 import type { DenyReason, Grant, Servable } from "../agents";
 import { getClaim, listClaims } from "../claims/store";
+import { sourcePolicyEpoch } from "../ledger/source-grants";
+import { claimReader } from "./claims";
 import type { Claim } from "../contracts/proposal";
 import { identifier } from "./arguments";
 import { ServeError } from "./types";
@@ -51,6 +53,21 @@ export interface Resolved {
   claims: Claim[];
 }
 
+/**
+ * What the principal could have read. A claim outside that view is treated as
+ * absent, so the refusal for a claim that does not exist and for one the
+ * caller may not read is the same one: neither existence nor tier can be
+ * probed by guessing an id, a key or a subject. The owner sees every claim.
+ */
+function visibleTo(ctx: ServeContext): (claim: Claim) => boolean {
+  if (ctx.principal.kind === "owner") return () => true;
+  const grant = ctx.principal.grant;
+  const reader = claimReader(ctx.db, grant, { owner: false, purpose: "correction" });
+  return (claim) =>
+    (sourcePolicyEpoch(ctx.db) === 0 || reader.canRead(claim)) &&
+    authorize(grant, claimServable(claim)).allow;
+}
+
 export function resolve(
   ctx: ServeContext,
   target: CorrectTarget | undefined,
@@ -65,12 +82,13 @@ export function resolve(
     throw refuse("target", "name exactly one of claim_id, claim_key, subject");
   }
 
+  const visible = visibleTo(ctx);
   if (target.claim_id !== undefined) {
     const claim = getClaim(
       ctx.db,
       identifier("target.claim_id", target.claim_id),
     );
-    if (claim === null || claim.status !== "live") {
+    if (claim === null || claim.status !== "live" || !visible(claim)) {
       throw refuse("target.claim_id", "names no live claim");
     }
     if (claim.claim_key === null) {
@@ -90,6 +108,7 @@ export function resolve(
       claim_key: target.claim_key,
       status: "live",
       limit: MAX_CANDIDATES,
+      filter: visible,
     });
     if (claims.length === 0) {
       throw refuse("target.claim_key", "names no live claim");
@@ -105,6 +124,7 @@ export function resolve(
     subject,
     keyed: true,
     limit: MAX_CANDIDATES,
+    filter: visible,
   });
   if (claims.length === 0) {
     throw refuse("target.subject", "names no live keyed claim");

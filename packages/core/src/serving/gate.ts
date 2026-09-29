@@ -16,6 +16,7 @@ import type {
 } from "../agents";
 import type { ClaimsIo } from "../claims/store";
 import { claimsEpoch } from "./epoch";
+import { createRedactor, redactValue } from "./redact";
 import { compareText } from "../util/order";
 import { isPlainObject } from "../util/validate";
 import { LEDGER_BUSY_RETRY_AFTER_SECONDS, ServeError, ENVELOPE_SCHEMA } from "./types";
@@ -270,7 +271,7 @@ function enter(
     ]);
     throw new ServeError("tool_not_granted", "tool not granted");
   }
-  return { live: { ...live, sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall" }, audit_id: reserved.audit_id };
+  return { live: { ...live, sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall", redactor: createRedactor(live.principal) }, audit_id: reserved.audit_id };
 }
 
 /** Contention reads as a retry, never as a broken engine or a denied grant. */
@@ -332,17 +333,21 @@ function envelopeOf<T>(
     boundedForAudit(served.withheld),
   );
 
-  const data = served.data;
+  // The one serving-output seam: sources redact before they truncate or pack,
+  // and this pass covers every string that reaches the caller, whatever built it.
+  const redactor = live.redactor ?? createRedactor(live.principal);
+  const { canon, quoted, data } = redactValue(redactor, { canon: served.canon, quoted: served.quoted, data: served.data });
   return {
     schema: ENVELOPE_SCHEMA,
     tool,
     principal: principalName(live.principal),
     at,
-    canon: served.canon,
-    quoted: served.quoted,
+    canon,
+    quoted,
     denied: live.principal.kind === "owner" ? collapse(served.withheld) : [],
     ...(live.principal.kind === "owner" && served.withheld.length > 0 ? { has_withheld: true as const } : {}),
     ...(sourcePolicyEpoch(live.db) === 0 ? {} : { source_policy: { mode: "enforced" as const, epoch: sourcePolicyEpoch(live.db), legacy_unbound: "owner_only" as const } }),
+    ...(Object.keys(redactor.counts).length === 0 ? {} : { redacted: { ...redactor.counts } }),
     ...(data === undefined ? {} : { data }),
   };
 }

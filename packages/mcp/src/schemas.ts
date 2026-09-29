@@ -1,3 +1,4 @@
+import { REDACTED } from "./redaction";
 import { AUTHORITY_TIERS, ENVELOPE_SCHEMA, PAGE_TAINTS, TOOLS } from "@kizuki/core";
 import type { Tool } from "@kizuki/core";
 import { z } from "zod";
@@ -66,6 +67,8 @@ const SOURCE_POLICY = z.strictObject({
   legacy_unbound: z.literal("owner_only"),
 });
 
+/** Credential-shaped spans replaced in one response, per kind; present only when something was. */
+
 export const ENVELOPE_SHAPE = z.strictObject({
   schema: z.literal(ENVELOPE_SCHEMA),
   tool: z.enum(TOOLS),
@@ -77,6 +80,7 @@ export const ENVELOPE_SHAPE = z.strictObject({
   /** Owner envelopes only; omitted when nothing was withheld. */
   has_withheld: z.literal(true).optional(),
   source_policy: SOURCE_POLICY.optional(),
+  redacted: REDACTED.optional(),
   data: z.record(z.string(), z.unknown()).optional(),
 });
 

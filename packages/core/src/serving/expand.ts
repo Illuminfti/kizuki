@@ -3,10 +3,11 @@ import { sha256 } from "../agents/hash";
 import { identifier, range } from "./arguments";
 import type { Served } from "./gate";
 import { currentQuotedSource, eventDecision } from "./ledger";
+import { redactorOf } from "./redact";
 import { ServeError } from "./types";
 import type { ServeContext } from "./types";
 
-/** Code points, matching the timeline preview and canon excerpt cuts. */
+/** Code points of the served text, matching the timeline preview and canon excerpt cuts. */
 export const EXPAND_OFFSET_MAX = 100_000;
 export const EXPAND_SPAN_MAX = 2_000;
 const DEFAULT_SPAN = 512;
@@ -115,7 +116,9 @@ export function expandTimelineDetail(
     return { canon: [], quoted: [], withheld: [] };
   }
 
-  const points = Array.from(source.text);
+  // Offsets and totals are in the served text: redaction runs on the whole
+  // capture before it is cut, so a window never opens on half a secret.
+  const points = Array.from(redactorOf(ctx).text(source.text));
   const start = Math.min(offset, points.length);
   const slice = points.slice(start, start + span).join("");
   const returned = Array.from(slice).length;

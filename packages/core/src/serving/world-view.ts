@@ -27,6 +27,7 @@ import {
 import { isPlainObject } from "../util/validate";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
+import type { RedactionCounts } from "./redact";
 import { ServeError } from "./types";
 import type { ServeContext } from "./types";
 
@@ -83,6 +84,8 @@ export type WorldViewEnvelope = {
   readonly at: string;
   readonly canon: readonly [];
   readonly quoted: readonly [];
+  /** Credential-shaped spans replaced in this response, per kind. Never the values. */
+  readonly redacted?: RedactionCounts;
   readonly data: WorldReadResult;
 };
 
@@ -224,6 +227,7 @@ export function serveWorldView(
         at: envelope.at,
         canon: [],
         quoted: [],
+        ...(envelope.redacted === undefined ? {} : { redacted: envelope.redacted }),
         data: envelope.data!,
       };
     })

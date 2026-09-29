@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { REDACTED } from "../redaction";
 import type { McpWorldOp } from "./ops/types";
 import { WORLD_KNOWN_AT, WORLD_VALID, worldGaps, worldRef } from "./ops/shared";
 
@@ -49,6 +50,7 @@ export function buildWorldSurface(ops: readonly McpWorldOp[]) {
     at: z.string(),
     canon: z.array(z.never()).max(0),
     quoted: z.array(z.never()).max(0),
+    redacted: REDACTED.optional(),
     data: z.union([
       z.strictObject({ status: z.literal("not_found") }),
       z.strictObject({

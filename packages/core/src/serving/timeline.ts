@@ -33,7 +33,7 @@ export interface TimelineArgs {
   limit?: number;
   /** Expand one captured record by its evidence id. Not a list filter. */
   event_id?: string;
-  /** Code-point offset into the current captured text. */
+  /** Code-point offset into the served captured text. */
   offset?: number;
   /** Code points to return. Defaults to 512, capped at 2000. */
   span?: number;

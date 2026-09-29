@@ -234,21 +234,20 @@ function predicateOf(
  * An agent cannot cite what it cannot read: every provenance id has to be a
  * live event this principal is allowed to quote, so a proposal can never
  * launder a withheld record into the claim store. The offending id stays out
- * of the message and reaches the owner through the audit row instead.
+ * of the message, and so does the reason: an id that is absent and one that is
+ * unreadable are refused identically.
  */
 function validateProvenance(ctx: ServeContext, provenance: string[]): void {
   const facts = readServableEvents(ctx.db, provenance);
   for (const id of provenance) {
     const event = facts.get(id);
-    if (event === undefined) {
+    // Absent and unreadable answer alike: the reason would tell the caller
+    // which ids exist and at what tier. The audit row keeps the refusal.
+    if (event === undefined || !eventDecision(ctx.principal.grant, event, ctx).allow) {
       throw refuse(
         "provenance",
         "must name live events this principal can read",
       );
-    }
-    const decision = eventDecision(ctx.principal.grant, event, ctx);
-    if (!decision.allow) {
-      throw new ServeError(decision.reason, "provenance outside the grant");
     }
   }
 }
