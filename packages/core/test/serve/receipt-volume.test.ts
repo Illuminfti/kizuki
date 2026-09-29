@@ -109,7 +109,7 @@ describe("embed-backfill without an embedding port", () => {
     db.close();
   });
 
-  test("doctor reports a configured port and still calls a silent embed rail with a port down", () => {
+  test("doctor reports a configured port and keeps a quiet embed rail with nothing to embed healthy", () => {
     const { path, db } = vault('[ports]\nembedding = "kizuki.embedding.gguf"\n');
     for (let index = 0; index < 6; index += 1) {
       persistRunReceipt(db, path, {
@@ -120,17 +120,33 @@ describe("embed-backfill without an embedding port", () => {
     writeServeIntent(path, "installed");
     const report = inspectServeDoctor(db, path, { now: at(6 * 60), supervisor });
     expect(report.stores.vector_layer).toEqual({ state: "configured", detail: "vector layer: configured (kizuki.embedding.gguf)" });
-    expect(report.rails.find((rail) => rail.rail === "embed-backfill")?.reason).toBe("empty streak 6");
+    expect(report.rails.find((rail) => rail.rail === "embed-backfill")).toMatchObject({ status: "ok", reason: null, empty_streak: 0 });
     db.close();
   });
 
-  test("the empty streak counts elapsed periods, so coalesced idle runs still raise it", async () => {
+  test("a configured port that reports a backlog it cannot embed is down with the reason", () => {
+    const { path, db } = vault('[ports]\nembedding = "kizuki.embedding.gguf"\n');
+    for (let index = 0; index < 6; index += 1) {
+      persistRunReceipt(db, path, {
+        ...emptyRunTotals(), run_id: `01JEMBEDDOWN000000000000${index}`, rail: "embed-backfill",
+        started_at: at(index * 60), finished_at: at(index * 60 + 1), status: "degraded", stopped: null,
+        retrieval: { upserts: 0, removals: 0, pending_ops: 4, degraded: ["embedding-unavailable"] },
+      });
+    }
+    writeServeIntent(path, "installed");
+    const rail = inspectServeDoctor(db, path, { now: at(6 * 60), supervisor }).rails.find((item) => item.rail === "embed-backfill")!;
+    expect(rail.status).toBe("down");
+    expect(rail.reason).toContain("embedding-unavailable");
+    db.close();
+  });
+
+  test("coalesced idle runs of a configured embed rail with nothing to embed stay healthy", async () => {
     const { path, db } = vault('[ports]\nembedding = "kizuki.embedding.gguf"\n');
     for (let minute = 0; minute <= 6; minute += 1) await tick(db, path, "embed-backfill", at(minute * 60));
     expect(listRunReceipts(db, { rail: "embed-backfill" })).toHaveLength(1);
     writeServeIntent(path, "installed");
     const rail = inspectServeDoctor(db, path, { now: at(6 * 60 + 1), supervisor }).rails.find((item) => item.rail === "embed-backfill")!;
-    expect(rail).toMatchObject({ status: "down", reason: "empty streak 7", empty_streak: 7 });
+    expect(rail).toMatchObject({ status: "ok", reason: null, empty_streak: 0 });
     db.close();
   });
 });
