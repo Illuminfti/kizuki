@@ -4,9 +4,7 @@ import type {
 } from "../../contracts/concept-card";
 import type { WorldKindSpec } from "../../contracts/world-kinds";
 import { sourceCoverage } from "../coverage";
-import { validateConceptCard, type ConceptCard } from "../../contracts/concept-card";
-import { validateSituationCard, type SituationCard } from "../../contracts/situation-card";
-import { sealCard, type AssembledCard, type KindAssembler } from "../kinds/kit";
+import type { AssembledCard, KindAssembler } from "../kinds/kit";
 import { issueWorldRef, type WireRef } from "../references";
 import type { CardCollection, MatchScan } from "./collect";
 import type { CardBody } from "./enrich";
@@ -137,96 +135,3 @@ export function assembleMatches<Schema extends string>(
     coverage: coverageOf(frame, scan.cut, dark ? ["coverage"] : []),
   };
 }
-
-const conceptAssembler: KindAssembler = {
-  kind: "concept",
-  assemble({ node, own, relations, summary, coverage }) {
-    const card: ConceptCard = {
-      schema: "kizuki.concept-card/v1",
-      concept: { ...node, kind: "concept" },
-      summary,
-      definitions: own.filter(
-        (item) => item.predicate === "concept.definition",
-      ),
-      relations: own.filter(
-        (item) =>
-          item.predicate !== "concept.definition" &&
-          item.predicate !== "concept.label" &&
-          item.predicate !== "world.kind",
-      ),
-      learning: relations
-        .filter(
-          (item) =>
-            /^learning\.(exposure|explanation|application|demonstration)$/.test(
-              item.predicate,
-            ) &&
-            item.object.kind === "node" &&
-            item.object.ref.token === node.ref.token,
-        )
-        .map((item) => ({
-          facet: item.predicate.slice(9) as
-            | "exposure"
-            | "explanation"
-            | "application"
-            | "demonstration",
-          assertion: item,
-          assistance: "unknown",
-          assistanceEvidence: [],
-        })),
-      knownAt: { kind: "current" },
-      coverage,
-    };
-    return sealCard(card, validateConceptCard, "concept");
-  },
-};
-
-const situationAssembler: KindAssembler = {
-  kind: "situation",
-  assemble({ node, own, summary, coverage }) {
-    const select = (predicate: string) =>
-      own.filter((item) => item.predicate === predicate);
-    const one = (predicate: string) => {
-      const found = select(predicate).filter(
-        (item) =>
-          item.polarity === "positive" && item.perspective.mode === "asserted",
-      );
-      return found.length === 1 ? found[0]! : null;
-    };
-    const uncertainty = own.filter(
-      (item) =>
-        item.perspective.mode !== "asserted" ||
-        item.polarity === "negative" ||
-        ([
-          "situation.objective",
-          "situation.blocker",
-          "situation.change",
-        ].includes(item.predicate) &&
-          select(item.predicate).length > 1),
-    );
-    const card: SituationCard = {
-      schema: "kizuki.situation-card/v1",
-      situation: { ...node, kind: "situation" },
-      summary,
-      objective: one("situation.objective"),
-      participants: select("situation.participant")
-        .filter(
-          (item) =>
-            item.polarity === "positive" &&
-            item.perspective.mode === "asserted",
-        )
-        .flatMap((item) =>
-          item.object.kind === "node" ? [item.object.ref] : [],
-        ),
-      commitments: select("situation.commitment"),
-      blocker: one("situation.blocker"),
-      recentChange: one("situation.change"),
-      uncertainty,
-      knownAt: { kind: "current" },
-      coverage,
-    };
-    return sealCard(card, validateSituationCard, "situation");
-  },
-};
-
-/** One assembler per kind that has a card. */
-export const ASSEMBLERS: readonly KindAssembler[] = [conceptAssembler, situationAssembler];

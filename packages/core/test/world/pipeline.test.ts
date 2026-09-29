@@ -13,6 +13,8 @@ import type { Enricher } from "../../src/world/pipeline/enrich";
 import type { Collector } from "../../src/world/pipeline/collect";
 import type { Grouper } from "../../src/world/pipeline/group";
 import { readWorldView } from "../../src/serving/world-view";
+import { WORLD_REGISTRY } from "../../src/contracts/world-vocabulary";
+import { KIND_ASSEMBLERS } from "../../src/world/kinds";
 import { withWorldPipeline } from "../../src/world/pipeline/read";
 import {
   goldenReader,
@@ -176,6 +178,12 @@ describe("the stage lists", () => {
     expect(conceptCard().status).toBe("current");
   });
 
+  test("each shipped assembler serves one registered kind, once", () => {
+    const ids = KIND_ASSEMBLERS.map((assembler) => assembler.kind);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(WORLD_REGISTRY.kind(id)).toBeDefined();
+  });
+
   test("every slot marker appears exactly once in the file that owns its list", () => {
     const root = join(import.meta.dir, "../../src/world");
     const markers = (file: string) =>
@@ -183,5 +191,6 @@ describe("the stage lists", () => {
     expect(markers("pipeline/enrichers.ts")).toEqual(["card", "consol"]);
     expect(markers("pipeline/collect.ts")).toEqual(["ident"]);
     expect(markers("pipeline/group.ts")).toEqual(["ident"]);
+    expect(markers("kinds/index.ts")).toEqual(["quest", "people", "skill", "sit2", "art"]);
   });
 });

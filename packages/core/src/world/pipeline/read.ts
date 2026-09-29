@@ -1,8 +1,8 @@
 import type { WorldKindSpec } from "../../contracts/world-kinds";
 import { activeWorldRegistry } from "../../contracts/world-vocabulary";
+import { KIND_ASSEMBLERS } from "../kinds";
 import type { AssembledCard, KindAssembler } from "../kinds/kit";
 import {
-  ASSEMBLERS as KIND_ASSEMBLERS,
   assembleCard,
   assembleMatches,
   type WorldMatches,
