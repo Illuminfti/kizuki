@@ -533,6 +533,9 @@ not a grant. Grant-bound clamping and denial stay in Core.
 Claims and derived statements follow the live grant and
 [context privacy rules](context-privacy.md), including fail-closed provenance
 and bounded audit coverage.
+Canon excerpts and captured text in the packet are quoted line by line so a
+body line cannot imitate a stamp, and an agent's packet is redacted as described
+in [what an agent is served](agent-enrollment.md#what-an-agent-is-served).
 
 ## hook
 

@@ -127,6 +127,51 @@ include the owner's own corrections. That dialog grants no `propose` or
 `correct` tool, so an app-created agent cannot relay a correction until its
 grant is widened with `agent grant`.
 
+## What an agent is served
+
+Every text field an agent receives passes one redaction step in Core, below the
+MCP and HTTP adapters, so stdio, loopback HTTP and the `context_packet` session
+hook behave alike. It reuses the scrubber that protects model prompts. For an
+agent it replaces these shapes with `[redacted:<kind>]`: PEM blocks (`pem`), JWTs
+(`jwt`), `sk-`, `ghp_`, `github_pat_`, `xox` and `AKIA` tokens (`api_token`),
+`Authorization: Bearer` values (`bearer`), `NAME=value` assignments whose name
+contains `secret`, `token`, `password` or `api_key` (`secret_assignment`) and
+runs of twelve or more lowercase words that read as a mnemonic (`seed_phrase`).
+It covers `search`, `get_page`, `timeline` and its expansion, every
+`context_packet` section, `query_entities`, `graph_neighbors` labels and
+`world_view` cards. Ids, hashes, etags and integrity digests are not touched.
+When something was replaced, the envelope carries `redacted`, a count per kind,
+never a value. The owner principal keeps raw text and sees no `redacted` field.
+
+Redaction runs on the whole text before an excerpt, preview or expansion window
+is cut, so a secret is not left half visible, and before a packet is packed, so
+the packet's token estimate stays exact. Offsets and totals in a `timeline`
+expansion are counted in the served text, not the stored capture; its
+`integrity` digest is still the stored capture's.
+
+Two rules apply to every principal, the owner included. Unicode tag characters
+and bidirectional controls are removed from served text, before the scrubber
+runs, so they cannot hide text or split a secret. In a context packet the
+excerpt of a canon page and the text of a capture are quoted line by line, and a
+title or path stays on one line, so a body line that imitates a stamp such as
+`- [page:x] s=public taint=clean ...` reads as quotation and cannot pass for a
+real stamp.
+
+`system_health` for an agent counts only the pages, events and claims its grant
+can read and lists only the connections that feed that view. Vault-wide totals,
+agent counts, runtime and index details, and connection run results are owner
+only. `correct`, `propose` provenance and a `context_packet` task capture refuse
+an id the agent may not read with the same answer as an absent id.
+
+Limits. The scrubber recognizes only the shapes above; it is a heuristic
+backstop and not a guarantee, and a credential in another shape is served. It
+does not reach a credential an agent already knows or text the agent sends in.
+A `redacted` count reports spans replaced
+while the response was assembled, so it can include a span in a result that was
+then dropped. `world_view` evidence spans are offsets into the stored capture
+and carry no text. Redaction narrows what is served; the grant, sensitivity
+ceiling and source consent still decide what an agent may read at all.
+
 ## Retry and revoke
 
 Repeat the exact add command after a lost response. Its identity and initial
