@@ -379,7 +379,7 @@ export function realSupervisorHost(
   };
 }
 
-function realOrResolved(path: string): string | null {
+function realPathOrNull(path: string): string | null {
   try { return realpathSync(path); } catch { return null; }
 }
 
@@ -398,8 +398,8 @@ export function serviceBoundElsewhere(vaultPath: string, host: SupervisorHost): 
     : launchdPlistPath(host.home, vaultId));
   const bound = definition === null ? null : unitVaultPath(host.kind, definition);
   if (bound === null || !isAbsolute(bound)) return null;
-  const boundReal = realOrResolved(bound);
-  const ownReal = realOrResolved(vaultPath) ?? resolve(vaultPath);
+  const boundReal = realPathOrNull(bound);
+  const ownReal = realPathOrNull(vaultPath) ?? resolve(vaultPath);
   if (boundReal === null || boundReal === ownReal || readVaultId(boundReal) !== vaultId) return null;
   return bound;
 }
