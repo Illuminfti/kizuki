@@ -51,7 +51,10 @@ Core projection is served as the MCP `world_view` tool, loopback HTTP
 --world-claim` and MCP `correct` correct a world claim; the correction is
 receipted and reversible, and a second authorized client sees it on its next
 read. Without a model there are no Concepts or Situations; an empty
-discovery says so and points at `kizuki doctor`.
+discovery says so and points at `kizuki doctor`. Discovery and cards report
+`partial` coverage while a readable source is still importing, failed its last
+run, or has unconsumed extraction backlog; label search is case-insensitive
+and paginated by cursor.
 
 The public CLI including `app`, a Linux x64 baseline local native package, file ingest, FTS
 query, doctor, tell/undo/audit, serve loopback, context packets, and MCP stdio

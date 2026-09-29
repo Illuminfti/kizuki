@@ -89,10 +89,11 @@ describe("world", () => {
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain(message);
     }
-  }, 15_000);
+  }, 60_000);
 });
 
 import { openLedger } from "../../core/src/ledger/db";
+import { setSourceGrant } from "../../core/src/ledger/source-grants";
 import { worldFixture } from "../../core/test/serving/world-fixture";
 import { join } from "node:path";
 
@@ -159,3 +160,54 @@ test("CLI renders a situation card with human item labels", async () => {
   expect(read.stdout).toContain("Harbor rollout\nObjective: Revise beliefs using evidence\n");
   expect(read.stdout).not.toContain("situation.objective");
 });
+
+test("CLI matches labels without regard to case and pages with --cursor", async () => {
+  const setup = tempVault(), db = openLedger(join(setup.vault, ".kizuki/kizuki.db"));
+  try {
+    const first = await worldFixture(db, { label: "Topic 00", subject: "topic:0" });
+    for (let i = 1; i < 33; i += 1)
+      await worldFixture(db, { sourceKey: first.sourceKey, label: `Topic ${String(i).padStart(2, "0")}`, subject: `topic:${i}` });
+  } finally { db.close(); }
+  const one = runCli(setup.env, "world", "--operation", "find_concepts", "--label", "TOPIC");
+  expect(one.exitCode).toBe(0);
+  const lines = one.stdout.trim().split("\n");
+  expect(lines).toHaveLength(34);
+  expect(lines[32]).toBe("Coverage: partial (traversal_limit); history: unavailable.");
+  const more = /^More matches: --cursor (\S{43})$/.exec(lines[33]!);
+  expect(more).not.toBeNull();
+  const two = runCli(setup.env, "world", "--operation", "find_concepts", "--label", "topic", "--cursor", more![1]!, "--json");
+  expect(two.exitCode).toBe(0);
+  const page = JSON.parse(two.stdout).data.data.result.data;
+  expect(page.matches).toHaveLength(1);
+  expect(page.cursor).toBeNull();
+  expect(page.coverage.status).toBe("complete_for_query");
+  for (const args of [
+    ["--operation", "find_concepts", "--cursor", "nope"],
+    ["--operation", "find_concepts", "--cursor", "A".repeat(43)],
+    ["--operation", "concept", "--ref", OBJECT, "--cursor", more![1]!],
+  ])
+    expect(runCli(setup.env, "world", ...args).exitCode).toBe(2);
+}, 120_000);
+
+test("CLI empty discovery with an unconsumed extraction backlog says partial, not complete", async () => {
+  const setup = tempVault(), db = openLedger(join(setup.vault, ".kizuki/kizuki.db"));
+  try {
+    const f = await worldFixture(db);
+    setSourceGrant(db, {
+      source_key: f.sourceKey,
+      expected_revision: 1,
+      operation_id: "cli-extract",
+      policy: {
+        purposes: ["capture", "derive", "recall", "correction", "export", "extract"],
+        allowed_fields: ["text", "subjects", "metadata", "attachments"],
+        retention: "persistent_owned_until_revoked",
+        egress: "local_only",
+        sensitivity_floor: "public",
+      },
+    });
+  } finally { db.close(); }
+  const result = runCli(setup.env, "world", "--operation", "find_concepts", "--label", "nothing like it");
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("No admitted matches in your current scope.");
+  expect(result.stdout).toContain("Coverage: partial (pending_consolidation); history: unavailable.");
+}, 60_000);

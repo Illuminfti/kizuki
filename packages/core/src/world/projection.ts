@@ -24,6 +24,7 @@ import {
   type ConceptCard,
   type Relation,
   type ConceptCoverage,
+  type ViewGap,
   validateConceptCard,
 } from "../contracts/concept-card";
 import {
@@ -37,6 +38,7 @@ import type { ServeContext } from "../serving/types";
 import type { WorldValidQuery } from "../serving/world-view";
 import { canonicalJson } from "../util/hash";
 import { assertionEndpoints } from "./allocation";
+import { sourceCoverage } from "./coverage";
 import { issueWorldRef, type WorldNamespace, type WireRef } from "./references";
 
 export class WorldProjectionBudgetError extends Error {}
@@ -51,7 +53,34 @@ function checkCardBudget(card: ConceptCard | SituationCard): void {
 }
 const MAX_RELATIONS = 128;
 const MAX_SUPPORTS = 32;
+/** The page size of label discovery. */
 export const MAX_WORLD_MATCHES = 32;
+const DISCOVERY_SCAN = 256;
+/** Most handles one discovery request examines before it hands back a cursor, so a rare label cannot hold the event loop across a whole vault. */
+export const WORLD_DISCOVERY_SCAN_BUDGET = 4096;
+/** Unicode-aware, locale-independent fold shared by the query and the stored labels. */
+export function foldLabel(text: string): string {
+  return text.normalize("NFKC").toUpperCase().toLowerCase();
+}
+function labelMatches(text: unknown, wanted: string): boolean {
+  return typeof text === "string" && foldLabel(text).includes(wanted);
+}
+function coverageFor(
+  ctx: ServeContext,
+  valid: WorldValidQuery,
+  overflow: boolean,
+): ConceptCoverage {
+  const gaps: ViewGap[] = [
+    ...sourceCoverage(ctx),
+    ...(overflow ? (["traversal_limit"] as const) : []),
+  ];
+  return {
+    status: gaps.length === 0 ? "complete_for_query" : "partial",
+    gaps,
+    validWindow: valid,
+    history: "unavailable",
+  };
+}
 type Support = {
   support_origin: "source" | "native_owner";
   support_key: string;
@@ -484,12 +513,7 @@ export function projectWorldCard(
       text: item.object.kind === "literal" ? item.object.value : "",
       claim: item.claim,
     }));
-  const coverage: ConceptCoverage = {
-    status: overflow ? "partial" : "complete_for_query",
-    gaps: overflow ? ["traversal_limit"] : [],
-    validWindow: valid,
-    history: "unavailable",
-  };
+  const coverage = coverageFor(ctx, valid, overflow);
   const node = {
     schema: "kizuki.knowledge-node/v1" as const,
     ref: issueWorldRef(ctx.db, ns, "object", handle),
@@ -588,106 +612,138 @@ export function discoverWorld(
   kind: "concept" | "situation",
   label: string,
   valid: WorldValidQuery,
+  after: string | null = null,
+  scanBudget: number = WORLD_DISCOVERY_SCAN_BUDGET,
 ): {
   schema: "kizuki.concept-matches/v1" | "kizuki.situation-matches/v1";
   matches: readonly { ref: WireRef<"object">; labels: readonly string[] }[];
+  cursor: string | null;
   coverage: ConceptCoverage;
 } {
   const budget: ReadBudget = { bytes: 0 };
   const matches: { ref: WireRef<"object">; labels: readonly string[] }[] = [];
-  let overflow = false;
+  const wanted = foldLabel(label);
+  let traversal = false;
+  let next = false;
+  let budgetSpent = false;
+  let scanned = 0;
+  let last: string | null = null;
+  let position = after ?? "";
   const permitted = authorizedSupportSql(ctx),
     time = validMeaningSql(valid);
   const labelPolicy = authorizedSupportSql(ctx, "ls"),
     labelTime = validMeaningSql(valid, "lc");
-  const query = ctx.db.query<
-    { handle_id: string },
+  // Handles in id order after the cursor, each with its currently authorized label texts.
+  // Folding happens here, in one place, because SQL has no Unicode case folding.
+  const filtering = wanted.length > 0;
+  const scan = ctx.db.query<
+    { handle_id: string; labels: string },
     (string | number)[]
-  >(`SELECT DISTINCT b.handle_id FROM semantic_bindings b JOIN claim_v2_semantics c
+  >(`SELECT b.handle_id, ${filtering ? "json_group_array(json_extract(lc.payload,'$.object.value'))" : "'[]'"} AS labels
+    FROM semantic_bindings b JOIN claim_v2_semantics c
     ON c.subject_kind=b.raw_kind AND c.subject_id=b.raw_id AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=b.raw_namespace JOIN claims base ON base.claim_id=c.claim_id
-    WHERE c.predicate='world.kind' AND base.status='live' AND c.polarity='positive' AND json_extract(c.payload,'$.object.ref.id')=? AND ${time.sql}
+    ${filtering ? `    LEFT JOIN claim_v2_semantics lc ON lc.subject_kind=b.raw_kind AND lc.subject_id=b.raw_id AND coalesce(json_extract(lc.payload,'$.subject.namespace'),'')=b.raw_namespace
+      AND lc.predicate=? AND lc.polarity='positive' AND ${labelTime.sql}
+      AND EXISTS(SELECT 1 FROM claims lb WHERE lb.claim_id=lc.claim_id AND lb.status='live')
+      AND EXISTS(SELECT 1 FROM claim_v2_support ls WHERE ls.claim_id=lc.claim_id AND ${labelPolicy.sql})` : ""}
+    WHERE b.handle_id>? AND c.predicate='world.kind' AND base.status='live' AND c.polarity='positive' AND json_extract(c.payload,'$.object.ref.id')=? AND ${time.sql}
     AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
-    AND (?='' OR EXISTS(SELECT 1 FROM claim_v2_semantics lc JOIN claims lb ON lb.claim_id=lc.claim_id
-      WHERE lc.subject_kind=b.raw_kind AND lc.subject_id=b.raw_id AND coalesce(json_extract(lc.payload,'$.subject.namespace'),'')=b.raw_namespace AND lc.predicate=? AND lb.status='live' AND lc.polarity='positive'
-      AND ${labelTime.sql} AND instr(json_extract(lc.payload,'$.object.value'),?)>0
-      AND EXISTS(SELECT 1 FROM claim_v2_support ls WHERE ls.claim_id=lc.claim_id AND ${labelPolicy.sql})))
-    ORDER BY b.handle_id LIMIT ?`);
-  for (const row of query.all(
-    `world/${kind}`,
-    ...time.bindings,
-    ...permitted.bindings,
-    label,
-    `${kind}.label`,
-    ...labelTime.bindings,
-    label,
-    ...labelPolicy.bindings,
-    MAX_WORLD_MATCHES + 1,
-  )) {
-    const raw = ctx.db
-      .query<
-        {
-          raw_kind: RawSubjectRef["kind"];
-          raw_namespace: string;
-          raw_id: string;
-        },
-        [string]
-      >("SELECT raw_kind,raw_namespace,raw_id FROM semantic_bindings WHERE handle_id=?")
-      .get(row.handle_id);
-    if (raw === null) continue;
-    const labels: string[] = [];
-    let classified = false;
-    const candidates = ctx.db
-      .query<{ claim_id: string }, (string | number)[]>(
-        `SELECT c.claim_id FROM claim_v2_semantics c JOIN claims base USING(claim_id)
+    GROUP BY b.handle_id ORDER BY b.handle_id LIMIT ?`);
+  scanning: for (;;) {
+    const rows = scan.all(
+      ...(filtering
+        ? [`${kind}.label`, ...labelTime.bindings, ...labelPolicy.bindings]
+        : []),
+      position,
+      `world/${kind}`,
+      ...time.bindings,
+      ...permitted.bindings,
+      DISCOVERY_SCAN,
+    );
+    for (const row of rows) {
+      if (scanned === scanBudget) {
+        budgetSpent = true;
+        break scanning;
+      }
+      scanned += 1;
+      position = row.handle_id;
+      if (
+        filtering &&
+        !(JSON.parse(row.labels) as unknown[]).some((text) =>
+          labelMatches(text, wanted),
+        )
+      )
+        continue;
+      const raw = ctx.db
+        .query<
+          {
+            raw_kind: RawSubjectRef["kind"];
+            raw_namespace: string;
+            raw_id: string;
+          },
+          [string]
+        >("SELECT raw_kind,raw_namespace,raw_id FROM semantic_bindings WHERE handle_id=?")
+        .get(row.handle_id);
+      if (raw === null) continue;
+      const labels: string[] = [];
+      let classified = false;
+      const candidates = ctx.db
+        .query<{ claim_id: string }, (string | number)[]>(
+          `SELECT c.claim_id FROM claim_v2_semantics c JOIN claims base USING(claim_id)
       WHERE c.subject_kind=? AND c.subject_id=? AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=? AND c.predicate IN ('world.kind',?) AND base.status='live' AND ${time.sql}
       AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
       ORDER BY CASE c.predicate WHEN 'world.kind' THEN 0 ELSE 1 END,c.claim_id LIMIT ?`,
-      )
-      .all(
-        raw.raw_kind,
-        raw.raw_id,
-        raw.raw_namespace,
-        `${kind}.label`,
-        ...time.bindings,
-        ...permitted.bindings,
-        MAX_RELATIONS + 1,
-      );
-    for (const candidate of candidates.slice(0, MAX_RELATIONS)) {
-      const item = eligibleWorldClaim(ctx, candidate.claim_id, valid, budget);
-      if (item === null) continue;
-      const semantic = item.semantic;
+        )
+        .all(
+          raw.raw_kind,
+          raw.raw_id,
+          raw.raw_namespace,
+          `${kind}.label`,
+          ...time.bindings,
+          ...permitted.bindings,
+          MAX_RELATIONS + 1,
+        );
+      for (const candidate of candidates.slice(0, MAX_RELATIONS)) {
+        const item = eligibleWorldClaim(ctx, candidate.claim_id, valid, budget);
+        if (item === null) continue;
+        const semantic = item.semantic;
+        if (
+          semantic.polarity !== "positive" ||
+          semantic.perspective.mode !== "asserted"
+        )
+          continue;
+        if (
+          semantic.predicate === "world.kind" &&
+          semantic.object.kind === "vocabulary" &&
+          semantic.object.ref.id === `world/${kind}`
+        )
+          classified = true;
+        if (
+          semantic.predicate === `${kind}.label` &&
+          semantic.object.kind === "literal"
+        )
+          labels.push(semantic.object.value);
+      }
       if (
-        semantic.polarity !== "positive" ||
-        semantic.perspective.mode !== "asserted"
+        !classified ||
+        (wanted.length > 0 &&
+          !labels.some((text) => labelMatches(text, wanted)))
       )
         continue;
-      if (
-        semantic.predicate === "world.kind" &&
-        semantic.object.kind === "vocabulary" &&
-        semantic.object.ref.id === `world/${kind}`
-      )
-        classified = true;
-      if (
-        semantic.predicate === `${kind}.label` &&
-        semantic.object.kind === "literal"
-      )
-        labels.push(semantic.object.value);
+      if (matches.length === MAX_WORLD_MATCHES) {
+        next = true;
+        break scanning;
+      }
+      matches.push({
+        ref: issueWorldRef(ctx.db, ns, "object", row.handle_id),
+        labels,
+      });
+      last = row.handle_id;
+      traversal ||= candidates.length > MAX_RELATIONS;
     }
-    if (
-      !classified ||
-      (label.length > 0 && !labels.some((text) => text.includes(label)))
-    )
-      continue;
-    if (matches.length === MAX_WORLD_MATCHES) {
-      overflow = true;
-      break;
-    }
-    matches.push({
-      ref: issueWorldRef(ctx.db, ns, "object", row.handle_id),
-      labels,
-    });
-    overflow ||= candidates.length > MAX_RELATIONS;
+    if (rows.length < DISCOVERY_SCAN) break;
   }
+  const resume = budgetSpent ? position : next ? last : null;
   matches.sort(
     (a, b) =>
       (a.labels[0] ?? "").localeCompare(b.labels[0] ?? "") ||
@@ -699,11 +755,7 @@ export function discoverWorld(
         ? "kizuki.concept-matches/v1"
         : "kizuki.situation-matches/v1",
     matches,
-    coverage: {
-      status: overflow ? "partial" : "complete_for_query",
-      gaps: overflow ? ["traversal_limit"] : [],
-      validWindow: valid,
-      history: "unavailable",
-    },
+    cursor: resume === null ? null : issueWorldRef(ctx.db, ns, "object", resume).token,
+    coverage: coverageFor(ctx, valid, traversal || next || budgetSpent),
   };
 }

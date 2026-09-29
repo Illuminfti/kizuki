@@ -265,6 +265,7 @@ const WORLD_OPERATIONS = ["find_concepts", "find_situations", "concept", "situat
 export const WORLD_VIEW_INPUT = z.strictObject({
   operation: z.enum(WORLD_OPERATIONS),
   label: z.string().max(200).default(""),
+  cursor: WIRE_TOKEN.optional(),
   concept: WORLD_OBJECT_REF.optional(),
   situation: WORLD_OBJECT_REF.optional(),
   valid: WORLD_VALID.default({ kind: "all" }),
@@ -297,7 +298,7 @@ const worldData=z.union([
   z.strictObject({schema:z.literal("kizuki.concept-card/v1"),concept:worldNode("concept"),...worldCommon,definitions:z.array(worldRelation).max(256),relations:z.array(worldRelation).max(256),
     learning:z.array(z.strictObject({facet:z.enum(["exposure","explanation","application","demonstration"]),assertion:worldRelation,assistance:z.enum(["assisted","unassisted","unknown"]),assistanceEvidence:z.array(worldRelation).max(256)})).max(256)}),
   z.strictObject({schema:z.literal("kizuki.situation-card/v1"),situation:worldNode("situation"),...worldCommon,objective:worldRelation.nullable(),participants:z.array(WORLD_OBJECT_REF).max(256),commitments:z.array(worldRelation).max(256),blocker:worldRelation.nullable(),recentChange:worldRelation.nullable(),uncertainty:z.array(worldRelation).max(256)}),
-  z.strictObject({schema:z.enum(["kizuki.concept-matches/v1","kizuki.situation-matches/v1"]),matches:z.array(z.strictObject({ref:WORLD_OBJECT_REF,labels:z.array(z.string().max(400)).max(256)})).max(32),coverage:worldCoverage}),
+  z.strictObject({schema:z.enum(["kizuki.concept-matches/v1","kizuki.situation-matches/v1"]),matches:z.array(z.strictObject({ref:WORLD_OBJECT_REF,labels:z.array(z.string().max(400)).max(256)})).max(32),cursor:WIRE_TOKEN.nullable(),coverage:worldCoverage}),
 ]);
 export const WORLD_ENVELOPE_SHAPE={schema:z.literal("kizuki.envelope/v2"),tool:z.literal("world_view"),principal:worldRef("principal"),at:z.string(),canon:z.array(z.never()).max(0),quoted:z.array(z.never()).max(0),
   data:z.union([z.strictObject({status:z.literal("not_found")}),z.strictObject({schema:z.literal("kizuki.world-view/v1"),operation:z.enum(["concept","situation","find_concepts","find_situations"]),result:z.union([

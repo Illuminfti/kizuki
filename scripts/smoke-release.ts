@@ -42,13 +42,20 @@ function runJson(command: string, args: string[], env: Record<string, string>): 
   return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };
 }
 
-/** A world_view envelope for an empty concept discovery: a no-model vault admits no Concepts, but the read itself must be current. */
+/**
+ * A world_view envelope for an empty concept discovery: a no-model vault admits no Concepts. The
+ * imported note is not consolidated either, so the read must say so (incomplete, with a
+ * pending_consolidation gap) rather than claim the empty answer is complete.
+ */
 function requireConceptDiscovery(envelope: unknown, surface: string): void {
   const view = envelope as { schema?: string; tool?: string; data?: { schema?: string; operation?: string;
-    result?: { status?: string; data?: { schema?: string; matches?: unknown } } } };
+    result?: { status?: string; data?: { schema?: string; matches?: unknown; coverage?: { status?: string; gaps?: unknown } } } } };
+  const data = view.data?.result?.data;
   if (view.schema !== "kizuki.envelope/v2" || view.tool !== "world_view" || view.data?.schema !== "kizuki.world-view/v1" ||
-      view.data.operation !== "find_concepts" || view.data.result?.status !== "current" ||
-      view.data.result.data?.schema !== "kizuki.concept-matches/v1" || !Array.isArray(view.data.result.data.matches)) {
+      view.data.operation !== "find_concepts" || view.data.result?.status !== "incomplete" ||
+      data?.schema !== "kizuki.concept-matches/v1" || !Array.isArray(data.matches) ||
+      data.coverage?.status !== "partial" || !Array.isArray(data.coverage.gaps) ||
+      !data.coverage.gaps.includes("pending_consolidation")) {
     throw new Error(`${surface} world find_concepts smoke failed`);
   }
 }

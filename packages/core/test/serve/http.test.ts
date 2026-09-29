@@ -114,6 +114,10 @@ describe("serve http", () => {
     const found=await fetch(`${handle.url}/v1/world_view`,{method:"POST",headers:worldHeaders,body:JSON.stringify({operation:"find_concepts",label:"Bayesian",valid:{kind:"all"},knownAt:{kind:"current"}})});
     const discovery=await found.json() as {value:{schema:string;data:{result:{data:{matches:{ref:{kind:"object";token:string}}[]}}}}};
     expect(discovery.value.schema).toBe("kizuki.envelope/v2");
+    expect(discovery.value.data.result.data).toHaveProperty("cursor", null);
+    const paged=await fetch(`${handle.url}/v1/world_view`,{method:"POST",headers:worldHeaders,body:JSON.stringify({operation:"find_concepts",label:"bayesian",cursor:discovery.value.data.result.data.matches[0]!.ref.token,valid:{kind:"all"},knownAt:{kind:"current"}})});
+    expect(paged.status).toBe(200);
+    expect(((await paged.json()) as {value:{data:{result:{data:{matches:unknown[]}}}}}).value.data.result.data.matches).toEqual([]);
     const read=await fetch(`${handle.url}/v1/mcp/world_view`,{method:"POST",headers:worldHeaders,body:JSON.stringify({operation:"concept",concept:discovery.value.data.result.data.matches[0]!.ref,valid:{kind:"all"},knownAt:{kind:"current"}})});
     expect(read.status).toBe(200);expect(await read.text()).toContain("Revise beliefs using evidence");
 

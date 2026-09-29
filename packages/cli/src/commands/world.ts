@@ -1,5 +1,6 @@
 import {
   OWNER,
+  ServeError,
   WorldViewError,
   isWorldWireToken,
   serveWorldView,
@@ -17,12 +18,13 @@ const OPERATIONS = [
   "find_situations",
 ] as const;
 export const WORLD_SCHEMA = {
-  options: ["--operation", "--ref", "--label"],
+  options: ["--operation", "--ref", "--label", "--cursor"],
   flags: ["--json"],
   bounds: {
     "--operation": "situation|concept|find_concepts|find_situations",
     "--ref": "32-byte base64url object token",
     "--label": "up to 200 characters",
+    "--cursor": "32-byte base64url token from the previous page",
   },
 } as const satisfies CommandHelpSchema;
 
@@ -33,18 +35,31 @@ const SITUATION_LABELS: Readonly<Record<string, string>> = {
   "situation.commitment": "Commitment",
 };
 
+function coverageLine(coverage: {
+  status: string;
+  gaps: readonly string[];
+  history?: string;
+}): string {
+  const gaps = coverage.gaps.length === 0 ? "" : ` (${coverage.gaps.join(", ")})`;
+  return `Coverage: ${coverage.status}${gaps}${coverage.history === undefined ? "" : `; history: ${coverage.history}`}.`;
+}
+
 function render(result: WorldReadResult): string[] {
   if ("status" in result) return ["not found"];
   if (result.result.status === "unavailable")
     return [`World view unavailable: ${result.result.reason}.`];
   const data = result.result.data;
   if ("matches" in data) {
-    return data.matches.length === 0
-      ? ["No admitted matches in your current scope."]
-      : data.matches.map(
-          (match) =>
-            `${clean(match.labels.join(" / ")) || "Unlabelled"}  ${match.ref.token}`,
-        );
+    return [
+      ...(data.matches.length === 0
+        ? ["No admitted matches in your current scope."]
+        : data.matches.map(
+            (match) =>
+              `${clean(match.labels.join(" / ")) || "Unlabelled"}  ${match.ref.token}`,
+          )),
+      ...(data.coverage.status === "partial" ? [coverageLine(data.coverage)] : []),
+      ...(data.cursor === null ? [] : [`More matches: --cursor ${data.cursor}`]),
+    ];
   }
   if (data.schema === "kizuki.concept-card/v1")
     return [
@@ -55,7 +70,7 @@ function render(result: WorldReadResult): string[] {
           ? clean(definition.object.value)
           : "Qualified linked definition",
       ),
-      `Coverage: ${data.coverage.status}; history: ${data.coverage.history}.`,
+      coverageLine(data.coverage),
     ];
   return [
     clean(data.situation.labels.map((label) => label.text).join(" / ")) ||
@@ -70,14 +85,14 @@ function render(result: WorldReadResult): string[] {
         ? [`${SITUATION_LABELS[item.predicate] ?? item.predicate}: ${clean(item.object.value)}`]
         : [],
     ),
-    `Coverage: ${data.coverage.status}; history: ${data.coverage.history}.`,
+    coverageLine(data.coverage),
   ];
 }
 
 export const worldCommand: Command = {
   name: "world",
   usage:
-    "world --operation concept|situation --ref TOKEN [--json] | world --operation find_concepts|find_situations [--label TEXT] [--json]",
+    "world --operation concept|situation --ref TOKEN [--json] | world --operation find_concepts|find_situations [--label TEXT] [--cursor TOKEN] [--json]",
   summary:
     "discover and read admitted Concepts and Situations in your current scope",
   schema: WORLD_SCHEMA,
@@ -89,7 +104,8 @@ export const worldCommand: Command = {
     if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
     const operation = parsed.options.get("--operation"),
       ref = parsed.options.get("--ref"),
-      label = parsed.options.get("--label");
+      label = parsed.options.get("--label"),
+      cursor = parsed.options.get("--cursor");
     if (
       operation === undefined ||
       !(OPERATIONS as readonly string[]).includes(operation)
@@ -99,14 +115,19 @@ export const worldCommand: Command = {
       operation === "find_concepts" || operation === "find_situations";
     if (
       discovery
-        ? ref !== undefined || (label?.length ?? 0) > 200
-        : label !== undefined || ref === undefined || !isWorldWireToken(ref)
+        ? ref !== undefined ||
+          (label?.length ?? 0) > 200 ||
+          (cursor !== undefined && !isWorldWireToken(cursor))
+        : label !== undefined ||
+          cursor !== undefined ||
+          ref === undefined ||
+          !isWorldWireToken(ref)
     )
       throw new UsageError(this.usage);
     const input = {
       operation,
       ...(discovery
-        ? { label: label ?? "" }
+        ? { label: label ?? "", ...(cursor === undefined ? {} : { cursor }) }
         : { [operation]: { kind: "object", token: ref } }),
       valid: { kind: "all" },
       knownAt: { kind: "current" },
@@ -127,7 +148,11 @@ export const worldCommand: Command = {
           if (!("status" in data) && data.result.status !== "unavailable" && "matches" in data.result.data && data.result.data.matches.length === 0)
             io.err("next: Concepts and Situations appear once the model loop admits them; kizuki doctor shows whether canon writing is on");
         } catch (error) {
-          if (error instanceof WorldViewError) throw new UsageError(this.usage);
+          if (
+            error instanceof WorldViewError ||
+            (error instanceof ServeError && error.code === "invalid_arguments")
+          )
+            throw new UsageError(this.usage);
           throw error;
         }
         return 0;

@@ -445,12 +445,42 @@ and bounded audit coverage.
 
 ```text
 usage: kizuki world --operation situation|concept --ref TOKEN [--json]
-usage: kizuki world --operation find_concepts|find_situations [--label TEXT] [--json]
+usage: kizuki world --operation find_concepts|find_situations [--label TEXT] [--cursor TOKEN] [--json]
 ```
 
 Discover currently authorized Concepts and Situations, then use the returned
 32-byte base64url object token for an exact lookup. The optional label filter is
-a Unicode case-sensitive substring. Homonyms remain separate objects.
+a case-insensitive substring: both sides are folded with Unicode normalization
+and case folding, so `bayesian`, `BAYESIAN` and `Bayesian` match alike and
+`STRASSE` matches `Straße`. Homonyms remain separate objects.
+
+Discovery returns at most 32 matches per page. When more remain, the result
+carries a `cursor` (the `--json` field is null on the last page) and the plain
+output ends with `More matches: --cursor TOKEN`. Repeat the same command with
+`--cursor TOKEN` for the next page. A cursor is an opaque token bound to the
+current principal and grant, like an object token; an unknown one is a usage
+error, and `--cursor` is valid only for discovery. MCP `world_view` and loopback
+HTTP `/v1/world_view` take the same optional `cursor` input for
+`find_concepts` and `find_situations` and return `cursor` (null on the last
+page) beside `matches`.
+
+Coverage is not assumed complete. Discovery and cards report `partial` with
+these gaps, computed only from sources the current grant can read (a source the
+grant hides never changes the result or its wording):
+
+- `coverage`: a readable source has not finished importing its history, or its
+  last capture run reported an error or could not be read. A source with no
+  recorded capture run adds no gap.
+- `pending_consolidation`: a readable source whose grant permits extraction has
+  events this caller can read that the extraction rail has not consumed, including events held in
+  its deferred queue. An empty discovery in that state is `partial`, not
+  complete: absence here does not mean the vault holds no such Concept.
+- `traversal_limit`: more matches follow on another page (the `cursor` is then
+  set), one request spent its scan budget before reaching the end of the vault
+  (the `cursor` resumes there), or one object hit a bounded read limit.
+
+In the MCP and HTTP result, `partial` coverage is returned as status
+`incomplete` with the gaps as `reasons`.
 
 CLI, MCP `world_view` (whose `label`, `valid` and `knownAt` may be omitted) and loopback HTTP `/v1/world_view` (plus
 `/v1/mcp/world_view`) use the same Core projection over admitted claims and
