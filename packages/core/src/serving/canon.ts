@@ -127,7 +127,7 @@ function deniedCanonPaths(ctx: ServeContext): Set<string> {
   // counters by adding returned rows or per-page authorization queries.
   const grant = ctx.principal.grant;
   const ceiling = requireCeiling(grant.ceiling);
-  const source = sourceServingSql(ctx.db, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" }, ceiling);
+  const source = ctx.principal.kind === "owner" ? null : sourceServingSql(ctx.db, { owner: false, purpose: ctx.sourcePurpose ?? "recall" }, ceiling);
   const deniedSource = source === null ? "0" : `EXISTS (
     SELECT 1 FROM json_each(r.provenance) p WHERE NOT EXISTS (
       SELECT 1 FROM events WHERE events.event_id=CASE WHEN p.value LIKE 'event:%' THEN substr(p.value,7) ELSE p.value END
@@ -207,7 +207,10 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
   }
   const permitted = report.pages.filter(page => !denied.has(page.relPath) && authorize(grant, pageScope(page)).allow);
   const holds = tableExists(ctx.db, "canon_holds") ? ctx.db.query<{ page_path: string }, [string]>(`
-    SELECT DISTINCT page_path FROM canon_holds WHERE page_path IN (SELECT value FROM json_each(?))
+    SELECT page_path FROM (
+      SELECT page_path FROM canon_holds UNION SELECT page_path FROM canon_write_intents
+      UNION SELECT page_path FROM canon_projection_obligations
+    ) WHERE page_path IN (SELECT value FROM json_each(?))
   `).all(JSON.stringify(permitted.map(page => page.relPath))) : [];
   assertCanonReadAdmission(ctx);
   if (canonReadGeneration(ctx.db) !== generation) throw new ServeError("held", "canon changed during request; retry");

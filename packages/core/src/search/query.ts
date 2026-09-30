@@ -186,7 +186,7 @@ function searchPlan(
 
   const clauses = ["search_docs MATCH ?"];
   const bindings: (string | number)[] = [ftsQuery];
-  const heldPaths = [...readDerivedHolds(db).paths];
+  const heldPaths = canonPaths === undefined ? [...readDerivedHolds(db).paths] : [];
   if (heldPaths.length > 0) {
     clauses.push(
       `(search_docs.scope != 'canon' OR path NOT IN (${placeholders(heldPaths.length)}))`,

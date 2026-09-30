@@ -32,10 +32,12 @@ sensitivity, subject, type, time or source consent do not add degradation flags
 or counts to that principal's answer. A visible unrecorded revision can report
 `index-degraded` while remaining withheld; reporting health never admits it.
 Unreadable paths whose durable receipt labels, source permissions or current
-receipted subject assignments put them outside the caller's grant do not affect that caller's
-reply. Doctor still reports those failures for the owner. Unclassified or permitted unreadable paths refuse the read under
-fail-closed admission rules. Permission filtering precedes health provenance
+receipted subject assignments put them outside the caller's grant do not affect
+that caller's reply. Doctor still reports those failures for the owner.
+Unclassified or permitted unreadable paths refuse the read under fail-closed
+admission rules. Permission filtering precedes health provenance
 reconstruction; ledger health checks the authorized live corpus against both
 the companion and the FTS rows actually served. An incremental pass restores
 recreated FTS contents and repairs every known page during a partial walk.
-Configured retrieval-port availability and ranking have their own declarations and are unchanged by this floor health.
+Configured retrieval-port availability and ranking have their own declarations
+and are unchanged by this floor health.

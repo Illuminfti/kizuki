@@ -235,8 +235,10 @@ export async function serveSearch(
     for (const id of nominated.ids) seen.add(id);
     const rankedOpts = {
       ...base,
-      ceiling: grant.ceiling,
-      canonPaths: index.pages.filter(page => authorize(narrowed, pageScope(page)).allow).map(page => page.relPath),
+      ...(ctx.principal.kind === "owner" ? {} : {
+        ceiling: grant.ceiling,
+        canonPaths: index.pages.filter(page => authorize(narrowed, pageScope(page)).allow).map(page => page.relPath),
+      }),
       limit: MAX_RETRIEVAL_LIMIT,
       source: {
         owner: ctx.principal.kind === "owner",
