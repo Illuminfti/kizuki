@@ -113,7 +113,6 @@ describe(`export and purge on a vault above ${OLD_CEILING} canon files`, () => {
   test("export enumerates and hashes every page before payload copying", () => {
     const db = openLedger(":memory:");
     const controller = new AbortController();
-    const cancelled = new Error("synthetic export cancellation");
     let inventory: { files: { kind: string; sha256: string }[] } | undefined;
     try {
       expect(() => exportVault(db, vault, join(root, "backup"), {
@@ -125,9 +124,9 @@ describe(`export and purge on a vault above ${OLD_CEILING} canon files`, () => {
           const staged = join(root, name);
           inventory = JSON.parse(readFileSync(join(staged, "export-inventory.json"), "utf8"));
           expect(existsSync(join(staged, "vault"))).toBe(false);
-          controller.abort(cancelled);
+          controller.abort();
         },
-      })).toThrow(cancelled);
+      })).toThrow("export cancelled");
     } finally {
       db.close();
     }
