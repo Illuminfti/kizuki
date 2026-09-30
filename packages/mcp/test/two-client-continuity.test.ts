@@ -263,12 +263,21 @@ async function stdioClient(vault: string, token: string): Promise<ContinuityClie
     expect(reply.result).toBeDefined();
     child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
     const listed = await request("tools/list", {});
-    const tools = (listed.result as { tools?: { name: string; outputSchema?: { properties?: object; required?: string[] } }[] } | undefined)?.tools;
+    type ListedSchema = { properties?: Record<string, unknown>; required?: string[]; anyOf?: ListedSchema[] };
+    const tools = (listed.result as { tools?: { name: string; outputSchema?: ListedSchema }[] } | undefined)?.tools;
     expect(tools?.length).toBeGreaterThan(0);
     for (const tool of tools ?? []) {
-      expect(tool.outputSchema?.properties).not.toHaveProperty("has_withheld");
-      expect(tool.outputSchema?.properties).not.toHaveProperty("source_policy");
-      expect(tool.outputSchema?.properties).not.toHaveProperty("denied");
+      if (tool.name === "system_health") {
+        expect(tool.outputSchema?.properties?.schema).toEqual({ const: "kizuki.envelope/v1" });
+      } else if (tool.name === "world_view") {
+        expect(Object.keys(tool.outputSchema?.properties ?? {}).sort()).toEqual(["at", "canon", "data", "principal", "quoted", "schema", "tool"]);
+      } else {
+        const v2 = tool.outputSchema?.anyOf?.find((branch) =>
+          (branch.properties?.schema as { const?: string } | undefined)?.const === "kizuki.envelope/v2");
+        expect(v2).toBeDefined();
+        expect(v2?.required).toContain("data");
+        for (const field of ["has_withheld", "source_policy", "denied", "redacted"]) expect(v2?.properties?.[field]).toBe(false);
+      }
     }
     initialized = true;
     return {
