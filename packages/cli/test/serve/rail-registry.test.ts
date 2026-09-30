@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
-import { listRunReceipts } from "@kizuki/core";
+import { DEFAULT_RAILS, RAIL_IDS, initServe, listSchedules, listRunReceipts, readLease, WRITER_LEASE } from "@kizuki/core";
 import { defineRail, openLedger, registerRail } from "@kizuki/core/testing";
 import type { CliIo } from "../../src/commands/index";
 import { doctorCommand } from "../../src/commands/doctor";
@@ -60,6 +60,44 @@ function fixtureRail(id: string, run: () => void = () => { calls += 1; }) {
 }
 
 describe("a rail registered only in a test", () => {
+  test("shipped serve --once output keeps its exact text and JSON bytes", async () => {
+    const vault = session();
+    const first = await vault.run("--once", "--no-http", "--json");
+    expect(first.code).toBe(0);
+    expect(first.out).toEqual(['{"schema":"kizuki.cli.serve/v1","status":"ok","data":{"receipts":7,"http":null},"degraded":[],"warnings":[]}']);
+    const second = await vault.run("--once", "--no-http");
+    expect(second.code).toBe(0);
+    expect(second.out).toEqual(["receipts=7"]);
+  });
+
+  test("public defaults and serve init include an extension without a second schedule table", () => {
+    fixtureRail("fixture-tick");
+    const vault = session();
+    const db = vault.ledger();
+    try {
+      initServe(db);
+      expect(RAIL_IDS).toContain("fixture-tick");
+      expect(DEFAULT_RAILS.find((rail) => rail.rail === "fixture-tick"))
+        .toEqual({ rail: "fixture-tick", period_s: 300, jitter_s: 0, enabled: true });
+      expect(listSchedules(db).find((rail) => rail.rail === "fixture-tick"))
+        .toMatchObject({ period_s: 300, jitter_s: 0, enabled: true });
+    } finally { db.close(); }
+  });
+
+  test("serve run holds and releases the writer lease for an extension", async () => {
+    let holder: number | undefined;
+    const vault = session();
+    fixtureRail("fixture-tick", () => {
+      const db = vault.ledger();
+      try { holder = readLease(db, WRITER_LEASE)?.holder_pid; } finally { db.close(); }
+    });
+    const ran = await vault.run("run", "fixture-tick", "--json");
+    expect(ran.code).toBe(0);
+    expect(holder).toBe(process.pid);
+    const db = vault.ledger();
+    try { expect(readLease(db, WRITER_LEASE)).toBeNull(); } finally { db.close(); }
+  });
+
   test("is refused by serve run until it is registered", async () => {
     const vault = session();
     await expect(vault.run("run", "fixture-tick")).rejects.toThrow("serve run <rail>");
