@@ -4,7 +4,7 @@
  * counters; here the counters are the pipeline's own `ReadFrame.stats`, read
  * through the public seam by collecting the frames a read opens.
  */
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, expect, setDefaultTimeout, setSystemTime, test } from "bun:test";
 import {
   HIDDEN_MUTATIONS,
   checkNoninterference,
@@ -22,6 +22,9 @@ import { testClock } from "../helpers/clock";
 import { issueWorldRef, worldNamespace } from "../../src/world/references";
 
 setDefaultTimeout(120_000);
+// Keep request time fixed so issued lifetimes remain part of the byte comparison.
+beforeEach(() => setSystemTime(new Date("2030-01-01T00:00:00.000Z")));
+afterEach(() => setSystemTime());
 
 const view = (operation: string, rest: Record<string, unknown>) => ({
   operation,
