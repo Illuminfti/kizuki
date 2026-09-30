@@ -22,7 +22,7 @@ import type { Served } from "./gate";
 import { pendingCanonRewrite, rewriteCanon } from "./rewrite";
 import type { RewrittenPage, CanonRewrite } from "./rewrite";
 import type { CanonRecoveryPending } from "../correction/types";
-import { groupByKey, readable, resolve } from "./target";
+import { claimVisibleTo, groupByKey, readable, resolve } from "./target";
 import type { CorrectTarget } from "./target";
 import { ServeError } from "./types";
 import type { Envelope, ServeContext } from "./types";
@@ -550,8 +550,9 @@ export async function serveCorrect(
             .get(recorded.event_id);
           const prior =
             filedRow === null ? null : getClaim(ctx.db, filedRow.claim_id);
-          if (prior !== null) {
-            readable(grant, [prior]);
+          // A recording the caller could not have read is treated as absent and
+          // falls through to resolve, so a replay is no tier oracle.
+          if (prior !== null && claimVisibleTo(ctx, prior)) {
             requireSourceEvents(ctx.db, prior.provenance, {
               owner: ctx.principal.kind === "owner",
               purpose: "correction",

@@ -13,6 +13,8 @@ import {
 } from "./candidates";
 import type { Piece } from "./candidates";
 import { claimReader } from "./claims";
+import { oneLine, redactorOf } from "./redact";
+import type { Redactor } from "./redact";
 import { SESSION_SECTIONS } from "./sections";
 import type { SessionSection } from "./sections";
 import type { ServeContext } from "./types";
@@ -101,8 +103,9 @@ export interface SessionPieces {
   degraded: string[];
 }
 
+/** One line, cut to the section's text bound. Every line break a renderer honours is one space. */
 function clamp(text: string): string {
-  const points = Array.from(text.replace(/\s+/g, " ").trim());
+  const points = Array.from(oneLine(text));
   return points.length <= TEXT_CHARS
     ? points.join("")
     : `${points.slice(0, TEXT_CHARS - 1).join("")}…`;
@@ -113,14 +116,16 @@ function stamps(claim: Claim): string {
 }
 
 /** A world statement line: same stamps as a working-knowledge claim, with the situation named. */
-function situationLine(state: SituationState, item: SituationItem): string {
+function situationLine(state: SituationState, item: SituationItem, redactor: Redactor): string {
+  // Redacted before it is cut, so a secret on the cut is gone whole.
+  const say = (text: string): string => clamp(redactor.text(text));
   const hedge =
     item.polarity === "negative" || item.mode !== "asserted"
       ? ` polarity=${item.polarity} mode=${item.mode}`
       : "";
   return (
     `- [claim:${inline(item.claim.claim_id)}] ${stamps(item.claim)}${hedge}` +
-    ` :: situation ${JSON.stringify(clamp(state.label ?? state.subject))} ${item.predicate.slice(10)} ${JSON.stringify(clamp(item.text))}\n`
+    ` :: situation ${JSON.stringify(say(state.label ?? state.subject))} ${inline(item.predicate.slice(10))} ${JSON.stringify(say(item.text))}\n`
   );
 }
 
@@ -144,13 +149,14 @@ function claimPiece(
   heading: string,
   claim: Claim,
   reader: ReturnType<typeof claimReader>,
+  redactor: Redactor,
 ): Piece {
   return piece(
     section,
     heading,
     claimLine({
       ...claim,
-      object: claim.object === null ? null : clamp(claim.object),
+      object: claim.object === null ? null : clamp(redactor.text(claim.object)),
     }),
     [claim.claim_id],
     reader,
@@ -236,6 +242,7 @@ export function collectSessionPieces(
   const reasons: SessionPieces["reasons"] = {};
   const degraded: string[] = [];
   const shown = new Set<string>();
+  const redactor = redactorOf(ctx);
 
   const run = (section: SessionSection, gather: () => Piece[]): void => {
     try {
@@ -273,7 +280,7 @@ export function collectSessionPieces(
     if (truncated) reasons.owner = "unavailable";
     for (const claim of facts) shown.add(claim.claim_id);
     return facts.map((claim) =>
-      claimPiece("owner", "## owner (owner-authority facts)", claim, reader),
+      claimPiece("owner", "## owner (owner-authority facts)", claim, reader, redactor),
     );
   });
 
@@ -286,7 +293,7 @@ export function collectSessionPieces(
           piece(
             "now",
             "## now (situations)",
-            situationLine(state, item),
+            situationLine(state, item, redactor),
             [item.claim.claim_id],
             reader,
           ),
@@ -306,7 +313,7 @@ export function collectSessionPieces(
     );
     for (const claim of changes) {
       shown.add(claim.claim_id);
-      lines.push(claimPiece("now", "## now (recent changes)", claim, reader));
+      lines.push(claimPiece("now", "## now (recent changes)", claim, reader, redactor));
     }
     if (lines.length === 0)
       if (truncated) reasons.now = "unavailable";
@@ -322,7 +329,7 @@ export function collectSessionPieces(
           piece(
             "commitments",
             "## commitments (open)",
-            situationLine(state, item),
+            situationLine(state, item, redactor),
             [item.claim.claim_id],
             reader,
           ),
@@ -339,7 +346,7 @@ export function collectSessionPieces(
     );
     for (const claim of claims)
       lines.push(
-        claimPiece("commitments", "## commitments (open)", claim, reader),
+        claimPiece("commitments", "## commitments (open)", claim, reader, redactor),
       );
     if (lines.length === 0)
       if (truncated) reasons.commitments = "unavailable";
@@ -355,7 +362,7 @@ export function collectSessionPieces(
           piece(
             "uncertain",
             "## uncertain (contradictions and open questions)",
-            situationLine(state, item),
+            situationLine(state, item, redactor),
             [item.claim.claim_id],
             reader,
           ),
@@ -379,7 +386,7 @@ export function collectSessionPieces(
       const first = members[0];
       const values = members.map(
         (member) =>
-          `${member.polarity === "negative" ? "not " : ""}${JSON.stringify(clamp(member.object ?? ""))} [claim:${inline(member.claim_id)}] ${stamps(member)} status=${member.status}`,
+          `${member.polarity === "negative" ? "not " : ""}${JSON.stringify(clamp(redactor.text(member.object ?? "")))} [claim:${inline(member.claim_id)}] ${stamps(member)} status=${member.status}`,
       );
       lines.push(
         piece(

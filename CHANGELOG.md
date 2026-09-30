@@ -158,6 +158,17 @@
   current boot, and a failed write of it no longer stops the daemon.
 - [Integration recipes](docs/integrations.md) for Claude Code, Codex and any
   stdio MCP client.
+- Everything Kizuki serves to an agent passes one output seam that reuses the
+  model-prompt scrubber. PEM blocks, JWTs, `sk-`, `ghp_`, `github_pat_`, `xox`
+  and `AKIA` tokens, `Authorization: Bearer` values, `NAME=value` secret
+  assignments and mnemonic-like word runs become `[redacted:<kind>]` in search,
+  `get_page`, `timeline` and its expansion, every `context_packet` section,
+  `query_entities`, `graph_neighbors` and `world_view`, over MCP stdio, loopback
+  HTTP and the session hook. The envelope adds `redacted`, the per-kind count of
+  replaced spans, and never a value. Redaction runs before an excerpt, preview
+  or expansion window is cut and before a packet is packed, so a secret cannot
+  survive a cut and the token budget stays exact. The owner keeps raw text. The
+  scrubber is a heuristic; see [what an agent is served](docs/agent-enrollment.md#what-an-agent-is-served).
 
 ### Fixed
 
@@ -294,6 +305,25 @@
 - Doctor reads the newest 2,000 sync receipts and the newest 200 of each other
   rail instead of a week of receipts, and the `doctor-sweep` rail now records
   the failures doctor would report, so its status matches.
+- Captured and canon text in a context packet is blockquoted line by line, and
+  titles and paths stay on one line, so a page or capture that contains a line
+  imitating a packet stamp cannot pass for one. Unicode tag characters and
+  bidirectional controls are removed from served text for every principal.
+- `system_health` for an agent reports counts over what its grant can read and
+  the connections that feed that view; the vault-wide page, event and claim
+  totals, agent counts, runtime, derived-index times, retrieval backlog and
+  per-connection run results are owner only.
+- `correct`, `propose` and a `context_packet` task capture refuse an id the agent
+  cannot read exactly as they refuse one that does not exist, so neither
+  existence nor tier can be probed. A denied task capture no longer reports
+  `reason: "denied"`.
+- A claim object or a task-capture value with a Unicode line separator can no
+  longer start a packet line of its own, and the packet hash covers the served
+  path. `world_view` labels lengthened by redaction are cut back to the schema
+  bound, `system_health` for an agent reports `counts_capped` when its counts
+  stop at the bound and derives connections without that bound, and an unreadable
+  provenance or correction target is refused generically while the owner's audit
+  row keeps the real reason.
 
 ### Changed
 

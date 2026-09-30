@@ -66,7 +66,7 @@ function dayWindow(day: string): { since: string; until: string } {
   };
 }
 
-function preview(text: string): string {
+export function previewText(text: string): string {
   return Array.from(text.replace(/\s+/g, " ").trim())
     .slice(0, PREVIEW_CODE_POINTS)
     .join("");
@@ -213,8 +213,19 @@ export function timeline(db: Database, opts: TimelineOptions): TimelineEntry[] {
     ),
     sensitivity: row.sensitivity,
     taint: "quoted",
-    text_preview: preview(row.text),
+    text_preview: previewText(row.text),
   }));
+}
+
+/** Identities and connectors of the events a bounded read selects; never their text. */
+export function timelineSelection(
+  db: Database,
+  opts: TimelineOptions,
+): { event_id: string; connector_id: string }[] {
+  const plan = timelinePlan(db, opts, requireCeiling(opts?.ceiling));
+  return plan.tail === null ? [] : db
+    .query<{ event_id: string; connector_id: string }, (string | number)[]>(`SELECT event_id, connector_id ${plan.tail}`)
+    .all(...plan.bindings);
 }
 
 /** Internal audit identities only. Deliberately excluded from public exports. */

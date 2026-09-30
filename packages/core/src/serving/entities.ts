@@ -101,6 +101,7 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope<E
         const { excerpt, truncated } = excerptOf(
           collapseWhitespace(page.body),
           EXCERPT_CHARS,
+          ctx,
         );
         const chunk = canonChunk(index, page, decision, excerpt, truncated);
         for (const item of attachSubjectLabels(projection, chunk, subjects)) audit.set(item.id, item);

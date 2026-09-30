@@ -1,4 +1,4 @@
-import type { Grant } from "../agents";
+import type { AuditDenial, Grant } from "../agents";
 import { isRegisteredPredicate } from "../claims/predicates";
 import { insertClaim } from "../claims/store";
 import { CLAIM_POLARITIES } from "../contracts/proposal";
@@ -71,10 +71,11 @@ export interface ProposeData {
   superseded: string[];
 }
 
-function refuse(field: string, rule: string): ServeError {
+function refuse(field: string, rule: string, denials: AuditDenial[] = []): ServeError {
   return new ServeError(
     "invalid_arguments",
     `invalid arguments: ${field}: ${rule}`,
+    { denials },
   );
 }
 
@@ -234,22 +235,29 @@ function predicateOf(
  * An agent cannot cite what it cannot read: every provenance id has to be a
  * live event this principal is allowed to quote, so a proposal can never
  * launder a withheld record into the claim store. The offending id stays out
- * of the message and reaches the owner through the audit row instead.
+ * of the message, and so does the reason: an id that is absent and one that is
+ * unreadable are refused identically.
  */
 function validateProvenance(ctx: ServeContext, provenance: string[]): void {
   const facts = readServableEvents(ctx.db, provenance);
+  const denials: AuditDenial[] = [];
+  let refused = false;
   for (const id of provenance) {
     const event = facts.get(id);
+    // Absent and unreadable answer alike: the reason would tell the caller
+    // which ids exist and at what tier. The audit row keeps the real reason.
     if (event === undefined) {
-      throw refuse(
-        "provenance",
-        "must name live events this principal can read",
-      );
+      refused = true;
+      continue;
     }
     const decision = eventDecision(ctx.principal.grant, event, ctx);
     if (!decision.allow) {
-      throw new ServeError(decision.reason, "provenance outside the grant");
+      refused = true;
+      denials.push({ id, reason: decision.reason });
     }
+  }
+  if (refused) {
+    throw refuse("provenance", "must name live events this principal can read", denials);
   }
 }
 

@@ -22,6 +22,7 @@ import type { CanonPage, SkippedPage } from "../vault/pages";
 import { assessLivePageEvidence, type LivePageEvidence } from "../vault/provenance";
 import { PAGE_TAINTS } from "../vault/schema";
 import type { PageTaint } from "../vault/schema";
+import { redactorOf } from "./redact";
 import { ServeError } from "./types";
 import type { CanonChunk, ServeContext } from "./types";
 
@@ -243,8 +244,8 @@ export function canonChunk(
   })) throw new ServeError("held", "canon evidence unavailable");
   return {
     page_id: page.id,
-    path: page.relPath,
-    title: stringField(page, "title") ?? "",
+    path: redactorOf(index.sourceContext).text(page.relPath),
+    title: redactorOf(index.sourceContext).text(stringField(page, "title") ?? ""),
     type: stringField(page, "type") ?? "",
     sensitivity: decision.sensitivity,
     taint: decision.taint,
@@ -260,12 +261,18 @@ export function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-/** Code-point safe, so a surrogate pair at the boundary is never split. */
+/**
+ * Code-point safe, so a surrogate pair at the boundary is never split. The
+ * body is redacted before it is cut, so a secret straddling the cut is gone
+ * whole rather than left half-visible.
+ */
 export function excerptOf(
   body: string,
   maxChars: number,
+  ctx: ServeContext,
 ): { excerpt: string; truncated: boolean } {
-  const points = Array.from(body);
-  if (points.length <= maxChars) return { excerpt: body, truncated: false };
+  const served = redactorOf(ctx).text(body);
+  const points = Array.from(served);
+  if (points.length <= maxChars) return { excerpt: served, truncated: false };
   return { excerpt: points.slice(0, maxChars).join(""), truncated: true };
 }

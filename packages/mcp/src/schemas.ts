@@ -1,6 +1,7 @@
 import { AUTHORITY_TIERS, ENVELOPE_SCHEMA, PAGE_TAINTS, TOOLS } from "@kizuki/core";
 import type { Tool } from "@kizuki/core";
 import { z } from "zod";
+import { REDACTED } from "./redaction";
 import { MCP_WORLD_OPS } from "./world/ops";
 import { buildWorldSurface } from "./world/surface";
 
@@ -77,6 +78,7 @@ export const ENVELOPE_SHAPE = z.strictObject({
   /** Owner envelopes only; omitted when nothing was withheld. */
   has_withheld: z.literal(true).optional(),
   source_policy: SOURCE_POLICY.optional(),
+  redacted: REDACTED.optional(),
   data: z.record(z.string(), z.unknown()).optional(),
 });
 
