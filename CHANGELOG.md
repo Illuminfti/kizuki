@@ -402,9 +402,10 @@
 - `query`, `context`, MCP `search` and `context_packet` ask the embedded engine
   for hybrid ranking whenever it can rank by vector, in the CLI, the MCP stdio
   host and the daemon (which now bind the vault's embedding port with the
-  engine). `query` and `context` bind the engine when it is free. An answer
+  engine). `query` and `context` bind it when an embedding port is selected
+  and its lease is free. An answer
   that was not vector-ranked although an embedding port is configured carries
-  `retrieval-vector-unavailable`, and one that covers only part of the corpus
+  `retrieval-vector-unavailable`, and one that covers only part of the permitted corpus
   carries `retrieval-vector-partial`. A dead or slow embedding server leaves
   keyword ranking and the label; hybrid never fails with the server.
 - The `embed-backfill` rail embeds up to 200 chunks per run, newest documents
@@ -415,14 +416,15 @@
   chunk and is no longer part of the chunk text; the GGUF table embedder's
   prompts are slots only, so no prompt word is averaged into its vectors; chunk
   sizes are counted with the embedding port's tokenizer when it has one
-  (`EmbeddingPort.countTokens`, additive), an over-long unbroken run is cut to
+  (`EmbeddingPort.countTokens`, complete spans), an over-long unbroken run is cut to
   fit, and chunks written before an embedder was bound are cut again for it.
   The GGUF space's prompts changed, so a vault using the fixture embedder needs
   `kizuki rebuild --confirm`.
-- The embedded engine refuses a corpus above `max_text_bytes` (default 4 MiB of
-  titles and bodies, 1 MiB to 1 GiB under `[ports.retrieval]`) whole, before it
-  touches the active index, and `kizuki doctor` prints `vector layer: refused
-  (...)` with the sizes. Doctor also prints `not in use` when an embedding port
+- The embedded engine bounds text (default 4 MiB), serialized metadata
+  (16 MiB), documents (5,000), chunks (10,000) and subject links (20,000),
+  checking a rebuild before embedding or replacing the active index. Doctor
+  reports the resource that refused the last index update; the prior index is
+  preserved, and only a successful authoritative rebuild clears the refusal. Doctor also prints `not in use` when an embedding port
   is configured but retrieval is not the embedded engine.
 
 ## 1.0.2 (2026-09-24)

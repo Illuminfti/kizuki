@@ -58,6 +58,13 @@ export interface PhantomEmbedding {
   readonly chunk_id: string;
 }
 
+/** Capacity is checked while cutting, before an unbounded chunk list exists. */
+export class ChunkLimitError extends PortError {
+  constructor(readonly limit: number) {
+    super("budget_exhausted", `document exceeds ${limit} retrieval chunks`, false);
+  }
+}
+
 export function storedFromDoc(doc: RetrievalDoc): StoredDoc {
   return {
     ...doc,
@@ -85,18 +92,9 @@ export function chunkDocument(
   tokens: number,
   overlap: number,
   countTokens?: (text: string) => number,
+  maxChunks = Infinity,
 ): StoredChunk[] {
   const size = Math.max(1, tokens);
-  const words = doc.text.split(/\s+/).filter(Boolean).flatMap((word) => {
-    if (countTokens === undefined || countTokens(word) <= size) return [word];
-    // A run with no whitespace, such as a URL or an encoded blob, is cut so
-    // that no piece can exceed the window. A character costs at most one token.
-    const characters = [...word];
-    const pieces: string[] = [];
-    for (let at = 0; at < characters.length; at += size) pieces.push(characters.slice(at, at + size).join(""));
-    return pieces;
-  });
-  const weights = words.map((word) => (countTokens === undefined ? 1 : Math.max(1, countTokens(word))));
   const chunk = (index: number, text: string): StoredChunk => ({
     chunk_id: `${doc.doc_id}#${index}`,
     index,
@@ -105,25 +103,66 @@ export function chunkDocument(
     embedded_at: null,
     space: null,
   });
+  if (countTokens !== undefined) {
+    return tokenChunks(doc.text, size, overlap, countTokens, maxChunks).map((text, index) => chunk(index, text));
+  }
+  const words = doc.text.split(/\s+/).filter(Boolean);
   if (words.length === 0) return [chunk(0, "")];
   const chunks: StoredChunk[] = [];
   for (let start = 0; start < words.length; ) {
-    let end = start;
-    let used = 0;
-    while (end < words.length && (end === start || used + weights[end]! <= size)) {
-      used += weights[end]!;
-      end += 1;
-    }
+    if (chunks.length >= maxChunks) throw new ChunkLimitError(maxChunks);
+    const end = Math.min(words.length, start + size);
     chunks.push(chunk(chunks.length, words.slice(start, end).join(" ")));
-    if (end >= words.length) break;
-    // The next chunk re-reads the last `overlap` tokens but always moves forward.
-    let next = end;
-    let carried = 0;
-    while (next > start + 1 && carried + weights[next - 1]! <= Math.max(0, overlap)) {
-      carried += weights[next - 1]!;
-      next -= 1;
+    if (end === words.length) break;
+    start = Math.max(start + 1, end - overlap);
+  }
+  return chunks;
+}
+
+/** Count complete spans, including separators, and cut only at Unicode boundaries. */
+function tokenChunks(text: string, size: number, overlap: number, count: (text: string) => number, maxChunks: number): string[] {
+  if (text.length === 0) return [""];
+  const offsets = new Uint32Array(text.length + 1);
+  let length = 0;
+  let offset = 0;
+  for (const character of text) {
+    offsets[length++] = offset;
+    offset += character.length;
+  }
+  offsets[length] = offset;
+  const span = (start: number, end: number) => text.slice(offsets[start], offsets[end]);
+  const chunks: string[] = [];
+  for (let start = 0; start < length; ) {
+    if (chunks.length >= maxChunks) throw new ChunkLimitError(maxChunks);
+    let low = start;
+    let high = length;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (count(span(start, middle)) <= size) low = middle;
+      else high = middle - 1;
     }
-    start = next;
+    let end = low;
+    if (end === start) throw new PortError("budget_exhausted", "one character exceeds the embedding chunk budget", false);
+    // Prefer a word boundary; long unbroken runs still make progress.
+    if (end < length) {
+      for (let at = end; at > start + 1; at--) {
+        if (/\s/u.test(span(at - 1, at))) { end = at; break; }
+      }
+    }
+    chunks.push(span(start, end).trim());
+    if (end === length) break;
+    low = start + 1;
+    high = end;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (count(span(middle, end)) <= overlap) high = middle;
+      else low = middle + 1;
+    }
+    // Start overlap at a word boundary when there is one; do not invent partial words.
+    if (/\s/u.test(span(start, end))) {
+      while (low < end && !/\s/u.test(span(low - 1, low))) low++;
+    }
+    start = low;
   }
   return chunks;
 }

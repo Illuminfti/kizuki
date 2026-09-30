@@ -29,8 +29,9 @@ Every host that binds it also binds the vault's configured embedding port
 factory: the CLI in `openConfiguredRetrieval`, the MCP stdio host in
 `bindRetrieval`, and therefore the daemon, which runs on the CLI's binding. A
 process that writes the engine without the embedder would cut chunks for another
-tokenizer, so none does. `kizuki query` and `kizuki context` bind the engine when
-its writer lease is free. Where a live host holds it, they use the floor and
+tokenizer, so configured hosts carry the embedder with the engine.
+`kizuki query` and `kizuki context` bind it when an embedding port is selected
+and its writer lease is free. Where a live host holds it, they use the floor and
 say so.
 
 ## Registered versus bound capabilities
@@ -62,7 +63,7 @@ model, weights, or a live endpoint. Configuration is in
 recipe chunk 800/120 and prompts that are slots only (`{q}`, `{title}\n{text}`),
 because a table embedder averages every word it is given. The local HTTP port
 formats it as `local-http:<sanitized-model>@<dims>#<digest>`, where the digest
-covers the model, width, both prompts and the tokenizer id, so a prompt change
+covers the model, width, both prompts, the tokenizer id and chunk parameters, so a prompt change
 is a new space. A changed space, dimension, or chunk configuration
 disables vector retrieval on the embedded engine while lexical retrieval stays
 usable. Serving never returns engine snippet text; it rehydrates live evidence.
@@ -75,27 +76,31 @@ The embedded engine chunks by whitespace-separated words unless its embedding
 port offers `countTokens`, in which case chunk size and overlap are counted in
 that port's tokens. The engine never puts the title in a chunk: it hands the
 port the document title beside each chunk and the port frames it. The local HTTP
-port has no model tokenizer to call, so its `countTokens` is the high estimate
-`kizuki:estimate-v1` (see the CLI reference); a real tokenizer is not
-implemented. Chunks written by a process that had no embedder are cut again the
+port uses the conservative `kizuki:utf8-bytes-v1` budget, counting UTF-8 bytes
+including separators. This bounds byte-level BPE and byte-fallback tokenizers,
+but is not an exact model tokenizer; the configured window must also cover any
+server-side input expansion. Chunks written by a process that had no embedder are cut again the
 first time an embedder is about to use them and nothing has been embedded yet.
 Context packets use a separate `js-tiktoken@1.0.21/cl100k_base` tokenizer;
 that is not the retrieval chunker.
 
 ## Engine memory bound
 
-The embedded engine holds its corpus in the daemon's own memory. Measured on
-this revision with synthetic 300-word documents, it costs about 0.4 GiB to start
-and 130 to 170 MiB more for every MiB of text it indexes, and its resident size
-does not shrink after a large write. After the daemon's own working set, a
-2 GiB service unit leaves room for roughly 5 to 6 MiB of text (an estimate, not
-a measurement of the daemon). The engine therefore accepts
-at most `max_text_bytes` of titles and bodies (default 4 MiB, configurable from
-1 MiB to 1 GiB under `[ports.retrieval]`) and refuses a larger corpus whole,
-before it touches the active index, recording the refusal in its `engine.json`.
-`kizuki doctor` reads that record and prints why hybrid ranking is off. A vault
-larger than the bound stays on the lexical floor; a SQLite-resident vector lane
-would lift the bound and is an open decision, not part of this revision.
+The embedded engine is opt-in and runs in process. Its conservative workload
+bounds are 4 MiB of titles and bodies, 5,000 documents, 10,000 chunks, 20,000
+subject links and 16 MiB of serialized document metadata. Both incremental
+writes and staged rebuilds check these bounds before modifying the active index;
+rebuild checks the whole input before calling the model. A refusal is recorded
+in `engine.json`, and doctor names the exceeded resource and limit. A failed
+rebuild preserves the prior index and the lexical floor remains usable. Only a
+successful authoritative rebuild clears the refusal.
+
+The text cap is configurable with `max_text_bytes` (1 MiB to 1 GiB); the other
+caps are fixed. These limits bound the corpus and vector allocation, not the
+engine's RSS or disk high-water mark after repeated writes. No measured daemon
+capacity or real-model recall claim is made. Keep embeddings off until the local
+server and engine fit the service unit's CPU and memory budget. A different
+vector-store implementation remains outside this change.
 
 ## Local GGUF and rerank lane
 

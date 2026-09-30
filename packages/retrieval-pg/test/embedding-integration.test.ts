@@ -131,9 +131,7 @@ describe("chunking follows the embedder's tokenizer", () => {
     const chunks = chunkDocument({ ...base, text }, 12, 5, count);
     expect(chunks.length).toBeGreaterThan(2);
     for (const chunk of chunks) {
-      const used = chunk.text
-        .split(" ")
-        .reduce((sum, word) => sum + count(word), 0);
+      const used = count(chunk.text);
       expect(used).toBeLessThanOrEqual(12);
     }
     // Overlap re-reads a short tail of the previous chunk, never more than the overlap budget.
@@ -147,6 +145,22 @@ describe("chunking follows the embedder's tokenizer", () => {
     expect(new Set(chunks.flatMap((chunk) => chunk.text.split(" ")))).toEqual(
       new Set(text.split(" ")),
     );
+  });
+
+  test("counts separators and multi-byte characters and preserves unbroken text", () => {
+    const count = (text: string) => Buffer.byteLength(text);
+    for (const text of ["alpha bravo charlie", "🙂".repeat(30), "界".repeat(40), "x".repeat(50)]) {
+      const chunks = chunkDocument({ ...base, text }, 16, 0, count);
+      expect(chunks.every((chunk) => count(chunk.text) <= 16)).toBe(true);
+      expect(chunks.map((chunk) => chunk.text).join(" ").replaceAll(" ", "")).toBe(text.replaceAll(" ", ""));
+    }
+  });
+
+  test("stops allocating chunks at the capacity bound", () => {
+    let counts = 0;
+    const count = (text: string) => { counts++; return text.length; };
+    expect(() => chunkDocument({ ...base, text: "x".repeat(10_000) }, 1, 0, count, 3)).toThrow(PortError);
+    expect(counts).toBeLessThan(100);
   });
 
   test("a run with no whitespace is cut to fit instead of exceeding the window", () => {
@@ -341,6 +355,17 @@ describe("rebuild", () => {
     expect(embedding.chunks).toHaveLength(first * 2);
   });
 
+  test("a changed title re-embeds the body under the new title", async () => {
+    const embedding = new RecordingEmbedding();
+    const { port } = await open(embedding, options);
+    const original = doc("page:title", "body unchanged", "Old title");
+    await port.rebuildFromDocuments([original]);
+    embedding.chunks.length = 0;
+    await port.rebuildFromDocuments([{ ...original, title: "New title" }]);
+    expect(embedding.chunks).toHaveLength(1);
+    expect(embedding.chunks[0]?.title).toBe("New title");
+  });
+
   test("an index grown by upserts and backfill equals one rebuilt from the same documents", async () => {
     const grown = await open(new RecordingEmbedding(), options);
     await grown.port.upsert(corpus);
@@ -367,6 +392,19 @@ describe("rebuild", () => {
   });
 });
 
+test("hidden pending embeddings change no hybrid hits or degradation", async () => {
+  const embedding = new RecordingEmbedding();
+  const { port } = await open(embedding);
+  await port.upsert([{ ...doc("page:visible", "public kettles"), sensitivity: "public" }]);
+  const query = { ...SYNTHETIC_QUERY, text: "kettles", mode: "hybrid" as const, ceiling: "public" as const };
+  const before = await port.search(query);
+  embedding.failAfter = embedding.calls;
+  await expect(port.upsert([{ ...doc("page:hidden", "private kettles"), sensitivity: "private" }])).rejects.toBeInstanceOf(PortError);
+  const after = await port.search(query);
+  expect(after.hits).toEqual(before.hits);
+  expect(after.degraded).toEqual(before.degraded);
+});
+
 describe("the engine's memory bound", () => {
   const MIB = 1024 * 1024;
   const readRefusal = (dataDir: string) => (JSON.parse(readFileSync(join(dataDir, "engine.json"), "utf8")) as { refusal?: { corpus_bytes: number; limit_bytes: number } }).refusal;
@@ -382,8 +420,10 @@ describe("the engine's memory bound", () => {
     expect(refusal?.corpus_bytes).toBeGreaterThan(3 * MIB);
     expect(readRetrievalEngineRefusal(temporary.ctx.vault_path, "kizuki.retrieval.embedded-pg")).toMatchObject({ limit_bytes: 2 * MIB });
 
-    // Replacing the same document with a small one fits again and clears the record.
+    // An unrelated successful write cannot claim the rejected corpus was activated.
     await bounded.upsert([doc("page:small", "a small note about teapots")]);
+    expect(readRefusal(temporary.ctx.data_dir)).toBeDefined();
+    await bounded.rebuildFromDocuments([doc("page:small", "a small note about teapots")]);
     expect(readRefusal(temporary.ctx.data_dir)).toBeUndefined();
   });
 
@@ -416,6 +456,29 @@ describe("the engine's memory bound", () => {
     await expect(port.upsert([big("page:huge", 3)])).rejects.toMatchObject({ code: "budget_exhausted" });
     const health = await port.health();
     expect(health.status === "ready" && health.detail["max_text_bytes"]).toBe(2 * MIB);
+  });
+
+  test("chunk expansion is bounded before a rebuild calls the model", async () => {
+    const embedding = new RecordingEmbedding();
+    const { port, temporary } = await open(embedding, { chunk_tokens: 1, chunk_overlap: 0 });
+    await port.upsert([doc("page:kept", "kettles")]);
+    embedding.failAfter = embedding.calls;
+    await expect(port.rebuildFromDocuments([doc("page:expanded", words(10_001))])).rejects.toMatchObject({ code: "budget_exhausted" });
+    expect(readRefusal(temporary.ctx.data_dir)).toBeDefined();
+    expect((await port.search({ ...SYNTHETIC_QUERY, text: "kettles" })).hits.map((hit) => hit.doc_id)).toEqual(["page:kept"]);
+  });
+
+  test("concurrent writes cannot both spend the same remaining text budget", async () => {
+    const { port } = await open(undefined, { max_text_bytes: 2 * MIB });
+    const outcomes = await Promise.allSettled([
+      port.upsert([doc("page:left", "alpha ".repeat(220_000))]),
+      port.upsert([doc("page:right", "bravo ".repeat(220_000))]),
+    ]);
+    expect(outcomes.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    const refused = outcomes.find(result => result.status === "rejected");
+    expect(refused?.status === "rejected" && refused.reason.code).toBe("budget_exhausted");
+    const health = await port.health();
+    expect(health.status === "ready" && Number(health.detail["text_bytes"])).toBeLessThanOrEqual(2 * MIB);
   });
 });
 

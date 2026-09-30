@@ -21,6 +21,7 @@ export type Behaviour =
   | { kind: "short" }
   | { kind: "null-value" }
   | { kind: "shuffle" }
+  | { kind: "wrong-model" }
   | { kind: "huge" };
 
 /** Deterministic vector so equal inputs match and different inputs differ. */
@@ -89,7 +90,7 @@ export function startFakeServer(): FakeServer {
           ...vector.slice(1),
         ]);
       if (path === "/api/embed")
-        return Response.json({ model: body.model, embeddings: vectors });
+        return Response.json({ model: behaviour.kind === "wrong-model" ? "other-model" : body.model, embeddings: vectors });
       if (path === "/v1/embeddings") {
         const data = vectors.map((embedding, index) => ({
           object: "embedding",
@@ -98,7 +99,7 @@ export function startFakeServer(): FakeServer {
         }));
         return Response.json({
           object: "list",
-          model: body.model,
+          model: behaviour.kind === "wrong-model" ? "other-model" : body.model,
           data: behaviour.kind === "shuffle" ? data.reverse() : data,
         });
       }

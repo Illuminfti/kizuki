@@ -1,5 +1,3 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   EMBEDDING_CAPABILITIES,
   EMBEDDING_CONTRACT,
@@ -105,6 +103,12 @@ function vectorOf(value: unknown, dims: number): Float32Array {
       );
     }
     vector[at] = item;
+    if (!Number.isFinite(vector[at])) {
+      throw new PortError("space_mismatch", "embedding value exceeds float32 range", false);
+    }
+  }
+  if (!vector.some((value) => value !== 0)) {
+    throw new PortError("space_mismatch", "embedding server returned a zero vector", false);
   }
   return vector;
 }
@@ -156,7 +160,7 @@ function parseVectors(
       false,
     );
   }
-  return rows.map((row) => vectorOf(row, dims));
+  return Array.from(rows, (row) => vectorOf(row, dims));
 }
 
 export class LocalHttpEmbeddingPort implements EmbeddingPort {
@@ -166,6 +170,7 @@ export class LocalHttpEmbeddingPort implements EmbeddingPort {
   private tail: Promise<unknown> = Promise.resolve();
   private failure: Failure | null = null;
   private closed = false;
+  private readonly lifetime = new AbortController();
 
   constructor(ctx: PortContext) {
     this.config = parseLocalHttpEmbeddingConfig(ctx.config);
@@ -180,18 +185,6 @@ export class LocalHttpEmbeddingPort implements EmbeddingPort {
         false,
       );
     }
-    mkdirSync(ctx.data_dir, { recursive: true, mode: 0o700 });
-    writeFileSync(
-      join(ctx.data_dir, "space.json"),
-      `${JSON.stringify({
-        space: this.resolved,
-        api: this.config.api,
-        endpoint: `http://${this.config.host.includes(":") ? `[${this.config.host}]` : this.config.host}:${this.config.port}`,
-        max_input_tokens: this.config.max_input_tokens,
-        batch_size: this.config.batch_size,
-      })}\n`,
-      { mode: 0o600 },
-    );
   }
 
   space(): EmbeddingSpace {
@@ -242,9 +235,11 @@ export class LocalHttpEmbeddingPort implements EmbeddingPort {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.lifetime.abort();
+    await this.tail;
   }
 
-  /** One request at a time: the server is CPU bound and a query must not queue behind a whole batch backlog. */
+  /** One call at a time; the retrieval rail submits a bounded pass one chunk at a time. */
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
     const run = this.tail.then(work, work);
     this.tail = run.catch(() => undefined);
@@ -281,7 +276,11 @@ export class LocalHttpEmbeddingPort implements EmbeddingPort {
                 },
           timeout_ms: this.config.timeout_ms,
           max_response_bytes: MAX_RESPONSE_BYTES,
+          signal: this.lifetime.signal,
         });
+        if (!isPlainObject(reply) || reply["model"] !== this.config.model) {
+          throw new PortError("space_mismatch", "embedding server did not report the pinned model", false);
+        }
         out.push(
           ...parseVectors(
             this.config.api,
@@ -292,6 +291,7 @@ export class LocalHttpEmbeddingPort implements EmbeddingPort {
         );
       }
     } catch (error) {
+      if (this.closed) closed();
       const mapped = mapFailure(error);
       this.failure =
         mapped.code === "space_mismatch"

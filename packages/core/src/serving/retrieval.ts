@@ -45,17 +45,18 @@ export async function retrievalCandidates(
   query: string,
   options: SearchOptions,
 ): Promise<RetrievalCandidates> {
+  const vectorUnavailable = vectorExpected(ctx) ? ["retrieval-vector-unavailable"] : [];
   if (ctx.retrieval === undefined) {
     return { ids: [], degraded: [
       ...(ctx.retrievalUnavailable ? ["retrieval-unavailable", ...(typeof ctx.retrievalUnavailable === "string" ? [ctx.retrievalUnavailable] : [])] : []),
-      ...(vectorExpected(ctx) ? ["retrieval-vector-unavailable"] : []),
+      ...vectorUnavailable,
     ] };
   }
-  if (sourcePolicyEpoch(ctx.db) > 0 && !isLocalSourcePort(ctx.retrieval)) return { ids: [], degraded: ["retrieval-source-egress-denied"] };
+  if (sourcePolicyEpoch(ctx.db) > 0 && !isLocalSourcePort(ctx.retrieval)) return { ids: [], degraded: ["retrieval-source-egress-denied", ...vectorUnavailable] };
   // The v1 port has no page-type predicate. Keep that request on the scoped
   // deterministic index rather than spending its window on excluded types.
   if (options.types !== undefined) {
-    return { ids: [], degraded: ["retrieval-type-scope-unavailable"] };
+    return { ids: [], degraded: ["retrieval-type-scope-unavailable", ...vectorUnavailable] };
   }
   const kinds: RetrievalDocKind[] = options.scope === "canon" ? ["page"]
     : options.scope === "ledger" ? ["event"] : ["page", "event"];
@@ -83,7 +84,7 @@ export async function retrievalCandidates(
     } catch {
       // Keep the compatibility marker; distinguish invalid success from an
       // unavailable provider without publishing its payload or error text.
-      return { ids: [], degraded: ["retrieval-unavailable", "retrieval-invalid-response"] };
+      return { ids: [], degraded: ["retrieval-unavailable", "retrieval-invalid-response", ...vectorUnavailable] };
     }
     return {
       ids: validated.hits.map((hit) => hit.doc_id),
@@ -91,11 +92,11 @@ export async function retrievalCandidates(
       degraded: [
         ...publicDegraded(validated.degraded),
         // A configured embedding port the engine could not bind is not a lexical-only choice.
-        ...(mode === "lexical" && vectorExpected(ctx) ? ["retrieval-vector-unavailable"] : []),
+        ...(mode === "lexical" ? vectorUnavailable : []),
       ],
     };
   } catch {
-    return { ids: [], degraded: ["retrieval-unavailable"] };
+    return { ids: [], degraded: ["retrieval-unavailable", ...vectorUnavailable] };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }

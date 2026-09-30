@@ -406,3 +406,13 @@ test("engine vector degradation reaches the caller only as fixed public labels",
     expect(search.data?.degraded).not.toContain(engine);
   }
 });
+
+test("a configured vector layer is labelled unavailable when the request cannot use the engine", async () => {
+  const f = await live();
+  selectEmbedding(f.vaultPath);
+  const failed = port(async () => { throw new Error("provider failure"); });
+  const answer = await serveSearch({ ...f.owner(), retrieval: failed }, { query: "kettle" });
+  expect(answer.data?.degraded).toContain("retrieval-vector-unavailable");
+  const scoped = await serveSearch({ ...f.owner(), retrieval: modePort(HYBRID_DESCRIPTOR, []) }, { query: "kettle", types: ["person"] });
+  expect(scoped.data?.degraded).toContain("retrieval-vector-unavailable");
+});

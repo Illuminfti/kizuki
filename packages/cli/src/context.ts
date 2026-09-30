@@ -15,7 +15,7 @@ import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
 import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, LedgerReadError, LEDGER_SCHEMA_VERSION, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch } from "@kizuki/core/internal";
 import type { LedgerReadContext } from "@kizuki/core/internal";
 import { INVOCATION, shellQuote } from "./runtime";
-import { inspectConfiguredRetrieval, openConfiguredRetrieval } from "./retrieval-runtime";
+import { inspectConfiguredRetrieval, loadConfiguredEmbedding, openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
   type KizukiConfig,
@@ -271,7 +271,7 @@ async function withOpenReadVault<T>(
     // the reads that rank by vector: it binds the engine when it is free, and a live host that
     // holds it leaves that read on the ledger floor with the answer saying so.
     let retrievalUnavailable = options.retrieval !== undefined && options.retrieval !== "none" && inspectConfiguredRetrieval(vaultPath);
-    if (retrievalUnavailable && options.retrieval === "bound") {
+    if (retrievalUnavailable && options.retrieval === "bound" && loadConfiguredEmbedding(vaultPath).id !== "kizuki.embedding.none") {
       try { retrieval = await openConfiguredRetrieval(vaultPath); retrievalUnavailable = false; }
       catch (error) {
         if (!(error instanceof PortError) || !error.retryable ||

@@ -11,7 +11,7 @@ import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
 
 // Each test spawns the MCP server and opens the embedded SQL engine.
-setDefaultTimeout(300_000);
+setDefaultTimeout(120_000);
 
 const BIN = join(import.meta.dir, "..", "src", "bin.ts");
 const ENGINE = "kizuki.retrieval.embedded-pg";

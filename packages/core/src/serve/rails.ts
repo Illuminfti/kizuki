@@ -15,7 +15,7 @@ import { inspectPurgeHealth, listPurgeRecoveryReceipts, resumePurge } from "../l
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { createDurableWriteBudget } from "./budget-ledger";
-import { embedBackfillPeriod, loadServeConfig } from "./config";
+import { embedBackfillPeriod, loadEmbeddingSelection, loadServeConfig } from "./config";
 import { composeBrief, repairBriefPages, type BriefRepair } from "./brief";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { inspectServeDoctor } from "./doctor";
@@ -296,6 +296,7 @@ async function runEmbedBackfill(
   // Without an embedding port the rail backs off to a long period; configuring
   // one pulls the next run forward again.
   applyRailPeriod(db, "embed-backfill", embedBackfillPeriod(vaultPath), now);
+  if (loadEmbeddingSelection(vaultPath).state === "off") return { status: "ok" };
   // The engine's own store holds the backlog: chunks that have no vector yet.
   const engine = hooks?.claims?.retrieval;
   if (engine?.embedPending === undefined) return { status: "ok" };

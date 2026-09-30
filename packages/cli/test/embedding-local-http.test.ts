@@ -1,7 +1,7 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { OWNER, serveContextPacket, serveSearch } from "@kizuki/core";
+import { OWNER, runRail, serveContextPacket, serveSearch } from "@kizuki/core";
 import {
   SEMANTIC_DIMS,
   semanticVector,
@@ -13,7 +13,7 @@ import { openConfiguredRetrieval } from "../src/retrieval-runtime";
 import { createHelpers, fixtureConsent } from "./helpers";
 
 // Each test spawns real CLI processes and opens the embedded SQL engine.
-setDefaultTimeout(300_000);
+setDefaultTimeout(120_000);
 
 const helpers = createHelpers();
 const servers: FakeServer[] = [];
@@ -314,4 +314,71 @@ test("kizuki query and kizuki context reach the same hybrid ranking from the com
     "sedan",
   );
   expect(labelled.degraded).toContain("retrieval-vector-unavailable");
+});
+
+test("the embed-backfill rail drains a backlog left while the embedding server was down", async () => {
+  const f = helpers.tempVault();
+  const server = semanticServer();
+  configure(f.vault, server);
+  const db = openVaultDb(f.vault);
+  const engine = await openConfiguredRetrieval(f.vault);
+  try {
+    const doc = (id: string, title: string, text: string) => ({
+      doc_id: id, kind: "page" as const, title, text, sensitivity: "public" as const, taint: "clean" as const,
+      authority: "connector_evidence" as const, subjects: [], provenance: [], occurred_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z",
+    });
+    // The write is stored and searchable by keyword; its vectors wait for the server.
+    server.behaviour = { kind: "status", status: 503 };
+    // Not `expect(...).rejects`: it blocks the loop that also serves the fake server.
+    const refused = await engine!.upsert([doc("page:sedan", "Sedan", "We signed for the sedan on Friday."), doc("page:storm", "Weather", "A hurricane warning covers the coast.")]).then(() => null, (error: unknown) => error);
+    expect(refused).toMatchObject({ code: "unavailable", retryable: true });
+    const before = await engine!.health();
+    const backlog = before.status === "ready" ? Number(before.detail["backlog_depth"]) : -1;
+    expect(backlog).toBeGreaterThan(0);
+
+    const rails = { hooks: { claims: { db, retrieval: engine! }, embedding_configured: true } };
+    const down = await runRail(db, f.vault, "embed-backfill", rails);
+    expect(down.status).toBe("degraded");
+    expect(down.retrieval.degraded).toEqual(["embedding-unavailable"]);
+    expect(down.retrieval.pending_ops).toBe(backlog);
+
+    server.behaviour = { kind: "ok" };
+    const drained = await runRail(db, f.vault, "embed-backfill", rails);
+    expect(drained.status).toBe("ok");
+    expect(drained.retrieval).toEqual({ upserts: 2, removals: 0, pending_ops: 0, degraded: [] });
+    const after = await engine!.health();
+    expect(after.status === "ready" && after.detail["backlog_depth"]).toBe(0);
+
+    const found = await engine!.search({ text: "automobile", mode: "hybrid", scope: { kinds: ["page"] }, ceiling: "private", limit: 5, deadline_ms: 3_000 });
+    expect(found.hits[0]?.doc_id).toBe("page:sedan");
+    expect(found.degraded).not.toContain("vector-backlog");
+    // Nothing left to do: the next run is idle.
+    expect((await runRail(db, f.vault, "embed-backfill", rails)).retrieval.upserts).toBe(0);
+  } finally {
+    await engine?.close();
+    db.close();
+  }
+});
+
+test("doctor explains an index update refused by the capacity bound without dialing the model", async () => {
+  const f = helpers.tempVault();
+  const server = semanticServer();
+  configure(f.vault, server);
+  const engine = await openConfiguredRetrieval(f.vault);
+  try {
+    const refused = await engine!.rebuildFromDocuments([{
+      doc_id: "page:oversized", kind: "page", title: "Synthetic capacity fixture",
+      text: "synthetic text ".repeat(400_000), sensitivity: "public", taint: "clean",
+      authority: "connector_evidence", subjects: [], provenance: [],
+      occurred_at: null, updated_at: "2026-09-01T00:00:00.000Z",
+    }]).then(() => null, (error: unknown) => error);
+    expect(refused).toMatchObject({ code: "budget_exhausted" });
+    expect(server.requests).toHaveLength(0);
+  } finally { await engine?.close(); }
+  const report = await helpers.runCliAsync(f.env, "doctor", "--json");
+  const json = JSON.parse(report.stdout) as { data: { serve: { stores: { vector_layer: { state: string; detail: string } } } } };
+  expect(json.data.serve.stores.vector_layer.state).toBe("refused");
+  expect(json.data.serve.stores.vector_layer.detail).toContain("text_bytes");
+  expect(json.data.serve.stores.vector_layer.detail).toContain("lexical floor remains available");
+  expect(server.requests).toHaveLength(0);
 });

@@ -29,7 +29,9 @@ by keyword and declares `vector-unavailable`; only a vector-only search throws.
 Chunks hold body text sized by the embedding port's tokenizer when it has one;
 the title travels beside each chunk. The engine refuses a corpus above
 `max_text_bytes` (default 4 MiB) whole, before touching the active index, and
-records the refusal in `engine.json` for `kizuki doctor`. `kizuki.retrieval.fts5` remains the zero-model default.
+records the refusal in `engine.json` for `kizuki doctor`. Fixed document,
+metadata, subject-link and chunk caps also bound expansion. These workload
+limits do not promise a measured RSS ceiling. `kizuki.retrieval.fts5` remains the zero-model default.
 It does not write canon, own correction, label sensitivity, install a
 daemon, or implement purge totality. Rerank and local GGUF stay out of
 this package.

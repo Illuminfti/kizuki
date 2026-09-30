@@ -393,8 +393,6 @@ function countOriginPages(report: CanonPageReport): StoreDoctor["origin"] {
   return { machine, human };
 }
 
-const MIB = 1024 * 1024;
-
 function vectorLayer(embedding: EmbeddingSelection, vaultPath: string): StoreDoctor["vector_layer"] {
   switch (embedding.state) {
     case "off": return { state: "off", detail: "vector layer: off (no embedding model configured)" };
@@ -410,7 +408,7 @@ function vectorLayer(embedding: EmbeddingSelection, vaultPath: string): StoreDoc
       if (refusal !== null) {
         return {
           state: "refused",
-          detail: `vector layer: refused (${embedding.id} is configured, but the corpus is ${Math.ceil(refusal.corpus_bytes / MIB)} MiB of text and the embedded engine holds at most ${Math.floor(refusal.limit_bytes / MIB)} MiB in a 2 GiB service unit; searches stay lexical. Raise max_text_bytes under [ports.retrieval] only where the memory exists)`,
+          detail: `vector layer: refused (last index update exceeded ${refusal.resource ?? "text_bytes"}: ${refusal.requested ?? refusal.corpus_bytes} > ${refusal.limit ?? refusal.limit_bytes}; the prior index is preserved, and the lexical floor remains available. Use a smaller corpus; raise max_text_bytes only with sufficient memory)`,
         };
       }
       return { state: "configured", detail: `vector layer: configured (${embedding.id})` };

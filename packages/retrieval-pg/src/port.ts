@@ -9,25 +9,16 @@ import type { LeaseReceipt } from "./lease";
 import { candidateFromDoc, finalizeRecipe, hitsFromCandidates, walkNeighbors, MAX_WALK_DEPTH } from "./rank";
 import { canonical, SqlStore } from "./sql-store";
 import type { CandidateRow } from "./sql-store";
-import { chunkDocument, engineMismatch } from "./store";
+import { ChunkLimitError, chunkDocument, engineMismatch } from "./store";
 import type { EngineJson, EmbedCheckpoint } from "./store";
 import { assertNoStoreTransaction, runStoreTransaction } from "./txn";
 import { sha256Text, writeAtomic } from "./atomic";
 import { RefreshWatcher } from "./watcher";
 import type { RefreshWatcherOptions } from "./watcher";
-/**
- * Text the engine will hold: titles plus bodies, in bytes. The SQL engine runs
- * in-process and its resident memory grows with what it stores and never
- * shrinks after a large write. Measured on this revision with synthetic
- * 300-word documents it costs about 0.4 GiB to start and 130 to 170 MiB more
- * for every MiB of text indexed (lexical lane; with 768-wide vectors at the
- * high end). After the daemon's own working set, a 2 GiB service unit leaves
- * room for roughly 5 to 6 MiB of text (an estimate, not a daemon measurement),
- * so the default keeps headroom below that. A larger corpus is refused, not
- * attempted: an owner who has the memory raises it with `max_text_bytes` under
- * `[ports.retrieval]`.
- */
+/** Conservative opt-in capacity guard; this is not a measured RSS guarantee. */
 export const EMBEDDED_ENGINE_MAX_TEXT_BYTES = 4 * 1024 * 1024;
+const CORPUS_LIMITS = { text_bytes: EMBEDDED_ENGINE_MAX_TEXT_BYTES, payload_bytes: 16 * 1024 * 1024, documents: 5_000, chunks: 10_000, links: 20_000 };
+type CorpusSize = Record<keyof typeof CORPUS_LIMITS, number>;
 const MIN_TEXT_BYTES = 1024 * 1024;
 const MAX_TEXT_BYTES = 1024 * 1024 * 1024;
 
@@ -106,41 +97,64 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   }
   private get textBudget(): number { return this.options.max_text_bytes ?? EMBEDDED_ENGINE_MAX_TEXT_BYTES; }
   /** Records why the corpus was turned away, where `kizuki doctor` can read it without opening the engine. */
-  private async refuse(corpusBytes: number): Promise<never> {
-    const refusal = { corpus_bytes: corpusBytes, limit_bytes: this.textBudget, at: this.ctx.clock() };
-    await this.store.run(async () => { await this.store.setMeta("refusal", refusal); await this.syncEngineMetadata(); });
-    throw new PortError("budget_exhausted", `corpus of ${Math.ceil(corpusBytes / 1048576)} MiB exceeds the embedded engine's ${Math.floor(this.textBudget / 1048576)} MiB bound`, false);
+  private async checkCapacity(size: CorpusSize): Promise<void> {
+    for (const resource of Object.keys(CORPUS_LIMITS) as Array<keyof CorpusSize>) {
+      const limit = resource === "text_bytes" ? this.textBudget : CORPUS_LIMITS[resource];
+      if (size[resource] <= limit) continue;
+      const refusal = { resource, requested: size[resource], limit,
+        corpus_bytes: size.text_bytes, limit_bytes: this.textBudget, at: this.ctx.clock() };
+      await this.store.setMeta("refusal", refusal);
+      await this.syncEngineMetadata();
+      throw new PortError("budget_exhausted", `embedded retrieval ${resource} exceeds the configured capacity (${size[resource]} > ${limit}); use the lexical floor`, false);
+    }
+  }
+  private documentSize(doc: RetrievalDoc): CorpusSize {
+    let chunks: number;
+    try {
+      chunks = chunkDocument(doc, this.tokens, this.overlap, this.countTokens, CORPUS_LIMITS.chunks).length;
+    } catch (error) {
+      if (!(error instanceof ChunkLimitError)) throw error;
+      // The capacity check records this refusal without allocating the rest.
+      chunks = error.limit + 1;
+    }
+    return { text_bytes: textBytes(doc), payload_bytes: Buffer.byteLength(JSON.stringify(doc)) * 2,
+      documents: 1, chunks, links: doc.subjects.length };
+  }
+  private async retainedSize(ids: readonly string[] = []): Promise<CorpusSize> {
+    return (await this.store.db.query<CorpusSize>(`
+        SELECT coalesce(sum(octet_length(title)+octet_length(body)),0)::float8 AS text_bytes,
+          coalesce(sum(octet_length(doc::text)),0)::float8 AS payload_bytes,
+          count(*)::int AS documents, coalesce(sum(cardinality(subjects)),0)::int AS links,
+          (SELECT count(*)::int FROM retrieval_chunks WHERE NOT(doc_id=ANY($1::text[]))) AS chunks
+        FROM retrieval_docs WHERE NOT(doc_id=ANY($1::text[]))`, [ids])).rows[0]!;
   }
   async upsert(docs: readonly RetrievalDoc[]): Promise<RetrievalMutationReport> {
     this.assertMutable();
-    const validated = docs.map(validateRetrievalDoc);
-    const stored = await this.store.run(async () => (await this.store.db.query<{ documents: number; total: number; replaced: number }>(
-      `SELECT count(*)::int AS documents, coalesce(sum(octet_length(title)+octet_length(body)),0)::float8 AS total,
-              coalesce(sum(octet_length(title)+octet_length(body)) FILTER (WHERE doc_id=ANY($1::text[])),0)::float8 AS replaced
-         FROM retrieval_docs`, [validated.map((doc) => doc.doc_id)])).rows[0]!);
-    const projected = stored.total - stored.replaced + validated.reduce((sum, doc) => sum + textBytes(doc), 0);
-    if (projected > this.textBudget) await this.refuse(projected);
+    const validated = [...new Map(docs.map(raw => { const doc = validateRetrievalDoc(raw); return [doc.doc_id, doc] as const; })).values()];
     await this.store.run(async () => {
       this.assertMutable();
       await this.assertAvailable();
-      await this.store.transaction(async (tx) => {
-        for (const doc of validated) {
-          await this.store.writeDoc(tx, doc, this.tokens, this.overlap, this.countTokens);
-        }
-        // The first documents of an empty engine are cut the way this embedder cuts them.
-        if (this.embedding !== undefined && stored.documents === 0) {
-          await tx.query("INSERT INTO retrieval_meta VALUES ('chunking',$1::jsonb) ON CONFLICT(key) DO NOTHING", [JSON.stringify(this.chunkingId())]);
-        }
+      const ids = validated.map(doc => doc.doc_id);
+      const sizes = await this.retainedSize(ids);
+      for (const doc of validated) {
+        // Refuse large text and metadata before allocating its chunks.
+        const bytes = textBytes(doc);
+        await this.checkCapacity({ ...sizes, text_bytes: sizes.text_bytes + bytes });
+        const payload = Buffer.byteLength(JSON.stringify(doc)) * 2;
+        await this.checkCapacity({ ...sizes, text_bytes: sizes.text_bytes + bytes, payload_bytes: sizes.payload_bytes + payload });
+        const added = this.documentSize(doc);
+        for (const key of Object.keys(sizes) as Array<keyof CorpusSize>) sizes[key] += added[key];
+        await this.checkCapacity(sizes);
+      }
+      const empty = (await this.store.db.query("SELECT 1 FROM retrieval_docs LIMIT 1")).rows.length === 0;
+      await this.store.transaction(async tx => {
+        for (const doc of validated) await this.store.writeDoc(tx, doc, this.tokens, this.overlap, this.countTokens);
+        if (this.embedding !== undefined && empty) await this.store.setMeta("chunking", this.chunkingId(), tx);
       });
+      // Refusal describes a failed corpus activation. Incremental writes cannot clear it.
     });
-    if (await this.store.run(() => this.store.meta("refusal")) !== null) {
-      await this.store.run(async () => { await this.store.db.query("DELETE FROM retrieval_meta WHERE key='refusal'"); await this.syncEngineMetadata(); });
-    }
-    if (this.embedding !== undefined) {
-      // A write embeds the documents it wrote. An older backlog is the embed-backfill rail's, not this caller's.
-      await this.runEmbedding(undefined, validated.map((doc) => doc.doc_id));
-    }
-    return { processed: validated.length };
+    if (this.embedding !== undefined) await this.runEmbedding(undefined, validated.map(doc => doc.doc_id));
+    return { processed: docs.length };
   }
   async search(query: RetrievalQuery): Promise<RetrievalResult> {
     this.assertOpen();
@@ -158,7 +172,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       }
       else {
         space = this.effectiveSpace();
-        const mismatch = await this.store.run(() => this.store.spaceMismatch(space!));
+        const mismatch = await this.store.run(() => this.store.spaceMismatch(space!, q));
         if (mismatch) {
           if (q.mode === "vector") {
             throw new PortError("space_mismatch", "embedding-space-mismatch; lexical fallback is available", false);
@@ -200,7 +214,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
         text: row.body ?? row.doc.text, vector: row.vector === undefined ? null : Float32Array.from(JSON.parse(row.vector) as number[]),
       });
       const final = finalizeRecipe({ lexical: lexical.map(asCandidate), vector: vector === null ? null : vectors.map(asCandidate), queryVector: vector, edges, visible: id => visible.has(id) });
-      if (vector !== null && await this.store.pendingCount() > 0) {
+      if (vector !== null && await this.store.pendingCount(q) > 0) {
         degraded.push("vector-backlog");
       }
       if (q.scope.kinds?.length === 0 || q.scope.subjects?.length === 0) {
@@ -350,8 +364,8 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   embedPending(options: { limit?: number } = {}): Promise<EmbedProgress> {
     this.assertMutable();
     assertNoStoreTransaction("embedPending");
-    if (this.embeddingWork !== undefined) {
-      return this.embeddingWork;
+    if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > CORPUS_LIMITS.chunks)) {
+      throw new PortError("config_invalid", "invalid embedding pass limit", false);
     }
     return this.runEmbedding(options.limit);
   }
@@ -388,10 +402,16 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
         // again once, and give up on it only if the fresh chunks are refused too.
         if (!(error instanceof PortError) || error.code !== "budget_exhausted" || recut.has(pending.doc_id)) throw error;
         recut.add(pending.doc_id);
-        await this.store.run(() => this.store.transaction(async (tx) => {
-          const row = (await tx.query<{ doc: RetrievalDoc }>("SELECT doc FROM retrieval_docs WHERE doc_id=$1", [pending.doc_id])).rows[0];
-          if (row !== undefined) await this.store.writeChunks(tx, row.doc, this.tokens, this.overlap, this.countTokens);
-        }));
+        await this.store.run(async () => {
+          const row = (await this.store.db.query<{ doc: RetrievalDoc }>("SELECT doc FROM retrieval_docs WHERE doc_id=$1", [pending.doc_id])).rows[0];
+          if (row !== undefined) {
+            const size = await this.retainedSize([row.doc.doc_id]);
+            const added = this.documentSize(row.doc);
+            for (const key of Object.keys(size) as Array<keyof CorpusSize>) size[key] += added[key];
+            await this.checkCapacity(size);
+            await this.store.transaction(tx => this.store.writeChunks(tx, row.doc, this.tokens, this.overlap, this.countTokens));
+          }
+        });
         continue;
       }
       this.validateVector(vector ?? null, space);
@@ -420,7 +440,23 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
   private async ensureChunking(): Promise<void> {
     const wanted = this.chunkingId();
     if (await this.store.meta("chunking") === wanted) return;
-    if ((await this.store.db.query("SELECT 1 FROM retrieval_chunks WHERE embedding IS NOT NULL LIMIT 1")).rows.length === 0) {
+    if ((await this.store.db.query("SELECT 1 FROM retrieval_chunks WHERE embedding IS NOT NULL LIMIT 1")).rows.length !== 0) {
+      throw new PortError("space_mismatch", "chunk configuration changed; rebuild from authoritative documents", false);
+    }
+    // Price the whole recut before modifying any existing chunk.
+    const size: CorpusSize = { text_bytes: 0, payload_bytes: 0, documents: 0, chunks: 0, links: 0 };
+    let last = "";
+    for (;;) {
+      const rows = (await this.store.db.query<{ doc: RetrievalDoc }>("SELECT doc FROM retrieval_docs WHERE doc_id>$1 ORDER BY doc_id LIMIT 100", [last])).rows;
+      if (rows.length === 0) break;
+      for (const { doc } of rows) {
+        const added = this.documentSize(doc);
+        for (const key of Object.keys(size) as Array<keyof CorpusSize>) size[key] += added[key];
+        await this.checkCapacity(size);
+      }
+      last = rows[rows.length - 1]!.doc.doc_id;
+    }
+    {
       let last = "";
       for (;;) {
         const rows = (await this.store.db.query<{ doc: RetrievalDoc }>("SELECT doc FROM retrieval_docs WHERE doc_id>$1 ORDER BY doc_id LIMIT 100", [last])).rows;
@@ -501,14 +537,19 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       await this.store.run(() => this.store.db.exec(`
         CREATE TEMP TABLE rebuild_docs (doc_id text PRIMARY KEY,doc jsonb NOT NULL);
         CREATE TEMP TABLE rebuild_vectors (chunk_id text PRIMARY KEY,embedding vector NOT NULL);`));
-      let corpusBytes = 0;
+      const size: CorpusSize = { text_bytes: 0, payload_bytes: 0, documents: 0, chunks: 0, links: 0 };
       for await (const raw of docs) {
         this.assertOpen();
         if (requiresEmbedding) throw new PortError("unavailable", "rebuilding an embedded index requires its embedding port", false);
         const doc = validateRetrievalDoc(raw);
         // Stop reading at the bound: nothing has touched the active index yet.
-        corpusBytes += textBytes(doc);
-        if (corpusBytes > this.textBudget) await this.refuse(corpusBytes);
+        const bytes = textBytes(doc);
+        await this.store.run(() => this.checkCapacity({ ...size, text_bytes: size.text_bytes + bytes }));
+        const payload = Buffer.byteLength(JSON.stringify(doc)) * 2;
+        await this.store.run(() => this.checkCapacity({ ...size, text_bytes: size.text_bytes + bytes, payload_bytes: size.payload_bytes + payload }));
+        const added = this.documentSize(doc);
+        for (const key of Object.keys(size) as Array<keyof CorpusSize>) size[key] += added[key];
+        await this.store.run(() => this.checkCapacity(size));
         await this.store.run(() => this.store.db.query("INSERT INTO rebuild_docs VALUES($1,$2::jsonb) ON CONFLICT(doc_id) DO UPDATE SET doc=excluded.doc", [doc.doc_id, JSON.stringify(doc)]));
       }
       if (space !== null) {
@@ -522,7 +563,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
           for (const {doc} of rows) {
             const chunks = chunkDocument(doc, this.tokens, this.overlap, this.countTokens);
             // A document whose chunks were already embedded under this space keeps its vectors.
-            if (!(sameSpace && await this.store.run(() => this.store.reuseVectors(doc.doc_id, chunks)))) {
+            if (!(sameSpace && await this.store.run(() => this.store.reuseVectors(doc.doc_id, doc.title, chunks)))) {
               for (const chunk of chunks) {
                 assertNoStoreTransaction("embedDocs");
                 const [vector] = await this.embedding!.embedDocs([{chunk_id: chunk.chunk_id, doc_id: doc.doc_id, title: doc.title, text: chunk.text, index: chunk.index}]);

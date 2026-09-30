@@ -37,8 +37,8 @@ export interface EmbeddingPort extends Port {
   embedQuery(texts: readonly string[]): Promise<Float32Array[]>;
   embedDocs(chunks: readonly Chunk[]): Promise<Float32Array[]>;
   /**
-   * Tokens `text` occupies under the port's tokenizer. Engines size chunks with
-   * it. A port without it is chunked by whitespace-separated words.
+   * Model token count or a documented conservative bound for the complete text,
+   * including separators. Engines size chunks with it. A port without it is chunked by whitespace-separated words.
    */
   countTokens?(text: string): number;
 }

@@ -1,5 +1,5 @@
 export type HttpFailureKind =
-  "timeout" | "network" | "too_large" | "malformed" | "redirect" | "status";
+  "timeout" | "network" | "too_large" | "malformed" | "redirect" | "status" | "aborted";
 
 export class HttpFailure extends Error {
   override readonly name = "HttpFailure";
@@ -18,6 +18,7 @@ export interface JsonPost {
   readonly body: unknown;
   readonly timeout_ms: number;
   readonly max_response_bytes: number;
+  readonly signal?: AbortSignal;
 }
 
 const HEAD_END = new Uint8Array([13, 10, 13, 10]);
@@ -138,6 +139,7 @@ export function postJson(request: JsonPost): Promise<unknown> {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      request.signal?.removeEventListener("abort", abort);
       try {
         socket?.terminate();
       } catch {
@@ -153,11 +155,14 @@ export function postJson(request: JsonPost): Promise<unknown> {
       settle(() => {
         throw new HttpFailure(kind);
       });
+    const abort = (): void => fail("aborted");
     const timer = setTimeout(() => fail("timeout"), request.timeout_ms);
     const flush = (target: { write(data: Uint8Array): number }): void => {
       if (written < outgoing.byteLength)
         written += target.write(outgoing.subarray(written));
     };
+    request.signal?.addEventListener("abort", abort, { once: true });
+    if (request.signal?.aborted) { abort(); return; }
 
     Bun.connect({
       hostname: request.host,
@@ -170,9 +175,10 @@ export function postJson(request: JsonPost): Promise<unknown> {
           else flush(target);
         },
         drain(target) {
-          flush(target);
+          if (!settled) flush(target);
         },
         data(_target, chunk) {
+          if (settled) return;
           total += chunk.byteLength;
           if (total > request.max_response_bytes + MAX_HEAD_BYTES) {
             fail("too_large");

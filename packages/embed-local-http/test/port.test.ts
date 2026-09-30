@@ -222,8 +222,9 @@ describe("kizuki.embedding.local-http wire formats", () => {
       hostname: "127.0.0.1",
       port: 0,
       async fetch(request) {
-        const body = (await request.json()) as { input: string[] };
+        const body = (await request.json()) as { model: string; input: string[] };
         const text = JSON.stringify({
+          model: body.model,
           data: body.input.map((input, index) => ({
             index,
             embedding: hashVector(input),
@@ -252,6 +253,12 @@ describe("kizuki.embedding.local-http wire formats", () => {
 });
 
 describe("kizuki.embedding.local-http failure handling", () => {
+  test.each(["openai", "ollama"])("refuses a different reported model with %s", async (api) => {
+    const { server, open } = fixture({ api });
+    server.behaviour = { kind: "wrong-model" };
+    expect((await refusal(() => open().embedQuery(["grace"]))).code).toBe("space_mismatch");
+  });
+
   test("a wrong width, a short reply and a non-finite value are a space mismatch, never padded", async () => {
     const { server, open } = fixture();
     const port = open();
@@ -338,6 +345,24 @@ describe("kizuki.embedding.local-http failure handling", () => {
     expect(server.requests).toHaveLength(0);
   });
 
+  test("unusual Unicode and whitespace cannot evade the conservative byte budget", async () => {
+    const { server, open } = fixture({ max_input_tokens: 128 });
+    const port = open();
+    for (const input of ["界".repeat(60), " ".repeat(150), "🙂".repeat(60)]) {
+      expect((await refusal(() => port.embedQuery([input]))).code).toBe("budget_exhausted");
+    }
+    expect(server.requests).toHaveLength(0);
+  });
+
+  test("values that overflow float32 and zero vectors are refused", async () => {
+    const { server, open } = fixture();
+    const port = open();
+    for (const value of [1e100, 0]) {
+      server.embed = () => Array.from({ length: DIMS }, () => value);
+      expect((await refusal(() => port.embedQuery(["grace"]))).code).toBe("space_mismatch");
+    }
+  });
+
   test("a closed port refuses work", async () => {
     const { open } = fixture();
     const port = open();
@@ -346,6 +371,16 @@ describe("kizuki.embedding.local-http failure handling", () => {
       "unavailable",
     );
     expect(() => port.space()).toThrow(PortError);
+  });
+
+  test("closing a port cancels its in-flight request", async () => {
+    const { server, open } = fixture({ timeout_ms: 300 });
+    server.behaviour = { kind: "delay", ms: 1_000 };
+    const port = open();
+    const pending = port.embedQuery(["grace"]).then(() => null, (error: unknown) => error);
+    while (server.requests.length === 0) await Bun.sleep(1);
+    await port.close();
+    expect(await pending).toMatchObject({ code: "unavailable", retryable: false });
   });
 
   test("HTTP_PROXY in the environment cannot reroute the request", async () => {
@@ -394,7 +429,7 @@ describe("kizuki.embedding.local-http space identity", () => {
     expect(space.provider).toBe("local-http");
     expect(space.model).toBe("synthetic-embed-v1");
     expect(space.id).toMatch(/^local-http:synthetic-embed-v1@8#[0-9a-f]{8}$/);
-    expect(space.tokenizer_id).toBe("kizuki:estimate-v1");
+    expect(space.tokenizer_id).toBe("kizuki:utf8-bytes-v1");
     expect(space.prompt_query).toBe("search_query: {q}");
     expect(space.prompt_doc).toBe("search_document: {title}\n{text}");
   });
@@ -408,6 +443,7 @@ describe("kizuki.embedding.local-http space identity", () => {
     expect(idOf({ api: "ollama" }).id).toBe(base);
     expect(idOf({ endpoint: "http://127.0.0.1:65000" }).id).toBe(base);
     expect(idOf({ timeout_ms: 5_000 }).id).toBe(base);
+    expect(idOf({ chunk_tokens: 200 }).id).not.toBe(base);
   });
 
   test("refuses to start when the configured space is not the expected one", async () => {
@@ -422,7 +458,7 @@ describe("kizuki.embedding.local-http space identity", () => {
     ).toBe("space_mismatch");
   });
 
-  test("countTokens is additive over whitespace, so an engine can size chunks word by word", () => {
+  test("countTokens includes UTF-8 bytes and separators", () => {
     const port = fixture().open();
     const samples = [
       "Grace runs partnerships at Acme.",
@@ -431,10 +467,7 @@ describe("kizuki.embedding.local-http space identity", () => {
       "supercalifragilisticexpialidocious 1234567890",
     ];
     for (const text of samples) {
-      const words = text.split(/\s+/).filter(Boolean);
-      expect(
-        words.reduce((sum, word) => sum + port.countTokens!(word), 0),
-      ).toBe(port.countTokens!(text));
+      expect(port.countTokens!(text)).toBe(Buffer.byteLength(text));
     }
     expect(port.countTokens!("")).toBe(0);
   });

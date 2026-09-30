@@ -379,11 +379,10 @@ the baseline FTS index; a missing optional index stays missing and is reported
 as degraded. An older or incomplete authoritative schema requires explicit
 `kizuki init <path>` before reads can proceed.
 
-`query` and `context` bind the configured retrieval engine when it is free. When
-the vault also selects an embedding port (see
-[Semantic retrieval](#semantic-retrieval-embedding-port)) and the engine can
-rank by vector, they ask it for hybrid ranking; otherwise they ask for lexical
-ranking. A live host that holds the engine's writer lease (the daemon, an MCP
+`query` and `context` bind the configured retrieval engine when it is free and
+the vault selects an embedding port (see
+[Semantic retrieval](#semantic-retrieval-embedding-port)). A vector-capable
+engine receives hybrid requests; otherwise reads use lexical ranking. A live host that holds the engine's writer lease (the daemon, an MCP
 session) leaves the read on the authorized SQLite floor, reported as
 `configured-engine-unavailable` and `retrieval-unavailable`. Whenever an
 embedding port is configured and the answer did not rank by vector, it also
@@ -716,7 +715,7 @@ nothing. With an embedding port and the embedded engine bound, each run embeds
 up to 200 chunks that have no vector yet, newest documents first, and its
 receipt counts the documents embedded and the chunks still waiting. When the
 embedding server does not answer, the run is `degraded` with
-`embedding-unavailable` and the backlog is left for the next run. Doctor counts an idle rail's empty streak in elapsed periods, so coalescing does not slow that alarm. A new embedding selection is applied when the service starts and on the embed rail's next run. The `journal-prune` rail drops receipts older than
+`embedding-unavailable` and the backlog is left for the next run. Doctor counts an idle rail's empty streak in elapsed periods, so coalescing does not slow that alarm. The rail rechecks its on/off selection and schedule each run; restart the service to bind a changed embedding port or model. The `journal-prune` rail drops receipts older than
 `[serve] journal_retention_days` (default 7) and then the oldest until
 `run-receipts.jsonl` fits 8 MiB. Doctor reads at most the newest 5,000 receipts and scans at most the newest 1 MiB of the journal for orphans.
 
@@ -794,36 +793,54 @@ or a proxy you run can carry it elsewhere, and that is yours to check.
 
 - **Identity.** The space id names the model, the width, both prompts and the
   token estimate (`local-http:<model>@<dims>#<digest>`). Changing a prompt,
-  the model or the width is a new space: vectors made under the old one stop
+  the model, width or chunk configuration is a new space: vectors made under the old one stop
   matching, and `kizuki rebuild --confirm` re-embeds. The endpoint and wire
   format are not part of it. A reply with the wrong width, count or a
   non-finite value is a `space_mismatch` and is never padded or truncated.
-- **Chunking.** Kizuki carries no model tokenizer, so chunks are sized with a
-  deliberately high estimate (`kizuki:estimate-v1`: one token per three ASCII
-  letters, per two digits, per other letter or symbol). A chunk, its prompt, a
-  title capped at 64 estimated tokens and eight special tokens always fit
-  `max_input_tokens`; an `ollama` server is also asked not to truncate. Chunks
-  are therefore somewhat smaller than the model allows. The title is framed into
-  every chunk's document prompt and is not part of the chunk text.
+- **Chunking.** The port budgets one token per UTF-8 byte, including whitespace
+  (`kizuki:utf8-bytes-v1`), a conservative bound for byte-level BPE and
+  byte-fallback tokenizers. This is not an exact model tokenizer. Chunking counts
+  complete spans, preserves Unicode boundaries, and reserves space for the
+  document prompt, a title capped at 64 bytes and eight special tokens. Configure
+  a smaller window for servers that expand input or add more framing tokens.
+  Ollama is also asked to refuse truncation. The title is framed into each
+  document input and is separate from the body chunk.
 - **Hybrid everywhere it is advertised.** `query`, `context`, MCP `search` and
   `context_packet` ask a vector-capable engine for hybrid ranking. If the
   server is down, slow or refuses, the engine answers with keyword ranking and
   the answer carries `retrieval-vector-unavailable`; the embedding call may use
   two thirds of the 3 second search deadline. `retrieval-vector-partial` means
-  some chunks have no vector yet, so vector results cover only part of the
-  corpus.
+  some permitted chunks have no vector yet, so vector results cover only part
+  of the caller's permitted corpus.
 - **Backlog.** The `embed-backfill` rail embeds chunks without vectors, 200 per
   run. A write embeds the documents it wrote and leaves an older backlog to the
   rail. A refresh reuses the vectors of documents that did not change.
-- **Memory bound.** The engine runs in process and its memory grows with the
-  text it holds. It accepts up to 4 MiB of titles and bodies by default, sized
-  for a 2 GiB service unit; a larger corpus is refused whole (nothing is
-  half-indexed), searches stay lexical, and `kizuki doctor` prints
-  `vector layer: refused (...)` with the corpus size and the bound. An owner
-  who has the memory raises it with `max_text_bytes` (1 MiB to 1 GiB) under
-  `[ports.retrieval]`, which needs the table form `id = "kizuki.retrieval.embedded-pg"`.
-  The bound was measured on synthetic 300-word documents; it is a guard, not a
-  capacity promise.
+- **Capacity bound.** The embedded engine accepts up to 4 MiB of titles and
+  bodies by default, with fixed caps of 5,000 documents, 10,000 chunks, 20,000
+  subject links and 16 MiB of serialized document metadata. Rebuild stops reading
+  at the first exceeded bound, before calling the model or replacing the active
+  index. `kizuki doctor` names the resource and limit that refused the last index
+  update. The prior index is preserved; the authorized lexical floor remains
+  available. Only a successful authoritative rebuild clears that refusal.
+  `max_text_bytes` (1 MiB to 1 GiB) under `[ports.retrieval]` can raise the text
+  cap, using `id = "kizuki.retrieval.embedded-pg"`; the other caps remain.
+  These are conservative workload limits, not a measured service RSS guarantee.
+  Keep hybrid off on a constrained unit until the model server and retrieval
+  engine fit its memory and CPU budget.
+
+The deterministic quality fixture proves that the hybrid wiring recovers
+synthetic paraphrases that lexical retrieval misses. It does not measure the
+quality of any real model. Embeddings remain off by default; enabling them and
+pinning an immutable model id on the local server are owner choices.
+
+Restart the daemon and MCP sessions after changing embedding configuration;
+their engine and embedder are bound for the process lifetime. The backfill rail
+rechecks the configured on/off state and schedule on each pass.
+
+Wire formats were checked on 2026-09-30 against the
+[OpenAI embeddings reference](https://developers.openai.com/api/reference/resources/embeddings/methods/create)
+and [Ollama embed reference](https://docs.ollama.com/api/embed). Tests use fake
+loopback servers; live model quality and capacity qualification remain unrun.
 
 The GGUF table embedder (`kizuki.embedding.gguf`) loads only the small table
 format used by the tests and refuses real transformer models. It is a fixture,
@@ -1103,7 +1120,9 @@ rebuilds vectors in that space. The public CLI refuses when that binding is
 unavailable instead of discarding vector state. Other layers are not implemented and exit 2. `--prune-old` cannot
 be combined with `--layer`, `--port`, `--confirm`, or a budget option.
 
-Rebuild has no fixed corpus ceiling. It runs under an explicit resource budget:
+The authoritative rebuild scanner runs under an explicit resource budget. The
+selected retrieval engine can impose a smaller capacity bound (see Semantic
+retrieval above):
 `--max-records N` (documents a configured retrieval port may be handed at once,
 default 1000000), `--max-entries N` (vault directory entries the preflight may
 inspect, default 200000), and `--max-source-bytes N` (canon file bytes, and

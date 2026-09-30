@@ -41,6 +41,15 @@ const run = (f: ReturnType<typeof vault>, port: RetrievalPort | undefined) =>
   });
 
 describe("embed-backfill drains the engine's backlog", () => {
+  test("an unconfigured vault never calls an engine's embedding pass", async () => {
+    const f = vault(false);
+    const { port, limits } = engine(async () => { throw new Error("embedding must stay off"); });
+    try {
+      expect((await run(f, port)).status).toBe("ok");
+      expect(limits).toEqual([]);
+    } finally { f.db.close(); }
+  });
+
   test("a pass embeds a bounded batch and receipts the documents and what is left", async () => {
     const f = vault(true);
     const { port, limits } = engine(async () => ({ chunks: 200, documents: 37, remaining: 1_200 }));

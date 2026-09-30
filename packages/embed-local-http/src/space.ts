@@ -16,7 +16,7 @@ export function sanitizeModelName(name: string): string {
 
 /**
  * The id names everything that changes a vector: model, width, both prompts and
- * the token estimate. A prompt edit therefore starts a new space, and rows
+ * the token budget and chunk parameters. A prompt edit therefore starts a new space, and rows
  * embedded under the old one stop matching instead of silently mixing. The
  * endpoint and wire format are not part of it: the same model behind either
  * API answers in the same space.
@@ -33,6 +33,8 @@ export function spaceFromConfig(
         config.prompt_query,
         config.prompt_doc,
         TOKENIZER_ID,
+        config.chunk_tokens,
+        config.chunk_overlap,
       ]),
     )
     .digest("hex")
