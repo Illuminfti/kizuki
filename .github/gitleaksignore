@@ -22,3 +22,10 @@ df334914dccfef538ab625413cab9999d330247b:packages/core/test/sensitivity/event-cl
 df334914dccfef538ab625413cab9999d330247b:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:94
 df334914dccfef538ab625413cab9999d330247b:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:333
 df334914dccfef538ab625413cab9999d330247b:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:337
+# The same synthetic canaries after the integration rebase.
+25b841c94987fb121977425c860846f633ec193c:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:93
+25b841c94987fb121977425c860846f633ec193c:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:94
+25b841c94987fb121977425c860846f633ec193c:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:333
+25b841c94987fb121977425c860846f633ec193c:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:337
+25b841c94987fb121977425c860846f633ec193c:packages/core/test/serving/world-correct-modes.test.ts:generic-api-key:102
+25b841c94987fb121977425c860846f633ec193c:packages/core/test/serving/canon-classes.test.ts:generic-api-key:34
