@@ -1,4 +1,7 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
+import { join } from "node:path";
+import { accept, listAudit } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
 
 setDefaultTimeout(120_000);
@@ -52,4 +55,23 @@ test("unknown CLI contracts fail with an audited fixed refusal", () => {
       result: { ok: false, error: { code: "unsupported_contract", message: "requested contract unavailable", retryable: false } },
     });
   }
+});
+
+test("an unknown query contract is refused and audited even when the index is stale", () => {
+  const setup = tempVault();
+  const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  try {
+    expect(accept(db, {
+      schema: "kizuki.event/v1", connector_id: "fixture", source_record_id: "contract-stale",
+      kind: "message", occurred_at: "2026-09-01T00:00:00Z", observed_at: "2026-09-01T00:00:00Z",
+      text: "An ordinary fixture", subjects: [], deleted: false, attachments: [], metadata: {},
+    }).status).toBe("stored");
+    const result = runCli(setup.env, "query", "ordinary", "--response-contract", "kizuki.envelope/v9", "--json");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("requested contract unavailable");
+    expect(JSON.parse(result.stdout)).toMatchObject({ result: { error: { code: "unsupported_contract" } } });
+    const row = listAudit(db, "owner", { kind: "access", limit: 1 })[0];
+    expect(row?.served).toEqual([]);
+    expect(row?.denied).toEqual([{ id: "tool:search", reason: "unsupported_contract" }]);
+  } finally { db.close(); }
 });
