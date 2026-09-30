@@ -78,9 +78,11 @@ readers can deliberately replacement-decode malformed octets into evidence.
 A decoded replacement character is not itself a crash or authorization
 failure. The Telegram mapper can return an event that host ingress refuses;
 the harness does not mistake a mapper for an authorization or ingestion API.
-This campaign does not cover every credential/state decoder, provider SDK
-transport, filesystem replacement race, or arbitrary stream timing. Existing
-package conformance and boundary tests remain required.
+The matrix does not exercise screenpipe or WHOOP projections, the complete
+Pocket/Omnivore/WhatsApp filesystem and media mapping stages, or app-specific
+HTTP route handlers. It also does not cover every credential/state decoder,
+provider SDK transport, filesystem replacement race, or arbitrary stream
+timing. Existing package conformance and boundary tests remain required.
 
 ## Findings and open work
 
