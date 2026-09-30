@@ -120,7 +120,7 @@ describe("derived receipt walk", () => {
         { ...emptyIndexCursor(), receipt_id: "01IDLE00000000000000000001" },
         () => {
           scanned += 1;
-          return { pages: [], skipped: [], truncated: false };
+          return { pages: [], skipped: [], truncated: false, scanned_files: 0, scanned_bytes: 0 };
         },
       );
       expect(scanned).toBe(0);
@@ -146,7 +146,7 @@ describe("derived receipt walk", () => {
         { ...emptyIndexCursor(), receipt_id: "01NEW000000000000000000001" },
         () => {
           scanned += 1;
-          return { pages: [], skipped: [], truncated: false };
+          return { pages: [], skipped: [], truncated: false, scanned_files: 0, scanned_bytes: 0 };
         },
       );
       expect(scanned).toBe(1);
