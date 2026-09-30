@@ -436,6 +436,7 @@ async function runRailImpl(
   activeRuns.add(runId);
   const vaultKey = resolve(vaultPath);
   let activeVault = false;
+  let lease: { process: LeaseProcess; release: boolean } | undefined;
   try {
     const now = options.now ?? (() => new Date().toISOString());
     const started = now();
@@ -448,7 +449,6 @@ async function runRailImpl(
     let budget: BudgetTracker | undefined;
     let runtime: AnyRailRuntime | undefined;
     let interrupted = false;
-    let lease: { process: LeaseProcess; release: boolean } | undefined;
     try {
       if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
         throw new Error("rail hooks and acquireRuntime are mutually exclusive");
@@ -457,7 +457,18 @@ async function runRailImpl(
       // do not import older receipt/usage journals before validating a sync decision.
       definition.preflight?.(db);
       initServe(db);
-        if (definition.recover_canon !== false && inspectCanonRecovery(db).pending) {
+      if (activeVaultRuns.has(vaultKey)) {
+        throw new ServeDaemonError("lease_busy", "a rail is already running for this vault");
+      }
+      activeVaultRuns.add(vaultKey);
+      activeVault = true;
+      const holder = thisProcess(now);
+      const borrowed = leaseState(db, holder) === "held";
+      if (!acquireLease(db, holder).acquired) {
+        throw new ServeDaemonError("lease_busy", "writer lease is busy; retry the rail");
+      }
+      lease = { process: holder, release: !borrowed };
+      if (definition.recover_canon !== false && inspectCanonRecovery(db).pending) {
         // Writer-held mode: a held write blocks only new canon writes, so the
         // rails that ingest, index or prune keep running around it.
         try { recoverCanonWrites({ db, vault_path: vaultPath }); }
@@ -499,16 +510,12 @@ async function runRailImpl(
     } finally {
       // Close before publication so failure cannot leave a successful receipt.
       // This also releases the binding before any journal persistence can fail.
-      try {
-        if (runtime !== undefined) {
-          try { await runtime.close(); }
-          catch {
-            if (interrupted) throw new Error("rail runtime close failed after interruption");
-            partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "rail runtime close failed"] };
-          }
+      if (runtime !== undefined) {
+        try { await runtime.close(); }
+        catch {
+          if (interrupted) throw new Error("rail runtime close failed after interruption");
+          partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "rail runtime close failed"] };
         }
-      } finally {
-        if (lease?.release === true) releaseLease(db, lease.process);
       }
     }
 
@@ -559,6 +566,7 @@ async function runRailImpl(
   } finally {
     activeRuns.delete(runId);
     if (activeVault) activeVaultRuns.delete(vaultKey);
+    if (lease?.release === true) releaseLease(db, lease.process);
   }
 }
 
