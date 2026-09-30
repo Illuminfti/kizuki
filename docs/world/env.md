@@ -41,10 +41,10 @@ Send that body to `/v1/context_packet` with the caller's bearer. Token clients
 that omit the selector also receive v2; the adapter supplies it. Owner requests
 keep the legacy default. The transport route version does not select the
 content version. Nested selectors are refused, including a selector inside
-`args`. Explicit v1 HTTP requests and
-direct Core calls with missing or v1 selectors still retain compatibility in
-this stage. Refusing those scoped requests is a separate draft change pending
-the compatibility decision.
+`args`. On this draft branch, explicit v1 HTTP requests and direct Core calls
+with missing or v1 selectors are refused for scoped principals. That separate
+[compatibility change](env4.md) remains pending the D-ENV decision; the main
+envelope rollout retains those legacy forms.
 
 The owner CLI supports explicit selection:
 
