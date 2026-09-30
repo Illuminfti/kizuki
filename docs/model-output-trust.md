@@ -13,7 +13,7 @@ authority. Every rule below is deterministic and needs no second model.
 
 | Rule | Where | Effect |
 | --- | --- | --- |
-| A typed claim is quoted | claim writer | Every typed claim whose evidence is not the owner's own native correction is stored with `taint: quoted`, whatever the producer asked for. The page it renders into carries `taint: "quoted"`, and served chunks and packet blocks carry the stamp. |
+| A typed claim is quoted | claim writer and materializer | New typed claims whose evidence is not the owner's own native correction are stored with `taint: quoted`, whatever the producer asked for. Each selected source support renders quoted, including support on a retained clean parent. The page carries `taint: "quoted"`, and served chunks and packet blocks carry the stamp. |
 | A literal must be grounded | admission, before journaling | A literal object contained in its cited span after normalization, on whole-token boundaries, keeps the model's stated perspective. Otherwise the claim is admitted only as `interpretation: inferred`, `mode: uncertain`. |
 | Person state needs a quoted basis | admission | `health.*` and `preference.*` claims are dropped as `invalid_claim` unless the literal contains at least two tokens and is contained in the cited span. The host cannot tell the owner from a contact, so no subject is exempt; the owner states such a fact through a correction. |
 | Instruction-shaped text is not repeated | admission | A literal or rendered body, for a claim of any object kind, that repeats an instruction-shaped span from a cited record is dropped as `invalid_claim`, unless the claim reports it with `mode: quoted`. A role label such as `Operating system: Linux` is not a turn and is not matched; a role marker counts only at a sentence or line start with text after the colon. |
@@ -39,6 +39,9 @@ released when the same claim gains support from a second enrolled source, or
 when the owner supports it. Two records of one source are one root, because one
 attacker-controlled inbox can send both. The owner's own correction is native
 support and is never held.
+
+The parent's authority label cannot substitute for currently permitted native
+support. Hidden native contributions cannot release a source-only reading.
 
 Each source names its subjects in its own namespace, so a second source that
 states the same thing writes its own claim rather than adding support to the

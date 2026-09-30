@@ -50,7 +50,7 @@ function titleOf(semantic:ClaimV2Assertion,current:string):string {
 }
 function context(db:Database):ServeContext {return {db,vaultPath:"",principal:OWNER,sourcePurpose:"derive"};}
 function render(claim:Claim,support:EligibleSupport):Claim {
- return {...claim,body:support.admission.rendering.body,frontmatter:{},authority:support.admission.authority,confidence:support.admission.confidence,provenance:support.events.map(event=>event.event_id)};
+ return {...claim,body:support.admission.rendering.body,frontmatter:{},taint:support.row.support_origin==="native_owner"?claim.taint:"quoted",authority:support.admission.authority,confidence:support.admission.confidence,provenance:support.events.map(event=>event.event_id)};
 }
 export interface WorldMaterialization {
  readonly handle:string; readonly claims:readonly Claim[];readonly basis:readonly WorldClaimBasis[];
