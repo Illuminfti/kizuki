@@ -381,6 +381,12 @@ so a defaulted page never looks like a decision the previous system made.
 - **Without a mapped date field, `occurred_at` is the file's mtime.** Copying
   a wiki rewrites mtimes and therefore rewrites event identity. Mapping a date
   field is the stable choice.
+- **An edited wiki page is dated by the edit.** A page the importer already
+  emitted and now re-emits because its content changed takes the file's mtime
+  as `occurred_at` (never later than the run; an unusable mtime uses the run),
+  so a timeline window over recent days finds the revision. A page's first
+  import keeps its mapped date. The report's `occurred_at` for a revised page
+  is `mtime`.
 - **The frontmatter reader covers a subset.** Block mappings and sequences,
   flow sequences and mappings on one line, block scalars, quoted and plain
   scalars, and comments. Anchors, aliases, tags, complex keys, directives and

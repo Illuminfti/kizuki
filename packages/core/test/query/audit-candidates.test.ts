@@ -46,7 +46,9 @@ test("search audit candidates retain bounded rank/filter order without projectin
     expect(JSON.stringify(result)).not.toContain("PRIVATE_AUDIT_");
     const projection = sql.find(query => query.includes("FROM search_docs"))!;
     expect(projection.startsWith("SELECT doc_id, scope ")).toBe(true);
-    expect(projection).not.toMatch(/\b(?:body|title|snippet|text_preview)\b/);
+    // Ranking may read text; the identity projection never returns it.
+    expect(projection.slice(0, projection.indexOf(" FROM "))).toBe("SELECT doc_id, scope");
+    expect(projection.slice(0, projection.indexOf(" FROM "))).not.toMatch(/\b(?:body|snippet|text_preview)\b/);
     expect(projection).not.toContain("source_event_bindings");
     expect(projection).toContain("LIMIT ?");
     expect(projection).not.toMatch(/\bOFFSET\b/);
@@ -57,7 +59,8 @@ test("search audit candidates retain bounded rank/filter order without projectin
     const paged = sql.filter(query => query.includes("FROM search_docs")).at(-1)!;
     expect(paged.startsWith("SELECT doc_id, scope ")).toBe(true);
     expect(paged).toContain("LIMIT ? OFFSET ?");
-    expect(paged).not.toMatch(/\b(?:body|title|snippet|text_preview)\b/);
+    expect(paged.slice(0, paged.indexOf(" FROM "))).toBe("SELECT doc_id, scope");
+    expect(paged.slice(0, paged.indexOf(" FROM "))).not.toMatch(/\b(?:body|snippet|text_preview)\b/);
   } finally { db.close(); vault.dispose(); }
 });
 

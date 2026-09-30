@@ -74,6 +74,7 @@ export const queryCommand: Command = {
           path: chunk.path, page_type: chunk.type, sensitivity: chunk.sensitivity,
           taint: chunk.taint, authority: chunk.authority ?? "model_inference", occurred_at: "",
           connector_id: "", subjects: chunk.subjects, snippet: chunk.excerpt, rank: index,
+          coverage: envelope.data?.coverage?.[chunk.page_id] ?? 1,
         })),
         ...envelope.quoted.map((chunk, index): SearchHit & { truncated?: true } => ({
           doc_id: retrievalDocId("event", chunk.event_id), scope: "ledger", title: `${chunk.connector_id} ${chunk.kind}`,
@@ -81,6 +82,7 @@ export const queryCommand: Command = {
           taint: "quoted", authority: "connector_evidence", occurred_at: chunk.occurred_at,
           connector_id: chunk.connector_id, subjects: chunk.subjects, snippet: chunk.text, rank: index,
           ...(chunk.truncated === true ? { truncated: true as const } : {}),
+          coverage: envelope.data?.coverage?.[chunk.event_id] ?? 1,
         })),
       ];
       ctx.assertCurrent();

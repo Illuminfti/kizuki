@@ -160,9 +160,17 @@ function planPage(
   if (occurredAt === null && mtime === null) {
     notes.push("occurred_at: unusable_mtime");
   }
+  // A page a previous run already emitted is a revision, and a revision
+  // happened when the file was last written, not when the page was created.
+  // Timelines and "what changed recently" window on this instant. A file
+  // dated after this run is clamped to it.
+  const revisedAt =
+    pinned !== undefined
+      ? new Date(Math.min(Date.parse(mtime ?? opts.observedAt), Date.parse(opts.observedAt))).toISOString()
+      : null;
   const occurredSource: LegacyWikiPageReport["occurred_at"] =
-    occurredAt !== null ? "field" : mtime !== null ? "mtime" : "observed";
-  const occurred = occurredAt ?? mtime ?? opts.observedAt;
+    revisedAt !== null ? (mtime === null ? "observed" : "mtime") : occurredAt !== null ? "field" : mtime !== null ? "mtime" : "observed";
+  const occurred = revisedAt ?? occurredAt ?? mtime ?? opts.observedAt;
 
   const subjects = planSubjects(data, mapping);
   const fields = planFields(data, mapping, slots);

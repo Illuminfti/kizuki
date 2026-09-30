@@ -375,6 +375,23 @@ A cut excerpt ends with `…` in text output and has `"truncated": true` in
 `--json`. `--full-text` returns whole records; a large capture then makes a
 large document. Canon hits are unchanged.
 
+Words are ANDed. A question of three or more words (it ends in `?` or starts
+with a question or instruction word, and has no quotes or `*`) that matches
+fewer than three records that way is retried on its content words: stopwords
+drop out, inflected words match by stem, and a result must contain at least
+60% of the distinct content words. `degraded` then carries `query-relaxed`,
+and `--json` gives each hit a `coverage` between 0 and 1, the share of those
+words it holds (a literal match is `1`); a caller that wants a stricter answer
+thresholds it. A question nothing answers prints `0 hits` and reports
+`query-no-match` rather than returning loose matches. A page whose title is the
+whole query ranks first, and at close relevance a page the owner wrote ranks
+above one the loop wrote (under `auto/`, a daily brief, or a `rollup`). One
+result stands for one record: a capture that a returned canon page cites is not
+listed beside it, and once a record is edited only its current capture is
+searchable. The scan of withheld candidates is capped at 500 candidate identities in the owner audit sample, reported as
+`scan-bound`. Agent selection filters sensitivity and live source policy before
+matching; withheld evidence changes no agent diagnostic or ranking statistic.
+
 Reads wait out ordinary daemon writes rather than failing: `query` and
 `context` keep the owner access-audit writer on the same bounded busy timeout
 as every other ledger connection, and report `lease_held` rather than a lock
@@ -544,7 +561,11 @@ grant. Other purposes are unchanged. Same engine as MCP
 on stdout and offer a next step on stderr. If gathering fails, the CLI returns
 exit 1 and reports `degraded` in JSON instead of presenting the header as a
 complete packet. Omitting `--since`/`--until` keeps the purpose profile's
-recent window (session is seven days). Explicit RFC3339 bounds pass through to
+recent window (session is seven days). With `--query`, the query picks the
+canon pages and, within that window, the captures, using the same matching as
+`query`; a capture that a packed page cites is left out, and named subjects
+add their other recent captures after the matches. A query that matches
+neither reports `query-no-match` in `retrieval_degraded`. Explicit RFC3339 bounds pass through to
 Core's existing request fields; timeline evidence uses each source's
 `occurred_at`. Malformed timestamps and an inverted window are usage errors
 before the vault is opened. `--task-event` asks Core for structured sections

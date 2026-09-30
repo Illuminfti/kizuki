@@ -447,16 +447,17 @@ describe("the packet is scoped by the grant, not by the request", () => {
     ).toBe(true);
     expect(widened.data?.sections.timeline ?? 0).toBeGreaterThan(0);
 
+    // The query picks the captures now, so ask for ones the fixture holds inside the grant's window.
     const restricted = await serveContextPacket(live.agent("windowed"), {
       purpose: "session",
-      query: "Atlas",
+      query: "kettle",
       since: "2020-01-01T00:00:00.000Z",
       until: "2030-01-01T00:00:00.000Z",
       budget_tokens: 2_000,
       include: ["timeline" as const],
     });
     expect(restricted.quoted.every((chunk) => chunk.occurred_at !== occurredAt)).toBe(true);
-    expect(restricted.quoted.map((chunk) => chunk.occurred_at)).toEqual([
+    expect(restricted.quoted.map((chunk) => chunk.occurred_at).sort()).toEqual([
       "2026-02-28T11:00:00Z",
       "2026-02-28T12:00:00Z",
     ]);
