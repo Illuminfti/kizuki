@@ -100,6 +100,8 @@ describe("inactive page cleanup during an incomplete graph walk", () => {
       ]);
       expect(readDerivedMeta(db, "graph")).toEqual({
         ...beforeMeta,
+        // The stamp counts the six served rows, including partial cleanup.
+        doc_count: 6,
         rebuilt_at: expect.any(String),
         skipped_count: 1,
         status: "degraded",
