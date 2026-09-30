@@ -891,9 +891,9 @@ function finishSourceErasure(scope: VaultMutationScope, io: CanonIo, intent: Sou
     }
     if (intent.page_id !== null && !receipt.page_path.startsWith("archive/")) {
         if (page === null)
-            removeDerivedPage(io.db, intent.page_id, io.vault_path);
+            removeDerivedPage(io.db, intent.page_id, io.vault_path, scope);
         else
-            refreshDerivedPage(io.db, canonPageFromWrite(io.vault_path, receipt.page_path, intent.page_id, page, receipt.after_hash), io.vault_path);
+            refreshDerivedPage(io.db, canonPageFromWrite(io.vault_path, receipt.page_path, intent.page_id, page, receipt.after_hash), io.vault_path, scope);
     }
 }
 /** Called only inside the source purge's existing native writer ownership. */

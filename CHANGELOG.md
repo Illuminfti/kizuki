@@ -377,14 +377,11 @@
   loaded machine does not fail tests at Bun's 5-second default. A test's own
   explicit timeout is unchanged. The CLI test helper kills a child process that
   has not exited after 90 seconds and fails that test with a clear message.
-- A canon write costs the page written, not the vault. It assessed the live
-  evidence of every page, several times, walked the vault and rewrote every
-  graph edge, so a page took many seconds at production size and the
-  writer was held throughout. It now assesses that page's evidence and
-  projects the edges of that page and of the pages that link to it, from the
-  graph's own record of the pages; a stat scan of the vault notices any other
-  file that changed and takes one full walk. A test with 4,000 live pages
-  writes a page in the time of 200 and reads only the written page's sources.
+- After graph registry initialization, a canon write assesses only the written
+  page's evidence and refreshes its edges and affected incoming links through
+  indexed page names. Ordinary refresh and rebuild reconcile unrelated disk
+  edits. Synthetic coverage compares writes with 4,000 and 200 live pages,
+  checks a ratio below three, and verifies rebuild equality.
 - The sync pass writes canon one page at a time. It takes and releases the
   writer for every page and reads a stop request between pages, so a stop ends
   it after the page in progress. `kizuki tell` and `kizuki undo` wait up to 30

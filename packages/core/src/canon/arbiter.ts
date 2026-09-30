@@ -3,7 +3,7 @@ import type { Claim, ClaimKind } from "../contracts/proposal";
 import { AUTHORITY_TIERS } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
 import { registeredPagePath } from "../graph/graph";
-import { findPageById, scanCanonSignatures } from "../vault/pages";
+import { findPageById } from "../vault/pages";
 import { CanonWriteError } from "./errors";
 import { machineOriginPath } from "./origin";
 export { assertPageRelPath } from "./paths";
@@ -78,9 +78,9 @@ function resolvePageById(io: CanonIo, pageId: string): ResolvedPage | null {
     const onDisk = pageAt(io, indexed.rel_path);
     if (onDisk !== null && onDisk.page_id === pageId) return onDisk;
   }
-  // A page the index does not know is found by the graph registry while the
-  // vault still matches it, and by a walk otherwise.
-  const registered = registeredPagePath(io.db, scanCanonSignatures(io.vault_path), pageId);
+  // The reconciled registry resolves IDs without a vault scan. The selected
+  // file's identity is still checked before it can become a write target.
+  const registered = registeredPagePath(io.db, undefined, pageId);
   if (registered === null) return null;
   if (registered !== undefined) {
     const onDisk = pageAt(io, registered);

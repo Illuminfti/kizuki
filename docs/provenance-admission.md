@@ -17,15 +17,15 @@ withdraws incoming relations to unrecorded active pages, including known
 aliases during an incomplete scan. Purge-held aliases remain suppressed even
 for inactive pages. Other inactive pages leave ordinary unresolved prose links
 unchanged. Page identity and owner bytes remain available to the arbiter.
-Refreshing one written page reads that page's evidence and the graph's record
-of the other pages (`graph_pages`, `graph_links`, `graph_files`), which every
-full walk replaces and a purge clears; while the vault's stat signatures still
-match it, no other page is assessed, and a changed file makes the next write
-walk again. Other pages are not assessed again until their own write or a
-rebuild; serving still checks a page's evidence on every read. Incoming relations that resolve differently because of the page
-(a title now shared, a new page a link can reach, an archived page) are
-projected again with it, so the result equals a full rebuild after a complete
-walk.
+After registry initialization, the receipted writer assesses only the written
+page's evidence. The disposable graph registry (`graph_pages`, `graph_links`,
+`graph_page_keys`, `graph_files`) supplies the affected origins and link
+destinations through indexed lookups. A full reconciliation replaces it and
+purge clears it. Ordinary refresh and rebuild reconcile unrelated disk edits;
+the writer does not scan those files. Serving still checks a page's evidence
+on every read. Incoming relations whose resolution changes with the page
+(a shared title, a newly reachable page, an archived page) are projected again
+with it, preserving rebuild equality for the reconciled page set.
 Schema-only FTS recovery restores ledger rows and withholds canon companion
 rows until a rebuild supplies a current page snapshot.
 

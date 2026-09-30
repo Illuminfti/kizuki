@@ -348,6 +348,8 @@ function insertRow(db: Database, row: PageRow, links: PageLinks): void {
        (page_id, rel_path, title, active, admitted, sensitivity, taint, authority, provenance)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(row.id, row.relPath, row.title, row.active ? 1 : 0, row.admitted ? 1 : 0, row.sensitivity, row.taint, row.authority, row.provenance);
+  const key = db.query("INSERT OR IGNORE INTO graph_page_keys (key, page_id) VALUES (?, ?)");
+  for (const alias of linkKeys(row)) key.run(alias, row.id);
   const insert = db.query("INSERT OR IGNORE INTO graph_links (src, kind, target, key) VALUES (?, ?, ?, ?)");
   for (const target of links.wikilinks) insert.run(row.id, "wikilink", target, target.toLowerCase());
   for (const target of links.subjects) insert.run(row.id, "subject", target, target.toLowerCase());
@@ -360,6 +362,7 @@ function saveRow(db: Database, row: PageRow, links: PageLinks): void {
 }
 
 function removeRow(db: Database, id: string, relPath: string): void {
+  db.query("DELETE FROM graph_page_keys WHERE page_id IN (SELECT page_id FROM graph_pages WHERE page_id = ? OR rel_path = ?)").run(id, relPath);
   db.query("DELETE FROM graph_links WHERE src IN (SELECT page_id FROM graph_pages WHERE page_id = ? OR rel_path = ?)").run(id, relPath);
   db.query("DELETE FROM graph_pages WHERE page_id = ? OR rel_path = ?").run(id, relPath);
 }
@@ -370,7 +373,7 @@ function registeredKeys(db: Database, id: string, relPath: string): string[] {
 }
 
 export function clearGraphRegistry(db: Database): void {
-  for (const table of ["graph_links", "graph_pages", "graph_files", "graph_registry"]) {
+  for (const table of ["graph_links", "graph_page_keys", "graph_pages", "graph_files", "graph_registry"]) {
     if (tableExists(db, table)) db.exec(`DELETE FROM ${table}`);
   }
 }
@@ -411,10 +414,10 @@ export function graphRegistryCurrent(
  */
 export function registeredPagePath(
   db: Database,
-  signatures: ReadonlyMap<string, string>,
+  signatures: ReadonlyMap<string, string> | undefined,
   pageId: string,
 ): string | null | undefined {
-  if (!graphRegistryCurrent(db, signatures, { id: pageId })) return undefined;
+  if (!graphRegistryReady(db) || (signatures !== undefined && !graphRegistryCurrent(db, signatures, { id: pageId }))) return undefined;
   return db.query<{ rel_path: string }, [string]>("SELECT rel_path FROM graph_pages WHERE page_id = ?").get(pageId)?.rel_path ?? null;
 }
 
@@ -684,18 +687,15 @@ export function removePageEdges(
  * evidence is assessed, and only it and the pages linking to it are projected
  * again. Callers check `graphRegistryReady` first.
  */
-export function refreshRegisteredPage(db: Database, page: CanonPage, signatures: ReadonlyMap<string, string>): void {
+export function refreshRegisteredPage(db: Database, page: CanonPage, signatures?: ReadonlyMap<string, string>): void {
   assertDerivedDiscoveryReady(db);
   const before = registeredKeys(db, page.id, page.relPath);
   const assessed = assessPage(page, projectablePageEvidence(db, [page]).get(page.relPath));
   db.query("DELETE FROM graph_files WHERE rel_path IN (SELECT rel_path FROM graph_pages WHERE page_id = ?)").run(page.id);
   saveRow(db, assessed.row, assessed.links);
-  const signature = signatures.get(page.relPath);
+  const signature = signatures?.get(page.relPath);
   if (signature !== undefined) db.query("INSERT OR REPLACE INTO graph_files (rel_path, signature) VALUES (?, ?)").run(page.relPath, signature);
-  settleGraph(db, graphState(db, readRegistry(db)), registrySkipped(db), {
-    pageId: page.id,
-    keys: [...before, ...linkKeys(assessed.row)],
-  });
+  settleRegisteredGraph(db, page.id, [...before, ...linkKeys(assessed.row)]);
 }
 
 /** Incremental delete from the registry. Callers check `graphRegistryReady` first. */
@@ -704,7 +704,34 @@ export function removeRegisteredPage(db: Database, pageId: string): void {
   const before = registeredKeys(db, pageId, "");
   db.query("DELETE FROM graph_files WHERE rel_path IN (SELECT rel_path FROM graph_pages WHERE page_id = ?)").run(pageId);
   removeRow(db, pageId, "");
-  settleGraph(db, graphState(db, readRegistry(db)), registrySkipped(db), { pageId, keys: before });
+  settleRegisteredGraph(db, pageId, before);
+}
+
+/** Resolution reads only affected origins, their named destinations, and held pages. */
+function settleRegisteredGraph(db: Database, pageId: string, keys: readonly string[]): void {
+  const ids = [...new Set([pageId, ...affectedPages(db, keys, pageId)])];
+  const targets = [...readLinks(db, ids).values()].flatMap(links => links.wikilinks.map(target => target.toLowerCase()));
+  const held = readDerivedHolds(db);
+  const rows = readRegistry(db, `WHERE page_id IN (SELECT value FROM json_each(?))
+    OR page_id IN (SELECT page_id FROM graph_page_keys WHERE key IN (SELECT value FROM json_each(?)))
+    OR rel_path IN (SELECT value FROM json_each(?)) OR (active=1 AND admitted=0)`,
+    [JSON.stringify(ids), JSON.stringify(targets), JSON.stringify([...held.paths])]);
+  const state = graphState(db, rows);
+  if (!state.complete) {
+    db.exec("DELETE FROM graph_edges");
+    stampGraphIncomplete(db, registrySkipped(db), state.withheldCount);
+    return;
+  }
+  removeHeldEdges(db, state);
+  db.query("DELETE FROM graph_edges WHERE src IN (SELECT value FROM json_each(?))").run(JSON.stringify(registrySkipped(db) === 0 ? ids : [pageId]));
+  if (registrySkipped(db) === 0) projectPages(db, state, ids);
+  else projectOne(db, state, pageId);
+  // Recount a degraded stamp only when it needs repair; ordinary writes use
+  // the bounded relation snapshot above instead of reading the whole registry.
+  const meta = readDerivedMeta(db, "graph");
+  if (registrySkipped(db) > 0) stampGraphIncomplete(db, registrySkipped(db), state.withheldCount);
+  else if (state.withheldCount > 0) markDerivedHeld(db, "graph", state.withheldCount);
+  else if (meta !== null && meta.status !== "ok") restoreGraphStamp(db, graphState(db, readRegistry(db)));
 }
 
 function stampGraph(

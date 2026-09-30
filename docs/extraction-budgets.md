@@ -147,12 +147,13 @@ change nothing, because the pass ended at 32 whatever the setting. A vault with
 a long queue can raise it, and one with a slow model can lower it.
 `doctor --json` reports it as `serve.model.budget.canon_writes_per_run.limit`.
 
-A write costs the page written, not the vault: it assesses that page's
-evidence only and refreshes the graph edges of that page and of the pages
-that link to it. The graph keeps the pages it last projected in the ledger's
-derived tables, so one write no longer walks the vault or assesses every
-page. A file added, removed or rewritten outside the writer is noticed by a
-stat scan and takes one full walk, which fills those tables again.
+After the graph registry has been initialized, a receipted write assesses
+only that page's evidence and refreshes its edges and the incoming links whose
+resolution changed. Indexed page names resolve those links without loading
+the entire registry or walking the vault. A cold or discarded registry takes
+one full reconciliation. Ordinary derived refresh and rebuild still reconcile
+files added, removed or rewritten outside the writer; a canon write does not
+scan unrelated files for edits. Serving checks current evidence on each read.
 
 A typed page group that fails a pass is named in the receipt with its handle
 and page path, for example `page <handle> at auto/world/<handle>.md`. After

@@ -2,6 +2,8 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { rebuildDerived } from "../../src/derived";
 import * as ledger from "../../src/ledger/ledger";
+import * as pages from "../../src/vault/pages";
+import * as provenance from "../../src/vault/provenance";
 import { readDerivedMeta } from "../../src/derived-meta";
 import { seedLivePages } from "../helpers/bulk-pages";
 import { recordedPage } from "../helpers/recorded-page";
@@ -70,3 +72,19 @@ test("an incremental write leaves the graph a full rebuild would produce", async
   rebuildDerived(db, vault.path);
   expect(edges(db)).toEqual(incremental);
 }, 120_000);
+
+test("the receipted writer does no vault walk and assesses only its page", async () => {
+  const { db, vault } = vaultOf(200);
+  const scan = spyOn(pages, "scanCanonSignatures");
+  const walk = spyOn(pages, "listCanonPagesReport");
+  const assess = spyOn(provenance, "assessLivePageEvidence");
+  try {
+    await timedWrite(db, vault.path, "one-page", "See [[Bulk 9]].");
+    expect(scan).not.toHaveBeenCalled();
+    expect(walk).not.toHaveBeenCalled();
+    expect(assess.mock.calls.length).toBeGreaterThan(0);
+    expect(assess.mock.calls.every(([, page]) => page.relPath === "facts/one-page.md")).toBe(true);
+  } finally {
+    scan.mockRestore(); walk.mockRestore(); assess.mockRestore();
+  }
+});

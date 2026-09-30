@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { appendFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as graph from "../../src/graph/graph";
+import { initGraph } from "../../src/graph/schema";
 import { rebuildDerived, refreshDerivedPage, removeDerivedPage } from "../../src/derived";
 import { readDerivedMeta } from "../../src/derived-meta";
 import { serializePage } from "../../src/vault/frontmatter";
@@ -145,3 +146,20 @@ test("the registry follows a page that moves, and a purge clears it", async () =
   expect(graph.graphRegistryReady(db)).toBe(true);
   expect(graphRows(db)).toEqual(rebuiltRows(db, vault.path));
 }, 60_000);
+
+test("an older disposable registry is reconciled before indexed resolution", async () => {
+  const db = searchDb();
+  const vault = tempVault();
+  disposers.push(() => db.close(), vault.dispose);
+  await recordedPage(db, vault.path, "facts/one.md", {
+    id: "fact:one", title: "One", type: "fact", status: "active", sensitivity: "personal", taint: "clean",
+  }, "See [[One]].");
+  rebuildDerived(db, vault.path);
+  const before = graphRows(db);
+  db.exec("DROP TABLE graph_page_keys");
+  initGraph(db);
+  expect(graph.graphRegistryReady(db)).toBe(false);
+  refreshDerivedPage(db, listCanonPages(vault.path)[0]!, vault.path);
+  expect(graph.graphRegistryReady(db)).toBe(true);
+  expect(graphRows(db)).toEqual(before);
+});

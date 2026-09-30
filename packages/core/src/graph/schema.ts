@@ -35,6 +35,15 @@ CREATE TABLE IF NOT EXISTS graph_pages (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS graph_pages_path_idx ON graph_pages (rel_path);
+CREATE INDEX IF NOT EXISTS graph_pages_admission_idx ON graph_pages (active, admitted);
+
+-- Indexed names let one page's links resolve without loading every page.
+CREATE TABLE IF NOT EXISTS graph_page_keys (
+  key TEXT NOT NULL,
+  page_id TEXT NOT NULL,
+  PRIMARY KEY (key, page_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS graph_page_keys_id_idx ON graph_page_keys (page_id);
 
 -- Raw wikilink and subject targets; key is the lowercase form a link resolves by.
 CREATE TABLE IF NOT EXISTS graph_links (
@@ -75,8 +84,11 @@ export function graphSchemaNeedsRebuild(db: Database): boolean {
 
 export function initGraph(db: Database): void {
   if (graphSchemaNeedsRebuild(db)) {
-    db.exec("DROP TABLE graph_edges; DROP TABLE IF EXISTS graph_pages; DROP TABLE IF EXISTS graph_links; DROP TABLE IF EXISTS graph_files; DROP TABLE IF EXISTS graph_registry");
+    db.exec("DROP TABLE graph_edges; DROP TABLE IF EXISTS graph_pages; DROP TABLE IF EXISTS graph_links; DROP TABLE IF EXISTS graph_files; DROP TABLE IF EXISTS graph_registry; DROP TABLE IF EXISTS graph_page_keys");
   }
+  // Existing disposable registries predate the name index. One reconciliation
+  // fills both; never trust a registry with missing resolution keys.
+  if (tableExists(db, "graph_registry") && !tableExists(db, "graph_page_keys")) db.exec("DELETE FROM graph_registry");
   db.exec(GRAPH_SCHEMA);
   initDerivedMeta(db);
 }

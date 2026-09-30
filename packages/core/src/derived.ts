@@ -6,6 +6,7 @@ import {
 } from "./derived-meta";
 import {
   graphRegistryCurrent,
+  graphRegistryReady,
   rebuildGraphLayer,
   refreshPageEdges,
   refreshRegisteredPage,
@@ -34,6 +35,7 @@ import {
   scanCanonSignatures,
 } from "./vault/pages";
 import type { CanonPage } from "./vault/pages";
+import { assertVaultMutationScope, type VaultMutationScope } from "./vault/mutation-scope";
 
 export interface DerivedRebuildResult {
   search: SearchRebuildResult;
@@ -115,19 +117,25 @@ export function rebuildWorldLayer(db: Database): { layer: "world"; tables: strin
 }
 
 /**
- * One incremental write path: search and graph for a single page. While the
- * vault still matches what the graph's page registry was filled from, no page
- * is parsed or assessed but this one; the cost is that page's evidence and the
- * pages that link to it. Any other file added, removed or rewritten takes one
- * full walk, which fills the registry again.
+ * One incremental projection path. A live writer scope uses the reconciled
+ * registry and assesses only this page. Ordinary refresh reconciles external
+ * edits with a stat scan, taking a full walk when another file changed.
  */
 export function refreshDerivedPage(
   db: Database,
   page: CanonPage,
   vaultPath: string,
+  scope?: VaultMutationScope,
 ): void {
+  if (scope !== undefined) assertVaultMutationScope(scope, { db, vault_path: vaultPath });
   initSearch(db);
   initGraph(db);
+  // The writer already checked the exact receipted bytes and source admission.
+  // Reconciliation of unrelated disk edits belongs to the normal refresh/rebuild.
+  if (scope !== undefined && graphRegistryReady(db)) {
+    db.transaction(() => { replacePage(db, page); refreshRegisteredPage(db, page); }).immediate();
+    return;
+  }
   const signatures = scanCanonSignatures(vaultPath);
   const report = graphRegistryCurrent(db, signatures, page) ? null : listCanonPagesReport(vaultPath);
   db.transaction(() => {
@@ -141,9 +149,15 @@ export function removeDerivedPage(
   db: Database,
   pageId: string,
   vaultPath: string,
+  scope?: VaultMutationScope,
 ): void {
+  if (scope !== undefined) assertVaultMutationScope(scope, { db, vault_path: vaultPath });
   initSearch(db);
   initGraph(db);
+  if (scope !== undefined && graphRegistryReady(db)) {
+    db.transaction(() => { removeDoc(db, "canon", pageId); removeRegisteredPage(db, pageId); }).immediate();
+    return;
+  }
   const signatures = scanCanonSignatures(vaultPath);
   const report = graphRegistryCurrent(db, signatures, { id: pageId }) ? null : listCanonPagesReport(vaultPath);
   db.transaction(() => {
