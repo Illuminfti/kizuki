@@ -102,8 +102,9 @@ the serialized contract, and redaction tests prove that secret-shaped text is
 still replaced inside the seven-field envelope. These tests reuse the shared
 reader policy rather than introducing another authorization implementation.
 
-Scoped reads filter candidates before materialization and before session
-candidate limits. Privileged timeline denial enumeration stays on the owner
+Scoped timeline, proposal-provenance and correction-target reads filter
+candidates before materialization. Session reads filter before candidate
+limits. Privileged timeline denial enumeration stays on the owner
 path. V2 authorization and sealing share a protected publication boundary;
 asynchronous reads revalidate the caller's authority and published evidence.
 An unrelated global epoch change alone does not produce a scoped refusal.
