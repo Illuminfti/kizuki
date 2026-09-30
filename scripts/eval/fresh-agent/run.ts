@@ -30,8 +30,8 @@ async function observe(fixture: Awaited<ReturnType<typeof generateVault>>, princ
     }
     case "context_packet": {
       const envelope = await serveContextPacket(ctx, { query: question.query, purpose: "recall", budget_tokens: BUDGET });
-      const output = envelope.data?.packet_md ?? "";
-      return { output, atoms: markdownAtoms(output), status: envelope.data?.truncated ? "truncated" : "ok" };
+      return { output: JSON.stringify(envelope), atoms: markdownAtoms(envelope.data?.packet_md ?? ""),
+        status: envelope.data?.truncated ? "truncated" : "ok" };
     }
     case "search": {
       const envelope = await serveSearch(ctx, { query: question.query, scope: "all", limit: 20 });
@@ -106,7 +106,7 @@ export function renderMarkdown(report: EvaluationReport): string {
     "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...report.summaries.map(row => `| ${row.principal} | ${row.surface} | ${row.recalled}/${row.expected} (${percent(row.fact_recall)}) | ${row.stale}/${row.returned} (${percent(row.stale_fact_rate)}) | ${row.leak_count} | ${row.cited}/${row.returned} (${percent(row.provenance_rate)}) | ${row.tokens_used} | ${row.failures} |`),
     "", "Stale exposure includes explicitly quoted historical facts. Provenance measures local addressable citations, not verified truth. Zero expected facts gives n/a recall.", "",
-    "World views use discovery plus all returned cards with all valid windows and current knowledge. Session hooks use the host project hint. Search and recall packets use the same lexical hint. See docs/evaluation.md for limits.", "",
+    "World views use discovery plus all returned cards with all valid windows and current knowledge. Session hooks use the host project hint. Search and recall packets use the same lexical hint. Context packets count the complete envelope; their budget constrains the Markdown body. See docs/evaluation.md for limits.", "",
     "| Principal | Surface | Question | Recall | Stale | Leaks | Provenance | Tokens | Status |",
     "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ...report.rows.map(row => `| ${row.principal} | ${row.surface} | ${row.question_id} | ${row.recalled}/${row.expected} | ${row.stale} | ${row.leak_count} | ${row.cited}/${row.returned} | ${row.tokens_used} | ${row.status} |`), "",

@@ -68,11 +68,12 @@ Each question has a fixed lexical task hint and a fixed world lookup plan:
 | Surface | Measured output |
 | --- | --- |
 | Session hook | Real `runSessionStart`, direct mode, generic harness, with a synthetic project-directory hint; the returned Markdown is scored |
-| `context_packet` | Core recall-purpose packet using the lexical hint; the returned Markdown is scored |
+| `context_packet` | Core recall-purpose packet using the lexical hint; facts/citations are scored from its Markdown, while the complete envelope is counted for tokens and scanned for leaks |
 | `search` | Core `scope=all`, limit 20, using the same hint; the whole envelope is counted for tokens and scanned for leaks |
 | `world_view` | Core discovery followed by cards returned on that discovery page, with the question's Concept or Situation label; discovery and cards are both counted |
 
-Packets have a 2,000-token budget. World reads use all valid windows and current
+Packet Markdown has a 2,000-token budget; the structured envelope adds overhead
+to the reported token count. World reads use all valid windows and current
 recorded knowledge; the gold distinguishes expired and corrected facts.
 Discovery and all returned cards count
 as one multi-call observation. These are different retrieval workflows, not
