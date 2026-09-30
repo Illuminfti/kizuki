@@ -61,7 +61,9 @@ describe("packages/tui/AGENTS.md is executable", () => {
 
   test("captured text is sanitized before styling and lines are hard-capped", () => {
     const ansi = sources().get("ansi.ts") ?? "";
-    expect(ansi).toContain("STRING_SEQ_PATTERN");
+    expect(ansi).toContain('import { sanitize, stripAnsi } from "@kizuki/core/internal"');
+    const sanitizer = readFileSync(resolve(import.meta.dir, "../../core/src/terminal-text.ts"), "utf8");
+    expect(sanitizer).toContain("STRING_SEQ_PATTERN");
     expect(ansi).toContain("truncate(stripAnsi(text), width, \"\")");
     const view = sources().get("view.ts") ?? "";
     expect(view).toContain("sanitize(");
