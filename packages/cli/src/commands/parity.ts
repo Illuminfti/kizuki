@@ -95,7 +95,7 @@ export const parityCommand: Command = {
             degraded: envelope.data.retrieval_degraded.slice(0, 8),
             chunks: [
               ...envelope.canon.map((chunk) => keys([chunk.path, ...chunk.sources])),
-              ...envelope.quoted.map((chunk) => keys([chunk.event_id])),
+              ...envelope.quoted.map((chunk) => keys("event_id" in chunk ? [chunk.event_id] : [chunk.path, ...chunk.sources])),
             ],
           };
         } catch {

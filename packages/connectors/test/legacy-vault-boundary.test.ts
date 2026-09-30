@@ -7,6 +7,7 @@ import { createLegacyEventsConnector } from "../src/import-legacy-events";
 import { LEGACY_EVENTS_FIXTURE, fixtureJsonl } from "../src/import-legacy-events/fixture";
 import { createLegacyWikiConnector } from "../src/import-legacy-wiki";
 import { LEGACY_WIKI_FIXTURE } from "../src/import-legacy-wiki/fixture";
+import { scanLegacyWiki } from "../src/import-legacy-wiki/scan";
 
 // Real ledger and vault work; bound it for a loaded host.
 setDefaultTimeout(30_000);
@@ -62,6 +63,14 @@ describe("legacy wiki importer", () => {
     rmSync(join(wiki, "ignored"), { recursive: true });
     vaultWithPages(join(wiki, "drafts", "deep", "copy"));
     await expect(createLegacyWikiConnector({ path: wiki }).backfill(null)).rejects.toThrow(REFUSED);
+  });
+
+  test("an ignored tree too large to verify is refused, not passed", async () => {
+    const wiki = join(root, "wiki");
+    wikiAt(wiki);
+    for (let index = 0; index < 6; index++) write(join(wiki, "ignored", `folder-${index}`, "note.md"), "x");
+    await expect(scanLegacyWiki(wiki, ["ignored"], 3)).rejects.toThrow(/source_path_depth/);
+    expect((await scanLegacyWiki(wiki, ["ignored"], 100)).files.length).toBeGreaterThan(0);
   });
 
   test("a source root inside a vault, or the vault itself, is refused", async () => {

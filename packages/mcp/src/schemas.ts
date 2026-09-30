@@ -73,7 +73,7 @@ export const ENVELOPE_SHAPE = z.strictObject({
   principal: z.string(),
   at: z.string(),
   canon: z.array(CANON_CHUNK),
-  quoted: z.array(QUOTED_CHUNK),
+  quoted: z.array(z.union([QUOTED_CHUNK, CANON_CHUNK.extend({ taint: z.literal("quoted"), tainted: z.literal(true) })])),
   denied: z.array(DENIED),
   /** Owner envelopes only; omitted when nothing was withheld. */
   has_withheld: z.literal(true).optional(),

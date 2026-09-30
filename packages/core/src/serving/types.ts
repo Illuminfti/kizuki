@@ -64,6 +64,9 @@ export interface QuotedChunk {
   subject_labels?: SubjectLabel[];
 }
 
+/** A quoted page keeps its page identity and provenance; it never poses as an event. */
+export type QuotedPageChunk = CanonChunk & { taint: "quoted"; tainted: true };
+
 /** Counts per reason on owner envelopes. Agent envelopes omit counts. Ids of withheld items reach only the owner's audit row. */
 export interface Denied {
   reason: DenyReason;
@@ -73,13 +76,13 @@ export interface Denied {
 // `type`, not `interface`: the MCP layer hands the envelope to the SDK as
 // `structuredContent: Record<string, unknown>`, which an interface cannot
 // satisfy without a cast.
-export type Envelope<T = undefined> = {
+export type Envelope<T = undefined, Q = QuotedChunk> = {
   schema: typeof ENVELOPE_SCHEMA;
   tool: Tool;
   principal: string;
   at: string;
   canon: CanonChunk[];
-  quoted: QuotedChunk[];
+  quoted: Q[];
   denied: Denied[];
   /** Owner envelopes only. True when at least one match was withheld. */
   has_withheld?: true;

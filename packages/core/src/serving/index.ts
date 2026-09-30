@@ -4,6 +4,7 @@ export type {
   Denied,
   Envelope,
   QuotedChunk,
+  QuotedPageChunk,
   ServeContext,
   SubjectLabel,
   SubjectLabelDegradation,

@@ -230,13 +230,16 @@ for (const alteration of ["unknown-version", "unknown-field", "changed-basis", "
 
 test("actual writer erasure survives export and restore without resurrecting source or page", async () => {
   const f = await fixture();
+  expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_machine_body_images").get()!.n).toBeGreaterThan(0);
   await runPurge(f.db, f.vault, { event_id: f.world.eventId }, "erase typed source and page");
   const receipts = readReceiptRecords(f.vault);
   expect(receipts).toHaveLength(2);
   expect(receipts.every(isErasedReceipt)).toBe(true);
+  expect(f.db.query("SELECT 1 FROM canon_machine_body_images").get()).toBeNull();
   expect(existsSync(join(f.vault, f.receipt.page_path))).toBe(false);
   exportVault(f.db, f.vault, f.backup); restoreVault(f.backup, f.restored);
   const copy = openCopy(f.restored);
+  expect(copy.query("SELECT 1 FROM canon_machine_body_images").get()).toBeNull();
   expect(receipts.map(receipt => getCanonReceiptRecord(copy, receipt.receipt_id))).toEqual(receipts);
   expect(copy.query("SELECT event_id FROM events WHERE event_id=?").get(f.world.eventId)).toBeNull();
   expect(copy.query("SELECT count(*) AS n FROM claim_v2_semantics").get()).toEqual({ n: 0 });
