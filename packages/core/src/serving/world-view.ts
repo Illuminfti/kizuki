@@ -31,6 +31,8 @@ import type { RedactionCounts } from "./redact";
 import { clampWorldData } from "./world-clamp";
 import { ServeError } from "./types";
 import type { ServeContext } from "./types";
+import type { ConceptEvidenceRef } from "../contracts/concept-card";
+import type { WorldEvidenceData, WorldEvidenceSource, WorldQuotedEvidence } from "../world/ops/evidence-types";
 
 export { WorldViewError } from "../world/ops/types";
 export { isWorldWireToken } from "../world/ops/parse";
@@ -58,6 +60,12 @@ export type WorldReadInput =
       readonly knownAt: WorldKnownAt;
     }
   | {
+      readonly operation: "evidence";
+      readonly evidence: ConceptEvidenceRef;
+      readonly valid: WorldValidQuery;
+      readonly knownAt: WorldKnownAt;
+    }
+  | {
       readonly operation: "concept";
       readonly concept: WorldObjectRef;
       readonly valid: WorldValidQuery;
@@ -70,7 +78,8 @@ export type WorldData =
   | ConceptCard
   | SituationCard
   | ReturnType<typeof discoverWorld>
-  | WorldDescribe;
+  | WorldDescribe
+  | WorldEvidenceData;
 export type WorldReadResult =
   | { readonly status: "not_found" }
   | {
@@ -84,7 +93,7 @@ export type WorldViewEnvelope = {
   readonly principal: WireRef<"principal">;
   readonly at: string;
   readonly canon: readonly [];
-  readonly quoted: readonly [];
+  readonly quoted: readonly WorldQuotedEvidence[];
   /** Credential-shaped spans replaced in this response, per kind. Never the values. */
   readonly redacted?: RedactionCounts;
   readonly data: WorldReadResult;
@@ -108,36 +117,44 @@ function unavailable(
   return answer(operation, { status: "unavailable", reason });
 }
 
-/** Maps what an operation found to the result the reader serves; a body over the response bound is never partly served. */
-function present(op: WorldOp, outcome: WorldOpOutcome): WorldReadResult {
-  if (outcome.status === "not_found") return { status: "not_found" };
+interface WorldResponse {
+  readonly data: WorldReadResult;
+  readonly quoted: readonly WorldEvidenceSource[];
+}
+const withoutQuotes = (data: WorldReadResult): WorldResponse => ({ data, quoted: [] });
+
+/** A body plus its captured quotes over the response bound is never partly served. */
+function present(op: WorldOp, outcome: WorldOpOutcome): WorldResponse {
+  if (outcome.status === "not_found") return withoutQuotes({ status: "not_found" });
   if (outcome.status === "unavailable")
-    return unavailable(op.name, outcome.reason);
+    return withoutQuotes(unavailable(op.name, outcome.reason));
   const { gaps } = outcome;
-  if (Buffer.byteLength(JSON.stringify(outcome.data), "utf8") > MAX_RESPONSE_BYTES)
+  const bytes = Buffer.byteLength(JSON.stringify(outcome.data), "utf8") +
+    (outcome.quoted === undefined ? 0 : Buffer.byteLength(JSON.stringify(outcome.quoted), "utf8"));
+  if (bytes > MAX_RESPONSE_BYTES)
     throw new WorldProjectionBudgetError();
   // Every adapter states a grammar per declared schema; a body outside them is a defect, never served.
   if (!op.dataSchemas.includes(outcome.data.schema))
     throw new ServeError("error", "serving failed");
   // The registry is open and `WorldData` names the shipped bodies; the check above ties `data` to a declared schema.
   const data = outcome.data as WorldData;
-  return answer(
+  return { quoted: outcome.quoted ?? [], data: answer(
     op.name,
     gaps === null
       ? { status: "current", view: { status: "not_issued" }, data }
       : { status: "incomplete", data, reasons: gaps },
-  );
+  ) };
 }
 
 /**
  * Fresh model-free projection through the registered operation the input
  * names. References carry lookup identity, never authority.
  */
-export function readWorldView(
+function readWorldResponse(
   ctx: ServeContext,
   input: unknown,
   registry: WorldOpRegistry = activeWorldOps(),
-): WorldReadResult {
+): WorldResponse {
   const principal = resolvePrincipal(ctx.db, ctx.principal);
   if (principal === null)
     throw new ServeError("unknown_agent", "unknown agent");
@@ -154,7 +171,7 @@ export function readWorldView(
       const valid = Object.hasOwn(input, "valid") ? parseWorldValid(input.valid) : ALL_VALID,
         knownAt = Object.hasOwn(input, "knownAt") ? parseWorldKnownAt(input.knownAt) : CURRENT;
       if (valid === null || knownAt === null) throw new WorldViewError();
-      if (knownAt.kind !== "current") return unavailable(op.name, "history");
+      if (knownAt.kind !== "current") return withoutQuotes(unavailable(op.name, "history"));
       return present(op, op.run(registry));
     }
     const query = op.parse(input),
@@ -162,9 +179,9 @@ export function readWorldView(
       knownAt = parseWorldKnownAt(input.knownAt);
     if (query === null || valid === null || knownAt === null)
       throw new WorldViewError();
-    if (knownAt.kind !== "current") return unavailable(op.name, "history");
+    if (knownAt.kind !== "current") return withoutQuotes(unavailable(op.name, "history"));
     if (!tableExists(ctx.db, "world_authorization_namespaces"))
-      return unavailable(op.name, "storage");
+      return withoutQuotes(unavailable(op.name, "storage"));
     // A nested transaction is a savepoint: failed/budgeted projections issue no refs.
     return ctx.db
       .transaction(() =>
@@ -179,9 +196,14 @@ export function readWorldView(
       .immediate();
   } catch (error) {
     if (error instanceof WorldProjectionBudgetError)
-      return unavailable(op.name, "budget");
+      return withoutQuotes(unavailable(op.name, "budget"));
     throw error;
   }
+}
+
+/** Structured world state contains references only; captured text is served by the envelope seam. */
+export function readWorldView(ctx: ServeContext, input: unknown, registry: WorldOpRegistry = activeWorldOps()): WorldReadResult {
+  return readWorldResponse(ctx, input, registry).data;
 }
 
 export function serveWorldView(
@@ -199,11 +221,12 @@ export function serveWorldView(
     auditArguments(args),
     ({ ctx: live }): Served<WorldReadResult> => {
       try {
+        const response = readWorldResponse(live, args, registry);
         return {
           canon: [],
-          quoted: [],
+          quoted: [...response.quoted],
           withheld: [],
-          data: readWorldView(live, args, registry),
+          data: response.data,
         };
       } catch (error) {
         if (error instanceof WorldViewError)
@@ -227,7 +250,15 @@ export function serveWorldView(
         principal: issueWorldRef(ctx.db, ns, "principal", ns.principalId),
         at: envelope.at,
         canon: [],
-        quoted: [],
+        quoted: envelope.quoted.map((chunk): WorldQuotedEvidence => {
+          // Only operation-produced evidence sources enter this channel. The
+          // gate retains their qualifiers while auditing/redacting the source;
+          // this projection removes every raw source identifier.
+          const source = chunk as WorldEvidenceSource;
+          return { evidence: source.evidence, text: source.text, tainted: true,
+            integrity: source.integrity, slice_integrity: source.slice_integrity,
+            offset: source.offset, returned: source.returned, total: source.total, truncated: source.truncated };
+        }),
         ...(envelope.redacted === undefined ? {} : { redacted: envelope.redacted }),
         data: clampWorldData(envelope.data!),
       };

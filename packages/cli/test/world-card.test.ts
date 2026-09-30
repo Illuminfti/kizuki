@@ -34,3 +34,18 @@ test("world text carries definitions, relations, learning, attribution, evidence
     }
   } finally { if (!closed) db.close(); f.dispose(); }
 }, 120_000);
+
+test("evidence usage errors stay on stderr; the documented absent-ref command is model-free", () => {
+  const setup = h.tempVault(), token = "A".repeat(43);
+  const args = ["world", "--operation", "evidence", "--admission", token, "--event-version", token, "--start-utf16", "0", "--end-utf16", "10"];
+  const result = h.runCli(setup.env, ...args, "--json");
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout).data).toMatchObject({ canon: [], quoted: [], data: { status: "not_found" } });
+  for (const invalid of [args.slice(0, -2), [...args.slice(0, -1), "0"], [...args, "--label", "extra"]]) {
+    const failure = h.runCli(setup.env, ...invalid);
+    expect(failure.exitCode).toBe(2);
+    expect(failure.stdout).toBe("");
+    expect(failure.stderr).toContain("usage: kizuki world");
+  }
+}, 120_000);

@@ -47,7 +47,7 @@ export function createWorldCommand(entries: readonly WorldCliEntry[]): Command {
             if (parsed.flags.has("--json")) io.out(jsonEnvelope("world", "ok", envelope));
             else if ("status" in data) io.out("not found");
             else if (data.result.status === "unavailable") io.out(`World view unavailable: ${data.result.reason}.`);
-            else for (const line of op.cli.render(data.result.data)) io.out(line);
+            else for (const line of op.cli.render(data.result.data, envelope.quoted)) io.out(line);
             if (!("status" in data) && data.result.status !== "unavailable") {
               const notice = op.cli.notice?.(data.result.data);
               if (notice) io.err(notice);

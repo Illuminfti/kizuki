@@ -44,5 +44,43 @@
       "packages/cli/test/world-ops.test.ts",
       "packages/mcp/test/world-ops.test.ts"
     ]
+  },
+  {
+    "packet": 484,
+    "workstream": "CARD",
+    "scope": "Qualified card fields, shared support roots, current evidence spans and text rendering; identity convergence and consolidation remain separate",
+    "core": "@kizuki/core/world: readWorldView and serveWorldView",
+    "cli": "kizuki world: concept, situation and evidence (text and --json)",
+    "mcp": "world_view: concept, situation and evidence",
+    "http": "/v1/world_view",
+    "app": "/app/v1/world_view: cards and the quoted evidence envelope",
+    "seams": {
+      "core": [
+        "packages/core/src/world/public.ts",
+        "packages/core/src/world/lineage.ts",
+        "packages/core/src/world/ops/evidence.ts"
+      ],
+      "cli": [
+        "packages/cli/src/commands/world/ops/evidence.ts",
+        "packages/cli/src/commands/world/ops/relation-render.ts"
+      ],
+      "mcp": [
+        "packages/mcp/src/world/ops/evidence.ts"
+      ],
+      "http": [
+        "packages/core/src/serve/http.ts"
+      ],
+      "app": [
+        "packages/cli/src/app/host.ts"
+      ]
+    },
+    "tests": [
+      "packages/core/test/world/card-fields.test.ts",
+      "packages/core/test/world/card-lineage.test.ts",
+      "packages/core/test/world/card-oracles.test.ts",
+      "packages/core/test/world/evidence.test.ts",
+      "packages/cli/test/world-card.test.ts",
+      "packages/cli/test/world-card-parity.test.ts"
+    ]
   }
 ]
