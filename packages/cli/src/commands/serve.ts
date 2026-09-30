@@ -238,7 +238,9 @@ export const serveCommand: Command = {
       }
       if (result.http !== null) await result.http.stop();
       return 0;
-    }, { retrieval: verb === "status" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required" });
+    }, { retrieval: verb === "status" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required",
+      ...(daemon ? { nonblockingSeal: true } : {}),
+    });
     // The long-running loop outwaits a held ledger; every other verb reports it.
     if (daemon) {
       process.on("SIGTERM", requestStop);

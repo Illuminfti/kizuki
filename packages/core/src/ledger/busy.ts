@@ -71,7 +71,10 @@ export function runImmediate<T>(
     return run();
   }
   if (nested) return run();
-  return retryWhileBusy(run, attempts);
+  // A nonblocking connection is also a nonblocking retry policy. In
+  // particular, shutdown must not stack batch waits after a slow connector.
+  const wait = db.query<{ timeout: number }, []>("PRAGMA busy_timeout").get()?.timeout;
+  return retryWhileBusy(run, wait === 0 ? 1 : attempts);
 }
 
 /**

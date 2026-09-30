@@ -773,7 +773,7 @@ export type {
 export { cursorStoreDeltaError, cursorStoreOverflow, readCursorStore } from "./ledger/cursor-store";
 export { scopedSecretResolver } from "./ledger/secret-scope";
 export { assertConnectorBrowserUrl, guardedSignInIo } from "./ledger/sign-in-guard";
-export { DeadlineError, withDeadline } from "./util/deadline";
+export { DeadlineError, withDeadline, withAbortSignal } from "./util/deadline";
 export { sha256Hex } from "./util/hash";
 export {
   ConnectionStateStore,

@@ -356,15 +356,21 @@ export async function createServeRuntime(options: ServeRuntimeOptions): Promise<
           : result;
       },
       refresh: async () => {
+        options.signal?.throwIfAborted();
         const degraded: string[] = [];
         if (options.retrieval !== undefined) {
           try {
             if (options.retrieval.rebuildFromDocuments === undefined) throw new Error("rebuild unavailable");
             // Reuse the public bounded, authority-preserving projection. The engine
             // stages it before replacement, including edits, deletions and page writes.
-            await options.retrieval.rebuildFromDocuments(readRetrievalDocuments(options.db, options.vaultPath));
-          } catch { degraded.push("retrieval refresh unavailable"); }
+            await options.retrieval.rebuildFromDocuments(readRetrievalDocuments(options.db, options.vaultPath),
+              options.signal === undefined ? {} : { signal: options.signal });
+          } catch {
+            options.signal?.throwIfAborted();
+            degraded.push("retrieval refresh unavailable");
+          }
         }
+        options.signal?.throwIfAborted();
         // Bounded per pass: progress is written after every batch, so an
         // interrupted pass still leaves the next one less to do.
         const result = tryRefreshDerived(options.db, options.vaultPath, { limit: DERIVED_PASS_RECORDS });

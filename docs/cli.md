@@ -745,7 +745,12 @@ holds is skipped as `ledger:lease_held` and retried with backoff. See
 [extraction budgets](extraction-budgets.md#owner-throughput-settings).
 
 During connector draining, a stop finishes and checkpoints the current bounded
-batch, then starts no further batch or source. `serve stop` can queue its request
+batch when the ledger is writable, then starts no further batch or source.
+Shutdown batch writes, receipt publication, lease release and sealing never
+wait for ledger contention: refused batches replay from their checkpoint, and
+stop receipts remain in the durable journal for later publication. Cancelled
+model passes skip derived refresh; in-flight retrieval rebuilds stop before
+replacing the active generation. `serve stop` can queue its request
 while the ledger is busy. Startup retries end once the daemon is running; busy
 final sealing never restarts a stopped daemon. Doctor includes pending journal
 receipts in rail health while another writer prevents their ledger publication.

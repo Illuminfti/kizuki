@@ -136,7 +136,16 @@ export async function runServeDaemon(
   // A model request in flight is aborted, not waited out: a stop must finish
   // inside the supervisor's stop timeout whatever the model timeout is.
   const stopSignal = new AbortController();
-  const requestStop = (): void => { stopping = true; stopSignal.abort(); };
+  const priorWait = db.query<{ timeout: number }, []>("PRAGMA busy_timeout").get()?.timeout;
+  const requestStop = (): void => {
+    if (stopping) return;
+    stopping = true;
+    // The connector has the only remaining operation deadline. Every later
+    // batch write, receipt publication and lease release tries without waiting;
+    // uncommitted work replays and the receipt journal survives a busy ledger.
+    db.exec("PRAGMA busy_timeout=0");
+    stopSignal.abort();
+  };
   options.signal?.addEventListener("abort", requestStop, { once: true });
   if (options.signal?.aborted) requestStop();
   // A long sync pass reads the same request before each extraction step.
@@ -273,6 +282,7 @@ export async function runServeDaemon(
     if (asLeaseHeld(vaultPath, error, db) !== null && stopRequested()) return { receipts, http };
     throw error;
   } finally {
+    if (stopRequested()) requestStop();
     options.signal?.removeEventListener("abort", requestStop);
     nodeProcess.off("SIGTERM", requestStop);
     nodeProcess.off("SIGINT", requestStop);
@@ -282,8 +292,10 @@ export async function runServeDaemon(
       finally {
         // A writer that outlasts the retries leaves the lease to expire: its
         // holder is dead, so the next start reclaims it after the stale window.
-        try { retryWhileBusy(() => releaseLease(db, process), RELEASE_ATTEMPTS); }
-        catch (error) { if (asLeaseHeld(vaultPath, error) === null) throw error; }
+        try {
+          try { retryWhileBusy(() => releaseLease(db, process), stopping ? 1 : RELEASE_ATTEMPTS); }
+          catch (error) { if (asLeaseHeld(vaultPath, error) === null) throw error; }
+        } finally { if (priorWait !== undefined) db.exec(`PRAGMA busy_timeout=${priorWait}`); }
       }
     }
   }

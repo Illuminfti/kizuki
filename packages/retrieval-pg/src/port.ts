@@ -1,7 +1,7 @@
 import { removeOwnedGeneration, validateOwnedGeneration } from "./owned-generation";
 import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { openOwnedDirectory, PortError, validatePortDescriptor, validateProvenanceEventIds, validateRetrievalDoc, validateRetrievalQuery, SENSITIVITY_ORDER } from "@kizuki/core";
+import { openOwnedDirectory, PortError, validatePortDescriptor, validateProvenanceEventIds, validateRetrievalDoc, validateRetrievalQuery, SENSITIVITY_ORDER, withAbortSignal } from "@kizuki/core";
 import type { OwnedDirectory, AbsenceProof, ProvenanceAbsenceProof, EmbeddingPort, EmbeddingSpace, EntityRef, GraphQueryOptions, GraphResult, PortContext, PortDescriptor, PortHealth, RetrievalDoc, RetrievalMutationReport, RetrievalPort, RetrievalQuery, RetrievalResult } from "@kizuki/core";
 import { EMBEDDED_RETRIEVAL_DESCRIPTOR } from "./descriptor";
 import { WriterLease } from "./lease";
@@ -367,7 +367,9 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     }
   }
   /** Stage documents and required vectors before atomically replacing the active index. */
-  async rebuildFromDocuments(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>): Promise<void> {
+  async rebuildFromDocuments(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>, options: { signal?: AbortSignal } = {}): Promise<void> {
+    const check = (): void => { options.signal?.throwIfAborted(); this.assertOpen(); };
+    check();
     this.assertMutable();
     if (this.embeddingWork !== undefined) throw new PortError("unavailable", "embedding work is active; retry rebuild", true);
     const space = this.embedding === undefined ? null : this.effectiveSpace();
@@ -381,7 +383,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
         CREATE TEMP TABLE rebuild_docs (doc_id text PRIMARY KEY,doc jsonb NOT NULL);
         CREATE TEMP TABLE rebuild_vectors (chunk_id text PRIMARY KEY,embedding vector NOT NULL);`));
       for await (const raw of docs) {
-        this.assertOpen();
+        check();
         if (requiresEmbedding) throw new PortError("unavailable", "rebuilding an embedded index requires its embedding port", false);
         const doc = validateRetrievalDoc(raw);
         await this.store.run(() => this.store.db.query("INSERT INTO rebuild_docs VALUES($1,$2::jsonb) ON CONFLICT(doc_id) DO UPDATE SET doc=excluded.doc", [doc.doc_id, JSON.stringify(doc)]));
@@ -389,15 +391,17 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       if (space !== null) {
         let last = "";
         for (;;) {
+          check();
           const rows = await this.store.run(async () => (await this.store.db.query<{doc: RetrievalDoc}>(
             "SELECT doc FROM rebuild_docs WHERE doc_id>$1 ORDER BY doc_id LIMIT 100", [last])).rows);
           if (rows.length === 0) break;
           for (const {doc} of rows) {
             for (const chunk of chunkDocument(doc, this.tokens, this.overlap)) {
+              check();
               assertNoStoreTransaction("embedDocs");
-              const [vector] = await this.embedding!.embedDocs([{chunk_id: chunk.chunk_id, doc_id: doc.doc_id, text: chunk.text, index: chunk.index}]);
+              const [vector] = await withAbortSignal(this.embedding!.embedDocs([{chunk_id: chunk.chunk_id, doc_id: doc.doc_id, text: chunk.text, index: chunk.index}]), options.signal);
               this.validateVector(vector ?? null, space);
-              this.assertOpen();
+              check();
               await this.store.run(() => this.store.db.query("INSERT INTO rebuild_vectors VALUES($1,$2::vector)", [chunk.chunk_id, JSON.stringify([...vector!])]));
             }
             last = doc.doc_id;
@@ -405,14 +409,14 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
         }
       }
       await this.store.run(async () => {
-        this.assertOpen();
+        check();
         await this.store.transaction(async tx => {
           await tx.exec("DELETE FROM retrieval_docs; DROP INDEX IF EXISTS retrieval_chunks_hnsw_cosine; DELETE FROM retrieval_meta WHERE key IN ('space','checkpoint')");
           let last = "";
           for (;;) {
             const rows = (await tx.query<{doc: RetrievalDoc}>("SELECT doc FROM rebuild_docs WHERE doc_id>$1 ORDER BY doc_id LIMIT 100", [last])).rows;
             if (rows.length === 0) break;
-            for (const {doc} of rows) { await this.store.writeDoc(tx, doc, this.tokens, this.overlap); last = doc.doc_id; }
+            for (const {doc} of rows) { check(); await this.store.writeDoc(tx, doc, this.tokens, this.overlap); last = doc.doc_id; }
           }
           if (space !== null) {
             await tx.query("UPDATE retrieval_chunks c SET embedding=v.embedding,space=$1,embedded_at=$2 FROM rebuild_vectors v WHERE c.chunk_id=v.chunk_id", [space.id, this.ctx.clock()]);
@@ -421,6 +425,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
           }
           await this.store.setMeta("rebuilt", this.ctx.clock(), tx);
           await this.store.setMeta("migration_required", false, tx);
+          check();
         });
         this.checkpoint = null;
         await this.syncEngineMetadata();

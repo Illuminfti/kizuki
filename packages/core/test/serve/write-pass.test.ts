@@ -102,6 +102,36 @@ function vault() {
 }
 
 describe("write pass", () => {
+  test("model cancellation preserves its stopped receipt without starting a slow derived refresh", async () => {
+    const { path, db } = vault();
+    const stop = new AbortController();
+    let modelCalls = 0;
+    let refreshStarted = false;
+    putEvent(db);
+    const unavailable: ProduceResult = { status: "unavailable", reason: "request cancelled", usage: { calls: 1, input_tokens: 0, output_tokens: 0 } };
+    const producer = stubProducer(unavailable);
+    producer.produce = async () => {
+      modelCalls++;
+      stop.abort();
+      return unavailable;
+    };
+    try {
+      const receipt = await runRail(db, path, "sync", {
+        signal: stop.signal, stopRequested: () => stop.signal.aborted,
+        hooks: { model_ref: "fixture:model", claims: { db }, producer,
+          refresh: async () => {
+            refreshStarted = true;
+            await Bun.sleep(100);
+            return { indexed: 0, remaining: 1, degraded: [] };
+          },
+        },
+      });
+      expect(modelCalls).toBe(1);
+      expect(receipt).toMatchObject({ status: "stopped", stopped: "serve:stop_requested" });
+      expect(refreshStarted).toBe(false);
+    } finally { db.close(); }
+  });
+
   test("ingest files a live claim that stays unwritten without a model", async () => {
     const { path, db } = vault();
     const eventId = putEvent(db);

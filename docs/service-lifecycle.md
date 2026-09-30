@@ -106,12 +106,18 @@ by its supervisor, while a writer holds the ledger waits and starts again inside
 the same process (`start_held` in its log) instead of exiting, so the
 supervisor's start limit is not spent on something that clears by itself.
 
-A stop takes seconds: it aborts a model request in flight instead of waiting for
-it. The longest thing a stop can still wait for is one connector call, which the
+A stop aborts a model request in flight instead of waiting for it. The longest
+thing a stop can still wait for is one connector call, which the
 host bounds at 60 seconds, so the unit's `TimeoutStopSec=90s` is that bound plus
 a 30 second margin and does not depend on `[ports.llm] timeout_ms`.
-Connector draining finishes and checkpoints the current batch, then starts no
-new batch or source. A stop also cancels startup backoff. If the ledger remains
+Connector draining finishes and checkpoints the current batch when the ledger
+is writable, then starts no new batch or source. Once stopping, batch writes,
+receipt publication, lease release and final sealing try without contention
+waits. A refused batch retains its checkpoint for idempotent replay; its stop
+receipt remains in the durable journal until a later pass publishes it.
+Cancelled model passes skip derived refresh. A retrieval rebuild already in
+flight stops before replacement and retains its previous active generation.
+A stop also cancels startup backoff. If the ledger remains
 held during final sealing, the daemon exits after bounded cleanup and leaves
 the existing seal intact for the next successful writer to advance; it never
 starts the daemon again. Doctor reads the bounded journal tail for pending rail

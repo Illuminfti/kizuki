@@ -204,9 +204,10 @@ async function runSyncRail(
   // with a zeroed failed rail would hide a real write and understate budget.
   let refreshed: readonly string[];
   try {
-    refreshed = hooks?.refresh === undefined ? [] : (await hooks.refresh()).degraded;
+    refreshed = written.stopped === "serve:stop_requested" || stopRequested?.() || hooks?.refresh === undefined
+      ? [] : (await hooks.refresh()).degraded;
   } catch (error) {
-    refreshed = [redactReceiptError(error)];
+    refreshed = stopRequested?.() ? [] : [redactReceiptError(error)];
   }
   const errors = [...synced.errors, ...written.errors, ...refreshed];
   let status: RunReceipt["status"] = "ok";
@@ -228,7 +229,7 @@ async function runSyncRail(
     canon_writes: written.canon_writes,
     model: { ...written.model, model_ref: hooks?.model_ref ?? null },
     ...(written.oversized.segments + written.oversized.skipped === 0 ? {} : { oversized: written.oversized }),
-    stopped: written.stopped,
+    stopped: stopRequested?.() ? "serve:stop_requested" : written.stopped,
     errors,
   };
 }
@@ -250,9 +251,11 @@ async function refreshDerivedOnce(hooks: AnyRailHooks | undefined): Promise<Rail
 async function runRetrievalSweep(
   db: Database,
   hooks: AnyRailHooks | undefined,
+  stopRequested: (() => boolean) | undefined,
 ): Promise<Partial<RunReceipt>> {
   // Catch-up does not depend on a claims port, so it runs either way.
   const refreshed = await refreshDerivedOnce(hooks);
+  if (stopRequested?.()) return { status: "stopped", stopped: "serve:stop_requested" };
   const ops =
     hooks?.claims === undefined
       ? { retried: 0, pending: pendingRetrievalOps(db).length, code: "retrieval-unavailable" }
@@ -472,6 +475,7 @@ async function runRailImpl(
   rail: RailId,
   options: AnyRunRailOptions,
 ): Promise<RunReceipt> {
+  const stopRequested = (): boolean => options.signal?.aborted === true || options.stopRequested?.() === true;
   const runId = ulid();
   activeRuns.add(runId);
   try {
@@ -535,10 +539,10 @@ async function runRailImpl(
       }
       switch (rail) {
         case "sync":
-          partial = await runSyncRail(db, vaultPath, budget, config.extraction, hooks, runId, now, options.stopRequested);
+          partial = await runSyncRail(db, vaultPath, budget, config.extraction, hooks, runId, now, stopRequested);
           break;
         case "retrieval-sweep":
-          partial = await runRetrievalSweep(db, hooks);
+          partial = await runRetrievalSweep(db, hooks, stopRequested);
           break;
         case "purge-sweep":
           partial = await runPurgeSweep(db, vaultPath, hooks, started);
@@ -560,7 +564,11 @@ async function runRailImpl(
       if (error instanceof InjectedCrash) { interrupted = true; throw error; }
       // A writer this pass could not outwait is not a fault of the rail: the
       // pass is skipped, its receipt names the holder, and the daemon backs off.
-      partial = isLedgerBusy(error) || error instanceof LedgerLeaseHeldError
+      const held = isLedgerBusy(error) || error instanceof LedgerLeaseHeldError;
+      const cancelled = error === options.signal?.reason || (error instanceof Error && error.name === "AbortError");
+      partial = stopRequested() && (held || cancelled)
+        ? { status: "stopped", stopped: "serve:stop_requested" }
+        : held
         ? { status: "stopped", stopped: LEDGER_LEASE_HELD_STOP, errors: [railLeaseHeldNote(vaultPath, db)] }
         : { status: "failed", errors: [redactReceiptError(error)],
           ...(error instanceof LegacyExtractReconciliationError ? { stopped: error.code } : {}) };
@@ -585,6 +593,9 @@ async function runRailImpl(
     const repairProgress = getRunReceipt(db, runId);
     if (repairProgress?.stopped === CAPTURE_REPAIR_RECEIPT_PENDING) {
       partial = { ...partial, captures_skipped: repairProgress.captures_skipped! };
+    }
+    if (stopRequested() && partial.status !== "failed") {
+      partial = { ...partial, status: "stopped", stopped: "serve:stop_requested" };
     }
     const finished = now();
     const receipt: RunReceipt = {
@@ -618,7 +629,7 @@ async function runRailImpl(
       ...(rail === "brief" ? { artifactPath: briefPath(vaultPath, dayOf(started)) } : {}),
     });
     // A pass skipped for a held ledger journals its receipt, and asks the ledger only briefly.
-    if (options.ledgerHeld === true) withControlWait(db, publish, LEDGER_LOOP_PROBE_TIMEOUT_MS);
+    if (options.ledgerHeld === true) withControlWait(db, publish, stopRequested() ? 0 : LEDGER_LOOP_PROBE_TIMEOUT_MS);
     else publish();
     const published = getRunReceipt(db, runId);
     if (published === null) throw new Error("persisted run receipt unavailable");

@@ -16,6 +16,8 @@ export const SERVICE_STOP_MARGIN_SECONDS = 30;
  * model's own timeout, which an owner may set up to ten minutes, is never part
  * of it. The longest thing a stop can still wait for is one connector call,
  * which the host bounds at `CONNECTOR_OPERATION_DEADLINE_MS`, plus the margin.
+ * Once stopping, batch writes, receipt publication, release and final sealing
+ * never wait for ledger contention; refused work is replayed on the next run.
  */
 export const SERVICE_STOP_SECONDS = CONNECTOR_OPERATION_DEADLINE_MS / 1_000 + SERVICE_STOP_MARGIN_SECONDS;
 /** Deliberate refusals (custody, migration) exit with EX_CONFIG; systemd never restarts them. */

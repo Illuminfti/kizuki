@@ -483,3 +483,46 @@ test("SIGTERM during connector draining commits only the batch in flight and a r
     expect(await restarted.exited).toBe(0);
   } finally { finishBatch(); endpoint.stop(); }
 });
+
+test("SIGTERM during a slow connector with a held ledger defers its batch, receipt publication and final seal inside the unit stop bound", async () => {
+  const setup = tempVault();
+  const fixture = join(import.meta.dir, "slow-connector-child.ts");
+  const launch = (mode: string) => {
+    const child = Bun.spawn([process.execPath, fixture, setup.vault, mode], {
+      env: { ...process.env, ...setup.env }, stdout: "pipe", stderr: "pipe",
+    });
+    children.push(child);
+    return child;
+  };
+  const daemon = launch("slow");
+  const reader = daemon.stdout.getReader();
+  try {
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain("requested");
+  } finally { reader.releaseLock(); }
+  const holder = await holdLedger(setup, 150_000);
+  const started = performance.now();
+  daemon.kill("SIGTERM");
+  expect(await daemon.exited, await new Response(daemon.stderr).text()).toBe(0);
+  const elapsed = performance.now() - started;
+  expect(elapsed).toBeGreaterThan(50_000); // The real connector batch, not a shorter transport timeout.
+  expect(elapsed).toBeLessThan(70_000);
+  const remaining = daemon.stdout.getReader();
+  try {
+    let output = "";
+    for (;;) {
+      const chunk = await remaining.read();
+      if (chunk.done) break;
+      output += new TextDecoder().decode(chunk.value);
+    }
+    expect(output).toContain("seal-deferred");
+  } finally { remaining.releaseLock(); }
+  expect(holder.exitCode).toBeNull();
+  expect(existsSync(join(setup.vault, ".kizuki", "serve.pid"))).toBe(false);
+  expect(readRunReceiptsLog(setup.vault).at(-1)).toMatchObject({ status: "stopped", stopped: "serve:stop_requested" });
+  holder.kill("SIGKILL"); await holder.exited;
+  expect(readLedger(setup, db => getCheckpoint(db, "fixture", "01J00000000000000000000SRC"))).toBeNull();
+  const resumed = launch("resume");
+  expect(await resumed.exited, await new Response(resumed.stderr).text()).toBe(0);
+  const report = JSON.parse((await new Response(resumed.stdout).text()).trim().split("\n").at(-1)!);
+  expect(report).toEqual({ stored: 1, errors: [], cursor: "fixture-page-1" });
+});
