@@ -17,6 +17,12 @@ export async function mcpFuzzDriver(ctx: ServeContext) {
       try {
         const result = await client.callTool({ name, arguments: args as Record<string, unknown> });
         if (JSON.stringify(result).length > 1024 * 1024) throw new Error("output-unbounded");
+        const first = result.content[0];
+        if (result.isError && first?.type === "text" && typeof first.text === "string") {
+          let failure: unknown;
+          try { failure = JSON.parse(first.text); } catch { /* SDK schema refusals are plain text. */ }
+          if (failure !== null && typeof failure === "object" && "error" in failure && failure.error === "error") throw new Error("mcp-crash");
+        }
         return result;
       } catch (error) {
         // The pinned SDK reports request-schema rejection as InternalError;
