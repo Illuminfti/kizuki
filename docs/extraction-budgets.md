@@ -100,8 +100,9 @@ A value outside its range, a fraction or a string keeps that key's default.
 - **The writer during a pass.** A pass holds the vault writer only for local
   durable work: filing a step's decision and cursor, and each canon write. It
   takes and releases the writer for every page, and stays away from it for a
-  moment between pages, so an owner verb that needs the writer, such as `undo`,
-  `tell`, purge and `kizuki serve stop`, goes through after at most one page.
+  moment between pages, so waiting `tell` and `undo` commands can acquire it
+  before the pass finishes. Other operations can acquire it during the same
+  gap, but keep their existing busy-writer behavior.
   `kizuki tell` and `kizuki undo` wait up to 30 seconds for a write in progress
   before they report `writer_busy`. The pass never holds the writer across a
   model request either. An answer that arrives after a purge or
