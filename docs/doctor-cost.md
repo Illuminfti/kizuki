@@ -37,8 +37,9 @@ bun packages/core/test/serve/doctor-cost-fixture.ts seed "$TMPDIR/doctor-cost" 1
   --vault "$TMPDIR/doctor-cost" --json
 ```
 
-Scale `1` seeds 14,000 run receipts and 7,300 pages with neutral synthetic
-prose and ledger-linked provenance. Scale `10` multiplies both populations. An optional fourth argument `on`
+Scale `1` seeds 14,000 run receipts in SQLite and JSONL, plus 7,300 pages with
+neutral synthetic prose and ledger-linked provenance. Scale `10` multiplies
+both populations. An optional fourth argument `on`
 configures a synthetic model reference with an absent environment credential,
 exercising model-history reads without making model requests.
 The existing 10,000-page and 64 MiB walk ceilings still apply: a larger vault

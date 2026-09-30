@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
@@ -23,14 +23,19 @@ if (mode === "seed") {
   if (modelText === "on") writeFileSync(join(path, ".kizuki", "serve.toml"),
     '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "http://127.0.0.1:9099/v1"\nmodel = "synthetic"\nsecret_ref = "env:SYNTHETIC_MODEL_KEY"\n', { mode: 0o600 });
   const insert = db.query("INSERT INTO run_receipts (run_id, rail, started_at, finished_at, status, stopped, report) VALUES (?, ?, ?, ?, ?, NULL, ?)");
-  db.transaction(() => {
-    for (let i = 0; i < 14_000 * scale; i++) {
-      const at = new Date(Date.parse("2026-09-29T00:00:00Z") + i).toISOString();
-      const receipt = { ...emptyRunTotals(), run_id: `synthetic-${String(i).padStart(8, "0")}`, rail: i % 2 ? "sync" : "retrieval-sweep",
-        model: { ...emptyRunTotals().model, calls: modelText === "on" ? 1 : 0, input_tokens: modelText === "on" ? 100 : 0, output_tokens: modelText === "on" ? 50 : 0, model_ref: modelText === "on" ? "kizuki.llm.openai-compatible:synthetic@127.0.0.1" : null }, started_at: at, finished_at: at, status: "ok", stopped: null };
-      insert.run(receipt.run_id, receipt.rail, at, at, receipt.status, JSON.stringify(receipt));
-    }
-  })();
+  const journal = openSync(join(path, ".kizuki", "run-receipts.jsonl"), "w", 0o600);
+  try {
+    db.transaction(() => {
+      for (let i = 0; i < 14_000 * scale; i++) {
+        const at = new Date(Date.parse("2026-09-29T00:00:00Z") + i).toISOString();
+        const receipt = { ...emptyRunTotals(), run_id: `synthetic-${String(i).padStart(8, "0")}`, rail: i % 2 ? "sync" : "retrieval-sweep",
+          model: { ...emptyRunTotals().model, calls: modelText === "on" ? 1 : 0, input_tokens: modelText === "on" ? 100 : 0, output_tokens: modelText === "on" ? 50 : 0, model_ref: modelText === "on" ? "kizuki.llm.openai-compatible:synthetic@127.0.0.1" : null }, started_at: at, finished_at: at, status: "ok", stopped: null };
+        const report = JSON.stringify(receipt);
+        insert.run(receipt.run_id, receipt.rail, at, at, receipt.status, report);
+        appendFileSync(journal, `${report}\n`);
+      }
+    })();
+  } finally { closeSync(journal); }
   mkdirSync(join(path, "facts"), { recursive: true });
   for (let i = 0; i < 7_300 * scale; i++) {
     writeFileSync(join(path, "facts", `${String(i).padStart(8, "0")}.md`), serializePage({

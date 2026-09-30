@@ -148,13 +148,8 @@ export function parseFrontmatter(markdown: string): VaultPage {
       throw new SyntaxError(`${key}: duplicate frontmatter key`);
     }
     const value = parseValue(line.slice(separator + 1).trim(), key);
-    // Only this spelling invokes an inherited setter. Keep it as an inert own
-    // property so schema validation can refuse it without changing prototypes.
-    if (key === "__proto__") {
-      Object.defineProperty(data, key, { value, enumerable: true, configurable: true, writable: true });
-    } else {
-      data[key] = value;
-    }
+    // KEY refuses leading underscores, including the inherited prototype setter.
+    data[key] = value;
   }
 
   return {

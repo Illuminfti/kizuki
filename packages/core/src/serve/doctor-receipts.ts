@@ -51,7 +51,7 @@ const VALID_RECEIPT = `json_valid(report) AND json_type(report) = 'object'
 /** Aggregate bounded sync counters without loading the receipt reports. */
 export function readDoctorReceiptTotals(db: Database, since: string, limit: number, today: string): DoctorReceiptTotals {
   if (!tableExists(db, "run_receipts")) return { count: 0, extracted: 0, written: 0, deduped: 0, canon_today: 0, skipped: 0, extracting_count: 0, model_attempts: 0 };
-  return db.query<DoctorReceiptTotals, [string, number, string]>(`WITH selected AS MATERIALIZED (
+  return db.query<DoctorReceiptTotals, [string, number, string]>(`WITH selected AS (
       SELECT report, run_id, finished_at FROM run_receipts WHERE rail='sync' AND finished_at >= ?
        ORDER BY finished_at DESC, run_id DESC LIMIT ?
     ), valid AS (
@@ -59,11 +59,11 @@ export function readDoctorReceiptTotals(db: Database, since: string, limit: numb
         AND json_extract(report, '$.rail') = 'sync' AND json_extract(report, '$.run_id') = run_id
         AND json_extract(report, '$.finished_at') = finished_at ELSE 0 END
     ) SELECT COUNT(*) AS count,
-      COALESCE(SUM(${counter("claims_extracted")}),0) AS extracted,
-      COALESCE(SUM(${counter("claims_written_extracted", counter("claims_written"))}),0) AS written,
-      COALESCE(SUM(${counter("claims_deduped")}),0) AS deduped,
-      COALESCE(SUM(CASE WHEN substr(finished_at,1,10) = ? THEN ${counter("canon_writes")} ELSE 0 END),0) AS canon_today,
-      COALESCE(SUM(${counter("records_skipped")}),0) AS skipped,
+      TOTAL(${counter("claims_extracted")}) AS extracted,
+      TOTAL(${counter("claims_written_extracted", counter("claims_written"))}) AS written,
+      TOTAL(${counter("claims_deduped")}) AS deduped,
+      TOTAL(CASE WHEN substr(finished_at,1,10) = ? THEN ${counter("canon_writes")} ELSE 0 END) AS canon_today,
+      TOTAL(${counter("records_skipped")}) AS skipped,
       COALESCE(SUM(CASE WHEN ${counter("claims_extracted")} > 0 OR ${counter("claims_written")} > 0 THEN 1 ELSE 0 END),0) AS extracting_count,
       COALESCE(SUM(CASE WHEN ${counter("model.calls")} > 0 OR json_type(report,'$.model.diagnostic')='object' THEN 1 ELSE 0 END),0) AS model_attempts
       FROM valid`).get(since, limit, today)!;
@@ -74,7 +74,7 @@ export function readDoctorExtractingClock(db: Database, since: string, limit: nu
   if (!tableExists(db, "run_receipts")) return { kind: "none" };
   let startedAt: string | null = null;
   let latest = -Infinity;
-  const query = db.query<{ started_at: string }, [string, number]>(`WITH selected AS MATERIALIZED (
+  const query = db.query<{ started_at: string }, [string, number]>(`WITH selected AS (
     SELECT report, run_id, finished_at FROM run_receipts WHERE rail='sync' AND finished_at >= ?
      ORDER BY finished_at DESC, run_id DESC LIMIT ?
   ) SELECT json_extract(report, '$.started_at') AS started_at FROM selected
@@ -102,7 +102,7 @@ export interface DoctorRailHistory {
 
 /** Normalized numeric fields that decide whether a retrieval run progressed. */
 function railWindow(): string {
-  return `WITH selected AS MATERIALIZED (
+  return `WITH selected AS (
     SELECT report, finished_at, run_id, rail FROM run_receipts WHERE rail = ? AND finished_at >= ?
      ORDER BY finished_at DESC, run_id DESC LIMIT ?
   ), valid AS (
@@ -167,7 +167,7 @@ export function readDoctorRailHistory(db: Database, rail: string, since: string,
 /** Only model attempts can end or extend the truncation streak. */
 export function readDoctorTruncationCount(db: Database, since: string, limit: number): number {
   if (!tableExists(db, "run_receipts")) return 0;
-  const rows = db.query<{ report: string }, [string, number]>(`WITH selected AS MATERIALIZED (
+  const rows = db.query<{ report: string }, [string, number]>(`WITH selected AS (
     SELECT report, run_id, finished_at FROM run_receipts WHERE rail='sync' AND finished_at >= ?
      ORDER BY finished_at DESC, run_id DESC LIMIT ?
   ) SELECT json_object('run_id', run_id, 'rail', 'sync', 'started_at', finished_at, 'finished_at', finished_at,

@@ -61,6 +61,33 @@ test("pruning an unchanged 10 MB journal does not rewrite it", () => {
   } finally { db.close(); }
 });
 
+test("doctor aggregates finite counters beyond SQLite's integer sum range", () => {
+  const { path, db } = vault();
+  try {
+    const insert = db.query("INSERT INTO run_receipts (run_id, rail, started_at, finished_at, status, stopped, report) VALUES (?, 'sync', ?, ?, 'ok', NULL, ?)");
+    db.transaction(() => {
+      for (let i = 0; i < 2000; i++) {
+        const at = new Date(Date.parse("2026-09-29T00:00:00Z") + i).toISOString();
+        const receipt = { ...emptyRunTotals(), run_id: `synthetic-counter-${i}`, rail: "sync", started_at: at, finished_at: at, status: "ok", stopped: null,
+          claims_extracted: Number.MAX_SAFE_INTEGER, claims_written: Number.MAX_SAFE_INTEGER };
+        insert.run(receipt.run_id, at, at, JSON.stringify(receipt));
+      }
+    })();
+    const report = inspectServeDoctor(db, path, { now: "2026-09-30T00:00:00Z", host_checks: false, page_walk: false });
+    expect(report.calibration.write_rate).toBe(1);
+  } finally { db.close(); }
+});
+
+test("doctor withholds a malformed journal receipt without aborting the report", () => {
+  const { path, db } = vault();
+  try {
+    writeFileSync(runReceiptsPath(path), `${JSON.stringify({ ...emptyRunTotals(), run_id: "synthetic-malformed-transition", rail: "sync",
+      started_at: "2026-09-29", finished_at: "2026-09-29", status: "ok", stopped: null, schedule_transition: null })}\n`);
+    const report = inspectServeDoctor(db, path, { now: "2026-09-30T00:00:00Z", host_checks: false, page_walk: false });
+    expect(report.stores.orphan_run_receipts).toEqual([]);
+  } finally { db.close(); }
+});
+
 test("prune replays an unpublished receipt before retiring a 10 MB journal, and does not resurrect expired rows", () => {
   const { path, db } = vault();
   try {

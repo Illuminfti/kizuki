@@ -393,9 +393,8 @@ function* iterateRunReceiptsLog(vaultPath: string, tailBytes?: number): Generato
     const buffer = Buffer.alloc(64 * 1024);
     let pieces: Buffer[] = [];
     const parse = (bytes: Buffer): RunReceipt | null => {
-      let value: unknown;
-      try { value = JSON.parse(bytes.toString("utf8")); } catch { return null; }
-      return parseRunReceipt(value);
+      try { return parseRunReceipt(JSON.parse(bytes.toString("utf8"))); }
+      catch { return null; }
     };
     while (position < size) {
       const read = readSync(fd, buffer, 0, Math.min(buffer.length, size - position), position);
@@ -710,7 +709,7 @@ function fileSize(path: string): number {
  */
 export function orphanJournalReceipts(db: Database, vaultPath: string): string[] {
   const orphans: string[] = [];
-  for (const receipt of readRunReceiptsLog(vaultPath, DOCTOR_JOURNAL_TAIL_BYTES)) {
+  for (const receipt of iterateRunReceiptsLog(vaultPath, DOCTOR_JOURNAL_TAIL_BYTES)) {
     if (getRunReceipt(db, receipt.run_id) === null) {
       orphans.push(receipt.run_id);
     }
