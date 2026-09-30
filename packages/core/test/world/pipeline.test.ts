@@ -55,8 +55,8 @@ function conceptCard(ctx = scene.owner, label = "Bayesian updating", requested?:
 }
 
 /** The same read without the gate, which turns any failure into an opaque one. */
-function rawConceptRead(): unknown {
-  const ref: WireObjectRef = goldenReader(scene.owner).find("find", "find_concepts", "Bayesian updating")[0]!.ref;
+function rawConceptRead(requested?: WireObjectRef): unknown {
+  const ref: WireObjectRef = requested ?? goldenReader(scene.owner).find("find", "find_concepts", "Bayesian updating")[0]!.ref;
   return readWorldView(scene.owner, {
     operation: "concept",
     concept: ref,
@@ -165,8 +165,9 @@ describe("groupers", () => {
   });
 
   test("a grouper that loses the requested handle is refused", () => {
+    const ref = conceptCard().card.concept.ref;
     const lose: Grouper = (_frame, cluster) => ({ ...cluster, members: [handleOf("topic:probability")] });
-    expect(() => withWorldPipeline({ groupers: [lose] }, rawConceptRead)).toThrow(
+    expect(() => withWorldPipeline({ groupers: [lose] }, () => rawConceptRead(ref))).toThrow(
       "must keep the requested handle",
     );
   });
