@@ -288,7 +288,12 @@ describe("backfill and sync", () => {
     const served = await serveTimeline(ctx, window);
     expect(served.quoted.map(chunk => chunk.text)).toEqual(["Second draft."]);
     const packet = await serveContextPacket(ctx, { query: "draft", include: ["timeline"], ...window });
-    expect(packet.quoted.map(chunk => chunk.text)).toEqual(["Second draft."]);
+    // Timeline previews trim whitespace; packets preserve the captured text.
+    expect(packet.quoted.map(chunk => ({
+      text: chunk.text.trim(), event_id: chunk.event_id, occurred_at: chunk.occurred_at,
+    }))).toEqual([{
+      text: "Second draft.", event_id: served.quoted[0]!.event_id, occurred_at: "2026-03-10T12:00:00.000Z",
+    }]);
     db.close();
   });
 
