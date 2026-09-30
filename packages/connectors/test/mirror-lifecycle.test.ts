@@ -223,7 +223,11 @@ for (const kind of KINDS) {
       try {
         await establish(h, 50);
         // The root is replaced by a tree holding 3 of the 50 records (6 percent).
-        for (let index = 3; index < 50; index += 1) h.remove(index);
+        const original = join(h.root, "unmounted");
+        renameSync(h.mirror.dir, original);
+        mkdirSync(h.mirror.dir);
+        if (kind.label === "wiki") writeFileSync(join(h.mirror.dir, "kizuki-mapping.json"), MAPPING);
+        for (let index = 0; index < 3; index += 1) h.put(index);
         const held = await h.sync();
         expect(held.stored).toBe(0);
         expect(held.errors).toEqual(["mass_withdrawal_held: 47 of 50"]);
