@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { dispatchServeTool } from "../../src/serving/dispatch";
+import type { Tool } from "../../src/agents";
 import { checkNoninterference } from "../helpers/noninterference";
 import type { ReadCase } from "../helpers/noninterference";
 
@@ -17,9 +18,9 @@ function withoutLegacyEpochs(envelope: unknown): unknown {
 }
 
 test("hidden mutations leave timeline, health and session output and work unchanged", async () => {
-  const tool = (name: string, args: Record<string, unknown>, label = name): ReadCase => ({
+  const tool = (name: Tool, args: Record<string, unknown>, label: string = name): ReadCase => ({
     name: label,
-    run: async (ctx) => withoutLegacyEpochs(await dispatchServeTool(ctx, name as never, args)),
+    run: async (ctx) => withoutLegacyEpochs(await dispatchServeTool(ctx, name, args)),
   });
   const leaks = await checkNoninterference({
     cases: () => [
