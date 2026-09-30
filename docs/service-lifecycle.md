@@ -92,6 +92,31 @@ again resumes from the last checkpoint. Stopping the service is not required
 for ordinary capture; it remains the way to release a lease held by a stuck
 process. The MCP adapter refuses the same case as `busy` with a retry hint.
 
+A writer never takes the service down. `backfill`, `sync` and `import` record
+themselves as the running ingest, and while a service is running they leave the
+ledger free for 150 ms after every 250 ms of writing, so the service's rails
+interleave with them instead of waiting behind them. When a rail still meets a
+ledger it cannot outwait, that pass is skipped: the receipt stops as
+`ledger:lease_held` and names the holder, the schedule is not advanced, and the
+service waits 1 s, then 2 s, doubling to at most 30 s, before it tries again.
+The service logs `ledger_held` once when this starts and `ledger_free` when its
+next write succeeds. Doctor calls a rail down only after five skipped passes in
+a row, and its reason names the holder. A service that is started, or restarted
+by its supervisor, while a writer holds the ledger waits and starts again inside
+the same process (`start_held` in its log) instead of exiting, so the
+supervisor's start limit is not spent on something that clears by itself.
+
+A stop takes seconds: it aborts a model request in flight instead of waiting for
+it. The longest thing a stop can still wait for is one connector call, which the
+host bounds at 60 seconds, so the unit's `TimeoutStopSec=90s` is that bound plus
+a 30 second margin and does not depend on `[ports.llm] timeout_ms`.
+Connector draining finishes and checkpoints the current batch, then starts no
+new batch or source. A stop also cancels startup backoff. If the ledger remains
+held during final sealing, the daemon exits after bounded cleanup and leaves
+the existing seal intact for the next successful writer to advance; it never
+starts the daemon again. Doctor reads the bounded journal tail for pending rail
+receipts and counts each run once, including while the writer is still active.
+
 Definitions and service intent use bounded private files, atomic replacement and
 directory synchronization. A process lock serializes changes for one vault. A
 private transaction snapshot retains the previous definition and intent until

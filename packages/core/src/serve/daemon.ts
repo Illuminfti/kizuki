@@ -2,13 +2,16 @@ import type { Database } from "bun:sqlite";
 import { recoverCanonWrites } from "../canon/recovery";
 import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { canonRecoveryNextStep, readCanonRecoveryHold } from "../canon/stage-recovery";
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fsyncSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import nodeProcess from "node:process";
+import { LEDGER_LOOP_PROBE_TIMEOUT_MS } from "../ledger/limits";
+import { retryWhileBusy, withControlWait } from "../ledger/busy";
 import { embedBackfillPeriod, loadServeConfig } from "./config";
 import { clearServeEndpoint, writeServeEndpoint } from "./endpoint";
 import { startServeHttp } from "./http";
 import type { ServeHttpHandle } from "./http";
+import { asLeaseHeld, ledgerLeaseHolder } from "./lease-held";
 import {
   acquireLease,
   heartbeatLease,
@@ -19,10 +22,22 @@ import {
   type LeaseState,
 } from "./leases";
 import { getRunReceipt, recoverRunJournal } from "./receipts";
-import { dueRails, runRail, type RailHooks, type RailHooksV2, type RailRuntime, type RailRuntimeV2 } from "./rails";
+import { dueRails, runRail, type RailHooks, type RailHooksV2, type RailRuntime, type RailRuntimeContext, type RailRuntimeV2 } from "./rails";
 import type { RetrievalPort } from "../contracts/retrieval";
 import { applyRailPeriod, initServe, listSchedules } from "./schema";
-import { SERVE_PID_PATH, ServeDaemonError, isRailId, type CrashPoint, type RailId } from "./types";
+import {
+  LEDGER_HELD_BACKOFF_MAX_MS,
+  LEDGER_HELD_BACKOFF_MIN_MS,
+  LEDGER_LEASE_HELD_STOP,
+  STOP_WATCH_MS,
+  ServeDaemonError,
+  isRailId,
+  type CrashPoint,
+  type RailId,
+  type RunExecution,
+  type RunReceipt,
+} from "./types";
+import { readServePid, readServeProcessMarker, servePidPath, type ServeProcessMarker } from "./process-marker";
 import { clearServeStopRequest, serveStopRequested } from "./stop-control";
 
 interface ServeDaemonOptionsBase {
@@ -39,16 +54,20 @@ interface ServeDaemonOptionsBase {
   readonly shouldContinue?: () => boolean;
   /** One structured line per held recovery attempt; defaults to stderr. */
   readonly log?: (line: string) => void;
+  /** Terminal command cancellation, including startup and final cleanup. */
+  readonly signal?: AbortSignal;
+  /** Startup finished; subsequent contention must never restart this invocation. */
+  readonly onStarted?: () => void;
 }
 
 export interface ServeDaemonOptions extends ServeDaemonOptionsBase {
   readonly hooks?: RailHooks;
-  readonly acquireRuntime?: () => Promise<RailRuntime>;
+  readonly acquireRuntime?: (context: RailRuntimeContext) => Promise<RailRuntime>;
 }
 
 export interface ServeDaemonOptionsV2 extends ServeDaemonOptionsBase {
   readonly hooks?: RailHooksV2;
-  readonly acquireRuntime?: () => Promise<RailRuntimeV2>;
+  readonly acquireRuntime?: (context: RailRuntimeContext) => Promise<RailRuntimeV2>;
 }
 
 type AnyServeDaemonOptions = ServeDaemonOptions | ServeDaemonOptionsV2;
@@ -60,41 +79,8 @@ export interface ServeStatus {
   readonly http: { host: string; port: number } | null;
 }
 
-export function servePidPath(vaultPath: string): string {
-  return join(vaultPath, SERVE_PID_PATH);
-}
+export { readServePid, readServeProcessMarker, servePidPath, type ServeProcessMarker } from "./process-marker";
 
-export interface ServeProcessMarker { pid: number; boot_id: string; instance_id: string; }
-export function readServeProcessMarker(vaultPath: string): ServeProcessMarker | null {
-  const path = servePidPath(vaultPath);
-  if (!existsSync(path)) return null;
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    if (!fstatSync(fd).isFile() || fstatSync(fd).size > 4096) return null;
-    const raw = readFileSync(fd, "utf8");
-    if (raw.length > 4096) return null;
-    let value: unknown;
-    try { value = JSON.parse(raw); } catch { return null; }
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const marker = value as Record<string, unknown>;
-    if (Object.keys(marker).sort().join() !== "boot_id,instance_id,pid" || !Number.isSafeInteger(marker.pid) || Number(marker.pid) < 1 || typeof marker.boot_id !== "string" || !marker.boot_id || marker.boot_id.length > 128 || typeof marker.instance_id !== "string" || !marker.instance_id || marker.instance_id.length > 128) return null;
-    return marker as unknown as ServeProcessMarker;
-  } finally { closeSync(fd); }
-}
-export function readServePid(vaultPath: string): number | null {
-  const marker = readServeProcessMarker(vaultPath);
-  if (marker) return marker.pid;
-  const path = servePidPath(vaultPath);
-  if (!existsSync(path)) return null;
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    if (!fstatSync(fd).isFile() || fstatSync(fd).size > 4096) return null;
-    const raw = readFileSync(fd, "utf8").trim();
-    if (!/^[1-9]\d{0,9}$/.test(raw)) return null;
-    const pid = Number(raw);
-    return Number.isSafeInteger(pid) ? pid : null;
-  } finally { closeSync(fd); }
-}
 function syncPidDirectory(path: string): void {
   const fd = openSync(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try { fsyncSync(fd); } finally { closeSync(fd); }
@@ -147,9 +133,33 @@ export async function runServeDaemon(
   // Native supervisor signals and instance-bound CLI requests leave an active
   // rail at its durable boundary, then release the runtime, marker and lease.
   let stopping = false;
-  const requestStop = (): void => { stopping = true; };
+  // A model request in flight is aborted, not waited out: a stop must finish
+  // inside the supervisor's stop timeout whatever the model timeout is.
+  const stopSignal = new AbortController();
+  const requestStop = (): void => { stopping = true; stopSignal.abort(); };
+  options.signal?.addEventListener("abort", requestStop, { once: true });
+  if (options.signal?.aborted) requestStop();
   // A long sync pass reads the same request before each extraction step.
   const stopRequested = (): boolean => stopping || serveStopRequested(vaultPath, ownMarker);
+  const log = options.log ?? ((line: string) => { nodeProcess.stderr.write(`${line}\n`); });
+  // A queued `serve stop` is a file, so a rail in flight has to be told.
+  const runRailUntilStopped = async (rail: RailId, execution: RunExecution, ledgerHeld = false): Promise<RunReceipt> => {
+    const watch = setInterval(() => { if (stopRequested()) requestStop(); }, STOP_WATCH_MS);
+    try {
+      return await runRail(db, vaultPath, rail, {
+        ...options,
+        now: process.now,
+        stopRequested,
+        signal: stopSignal.signal,
+        ledgerHeld,
+        execution,
+      });
+    } finally { clearInterval(watch); }
+  };
+  // Sleep in slices so a stop request ends a backoff at the next slice.
+  const backoff = async (ms: number): Promise<void> => {
+    for (let left = ms; left > 0 && !stopRequested(); left -= 1_000) await sleep(Math.min(1_000, left));
+  };
   nodeProcess.once("SIGTERM", requestStop);
   nodeProcess.once("SIGINT", requestStop);
   try {
@@ -161,7 +171,7 @@ export async function runServeDaemon(
       // serving boundary, reads and ingest keep running, and the supervisor
       // is never asked to restart into the same refusal.
       if (!(error instanceof CanonRecoveryError)) throw error;
-      (options.log ?? ((line: string) => { nodeProcess.stderr.write(`${line}\n`); }))(canonRecoveryHeldLine(vaultPath, error));
+      log(canonRecoveryHeldLine(vaultPath, error));
     }
   }
   const config = loadServeConfig(vaultPath);
@@ -183,11 +193,10 @@ export async function runServeDaemon(
       writeServeEndpoint(vaultPath, { host: http.host, port: http.port, instance_id: ownMarker.instance_id });
     } catch {
       // The endpoint file is only a discovery hint for local clients; sync and http stay up without it.
-      (options.log ?? ((line: string) => { nodeProcess.stderr.write(`${line}\n`); }))("serve: endpoint hint could not be written; clients must find the daemon another way");
+      log("serve: endpoint hint could not be written; clients must find the daemon another way");
     }
   }
-
-
+  options.onStarted?.();
     if (options.once === true) {
       const rails =
         options.rails ??
@@ -206,46 +215,91 @@ export async function runServeDaemon(
       for (const rail of listed) {
         if (stopRequested()) break;
         if (!isRailId(rail)) continue;
-        const receipt = await runRail(db, vaultPath, rail, {
-          ...options,
-          now: process.now,
-          stopRequested,
-          execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "once", due_at: null },
-        });
+        const receipt = await runRailUntilStopped(rail, { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "once", due_at: null });
         if (getRunReceipt(db, receipt.run_id) !== null) receipts += 1;
       }
       return { receipts, http };
     }
 
+    // A held ledger skips passes; it never ends the daemon. Consecutive
+    // skips lengthen the wait until a pass runs again, and that says so.
+    let held = 0;
+    // A receipt whose journal line outlived a refused ledger write must reach
+    // the ledger before any rail runs again, or the same slot would run twice.
+    let unpublished = false;
+    const skipped = async (): Promise<void> => {
+      held += 1;
+      if (held === 1) log(ledgerHeldLine(vaultPath, db, "held"));
+      await backoff(Math.min(LEDGER_HELD_BACKOFF_MIN_MS * 2 ** (held - 1), LEDGER_HELD_BACKOFF_MAX_MS));
+    };
+    const writable = (): void => {
+      if (held === 0) return;
+      held = 0;
+      log(ledgerHeldLine(vaultPath, db, "free"));
+    };
     while (!stopRequested() && (options.shouldContinue?.() ?? true)) {
-      heartbeatLease(db, process);
-      const due = dueRails(db, process.now());
-      const rail = due[0];
-      if (rail !== undefined) {
-        const receipt = await runRail(db, vaultPath, rail, {
-          ...options,
-          now: process.now,
-          stopRequested,
-          execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
-            due_at: listSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() },
-        });
-        // A coalesced idle run advances the schedule and persists no receipt.
-        if (getRunReceipt(db, receipt.run_id) !== null) receipts += 1;
-        continue;
+      try {
+        // The probe waits briefly: the loop shares a thread with loopback HTTP.
+        let free = true;
+        try { withControlWait(db, () => heartbeatLease(db, process), LEDGER_LOOP_PROBE_TIMEOUT_MS); }
+        catch (error) { if (asLeaseHeld(vaultPath, error, db) === null) throw error; free = false; }
+        if (free && unpublished) { recoverRunJournal(db, vaultPath); unpublished = false; }
+        const rail = dueRails(db, process.now())[0];
+        if (rail !== undefined) {
+          // A rail due while the ledger is held records its skipped pass, so doctor sees it.
+          const receipt = await runRailUntilStopped(rail, { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
+            due_at: listSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() }, !free);
+          // A coalesced idle run advances the schedule and persists no receipt.
+          if (getRunReceipt(db, receipt.run_id) !== null) receipts += 1;
+          if (receipt.stopped === LEDGER_LEASE_HELD_STOP) await skipped();
+          else writable();
+          continue;
+        }
+        if (!free) { await skipped(); continue; }
+        writable();
+        await sleep(1_000);
+        if (stopping || (options.shouldContinue !== undefined && !options.shouldContinue())) break;
+      } catch (error) {
+        if (asLeaseHeld(vaultPath, error, db) === null) throw error;
+        unpublished = true;
+        await skipped();
       }
-      await sleep(1_000);
-      if (stopping || (options.shouldContinue !== undefined && !options.shouldContinue())) break;
     }
     return { receipts, http };
+  } catch (error) {
+    // A stop queued against the startup marker is terminal too. Observe it
+    // before cleanup removes the marker/request, or a busy startup could be
+    // mistaken for another attempt after the requested shutdown.
+    if (asLeaseHeld(vaultPath, error, db) !== null && stopRequested()) return { receipts, http };
+    throw error;
   } finally {
+    options.signal?.removeEventListener("abort", requestStop);
     nodeProcess.off("SIGTERM", requestStop);
     nodeProcess.off("SIGINT", requestStop);
     try { if (http !== null) { clearServeEndpoint(vaultPath); await http.stop(); } }
     finally {
       try { clearServeStopRequest(vaultPath, ownMarker); clearPid(vaultPath, instanceId); }
-      finally { releaseLease(db, process); }
+      finally {
+        // A writer that outlasts the retries leaves the lease to expire: its
+        // holder is dead, so the next start reclaims it after the stale window.
+        try { retryWhileBusy(() => releaseLease(db, process), RELEASE_ATTEMPTS); }
+        catch (error) { if (asLeaseHeld(vaultPath, error) === null) throw error; }
+      }
     }
   }
+}
+
+/** A stop that finds the ledger held tries twice to give the lease back, then lets it expire. */
+const RELEASE_ATTEMPTS = 2;
+
+/** One structured line when the ledger is held by another writer, and one when the daemon can write again. */
+function ledgerHeldLine(vaultPath: string, db: Database, state: "held" | "free"): string {
+  const holder = state === "held" ? ledgerLeaseHolder(vaultPath, db, process.pid) : null;
+  return JSON.stringify({
+    event: `ledger_${state}`,
+    ...(holder === null ? {} : { holder_pid: holder.pid, holder: holder.kind }),
+    next: state === "held" ? "rails skip their passes and retry with backoff; nothing is lost" : "rails resume",
+  });
 }
 
 function canonRecoveryHeldLine(vaultPath: string, error: CanonRecoveryError): string {

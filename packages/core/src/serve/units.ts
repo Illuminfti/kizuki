@@ -1,3 +1,4 @@
+import { CONNECTOR_OPERATION_DEADLINE_MS } from "../contracts/connector";
 import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS, type ServeConfig } from "./types";
 
 /** A dead writer's fresh lease remains protected until its reclaim window ends. */
@@ -8,8 +9,15 @@ export const SERVICE_READY_SECONDS = 15;
 export const SERVICE_BROKER_REAP_SECONDS = 2;
 /** TimeoutStartSec: READY plus reap plus a 1s margin. */
 export const SERVICE_START_SECONDS = SERVICE_READY_SECONDS + SERVICE_BROKER_REAP_SECONDS + 1;
-/** Rendered TimeoutStopSec. */
-export const SERVICE_STOP_SECONDS = 90;
+/** Slack for the durable step a stop lets finish, and for the exit itself. */
+export const SERVICE_STOP_MARGIN_SECONDS = 30;
+/**
+ * Rendered TimeoutStopSec. A stop aborts the model request in flight, so the
+ * model's own timeout, which an owner may set up to ten minutes, is never part
+ * of it. The longest thing a stop can still wait for is one connector call,
+ * which the host bounds at `CONNECTOR_OPERATION_DEADLINE_MS`, plus the margin.
+ */
+export const SERVICE_STOP_SECONDS = CONNECTOR_OPERATION_DEADLINE_MS / 1_000 + SERVICE_STOP_MARGIN_SECONDS;
 /** Deliberate refusals (custody, migration) exit with EX_CONFIG; systemd never restarts them. */
 export const SERVICE_REFUSAL_EXIT = 78;
 /** At most this many starts per interval before systemd stops restarting a failing unit. */

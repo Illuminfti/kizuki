@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import {
   appendFileSync,
   closeSync,
+  constants,
   existsSync,
   fstatSync,
   fsyncSync,
@@ -22,6 +23,7 @@ import { loadServeConfig } from "./config";
 import {
   DOCTOR_JOURNAL_TAIL_BYTES,
   InjectedCrash,
+  LEDGER_LEASE_HELD_STOP,
   NOOP_RECEIPT_HEARTBEAT_S,
   RUN_RECEIPT_JOURNAL_MAX_BYTES,
   RUN_RECEIPTS_PATH,
@@ -358,26 +360,54 @@ export function readRunReceiptsLog(vaultPath: string, tailBytes?: number): RunRe
       if (line.trim().length === 0) return [];
       let value: unknown;
       try { value = JSON.parse(line); } catch { return []; }
-      const parsed = parseRunReceipt(value);
-      return parsed === null ? [] : [parsed];
+      try {
+        const parsed = parseRunReceipt(value);
+        return parsed === null ? [] : [parsed];
+      } catch (error) {
+        // Inspection ignores invalid tail entries; recovery still fails closed
+        // on invalid schedule transitions rather than silently losing them.
+        if (tailBytes === undefined) throw error;
+        return [];
+      }
     });
 }
 
 function readJournalText(path: string, tailBytes: number | undefined): string {
   if (tailBytes === undefined) return readFileSync(path, "utf8");
-  const fd = openSync(path, "r");
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const size = fstatSync(fd).size;
-    if (size <= tailBytes) return readFileSync(fd, "utf8");
-    const buffer = Buffer.alloc(tailBytes);
-    readSync(fd, buffer, 0, tailBytes, size - tailBytes);
-    const text = buffer.toString("utf8");
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return "";
+    const size = stat.size;
+    const buffer = Buffer.alloc(Math.min(size, tailBytes));
+    const offset = Math.max(0, size - tailBytes);
+    const count = readSync(fd, buffer, 0, buffer.length, offset);
+    const text = buffer.subarray(0, count).toString("utf8");
+    if (offset === 0) return text;
     // The window starts mid-line; drop the partial first line.
     const firstBreak = text.indexOf("\n");
     return firstBreak === -1 ? "" : text.slice(firstBreak + 1);
   } finally {
     closeSync(fd);
   }
+}
+
+/** Bounded, validated journal runs still awaiting SQLite publication. Persisted ids win. */
+export function readPendingRunReceipts(db: Database, vaultPath: string): RunReceipt[] {
+  const pending = new Map<string, RunReceipt>();
+  const persisted = tableExists(db, "run_receipts")
+    ? db.query<{ present: number }, [string]>("SELECT 1 AS present FROM run_receipts WHERE run_id = ?")
+    : null;
+  const validTime = (value: string): boolean => Number.isFinite(Date.parse(value)) &&
+    new Date(value).toISOString().replace(".000Z", "Z") === value.replace(".000Z", "Z");
+  for (const receipt of readRunReceiptsLog(vaultPath, DOCTOR_JOURNAL_TAIL_BYTES)) {
+    if (!isRailId(receipt.rail) || receipt.run_id.length > 128 ||
+        !validTime(receipt.started_at) || !validTime(receipt.finished_at) ||
+        receipt.finished_at < receipt.started_at || persisted?.get(receipt.run_id)) continue;
+    // Repeated journal ids are one run. Recovery remains responsible for conflicts.
+    if (!pending.has(receipt.run_id)) pending.set(receipt.run_id, receipt);
+  }
+  return [...pending.values()];
 }
 
 function appendJsonl(vaultPath: string, receipt: RunReceipt): void {
@@ -433,7 +463,8 @@ function redactReceipt(receipt: RunReceipt): RunReceipt {
 
 /** Attach the compare-and-advance intent for the rail's next due slot. */
 function withScheduleTransition(db: Database, vaultPath: string, receipt: RunReceipt): RunReceipt {
-  if (!isRailId(receipt.rail)) return receipt;
+  // A skipped pass leaves its rail due: the daemon retries it with backoff.
+  if (!isRailId(receipt.rail) || receipt.stopped === LEDGER_LEASE_HELD_STOP) return receipt;
   const row = db.query<{ next_run_at: string | null; period_s: number }, [string]>("SELECT next_run_at,period_s FROM schedules WHERE rail=?").get(receipt.rail);
   if (row === null) return receipt;
   const scheduled = receipt.execution?.trigger === "scheduled";

@@ -151,6 +151,40 @@ describe("fetchTransport", () => {
     });
   });
 
+  test("aborts a request in flight as soon as its signal fires, and says so", async () => {
+    fake = startFakeEndpoint(async () => {
+      await Bun.sleep(5_000);
+      return defaultChatCompletion();
+    });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 40);
+    const started = performance.now();
+    const result = await fetchTransport({
+      url: `${fake.base_url}/chat/completions`,
+      api_key: null,
+      timeout_ms: 60_000,
+      max_response_bytes: 4_096,
+      body: BODY,
+      signal: controller.signal,
+    });
+    expect(result).toEqual({ ok: false, kind: "transport", status: 0, failure: "aborted" });
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  test("a signal already aborted sends nothing", async () => {
+    fake = startFakeEndpoint();
+    const result = await fetchTransport({
+      url: `${fake.base_url}/chat/completions`,
+      api_key: null,
+      timeout_ms: 1_000,
+      max_response_bytes: 4_096,
+      body: BODY,
+      signal: AbortSignal.abort(),
+    });
+    expect(result).toMatchObject({ ok: false, kind: "transport", failure: "aborted" });
+    expect(fake.requests).toHaveLength(0);
+  });
+
   test("rejects an oversized response before parsing it", async () => {
     fake = startFakeEndpoint(
       () =>

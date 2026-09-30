@@ -12,6 +12,7 @@ import {
   bindSourceModelPort,
   bindEpochZeroProducerPort,
   sourcePolicyEpoch,
+  isLedgerBusy,
   isPlainObject,
   registerModelProducerPort,
   registerModelProducerV2Port,
@@ -113,12 +114,15 @@ async function syncConnections(
   vaultPath: string,
   store: Parameters<typeof listHostConnections>[1],
   env: Record<string, string | undefined>,
+  pace: (() => void) | undefined,
+  signal: AbortSignal | undefined,
 ): Promise<RailSyncResult> {
   let events_synced = 0;
   let events_stored = 0;
   let events_duplicate = 0;
   const errors: string[] = [];
   for (const selected of listHostConnections(db, store)) {
+    if (signal?.aborted) break;
     if (selected.state === null) {
       if (errors.length < MAX_SYNC_ERRORS) errors.push("connection state unavailable");
       continue;
@@ -126,13 +130,14 @@ async function syncConnections(
     try {
       const connector = await loadConnector(selected, store, db, env);
       try {
+        if (signal?.aborted) break;
         const result = await runToCompletion(
           db,
           connector,
           selected.connection.connector_id,
           selected.connection.source_key,
           "sync",
-          { vault_path: vaultPath },
+          { vault_path: vaultPath, ...(pace === undefined ? {} : { pace }), ...(signal === undefined ? {} : { signal }) },
         );
         events_stored += result.stored;
         events_duplicate += result.duplicates;
@@ -148,6 +153,8 @@ async function syncConnections(
         }
       } finally { await closeHostConnector(connector); }
     } catch (error) {
+      // A held ledger is the whole pass's skip, not this connector's failure.
+      if (isLedgerBusy(error)) throw error;
       if (errors.length < MAX_SYNC_ERRORS) {
         errors.push(`connector ${selected.connection.connector_id} sync unavailable: ${redactReceiptError(error)}`);
       }
@@ -165,6 +172,10 @@ interface ServeRuntimeOptions {
   readonly err: (line: string) => void;
   /** Strict by default; the daemon can retain its useful local capture floor. */
   readonly configurationErrorMode?: "throw" | "disable-model";
+  /** Aborts model requests and stops connector draining after its current committed batch. */
+  readonly signal?: AbortSignal;
+  /** A foreground caller's pacer, so its sync leaves the ledger free between commits for a running daemon. */
+  readonly pace?: () => void;
 }
 
 /** What doctor and serve status show about a bindable model. Never the credential. */
@@ -234,11 +245,14 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
   }
   const registry = new PortRegistry();
   registerLlmPorts(registry);
-  const llm = (await registry.bindFromConfig<LlmPort>(
+  const boundLlm = (await registry.bindFromConfig<LlmPort>(
     "llm",
     { llm: selected.id },
     portContext(options.vaultPath, "llm", selected.id, selected.config, selected.secret_ref, secret, options.err),
   )).port;
+  const { signal } = options;
+  const llm: LlmPort = signal === undefined ? boundLlm
+    : { ...boundLlm, complete: (request) => boundLlm.complete({ ...request, signal }) };
   let producer: ProducerPort | ProducerV2Port | undefined;
   let systemone: SystemOnePort | undefined;
   try {
@@ -263,11 +277,13 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
         }
         parseSystemOneJevConfig(config);
         registerSystemOnePorts(registry);
-        systemone = (await registry.bindFromConfig<SystemOnePort>(
+        const boundJudge = (await registry.bindFromConfig<SystemOnePort>(
           "systemone",
           { systemone: SYSTEMONE_JEV_ID },
           portContext(options.vaultPath, "systemone", SYSTEMONE_JEV_ID, config, secretRef, systemoneSecret, options.err),
         )).port;
+        systemone = signal === undefined ? boundJudge
+          : { ...boundJudge, evaluate: (request) => boundJudge.evaluate({ ...request, signal }) };
       }
       // Epoch-zero journals predate typed source support. Keep their declared
       // v1 producer/draft codec end-to-end; the modern, source-bound route is
@@ -334,7 +350,7 @@ export async function createServeRuntime(options: ServeRuntimeOptions): Promise<
       ...(binding?.producer === undefined ? {} : { producer: binding.producer }),
       claims,
       sync: async () => {
-        const result = await syncConnections(options.db, options.vaultPath, options.store, options.env);
+        const result = await syncConnections(options.db, options.vaultPath, options.store, options.env, options.pace, options.signal);
         return configurationUnavailable
           ? { ...result, errors: [...result.errors, "model configuration unavailable"] }
           : result;
