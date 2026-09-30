@@ -134,6 +134,9 @@ function completeErasureRows(io:CanonIo,intent:WorldCanonErasureIntent):void {
     if(tableExists(io.db,"canon_write_reservations"))io.db.query("UPDATE canon_write_reservations SET page_path='',before_hash=NULL WHERE receipt_id=?").run(erased.receipt_id);
   }
   io.db.query("DELETE FROM canon_holds WHERE page_path=?").run(intent.receipt.page_path);
+  // Completion and projection share the transaction. The finished intent must
+  // stop holding its page before graph refresh, especially after deletion.
+  io.db.query("DELETE FROM canon_write_intents WHERE singleton=1 AND receipt_id=?").run(receipt.receipt_id);
   const after=decodeCanonImage(intent.after_base64),pageId=intent.completion.page_id;
   if(after===null) {
     deletePageIndex(io.db,intent.receipt.page_path);
@@ -146,7 +149,6 @@ function completeErasureRows(io:CanonIo,intent:WorldCanonErasureIntent):void {
     const page=parseFrontmatter(after.toString("utf8"));
     refreshDerivedPage(io.db,{id:pageId,path:join(io.vault_path,receipt.page_path),relPath:receipt.page_path,data:page.data,body:page.body,contentHash:receipt.after_hash},io.vault_path);
   }
-  io.db.query("DELETE FROM canon_write_intents WHERE singleton=1 AND receipt_id=?").run(receipt.receipt_id);
   advanceCanonReadGeneration(io.db);
 }
 
