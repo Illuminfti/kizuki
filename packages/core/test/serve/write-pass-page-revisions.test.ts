@@ -563,11 +563,13 @@ test("a later revision cannot invalidate recovery of published bytes", async () 
     expect((await f.pass()).errors.length).toBeGreaterThan(0);
     expect(readPage(f).body).toContain("revision two");
     revise(f, { text: "# Atlas\n\nrevision two", delivery: "repeat-during-recovery" });
-    revise(f, { text: "# Atlas\n\nrevision three" });
+    // More queued edits than one writer scan must still leave one latest revision.
+    for (let revision = 3; revision <= 260; revision++)
+      revise(f, { text: `# Atlas\n\nrevision ${revision}` });
     f.db.exec("DROP TRIGGER fail_receipt");
     recoverCanonWrites({ db: f.db, vault_path: f.vault });
     expect((await f.pass()).errors).toEqual([]);
-    expect(readPage(f).body).toContain("revision three");
+    expect(readPage(f).body).toContain("revision 260");
     expect(occurrences(readPage(f).body, "# Atlas")).toBe(1);
     expect(listCanonReceipts(f.db, { page_path: PAGE })).toHaveLength(3);
   } finally { f.db.close(); }

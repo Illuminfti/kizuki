@@ -1,5 +1,6 @@
 import { UNWRITTEN_CAPTURE_NOTE_WHERE } from "./capture-fanout";
 import { pageClaimKey } from "./hash";
+import { readCanonWriteIntent } from "../canon/write-intent";
 import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { historicalSourceWriteAllowed, inspectSourceGrant, sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, type SourceReadScope } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
@@ -1117,9 +1118,11 @@ export function supersedePageRevisions(db: Database, winnerId: string, at: strin
   if (!db.inTransaction) throw new Error("page supersession requires the claim transaction");
   const winner = getClaim(db, winnerId);
   if (winner === null || winner.status !== "live" || winner.authority !== "connector_evidence" || !isSourcePageClaim(db, winner)) return;
-  // New evidence may be filed while bytes await their receipt. Its lifecycle
-  // stays deferred until the writer completes the guarded intent.
-  if (tableExists(db, "canon_write_intents") && db.query("SELECT 1 FROM canon_write_intents LIMIT 1").get() !== null) return;
+  // Only the unfinished write's guarded claims await writer completion.
+  // Later revisions can retire one another without changing those guards.
+  const pending = tableExists(db, "canon_write_intents") ? readCanonWriteIntent(db) : null;
+  const guarded = new Set(pending?.admission.claims.map(claim => claim.id));
+  if (guarded.has(winnerId)) return;
   if (!sourceEventsAllowed(db, winner.provenance, { owner: true, purpose: "derive" })) return;
   const connector = winner.frontmatter["x-connector"] as string;
   const record = winner.frontmatter["x-source-record-id"] as string;
@@ -1140,6 +1143,7 @@ export function supersedePageRevisions(db: Database, winnerId: string, at: strin
     return;
   }
   for (const loser of older) {
+    if (guarded.has(loser.claim_id)) continue;
     // Carry the materialized predecessor across any number of queued edits.
     // Intermediate revisions stay superseded and are not revived by undo.
     if (loser.receipt_id === null) {
@@ -1147,7 +1151,7 @@ export function supersedePageRevisions(db: Database, winnerId: string, at: strin
         "SELECT loser, prior_valid_to FROM claim_supersessions WHERE winner = ?",
       ).all(loser.claim_id)) {
         const prior = getClaim(db, predecessor.loser);
-        if (prior === null || prior.receipt_id === null || prior.status !== "superseded" ||
+        if (prior === null || guarded.has(prior.claim_id) || prior.receipt_id === null || prior.status !== "superseded" ||
             prior.superseded_by !== loser.claim_id) continue;
         persistClaim(db, { ...prior, superseded_by: winner.claim_id });
         writeSupersession(db, winner.claim_id, prior.claim_id, "R3", predecessor.prior_valid_to, at);
