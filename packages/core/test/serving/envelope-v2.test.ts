@@ -7,7 +7,7 @@
  * byte of it except the request time.
  */
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { OWNER_AGENT_GRANT, addAgent, listAudit } from "../../src/agents";
+import { OWNER_AGENT_GRANT, TOOLS, addAgent, listAudit } from "../../src/agents";
 import { revokeSourceGrant } from "../../src/ledger/source-grants";
 import { hiddenScene } from "../helpers/noninterference";
 import type { NoninterferenceScene } from "../helpers/noninterference";
@@ -161,6 +161,45 @@ test("the same revoke moves the epoch a v1 caller can read, which is the leak th
     expect(after.body.value.data.claims_epoch).toBeGreaterThan(
       before.body.value.data.claims_epoch,
     );
+  } finally {
+    await r.dispose();
+  }
+});
+
+test("every loopback tool uses the closed v2 envelope or a fixed refusal across hidden revocation", async () => {
+  const r = await rig();
+  try {
+    const inputs: Record<(typeof TOOLS)[number], Record<string, unknown>> = {
+      search: { query: "Bayesian" },
+      get_page: { id: "absent:page" },
+      query_entities: { type: "topic" },
+      timeline: { since: "2026-01-01T00:00:00Z", until: "2030-01-01T00:00:00Z" },
+      context_packet: PACKET,
+      graph_neighbors: { id: "absent:page" },
+      system_health: {},
+      world_view: { operation: "describe" },
+      propose: { kind: "claim", body: "A note", subjects: ["topic:bayes"], provenance: [r.scene.hidden.eventId] },
+      correct: { statement: "Use the revised definition.", target: { claim_id: r.scene.hidden.claims[2] }, dry_run: true },
+    };
+    const before = new Map<string, Reply>();
+    for (const tool of TOOLS) {
+      const reply = await r.agent(tool, v2(inputs[tool]));
+      expect(forbiddenPaths(reply.body)).toEqual([]);
+      if (["system_health", "propose", "correct"].includes(tool)) {
+        expect(reply.status).toBe(400);
+        expect(reply.body.ok).toBe(false);
+      } else {
+        expect(reply.status).toBe(200);
+        expect(Object.keys(reply.body.value).sort()).toEqual(ENVELOPE_V2_KEYS);
+        expect(reply.body.value.schema).toBe(V2);
+      }
+      before.set(tool, reply);
+    }
+    r.revokeHiddenSource();
+    for (const tool of TOOLS) {
+      const reply = await r.agent(tool, v2(inputs[tool]));
+      expect({ tool, reply: withoutTime(reply) }).toEqual({ tool, reply: withoutTime(before.get(tool)) });
+    }
   } finally {
     await r.dispose();
   }

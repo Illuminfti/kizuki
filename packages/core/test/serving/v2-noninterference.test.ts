@@ -1,8 +1,14 @@
 import { afterEach, expect, setDefaultTimeout, setSystemTime, test } from "bun:test";
-import { TOOLS } from "../../src/agents";
+import { join } from "node:path";
+import { OWNER_AGENT_GRANT, TOOLS, addAgent, authenticate } from "../../src/agents";
+import { initGraph } from "../../src/graph/schema";
+import { openLedger } from "../../src/ledger/db";
+import { initSearch } from "../../src/search/schema";
 import { dispatchServeTool } from "../../src/serving/dispatch";
-import { HIDDEN_MUTATIONS, checkNoninterference } from "../helpers/noninterference";
+import { HIDDEN_MUTATIONS, checkNoninterference, observe } from "../helpers/noninterference";
 import type { NoninterferenceScene, ReadCase } from "../helpers/noninterference";
+import { tempVault } from "../helpers/vault";
+import { worldSeed } from "../helpers/world-seed";
 
 setDefaultTimeout(120_000);
 afterEach(() => setSystemTime());
@@ -31,4 +37,33 @@ test("all ten v2 tools preserve bytes, refusals and work counters across hidden 
   setSystemTime(new Date("2026-09-30T12:00:00Z"));
   const leaks = await checkNoninterference({ cases, mutations: HIDDEN_MUTATIONS });
   expect(leaks).toEqual([]);
+});
+
+test("the first hidden source leaves v2 bytes and work unchanged across the epoch-zero boundary", async () => {
+  setSystemTime(new Date("2026-09-30T12:00:00Z"));
+  const vault = tempVault("kizuki-v2-policy-");
+  const db = openLedger(join(vault.path, ".kizuki", "kizuki.db"));
+  try {
+    initSearch(db);
+    initGraph(db);
+    const principal = authenticate(db, addAgent(db, "scoped-reader", {
+      ...OWNER_AGENT_GRANT, ceiling: "public", subjects: ["topic:visible"],
+    }).token)!;
+    const ctx = { db, vaultPath: vault.path, principal };
+    const read: ReadCase = {
+      name: "get_page",
+      run: (live) => dispatchServeTool(live, "get_page", { id: "absent:page" }, {
+        response_contract: "kizuki.envelope/v2",
+      }),
+    };
+    // Issue the principal reference before measuring either read.
+    await read.run(ctx);
+    const before = await observe(ctx, read);
+    await worldSeed(db, { subject: "topic:hidden", floor: "private", discover: false });
+    const after = await observe(ctx, read);
+    expect(after).toEqual(before);
+  } finally {
+    db.close();
+    vault.dispose();
+  }
 });
