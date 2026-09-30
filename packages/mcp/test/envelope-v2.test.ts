@@ -40,7 +40,7 @@ test("a newly enrolled stdio client uses v2 on every tool, and hidden revocation
       timeline: { since: "2026-01-01T00:00:00Z", until: "2030-01-01T00:00:00Z" },
       context_packet: { query: "Bayesian", budget_tokens: 1_000 }, graph_neighbors: { id: "absent:page" },
       system_health: {}, world_view: { operation: "describe" },
-      propose: { kind: "claim", body: "An ordinary note", provenance: [hidden.eventId] },
+      propose: { kind: "claim", body: "An ordinary note", subjects: ["topic:bayes"], provenance: [hidden.eventId] },
       correct: { statement: "Use the current definition.", target: { claim_id: hidden.claims[2] }, dry_run: true },
     };
     const before = new Map();
@@ -48,6 +48,9 @@ test("a newly enrolled stdio client uses v2 on every tool, and hidden revocation
       const result = await clients.agent.call(tool, inputs[tool]!);
       expect(forbidden(result)).toEqual([]);
       expect(forbidden(JSON.parse(result.content[0]!.text))).toEqual([]);
+      if (tool === "propose") {
+        expect(JSON.parse(result.content[0]!.text)).toMatchObject({ message: "provenance outside the grant" });
+      }
       if (tool === "system_health") {
         expect(JSON.parse(result.content[0]!.text)).toMatchObject({ error: "unsupported_contract", message: "requested contract unavailable" });
       } else if (!result.isError) {
