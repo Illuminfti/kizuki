@@ -19,6 +19,7 @@ import {
   WORLD,
 } from "./schemas";
 import { SERVER_VERSION } from "./version";
+import { compactToolSchema } from "./compact-schema";
 import type { McpWorldOp } from "./world/ops";
 import { buildWorldSurface } from "./world/surface";
 
@@ -141,7 +142,8 @@ function checked(
   return envelope as WorldViewEnvelope;
 }
 
-type ListHandler = (request: unknown, extra: unknown) => Promise<{ tools: { name: string }[] }>;
+type ListedTool = { name: string; inputSchema: Record<string, unknown>; outputSchema?: Record<string, unknown> };
+type ListHandler = (request: unknown, extra: unknown) => Promise<{ tools: ListedTool[] }>;
 
 /**
  * `tools/list` names only the tools this principal's grant allows, read from
@@ -160,7 +162,11 @@ function listOnlyGrantedTools(server: McpServer, ctx: ServeContext): void {
     const principal = resolvePrincipal(ctx.db, ctx.principal);
     return {
       ...listed,
-      tools: listed.tools.filter((tool) => principal !== null && toolAllowed(principal.grant, tool.name as Tool)),
+      tools: listed.tools.filter((tool) => principal !== null && toolAllowed(principal.grant, tool.name as Tool)).map((tool) => ({
+        ...tool,
+        inputSchema: compactToolSchema(tool.inputSchema),
+        ...(tool.outputSchema === undefined ? {} : { outputSchema: compactToolSchema(tool.outputSchema) }),
+      })),
     };
   });
 }

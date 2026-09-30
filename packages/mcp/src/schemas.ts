@@ -142,6 +142,13 @@ const PACKET_DATA_V2 = z.strictObject({
   ]),
 });
 
+// Like world cards, the listing names the result grammar; the server validates
+// every nested field against the complete contract above.
+const LISTED_PACKET_DATA_V2 = z.strictObject({
+  schema: z.literal(PACKET_V2_SCHEMA),
+  result: z.looseObject({ status: z.enum(["current", "unchanged", "incomplete"]) }),
+});
+
 /** The scoped counterpart of `envelopeFor`: the same chunk narrowing, the closed envelope around it. */
 export function envelopeV2For(tool: Tool) {
   return ENVELOPE_V2_SHAPE.extend({
@@ -168,7 +175,7 @@ export function negotiatedEnvelopeFor(tool: Tool) {
       properties: {
         schema: { const: ENVELOPE_V2_SCHEMA }, principal: { type: "object" },
         denied: false, has_withheld: false, source_policy: false, redacted: false,
-        ...(tool === "context_packet" ? { data: z.toJSONSchema(PACKET_DATA_V2, { target: "draft-7" }) } : {}),
+        ...(tool === "context_packet" ? { data: z.toJSONSchema(LISTED_PACKET_DATA_V2, { target: "draft-7" }) } : {}),
       },
       required: ["data"],
     },
@@ -187,7 +194,7 @@ export function negotiatedEnvelopeFor(tool: Tool) {
 /** Core judges the separate selector before the SDK parses the tool fields. */
 export function selectableInput<T extends z.ZodObject>(input: T) {
   return input.extend({ response_contract: z.unknown().optional().describe(
-    "Select kizuki.envelope/v1 or kizuki.envelope/v2. Tokens default to v2; unsupported selectors receive an audited refusal.",
+    "kizuki.envelope/v1 or kizuki.envelope/v2; token sessions default to v2.",
   ) });
 }
 
