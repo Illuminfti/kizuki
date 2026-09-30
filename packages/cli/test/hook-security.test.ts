@@ -39,7 +39,7 @@ function enroll(f: ReturnType<typeof seeded>) {
   return { token: (JSON.parse(readFileSync(ref.slice(5), "utf8")) as { token: string }).token, ref };
 }
 
-async function hook(env: Record<string, string | undefined>, args: string[], cwd?: string, launcher = false) {
+async function hook(env: Record<string, string | undefined>, args: readonly string[], cwd?: string, launcher = false) {
   const argv = ["hook", "session-start",
     ...(args.includes("--harness") ? [] : ["--harness", "generic"]),
     ...(args.includes("--timeout-ms") ? [] : ["--timeout-ms", "60000"]), ...args];
