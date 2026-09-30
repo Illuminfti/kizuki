@@ -20,6 +20,7 @@ import type { WorldValidQuery } from "../../serving/world-view";
 import { canonicalJson } from "../../util/hash";
 import { assertionEndpoints } from "../allocation";
 import { authorizedSupportSql } from "../policy-sql";
+import { heldUntilCorroborated } from "../corroboration";
 import { handleFor } from "../relation";
 import { charge, type ReadBudget } from "./frame";
 
@@ -256,6 +257,9 @@ export function eligibleWorldClaim(
     }
     supports.push({ row, admission, events });
   }
+  // History retains held claims; current reads need independent sources or owner support.
+  if (!options.historical && supports.length > 0 &&
+      heldUntilCorroborated(ctx.db, claimId, permitted)) return null;
   return supports.length === 0
     ? null
     : {

@@ -6,7 +6,7 @@ import type { ClaimV2Assertion } from "../contracts/claim-v2";
  * wrote with the exact text it cited.
  */
 
-/** Case, accents, punctuation and spacing are not evidence of a different claim. */
+/** Normalize Unicode compatibility forms, case, punctuation and spacing. */
 export function normalizeForGrounding(text: string): string {
   return text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
