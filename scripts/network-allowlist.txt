@@ -110,3 +110,4 @@ packages/embed-local-http/src/http.ts:postJson.Bun.connect#1:owner-configured lo
 packages/embed-local-http/test/helpers.ts:startFakeServer.Bun.serve#1:loopback fake embedding server bound to 127.0.0.1 for the embedding port tests
 packages/embed-local-http/test/port.test.ts:(toplevel).Bun.serve#1:loopback chunked-reply embedding server bound to 127.0.0.1
 packages/embed-local-http/test/port.test.ts:(toplevel).Bun.serve#2:loopback canary standing in for an HTTP proxy, bound to 127.0.0.1, which must receive nothing
+packages/embed-local-http/test/port.test.ts:(toplevel).fetch#1:synthetic loopback follow-up client proving that the proxy-denial fixture leaves later HTTP clients reachable

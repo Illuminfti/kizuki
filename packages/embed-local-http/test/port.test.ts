@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { PortError, PortRegistry, runEmbeddingConformance } from "@kizuki/core";
 import type { EmbeddingPort } from "@kizuki/core";
 import {
@@ -394,23 +395,33 @@ describe("kizuki.embedding.local-http failure handling", () => {
       },
     });
     cleanups.push(() => canary.stop(true));
-    const before = {
-      upper: process.env["HTTP_PROXY"],
-      lower: process.env["http_proxy"],
-    };
-    process.env["HTTP_PROXY"] = `http://127.0.0.1:${canary.port}`;
-    process.env["http_proxy"] = `http://127.0.0.1:${canary.port}`;
+    const { server } = fixture();
+    // Bun caches proxy state. Keep the hostile environment in a child so the
+    // proof cannot redirect later HTTP clients in this test process.
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, "proxy-client.ts"), String(server.port)], {
+      stdin: "ignore", stdout: "pipe", stderr: "pipe",
+      env: { ...process.env, HTTP_PROXY: `http://127.0.0.1:${canary.port}`,
+        http_proxy: `http://127.0.0.1:${canary.port}`, NO_PROXY: "", no_proxy: "" },
+    });
     try {
-      const { server, open } = fixture();
-      await open().embedQuery(["private words"]);
+      const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+      expect(code, stderr).toBe(0);
       expect(server.requests).toHaveLength(1);
       expect(seen).toEqual([]);
     } finally {
-      if (before.upper === undefined) delete process.env["HTTP_PROXY"];
-      else process.env["HTTP_PROXY"] = before.upper;
-      if (before.lower === undefined) delete process.env["http_proxy"];
-      else process.env["http_proxy"] = before.lower;
+      if (child.exitCode === null) child.kill();
+      await child.exited;
     }
+  });
+
+  test("the proxy proof leaves later loopback HTTP clients reachable", async () => {
+    const { server } = fixture();
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/embeddings`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "synthetic-follow-up", input: ["grace"] }),
+    });
+    expect(response.status).toBe(200);
+    expect(server.requests).toHaveLength(1);
   });
 });
 

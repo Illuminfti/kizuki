@@ -141,9 +141,9 @@ describe("embed-backfill without an embedding port", () => {
     writeFileSync(join(engineDir, "engine.json"), JSON.stringify({ refusal: { corpus_bytes: 70 * MIB + 1, limit_bytes: 8 * MIB, at: at(0) } }));
     const layer = inspectServeDoctor(db, path, { now: at(0), supervisor }).stores.vector_layer;
     expect(layer.state).toBe("refused");
-    expect(layer.detail).toContain("corpus is 71 MiB of text");
-    expect(layer.detail).toContain("at most 8 MiB");
-    expect(layer.detail).toContain("searches stay lexical");
+    expect(layer.detail).toContain(`text_bytes: ${70 * MIB + 1} > ${8 * MIB}`);
+    expect(layer.detail).toContain("prior index is preserved");
+    expect(layer.detail).toContain("lexical floor remains available");
     expect(layer.detail).toContain("max_text_bytes");
     // A malformed record is ignored rather than trusted.
     writeFileSync(join(engineDir, "engine.json"), JSON.stringify({ refusal: { corpus_bytes: "lots" } }));
