@@ -26,6 +26,7 @@ export async function observe(fixture: Awaited<ReturnType<typeof generateVault>>
         out: () => {}, err: () => {}, prompt: async () => { throw new Error("fixture cannot prompt"); },
         readStdin: async () => JSON.stringify({ cwd: `/projects/${question.query.replaceAll(" ", "-")}` }),
       }, { direct: true, harness: "generic", budget: BUDGET, timeoutMs: 60_000,
+        owner: principal === "owner",
         tokenRef: principal === "owner" ? undefined : "env:KIZUKI_EVAL_TOKEN" });
       const output = "output" in result ? result.output : "";
       return { output, atoms: markdownAtoms(output), status: "output" in result ? "ok" : `skip:${result.skip}` };
