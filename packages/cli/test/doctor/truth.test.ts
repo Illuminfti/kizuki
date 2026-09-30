@@ -63,13 +63,21 @@ const truncatedRun = {
 describe("doctor tells the daemon's story from a shell without its secret", () => {
   test("typed classifiers are not correctable and next selects a supported claim", async () => {
     const setup = tempVault();
+    const connected = runCli(setup.env, "connect", "markdown-folder", "--source", setup.notes);
+    expect(connected.exitCode, connected.stderr).toBe(0);
+    const sourceKey = connected.stdout.match(/source=([0-9A-HJKMNPQRSTVWXYZ]{26})/)?.[1];
+    expect(sourceKey).toBeDefined();
+    const granted = runCli(setup.env, "connect", "grant", "--source", sourceKey!, ...fixtureConsent(setup.root));
+    expect(granted.exitCode, granted.stderr).toBe(0);
     const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
     let ids: string[];
     try {
-      ids = (await worldFixture(db)).claims;
+      ids = (await worldFixture(db, { connector: "kizuki.markdown-folder", sourceKey: sourceKey!, floor: "private" })).claims;
     } finally {
       db.close();
     }
+    const rebuilt = runCli(setup.env, "rebuild");
+    expect(rebuilt.exitCode, rebuilt.stderr).toBe(0);
     const result = runCli(setup.env, "doctor", "--json");
     expect(result.exitCode, result.stderr).toBe(0);
     const report = JSON.parse(result.stdout).data;
