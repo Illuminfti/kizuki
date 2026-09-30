@@ -193,11 +193,14 @@ function readable(
 ): Readable {
   const found: Claim[] = [];
   let scanned = 0;
-  const policy = authorizedClaimSql(ctx);
-  const valid = `AND ${instantPairSql("claims.valid_from")} <= (?,?) AND
-    (claims.valid_to IS NULL OR ${instantPairSql("claims.valid_to")} > (?,?))`;
+  // Keep the owner's existing bounded-window availability diagnostic. Scoped
+  // windows must contain only candidates the caller may actually use.
+  const scoped = ctx.principal.kind === "agent";
+  const policy = scoped ? authorizedClaimSql(ctx) : { sql: "1", bindings: [] };
+  const valid = scoped ? `AND ${instantPairSql("claims.valid_from")} <= (?,?) AND
+    (claims.valid_to IS NULL OR ${instantPairSql("claims.valid_to")} > (?,?))` : "";
   const atPair = instantBoundPair(at, "at");
-  const requested = subjects === undefined || subjects.length === 0 ? "" :
+  const requested = !scoped || subjects === undefined || subjects.length === 0 ? "" :
     `AND (claims.subject IN (SELECT value FROM json_each(?)) OR (claims.subject IS NULL AND
       EXISTS(SELECT 1 FROM json_each(claims.subjects) s WHERE s.value IN (SELECT value FROM json_each(?)))))`;
   const requestedBindings = requested === "" ? [] : [JSON.stringify(subjects), JSON.stringify(subjects)];
@@ -205,7 +208,7 @@ function readable(
     .query<{ claim_id: string }, (string | number)[]>(
       `SELECT claim_id FROM claims WHERE status='live' AND ${where} AND ${policy.sql} ${valid} ${requested} ORDER BY asserted_at DESC, claim_id LIMIT ${CANDIDATES}`,
     )
-    .iterate(...bindings, ...policy.bindings, ...atPair, ...atPair, ...requestedBindings)) {
+    .iterate(...bindings, ...policy.bindings, ...(scoped ? [...atPair, ...atPair] : []), ...requestedBindings)) {
     scanned += 1;
     const claim = getClaim(ctx.db, row.claim_id);
     if (
