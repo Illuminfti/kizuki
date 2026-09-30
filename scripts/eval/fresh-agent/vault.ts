@@ -12,6 +12,7 @@ import { LegacyEventsConnector } from "../../../packages/connectors/src/index";
 import { initCommand } from "../../../packages/cli/src/commands/init";
 import type { RichClaimDraft, ProducerV2SuppliedRef } from "../../../packages/core/src/contracts/producer-v2";
 import { AS_OF, persona } from "./persona";
+import { assertLogicalClock } from "./clock";
 import type { PersonaSize, RecordSpec } from "./persona";
 
 const ENDPOINT = "https://model.example.test/v1/chat/completions";
@@ -78,6 +79,7 @@ export function discoveredCards(ctx: ServeContext, kind: "concept" | "situation"
 }
 
 export async function generateVault(root: string, size: PersonaSize) {
+  assertLogicalClock();
   const scenario = persona(size), vaultPath = join(root, "vault");
   const initialized = await initCommand.run({ env: { KIZUKI_CONFIG: join(root, "unused-config.toml") },
     vaultOverride: null, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false,

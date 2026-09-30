@@ -44,3 +44,11 @@ test("Markdown and world atoms cannot borrow a sibling's citation", () => {
     { object: { kind: "literal", value: "the bridge is open" }, assessments: [] }];
   expect(worldAtoms(world)).toEqual([{ text: "the bridge is closed", cited: true }, { text: "the bridge is open", cited: false }]);
 });
+
+test("a completely uncited Markdown item cannot inherit the preceding citation", () => {
+  for (const prefix of ["-", "*", "+", "1.", "2)", "  -", "-\t", "*   "]) {
+    const md = `- [claim:01ARZ3NDEKTSV4RRFFQ69G5FAV] the bridge is closed\n${prefix} the bridge is open`;
+    const score = scoreObservation(facts, question, "owner", "context_packet", { output: md, atoms: markdownAtoms(md), status: "ok" });
+    expect(score).toMatchObject({ returned: 2, cited: 1, provenance_rate: 0.5 });
+  }
+});

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serveContextPacket, serveSearch, OWNER, ServeError } from "../../../packages/core/src/index";
@@ -6,6 +6,7 @@ import type { ServeContext } from "../../../packages/core/src/index";
 import { PACKET_TOKENIZER_ID } from "../../../packages/core/src/serving/packet-tokenizer";
 import { runSessionStart } from "../../../packages/cli/src/hook/session-start";
 import { AS_OF } from "./persona";
+import { assertLogicalClock } from "./clock";
 import type { PersonaSize, PrincipalName, Question, Surface } from "./persona";
 import { discoveredCards, generateVault } from "./vault";
 import { markdownAtoms, rate, scoreObservation, worldAtoms } from "./score";
@@ -15,7 +16,8 @@ export const SURFACES: Surface[] = ["session_hook", "context_packet", "search", 
 export const PRINCIPALS: PrincipalName[] = ["owner", "scoped_agent"];
 const BUDGET = 2000;
 
-async function observe(fixture: Awaited<ReturnType<typeof generateVault>>, principal: PrincipalName, surface: Surface, question: Question, root: string): Promise<Observation> {
+export async function observe(fixture: Awaited<ReturnType<typeof generateVault>>, principal: PrincipalName, surface: Surface, question: Question, root: string): Promise<Observation> {
+  assertLogicalClock();
   const ctx: ServeContext = { db: fixture.db, vaultPath: fixture.vaultPath, principal: principal === "owner" ? OWNER : fixture.principal };
   switch (surface) {
     case "session_hook": {
@@ -30,8 +32,7 @@ async function observe(fixture: Awaited<ReturnType<typeof generateVault>>, princ
     }
     case "context_packet": {
       const envelope = await serveContextPacket(ctx, { query: question.query, purpose: "recall", budget_tokens: BUDGET });
-      return { output: JSON.stringify(envelope), atoms: markdownAtoms(envelope.data?.packet_md ?? ""),
-        status: envelope.data?.truncated ? "truncated" : "ok" };
+      return packetObservation(envelope);
     }
     case "search": {
       const envelope = await serveSearch(ctx, { query: question.query, scope: "all", limit: 20 });
@@ -49,6 +50,13 @@ async function observe(fixture: Awaited<ReturnType<typeof generateVault>>, princ
   }
 }
 
+export function packetObservation(envelope: Awaited<ReturnType<typeof serveContextPacket>>): Observation {
+  const packet = envelope.data;
+  const unavailable = !packet?.packet_md || packet.retrieval_degraded.includes("context-unavailable");
+  return { output: JSON.stringify(envelope), atoms: markdownAtoms(packet?.packet_md ?? ""),
+    status: unavailable ? "skip:unavailable" : packet?.truncated ? "truncated" : "ok" };
+}
+
 export function summarize(rows: Score[]) {
   return PRINCIPALS.flatMap(principal => SURFACES.map(surface => {
     const selected = rows.filter(row => row.principal === principal && row.surface === surface);
@@ -61,11 +69,12 @@ export function summarize(rows: Score[]) {
   }));
 }
 
-export async function runEvaluation(options: { size?: PersonaSize; out?: string } = {}) {
+export async function evaluateAtLogicalTime(options: { size?: PersonaSize; out: string }) {
+  assertLogicalClock();
   const size = options.size ?? "full";
   // Output is a new synthetic sandbox, never an existing owner vault.
-  const root = options.out ?? mkdtempSync(join(tmpdir(), "fresh-agent-"));
-  if (options.out !== undefined) mkdirSync(root, { recursive: false, mode: 0o700 });
+  const root = options.out;
+  mkdirSync(root, { recursive: false, mode: 0o700 });
   let fixture: Awaited<ReturnType<typeof generateVault>> | undefined;
   try {
     fixture = await generateVault(root, size);
@@ -84,19 +93,42 @@ export async function runEvaluation(options: { size?: PersonaSize; out?: string 
     const report = { schema: "kizuki.fresh-agent-eval/v1" as const, persona: `orchard-v1:${size}`, as_of: AS_OF,
       tokenizer: PACKET_TOKENIZER_ID, packet_budget: BUDGET, model: "scripted-persona-v1", bun: Bun.version,
       questions: fixture.questions, facts: fixture.facts, build: fixture.build, observations, rows, summaries: summarize(rows) };
-    if (options.out !== undefined) {
-      writeFileSync(join(root, "report.json"), JSON.stringify(report, null, 2) + "\n");
-      writeFileSync(join(root, "report.md"), renderMarkdown(report));
-      writeFileSync(join(root, "questions.json"), JSON.stringify(fixture.questions, null, 2) + "\n");
-    }
+    writeFileSync(join(root, "report.json"), JSON.stringify(report, null, 2) + "\n");
+    writeFileSync(join(root, "report.md"), renderMarkdown(report));
+    writeFileSync(join(root, "questions.json"), JSON.stringify(fixture.questions, null, 2) + "\n");
     return report;
   } finally {
     fixture?.db.close();
-    if (options.out === undefined) rmSync(root, { recursive: true, force: true });
   }
 }
 
-export type EvaluationReport = Awaited<ReturnType<typeof runEvaluation>>;
+export type EvaluationReport = Awaited<ReturnType<typeof evaluateAtLogicalTime>>;
+
+/** Every entrypoint, including callers in bun:test, evaluates in its own clock domain. */
+export async function runEvaluation(options: { size?: PersonaSize; out?: string } = {}): Promise<EvaluationReport> {
+  const sandbox = options.out === undefined ? mkdtempSync(join(tmpdir(), "fresh-agent-")) : undefined;
+  const out = options.out ?? join(sandbox!, "result");
+  try {
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, "worker.ts"), JSON.stringify({ ...options, out })], {
+      stdin: "ignore", stdout: "ignore", stderr: "pipe",
+    });
+    const deadline = setTimeout(() => child.kill("SIGKILL"), 120_000);
+    try {
+      const [code] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+      if (code !== 0) throw new Error("fresh-agent evaluation failed");
+      return JSON.parse(readFileSync(join(out, "report.json"), "utf8")) as EvaluationReport;
+    } finally {
+      clearTimeout(deadline);
+      if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }
+    }
+  } finally {
+    if (sandbox !== undefined) rmSync(sandbox, { recursive: true, force: true });
+  }
+}
+
+export function evaluationExitCode(report: Pick<EvaluationReport, "summaries">): 0 | 1 {
+  return report.summaries.some(row => row.leak_count > 0 || row.failures > 0) ? 1 : 0;
+}
 const percent = (value: number | null) => value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;
 
 export function renderMarkdown(report: EvaluationReport): string {
@@ -129,7 +161,7 @@ if (import.meta.main) {
     try {
       const report = await runEvaluation({ out, size });
       console.log(renderMarkdown(report).split("\n| Principal | Surface | Question")[0]);
-      if (report.summaries.some(row => row.leak_count > 0 || row.failures > 0)) process.exitCode = 1;
+      process.exitCode = evaluationExitCode(report);
     } catch {
       console.error("Fresh-agent evaluation failed; use a new output directory and inspect the synthetic sandbox.");
       process.exitCode = 1;

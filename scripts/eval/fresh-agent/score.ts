@@ -71,7 +71,7 @@ export const rate = (numerator: number, denominator: number): number | null => d
 
 /** Markdown citations stay on their own atom; a cited sibling cannot confer provenance. */
 export function markdownAtoms(output: string): Atom[] {
-  return output.split(/\n(?=- \[(?:page|event|claim):|## )/).map(text => ({
+  return output.split(/\n(?=[ \t]*(?:[-*+]|\d+[.)]|#{1,6})[ \t]+)/).map(text => ({
     text, cited: /\[(?:page|event|claim):[0-9A-HJKMNP-TV-Z]{26}\]|\bev:[0-9A-HJKMNP-TV-Z]{26}\b/.test(text),
   }));
 }

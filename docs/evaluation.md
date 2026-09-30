@@ -45,11 +45,17 @@ It never inserts claim rows or writes canon directly.
 The model endpoint named by the synthetic consent policy uses a reserved test
 domain; the fake LLM has no network transport and needs no credential.
 
-The records and oracle are deterministic. Operational metadata minted by the
-public seams (IDs, timestamps, hashes and opaque handles) is deliberately left
-to Core. Thus fresh vaults are semantically reproducible, not byte-identical.
-The surface clocks, native correction time, tie-breaking IDs and tokenization
-of those IDs can change individual packed results and token counts. Reports
+The records, oracle and logical clock are fixed. The runner evaluates in an
+isolated Bun child process that installs `AS_OF` before loading Core or the CLI.
+Generation, imports, writes, native proposals/corrections, surface reads and
+session hooks all use that clock, including code that reads `Date` directly.
+The caller's clock is unchanged; timers and the worker's outer deadline still
+use real elapsed time. Advancing the host calendar does not age these fixtures
+out of the retrieval window or change correction validity.
+
+Core still mints random IDs and opaque handles. Fresh vaults are semantically
+reproducible, not byte-identical. Tokenization of those references can change
+token counts and, near a packet's budget boundary, packed selection. Reports
 retain the actual observations so every score can be recomputed without a model.
 
 ## Principals and surfaces
@@ -107,7 +113,10 @@ A citation on an unrelated sibling cannot count. This measures reference
 presence, not source truth or whether every source expansion succeeds.
 Question rows with no authorized expected facts have `null` recall (`n/a` in
 Markdown). Empty output has zero tokens and `null` stale/provenance rates;
-unavailability is separately visible, as is incomplete world coverage.
+unavailability is separately visible, as is incomplete world coverage. A packet
+with `context-unavailable`, absent data or empty Markdown is `skip:unavailable`
+and counts as a failure before truncation is considered. Other retrieval
+degradation that preserves usable packet data remains a measured result.
 Summaries are micro-averages of question
 counts, so a fact relevant to several questions is counted once per question.
 Leaks and tokens are summed across observations; privacy failures cannot be
@@ -129,7 +138,11 @@ fact. The owner must retrieve the scope and ceiling decoys, proving those
 denial probes contain real readable facts; the corrected blocker and proposed
 relationship must also be retrievable under their expected access.
 An end-to-end command check rejects a flag in place of the destination before
-any vault work and preserves an existing file at that name.
+any vault work and preserves an existing file at that name. Subprocess tests
+compare fresh runs under different host dates, including semantic scores,
+native correction/receipt timestamps and serving clocks. They also break the
+synthetic retrieval floor and exercise the resulting unavailable observation,
+failure summary and command exit gate while retaining usable degraded fallbacks.
 
 This is a retrieval baseline for a hand-authored synthetic persona and scripted
 extraction, not an extraction-quality or real-agent reasoning benchmark. Exact
@@ -137,8 +150,8 @@ matching can miss paraphrases and partial leaks. Historical text is counted as
 stale exposure even when clearly quoted as historical; this is not a claim that
 the product asserted it as current. Access correctness is probed by known decoys,
 not by exhaustive adversarial noninterference or purge tests. Session selection
-also depends on its live seven-day window. No provider, latency, memory-use,
-embedding, live-sync, downstream tokenizer, prompt-injection resistance or
+uses its seven-day window at the fixed logical clock. No provider, latency,
+memory-use, embedding, live-sync, downstream tokenizer, prompt-injection resistance or
 human outcome claim is made. Those need separate measurements.
 
 The branch's PR records the observed baseline with its exact head. Future
