@@ -4,11 +4,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OWNER_AGENT_GRANT } from "../../src/agents";
-import { getClaim, insertClaim, listClaims, prepareClaimInsert } from "../../src/claims/store";
+import { getClaim, insertClaim, listClaims, pendingRetrievalOps, prepareClaimInsert, retryRetrievalOps } from "../../src/claims/store";
 import { openLedger, LEDGER_SCHEMA_VERSION } from "../../src/ledger/db";
-import { schemaVersion } from "../../src/ledger/schema";
 import { claimReader } from "../../src/serving/claims";
-import { claimInput, putEvent } from "./helpers";
+import { claimInput, FixtureVectorPort, putEvent } from "./helpers";
 
 const indexSql = (db: Database) => db.query<{ sql: string }, []>(
   "SELECT sql FROM sqlite_master WHERE name='claims_idempotency'",
@@ -30,7 +29,7 @@ test("fresh and previous-schema databases support scoped exact twins without los
     db.query("UPDATE schema_version SET version=?").run(LEDGER_SCHEMA_VERSION - 1);
     db.close();
     db = openLedger(path);
-    expect(schemaVersion(db)).toBe(LEDGER_SCHEMA_VERSION);
+    expect(db.query<{ version: number }, []>("SELECT version FROM schema_version").get()?.version).toBe(LEDGER_SCHEMA_VERSION);
     expect(indexSql(db)).not.toContain("UNIQUE");
     expect(getClaim(db, hidden.claim.claim_id)).toEqual(original);
     const visibility = claimReader(db, { ...OWNER_AGENT_GRANT, ceiling: "personal" }, { owner: false, purpose: "recall" }).visibility;
@@ -64,5 +63,27 @@ test("scoped filing rolls back without changing hidden support and serializes pr
     expect(replay.outcome).toBe("duplicate");
     expect(listClaims(db)).toHaveLength(2);
     expect(getClaim(db, hidden.claim.claim_id)).toEqual(original);
+  } finally { db.close(); }
+});
+
+test("scoped index publication retries readable work without touching or counting hidden pending work", async () => {
+  const db = openLedger(":memory:");
+  const retrieval = new FixtureVectorPort();
+  const upsert = retrieval.upsert.bind(retrieval);
+  try {
+    retrieval.upsert = async () => { throw new Error("synthetic index interruption"); };
+    const hidden = await insertClaim({ db, retrieval }, claimInput(putEvent(db), { sensitivity: "private" }));
+    if (hidden.outcome !== "stored") throw new Error(hidden.outcome);
+    const written: string[] = [];
+    retrieval.upsert = async docs => { written.push(...docs.map(doc => doc.doc_id)); return upsert(docs); };
+    const visibility = claimReader(db, { ...OWNER_AGENT_GRANT, ceiling: "personal" }, { owner: false, purpose: "recall" }).visibility;
+    const filed = await insertClaim({ db, retrieval, visibility }, claimInput(putEvent(db), {
+      target: "facts:visible", sensitivity: "personal",
+    }));
+    if (filed.outcome !== "stored") throw new Error(filed.outcome);
+    expect(written).toEqual([`claim:${filed.claim.claim_id}`]);
+    expect(pendingRetrievalOps(db).map(op => op.doc_id)).toEqual([hidden.claim.claim_id]);
+    expect(await retryRetrievalOps({ db, retrieval, visibility })).toEqual({ retried: 0, pending: 0 });
+    expect(getClaim(db, hidden.claim.claim_id)?.status).toBe("live");
   } finally { db.close(); }
 });

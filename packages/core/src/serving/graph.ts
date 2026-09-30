@@ -204,9 +204,12 @@ export async function serveGraph(
         if (authorizedDenials.length < MAX_EDGES) authorizedDenials.push(...classified.withheld);
         return allow;
       };
-      const scopedFloor = () => neighbors(ctx.db, id, {
-        ...query, limit: MAX_EDGES + 1, ceiling: grant.ceiling, filter: accept,
-      });
+      let scopedTruncated = false;
+      const scopedFloor = () => {
+        const result = neighbors(ctx.db, id, { ...query, ceiling: grant.ceiling, filter: accept });
+        scopedTruncated ||= result.truncated;
+        return result;
+      };
       const found = walked.ok
         ? {
             id,
@@ -271,7 +274,7 @@ export async function serveGraph(
         data: {
           id,
           edges: served.kept.slice(0, MAX_EDGES),
-          truncated: (ctx.principal.kind === "owner" && found.truncated) || served.kept.length > MAX_EDGES,
+          truncated: (ctx.principal.kind === "owner" ? found.truncated : scopedTruncated) || served.kept.length > MAX_EDGES,
         },
       };
     },

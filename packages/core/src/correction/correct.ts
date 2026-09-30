@@ -9,7 +9,7 @@ import { semanticKey } from "../claims/claim-v2-keys";
 import { unsupportedCorrectionReason, UNSUPPORTED_ASSERTION_REASONS, type UnsupportedAssertionReason } from "../world/correction-support";
 import type { Database } from "bun:sqlite";
 import { assertStoredPageRelPath } from "../canon/paths";
-import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
+import { extendOwnedCanonIo, requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
 import { readOwnedCanonPage } from "../canon/io";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { toolAllowed } from "../agents/authorization";
@@ -173,7 +173,7 @@ interface ScopedCorrectIo extends CorrectIo {
   };
 }
 
-function scopeCorrection(io: CorrectIo): ScopedCorrectIo {
+function scopeCorrection(scope: VaultMutationScope, io: CorrectIo): ScopedCorrectIo {
   if (io.grant === undefined) return io;
   const producer = io.producer ?? "owner";
   let ctx: ServeContext;
@@ -187,17 +187,17 @@ function scopeCorrection(io: CorrectIo): ScopedCorrectIo {
   }
   const reader = claimReader(io.db, ctx.principal.grant,
     { owner: ctx.principal.kind === "owner", purpose: "recall" });
-  return { ...io, grant: ctx.principal.grant,
+  return extendOwnedCanonIo(scope, io, { grant: ctx.principal.grant,
     ...(ctx.principal.kind === "owner" ? {} : { relay_owner_corrections: ctx.principal.grant.relay_owner_corrections }),
     readScope: {
       claims: reader.visibility,
-      page(path) {
+      page(path: string) {
         const index = loadCanon({ ...ctx, sourcePurpose: "recall" });
         const page = index.byPath.get(path);
         return page !== undefined && pageDecision(index, ctx.principal.grant, page).allow;
       },
     },
-  };
+  });
 }
 
 function pageReadable(io: ScopedCorrectIo, path: string): boolean {
@@ -718,7 +718,7 @@ function captureCorrectInput(input: CorrectInput): CorrectInput {
 
 async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, input: CorrectInput): Promise<CorrectResult> {
   requireCanonFiles(scope, io);
-  io = scopeCorrection(io);
+  io = scopeCorrection(scope, io);
   assertStatement(input.statement);
   assertScope(input.scope);
   assertGrant(io);

@@ -134,11 +134,11 @@ test("canon search and packets drop matches found only in redacted text", async 
       id: "fact:redacted-search", title: value, type: "fact", status: "active",
       sensitivity: "public", taint: "clean", subjects: ["person:ada"],
     }, "A synthetic searchable note.", [f.events.public!]);
-    expect((await serveSearch(f.owner(), { query: "fixturexxx" })).canon).toHaveLength(1);
-    const answer = await serveSearch(f.agent("reader-public"), { query: "fixturexxx" });
+    expect((await serveSearch(f.owner(), { query: "fixturexxx*" })).canon).toHaveLength(1);
+    const answer = await serveSearch(f.agent("reader-public"), { query: "fixturexxx*" });
     expect(answer.canon).toEqual([]);
     expect(answer.redacted).toBeUndefined();
-    const packet = await serveContextPacket(f.agent("reader-public"), { query: "fixturexxx", include: ["canon"] });
+    const packet = await serveContextPacket(f.agent("reader-public"), { query: "fixturexxx*", include: ["canon"] });
     expect(packet.canon).toEqual([]);
     expect(packet.redacted).toBeUndefined();
     const readable = await serveSearch(f.agent("reader-public"), { query: "synthetic searchable" });

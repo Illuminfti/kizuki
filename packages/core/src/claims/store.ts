@@ -701,6 +701,7 @@ export function pendingRetrievalOps(
   visibility?: ClaimVisibility,
 ): { op_id: string; doc_id: string }[] {
   if (!tableExists(db, "retrieval_ops")) return [];
+  if (limit === 0) return [];
   if (visibility !== undefined) {
     const selected: { op_id: string; doc_id: string }[] = [];
     const statement = db.prepare<{ op_id: string; doc_id: string }, (string | number | null)[]>(
@@ -713,7 +714,7 @@ export function pendingRetrievalOps(
         const claim = getClaim(db, op.doc_id);
         if (claim === null || !visibility.canRead(claim)) continue;
         selected.push(op);
-        if (selected.length >= limit) break;
+        if (limit > 0 && selected.length >= limit) break;
       }
       return selected;
     } finally { statement.finalize(); }
