@@ -546,9 +546,9 @@ export function inspectServeDoctor(
   const oversized = oversizedDoctor(db);
   const pages: CanonPageReport =
     options.page_walk === false
-      ? { pages: [], skipped: [], truncated: false }
+      ? { pages: [], skipped: [], truncated: false, scanned_files: 0, scanned_bytes: 0 }
       : listCanonPagesReport(vaultPath);
-  const canon = options.page_walk === false ? null : canonCapacity(pages.pages, pages.truncated, loadCanonLimits(vaultPath));
+  const canon = options.page_walk === false ? null : canonCapacity(pages.pages, pages.truncated, loadCanonLimits(vaultPath), pages);
   const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
   const cal = calibration(db, syncReceipts, now);
   const extraction = extractionDoctor(db, syncReceipts, model.canon_writing !== "off");
@@ -578,7 +578,7 @@ export function inspectServeDoctor(
     }
   }
   if (canon !== null && canon.state !== "ok") {
-    fail(`canon ${canon.state}: ${canon.live} live pages of ${canon.ceiling}, ${canon.archived} archived; ${canon.state === "scan_limited" ? "counts are incomplete; scan resource budget reached" : canon.state === "full" ? "new pages are held, reads continue" : "approaching the ceiling"}; next: ${canon.next}`);
+    fail(`canon ${canon.state}: ${canon.live} live pages of ${canon.ceiling}, ${canon.archived} archived; ${canon.state === "scan_limited" ? (pages.truncated ? "counts are incomplete; scan resource budget reached" : "scan resource budget reached; new pages are held, reads continue") : canon.state === "full" ? "new pages are held, reads continue" : "approaching the ceiling"}; next: ${canon.next}`);
   }
   for (const rail of rails) {
     if (rail.status === "down" && rail.reason !== null) {

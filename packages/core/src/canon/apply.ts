@@ -481,10 +481,6 @@ export function applyCanonWriteOwned(
       : existing === null
       ? prepareCreate(claims, pageId, provenance, decision.action === "conflict")
       : prepareRevision(io, claims, primary, existing, decision, provenance);
-  // Reactivating an archived page consumes a live slot just as creation does.
-  if ((existing === null || existing.page.data["status"] === "archived") && prepared.page.data["status"] !== "archived") {
-    requireRoomForNewPage(io.vault_path);
-  }
   const invalid = validatePage(prepared.page.data);
   if (invalid.length > 0) {
     throw new CanonWriteError("frontmatter_invalid", invalid[0] ?? "invalid page");
@@ -492,6 +488,11 @@ export function applyCanonWriteOwned(
   requireSourceEvents(io.db, Array.isArray(prepared.page.data["sources"]) ? prepared.page.data["sources"].filter((id): id is string => typeof id === "string") : [], { owner: true, purpose: "derive" });
   prepared.sensitivity = sourceSensitivity(io.db, provenance, prepared.sensitivity);
   prepared.page.data["sensitivity"] = prepared.sensitivity;
+  // Reserve both the live slot and inventory resources before publishing a new live image.
+  if ((existing === null || existing.page.data["status"] === "archived") && prepared.page.data["status"] !== "archived") {
+    requireRoomForNewPage(io.vault_path, existing === null ? 1 : 0,
+      Buffer.byteLength(serializePage(prepared.page)) - (existing === null ? 0 : Buffer.byteLength(existing.content)));
+  }
   const superseded = typed ? io.db.query<{claim_id:string;claim_key:string},[string]>("SELECT s.loser AS claim_id,m.semantic_key AS claim_key FROM claim_supersessions s JOIN claim_v2_semantics m ON m.claim_id=s.loser WHERE s.winner IN (SELECT value FROM json_each(?)) ORDER BY s.loser").all(JSON.stringify(ownedClaims.map(item=>item.claim_id))) : supersededRefs(io, decision);
   const retrievalOps: RetrievalOpRef[] =
     io.retrieval_store === undefined

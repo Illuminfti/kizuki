@@ -66,11 +66,13 @@ export function canonCapacity(
   pages: readonly { readonly data: Record<string, unknown> }[],
   truncated: boolean,
   limits: CanonLimits,
+  usage?: { readonly scanned_files: number; readonly scanned_bytes: number },
 ): CanonCapacity {
   let archived = 0;
   for (const page of pages) if (page.data["status"] === "archived") archived++;
   const live = pages.length - archived;
-  const state: CanonCapacityState = truncated ? "scan_limited"
+  const resourceFull = truncated || (usage !== undefined && (usage.scanned_files >= limits.walk_files || usage.scanned_bytes >= limits.walk_bytes));
+  const state: CanonCapacityState = resourceFull ? "scan_limited"
     : live >= limits.live_pages ? "full" : live >= limits.live_pages * 0.8 ? "near" : "ok";
   const next = state === "scan_limited"
     ? "raise max_scan_files or max_scan_bytes under [canon] in .kizuki/serve.toml within available memory; retry the incomplete read"

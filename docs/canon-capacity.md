@@ -52,7 +52,8 @@ the same fields plus scan budgets under `serve.canon` in JSON.
   Raise `max_live_pages` or archive obsolete pages through the receipted writer.
   At the maximum, doctor points at source purge.
 - `scan_limited`: the inventory reached a resource budget. Counts are lower
-  bounds. Raise `max_scan_files` or `max_scan_bytes` within available memory
+  bounds if the scan stopped early; a complete scan at its bound still serves
+  reads but holds creates. Raise `max_scan_files` or `max_scan_bytes` within available memory
   and retry. Incomplete inventories still fail closed; purge never deletes
   against a partial scan, and creation refuses with `canon_scan_incomplete`.
 
@@ -62,4 +63,6 @@ receipt path; this setting creates no additional write path.
 
 Configuration is local to the vault and is not included in an export. Capacity
 is established by a fresh walk under the cooperating writer fence before a
-new live page is written; no persistent counter or migration is needed.
+new live page is written. Creation reserves space for its file and bytes so
+it cannot make the next read incomplete. No persistent counter or migration is
+needed.

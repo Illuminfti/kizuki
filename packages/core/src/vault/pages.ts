@@ -74,6 +74,9 @@ export interface CanonPageReport {
   pages: CanonPage[];
   skipped: SkippedPage[];
   truncated: boolean;
+  /** Actual candidate resource usage, including invalid and archived files. */
+  scanned_files: number;
+  scanned_bytes: number;
 }
 
 export function stringArray(value: unknown): string[] {
@@ -321,7 +324,11 @@ export function listCanonPagesReport(
   walk(state, vaultPath, vaultPath, 0);
   if (cache !== undefined) cache.files = state.remembered;
   state.skipped.sort((left, right) => compareName(left.relPath, right.relPath));
-  return { pages: options.include_archived === false ? state.pages.filter((page) => page.data["status"] !== "archived") : state.pages, skipped: state.skipped, truncated: state.truncated };
+  return {
+    pages: options.include_archived === false ? state.pages.filter((page) => page.data["status"] !== "archived") : state.pages,
+    skipped: state.skipped, truncated: state.truncated,
+    scanned_files: state.files, scanned_bytes: state.bytes,
+  };
 }
 
 export function listCanonPages(vaultPath: string): CanonPage[] {

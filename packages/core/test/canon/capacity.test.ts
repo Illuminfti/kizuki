@@ -233,6 +233,26 @@ describe("the writer at the ceiling", () => {
     expect(result.canon_writes).toBe(1);
     expect(countUnwrittenLiveClaims(db)).toBe(2);
   });
+  test("creation cannot push a complete inventory past its resource budget", async () => {
+    const { vault, db, io } = fixture(100);
+    writeFileSync(join(vault, ".kizuki", "serve.toml"), "[canon]\nmax_live_pages = 100\nmax_scan_files = 100\n");
+    fill(vault, 100, "archived");
+    const claim = await storeClaim(db, putEvent(db));
+    expect(() => write(io, claim)).toThrow(CanonWriteError);
+    expect(listCanonPagesReport(vault).truncated).toBe(false);
+    expect(inspectServeDoctor(db, vault).canon?.next).toContain("max_scan_files");
+
+    // Byte admission also reserves room for the new image before publishing it.
+    writeFileSync(join(vault, ".kizuki", "serve.toml"), "[canon]\nmax_live_pages = 100\nmax_scan_files = 500\nmax_scan_bytes = 65536\n");
+    const large = await storeClaim(db, putEvent(db), {
+      target: "topics/large", subject: null, predicate: null, object: null,
+      body: "A synthetic note. ".repeat(4000), frontmatter: { type: "topic", title: "Large" },
+    });
+    expect(() => write(io, large)).toThrow(CanonWriteError);
+    expect(listCanonPagesReport(vault).truncated).toBe(false);
+    expect(existsSync(join(vault, "topics/large.md"))).toBe(false);
+  });
+
   test("a resource-limited scan holds new writes without a receipt", async () => {
     const { vault, db, io } = fixture(100);
     writeFileSync(join(vault, ".kizuki", "serve.toml"), "[canon]\nmax_live_pages = 100\nmax_scan_files = 100\n");
