@@ -36,7 +36,7 @@ export function createWorldCommand(entries: readonly WorldCliEntry[]): Command {
         if (option !== "--operation" && !op.cli.options.includes(option)) throw new UsageError(usage);
       const built = op.cli.buildInput(parsed.options);
       if (built === null) throw new UsageError(usage);
-      const input = { operation: op.name, ...built };
+      const input: Record<string, unknown> = { operation: op.name, ...built };
       // Reference issuance is durable bookkeeping and needs the normal bound ledger writer.
       return withVault(
         io,
@@ -46,11 +46,19 @@ export function createWorldCommand(entries: readonly WorldCliEntry[]): Command {
             const data = envelope.data;
             if (parsed.flags.has("--json")) io.out(jsonEnvelope("world", "ok", envelope));
             else if ("status" in data) io.out("not found");
-            else if (data.result.status === "unavailable") io.out(`World view unavailable: ${data.result.reason}.`);
-            else for (const line of op.cli.render(data.result.data)) io.out(line);
-            if (!("status" in data) && data.result.status !== "unavailable") {
-              const notice = op.cli.notice?.(data.result.data);
-              if (notice) io.err(notice);
+            else {
+              const { result } = data;
+              if (result.status === "unavailable") io.out(`World view unavailable: ${result.reason}.`);
+              else if (result.status === "new_view_required")
+                io.out("A new view is required: read again without --prior-view.");
+              else if (result.status === "unchanged")
+                io.out(`Unchanged since the prior view. It stays valid until ${result.validUntil}.`);
+              else {
+                for (const line of op.cli.render(result.data)) io.out(line);
+                if ("validUntil" in result) io.out(`View: ${result.view.token} (valid until ${result.validUntil})`);
+                const notice = op.cli.notice?.(result.data);
+                if (notice) io.err(notice);
+              }
             }
           } catch (error) {
             if (error instanceof WorldViewError || (error instanceof ServeError && error.code === "invalid_arguments"))
