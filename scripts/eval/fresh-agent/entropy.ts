@@ -1,5 +1,5 @@
 import nodeCrypto, { createHash } from "node:crypto";
-import { syncBuiltinESMExports } from "node:module";
+import { mock } from "bun:test";
 
 /** Predictable fixture bytes: install only in the isolated synthetic worker. */
 export function installFixtureEntropy(): void {
@@ -30,8 +30,8 @@ export function installFixtureEntropy(): void {
     return array;
   };
   globalThis.crypto.randomUUID = randomUUID;
-  nodeCrypto.randomBytes = randomBytes;
-  nodeCrypto.randomUUID = randomUUID;
-  // World handles use named Node imports; ledger IDs use Web Crypto.
-  syncBuiltinESMExports();
+  // Bun's named builtin imports retain their original functions when the
+  // default export is mutated. Replace the two exports before Core loads.
+  const fixtureCrypto = { ...nodeCrypto, randomBytes, randomUUID };
+  mock.module("node:crypto", () => ({ ...fixtureCrypto, default: fixtureCrypto }));
 }
