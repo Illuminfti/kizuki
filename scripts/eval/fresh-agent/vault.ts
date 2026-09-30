@@ -143,8 +143,9 @@ export async function generateVault(root: string, size: PersonaSize) {
       types: null, tools: ["propose"], rate_limit_per_minute: 1000, relay_owner_corrections: false });
     const proposalPrincipal = authenticate(db, proposer.token);
     if (proposalPrincipal === null) throw new Error("fixture proposer authentication failed");
-    const proposed = await servePropose({ ...ctx, principal: proposalPrincipal }, { kind: "claim", body: "Ada collaborates with Grace.",
-      subject: "persona:ada", subjects: ["persona:ada"], predicate: "relation.knows", object: "Grace", provenance: [event.event_id] });
+    const relationship = scenario.facts.find(fact => fact.id === "proposed-relationship")!;
+    const proposed = await servePropose({ ...ctx, principal: proposalPrincipal }, { kind: "claim", body: `${relationship.value}.`,
+      subject: "persona:ada", subjects: ["persona:ada"], predicate: "relation.knows", object: relationship.value, provenance: [event.event_id] });
     if (proposed.data?.outcome !== "stored") throw new Error("fixture proposal failed");
     const cards = discoveredCards(ctx, "situation", "Orchard");
     const blocker = cards.flatMap(envelope => "result" in envelope.data && envelope.data.result.status !== "unavailable" &&

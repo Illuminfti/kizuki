@@ -28,6 +28,14 @@ test("zero denominators stay n/a and a refused surface remains a visible failure
   expect(score).toMatchObject({ fact_recall: null, stale_fact_rate: null, provenance_rate: null, tokens_used: 0, status: "skip:unavailable" });
 });
 
+test("leak scans decode JSON string escapes in complete surface envelopes", () => {
+  const withheld: Fact = { id: "escaped", value: 'reserve uses the "amber"\nenvelope', state: "current", access: "withheld" };
+  const output = JSON.stringify({ data: { metadata: withheld.value } });
+  const score = scoreObservation([withheld], question, "owner", "context_packet", { output, atoms: [], status: "ok" });
+  expect(score.leaked_fact_ids).toEqual(["escaped"]);
+  expect(score.leak_count).toBe(1);
+});
+
 test("Markdown and world atoms cannot borrow a sibling's citation", () => {
   const md = "- [claim:01ARZ3NDEKTSV4RRFFQ69G5FAV] the bridge is closed\n- [claim:] the bridge is open";
   const score = scoreObservation(facts, question, "owner", "context_packet", { output: md, atoms: markdownAtoms(md), status: "ok" });

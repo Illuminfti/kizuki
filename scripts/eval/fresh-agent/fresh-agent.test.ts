@@ -25,13 +25,21 @@ test("small synthetic persona is measured through four surfaces for two principa
     expect(report.build).toMatchObject({ propose: "stored", correct: "committed" });
     expect(report.facts).toEqual(persona("small").facts);
     expect(report.questions).toEqual(persona("small").questions);
+    expect(report.facts.find(fact => fact.id === "proposed-relationship")).toMatchObject({
+      value: "Ada collaborates with Grace", access: "owner_only", state: "current",
+    });
+    expect(report.questions.find(question => question.id === "around")!.gold_fact_ids).toContain("proposed-relationship");
     expect(renderMarkdown(report)).toContain("| scoped_agent | world_view |");
     for (const summary of report.summaries) {
       expect(summary.leak_count).toBe(0);
       expect(summary.tokens_used).toBeGreaterThan(0);
       expect(summary.failures).toBe(0);
+      expect(summary.recalled).toBeGreaterThan(0);
     }
-    expect(report.summaries.some(row => row.recalled > 0)).toBe(true);
+    for (const id of ["scope-decoy", "ceiling-decoy", "proposed-relationship"]) {
+      expect(report.rows.some(row => row.principal === "owner" && row.recalled_fact_ids.includes(id))).toBe(true);
+    }
+    expect(report.rows.some(row => row.principal === "owner" && row.recalled_fact_ids.includes("corrected-blocker"))).toBe(true);
     for (const [index, sample] of report.observations.entries()) {
       const question = report.questions.find(item => item.id === sample.question_id)!;
       expect(scoreObservation(report.facts, question, sample.principal, sample.surface, sample.observation)).toEqual(report.rows[index]!);

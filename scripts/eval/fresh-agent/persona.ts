@@ -37,6 +37,7 @@ export function persona(size: PersonaSize) {
   const facts: Fact[] = [
     { id: "owner-role", value: "municipal bridge engineer", state: "current", access: "shared" },
     { id: "collaborator", value: "Grace coordinates the survey team", state: "current", access: "shared" },
+    { id: "proposed-relationship", value: "Ada collaborates with Grace", state: "current", access: "owner_only" },
     { id: "objective", value: "restore the orchard footbridge", state: "current", access: "shared" },
     { id: "commitment", value: "deliver the survey by 2026-10-04", state: "current", access: "shared" },
     { id: "old-blocker", value: "waiting for the timber permit", state: "stale", access: "shared" },
@@ -109,7 +110,7 @@ export function persona(size: PersonaSize) {
     ({ id, text, query, gold_fact_ids: ids, world });
   const questions: Question[] = [
     question("who", "Who is this person?", "Ada", ["owner-role"]),
-    question("around", "Who and what are around them?", "Grace Orchard", ["collaborator", "objective"]),
+    question("around", "Who and what are around them?", "Grace Orchard", ["collaborator", "proposed-relationship", "objective"]),
     question("now", "What is happening now?", "Orchard", ["objective", "corrected-blocker", "commitment"]),
     question("matters", "What matters to them?", "Ada", ["priority"]),
     question("knows", "What do they know?", "Bayes", ["knowledge"], bayes),

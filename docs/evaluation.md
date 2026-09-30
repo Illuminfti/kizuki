@@ -25,8 +25,10 @@ The output directory is an experiment artifact; do not commit its generated vaul
 `scripts/eval/fresh-agent/persona.ts` defines stable logical fact IDs, source
 records, values, validity windows, access expectations and gold IDs for each
 question. The small persona includes Ada, Grace, the Orchard bridge project,
-a decision, commitment, priority, skill, a learning example and a concept. It
-also includes an expired blocker, a mistaken blocker corrected by the owner,
+a decision, commitment, priority, skill, a learning example and a concept. A
+collaboration claim proposed by a fixture agent is scored against its own gold
+fact ID. The persona also includes an expired blocker, a mistaken blocker
+corrected by the owner,
 two incompatible survey statements, an explicitly uncertain flood estimate,
 and three privacy probes. The full persona adds six background facts to put
 more pressure on selection. Source text does not contain oracle fact IDs.
@@ -62,6 +64,9 @@ The decoys exercise three separate denials: an out-of-scope family project,
 a private medical-reserve fact about an in-scope project, and a source with no
 recall consent. The last is withheld from the owner too. Corrections use Core's
 native sensitivity handling; gold access expectations include that handling.
+The legacy proposal inherits the strictest default across this importer's
+sources, which is private here, so its relationship is also owner-only. These
+labels are resolved by Core; the fixture never relabels a claim to widen access.
 
 Each question has a fixed lexical task hint and a fixed world lookup plan:
 
@@ -92,7 +97,7 @@ status and these metrics:
 | --- | --- |
 | Fact recall | Returned authorized current gold facts divided by authorized current gold facts for that question |
 | Stale-fact rate | Returned expired or owner-corrected fact values divided by all matched fact values, including incidental facts |
-| Leak count | Unique forbidden fact values found anywhere in the complete output, including metadata; must be zero for each row |
+| Leak count | Unique forbidden fact values found anywhere in the complete output, including decoded JSON strings and metadata; must be zero for each row |
 | Provenance rate | Matched fact values with a citation on their own atom divided by all matched fact values |
 | Tokens used | Actual output tokens encoded with the packet's bundled `cl100k_base` tokenizer; includes envelope and discovery overhead when present |
 
@@ -118,7 +123,11 @@ bun test scripts/eval/fresh-agent --timeout 120000
 
 On a shared worker, run it through that worker's `ktest` semaphore. Tests check
 all four surfaces and both principals, zero measured leaks, scorer arithmetic,
-the privacy denominator, missing-surface handling and citation locality.
+the privacy denominator, escaped JSON leaks, missing-surface handling and
+citation locality. Each surface/principal pair must recall at least one gold
+fact. The owner must retrieve the scope and ceiling decoys, proving those
+denial probes contain real readable facts; the corrected blocker and proposed
+relationship must also be retrievable under their expected access.
 
 This is a retrieval baseline for a hand-authored synthetic persona and scripted
 extraction, not an extraction-quality or real-agent reasoning benchmark. Exact

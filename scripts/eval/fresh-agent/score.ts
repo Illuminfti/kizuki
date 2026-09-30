@@ -32,13 +32,31 @@ function contains(text: string, fact: Fact): boolean {
 export const permitted = (fact: Fact, principal: PrincipalName) =>
   fact.access === "shared" || (fact.access === "owner_only" && principal === "owner");
 
+/** Inspect decoded strings too: JSON escaping must not conceal a forbidden value. */
+function leakTexts(output: string): string[] {
+  const texts = [output];
+  let parsed: unknown;
+  try { parsed = JSON.parse(output); }
+  catch { return texts; } // Hook Markdown is plain text.
+  const visit = (value: unknown): void => {
+    if (typeof value === "string") texts.push(value);
+    else if (Array.isArray(value)) value.forEach(visit);
+    else if (value !== null && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) { texts.push(key); visit(item); }
+    }
+  };
+  visit(parsed);
+  return texts;
+}
+
 export function scoreObservation(facts: Fact[], question: Question, principal: PrincipalName, surface: Surface, observation: Observation): Score {
   const expected = facts.filter(fact => fact.state === "current" && permitted(fact, principal) && question.gold_fact_ids.includes(fact.id));
   const returned = facts.filter(fact => observation.atoms.some(atom => contains(atom.text, fact)));
   const recalled = expected.filter(fact => returned.includes(fact));
   const stale = returned.filter(fact => fact.state === "stale");
   // Scan every output byte, including metadata, even when no scoreable atom carries it.
-  const leaked = facts.filter(fact => !permitted(fact, principal) && contains(observation.output, fact));
+  const outputs = leakTexts(observation.output);
+  const leaked = facts.filter(fact => !permitted(fact, principal) && outputs.some(output => contains(output, fact)));
   const cited = returned.filter(fact => observation.atoms.some(atom => atom.cited && contains(atom.text, fact)));
   return { principal, surface, question_id: question.id, status: observation.status,
     expected: expected.length, recalled: recalled.length, fact_recall: rate(recalled.length, expected.length),
