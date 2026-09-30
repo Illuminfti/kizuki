@@ -56,8 +56,8 @@ the allocation-flood regression still checks a real worker budget breach.
 | --- | --- | --- |
 | `canon-frontmatter`, `wiki-frontmatter` | Markdown frontmatter readers | Determinism, bounded output, malformed-input refusal, prototype isolation |
 | `chatgpt`, `claude`, `pocket`, `whatsapp`, `omnivore`, `beacon` | Export parsers, raw grammar and wrapped text | Determinism; normalized ChatGPT, Claude and Beacon events pass frozen ingress |
-| `receipt`, `render-output` | Local adapter admission | Bounded refusal with synthetic consent; no reference fetch |
-| `ics`, `ics-rrule`, `ics-files` | Calendar grammar, event mapping, recurrence rule parser and file backfill | Nesting and recurrence refusal, symlink and UTF-8 refusal, sparse oversized files, bounded output; mapped events pass ingress |
+| `receipt`, `render-output` | Local adapter admission, raw JSON and wrapped instruction/note fields | Bounded refusal with synthetic consent, nonempty projection witnesses, ingress validity; no reference fetch |
+| `ics`, `ics-rrule`, `ics-files`, `ics-feed` | Calendar grammar, event mapping, recurrence rule parser, file backfill and synthetic streamed feed | Nesting and recurrence refusal, symlink and UTF-8 refusal, sparse oversized files, bounded output; mapped events pass ingress |
 | `imap-mime`, `imap-response` | MIME event mapping and response tokenizer | Invalid octets, multipart prefix ambiguity, depth and part limits, ingress validity |
 | `telegram` | Typed provider message projection | Private sensitivity preserved; host ingress admission checked separately |
 | `screenpipe-frame`, `screenpipe-audio`, `whoop`, `beeper` | Provider projections and synthetic Beeper response admission | Malformed timestamps/schema, selected metric bags, private sensitivity, mapped ingress bounds |
@@ -67,7 +67,7 @@ the allocation-flood regression still checks a real worker budget breach.
 | `session-files-claude`, `session-files-codex`, `legacy-jsonl`, `legacy-sqlite` | File readers, resumable JSONL paging and corrupt read-only SQLite exports | Oversized input, malformed bytes, bounded batches, forward progress past hostile rows |
 | `x-archive` | Archive directory scan | Malformed account/tweet data, file symlink refusal, sparse oversized account part and ZIP refusal |
 | `chatgpt-files`, `claude-files`, `beacon-files`, `pocket-files`, `omnivore-files`, `whatsapp-files` | Export backfill including highlights and media references | Raw and wrapped file admission, sparse oversized exports, primary/optional symlink exclusion, valid ingress and nonempty projection witnesses |
-| `http`, `mcp` | Loopback HTTP and SDK client over in-memory JSON-RPC plus raw stdio framing | Every one of the ten tools; inert grant refusal, argument mutations, captured instruction text stays in `quoted` |
+| `http`, `mcp` | Loopback HTTP and SDK client over in-memory JSON-RPC plus raw stdio framing | Every one of the ten tools; raw containers plus tool-specific field mutations, MCP dispatch witnesses and bounded replies; inert grant refusal, captured instruction text stays in `quoted` |
 | `app-http` | All app protocol routes over loopback HTTP through the real app host | Bad bearer refusal before dispatch, raw malformed body mutations, bounded output, prototype isolation; supervisor access is refused |
 
 No export importer in this matrix decompresses a ZIP file. X refuses ZIP
@@ -142,3 +142,10 @@ cursor; the regression checks refusal and a valid retry. This is a local
 synthetic response check, not live-account qualification or an authentication
 change. Provider documentation retrieval was unavailable on 2026-09-30;
 existing authentication and pagination contracts are preserved.
+
+Calendar feed reads now use fixed storage within the existing 16 MiB ceiling,
+strict UTF-8 decoding and the request deadline across chunk reads. Refusal does
+not wait for stream cancellation. The feed target supplies split bytes and
+empty chunks through an injected response; it performs no network call.
+`packages/connector-ics/test/hostile-feed.test.ts` covers invalid UTF-8 refusal,
+cancellation that never settles, and valid split Unicode.

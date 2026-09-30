@@ -6,6 +6,7 @@ import { startServeHttp } from "../../packages/core/src/serve/http";
 import { fuzzStdioBytes, mcpFuzzDriver } from "../../packages/mcp/test/fuzz-driver";
 import type { FuzzCase } from "./cases";
 import { NOW } from "./parsers";
+import { wrappedArguments } from "./arguments";
 
 export const SURFACES = ["http", "mcp", "app-http"] as const;
 
@@ -29,17 +30,27 @@ export async function surfaceDriver(target: typeof SURFACES[number], scratch: st
       if (target === "mcp") await fuzzStdioBytes({ db, vaultPath, principal }, input.bytes);
       const args = argumentsFor(input);
       for (const tool of TOOLS) {
-        if (mcp !== null && ownerMcp !== null) {
-          const denied = await mcp.call(tool, args);
-          if (!(denied as { isError?: boolean }).isError) throw new Error("inert-grant-admitted");
-          await ownerMcp.call(tool, args);
-        } else if (http !== null) {
-          const denied = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: `Bearer ${enrollment.token}` }, body: new Uint8Array(input.bytes) });
-          if (denied.status === 200) throw new Error("inert-grant-admitted");
-          const response = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: "Bearer synthetic-fuzz-token" }, body: new Uint8Array(input.bytes) });
-          if (response.status >= 500) throw new Error("http-crash");
-          const result = await response.text();
-          if (result.length > 1024 * 1024) throw new Error("output-unbounded");
+        for (const wrapped of [false, true]) {
+          const mutated = wrapped ? wrappedArguments(tool, input.text) : args;
+          if (mcp !== null && ownerMcp !== null) {
+            const denied = await mcp.call(tool, mutated);
+            if (!(denied as { isError?: boolean }).isError) throw new Error("inert-grant-admitted");
+            const result = await ownerMcp.call(tool, mutated) as { structuredContent?: unknown; content?: { text?: string }[] };
+            // A short valid envelope must reach core rather than only SDK validation.
+            if (wrapped && input.id === "object" && result.structuredContent === undefined) {
+              try {
+                if (typeof JSON.parse(result.content?.[0]?.text ?? "").error !== "string") throw new Error();
+              } catch { throw new Error("projection-unreached"); }
+            }
+          } else if (http !== null) {
+            const body = wrapped ? JSON.stringify(mutated) : new Uint8Array(input.bytes);
+            const denied = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: `Bearer ${enrollment.token}` }, body });
+            if (denied.status === 200) throw new Error("inert-grant-admitted");
+            const response = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: "Bearer synthetic-fuzz-token" }, body });
+            if (response.status >= 500) throw new Error("http-crash");
+            const result = await response.text();
+            if (result.length > 1024 * 1024) throw new Error("output-unbounded");
+          }
         }
       }
       // Captured instruction-looking bytes stay in quoted evidence at the read seam.

@@ -32,7 +32,7 @@ export async function exportCase(target: ExportTarget, input: FuzzCase, scratch:
     rmSync(tree, { recursive: true, force: true });
     mkdirSync(tree, { mode: 0o700 });
     const name = target === "pocket-files" ? "part_0.csv" : target === "whatsapp-files" ? "chat.txt"
-      : target === "omnivore-files" ? "metadata_0.json" : "synthetic.json";
+      : target === "omnivore-files" ? "metadata_0_to_0.json" : "synthetic.json";
     const file = join(tree, name);
     const content = wrapped ? Buffer.from(wrappedExport(target, input.text)) : input.bytes;
     writeFileSync(file, content);

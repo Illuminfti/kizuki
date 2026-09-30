@@ -15,7 +15,9 @@ export async function mcpFuzzDriver(ctx: ServeContext) {
   return {
     async call(name: string, args: unknown): Promise<unknown> {
       try {
-        return await client.callTool({ name, arguments: args as Record<string, unknown> });
+        const result = await client.callTool({ name, arguments: args as Record<string, unknown> });
+        if (JSON.stringify(result).length > 1024 * 1024) throw new Error("output-unbounded");
+        return result;
       } catch (error) {
         // The pinned SDK reports request-schema rejection as InternalError;
         // versions using InvalidParams are also refusals. This exception is

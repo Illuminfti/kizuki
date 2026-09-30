@@ -11,6 +11,7 @@ import { parseAlgalRunReceipt, ALGAL_RECEIPT_CONSENT } from "../../packages/conn
 import { parseSlopcameraRenderOutput, SLOPCAMERA_OUTPUT_CONSENT } from "../../packages/connectors/src/import-slopcamera-output";
 import { parseIcs } from "../../packages/connector-ics/src/parse";
 import { parseRrule } from "../../packages/connector-ics/src/rrule";
+import { makeFetcher } from "../../packages/connector-ics/src/fetch";
 import { calendarEvents } from "../../packages/connector-ics/src/events";
 import { messageEvent } from "../../packages/connector-imap/src/events";
 import { parseResponse } from "../../packages/connector-imap/src/imap/tokenizer";
@@ -28,7 +29,7 @@ import { createBeeperConnector } from "../../packages/connector-beeper/src/conne
 import type { FuzzCase } from "./cases";
 
 export const NOW = "2026-01-15T12:00:00.000Z";
-export const PARSERS = ["canon-frontmatter", "wiki-frontmatter", "chatgpt", "claude", "pocket", "whatsapp", "omnivore", "beacon", "receipt", "render-output", "ics", "ics-rrule", "imap-mime", "imap-response", "telegram", "x-ytd", "x-api", "gmail", "google-calendar", "session-claude", "session-codex", "screenpipe-frame", "screenpipe-audio", "whoop", "beeper"] as const;
+export const PARSERS = ["canon-frontmatter", "wiki-frontmatter", "chatgpt", "claude", "pocket", "whatsapp", "omnivore", "beacon", "receipt", "render-output", "ics", "ics-rrule", "ics-feed", "imap-mime", "imap-response", "telegram", "x-ytd", "x-api", "gmail", "google-calendar", "session-claude", "session-codex", "screenpipe-frame", "screenpipe-audio", "whoop", "beeper"] as const;
 export type Parser = typeof PARSERS[number];
 
 function json(text: string): unknown {
@@ -64,14 +65,42 @@ export function parseCase(target: Parser, input: FuzzCase, wrapped: boolean): un
         event: { id: "synthetic", kind: "agent_runtime", category: "prompt", action: "prompt.submitted" }, prompt: { text } }) : text;
       const result = parseBeaconExport(source, NOW); checkEvents(result.events); return result;
     }
-    case "receipt": return parseAlgalRunReceipt(text, { observedAt: NOW, consent: ALGAL_RECEIPT_CONSENT });
-    case "render-output": return parseSlopcameraRenderOutput(text, { observedAt: NOW, consent: SLOPCAMERA_OUTPUT_CONSENT });
+    case "receipt": {
+      const source = wrapped ? JSON.stringify({ contract: "algal.run.v1", runtime: { name: "algal", version: "0" },
+        manifestDigest: `sha256:${"a".repeat(64)}`, manifestKey: "synthetic", args: { task: { instruction: text } },
+        outcome: "complete", cells: {}, effects: [], events: [], work: { steps: 0, agentCalls: 0, units: 0 }, digest: `sha256:${"b".repeat(64)}` }) : text;
+      const result = parseAlgalRunReceipt(source, { observedAt: NOW, consent: ALGAL_RECEIPT_CONSENT });
+      if (result.status !== "refused") checkEvents([result.event]);
+      return result;
+    }
+    case "render-output": {
+      const digest = "a".repeat(64);
+      const source = wrapped ? JSON.stringify({ bytes: 1, kind: "slopcamera.project-render-output-reference",
+        path: "renders/candidates/synthetic.mp4", planArtifactSha256: digest, projectId: "project_synthetic1",
+        revisionSha256: digest, schemaVersion: 1, sha256: digest }) : text;
+      const result = parseSlopcameraRenderOutput(source, { observedAt: NOW, consent: SLOPCAMERA_OUTPUT_CONSENT,
+        ...(wrapped ? { note: { author: "agent" as const, rationale: text, outputSha256: digest } } : {}) });
+      if (result.status !== "refused") checkEvents([result.event]);
+      return result;
+    }
     case "ics": {
       const source = wrapped ? `BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:synthetic\nDTSTART:20260115T120000Z\nSUMMARY:${text.replace(/\n/g, "\n ")}\nEND:VEVENT\nEND:VCALENDAR\n` : text;
       const result = calendarEvents(parseIcs(source), { observedAt: NOW, now: new Date(NOW), slugSource: "synthetic" });
       checkEvents(result.events); return result;
     }
     case "ics-rrule": return parseRrule(text);
+    case "ics-feed": {
+      const raw = wrapped ? Buffer.concat([Buffer.from("BEGIN:VCALENDAR\nX-SYNTHETIC:"), input.bytes, Buffer.from("\nEND:VCALENDAR\n")]) : input.bytes;
+      const fetcher = makeFetcher(async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          const split = Math.floor(raw.length / 2);
+          controller.enqueue(raw.subarray(0, split));
+          for (let at = 0; at < 100; at += 1) controller.enqueue(new Uint8Array(0));
+          controller.enqueue(raw.subarray(split)); controller.close();
+        },
+      })));
+      return fetcher("https://example.invalid/synthetic.ics", {}).then(result => parseIcs(result.text));
+    }
     case "imap-mime": {
       const raw = wrapped ? Buffer.concat([Buffer.from("Content-Type: text/plain; charset=utf-8\r\n\r\n"), input.bytes]) : input.bytes;
       const result = messageEvent({ folderWire: "INBOX", folderDisplay: "INBOX", uidvalidity: 1, uid: 1, internaldate: "15-Jan-2026 12:00:00 +0000", size: raw.length, raw, section: "", observedAt: NOW });
