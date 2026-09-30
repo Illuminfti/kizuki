@@ -33,4 +33,3 @@ export function sanitize(text: string): string {
   }
   return out;
 }
-
