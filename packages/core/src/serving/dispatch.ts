@@ -28,9 +28,9 @@ import { projectEnvelope } from "./v2/envelope";
 export interface DispatchOptions {
   /**
    * The serving contract the adapter chose, kept apart from the tool's own
-   * arguments. Absent means the tool's default: v1 for every tool but
-   * `world_view`, which has only v2. Anything else it cannot serve is
-   * refused, audited, before any read.
+   * arguments. Scoped principals must explicitly select v2. For the owner,
+   * absent means v1 except for `world_view`, which has only v2. Anything
+   * else it cannot serve is refused, audited, before any read.
    */
   readonly response_contract?: unknown;
 }
@@ -76,7 +76,9 @@ export async function dispatchServeTool(
   args: Record<string, unknown>,
   options: DispatchOptions = {},
 ): Promise<Envelope<unknown> | EnvelopeV2 | WorldViewEnvelope> {
-  const contract = chooseContract(tool, options.response_contract, args);
+  const contract = chooseContract(
+    tool, options.response_contract, args, ctx.principal.kind === "agent",
+  );
   if (contract === null) return refuseCall(ctx, tool, args, unsupportedContract());
   if (tool === "world_view") return serveWorldView(ctx, args);
   if (contract === ENVELOPE_V2_SCHEMA) {

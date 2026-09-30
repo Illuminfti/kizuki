@@ -151,13 +151,13 @@ test("a hidden source revoke leaves the scoped v2 packet byte-equal, epoch-free 
   }
 });
 
-test("the same revoke moves the epoch a v1 caller can read, which is the leak the v2 contract closes", async () => {
+test("the same revoke moves the owner epoch while scoped v2 hides it", async () => {
   const r = await rig();
   try {
-    const before = await r.agent("context_packet", PACKET);
+    const before = await r.owner("context_packet", PACKET);
     expect(before.body.value.schema).toBe(V1);
     r.revokeHiddenSource();
-    const after = await r.agent("context_packet", PACKET);
+    const after = await r.owner("context_packet", PACKET);
     expect(after.body.value.data.claims_epoch).toBeGreaterThan(
       before.body.value.data.claims_epoch,
     );
