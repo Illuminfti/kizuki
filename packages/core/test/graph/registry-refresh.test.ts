@@ -163,3 +163,22 @@ test("an older disposable registry is reconciled before indexed resolution", asy
   expect(graph.graphRegistryReady(db)).toBe(true);
   expect(graphRows(db)).toEqual(before);
 });
+
+test("replacing an identity at the same path removes the old page's edges", async () => {
+  const db = searchDb();
+  const vault = tempVault();
+  disposers.push(() => db.close(), vault.dispose);
+  for (const slug of ["one", "two"]) {
+    await recordedPage(db, vault.path, `facts/${slug}.md`, {
+      id: `fact:${slug}`, title: slug, type: "fact", status: "active", sensitivity: "personal", taint: "clean",
+    }, slug === "one" ? "See [[two]]." : "See [[fact:one]] and [[one]].");
+  }
+  rebuildDerived(db, vault.path);
+  expect(db.query("SELECT 1 FROM graph_edges WHERE src='fact:one'").get()).not.toBeNull();
+  const prior = listCanonPages(vault.path).find(page => page.id === "fact:one")!;
+  writeFileSync(prior.path, serializePage({ data: { ...prior.data, id: "fact:replacement" }, body: prior.body }));
+  const replacement = listCanonPages(vault.path).find(page => page.id === "fact:replacement")!;
+  refreshDerivedPage(db, replacement, vault.path);
+  expect(graphRows(db)).toEqual(rebuiltRows(db, vault.path));
+  expect(db.query("SELECT 1 FROM graph_edges WHERE src='fact:one' OR dst='fact:one'").get()).toBeNull();
+});

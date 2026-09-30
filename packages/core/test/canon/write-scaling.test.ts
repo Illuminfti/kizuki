@@ -30,12 +30,17 @@ function vaultOf(count: number) {
 
 async function timedWrite(db: Database, vaultPath: string, name: string, body: string, title = name) {
   const spy = spyOn(ledger, "readLiveEvent");
+  const assess = spyOn(provenance, "assessLivePageEvidence");
   try {
     const started = performance.now();
-    await recordedPage(db, vaultPath, `facts/${name}.md`, { ...PAGE, id: `fact:${name}`, title }, body);
-    return { ms: performance.now() - started, evidenceReads: spy.mock.calls.length };
+    const written = await recordedPage(db, vaultPath, `facts/${name}.md`, { ...PAGE, id: `fact:${name}`, title }, body);
+    const ms = performance.now() - started;
+    expect(assess.mock.calls.length).toBeGreaterThan(0);
+    expect(assess.mock.calls.every(([, page]) => page.relPath === written.receipt.page_path)).toBe(true);
+    expect(spy.mock.calls.every(([, id]) => written.sourceIds.includes(id))).toBe(true);
+    return { ms, evidenceReads: spy.mock.calls.length };
   } finally {
-    spy.mockRestore();
+    spy.mockRestore(); assess.mockRestore();
   }
 }
 
@@ -79,7 +84,7 @@ test("the receipted writer does no vault walk and assesses only its page", async
   const walk = spyOn(pages, "listCanonPagesReport");
   const assess = spyOn(provenance, "assessLivePageEvidence");
   try {
-    await timedWrite(db, vault.path, "one-page", "See [[Bulk 9]].");
+    await recordedPage(db, vault.path, "facts/one-page.md", { ...PAGE, id: "fact:one-page", title: "One page" }, "See [[Bulk 9]].");
     expect(scan).not.toHaveBeenCalled();
     expect(walk).not.toHaveBeenCalled();
     expect(assess.mock.calls.length).toBeGreaterThan(0);
