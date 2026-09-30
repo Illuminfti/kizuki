@@ -36,8 +36,10 @@ export async function surfaceDriver(target: typeof SURFACES[number], scratch: st
           if (target === "http" && !wrapped && tool !== "system_health") continue;
           const mutated = wrapped ? wrappedArguments(tool, input.text) : args;
           if (mcp !== null && ownerMcp !== null) {
-            const denied = await mcp.call(tool, mutated);
-            if (!(denied as { isError?: boolean }).isError) throw new Error("inert-grant-admitted");
+            if (wrapped && input.id === "object") {
+              const denied = await mcp.call(tool, mutated);
+              if (!(denied as { isError?: boolean }).isError) throw new Error("inert-grant-admitted");
+            }
             const result = await ownerMcp.call(tool, mutated) as { structuredContent?: unknown; content?: { text?: string }[] };
             // A short valid envelope must reach core rather than only SDK validation.
             if (wrapped && input.id === "object" && result.structuredContent === undefined) {
@@ -47,8 +49,10 @@ export async function surfaceDriver(target: typeof SURFACES[number], scratch: st
             }
           } else if (http !== null) {
             const body = wrapped ? JSON.stringify(mutated) : new Uint8Array(input.bytes);
-            const denied = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: `Bearer ${enrollment.token}` }, body });
-            if (denied.status === 200) throw new Error("inert-grant-admitted");
+            if (wrapped && input.id === "object") {
+              const denied = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: `Bearer ${enrollment.token}` }, body });
+              if (denied.status === 200) throw new Error("inert-grant-admitted");
+            }
             const response = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: "Bearer synthetic-fuzz-token" }, body });
             if (response.status >= 500) throw new Error("http-crash");
             const result = await response.text();

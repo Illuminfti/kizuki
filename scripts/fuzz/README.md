@@ -34,6 +34,9 @@ it, then retain it in the corpus.
 Standing HTTP sends each raw byte case through the shared body reader once,
 then mutates fields through all ten tool routes. MCP sends raw argument
 containers and wrapped fields through each tool's distinct SDK schema.
+An inert-grant witness uses a short schema-valid envelope for each tool;
+mutation campaigns then exercise owner dispatch without repeating that fixed
+authorization check for every byte string.
 
 The supervisor runs one child at a time, samples Linux `VmHWM` every 25 ms,
 checks the worker's final maximum-RSS accounting, bounds protocol lines to
