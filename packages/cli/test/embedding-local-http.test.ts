@@ -366,7 +366,8 @@ test("doctor explains an index update refused by the capacity bound without dial
   configure(f.vault, server);
   const engine = await openConfiguredRetrieval(f.vault);
   try {
-    const refused = await engine!.rebuildFromDocuments([{
+    if (engine?.rebuildFromDocuments === undefined) throw new Error("expected an authoritative rebuild-capable engine");
+    const refused = await engine.rebuildFromDocuments([{
       doc_id: "page:oversized", kind: "page", title: "Synthetic capacity fixture",
       text: "synthetic text ".repeat(400_000), sensitivity: "public", taint: "clean",
       authority: "connector_evidence", subjects: [], provenance: [],
