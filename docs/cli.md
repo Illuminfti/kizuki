@@ -500,12 +500,14 @@ for a down rail it points at `kizuki serve status`, which only reads.
 
 A `canon pages` line reports live pages, archived pages, the configured
 ceiling and a state of `ok`, `near` (80 percent) or `full` (JSON:
-`serve.canon`; `scan_limited` names an incomplete resource-bounded scan).
+`serve.canon`; `scan_limited` names a reached scan resource budget).
 Archived pages are counted apart and do not count against the
 ceiling. At `near` and `full` doctor fails and names the next step: raise
 `[canon] max_live_pages` in `serve.toml`. At `full` the writer holds new pages
 under the named state `canon_ceiling` while queries, context, rebuild, export,
-purge and edits of existing pages keep working. See
+purge and edits of existing pages keep working within scan resource budgets.
+Growing writes that exceed those budgets refuse with `canon_scan_incomplete`
+before publication. See
 [canon capacity](canon-capacity.md).
 
 Doctor names the fix when it can. A `serve.toml` that is not mode 600 stops the

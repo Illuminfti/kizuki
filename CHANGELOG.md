@@ -52,7 +52,7 @@
 - Doctor prints `canon pages live=N archived=M ceiling=C state=...` (JSON:
   `serve.canon`) and fails at `near` (80 percent) and `full` with the next
   step. At `full` the writer holds new pages under the named state
-  `canon_ceiling`; reads, edits of existing pages, undo and purge continue, and
+  `canon_ceiling`; reads, edits within scan budgets, undo and purge continue, and
   held claims stay live. Details in `docs/canon-capacity.md`.
 
 ### Operator safety
