@@ -92,6 +92,17 @@ test("variable credentials keep long continuation parts private", async () => {
   } finally { f.dispose(); }
 });
 
+test("literal YAML credential values beginning with a dollar sign are scrubbed", async () => {
+  const f = await serveFixture();
+  try {
+    const value = ["$", "synthetic", "Credential123"].join("");
+    const id = storeEvent(f.db, "yaml-dollar-value", "2026-02-28T10:30:00Z", `password: ${value}`, "person:ada", "public");
+    const answer = serveTimeline(f.agent("reader-public"), { event_id: id });
+    expect(answer.quoted[0]?.text).toBe("password: [redacted:secret_assignment]");
+    expect(answer.redacted).toEqual({ secret_assignment: 1 });
+  } finally { f.dispose(); }
+});
+
 test("YAML block scalar credentials are removed without consuming the next field", async () => {
   const f = await serveFixture();
   try {
