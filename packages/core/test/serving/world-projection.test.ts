@@ -135,17 +135,24 @@ test("issued references survive reopen, rebuild and mandatory ledger32 backup/re
     const f = await worldFixture(db),
       input = lookup(f.ref);
     const before = readWorldView({ ...f.ctx, vaultPath: vault.path }, input);
+    if (!("result" in before) || before.result.status === "unavailable" || before.result.data.schema !== "kizuki.concept-card/v1") throw new Error("concept unavailable");
+    const evidenceInput = { operation: "evidence", evidence: before.result.data.definitions[0]!.assessments[0]!.evidence[0]!, valid: { kind: "all" }, knownAt: { kind: "current" } };
+    const quote = (ctx: Parameters<typeof serveWorldView>[0]) => serveWorldView(ctx, evidenceInput).quoted;
+    const quotedBefore = quote({ ...f.ctx, vaultPath: vault.path });
+    expect(quotedBefore).toHaveLength(1);
     initSearch(db);
     initGraph(db);
     rebuildDerived(db, vault.path);
     expect(readWorldView({ ...f.ctx, vaultPath: vault.path }, input)).toEqual(
       before,
     );
+    expect(quote({ ...f.ctx, vaultPath: vault.path })).toEqual(quotedBefore);
     db.close();
     db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
     expect(
       readWorldView({ db, vaultPath: vault.path, principal: OWNER }, input),
     ).toEqual(before);
+    expect(quote({ db, vaultPath: vault.path, principal: OWNER })).toEqual(quotedBefore);
     const backup = join(out.path, "world-backup");
     const manifest = exportVault(db, vault.path, backup);
     // World streams are mandatory from ledger32 on; the export carries the current ledger.
@@ -162,6 +169,7 @@ test("issued references survive reopen, rebuild and mandatory ledger32 backup/re
           input,
         ),
       ).toEqual(before);
+      expect(quote({ db: restored, vaultPath: destination, principal: OWNER })).toEqual(quotedBefore);
       assertWorldState(restored);
     } finally {
       restored.close();
