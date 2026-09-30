@@ -147,9 +147,21 @@ export function parseCase(target: Parser, input: FuzzCase, wrapped: boolean): un
       checkEvents(result); return result;
     }
     case "beeper": {
-      const body = wrapped ? Buffer.from(JSON.stringify({ items: [{ id: "1", accountID: "1", chatID: "1", sortKey: "1", timestamp: NOW, text }], hasMore: false })) : input.bytes;
+      const ceiling = 2 * 1024 * 1024; // the connector's response ceiling
+      const body = input.id === "beeper-oversized-stream" ? new Uint8Array(ceiling + 1)
+        : wrapped ? Buffer.from(JSON.stringify({ items: [{ id: "1", accountID: "1", chatID: "1", sortKey: "1", timestamp: NOW, text }], hasMore: false })) : input.bytes;
       const connector = createBeeperConnector({ token_secret_ref: "env:SYNTHETIC_BEEPER_TOKEN" }, {
-        now: () => new Date(NOW), fetch: async () => new Response(new Uint8Array(body)),
+        now: () => new Date(NOW), fetch: async () => new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            const split = Math.floor(body.length / 2);
+            controller.enqueue(body.subarray(0, split));
+            for (let at = 0; at < 100; at++) controller.enqueue(new Uint8Array(0));
+            controller.enqueue(body.subarray(split));
+            // Keep oversized streams open so refusal must actively cancel.
+            if (body.length <= ceiling) controller.close();
+          },
+          cancel() { return new Promise(() => {}); },
+        })),
       });
       return connector.connect(async () => "synthetic-token").then(() => connector.backfill(null))
         .then(batch => { checkEvents(batch.events); return batch; }).finally(() => connector.revoke());

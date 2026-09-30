@@ -1,4 +1,4 @@
-import { HealthReport, KizukiError, freezeManifest, isPlainObject, validateEventInput } from "@kizuki/core";
+import { HealthReport, KizukiError, freezeManifest, isPlainObject, validateEventInput, withDeadline } from "@kizuki/core";
 import type { AttachmentRef, CaptureEventInput, Connector, Cursor, Manifest, SecretResolver, SyncBatch } from "@kizuki/core";
 import { BEEPER_CURSOR_SCHEMA, encodeBeeperCursor, parseBeeperCursor } from "./cursor";
 import type { BeeperCursor } from "./cursor";
@@ -158,13 +158,37 @@ function parseConfig(raw: unknown): Config {
   return { baseUrl: url, tokenRef: raw.token_secret_ref };
 }
 
+function tooLarge(): KizukiError { return new KizukiError("parse_error", "kizuki.beeper: response is too large"); }
+
+/**
+ * The body is provider-controlled. Fixed storage bounds tiny and empty chunk
+ * floods as well as byte count, each read and the whole body share one
+ * deadline, and refusal never waits for the stream's own cancellation.
+ */
 async function boundedText(response: Response): Promise<string> {
-  const length = response.headers.get("content-length");
-  if (length !== null && (!/^\d+$/.test(length) || Number(length) > MAX_BODY_BYTES)) throw new KizukiError("parse_error", "kizuki.beeper: response is too large");
   const reader = response.body?.getReader(); if (reader === undefined) throw new KizukiError("parse_error", "kizuki.beeper: response body is missing");
-  const chunks: Uint8Array[] = []; let size = 0;
-  while (true) { const part = await reader.read(); if (part.done) break; size += part.value.byteLength; if (size > MAX_BODY_BYTES) { await reader.cancel(); throw new KizukiError("parse_error", "kizuki.beeper: response is too large"); } chunks.push(part.value); }
-  const joined = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.byteLength; } return new TextDecoder().decode(joined);
+  try {
+    const length = response.headers.get("content-length");
+    if (length !== null && (!/^\d+$/.test(length) || Number(length) > MAX_BODY_BYTES)) throw tooLarge();
+    const bytes = new Uint8Array(MAX_BODY_BYTES);
+    let size = 0;
+    const deadline = Date.now() + TIMEOUT_MS;
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw unavailable("response body timed out");
+      let part: Awaited<ReturnType<typeof reader.read>>;
+      try { part = await withDeadline(reader.read(), remaining, "Beeper body deadline"); }
+      catch { throw unavailable("response body could not be read"); }
+      if (part.done) break;
+      if (size + part.value.byteLength > MAX_BODY_BYTES) throw tooLarge();
+      bytes.set(part.value, size);
+      size += part.value.byteLength;
+    }
+    return new TextDecoder().decode(bytes.subarray(0, size));
+  } catch (error) {
+    void reader.cancel().catch(() => undefined);
+    throw error;
+  } finally { reader.releaseLock(); }
 }
 
 function parsePage(text: string, direction: "before" | "after"): Page {

@@ -16,6 +16,10 @@
     "text": "{}"
   },
   {
+    "id": "beeper-oversized-stream",
+    "text": "{\"items\":[],\"hasMore\":false}"
+  },
+  {
     "id": "truncated-json",
     "text": "{\"message\": ["
   },

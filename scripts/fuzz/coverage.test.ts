@@ -12,6 +12,11 @@ test.each(["screenpipe-frame", "screenpipe-audio"])("%s reaches the evidence pro
     .toMatchObject({ text, sensitivity_hint: "private" });
 });
 
+test("Beeper campaign injects an oversized open stream with nonsettling cancellation", async () => {
+  const input = { id: "beeper-oversized-stream", text: "", bytes: new Uint8Array(0) };
+  await expect(parseCase("beeper", input, false)).rejects.toMatchObject({ code: "parse_error" });
+});
+
 test("WHOOP corpus reaches each resource and retains private sensitivity", () => {
   const text = "{}";
   const result = parseCase("whoop" as Parser, { id: "synthetic", text, bytes: Buffer.from(text) }, true);
