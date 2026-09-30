@@ -18,7 +18,7 @@ export function buildWorldSurface(ops: readonly McpWorldOp[]) {
   const fields: Record<string, z.ZodType> = {};
   for (const op of ops)
     for (const [key, schema] of Object.entries(op.fields)) {
-      if (["operation", "valid", "knownAt"].includes(key) || (fields[key] !== undefined && fields[key] !== schema))
+      if (["operation", "valid", "knownAt", "priorView"].includes(key) || (fields[key] !== undefined && fields[key] !== schema))
         throw new Error(`world_view field "${key}" is declared more than once`);
       if (!schema.safeParse(undefined).success)
         throw new Error(`world_view field "${key}" must be optional or defaulted: the engine, not the SDK, judges which fields an operation takes`);
@@ -30,16 +30,19 @@ export function buildWorldSurface(ops: readonly McpWorldOp[]) {
   const input = z.strictObject({
     operation: z.enum(operations),
     ...fields,
+    priorView: worldRef("view").optional(),
     valid: WORLD_VALID.default({ kind: "all" }),
     knownAt: WORLD_KNOWN_AT.default({ kind: "current" }),
   });
 
-  const bodies = ops.flatMap((op) =>
-    Object.entries(op.data).map(([id, shape]) => z.strictObject({ schema: z.literal(id), ...shape })),
-  );
-  const schemaIds = names(ops.flatMap((op) => Object.keys(op.data)), "result schema");
-  if (new Set(schemaIds).size !== schemaIds.length)
-    throw new Error("two world_view operations claim one result schema");
+  // Resume reuses the target's grammar, never a second card codec.
+  const shapes = new Map<string, Readonly<Record<string, z.ZodType>>>();
+  for (const op of ops) for (const [id, shape] of Object.entries(op.data)) {
+    if (shapes.has(id) && shapes.get(id) !== shape) throw new Error("two world_view operations claim one result schema differently");
+    shapes.set(id, shape);
+  }
+  const bodies = [...shapes].map(([id, shape]) => z.strictObject({ schema: z.literal(id), ...shape }));
+  const schemaIds = names([...shapes.keys()], "result schema");
   const [firstBody, ...otherBodies] = bodies;
   const data = z.discriminatedUnion("schema", [firstBody!, ...otherBodies]);
 
@@ -58,6 +61,9 @@ export function buildWorldSurface(ops: readonly McpWorldOp[]) {
         operation: z.enum(operations),
         result: z.union([
           z.strictObject({ status: z.literal("current"), view: z.strictObject({ status: z.literal("not_issued") }), data }),
+          z.strictObject({ status: z.literal("current"), view: worldRef("view"), data, validUntil: z.string() }),
+          z.strictObject({ status: z.literal("unchanged"), view: worldRef("view"), validUntil: z.string() }),
+          z.strictObject({ status: z.literal("new_view_required") }),
           z.strictObject({ status: z.literal("incomplete"), data, reasons: z.array(worldGaps).max(5) }),
           z.strictObject({ status: z.literal("unavailable"), reason: z.enum(["storage", "history", "budget"]) }),
         ]),
@@ -75,8 +81,9 @@ export function buildWorldSurface(ops: readonly McpWorldOp[]) {
         schema: z.literal("kizuki.world-view/v1"),
         operation: z.enum(operations),
         result: z.strictObject({
-          status: z.enum(["current", "incomplete", "unavailable"]),
-          view: z.strictObject({ status: z.literal("not_issued") }).optional(),
+          status: z.enum(["current", "unchanged", "new_view_required", "incomplete", "unavailable"]),
+          view: z.union([worldRef("view"), z.strictObject({ status: z.literal("not_issued") })]).optional(),
+          validUntil: z.string().optional(),
           data: z.looseObject({ schema: z.enum(schemaIds) }).optional(),
           reasons: z.array(worldGaps).max(5).optional(),
           reason: z.enum(["storage", "history", "budget"]).optional(),

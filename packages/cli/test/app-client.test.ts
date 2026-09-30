@@ -902,6 +902,36 @@ test('unreadable existing model settings do not expose a replacement form', asyn
 });
 
 const readGrant = { ceiling: 'public', types: null, subjects: null, since: null, until: null, tools: ['search', 'get_page'], rate_limit_per_minute: 60, relay_owner_corrections: false };
+function openPinnedWorld(f: ReturnType<typeof fixture>) {
+    f.evaluate(`state.view='world'; state.worldKind='concepts'; state.worldRef={kind:'object',token:'A'.repeat(43)};
+      state.world={schema:'kizuki.world-view/v1',operation:'concept',result:{status:'current',view:{kind:'view',token:'V'.repeat(42)+'A'},validUntil:'2030-01-01T00:15:00.000Z',data:{schema:'kizuki.concept-card/v1',concept:{ref:state.worldRef,labels:[{text:'Synthetic concept'}]},definitions:[],relations:[],coverage:{status:'complete_for_query',gaps:[]}}}}; render();`);
+}
+test('World keeps cached data only after unchanged and drops it when the baseline is invalid', async () => {
+    const f = fixture(); openPinnedWorld(f);
+    const checked = f.evaluate<Promise<void>>('loadWorld()');
+    expect(f.requests[0]!.payload.priorView).toEqual({kind:'view',token:'V'.repeat(42)+'A'});
+    f.reply('world_view', {schema:'kizuki.world-view/v1',operation:'concept',result:{status:'unchanged',view:{kind:'view',token:'V'.repeat(42)+'A'},validUntil:'2030-01-01T00:15:00.000Z'}});
+    await checked;
+    expect(f.main.textContent).toContain('Synthetic concept'); expect(f.main.textContent).toContain('No visible change');
+    const invalid = f.evaluate<Promise<void>>('loadWorld()');
+    f.reply('world_view', {schema:'kizuki.world-view/v1',operation:'concept',result:{status:'new_view_required'}}); await invalid;
+    expect(f.main.textContent).not.toContain('Synthetic concept'); expect(f.main.textContent).toContain('Read a fresh view');
+    expect(f.storageWrites).toHaveLength(0);
+});
+test('World shares through the object operation and resumes without carrying the issuer view', async () => {
+    const f = fixture(); openPinnedWorld(f);
+    const shared = findAction(f.main, 'Share a resume handle').fire('click'); await tick();
+    expect(f.requests[0]!.payload).toMatchObject({operation:'share',of:{operation:'concept',concept:{kind:'object',token:'A'.repeat(43)}}});
+    expect(f.requests[0]!.payload).not.toHaveProperty('priorView');
+    f.reply('world_view', {schema:'kizuki.world-view/v1',operation:'share',result:{status:'current',view:{status:'not_issued'},data:{schema:'kizuki.resume-handle/v1',handle:'R'.repeat(42)+'A',expiresAt:'2030-01-02T00:00:00.000Z'}}}); await shared;
+    expect(f.main.textContent).toContain('Resume in another client'); expect(f.main.textContent).toContain('R'.repeat(42)+'A');
+    const resumed = f.evaluate<Promise<void>>(`loadWorld(null,{operation:'resume',handle:'R'.repeat(42)+'A'})`);
+    expect(f.requests[0]!.payload).toMatchObject({operation:'resume',handle:'R'.repeat(42)+'A'});
+    expect(f.requests[0]!.payload).not.toHaveProperty('priorView');
+    f.reply('world_view', {schema:'kizuki.world-view/v1',operation:'resume',result:{status:'incomplete',reasons:['coverage'],data:{schema:'kizuki.concept-card/v1',concept:{ref:{kind:'object',token:'B'.repeat(42)+'A'},labels:[{text:'Resumed concept'}]},definitions:[],relations:[],coverage:{status:'partial',gaps:['coverage']}}}}); await resumed;
+    expect(f.main.textContent).toContain('Resumed concept'); expect(f.evaluate('state.worldRef.token')).toBe('B'.repeat(42)+'A');
+    f.evaluate('invalidatePrivateView()'); expect(f.main.textContent).not.toContain('Resumed concept'); expect(f.storageWrites).toHaveLength(0);
+});
 test('World renders shared-reader statements with honest confidence and unavailable state', () => {
     const f = fixture();
     f.evaluate(`state.view='world'; state.worldKind='concepts'; state.world={schema:'kizuki.world-view/v1',operation:'find_concepts',result:{status:'current',view:{status:'not_issued'},data:{schema:'kizuki.concept-matches/v1',matches:[{ref:{kind:'object',token:'A'.repeat(43)},labels:['Bayesian reasoning']}],coverage:{status:'partial',gaps:['traversal_limit']}}}}; render();`);
