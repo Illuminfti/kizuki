@@ -75,6 +75,8 @@ describe("a command-line spec builds only the keys its core operation takes", ()
     ["--label", "flux"],
     ["--cursor", SAMPLE_TOKEN],
     ["--ref", SAMPLE_TOKEN],
+    ["--resume", SAMPLE_TOKEN],
+    ["--of-operation", "concept"],
   ]);
   test("every key built is one the operation names, and every required key is built", () => {
     for (const entry of WORLD_CLI_OPS) {

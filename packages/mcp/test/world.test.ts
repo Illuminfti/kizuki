@@ -58,6 +58,33 @@ test("listed MCP client discovers and reads real supported Concept and Situation
   expect(malformed.isError).toBe(true);
 });
 
+test("MCP validates issued views, unchanged, share and cross-client resume against the full grammar", async () => {
+  fixture = mcpFixture();
+  const seeded = await worldFixture(fixture.db);
+  const owner = await connectClient(fixture.owner(), open);
+  const peer = await connectClient(fixture.agent("reader-private"), open);
+  const input = { operation: "concept", concept: seeded.ref, valid: { kind: "all" }, knownAt: { kind: "current" } };
+  // Exercise discovery through the same client that will share the object.
+  const discovered = envelopeOf(await call(owner, "world_view", { operation: "find_concepts", label: "", valid: input.valid, knownAt: input.knownAt })).data as any;
+  input.concept = discovered.result.data.matches[0].ref;
+  const first = await call(owner, "world_view", input);
+  expect(first.isError ?? false).toBe(false);
+  const baseline = (envelopeOf(first).data as any).result;
+  expect(baseline.view.kind).toBe("view");
+  const second = await call(owner, "world_view", { ...input, priorView: baseline.view });
+  expect(second.isError ?? false).toBe(false);
+  expect((envelopeOf(second).data as any).result).toEqual({ status: "unchanged", view: baseline.view, validUntil: baseline.validUntil });
+  const shared = await call(owner, "world_view", { operation: "share", of: { operation: "concept", concept: input.concept }, valid: input.valid, knownAt: input.knownAt });
+  expect(shared.isError ?? false).toBe(false);
+  const handle = (envelopeOf(shared).data as any).result.data.handle;
+  const resumed = await call(peer, "world_view", { operation: "resume", handle });
+  expect(resumed.isError ?? false).toBe(false);
+  const data = (envelopeOf(resumed).data as any).result;
+  expect(data.status).toBe("current"); expect(data.data.concept.ref.token).not.toBe(input.concept.token);
+  const absent = await call(peer, "world_view", { operation: "resume", handle: "A".repeat(43) });
+  expect((envelopeOf(absent).data as any).result).toEqual({ status: "new_view_required" });
+});
+
 test("MCP world_view pages label discovery with the returned cursor", async () => {
   fixture = mcpFixture();
   const first = await worldFixture(fixture.db, { label: "Topic 00", subject: "topic:0" });

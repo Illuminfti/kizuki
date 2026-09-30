@@ -1,5 +1,5 @@
 import { OWNER, ServeError, serveWorldView } from "@kizuki/core";
-import { WorldViewError } from "@kizuki/core/world";
+import { WorldViewError, isWorldWireToken } from "@kizuki/core/world";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
 import { jsonEnvelope } from "../output";
@@ -11,11 +11,12 @@ import type { WorldCliEntry } from "./world/ops";
 export function createWorldCommand(entries: readonly WorldCliEntry[]): Command {
   const ops = entries.flatMap((entry) => (entry.cli === null ? [] : [{ name: entry.name, cli: entry.cli }]));
   const schema: CommandHelpSchema = {
-    options: ["--operation", ...new Set(ops.flatMap((op) => op.cli.options))],
-    flags: ["--json"],
+    options: ["--operation", "--prior-view", ...new Set(ops.flatMap((op) => op.cli.options))],
+    flags: ["--json", "--share"],
     bounds: {
       ...ops.reduce((all, op) => ({ ...all, ...op.cli.bounds }), {}),
       "--operation": ops.map((op) => op.name).join("|"),
+      "--prior-view": "32-byte base64url view token",
     },
   };
   const usage = ops
@@ -29,14 +30,23 @@ export function createWorldCommand(entries: readonly WorldCliEntry[]): Command {
     async run(io: CliIo, args: string[]): Promise<number> {
       const parsed = parseArguments(args, { options: [...schema.options], flags: [...schema.flags] });
       if (parsed.positionals.length !== 0) throw new UsageError(usage);
-      const name = parsed.options.get("--operation");
+      const name = parsed.options.get("--operation") ?? (parsed.options.has("--resume") ? "resume" : undefined);
       const op = ops.find((candidate) => candidate.name === name);
       if (op === undefined) throw new UsageError(usage);
       for (const option of parsed.options.keys())
-        if (option !== "--operation" && !op.cli.options.includes(option)) throw new UsageError(usage);
+        if (option !== "--operation" && option !== "--prior-view" && !op.cli.options.includes(option)) throw new UsageError(usage);
       const built = op.cli.buildInput(parsed.options);
       if (built === null) throw new UsageError(usage);
-      const input: Record<string, unknown> = { operation: op.name, ...built };
+      let input: Record<string, unknown> = { operation: op.name, ...built };
+      const prior = parsed.options.get("--prior-view");
+      if (prior !== undefined) {
+        if (!isWorldWireToken(prior)) throw new UsageError(usage);
+        input.priorView = { kind: "view", token: prior };
+      }
+      if (parsed.flags.has("--share")) {
+        if ((op.name !== "concept" && op.name !== "situation") || prior !== undefined) throw new UsageError(usage);
+        input = { operation: "share", of: { operation: op.name, [op.name]: built[op.name] }, valid: built.valid, knownAt: built.knownAt };
+      }
       // Reference issuance is durable bookkeeping and needs the normal bound ledger writer.
       return withVault(
         io,
@@ -50,11 +60,14 @@ export function createWorldCommand(entries: readonly WorldCliEntry[]): Command {
               const { result } = data;
               if (result.status === "unavailable") io.out(`World view unavailable: ${result.reason}.`);
               else if (result.status === "new_view_required")
-                io.out("A new view is required: read again without --prior-view.");
+                io.out(input.operation === "resume"
+                  ? "A new view is required: discover the object again or use a new resume handle."
+                  : "A new view is required: read again without --prior-view.");
               else if (result.status === "unchanged")
                 io.out(`Unchanged since the prior view. It stays valid until ${result.validUntil}.`);
               else {
-                for (const line of op.cli.render(result.data)) io.out(line);
+                const renderer = ops.find((candidate) => candidate.name === input.operation)!.cli;
+                for (const line of renderer.render(result.data)) io.out(line);
                 if ("validUntil" in result) io.out(`View: ${result.view.token} (valid until ${result.validUntil})`);
                 const notice = op.cli.notice?.(result.data);
                 if (notice) io.err(notice);
