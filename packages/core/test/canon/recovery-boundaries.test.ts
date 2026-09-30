@@ -61,7 +61,7 @@ test("a cached canon snapshot remains refused after another write is admitted an
   const f = await fixture();
   const first = write(f.io, f.claim), index = loadCanon(f.owner), page = index.byPath.get(first.page_path)!;
   expect(pageDecision(index, OWNER_AGENT_GRANT, page).allow).toBe(true);
-  const second = await storeClaim(f.db, putEvent(f.db), { target: "people/jules", subject: "person:jules", subjects: ["person:jules"] });
+  const second = await storeClaim(f.db, putEvent(f.db, { text: "Jules manages the community library." }), { target: "people/jules", subject: "person:jules", subjects: ["person:jules"] });
   breakRows(f.db); expect(() => write(f.io, second)).toThrow("boundary row failure");
   const intent = readCanonWriteIntent(f.db)!;
   expect(readDerivedHolds(f.db).paths.has(intent.receipt.page_path)).toBe(true);
