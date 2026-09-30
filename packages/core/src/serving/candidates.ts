@@ -1,3 +1,4 @@
+import { denyClassesOf } from "../agents";
 import type { AuditDenial, AuditItem } from "../agents";
 import { compareRfc3339 } from "../agents/time";
 import type { Claim } from "../contracts/proposal";
@@ -7,10 +8,9 @@ import { isMachineOriginPath } from "../canon/origin";
 import { listValidityGaps } from "../claims/gaps";
 import { listLiveConflicts } from "../claims/identity";
 import { listClaims } from "../claims/store";
-import { neighbors } from "../graph/graph";
+import { neighbors, neighborsForServing } from "../graph/graph";
 import { bareRetrievalId } from "../retrieval/ids";
-import { search } from "../search/query";
-import type { SearchOptions } from "../search/query";
+import { searchAuditCandidates } from "../search/query";
 import { compareText } from "../util/order";
 import { stringArray } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
@@ -27,6 +27,7 @@ import { collectAuthorizedTimeline } from "./ledger";
 import { blockquote, oneLine, redactorOf, stripInvisible } from "./redact";
 import type { Redactor } from "./redact";
 import { retrievalCandidates, retrievalGraphCandidates } from "./retrieval";
+import { graphServingScope, requiresClassScopedGraph } from "./graph-scope";
 import type { PacketSection, SessionSection } from "./sections";
 import type { CanonChunk, QuotedChunk, ServeContext } from "./types";
 
@@ -234,6 +235,14 @@ export async function collectPieces(
   const packed = new Set<string>();
 
   if (request.include.includes("canon")) {
+    const decisions = new Map<string, ReturnType<typeof pageDecision>>();
+    const decisionFor = (page: CanonPage): ReturnType<typeof pageDecision> => {
+      const cached = decisions.get(page.id);
+      if (cached !== undefined) return cached;
+      const decision = pageDecision(index, grant, page);
+      decisions.set(page.id, decision);
+      return decision;
+    };
     const candidates: CanonPage[] = nominated.ids.flatMap((id) => {
       const page = id.startsWith("page:") ? index.byId.get(bareRetrievalId(id)) : undefined;
       if (page === undefined) return [];
@@ -241,19 +250,37 @@ export async function collectPieces(
       return [page];
     });
     if (request.query !== undefined) {
-      const opts: SearchOptions = {
+      const opts = {
         scope: "canon",
         limit: CANDIDATE_LIMIT,
-        ceiling: grant.ceiling,
         excludePaths: [...index.holds],
+        source: {
+          owner: ctx.principal.kind === "owner",
+          purpose: ctx.sourcePurpose ?? "recall",
+          deny_classes: denyClassesOf(grant),
+        },
         ...(request.subjects === undefined
           ? {}
           : { subjects: request.subjects }),
         ...(request.types === undefined ? {} : { types: request.types }),
-      };
-      for (const hit of search(ctx.db, request.query, opts)) {
-        const page = index.byId.get(bareRetrievalId(hit.doc_id));
-        if (page !== undefined) candidates.push(page);
+      } satisfies Parameters<typeof searchAuditCandidates>[2];
+      let accepted = 0;
+      let offset = 0;
+      const rankedPages = new Set<string>();
+      // Share search's source/class-aware rank order. Page past identities
+      // denied by live snapshot checks so they cannot fill the packet window.
+      while (accepted < CANDIDATE_LIMIT) {
+        const ranked = searchAuditCandidates(ctx.db, request.query, { ...opts, offset });
+        for (const hit of ranked.candidates) {
+          const page = index.byId.get(bareRetrievalId(hit.doc_id));
+          if (page === undefined || rankedPages.has(page.id) || !eligible(page) || !decisionFor(page).allow) continue;
+          rankedPages.add(page.id);
+          candidates.push(page);
+          accepted += 1;
+          if (accepted === CANDIDATE_LIMIT) break;
+        }
+        if (ranked.candidates.length < CANDIDATE_LIMIT) break;
+        offset += ranked.candidates.length;
       }
     }
     if (request.subjects !== undefined) {
@@ -275,7 +302,7 @@ export async function collectPieces(
 
     for (const page of candidates) {
       if (packed.has(page.id) || !eligible(page)) continue;
-      const decision = pageDecision(index, grant, page);
+      const decision = decisionFor(page);
       if (!decision.allow) continue;
       packed.add(page.id);
       const { excerpt, truncated } = excerptOf(page.body, CANON_EXCERPT, ctx);
@@ -297,16 +324,19 @@ export async function collectPieces(
     for (const root of roots) {
       const rootId = root.canon?.page_id;
       if (rootId === undefined) continue;
-      const fromPort = await retrievalGraphCandidates(ctx, rootId, {
-        ceiling: grant.ceiling,
-        limit: GRAPH_CHUNKS,
-      });
+      const fromPort = requiresClassScopedGraph(ctx)
+        ? { ok: false, ids: [], degraded: ctx.retrieval === undefined ? [] : ["retrieval-graph-class-scope-unavailable"] }
+        : await retrievalGraphCandidates(ctx, rootId, {
+            ceiling: grant.ceiling,
+            limit: GRAPH_CHUNKS,
+          });
       for (const reason of fromPort.degraded) {
         if (!nominated.degraded.includes(reason)) nominated.degraded.push(reason);
       }
       plans.push({ rootId, ids: fromPort.ok ? fromPort.ids : [], fallback: !fromPort.ok });
     }
     const liveIndex = loadCanon(ctx);
+    let localScope: ReturnType<typeof graphServingScope> | undefined;
     let added = 0;
     const consider = (targetId: string): void => {
       if (added === GRAPH_CHUNKS) return;
@@ -332,13 +362,14 @@ export async function collectPieces(
     };
     for (const plan of plans) {
       if (added === GRAPH_CHUNKS) break;
-      const ids = plan.fallback
-        ? neighbors(ctx.db, plan.rootId, {
-            depth: 1,
-            kinds: ["wikilink"],
-            ceiling: grant.ceiling,
-          }).edges.map((edge) => edge.dst)
-        : plan.ids;
+      let ids = plan.ids;
+      if (plan.fallback) {
+        const options = { depth: 1 as const, kinds: ["wikilink" as const], ceiling: grant.ceiling };
+        const found = requiresClassScopedGraph(ctx)
+          ? neighborsForServing(ctx.db, plan.rootId, options, localScope ??= graphServingScope(liveIndex, grant))
+          : neighbors(ctx.db, plan.rootId, options);
+        ids = found.edges.map(edge => edge.dst);
+      }
       for (const id of ids) {
         if (added === GRAPH_CHUNKS) break;
         consider(id);

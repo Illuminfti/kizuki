@@ -100,6 +100,13 @@ and `["machine_exhaust"]` reads credential-shaped evidence again. The owner
 always reads every class, and `OWNER_AGENT_GRANT` takes the default. The
 inert grant given to a new arbitrary agent is unchanged.
 
+Denied pages and source edges are excluded before graph limits and traversal;
+denied canon matches cannot fill a context packet's candidate window. Graph
+reads with withheld classes use the local graph because the v1 retrieval
+port cannot express that filter. When a configured engine's graph is skipped,
+context packets report `retrieval-graph-class-scope-unavailable` and still
+include readable local relations.
+
 ```json
 {
   "ceiling": "private",

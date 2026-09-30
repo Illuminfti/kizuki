@@ -166,6 +166,9 @@ test("packets consume graph engine nominations using current evidence and author
 
 test("a graph engine cannot disclose private, held, or archived pages", async () => {
   const f = await live();
+  // This case exercises provider nominations at a sensitivity ceiling. The
+  // v1 graph port has no class predicate, so class-scoped reads use SQL.
+  setGrant(f.db, "reader-public", { deny_classes: [] });
   const retrieval = graphPort(async (entity) => ({
     entity: entity.entity_id,
     edges: ["org:acme", "fact:kettle", "fact:held", "fact:archived"].map((to) => ({
@@ -191,6 +194,7 @@ test("a graph engine cannot disclose private, held, or archived pages", async ()
 
 test("a grant narrowed while graph retrieval is pending refuses the whole response", async () => {
   const f = await live();
+  setGrant(f.db, "reader-private", { deny_classes: [] });
   const retrieval = graphPort(async (entity) => {
     setGrant(f.db, "reader-private", { ceiling: "public" });
     return relatedEdge(entity, "org:acme");
@@ -258,6 +262,7 @@ test("serveGraph consumes engine nominations using current evidence and authorit
 
 test("a graph engine cannot disclose private, held, or archived pages through serveGraph", async () => {
   const f = await live();
+  setGrant(f.db, "reader-public", { deny_classes: [] });
   const retrieval = graphPort(async (entity) => ({
     entity: entity.entity_id,
     edges: ["org:acme", "fact:kettle", "fact:held", "fact:archived"].map((to) => ({
@@ -284,6 +289,7 @@ test("a graph engine cannot disclose private, held, or archived pages through se
 
 test("a grant narrowed while serveGraph retrieval is pending refuses the whole response", async () => {
   const f = await live();
+  setGrant(f.db, "reader-private", { deny_classes: [] });
   const retrieval = graphPort(async (entity) => {
     setGrant(f.db, "reader-private", { ceiling: "public" });
     return graphEdge(entity, "org:acme");
@@ -325,6 +331,25 @@ test("kind-filtered serveGraph keeps the deterministic floor", async () => {
   );
   expect(calls).toBe(0);
   expect((envelope.data?.edges ?? []).map((edge) => edge.dst).sort()).toEqual(["Nowhere", "person:grace"]);
+});
+
+test("class-scoped graph reads use the filtered floor instead of a provider's bounded walk", async () => {
+  const f = await live();
+  let calls = 0;
+  const retrieval = graphPort(async (entity) => {
+    calls += 1;
+    return { ...graphEdge(entity, "fact:kettle"), truncated: true };
+  });
+  const ctx = { ...f.agent("reader-private"), retrieval };
+  const graph = await serveGraph(ctx, { id: "fact:linked", depth: 2 });
+  expect(graph.data?.truncated).toBe(false);
+  expect(graph.data?.edges).toContainEqual({ src: "fact:linked", dst: "person:grace", kind: "wikilink" });
+  const packet = await serveContextPacket(ctx, {
+    query: "Nowhere", include: ["canon", "graph"], budget_tokens: 2_000,
+  });
+  expect(relatedSection(packet.data?.packet_md ?? "")).toContain("Grace reviews the kettle log.");
+  expect(packet.data?.retrieval_degraded).toContain("retrieval-graph-class-scope-unavailable");
+  expect(calls).toBe(0);
 });
 
 test("serveGraph drops fabricated unresolved wikilink nominations", async () => {

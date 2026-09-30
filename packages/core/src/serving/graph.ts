@@ -1,5 +1,5 @@
 import type { AuditDenial, Grant } from "../agents";
-import { neighbors } from "../graph/graph";
+import { neighbors, neighborsForServing } from "../graph/graph";
 import type { GraphEdge, GraphEdgeKind } from "../graph/graph";
 import { enumOf, identifier } from "./arguments";
 import { eligible, loadCanon, pageDecision } from "./canon";
@@ -9,6 +9,7 @@ import type { Served } from "./gate";
 import { eventDecision, readServableEvents } from "./ledger";
 import type { ServableEvent } from "./ledger";
 import { retrievalGraphEdges } from "./retrieval";
+import { graphServingScope, requiresClassScopedGraph } from "./graph-scope";
 import { ServeError } from "./types";
 import type { Envelope, ServeContext } from "./types";
 
@@ -160,7 +161,7 @@ export async function serveGraph(
       const kinds = kindsOf(args.kinds);
 
       const walked =
-        kinds === undefined
+        kinds === undefined && !requiresClassScopedGraph(ctx)
           ? await retrievalGraphEdges(ctx, id, {
               hops: depth,
               limit: MAX_EDGES,
@@ -201,7 +202,9 @@ export async function serveGraph(
             edges: walked.edges,
             truncated: walked.truncated,
           }
-        : neighbors(ctx.db, id, { ...query, ceiling: grant.ceiling });
+        : requiresClassScopedGraph(ctx)
+          ? neighborsForServing(ctx.db, id, { ...query, ceiling: grant.ceiling }, graphServingScope(index, grant))
+          : neighbors(ctx.db, id, { ...query, ceiling: grant.ceiling });
       const foundKeys = new Set(found.edges.map(edgeKey));
       // Ceiling shapes the served cap on the local floor. A configured
       // engine already applied the requested ceiling; core still authorizes.
