@@ -378,12 +378,14 @@ so a defaulted page never looks like a decision the previous system made.
   re-read. Re-import from scratch (a fresh source, or a changed mapping) to
   pick it up. The wiki importer does notice an edited page, because it
   compares content hashes on every run. Each imported page carries a claim key
-  built from the connector and the page's source record, so an edit supersedes
+  built from the logical `page:<connector>:<source_record_id>` identity using
+  the claim contract's SHA-256 encoding, so an edit supersedes
   the earlier claim for that page: the canon page shows the newest body once,
   its frontmatter takes the newest fields, and `sources` keeps every
   revision's event. Undoing the write of an edit restores the previous
   revision. Claims imported before pages carried a key are superseded by the
-  first edit that arrives. The source record decides, not the mapped target: an
+  first edit that arrives; their stored null keys remain unchanged. A source
+  revision cannot supersede a higher-authority correction. The source record decides, not the mapped target: an
   edit that moves a page to a new target still updates the canon page it
   already has.
 - **Without a mapped date field, `occurred_at` is the file's mtime.** Copying

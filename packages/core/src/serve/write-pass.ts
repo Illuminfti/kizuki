@@ -15,11 +15,12 @@ import {
   type TargetDecision,
 } from "../canon";
 import type { CanonIo } from "../canon";
+import { CanonWriteError } from "../canon/errors";
 import { applyCanonWriteOwned } from "../canon/apply";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { machineOriginPath } from "../canon/origin";
-import { nowOf, readPage } from "../canon/store";
+import { nowOf } from "../canon/store";
 import type { Claim } from "../contracts/proposal";
 import type { ClaimDraft, ProduceResult, ProducerDiagnostic, ProducerPort } from "../contracts/producer";
 import type { DroppedDraftV2, ProduceResultV2, ProducerV2Port } from "../contracts/producer-v2";
@@ -413,14 +414,6 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
       else requireExternalEvents(db, claim.provenance);
       const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
-      // A file the arbiter could not bind to a page (no readable id) sits where a create
-      // would land. Retrying cannot change that, so the claim ends here with its reason.
-      if (decision.action === "create" && readPage(io, decision.rel_path) !== null) {
-        if (skipUnwrittenClaim(db, claim.claim_id, nowOf(io))) {
-          tally.claims_skipped["page_exists"] = (tally.claims_skipped["page_exists"] ?? 0) + 1;
-        }
-        continue;
-      }
       const before = occupyingWriteIds(db);
       try {
         applyCanonWriteOwned(scope, io, claim, decision, {
@@ -441,6 +434,14 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
       }
     } catch (error) {
       if (error instanceof SelfOriginError) continue;
+      // The writer validates provenance before refusing a create over an existing file.
+      // This terminal outcome consumes no canon write and must not retry forever.
+      if (error instanceof CanonWriteError && error.code === "page_exists") {
+        if (skipUnwrittenClaim(db, claim.claim_id, nowOf(io))) {
+          tally.claims_skipped["page_exists"] = (tally.claims_skipped["page_exists"] ?? 0) + 1;
+        }
+        continue;
+      }
       if (error instanceof BudgetExhausted) {
         tally.stopped = error.stopped;
         break;

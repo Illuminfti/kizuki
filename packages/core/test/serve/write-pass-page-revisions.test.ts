@@ -301,6 +301,13 @@ test("undo of the second receipt restores revision one and its claim", async () 
     expect(after.errors).toEqual([]);
     expect(after.claims_written).toBe(0);
     expect(readFileSync(join(f.vault, PAGE), "utf8")).toBe(revisionOne);
+    revise(f, {
+      text: "# Atlas\n\nfirst body",
+      extensions: { "x-status": "draft" },
+      delivery: "after-undo",
+    });
+    expect((await f.pass()).claims_written).toBe(0);
+    expect(listClaims(f.db, { status: "live", limit: 20 }).filter(c => c.target === TARGET)).toHaveLength(1);
   } finally {
     f.db.close();
   }
@@ -474,5 +481,29 @@ test("source revisions never supersede a higher-authority keyed correction", asy
     expect((await f.pass()).errors).toEqual([]);
     expect(getClaim(f.db, original.claim_id)?.status).toBe("live");
     expect(readFileSync(join(f.vault, PAGE), "utf8")).toBe(before);
+  } finally { f.db.close(); }
+});
+
+
+test("failure journaling supersession rolls back the revision's claims and proposal", async () => {
+  const f = fixture();
+  try {
+    revise(f, { text: "# Atlas\n\nfirst body" });
+    expect((await f.pass()).errors).toEqual([]);
+    const original = listClaims(f.db, { status: "live", limit: 20 }).find(c => c.target === TARGET)!;
+    const before = readFileSync(join(f.vault, PAGE), "utf8");
+    const accepted = accept(f.db, eventFor({ text: "# Atlas\n\nnext body" }));
+    if (accepted.status !== "stored") throw new Error("fixture event not stored");
+    const proposal = proposalsForEvent(accepted.event, GRANTED).find(p => p.target === TARGET)!;
+    f.db.exec(`CREATE TRIGGER fail_revision BEFORE INSERT ON claim_supersessions
+      BEGIN SELECT RAISE(ABORT, 'synthetic supersession failure'); END`);
+    expect(() => fileProposal(f.db, proposal)).toThrow("synthetic supersession failure");
+    expect(getClaim(f.db, original.claim_id)?.status).toBe("live");
+    expect(listClaims(f.db, { limit: 20 }).filter(c => c.target === TARGET)).toHaveLength(1);
+    expect(readFileSync(join(f.vault, PAGE), "utf8")).toBe(before);
+    f.db.exec("DROP TRIGGER fail_revision");
+    fileProposal(f.db, proposal);
+    expect((await f.pass()).errors).toEqual([]);
+    expect(readPage(f).body).toContain("next body");
   } finally { f.db.close(); }
 });

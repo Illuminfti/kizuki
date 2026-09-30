@@ -145,7 +145,8 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
       ? {
           claims_skipped: Object.fromEntries(
             Object.entries(value["claims_skipped"]).filter(
-              (entry): entry is [string, number] => typeof entry[1] === "number",
+              (entry): entry is [string, number] =>
+                Number.isSafeInteger(entry[1]) && (entry[1] as number) > 0,
             ),
           ),
         }

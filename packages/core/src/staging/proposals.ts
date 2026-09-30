@@ -386,10 +386,11 @@ function resolveLabels(
 function lookupSignatureRow(db: Database, contentHash: string): ProposalRow | null {
   return db
     .query(
-      `SELECT * FROM proposals
-        WHERE content_hash = ? AND status IN ('pending', 'promoted')
-        ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,
-                 created_at, proposal_id
+      `SELECT p.* FROM proposals p LEFT JOIN claims c ON c.claim_id = p.proposal_id
+        WHERE p.content_hash = ?
+          AND (c.status = 'live' OR (c.claim_id IS NULL AND p.status IN ('pending', 'promoted')))
+        ORDER BY CASE p.status WHEN 'pending' THEN 0 ELSE 1 END,
+                 p.created_at, p.proposal_id
         LIMIT 1`,
     )
     .get(contentHash) as ProposalRow | null;

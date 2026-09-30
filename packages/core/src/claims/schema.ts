@@ -350,10 +350,12 @@ function backfillProposalContentHash(db: Database): void {
     content_hash: string;
     claim_key: string | null;
   };
+  const keySql = tableExists(db, "claims") && columnNames(db, "claims").has("claim_key")
+    ? "(SELECT claim_key FROM claims WHERE claims.claim_id = proposals.proposal_id)"
+    : "NULL";
   const select = db.prepare<ProposalHashRow, []>(
     `SELECT proposal_id, kind, target, body, frontmatter, subjects,
-            producer, confidence, content_hash,
-            (SELECT claim_key FROM claims WHERE claims.claim_id = proposals.proposal_id) AS claim_key
+            producer, confidence, content_hash, ${keySql} AS claim_key
        FROM proposals`,
   );
   const update = db.prepare(
