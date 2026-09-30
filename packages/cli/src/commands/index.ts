@@ -15,6 +15,7 @@ import { reflexCommand } from "./reflex";
 import { restoreCommand } from "./restore";
 import { initCommand } from "./init";
 import { modelsCommand } from "./models";
+import { parityCommand } from "./parity";
 import { purgeCommand } from "./purge";
 import { queryCommand } from "./query";
 import { serveCommand } from "./serve";
@@ -79,4 +80,6 @@ export const COMMANDS: readonly Command[] = [
   recoverCommand,
   reflexCommand,
   versionCommand,
+  // slot: parity
+  parityCommand,
 ];
