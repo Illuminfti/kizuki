@@ -411,7 +411,7 @@ describe("write pass", () => {
     ));
     expect(seeded.canon_writes).toBe(1);
 
-    const eventId = putEvent(db, { source_record_id: "extract" });
+    const eventId = putEvent(db, { source_record_id: "extract", text: "Grace still runs partnerships at Acme." });
     const result = await runWritePass(db, path, {
       budget: createBudgetTracker({ canon_writes_per_run: 8 }),
       model_ref: "kizuki.llm.openai-compatible:synthetic@local",

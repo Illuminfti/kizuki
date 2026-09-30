@@ -551,7 +551,7 @@ describe("correct", () => {
       { db: fixture.db, vault_path: fixture.vault, now: () => AT },
       { statement: STATEMENT, target: { claim_id: claimId } },
     );
-    const unrelatedEvent = putEvent(fixture.db, { source_record_id: "unrelated-held-write" });
+    const unrelatedEvent = putEvent(fixture.db, { source_record_id: "unrelated-held-write", text: "An unrelated record describes the community garden." });
     const unrelated = await storeClaim(fixture.db, unrelatedEvent, {
       target: "facts/unrelated",
       subject: "fact:unrelated",
