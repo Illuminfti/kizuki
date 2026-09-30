@@ -388,7 +388,7 @@ function envelopeOf<T, C extends ResponseContract>(
   const redactor = live.redactor ?? createRedactor(live.principal);
   const { canon, quoted, data } = redactValue(redactor, { canon: served.canon, quoted: served.quoted, data: served.data });
   if (contract === ENVELOPE_V2_SCHEMA) {
-    return sealEnvelope(live, tool, at, canon, quoted, data ?? null) as ResponseEnvelope<T, C>;
+    return sealEnvelope(live, tool, at, canon, quoted, data ?? null) as unknown as ResponseEnvelope<T, C>;
   }
   // Read once: conditional extra queries would expose the first hidden source
   // through work counters even when the v2 projector omits policy metadata.

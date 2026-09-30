@@ -79,7 +79,7 @@ test.each(["context_packet", "search", "graph_neighbors"] as const)(
   },
 );
 
-test.each(HIDDEN_MUTATIONS)("overlapping $name leaves a v2 packet and its work unchanged", async (mutation) => {
+test.each([...HIDDEN_MUTATIONS])("overlapping $name leaves a v2 packet and its work unchanged", async (mutation) => {
   setSystemTime(new Date("2026-09-30T12:00:00Z"));
   const scene = await hiddenScene();
   try {
