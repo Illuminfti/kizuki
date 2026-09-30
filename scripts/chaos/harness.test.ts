@@ -5,13 +5,15 @@ import { join } from "node:path";
 import { OPERATIONS, random, runCampaign } from "./harness";
 import { ledger, prepare } from "./fixture";
 import { checkVault } from "./invariants";
+import { restoreVault } from "../../packages/core/src";
 
-test("seeded SIGKILL smoke exercises every durable operation and checks recovery", async () => {
-  const report = await runCampaign({ seed: 17, trials: 1, maxDelayMs: 4 });
-  expect(report.trials.map(trial => trial.operation)).toEqual([...OPERATIONS]);
-  expect(report.trials.every(trial => trial.killed)).toBe(true);
-  expect(report.trials.filter(trial => trial.failure !== null)).toEqual([]);
-}, 120_000);
+for (const operation of OPERATIONS) {
+  test(`seeded SIGKILL recovers ${operation}`, async () => {
+    const report = await runCampaign({ seed: 17 + OPERATIONS.indexOf(operation), trials: 1, maxDelayMs: 4, operations: [operation] });
+    expect(report.trials[0]).toMatchObject({ killed: true, failure: null });
+    expect(report.ok).toBe(true);
+  }, 120_000);
+}
 
 test("a seed reproduces kill delays; invalid budgets refuse before creating vaults", async () => {
   const first = random(0), second = random(0);
@@ -29,10 +31,45 @@ test("the oracle refuses unrelated file changes and projection loss before rebui
   try {
     await checkVault(db, vault, fixture);
     writeFileSync(join(vault, fixture.sentinelPath), fixture.sentinelBytes + "\nChanged independent text.\n");
-    await expect(checkVault(db, vault, fixture)).rejects.toThrow("unrelated_file_changed");
+    await expect(checkVault(db, vault, fixture)).rejects.toThrow("committed_file_changed");
     writeFileSync(join(vault, fixture.sentinelPath), fixture.sentinelBytes);
     db.query("DELETE FROM search_documents WHERE scope='canon'").run();
     await expect(checkVault(db, vault, fixture)).rejects.toThrow("rebuild_not_equal");
+  } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("the oracle detects changes to every committed claim, beyond its sentinel", async () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-chaos-preservation-"));
+  const fixture = await prepare(root, "rebuild");
+  const vault = join(root, "vault"), db = ledger(vault);
+  try {
+    await checkVault(db, vault, fixture);
+    db.query("UPDATE claims SET corroboration=corroboration+1 WHERE claim_id=?").run(fixture.claimIds[0]!);
+    await expect(checkVault(db, vault, fixture)).rejects.toThrow("committed_claim_changed");
+  } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a published restore must retain all baseline claims and bytes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-chaos-restore-"));
+  const fixture = await prepare(root, "restore");
+  const restored = join(root, "restored");
+  restoreVault(join(root, "artifact"), restored);
+  const db = ledger(restored);
+  try {
+    await checkVault(db, restored, fixture, true);
+    db.query("UPDATE claims SET corroboration=corroboration+1 WHERE claim_id=?").run(fixture.claimIds[0]!);
+    await expect(checkVault(db, restored, fixture, true)).rejects.toThrow("committed_claim_changed");
+  } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a later write's target stays protected until its call begins", async () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-chaos-targets-"));
+  const fixture = await prepare(root, "canon");
+  const vault = join(root, "vault"), db = ledger(vault);
+  try {
+    fixture.activeTargets = { claims: [fixture.claimIds[0]!], receipts: [] };
+    db.query("UPDATE claims SET corroboration=corroboration+1 WHERE claim_id=?").run(fixture.claimIds[1]!);
+    await expect(checkVault(db, vault, fixture)).rejects.toThrow("committed_claim_changed");
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -44,7 +81,7 @@ test("SIGKILL after a real retrieval upsert reproduces the unknown-execution rec
 }, 60_000);
 
 test("acknowledged writes survive SIGKILL before the next write", async () => {
-  for (const operation of ["capture", "canon", "correction", "undo"] as const) {
+  for (const operation of ["capture", "canon", "correction", "undo", "typed-canon", "typed-correction", "typed-undo"] as const) {
     const report = await runCampaign({ seed: 17, trials: 1, operations: [operation], cut: "acknowledged" });
     expect(report.ok).toBe(true);
     expect(report.trials[0]).toMatchObject({ killed: true, failure: null, acknowledgments: 1 });
@@ -55,3 +92,25 @@ test.skip("DEFECT: local retrieval started operations cannot recover automatical
   const report = await runCampaign({ seed: 17, trials: 1, operations: ["canon"], cut: "projection-started" });
   expect(report.ok).toBe(true);
 });
+
+test("a journaled extraction decision survives SIGKILL without another producer call for its inputs", async () => {
+  const report = await runCampaign({ seed: 17, trials: 1, operations: ["extraction"], cut: "extraction-journaled" });
+  expect(report.trials[0]).toMatchObject({ killed: true, failure: null });
+  expect(report.ok).toBe(true);
+}, 60_000);
+
+test("admitted purges finish after SIGKILL with an absence proof for every target", async () => {
+  for (const operation of ["purge", "typed-purge"] as const) {
+    const report = await runCampaign({ seed: 17, trials: 1, operations: [operation], cut: "purge-admitted" });
+    expect(report.trials[0]).toMatchObject({ killed: true, failure: null });
+    expect(report.ok).toBe(true);
+  }
+}, 120_000);
+
+test("published exports, snapshots and restores remain complete after SIGKILL", async () => {
+  for (const operation of ["export", "backup", "restore", "restore-snapshot"] as const) {
+    const report = await runCampaign({ seed: 17, trials: 1, operations: [operation], cut: "acknowledged" });
+    expect(report.ok).toBe(true);
+    expect(report.trials[0]).toMatchObject({ killed: true, failure: null, acknowledgments: 1, partial_artifacts: 0 });
+  }
+}, 120_000);

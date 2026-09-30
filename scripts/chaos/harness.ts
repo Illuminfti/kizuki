@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { verifyBackup, verifySnapshot } from "../../packages/core/src";
 import { prepare } from "./fixture";
 
-export const OPERATIONS = ["capture", "extraction", "canon", "correction", "undo", "purge", "export", "backup", "restore", "restore-snapshot", "rebuild"] as const;
+export const OPERATIONS = ["capture", "extraction", "canon", "correction", "undo", "purge", "typed-canon", "typed-correction", "typed-undo", "typed-purge", "export", "backup", "restore", "restore-snapshot", "rebuild", "retrieval-rebuild"] as const;
 export type Operation = typeof OPERATIONS[number];
-export type Cut = "random" | "projection-started" | "acknowledged";
+export type Cut = "random" | "projection-started" | "acknowledged" | "extraction-journaled" | "purge-admitted";
 export interface CampaignOptions {
   seed: number;
   trials: number;
@@ -55,6 +55,10 @@ async function killOperation(root: string, delay: number, cut: Cut): Promise<{ k
     },
   });
   const deadline = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, CHILD_TIMEOUT_MS);
+  // A synchronous purge hook cannot yield to IPC while it retains the writer.
+  const checkpoint = cut === "purge-admitted" ? setInterval(() => {
+    if (existsSync(join(root, "checkpoint"))) child.kill("SIGKILL");
+  }, 5) : undefined;
   // Drain both pipes concurrently: an error must never block waiting for its own stderr reader.
   try {
     const [status, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
@@ -64,6 +68,7 @@ async function killOperation(root: string, delay: number, cut: Cut): Promise<{ k
     return { killed, completed, failure: timedOut ? "operation_timeout" : !killed && !completed && status !== 0 ? "operation_failed" : !started ? "operation_not_started" : null };
   } finally {
     clearTimeout(deadline); if (timer !== undefined) clearTimeout(timer);
+    if (checkpoint !== undefined) clearInterval(checkpoint);
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     await child.exited;
   }
@@ -90,9 +95,11 @@ export async function runCampaign(options: CampaignOptions): Promise<{ schema: "
   if (!Number.isSafeInteger(maxDelay) || maxDelay < 0 || maxDelay > 1000) throw new Error("delay_must_be_0_to_1000");
   const operations = options.operations ?? OPERATIONS;
   if (operations.length === 0 || operations.some(value => !OPERATIONS.includes(value))) throw new Error("unknown_operation");
-  if (options.cut !== undefined && !["random", "projection-started", "acknowledged"].includes(options.cut)) throw new Error("unknown_cut");
+  if (options.cut !== undefined && !["random", "projection-started", "acknowledged", "extraction-journaled", "purge-admitted"].includes(options.cut)) throw new Error("unknown_cut");
   if (options.cut === "projection-started" && (operations.length !== 1 || operations[0] !== "canon")) throw new Error("projection_cut_requires_canon");
-  const acknowledgedOperations: readonly Operation[] = ["capture", "canon", "correction", "undo"];
+  if (options.cut === "extraction-journaled" && (operations.length !== 1 || operations[0] !== "extraction")) throw new Error("journal_cut_requires_extraction");
+  if (options.cut === "purge-admitted" && operations.some(value => value !== "purge" && value !== "typed-purge")) throw new Error("purge_cut_requires_purge");
+  const acknowledgedOperations: readonly Operation[] = ["capture", "canon", "correction", "undo", "typed-canon", "typed-correction", "typed-undo", "export", "backup", "restore", "restore-snapshot"];
   if (options.cut === "acknowledged" && operations.some(value => !acknowledgedOperations.includes(value))) throw new Error("acknowledged_cut_requires_repeated_writes");
   const next = random(options.seed);
   const trials: Trial[] = [];
@@ -120,7 +127,7 @@ export async function runCampaign(options: CampaignOptions): Promise<{ schema: "
         result.failure = "fixture_or_artifact_failed";
       } finally {
         trials.push(result);
-        if (result.failure !== null && options.artifacts !== undefined) writeFileSync(join(root, "trial.json"), JSON.stringify(result, null, 2) + "\n", { mode: 0o600 });
+        if (result.failure !== null) writeFileSync(join(root, "trial.json"), JSON.stringify(result, null, 2) + "\n", { mode: 0o600 });
         else rmSync(root, { recursive: true, force: true });
         options.onTrial?.(result);
       }

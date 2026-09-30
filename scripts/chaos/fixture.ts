@@ -2,12 +2,16 @@ import type { Database } from "bun:sqlite";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  accept, applyCanonWrite, backupVault, createBudgetTracker, exportVault,
-  getClaim, initVault, insertClaim, resolveTarget,
+  accept, applyCanonWrite, backupVault, createBudgetTracker, createFts5RetrievalPort, exportVault, FTS5_RETRIEVAL_ID,
+  getCanonReceiptRecord, getClaim, initVault, insertClaim, listCanonPagesReport, registerConnection,
+  rebuildRetrieval, resolveTarget, setSourceGrant, ulid,
 } from "../../packages/core/src";
 import type { CaptureEventInput, Claim, ProducerPort } from "../../packages/core/src";
+import type { ClaimV2Assertion } from "../../packages/core/src/contracts/claim-v2";
+import { worldCanonTarget } from "../../packages/core/src/canon/world-materialization";
 import { indexEvent, openLedger, rebuildDerived } from "../../packages/core/src/internal";
 import type { Operation } from "./harness";
+import { retrievalProjection } from "./invariants";
 
 export const MODEL = "kizuki.llm.chaos:synthetic@local";
 export const RECORDS = 8;
@@ -18,15 +22,28 @@ export interface Fixture {
   eventIds: string[];
   claimIds: string[];
   receiptIds: string[];
-  sentinelEvent: unknown;
-  sentinelClaim: unknown;
-  sentinelReceipt: unknown;
+  activeTargets?: { claims: string[]; receipts: string[] };
   sentinelPath: string;
   sentinelBytes: string;
+  retrievalProjection?: string;
+  baseline: {
+    events: Record<string, unknown>[];
+    claims: Record<string, unknown>[];
+    receipts: Record<string, unknown>[];
+    files: { path: string; bytes: string }[];
+    typed: { table: string; key: string; rows: Record<string, unknown>[] }[];
+  };
 }
 
 export function ledger(vault: string): Database {
   return openLedger(join(vault, ".kizuki", "kizuki.db"));
+}
+
+export function retrieval(vault: string) {
+  return createFts5RetrievalPort({
+    vault_path: vault, data_dir: join(vault, ".kizuki", "retrieval", FTS5_RETRIEVAL_ID), config: {},
+    clock: () => new Date().toISOString(), logger: () => {}, secrets: async () => { throw new Error("fixture_has_no_secrets"); },
+  });
 }
 
 export function event(record: number, sentinel = false): CaptureEventInput {
@@ -60,6 +77,32 @@ export async function claim(db: Database, id: string, record: number, sentinel =
   return result.claim;
 }
 
+async function typedClaim(db: Database, source: string, record: number): Promise<{ eventId: string; claim: Claim }> {
+  const evidence = { ...event(record), text: `Astronomy ${record} studies celestial objects.`,
+    subjects: [{ subject_id: `topic:astronomy-${record}`, role: "about" as const }] };
+  const accepted = accept(db, evidence, { source: { source_key: source, expected_revision: 1 } });
+  if (accepted.status !== "stored") throw new Error("fixture_typed_capture_refused");
+  indexEvent(db, accepted.event);
+  const id = accepted.event.event_id;
+  const semantic: ClaimV2Assertion = {
+    schema: "kizuki.claim/v2", discriminator: "assertion",
+    subject: { kind: "supplied", id: evidence.subjects[0]!.subject_id, namespace: { connector_id: evidence.connector_id, source_key: source } },
+    predicate: "concept.definition", object: { kind: "literal", value: "Study celestial objects." },
+    perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
+    context: [], polarity: "positive", valid_from: AT, valid_to: null, temporal_basis: "explicit",
+    anchors: [{ event_id: id, start_utf16: 0, end_utf16: evidence.text.length }],
+  };
+  const stored = await insertClaim({ db }, {
+    kind: "claim", body: "Study celestial objects.", provenance: [id], subjects: [semantic.subject.id],
+    producer: "model", model_ref: MODEL, confidence: 0.5, sensitivity: "private", semantic,
+    world_admission: { schema: "kizuki.world-admission/v1", semantic,
+      rendering: { body: "Study celestial objects.", frontmatter: {} },
+      authority: "model_inference", confidence: 0.5, epistemicKind: "model_inference" },
+  });
+  if (stored.outcome !== "stored") throw new Error("fixture_typed_claim_refused");
+  return { eventId: id, claim: stored.claim };
+}
+
 export function producer(): ProducerPort {
   return {
     descriptor: { id: "kizuki.producer.chaos", kind: "producer", contract: "kizuki.producer/v1",
@@ -85,25 +128,52 @@ export async function prepare(root: string, operation: Operation): Promise<Fixtu
     const receipt = applyCanonWrite(io, sentinel, resolveTarget(io, sentinel), { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 32 }) });
     const fixture: Fixture = {
       operation, eventIds: [], claimIds: [], receiptIds: [],
-      sentinelEvent: db.query("SELECT * FROM events WHERE event_id=?").get(sentinelId),
-      sentinelClaim: db.query("SELECT * FROM claims WHERE claim_id=?").get(sentinel.claim_id),
-      sentinelReceipt: receipt, sentinelPath: receipt.page_path, sentinelBytes: readFileSync(join(vault, receipt.page_path), "utf8"),
+      sentinelPath: receipt.page_path, sentinelBytes: readFileSync(join(vault, receipt.page_path), "utf8"),
+      baseline: { events: [], claims: [], receipts: [], files: [], typed: [] },
     };
+    const typed = operation.startsWith("typed-");
+    const source = typed ? ulid() : null;
+    if (source !== null) {
+      registerConnection(db, "chaos.target", source);
+      setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "synthetic-grant", policy: {
+        purposes: ["capture", "derive", "recall", "correction", "export"],
+        allowed_fields: ["text", "subjects", "metadata", "attachments"],
+        retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private",
+      } });
+    }
     if (operation !== "capture") {
       for (let record = 0; record < RECORDS; record++) {
-        const id = capture(db, record);
+        const admitted = source === null ? null : await typedClaim(db, source, record);
+        const id = admitted?.eventId ?? capture(db, record);
         fixture.eventIds.push(id);
         if (operation === "extraction") continue;
-        const stored = await claim(db, id, record);
+        const stored = admitted?.claim ?? await claim(db, id, record);
         fixture.claimIds.push(stored.claim_id);
-        if (operation === "canon") continue;
-        const written = applyCanonWrite(io, stored, resolveTarget(io, stored), { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 32 }) });
+        if (operation === "canon" || operation === "typed-canon") continue;
+        const written = applyCanonWrite(io, stored, typed ? worldCanonTarget(db, stored.claim_id) : resolveTarget(io, stored), { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 32 }) });
         fixture.receiptIds.push(written.receipt_id);
       }
     }
     rebuildDerived(db, vault);
+    fixture.baseline.events = db.query("SELECT * FROM events ORDER BY event_id").all() as Record<string, unknown>[];
+    fixture.baseline.claims = db.query("SELECT * FROM claims ORDER BY claim_id").all() as Record<string, unknown>[];
+    fixture.baseline.receipts = db.query<{ receipt_id: string }, []>("SELECT receipt_id FROM canon_receipts ORDER BY receipt_id")
+      .all().map(row => getCanonReceiptRecord(db, row.receipt_id) as unknown as Record<string, unknown>);
+    const paths = new Set(listCanonPagesReport(vault).pages.map(page => page.relPath));
+    for (const row of fixture.baseline.receipts) if (typeof row.archive_path === "string") paths.add(row.archive_path);
+    fixture.baseline.files = [...paths].sort().map(path => ({ path, bytes: readFileSync(join(vault, path), "utf8") }));
+    for (const [table, key] of [["claim_v2_semantics", "claim_id"], ["claim_v2_support", "support_key"], ["claim_v2_support_events", "support_key"]] as const) {
+      fixture.baseline.typed.push({ table, key, rows: db.query(`SELECT * FROM ${table} ORDER BY rowid`).all() as Record<string, unknown>[] });
+    }
     if (operation === "restore") exportVault(db, vault, join(root, "artifact"));
     if (operation === "restore-snapshot") await backupVault(db, vault, join(root, "artifact"));
+    if (operation === "retrieval-rebuild") {
+      const port = retrieval(vault);
+      try {
+        await rebuildRetrieval(db, vault, port);
+        fixture.retrievalProjection = await retrievalProjection(port);
+      } finally { await port.close(); }
+    }
     writeFileSync(join(root, "fixture.json"), JSON.stringify(fixture), { mode: 0o600 });
     return fixture;
   } finally { db.close(); }
