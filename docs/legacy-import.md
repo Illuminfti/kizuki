@@ -87,6 +87,14 @@ A sync brings the ledger to where the wiki is, in both directions:
   tree scan and plan on the same connector instance. A changed root or restarted
   drain scans again; edits made during a drain are captured by the next sync.
 
+Canon body replacement on a source revision is incomplete in the current
+compatibility writer: an edited, reverted, restored or renamed page can retain
+earlier source prose. The rules above describe ledger revisions, target identity
+and archive reversal; they do not claim that the materialized body already
+matches the latest source. Automatic archive reversal requires a configured
+model, respects the canon write budget and checkpoints its bounded scan so
+edited archives cannot permanently block later returned pages.
+
 ## Wiki mapping
 
 Schema tag: `kizuki.legacy-wiki-mapping/v1`.

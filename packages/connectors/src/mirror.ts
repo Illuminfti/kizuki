@@ -12,6 +12,8 @@ export interface RecordHistory {
    * tombstone, or a later event moved it to another name.
    */
   readonly withdrawn: boolean;
+  /** A folder document's stable subject digest, including after deletion. */
+  readonly subject_sha256?: string;
 }
 
 export type RecordHistoryReader = (
@@ -33,6 +35,7 @@ const HISTORY_CHUNK = 256;
  */
 export class EpochReader {
   readonly #epochs = new Map<string, number>();
+  readonly #subjects = new Map<string, string>();
 
   constructor(
     private readonly read: RecordHistoryReader | undefined,
@@ -50,6 +53,7 @@ export class EpochReader {
       const found = await this.read(chunk);
       for (const item of chunk) {
         const history = found.get(item);
+        if (history?.subject_sha256 !== undefined) this.#subjects.set(item, history.subject_sha256);
         this.#epochs.set(
           item,
           history !== undefined && (history.withdrawn || hasIdentity(item))
@@ -59,6 +63,10 @@ export class EpochReader {
       }
     }
     return this.#epochs.get(relpath) ?? 0;
+  }
+
+  subjectOf(relpath: string): string | undefined {
+    return this.#subjects.get(relpath);
   }
 }
 

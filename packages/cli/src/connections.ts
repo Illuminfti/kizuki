@@ -1,4 +1,4 @@
-import { parseIcsState, XApiConnector, createXApiConnector, inspectXApiState, type XApiConfig, createMarkdownFolderConnector, MARKDOWN_FOLDER_CONNECTOR_ID, MAX_FILES, LEGACY_EVENTS_AUTH_MODES, LEGACY_EVENTS_CONNECTOR_ID, LEGACY_WIKI_AUTH_MODES, LEGACY_WIKI_CONNECTOR_ID, REGISTRY, getConnector, createLegacyWikiConnector, type MarkdownFolderConfig, type MarkdownFolderDeps, type LegacyWikiConfig, type LegacyWikiDeps, type LegacyWikiIdentity } from "@kizuki/connectors";
+import { parseIcsState, XApiConnector, createXApiConnector, inspectXApiState, type XApiConfig, createMarkdownFolderConnector, MARKDOWN_FOLDER_CONNECTOR_ID, MAX_FILES, LEGACY_EVENTS_AUTH_MODES, LEGACY_EVENTS_CONNECTOR_ID, LEGACY_WIKI_AUTH_MODES, LEGACY_WIKI_CONNECTOR_ID, REGISTRY, getConnector, createLegacyWikiConnector, type MarkdownFolderConfig, type MarkdownFolderDeps, type MarkdownFileIdentity, type LegacyWikiConfig, type LegacyWikiDeps, type LegacyWikiIdentity } from "@kizuki/connectors";
 import { xApiClient, xApiRequiredFields, xApiStateConfig } from "./x-api";
 import type { ConnectionStateReader } from "@kizuki/core";
 import { GoogleCalendarConnector, createGoogleCalendarConnector, inspectGoogleCalendarState, type GoogleCalendarConnectorConfig } from "@kizuki/connector-google-calendar";
@@ -64,20 +64,21 @@ type HostConnectorFactoryDeps = Partial<TelegramDeps> &
 export function markdownCommittedIdentities(
   db: Database,
   sourceKey: string,
-): Array<[string, { sha256: string; size: number }]> {
+): Array<[string, MarkdownFileIdentity]> {
   if (!SOURCE_KEY.test(sourceKey)) {
     throw new ConnectionError("markdown committed identities require a source key");
   }
-  let rows: Array<{ relpath: string; sha256: unknown; size: unknown; accepted_at: string; event_id: string }>;
+  let rows: Array<{ relpath: string; sha256: unknown; size: unknown; subject_sha256: unknown; accepted_at: string; event_id: string }>;
   let marks: ReturnType<typeof movedAwayMarks>;
   try {
     marks = movedAwayMarks(db, MARKDOWN_FOLDER_CONNECTOR_ID, sourceKey);
     rows = db
-      .query<{ relpath: string; sha256: unknown; size: unknown; accepted_at: string; event_id: string }, [string, string, number]>(
-        `SELECT relpath, sha256, size, accepted_at, event_id FROM (
+      .query<{ relpath: string; sha256: unknown; size: unknown; subject_sha256: unknown; accepted_at: string; event_id: string }, [string, string, number]>(
+        `SELECT relpath, sha256, size, subject_sha256, accepted_at, event_id FROM (
            SELECT e.source_record_id AS relpath,
                   json_extract(e.metadata, '$.sha256') AS sha256,
                   json_extract(e.metadata, '$.size') AS size,
+                  json_extract(e.metadata, '$.subject_sha256') AS subject_sha256,
                   e.accepted_at AS accepted_at,
                   e.event_id AS event_id,
                   e.deleted,
@@ -102,7 +103,7 @@ export function markdownCommittedIdentities(
   if (rows.length > MAX_FILES) {
     throw new ConnectionError("markdown committed identities exceed the scan bound");
   }
-  const files: Array<[string, { sha256: string; size: number }]> = [];
+  const files: Array<[string, MarkdownFileIdentity]> = [];
   const seen = new Set<string>();
   for (const row of rows) {
     // Renamed to another name by a later event: the mirror no longer has it.
@@ -110,6 +111,7 @@ export function markdownCommittedIdentities(
     const relpath = row.relpath;
     const sha256 = row.sha256;
     const size = row.size;
+    const subject = row.subject_sha256;
     if (
       typeof relpath !== "string" ||
       relpath.length === 0 ||
@@ -120,14 +122,15 @@ export function markdownCommittedIdentities(
       typeof size !== "number" ||
       !Number.isInteger(size) ||
       size < 0 ||
-      size > EVENT_LIMITS.textBytes
+      size > EVENT_LIMITS.textBytes ||
+      (subject !== null && (typeof subject !== "string" || !MARKDOWN_SHA256.test(subject)))
     ) {
       throw new ConnectionError(
         "markdown committed identities are incompatible with scan policy",
       );
     }
     seen.add(relpath);
-    files.push([relpath, { sha256, size }]);
+    files.push([relpath, { sha256, size, ...(typeof subject === "string" ? { subject_sha256: subject } : {}) }]);
   }
   return files;
 }

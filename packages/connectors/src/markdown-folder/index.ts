@@ -54,8 +54,8 @@ export const MAX_DEPTH = 16;
 export const MAX_FILES = 50_000;
 export const MAX_FILE_BYTES = EVENT_LIMITS.textBytes;
 export const MAX_SCAN_ENTRIES = 100_000;
-/** `["",{"sha256":"<64 hex>","size":<max>}],` without the path. */
-const PACK_IDENTITY_JSON_OVERHEAD_BYTES = 98;
+/** Identity JSON, including the optional 64-hex subject digest, without the path. */
+const PACK_IDENTITY_JSON_OVERHEAD_BYTES = 182;
 /** NAME_MAX-class path budget per identity at MAX_FILES. */
 const PACK_PATH_BUDGET_BYTES = 256;
 /** gunzip ceiling for `pack`; scan MAX_FILES is unchanged. */
@@ -85,6 +85,8 @@ export interface MarkdownFolderConfig {
 export interface MarkdownFileIdentity {
   sha256: string;
   size: number;
+  /** The original document identity, retained when a unique byte match moves. */
+  subject_sha256?: string;
 }
 
 type FileIdentity = MarkdownFileIdentity;
@@ -310,7 +312,7 @@ export class MarkdownFolderConnector implements Connector {
       massWithdrawalHeld(withdrawn.length, previousFiles.size, this.confirmedWithdrawals);
     const tombstones = held
       ? []
-      : withdrawn.map((relpath) => tombstone(relpath, observedAt));
+      : withdrawn.map((relpath) => tombstone(relpath, observedAt, previousFiles.get(relpath)?.subject_sha256));
 
     // Each sweep diffs against the durable identities updated by prior pages.
     // An interrupted drain walks anew and includes changes below `after`.
@@ -329,11 +331,17 @@ export class MarkdownFolderConnector implements Connector {
         scanErrors.push({ location: file.relpath, code: "unstable", reason: "file changed during the capture drain" });
         continue;
       }
+      const movedFrom = moves.get(file.relpath);
+      const prior = previousFiles.get(movedFrom ?? file.relpath);
+      const epoch = await epochs.of(changedNames, index, (relpath) => previousFiles.has(relpath));
+      const subject = prior?.subject_sha256 ??
+        (movedFrom === undefined ? epochs.subjectOf(file.relpath) : subjectDigest(movedFrom));
       const event = fileEvent(
         file,
         observedAt,
-        await epochs.of(changedNames, index, (relpath) => previousFiles.has(relpath)),
-        moves.get(file.relpath),
+        epoch,
+        movedFrom,
+        subject,
       );
       const extra = utf8Bytes(JSON.stringify(event));
       if (extra + 2 > MAX_SYNC_BATCH_BYTES) {
@@ -359,6 +367,8 @@ export class MarkdownFolderConnector implements Connector {
         processed.set(event.source_record_id, {
           sha256: file.sha256,
           size: file.size,
+          ...(typeof event.metadata["subject_sha256"] === "string"
+            ? { subject_sha256: event.metadata["subject_sha256"] } : {}),
         });
       }
       const movedFrom = moves.get(event.source_record_id);
@@ -467,7 +477,7 @@ export class MarkdownFolderConnector implements Connector {
     const exhausted = tombstonesDone && !scan.truncated;
     if (exhausted) {
       for (const file of scan.files) {
-        processed.set(file.relpath, { sha256: file.sha256, size: file.size });
+        processed.set(file.relpath, { ...processed.get(file.relpath), sha256: file.sha256, size: file.size });
       }
     }
     const lastTombstone = tombstonePage[tombstonePage.length - 1];
@@ -978,8 +988,11 @@ function hiddenByScanError(
 }
 
 /** Source-record identity, bounded without lossy path normalization or mtime dependence. */
-function documentSubject(relpath: string): SubjectRef {
-  const digest = new Bun.CryptoHasher("sha256").update(relpath).digest("hex");
+function subjectDigest(relpath: string): string {
+  return new Bun.CryptoHasher("sha256").update(relpath).digest("hex");
+}
+
+function documentSubject(relpath: string, digest = subjectDigest(relpath)): SubjectRef {
   return {
     subject_id: `markdown-folder:${digest}`,
     role: "about",
@@ -992,6 +1005,7 @@ function fileEvent(
   observedAt: string,
   epoch: number,
   movedFrom: string | undefined,
+  subjectSha256?: string,
 ): CaptureEventInput {
   return {
     schema: "kizuki.event/v1",
@@ -1001,7 +1015,7 @@ function fileEvent(
     occurred_at: new Date(file.mtimeMs).toISOString(),
     observed_at: observedAt,
     text: file.content,
-    subjects: [documentSubject(file.relpath)],
+    subjects: [documentSubject(file.relpath, subjectSha256)],
     deleted: false,
     attachments: [],
     metadata: {
@@ -1010,11 +1024,12 @@ function fileEvent(
       sha256: file.sha256,
       ...(epoch > 0 ? { revision_epoch: epoch } : {}),
       ...(movedFrom === undefined ? {} : { moved_from: movedFrom }),
+      ...(subjectSha256 === undefined ? {} : { subject_sha256: subjectSha256 }),
     },
   };
 }
 
-function tombstone(relpath: string, observedAt: string): CaptureEventInput {
+function tombstone(relpath: string, observedAt: string, subjectSha256?: string): CaptureEventInput {
   return {
     schema: "kizuki.event/v1",
     connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
@@ -1023,7 +1038,7 @@ function tombstone(relpath: string, observedAt: string): CaptureEventInput {
     occurred_at: observedAt,
     observed_at: observedAt,
     text: "",
-    subjects: [documentSubject(relpath)],
+    subjects: [documentSubject(relpath, subjectSha256)],
     deleted: true,
     attachments: [],
     metadata: { relpath, snapshot: "absent" },
@@ -1274,6 +1289,7 @@ function parseFilePairs(value: unknown): Array<[string, FileIdentity]> {
     const relpath = entry[0];
     const sha256 = entry[1]["sha256"];
     const size = entry[1]["size"];
+    const subject = entry[1]["subject_sha256"];
     if (
       typeof relpath !== "string" ||
       relpath.length === 0 ||
@@ -1284,7 +1300,8 @@ function parseFilePairs(value: unknown): Array<[string, FileIdentity]> {
       typeof size !== "number" ||
       !Number.isInteger(size) ||
       size < 0 ||
-      size > MAX_FILE_BYTES
+      size > MAX_FILE_BYTES ||
+      (subject !== undefined && (typeof subject !== "string" || !SHA256_HEX.test(subject)))
     ) {
       throw new KizukiError(
         "parse_error",
@@ -1292,7 +1309,7 @@ function parseFilePairs(value: unknown): Array<[string, FileIdentity]> {
       );
     }
     seen.add(relpath);
-    files.push([relpath, { sha256, size }]);
+    files.push([relpath, { sha256, size, ...(typeof subject === "string" ? { subject_sha256: subject } : {}) }]);
   }
   return files;
 }

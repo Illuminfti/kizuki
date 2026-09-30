@@ -432,6 +432,47 @@ for (const kind of KINDS) {
 }
 
 describe("markdown folder follows its folder across a disk migration", () => {
+  test("a moved file keeps its subject through repeated renames and a later edit", async () => {
+    const h = harness(KINDS[0]);
+    try {
+      await establish(h, 1);
+      const subjects = () => h.db.query<{ subjects: string }, []>(
+        "SELECT subjects FROM events WHERE deleted = 0 ORDER BY rowid",
+      ).all().map(row => JSON.parse(row.subjects).map((subject: { subject_id: string }) => subject.subject_id));
+      const original = subjects()[0];
+      renameSync(join(h.mirror.dir, h.mirror.name(0)), join(h.mirror.dir, "moved.md"));
+      expect(await h.sync()).toMatchObject({ stored: 1, errors: [] });
+      renameSync(join(h.mirror.dir, "moved.md"), join(h.mirror.dir, "moved-again.md"));
+      expect(await h.sync()).toMatchObject({ stored: 1, errors: [] });
+      h.mirror.put("moved-again.md", "changed after the moves\n");
+      expect(await h.sync()).toMatchObject({ stored: 1, errors: [] });
+      unlinkSync(join(h.mirror.dir, "moved-again.md"));
+      expect(await h.sync()).toMatchObject({ stored: 1, errors: [] });
+      h.mirror.put("moved-again.md", "changed after the moves\n");
+      expect(await h.sync()).toMatchObject({ stored: 1, errors: [] });
+      expect(subjects()).toEqual([original, original, original, original, original]);
+    } finally { h.dispose(); }
+  });
+
+  test("a standalone snapshot retains subject identity after two moves", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-folder-lineage-"));
+    try {
+      writeFileSync(join(root, "a.md"), "synthetic document\n");
+      let batch = await createMarkdownFolderConnector({ path: root }).sync(null);
+      const identity = batch.events[0]!.subjects[0]!.subject_id;
+      for (const [from, to] of [["a.md", "b.md"], ["b.md", "c.md"]]) {
+        renameSync(join(root, from!), join(root, to!));
+        batch = await createMarkdownFolderConnector({ path: root }).sync(batch.cursor);
+        expect(batch.events).toHaveLength(1);
+        expect(batch.events[0]!.metadata["moved_from"]).toBe(from);
+        expect(batch.events[0]!.subjects[0]!.subject_id).toBe(identity);
+      }
+      const corrupt = JSON.parse(batch.cursor!) as { files: Array<[string, { subject_sha256: unknown }]> };
+      corrupt.files[0]![1].subject_sha256 = "not-a-digest";
+      await expect(createMarkdownFolderConnector({ path: root }).sync(JSON.stringify(corrupt)))
+        .rejects.toThrow("invalid cursor file identity");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   test("a copy on a new inode resumes from the committed files and emits only real differences", async () => {
     const h = harness(KINDS[0]);
     try {

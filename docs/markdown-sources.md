@@ -63,7 +63,9 @@ Each sync brings the ledger to where the folder is:
 - A file that vanishes while exactly one new file with the same bytes appears
   is a rename: one event at the new path with `moved_from`, and no tombstone
   for the old path. Empty files and ambiguous pairs are never treated as
-  renames.
+  renames. The folder retains the original subject digest in
+  `subject_sha256`; later moves, edits and ledger-backed restores retain that
+  document identity. Older snapshots without this optional digest remain readable.
 - A pass that would withdraw more than the larger of 20 files and 20 percent
   of the source's files emits no tombstones and ends `unavailable` with
   `mass_withdrawal_held: N of M`. `kizuki connect status` and `kizuki doctor`
@@ -80,3 +82,16 @@ Each sync brings the ledger to where the folder is:
   walks anew. New files added during a drain are discovered by the next sync.
   A fresh scan hashes the current bytes: restored metadata never stands in for
   content identity.
+
+Automatic reversal of a source archive requires a configured model and spends
+the loop's canon write budget. The archive scan checkpoints progress in the
+existing rail cursor table, including past pages edited since deletion. It
+cycles through those pages on later passes; an edited page becomes eligible
+again only when its bytes match the archive receipt. Owner undo retains its
+model-free path.
+
+These guarantees describe capture and archive reversal. Source revision body
+replacement is incomplete in the current compatibility writer: revisions can
+retain earlier source prose, and folder materialization can create an additional
+capture page. Event-level identity and a quiet next sync do not prove canon
+body replacement. The canon lifecycle regression tests track that remaining work.

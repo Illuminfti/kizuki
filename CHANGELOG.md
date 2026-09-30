@@ -66,6 +66,11 @@
 - Filing a proposal no longer reads the whole proposals and claims tables: two
   content-hash indexes (created on open for existing ledgers) make a
   5,000-file backfill cost work proportional to its size, not to its square.
+- Folder moves retain their original subject digest across further moves, edits
+  and ledger-backed restores. Automatic archive reversal respects the loop's
+  canon budgets and resumes past edited archives after a ledger restart.
+  Canon body replacement remains incomplete in the compatibility writer; these
+  mirror changes establish capture state and archive reversal.
 
 ### Operator safety
 

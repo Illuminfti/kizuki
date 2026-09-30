@@ -70,12 +70,13 @@ export function recordHistory(
     const chunk = relpaths.slice(start, start + CHUNK);
     const rows = db
       .query<
-        { rec: string; events: number; deleted: number; accepted_at: string; event_id: string },
+        { rec: string; events: number; deleted: number; accepted_at: string; event_id: string; subject_id: unknown },
         string[]
       >(
-        `SELECT rec, events, deleted, accepted_at, event_id FROM (
+        `SELECT rec, events, deleted, accepted_at, event_id, subject_id FROM (
            SELECT e.source_record_id AS rec, e.deleted AS deleted,
                   e.accepted_at AS accepted_at, e.event_id AS event_id,
+                  json_extract(e.subjects, '$[0].subject_id') AS subject_id,
                   count(*) OVER (PARTITION BY e.source_record_id) AS events,
                   ROW_NUMBER() OVER (
                     PARTITION BY e.source_record_id
@@ -88,9 +89,12 @@ export function recordHistory(
       )
       .all(sourceKey, connectorId, ...chunk);
     for (const row of rows) {
+      const subject = typeof row.subject_id === "string" && /^markdown-folder:[0-9a-f]{64}$/.test(row.subject_id)
+        ? row.subject_id.slice("markdown-folder:".length) : undefined;
       history.set(row.rec, {
         events: row.events,
         withdrawn: row.deleted === 1 || movedAway(marks, row.rec, row),
+        ...(subject === undefined ? {} : { subject_sha256: subject }),
       });
     }
   }
