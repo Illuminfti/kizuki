@@ -1,42 +1,11 @@
 import type { Database } from "bun:sqlite";
-import type { ClaimV2Assertion } from "../contracts/claim-v2";
-import { AUTHORITY_TIERS, type AuthorityTier } from "../contracts/proposal";
 
 /** Lower-case fragments that give a decision authority, grant or policy meaning. */
 const AUTHORITY_TERMS = ["owner", "agent", "assistant", "grant", "permission", "authoriz", "authoris", "access", "polic", "admin", "credential", "audit", "revok"] as const;
 const IDENTITY_PREDICATES = ["identity.same_as", "identity.handle_on"] as const;
 
-/**
- * Claims whose meaning is identity, authority, grant or policy. A model may
- * read one out of captured text, but nothing it read alone is allowed to become
- * such a fact: they wait for two independent witnesses or the owner.
- */
-export function hasAuthorityMeaning(semantic: ClaimV2Assertion): boolean {
-  if ((IDENTITY_PREDICATES as readonly string[]).includes(semantic.predicate)) return true;
-  if (!semantic.predicate.startsWith("decision.") || semantic.object.kind !== "literal") return false;
-  const value = semantic.object.value.toLowerCase();
-  return AUTHORITY_TERMS.some(term => value.includes(term));
-}
-
-/**
- * The page text is model prose whatever the literal says, so a body that talks
- * about who may do what carries the same meaning as an authority decision.
- * Authority terms are conservative: false positives stay held until corroborated.
- */
-export function bodyHasAuthorityMeaning(body: string): boolean {
-  const lower = body.toLowerCase();
-  return AUTHORITY_TERMS.some(term => lower.includes(term));
-}
-
 /** Independent sources a model-read authority claim needs before it is served. */
 export const AUTHORITY_CLAIM_MIN_ROOTS = 2;
-
-function renderedBody(admission: string): string {
-  try {
-    const body = (JSON.parse(admission) as { rendering?: { body?: unknown } }).rendering?.body;
-    return typeof body === "string" ? body : "";
-  } catch { return ""; }
-}
 
 /**
  * A model-read claim with identity, authority, grant or policy meaning, in its
@@ -51,22 +20,13 @@ function renderedBody(admission: string): string {
 export function heldUntilCorroborated(
   db: Database,
   claimId: string,
-  authority: AuthorityTier,
-  semantic: ClaimV2Assertion,
   permitted: { sql: string; bindings: (string | number)[] },
 ): boolean {
-  if (AUTHORITY_TIERS[authority] > AUTHORITY_TIERS.model_inference) return false;
-  const supports = db.query<{ source_key: string; support_origin: string; admission: string }, (string | number)[]>(
-    `SELECT s.source_key, s.support_origin, s.admission FROM claim_v2_support s WHERE s.claim_id=? AND ${permitted.sql}`,
-  ).all(claimId, ...permitted.bindings);
-  if (!hasAuthorityMeaning(semantic) && !supports.some(support => bodyHasAuthorityMeaning(renderedBody(support.admission)))) return false;
-  return !releasedBySupports(supports);
-}
-
-/** True when the owner stands behind the claim, or at least two distinct sources do. */
-export function releasedBySupports(supports: readonly { source_key: string; support_origin: string }[]): boolean {
-  if (supports.some(support => support.support_origin === "native_owner")) return true;
-  return new Set(supports.map(support => support.source_key)).size >= AUTHORITY_CLAIM_MIN_ROOTS;
+  const held = heldClaimSql("c", permitted);
+  // Read one decision, not every admission body: repeated deliveries must not
+  // turn the hold into an unbounded allocation. Reads and queues share one rule.
+  return db.query(`SELECT 1 FROM claims c WHERE c.claim_id=? AND ${held.sql}`)
+    .get(claimId, ...held.bindings) !== null;
 }
 
 /**

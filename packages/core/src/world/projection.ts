@@ -329,7 +329,7 @@ export function eligibleWorldClaim(
   // Held, not refused: history still reads the claim, and a second independent
   // source or the owner releases it.
   if (!options.historical && supports.length > 0 &&
-      heldUntilCorroborated(ctx.db, claimId, claim.authority, supports[0]!.admission.semantic, permitted)) return null;
+      heldUntilCorroborated(ctx.db, claimId, permitted)) return null;
   return supports.length === 0
     ? null
     : {
