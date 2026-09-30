@@ -1,0 +1,2637 @@
+{
+  "find_concepts (every)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "find_concepts",
+    "result": {
+      "status": "current",
+      "view": {
+        "status": "not_issued"
+      },
+      "data": {
+        "schema": "kizuki.concept-matches/v1",
+        "matches": [
+          {
+            "ref": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "labels": [
+              "Bayesian updating"
+            ]
+          },
+          {
+            "ref": {
+              "kind": "object",
+              "token": "<token 1>"
+            },
+            "labels": [
+              "Probability"
+            ]
+          }
+        ],
+        "cursor": null,
+        "coverage": {
+          "status": "complete_for_query",
+          "gaps": [],
+          "validWindow": {
+            "kind": "all"
+          },
+          "history": "unavailable"
+        }
+      }
+    }
+  },
+  "find_concepts (bayes)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "find_concepts",
+    "result": {
+      "status": "current",
+      "view": {
+        "status": "not_issued"
+      },
+      "data": {
+        "schema": "kizuki.concept-matches/v1",
+        "matches": [
+          {
+            "ref": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "labels": [
+              "Bayesian updating"
+            ]
+          }
+        ],
+        "cursor": null,
+        "coverage": {
+          "status": "complete_for_query",
+          "gaps": [],
+          "validWindow": {
+            "kind": "all"
+          },
+          "history": "unavailable"
+        }
+      }
+    }
+  },
+  "find_concepts (no match)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "find_concepts",
+    "result": {
+      "status": "current",
+      "view": {
+        "status": "not_issued"
+      },
+      "data": {
+        "schema": "kizuki.concept-matches/v1",
+        "matches": [],
+        "cursor": null,
+        "coverage": {
+          "status": "complete_for_query",
+          "gaps": [],
+          "validWindow": {
+            "kind": "all"
+          },
+          "history": "unavailable"
+        }
+      }
+    }
+  },
+  "find_situations (every)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "find_situations",
+    "result": {
+      "status": "current",
+      "view": {
+        "status": "not_issued"
+      },
+      "data": {
+        "schema": "kizuki.situation-matches/v1",
+        "matches": [
+          {
+            "ref": {
+              "kind": "object",
+              "token": "<token 2>"
+            },
+            "labels": [
+              "Archive plan"
+            ]
+          },
+          {
+            "ref": {
+              "kind": "object",
+              "token": "<token 3>"
+            },
+            "labels": [
+              "Launch plan"
+            ]
+          }
+        ],
+        "cursor": null,
+        "coverage": {
+          "status": "complete_for_query",
+          "gaps": [],
+          "validWindow": {
+            "kind": "all"
+          },
+          "history": "unavailable"
+        }
+      }
+    }
+  },
+  "concept (bayes)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "concept",
+    "result": {
+      "status": "current",
+      "view": {
+        "status": "not_issued"
+      },
+      "data": {
+        "schema": "kizuki.concept-card/v1",
+        "concept": {
+          "schema": "kizuki.knowledge-node/v1",
+          "ref": {
+            "kind": "object",
+            "token": "<token 0>"
+          },
+          "kind": "concept",
+          "classificationClaims": [
+            {
+              "kind": "claim",
+              "token": "<token 4>"
+            }
+          ],
+          "labels": [
+            {
+              "text": "Bayesian updating",
+              "claim": {
+                "kind": "claim",
+                "token": "<token 5>"
+              }
+            }
+          ],
+          "resolution": "distinct"
+        },
+        "summary": null,
+        "definitions": [
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 6>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.definition",
+            "object": {
+              "kind": "literal",
+              "value": "Revise beliefs using evidence"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 7>"
+                  },
+                  "eventVersion": {
+                    "kind": "event_version",
+                    "token": "<token 8>"
+                  },
+                  "span": {
+                    "kind": "text",
+                    "startUtf16": 17,
+                    "endUtf16": 56
+                  }
+                }
+              ]
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 7>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 7>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 8>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 17
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          }
+        ],
+        "relations": [
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 9>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.example",
+            "object": {
+              "kind": "literal",
+              "value": "Update a coin bias after each flip"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 10>"
+                  },
+                  "eventVersion": {
+                    "kind": "event_version",
+                    "token": "<token 8>"
+                  },
+                  "span": {
+                    "kind": "text",
+                    "startUtf16": 17,
+                    "endUtf16": 56
+                  }
+                }
+              ]
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 10>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 10>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 8>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 17
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 11>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.counterexample",
+            "object": {
+              "kind": "literal",
+              "value": "Ignoring the base rate"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 12>"
+                  },
+                  "eventVersion": {
+                    "kind": "event_version",
+                    "token": "<token 8>"
+                  },
+                  "span": {
+                    "kind": "text",
+                    "startUtf16": 17,
+                    "endUtf16": 56
+                  }
+                }
+              ]
+            },
+            "context": [],
+            "polarity": "negative",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 12>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 12>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 8>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 17
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 13>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.example",
+            "object": {
+              "kind": "literal",
+              "value": "Maybe medical screening works this way"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "hypothetical",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 14>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 14>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 15>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 39
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 16>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.requires",
+            "object": {
+              "kind": "node",
+              "ref": {
+                "kind": "object",
+                "token": "<token 1>"
+              }
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 17>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 17>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 18>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 39
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 19>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.example",
+            "object": {
+              "kind": "literal",
+              "value": "Spam filtering"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 20>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 20>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 21>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 17
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          }
+        ],
+        "learning": [
+          {
+            "facet": "exposure",
+            "assertion": {
+              "schema": "kizuki.relation/v1",
+              "claim": {
+                "kind": "claim",
+                "token": "<token 22>"
+              },
+              "subject": {
+                "kind": "object",
+                "token": "<token 23>"
+              },
+              "predicate": "learning.exposure",
+              "object": {
+                "kind": "node",
+                "ref": {
+                  "kind": "object",
+                  "token": "<token 0>"
+                }
+              },
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit",
+                "evidence": []
+              },
+              "context": [],
+              "polarity": "positive",
+              "valid": {
+                "kind": "known",
+                "from": "2026-01-01T00:00:00.000Z",
+                "until": null
+              },
+              "temporalBasis": "explicit",
+              "assessments": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 24>"
+                  },
+                  "epistemicKind": "model_inference",
+                  "authority": "model_inference",
+                  "confidence": {
+                    "kind": "known",
+                    "value": 0.5
+                  },
+                  "independence": "unknown",
+                  "evidence": [
+                    {
+                      "admission": {
+                        "kind": "admission",
+                        "token": "<token 24>"
+                      },
+                      "eventVersion": {
+                        "kind": "event_version",
+                        "token": "<token 25>"
+                      },
+                      "span": {
+                        "kind": "text",
+                        "startUtf16": 0,
+                        "endUtf16": 33
+                      }
+                    }
+                  ]
+                }
+              ],
+              "conflict": "unknown"
+            },
+            "assistance": "unknown",
+            "assistanceEvidence": []
+          }
+        ],
+        "knownAt": {
+          "kind": "current"
+        },
+        "coverage": {
+          "status": "complete_for_query",
+          "gaps": [],
+          "validWindow": {
+            "kind": "all"
+          },
+          "history": "unavailable"
+        }
+      }
+    }
+  },
+  "concept (bayes, valid at)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "concept",
+    "result": {
+      "status": "current",
+      "view": {
+        "status": "not_issued"
+      },
+      "data": {
+        "schema": "kizuki.concept-card/v1",
+        "concept": {
+          "schema": "kizuki.knowledge-node/v1",
+          "ref": {
+            "kind": "object",
+            "token": "<token 0>"
+          },
+          "kind": "concept",
+          "classificationClaims": [
+            {
+              "kind": "claim",
+              "token": "<token 4>"
+            }
+          ],
+          "labels": [
+            {
+              "text": "Bayesian updating",
+              "claim": {
+                "kind": "claim",
+                "token": "<token 5>"
+              }
+            }
+          ],
+          "resolution": "distinct"
+        },
+        "summary": null,
+        "definitions": [
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 6>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.definition",
+            "object": {
+              "kind": "literal",
+              "value": "Revise beliefs using evidence"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 7>"
+                  },
+                  "eventVersion": {
+                    "kind": "event_version",
+                    "token": "<token 8>"
+                  },
+                  "span": {
+                    "kind": "text",
+                    "startUtf16": 17,
+                    "endUtf16": 56
+                  }
+                }
+              ]
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 7>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 7>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 8>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 17
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          }
+        ],
+        "relations": [
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 9>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.example",
+            "object": {
+              "kind": "literal",
+              "value": "Update a coin bias after each flip"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 10>"
+                  },
+                  "eventVersion": {
+                    "kind": "event_version",
+                    "token": "<token 8>"
+                  },
+                  "span": {
+                    "kind": "text",
+                    "startUtf16": 17,
+                    "endUtf16": 56
+                  }
+                }
+              ]
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 10>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 10>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 8>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 17
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 11>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.counterexample",
+            "object": {
+              "kind": "literal",
+              "value": "Ignoring the base rate"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 12>"
+                  },
+                  "eventVersion": {
+                    "kind": "event_version",
+                    "token": "<token 8>"
+                  },
+                  "span": {
+                    "kind": "text",
+                    "startUtf16": 17,
+                    "endUtf16": 56
+                  }
+                }
+              ]
+            },
+            "context": [],
+            "polarity": "negative",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 12>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 12>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 8>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 17
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 13>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.example",
+            "object": {
+              "kind": "literal",
+              "value": "Maybe medical screening works this way"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "hypothetical",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 14>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 14>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 15>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 39
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 16>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.requires",
+            "object": {
+              "kind": "node",
+              "ref": {
+                "kind": "object",
+                "token": "<token 1>"
+              }
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 17>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 17>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 18>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 39
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 19>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.example",
+            "object": {
+              "kind": "literal",
+              "value": "Spam filtering"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 20>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 20>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 21>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 17
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          }
+        ],
+        "learning": [
+          {
+            "facet": "exposure",
+            "assertion": {
+              "schema": "kizuki.relation/v1",
+              "claim": {
+                "kind": "claim",
+                "token": "<token 22>"
+              },
+              "subject": {
+                "kind": "object",
+                "token": "<token 23>"
+              },
+              "predicate": "learning.exposure",
+              "object": {
+                "kind": "node",
+                "ref": {
+                  "kind": "object",
+                  "token": "<token 0>"
+                }
+              },
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit",
+                "evidence": []
+              },
+              "context": [],
+              "polarity": "positive",
+              "valid": {
+                "kind": "known",
+                "from": "2026-01-01T00:00:00.000Z",
+                "until": null
+              },
+              "temporalBasis": "explicit",
+              "assessments": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 24>"
+                  },
+                  "epistemicKind": "model_inference",
+                  "authority": "model_inference",
+                  "confidence": {
+                    "kind": "known",
+                    "value": 0.5
+                  },
+                  "independence": "unknown",
+                  "evidence": [
+                    {
+                      "admission": {
+                        "kind": "admission",
+                        "token": "<token 24>"
+                      },
+                      "eventVersion": {
+                        "kind": "event_version",
+                        "token": "<token 25>"
+                      },
+                      "span": {
+                        "kind": "text",
+                        "startUtf16": 0,
+                        "endUtf16": 33
+                      }
+                    }
+                  ]
+                }
+              ],
+              "conflict": "unknown"
+            },
+            "assistance": "unknown",
+            "assistanceEvidence": []
+          }
+        ],
+        "knownAt": {
+          "kind": "current"
+        },
+        "coverage": {
+          "status": "complete_for_query",
+          "gaps": [],
+          "validWindow": {
+            "kind": "at",
+            "at": "2026-06-01T00:00:00.000Z"
+          },
+          "history": "unavailable"
+        }
+      }
+    }
+  },
+  "concept (bayes, valid before)": {
+    "status": "not_found"
+  },
+  "concept (bayes, valid overlap)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "concept",
+    "result": {
+      "status": "current",
+      "view": {
+        "status": "not_issued"
+      },
+      "data": {
+        "schema": "kizuki.concept-card/v1",
+        "concept": {
+          "schema": "kizuki.knowledge-node/v1",
+          "ref": {
+            "kind": "object",
+            "token": "<token 0>"
+          },
+          "kind": "concept",
+          "classificationClaims": [
+            {
+              "kind": "claim",
+              "token": "<token 4>"
+            }
+          ],
+          "labels": [
+            {
+              "text": "Bayesian updating",
+              "claim": {
+                "kind": "claim",
+                "token": "<token 5>"
+              }
+            }
+          ],
+          "resolution": "distinct"
+        },
+        "summary": null,
+        "definitions": [
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 6>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.definition",
+            "object": {
+              "kind": "literal",
+              "value": "Revise beliefs using evidence"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 7>"
+                  },
+                  "eventVersion": {
+                    "kind": "event_version",
+                    "token": "<token 8>"
+                  },
+                  "span": {
+                    "kind": "text",
+                    "startUtf16": 17,
+                    "endUtf16": 56
+                  }
+                }
+              ]
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 7>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 7>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 8>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 17
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          }
+        ],
+        "relations": [
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 9>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.example",
+            "object": {
+              "kind": "literal",
+              "value": "Update a coin bias after each flip"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 10>"
+                  },
+                  "eventVersion": {
+                    "kind": "event_version",
+                    "token": "<token 8>"
+                  },
+                  "span": {
+                    "kind": "text",
+                    "startUtf16": 17,
+                    "endUtf16": 56
+                  }
+                }
+              ]
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 10>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 10>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 8>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 17
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 11>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.counterexample",
+            "object": {
+              "kind": "literal",
+              "value": "Ignoring the base rate"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 12>"
+                  },
+                  "eventVersion": {
+                    "kind": "event_version",
+                    "token": "<token 8>"
+                  },
+                  "span": {
+                    "kind": "text",
+                    "startUtf16": 17,
+                    "endUtf16": 56
+                  }
+                }
+              ]
+            },
+            "context": [],
+            "polarity": "negative",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 12>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 12>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 8>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 17
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 13>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.example",
+            "object": {
+              "kind": "literal",
+              "value": "Maybe medical screening works this way"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "hypothetical",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 14>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 14>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 15>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 39
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 16>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.requires",
+            "object": {
+              "kind": "node",
+              "ref": {
+                "kind": "object",
+                "token": "<token 1>"
+              }
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 17>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 17>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 18>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 39
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 19>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "predicate": "concept.example",
+            "object": {
+              "kind": "literal",
+              "value": "Spam filtering"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 20>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 20>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 21>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 17
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          }
+        ],
+        "learning": [
+          {
+            "facet": "exposure",
+            "assertion": {
+              "schema": "kizuki.relation/v1",
+              "claim": {
+                "kind": "claim",
+                "token": "<token 22>"
+              },
+              "subject": {
+                "kind": "object",
+                "token": "<token 23>"
+              },
+              "predicate": "learning.exposure",
+              "object": {
+                "kind": "node",
+                "ref": {
+                  "kind": "object",
+                  "token": "<token 0>"
+                }
+              },
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit",
+                "evidence": []
+              },
+              "context": [],
+              "polarity": "positive",
+              "valid": {
+                "kind": "known",
+                "from": "2026-01-01T00:00:00.000Z",
+                "until": null
+              },
+              "temporalBasis": "explicit",
+              "assessments": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 24>"
+                  },
+                  "epistemicKind": "model_inference",
+                  "authority": "model_inference",
+                  "confidence": {
+                    "kind": "known",
+                    "value": 0.5
+                  },
+                  "independence": "unknown",
+                  "evidence": [
+                    {
+                      "admission": {
+                        "kind": "admission",
+                        "token": "<token 24>"
+                      },
+                      "eventVersion": {
+                        "kind": "event_version",
+                        "token": "<token 25>"
+                      },
+                      "span": {
+                        "kind": "text",
+                        "startUtf16": 0,
+                        "endUtf16": 33
+                      }
+                    }
+                  ]
+                }
+              ],
+              "conflict": "unknown"
+            },
+            "assistance": "unknown",
+            "assistanceEvidence": []
+          }
+        ],
+        "knownAt": {
+          "kind": "current"
+        },
+        "coverage": {
+          "status": "complete_for_query",
+          "gaps": [],
+          "validWindow": {
+            "kind": "overlap",
+            "from": "2026-02-01T00:00:00.000Z",
+            "until": "2026-03-01T00:00:00.000Z"
+          },
+          "history": "unavailable"
+        }
+      }
+    }
+  },
+  "concept (bayes, unknown time only)": {
+    "status": "not_found"
+  },
+  "concept (bayes, known at a time)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "concept",
+    "result": {
+      "status": "unavailable",
+      "reason": "history"
+    }
+  },
+  "situation (a concept ref)": {
+    "status": "not_found"
+  },
+  "concept (probability)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "concept",
+    "result": {
+      "status": "current",
+      "view": {
+        "status": "not_issued"
+      },
+      "data": {
+        "schema": "kizuki.concept-card/v1",
+        "concept": {
+          "schema": "kizuki.knowledge-node/v1",
+          "ref": {
+            "kind": "object",
+            "token": "<token 1>"
+          },
+          "kind": "concept",
+          "classificationClaims": [
+            {
+              "kind": "claim",
+              "token": "<token 26>"
+            }
+          ],
+          "labels": [
+            {
+              "text": "Probability",
+              "claim": {
+                "kind": "claim",
+                "token": "<token 27>"
+              }
+            }
+          ],
+          "resolution": "distinct"
+        },
+        "summary": null,
+        "definitions": [
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 28>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 1>"
+            },
+            "predicate": "concept.definition",
+            "object": {
+              "kind": "literal",
+              "value": "Revise beliefs using evidence"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 29>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 29>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 30>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 11
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          }
+        ],
+        "relations": [],
+        "learning": [],
+        "knownAt": {
+          "kind": "current"
+        },
+        "coverage": {
+          "status": "complete_for_query",
+          "gaps": [],
+          "validWindow": {
+            "kind": "all"
+          },
+          "history": "unavailable"
+        }
+      }
+    }
+  },
+  "situation (launch)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "situation",
+    "result": {
+      "status": "current",
+      "view": {
+        "status": "not_issued"
+      },
+      "data": {
+        "schema": "kizuki.situation-card/v1",
+        "situation": {
+          "schema": "kizuki.knowledge-node/v1",
+          "ref": {
+            "kind": "object",
+            "token": "<token 3>"
+          },
+          "kind": "situation",
+          "classificationClaims": [
+            {
+              "kind": "claim",
+              "token": "<token 31>"
+            }
+          ],
+          "labels": [
+            {
+              "text": "Launch plan",
+              "claim": {
+                "kind": "claim",
+                "token": "<token 32>"
+              }
+            }
+          ],
+          "resolution": "distinct"
+        },
+        "summary": null,
+        "objective": {
+          "schema": "kizuki.relation/v1",
+          "claim": {
+            "kind": "claim",
+            "token": "<token 33>"
+          },
+          "subject": {
+            "kind": "object",
+            "token": "<token 3>"
+          },
+          "predicate": "situation.objective",
+          "object": {
+            "kind": "literal",
+            "value": "Ship the first release"
+          },
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit",
+            "evidence": []
+          },
+          "context": [],
+          "polarity": "positive",
+          "valid": {
+            "kind": "known",
+            "from": "2026-01-01T00:00:00.000Z",
+            "until": null
+          },
+          "temporalBasis": "explicit",
+          "assessments": [
+            {
+              "admission": {
+                "kind": "admission",
+                "token": "<token 34>"
+              },
+              "epistemicKind": "model_inference",
+              "authority": "model_inference",
+              "confidence": {
+                "kind": "known",
+                "value": 0.5
+              },
+              "independence": "unknown",
+              "evidence": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 34>"
+                  },
+                  "eventVersion": {
+                    "kind": "event_version",
+                    "token": "<token 35>"
+                  },
+                  "span": {
+                    "kind": "text",
+                    "startUtf16": 0,
+                    "endUtf16": 11
+                  }
+                }
+              ]
+            }
+          ],
+          "conflict": "unknown"
+        },
+        "participants": [
+          {
+            "kind": "object",
+            "token": "<token 23>"
+          }
+        ],
+        "commitments": [
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 36>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 3>"
+            },
+            "predicate": "situation.commitment",
+            "object": {
+              "kind": "literal",
+              "value": "Ada owns the checklist"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 37>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 37>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 35>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 11
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 38>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 3>"
+            },
+            "predicate": "situation.commitment",
+            "object": {
+              "kind": "literal",
+              "value": "Ben owns the announcement"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 39>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 39>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 35>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 11
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          }
+        ],
+        "blocker": {
+          "schema": "kizuki.relation/v1",
+          "claim": {
+            "kind": "claim",
+            "token": "<token 40>"
+          },
+          "subject": {
+            "kind": "object",
+            "token": "<token 3>"
+          },
+          "predicate": "situation.blocker",
+          "object": {
+            "kind": "literal",
+            "value": "Waiting on the review"
+          },
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit",
+            "evidence": []
+          },
+          "context": [],
+          "polarity": "positive",
+          "valid": {
+            "kind": "known",
+            "from": "2026-01-01T00:00:00.000Z",
+            "until": null
+          },
+          "temporalBasis": "explicit",
+          "assessments": [
+            {
+              "admission": {
+                "kind": "admission",
+                "token": "<token 41>"
+              },
+              "epistemicKind": "model_inference",
+              "authority": "model_inference",
+              "confidence": {
+                "kind": "known",
+                "value": 0.5
+              },
+              "independence": "unknown",
+              "evidence": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 41>"
+                  },
+                  "eventVersion": {
+                    "kind": "event_version",
+                    "token": "<token 35>"
+                  },
+                  "span": {
+                    "kind": "text",
+                    "startUtf16": 0,
+                    "endUtf16": 11
+                  }
+                }
+              ]
+            }
+          ],
+          "conflict": "unknown"
+        },
+        "recentChange": {
+          "schema": "kizuki.relation/v1",
+          "claim": {
+            "kind": "claim",
+            "token": "<token 42>"
+          },
+          "subject": {
+            "kind": "object",
+            "token": "<token 3>"
+          },
+          "predicate": "situation.change",
+          "object": {
+            "kind": "literal",
+            "value": "Scope was cut in half"
+          },
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit",
+            "evidence": []
+          },
+          "context": [],
+          "polarity": "positive",
+          "valid": {
+            "kind": "known",
+            "from": "2026-01-01T00:00:00.000Z",
+            "until": null
+          },
+          "temporalBasis": "explicit",
+          "assessments": [
+            {
+              "admission": {
+                "kind": "admission",
+                "token": "<token 43>"
+              },
+              "epistemicKind": "model_inference",
+              "authority": "model_inference",
+              "confidence": {
+                "kind": "known",
+                "value": 0.5
+              },
+              "independence": "unknown",
+              "evidence": [
+                {
+                  "admission": {
+                    "kind": "admission",
+                    "token": "<token 43>"
+                  },
+                  "eventVersion": {
+                    "kind": "event_version",
+                    "token": "<token 35>"
+                  },
+                  "span": {
+                    "kind": "text",
+                    "startUtf16": 0,
+                    "endUtf16": 11
+                  }
+                }
+              ]
+            }
+          ],
+          "conflict": "unknown"
+        },
+        "uncertainty": [],
+        "knownAt": {
+          "kind": "current"
+        },
+        "coverage": {
+          "status": "complete_for_query",
+          "gaps": [],
+          "validWindow": {
+            "kind": "all"
+          },
+          "history": "unavailable"
+        }
+      }
+    }
+  },
+  "situation (launch, known at a time)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "situation",
+    "result": {
+      "status": "unavailable",
+      "reason": "history"
+    }
+  },
+  "situation (archive)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "situation",
+    "result": {
+      "status": "current",
+      "view": {
+        "status": "not_issued"
+      },
+      "data": {
+        "schema": "kizuki.situation-card/v1",
+        "situation": {
+          "schema": "kizuki.knowledge-node/v1",
+          "ref": {
+            "kind": "object",
+            "token": "<token 2>"
+          },
+          "kind": "situation",
+          "classificationClaims": [
+            {
+              "kind": "claim",
+              "token": "<token 44>"
+            }
+          ],
+          "labels": [
+            {
+              "text": "Archive plan",
+              "claim": {
+                "kind": "claim",
+                "token": "<token 45>"
+              }
+            }
+          ],
+          "resolution": "distinct"
+        },
+        "summary": null,
+        "objective": null,
+        "participants": [],
+        "commitments": [],
+        "blocker": null,
+        "recentChange": null,
+        "uncertainty": [
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 46>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 2>"
+            },
+            "predicate": "situation.objective",
+            "object": {
+              "kind": "literal",
+              "value": "Move old notes out"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 47>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 47>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 48>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 12
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 49>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 2>"
+            },
+            "predicate": "situation.objective",
+            "object": {
+              "kind": "literal",
+              "value": "Delete old notes"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "positive",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 50>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 50>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 48>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 12
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          },
+          {
+            "schema": "kizuki.relation/v1",
+            "claim": {
+              "kind": "claim",
+              "token": "<token 51>"
+            },
+            "subject": {
+              "kind": "object",
+              "token": "<token 2>"
+            },
+            "predicate": "situation.blocker",
+            "object": {
+              "kind": "literal",
+              "value": "No backup exists"
+            },
+            "perspective": {
+              "holder": null,
+              "speaker": null,
+              "addressee": null,
+              "mode": "asserted",
+              "interpretation": "explicit",
+              "evidence": []
+            },
+            "context": [],
+            "polarity": "negative",
+            "valid": {
+              "kind": "known",
+              "from": "2026-01-01T00:00:00.000Z",
+              "until": null
+            },
+            "temporalBasis": "explicit",
+            "assessments": [
+              {
+                "admission": {
+                  "kind": "admission",
+                  "token": "<token 52>"
+                },
+                "epistemicKind": "model_inference",
+                "authority": "model_inference",
+                "confidence": {
+                  "kind": "known",
+                  "value": 0.5
+                },
+                "independence": "unknown",
+                "evidence": [
+                  {
+                    "admission": {
+                      "kind": "admission",
+                      "token": "<token 52>"
+                    },
+                    "eventVersion": {
+                      "kind": "event_version",
+                      "token": "<token 48>"
+                    },
+                    "span": {
+                      "kind": "text",
+                      "startUtf16": 0,
+                      "endUtf16": 12
+                    }
+                  }
+                ]
+              }
+            ],
+            "conflict": "unknown"
+          }
+        ],
+        "knownAt": {
+          "kind": "current"
+        },
+        "coverage": {
+          "status": "complete_for_query",
+          "gaps": [],
+          "validWindow": {
+            "kind": "all"
+          },
+          "history": "unavailable"
+        }
+      }
+    }
+  },
+  "find_situations (known at a time)": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "find_situations",
+    "result": {
+      "status": "unavailable",
+      "reason": "history"
+    }
+  }
+}

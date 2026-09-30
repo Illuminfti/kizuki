@@ -1,0 +1,178 @@
+{
+  "find": {
+    "schema": "kizuki.world-view/v1",
+    "operation": "find_concepts",
+    "result": {
+      "status": "current",
+      "view": {
+        "status": "not_issued"
+      },
+      "data": {
+        "schema": "kizuki.concept-matches/v1",
+        "matches": [
+          {
+            "ref": {
+              "kind": "object",
+              "token": "<token 0>"
+            },
+            "labels": [
+              "Many examples"
+            ]
+          }
+        ],
+        "cursor": null,
+        "coverage": {
+          "status": "complete_for_query",
+          "gaps": [],
+          "validWindow": {
+            "kind": "all"
+          },
+          "history": "unavailable"
+        }
+      }
+    }
+  },
+  "cardStatus": "incomplete",
+  "relationCount": 126,
+  "firstRelation": {
+    "schema": "kizuki.relation/v1",
+    "claim": {
+      "kind": "claim",
+      "token": "<token 1>"
+    },
+    "subject": {
+      "kind": "object",
+      "token": "<token 0>"
+    },
+    "predicate": "concept.example",
+    "object": {
+      "kind": "literal",
+      "value": "Example number 0"
+    },
+    "perspective": {
+      "holder": null,
+      "speaker": null,
+      "addressee": null,
+      "mode": "asserted",
+      "interpretation": "explicit",
+      "evidence": []
+    },
+    "context": [],
+    "polarity": "positive",
+    "valid": {
+      "kind": "known",
+      "from": "2026-01-01T00:00:00.000Z",
+      "until": null
+    },
+    "temporalBasis": "explicit",
+    "assessments": [
+      {
+        "admission": {
+          "kind": "admission",
+          "token": "<token 2>"
+        },
+        "epistemicKind": "model_inference",
+        "authority": "model_inference",
+        "confidence": {
+          "kind": "known",
+          "value": 0.5
+        },
+        "independence": "unknown",
+        "evidence": [
+          {
+            "admission": {
+              "kind": "admission",
+              "token": "<token 2>"
+            },
+            "eventVersion": {
+              "kind": "event_version",
+              "token": "<token 3>"
+            },
+            "span": {
+              "kind": "text",
+              "startUtf16": 0,
+              "endUtf16": 13
+            }
+          }
+        ]
+      }
+    ],
+    "conflict": "unknown"
+  },
+  "lastRelation": {
+    "schema": "kizuki.relation/v1",
+    "claim": {
+      "kind": "claim",
+      "token": "<token 4>"
+    },
+    "subject": {
+      "kind": "object",
+      "token": "<token 0>"
+    },
+    "predicate": "concept.example",
+    "object": {
+      "kind": "literal",
+      "value": "Example number 125"
+    },
+    "perspective": {
+      "holder": null,
+      "speaker": null,
+      "addressee": null,
+      "mode": "asserted",
+      "interpretation": "explicit",
+      "evidence": []
+    },
+    "context": [],
+    "polarity": "positive",
+    "valid": {
+      "kind": "known",
+      "from": "2026-01-01T00:00:00.000Z",
+      "until": null
+    },
+    "temporalBasis": "explicit",
+    "assessments": [
+      {
+        "admission": {
+          "kind": "admission",
+          "token": "<token 5>"
+        },
+        "epistemicKind": "model_inference",
+        "authority": "model_inference",
+        "confidence": {
+          "kind": "known",
+          "value": 0.5
+        },
+        "independence": "unknown",
+        "evidence": [
+          {
+            "admission": {
+              "kind": "admission",
+              "token": "<token 5>"
+            },
+            "eventVersion": {
+              "kind": "event_version",
+              "token": "<token 3>"
+            },
+            "span": {
+              "kind": "text",
+              "startUtf16": 0,
+              "endUtf16": 13
+            }
+          }
+        ]
+      }
+    ],
+    "conflict": "unknown"
+  },
+  "coverage": {
+    "status": "partial",
+    "gaps": [
+      "traversal_limit"
+    ],
+    "validWindow": {
+      "kind": "all"
+    },
+    "history": "unavailable"
+  },
+  "digest": "d86ebbb654a334eb42e15ca32cc947c6df4b8def465e93097293286a6839d5b8"
+}
