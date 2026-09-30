@@ -491,7 +491,7 @@ export function applyCanonWriteOwned(
   // Reserve both the live slot and inventory resources before publishing a new live image.
   if ((existing === null || existing.page.data["status"] === "archived") && prepared.page.data["status"] !== "archived") {
     requireRoomForNewPage(io.vault_path, existing === null ? 1 : 0,
-      Buffer.byteLength(serializePage(prepared.page)) - (existing === null ? 0 : Buffer.byteLength(existing.content)));
+      Buffer.byteLength(serializePage(prepared.page)) - (existing?.byte_length ?? 0));
   }
   const superseded = typed ? io.db.query<{claim_id:string;claim_key:string},[string]>("SELECT s.loser AS claim_id,m.semantic_key AS claim_key FROM claim_supersessions s JOIN claim_v2_semantics m ON m.claim_id=s.loser WHERE s.winner IN (SELECT value FROM json_each(?)) ORDER BY s.loser").all(JSON.stringify(ownedClaims.map(item=>item.claim_id))) : supersededRefs(io, decision);
   const retrievalOps: RetrievalOpRef[] =
