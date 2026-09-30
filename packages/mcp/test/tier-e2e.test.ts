@@ -93,9 +93,9 @@ describe("classes over the protocol", () => {
 
       const asAgent = await call(await connectClient(fixture.agent("private-default"), open), "system_health", {});
       expect(asAgent.isError).not.toBe(true);
-      const agent = envelopeOf(asAgent)["data"] as { pages: { withheld: number }; withheld_pages: unknown[] };
-      expect(agent.pages.withheld).toBe(1);
-      expect(agent.withheld_pages).toEqual([]);
+      const agent = envelopeOf(asAgent)["data"] as { pages: { withheld?: number }; withheld_pages?: unknown[] };
+      expect(agent.pages.withheld).toBeUndefined();
+      expect(agent.withheld_pages).toBeUndefined();
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }

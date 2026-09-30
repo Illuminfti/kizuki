@@ -29,7 +29,7 @@ const HIDDEN = /[\u{E0000}-\u{E007F}‪-‮⁦-⁩]/u;
 async function seeded(): Promise<McpFixture> {
   const made = mcpFixture();
   // Class access is explicit here; the wire must still redact allowed content.
-  for (const name of ["reader-public", "reader-private"]) setGrant(made.db, name, { deny_classes: [] });
+  for (const name of ["reader-personal", "reader-private"]) setGrant(made.db, name, { deny_classes: [] });
   accept(made.db, {
     schema: "kizuki.event/v1",
     connector_id: "fixture",
