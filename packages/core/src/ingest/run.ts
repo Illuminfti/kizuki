@@ -1,3 +1,4 @@
+import { parseScanCoverage, type PassCoverage, type ScanCoverage } from "../contracts/source-coverage";
 import { sourceCaptureAdmission, type SourceAdmission } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import type { Connector, CursorStoreDelta, Manifest, SyncBatch } from "../contracts/connector";
@@ -55,6 +56,7 @@ export function sourceGrants(manifest: Manifest): ProducerGrants {
 }
 
 export interface RunResult {
+  coverage?: PassCoverage;
   stored: number;
   duplicates: number;
   /**
@@ -242,6 +244,15 @@ function ingressBatch(
       if (problem !== null) return { ok: false, error: problem };
       cursorStore = cloned as CursorStoreDelta;
     }
+    const coverageField = ownData(batch, "coverage");
+    if (coverageField === null) return { ok: false, error: "sync batch coverage must be an own data property" };
+    let coverage: ScanCoverage | undefined;
+    if (coverageField.present) {
+      const failures: string[] = [];
+      const safe = cloneExactJson(coverageField.value, "coverage", { maxDepth: 4, maxKeysPerObject: 8, maxArrayLength: 512, maxStringBytes: 1024, maxKeyBytes: 64, maxTotalBytes: 262144 }, failures);
+      try { coverage = parseScanCoverage(safe); }
+      catch { return { ok: false, error: "sync batch coverage is invalid" }; }
+    }
 
     let cursor: string | null;
     try {
@@ -275,6 +286,7 @@ function ingressBatch(
     // The snapshot must not inherit hostile completion/status fields from Object.prototype.
     const snapshot = Object.assign(Object.create(null), {
       events: cloned as unknown as CaptureEventInput[],
+      ...(coverage === undefined ? {} : { coverage }),
       cursor,
       ...(cursorStore === undefined ? {} : { cursor_store: cursorStore }),
       ...(hasMoreField.present ? { has_more: hasMoreField.value as boolean } : {}),
@@ -539,6 +551,7 @@ function persistRun(
   status: ConnectionRunStatus,
   backfillComplete = false,
   cursorStore?: CursorStoreDelta,
+  pass?: { scan?: ScanCoverage; completed?: boolean; errorClass?: string },
 ): RunResult {
   const committed_cursor =
     status === "ok" ? assertCursorSize(attempted_cursor, "attempted_cursor") : previous_cursor;
@@ -554,6 +567,12 @@ function persistRun(
   const started = new Date().toISOString();
   return runImmediate(db, (): RunResult => {
     requireActiveConnection(db, connector_id, source_key);
+    const prior = getCheckpoint(db, connector_id, source_key)?.last_result.coverage;
+    storedResult.coverage = {
+      scan: pass?.scan ?? prior?.scan ?? null,
+      last_successful_pass_at: pass?.completed === true ? started : prior?.last_successful_pass_at ?? null,
+      last_error_class: status === "ok" ? null : pass?.errorClass ?? status,
+    };
     const checkpoint = persistCheckpointRow(
       db,
       connector_id,
@@ -686,7 +705,7 @@ async function runConnector(
     const status: ConnectionRunStatus = isUnavailable(error, null)
       ? "unavailable"
       : "failed";
-    return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, status), terminal: false };
+    return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, status, false, undefined, { errorClass: error instanceof KizukiError ? error.code : error instanceof DeadlineError ? "timeout" : status }), terminal: false };
   }
 
   const ingress = ingressBatch(received);
@@ -702,7 +721,7 @@ async function runConnector(
       batch.detail ?? `${connector_id}: connector unavailable`,
       previous,
     );
-    return { result: persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "unavailable"), terminal: false };
+    return { result: persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "unavailable", false, undefined, batch.coverage === undefined ? undefined : { scan: batch.coverage }), terminal: false };
   }
 
   const refusal = batchRefusal(manifest, connector_id, batch) ?? storeRefusal(cursorStore, batch);
@@ -728,8 +747,9 @@ async function runConnector(
     batch.cursor,
     processed,
     status,
-    mode === "backfill" && status === "ok" && hasMore === false,
+    (mode === "backfill" || manifest.capabilities.sync_covers_backfill === true) && status === "ok" && hasMore === false,
     batch.cursor_store,
+    { ...(batch.coverage === undefined ? {} : { scan: batch.coverage }), completed: status === "ok" && hasMore === false },
   );
   const result = processed.suppressed === undefined ? persisted : { ...persisted, suppressed: processed.suppressed };
   return { result, terminal: status === "ok" && hasMore === false, continue_empty: status === "ok" && hasMore === true };
@@ -809,6 +829,7 @@ export async function runToCompletion(
     const { result, terminal, continue_empty } = await runConnector(db, connector, connector_id, source_key, mode, context);
     absorb(total, result);
     total.cursor = stored();
+    if (result.coverage !== undefined) total.coverage = result.coverage;
     if (result.errors.length > 0) return total;
     if (terminal) return total;
     if (total.cursor === null) return total;

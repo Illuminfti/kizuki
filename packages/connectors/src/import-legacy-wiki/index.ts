@@ -1,3 +1,5 @@
+import { realpath, stat } from "node:fs/promises";
+import { wikiCoverage } from "../source-coverage";
 import {
   HealthReport,
   MAX_CURSOR_BYTES,
@@ -60,6 +62,7 @@ const MANIFEST: Manifest = freezeManifest({
   capabilities: {
     backfill: true,
     sync: true,
+    sync_covers_backfill: true,
     tombstones: true,
     purge: false,
     fixture: true,
@@ -382,6 +385,7 @@ export class LegacyWikiConnector implements Connector {
   readonly #committedFiles: LegacyWikiDeps["committedFiles"];
   #report: LegacyWikiReport | null = null;
   #degraded = 0;
+  #continuation: { cursor: Cursor; root: string; run: { scan: ScanResult; events: CaptureEventInput[] } } | null = null;
 
   constructor(config: LegacyWikiConfig, deps: LegacyWikiDeps = {}) {
     this.path = requirePathConfig(config, LEGACY_WIKI_CONNECTOR_ID);
@@ -473,10 +477,25 @@ export class LegacyWikiConnector implements Connector {
     const identities = await this.#identities(previous);
     const mappingChanged =
       previous !== null && previous.mapping_hash !== this.mappingHash;
-    const { scan, events: planned } = await this.#run(
+    let root: string;
+    try {
+      const info = await stat(this.path);
+      root = JSON.stringify([await realpath(this.path), info.dev, info.ino]);
+    } catch (cause) {
+      this.#continuation = null;
+      throw new KizukiError("misconfigured", "wiki source root is unavailable", { cause });
+    }
+    const continuation = this.#continuation;
+    this.#continuation = null;
+    const run = continuation !== null && continuation.cursor === cursor && continuation.root === root && !mappingChanged
+      ? continuation.run
+      : await this.#run(
       mappingChanged ? ["mapping_changed"] : [],
       mappingChanged ? {} : pinnedTargets(identities),
     );
+    const { scan, events: planned } = run;
+    const inventory = wikiCoverage(scan, this.#report!, this.mapping);
+    const partial = inventory.failed > 0 || inventory.truncated;
     const hashes = new Map(
       scan.files.map((file) => [file.relpath, contentHash(file.content)]),
     );
@@ -505,6 +524,7 @@ export class LegacyWikiConnector implements Connector {
 
     let events = [...page];
     let withdrawalsRemain = false;
+    let withdrawalsPending = 0;
     if (filesDone && previous !== null && (previous.exhausted || paging)) {
       const emitted = new Set(planned.map((event) => event.source_record_id));
       const { withdrawn, carried } = reconcileSnapshot(
@@ -519,6 +539,7 @@ export class LegacyWikiConnector implements Connector {
       const paged = takePage([...page, ...tombstones]);
       events = paged.page;
       withdrawalsRemain = paged.rest.length > 0;
+      withdrawalsPending = paged.rest.length;
       Object.assign(nextFiles, carriedEntries(identities, carried));
     }
 
@@ -534,14 +555,20 @@ export class LegacyWikiConnector implements Connector {
     }
 
     const last = events[events.length - 1];
-    const exhausted = filesDone && !withdrawalsRemain;
+    if (filesDone && !withdrawalsRemain && events.length === 0 && partial) {
+      return { events: [], cursor, status: "unavailable", detail: "partial_import: scan incomplete", coverage: inventory };
+    }
+    const exhausted = filesDone && !withdrawalsRemain && !partial;
     const nextAfter = exhausted
       ? null
       : (last?.source_record_id ?? after);
+    const next = encodeCursor(this.mappingHash, nextFiles, nextAfter, exhausted);
+    if (!exhausted) this.#continuation = { cursor: next, root, run };
     return {
       events,
-      cursor: encodeCursor(this.mappingHash, nextFiles, nextAfter, exhausted),
+      cursor: next,
       has_more: !exhausted,
+      coverage: { ...inventory, pending: rest.length + withdrawalsPending },
     };
   }
 

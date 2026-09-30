@@ -1,3 +1,5 @@
+import { inspectSourceCoverage, type SourceCoverageReport } from "@kizuki/core/world";
+import { sourceCoverageLines } from "../source-coverage";
 import { closeHostConnector } from "../connections";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -48,6 +50,7 @@ const HASH_DRIFT_CAP = 64;
 const DETAIL_CAP = 160;
 
 interface DoctorConnection {
+  coverage: SourceCoverageReport;
   connector_id: string;
   source_key: string;
   path: string;
@@ -58,7 +61,7 @@ interface DoctorConnection {
   errors: number;
   /** Why the last run failed, first reason only; null when it did not. */
   last_error: string | null;
-  /** A backfill run reached its end. Only a backfill run sets it, so a source that is only synced keeps it false. */
+  /** Backfill or a history-covering sync reached its reported end. */
   backfill_complete: boolean;
   /**
    * The last run recorded no error. Not a claim about what is left upstream:
@@ -302,13 +305,15 @@ async function collect(
   ) as Record<ClaimStatus, number>;
 
   const connections: DoctorConnection[] = [];
-  for (const host of listHostConnections(ctx.db, ctx.store)) {
+  const coverage = new Map(inspectSourceCoverage(ctx.db).map(report => [report.source_key, report]));
+  for (const host of listHostConnections(ctx.db, ctx.store, undefined, { includeDisconnected: true })) {
     const checkpoint = getCheckpoint(
       ctx.db,
       host.connection.connector_id,
       host.connection.source_key,
     );
     const base = {
+      coverage: coverage.get(host.connection.source_key)!,
       connector_id: host.connection.connector_id,
       source_key: host.connection.source_key,
       checkpoint: checkpoint?.last_run_at ?? "never",
@@ -577,6 +582,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     const reason = item.last_error === null ? "" : ` last_error=${JSON.stringify(item.last_error)}`;
     const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors} last_run_clean=${item.last_run_clean ? "yes" : "no"}${reason}`;
     io.out(item.problem === null ? line : `${line} ${item.problem}`);
+    for (const detail of sourceCoverageLines(item.coverage)) io.out(detail);
   }
   io.out(`receipts=${report.receipts} orphans=${report.orphans.length}`);
   io.out(hashDriftCoverageLine(report.hash_drift));

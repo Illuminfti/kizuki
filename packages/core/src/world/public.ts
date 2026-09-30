@@ -43,3 +43,7 @@ export type {
   WorldReadResult,
   WorldViewEnvelope,
 } from "../serving/world-view";
+
+export { inspectSourceCoverage, readSourceCoverage } from "./coverage";
+export type { SourceCoverageReport } from "./coverage";
+export type { ScanCoverage, PassCoverage } from "../contracts/source-coverage";

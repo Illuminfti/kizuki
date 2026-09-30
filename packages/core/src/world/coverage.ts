@@ -1,10 +1,13 @@
 import type { Database } from "bun:sqlite";
 import type { ViewGap } from "../contracts/concept-card";
-import { inspectCheckpoints } from "../ledger/connections";
+import { getCheckpoint, inspectConnections, type Checkpoint } from "../ledger/connections";
+import { LIVE_PREDICATE } from "../ledger/ledger";
+import type { ScanCoverage } from "../contracts/source-coverage";
 import { tableExists } from "../ledger/schema";
 import { readExtractCursor } from "../serve/extract";
 import type { ServeContext } from "../serving/types";
 import { authorizedEventSql } from "./policy-sql";
+import { instantNanoSql, instantSecondSql } from "../query/sql";
 
 export type SourceCoverageGap = Extract<
   ViewGap,
@@ -31,13 +34,14 @@ function visibleSources(ctx: ServeContext): string[] {
 /** Import unfinished, last run errored, or the run record unreadable. A source with no checkpoint has no recorded run and adds no gap. */
 function sourceIncomplete(db: Database, visible: ReadonlySet<string>): boolean {
   if (!tableExists(db, "checkpoints")) return false;
-  return inspectCheckpoints(db).some((item) =>
-    !item.ok
-      ? visible.has(item.source_key)
-      : visible.has(item.value.source_key) &&
-        (!item.value.backfill_complete ||
-          item.value.last_result.errors.length > 0),
-  );
+  return [...visible].some((source) => {
+    const connection = db.query<{ connector_id: string }, [string]>("SELECT connector_id FROM connections WHERE source_key=?").get(source);
+    if (connection === null) return false;
+    const state = checkpointState(db, connection.connector_id, source);
+    // Older sources with no recorded capture pass retain their world-read semantics.
+    return state.unreadable || (state.checkpoint !== null &&
+      (!state.checkpoint.backfill_complete || state.checkpoint.last_result.errors.length > 0));
+  });
 }
 
 /** The extraction cursor is `accepted_at<TAB>event_id`, the order `readSince` walks. Unreadable means start of ledger. */
@@ -104,4 +108,87 @@ export function sourceCoverage(ctx: ServeContext): SourceCoverageGap[] {
   if (sourceIncomplete(db, new Set(visible))) gaps.push("coverage");
   if (extractBacklog(ctx, visible)) gaps.push("pending_consolidation");
   return gaps;
+}
+
+
+export interface SourceCoverageReport {
+  connector_id: string;
+  source_key: string;
+  /** Unknown until a connector supplies an inventory; withheld from scoped readers. */
+  scanned: number | null;
+  ingested: number;
+  excluded: ScanCoverage["excluded"];
+  pending: number | null;
+  failed: number | null;
+  truncated: boolean | null;
+  first_occurred_at: string | null;
+  last_occurred_at: string | null;
+  backfill_complete: boolean;
+  backfill_state: "never_run" | "in_progress" | "complete" | "failed" | "unreadable";
+  last_successful_pass_at: string | null;
+  last_error_class: string | null;
+  blind_spots: { reason: string; detail: string; next_step: string }[];
+}
+
+function checkpointState(db: Database, connector: string, source: string): { checkpoint: Checkpoint | null; unreadable: boolean } {
+  try { return { checkpoint: getCheckpoint(db, connector, source), unreadable: false }; }
+  catch { return { checkpoint: null, unreadable: true }; }
+}
+
+function coverageReports(db: Database, sources: readonly string[] | null, filter: { clauses: string[]; bindings: (string | number)[] } | null, inventoryVisible = filter === null): SourceCoverageReport[] {
+  const reports: SourceCoverageReport[] = [];
+  for (const item of inspectConnections(db, { includeDisconnected: true, ...(sources === null ? {} : { sourceKeys: sources }) })) {
+    const source = item.ok ? item.value.source_key : item.source_key;
+    const connector = item.ok ? item.value.connector_id : item.connector_id;
+    const { checkpoint, unreadable } = checkpointState(db, connector, source);
+    const pass = checkpoint?.last_result.coverage;
+    const scan = inventoryVisible ? pass?.scan : null;
+    const clauses = filter?.clauses ?? [LIVE_PREDICATE];
+    const bindings = filter?.bindings ?? [];
+    const where = `b.source_key=? AND ${clauses.join(" AND ")}`;
+    // Shift supported epoch seconds into positive, fixed-width keys. Reuse
+    // grant-window ordering, including nanoseconds, leap seconds and offsets.
+    const totals = db.query<{ ingested: number; first: string | null; last: string | null }, (string | number)[]>(
+      `WITH eligible AS MATERIALIZED (
+         SELECT events.occurred_at,
+           printf('%012d:%09d', ${instantSecondSql("events.occurred_at")} + 62167219200,
+             ${instantNanoSql("events.occurred_at")}) AS instant
+         FROM source_event_bindings b JOIN events ON events.event_id=b.event_id WHERE ${where}
+       ) SELECT (SELECT count(*) FROM eligible) AS ingested,
+         (SELECT occurred_at FROM eligible ORDER BY instant, occurred_at LIMIT 1) AS first,
+         (SELECT occurred_at FROM eligible ORDER BY instant DESC, occurred_at LIMIT 1) AS last`
+    ).get(source, ...bindings)!;
+    const errors = checkpoint?.last_result.errors.length ?? 0;
+    const complete = checkpoint?.backfill_complete === true;
+    const state = unreadable ? "unreadable" : errors > 0 ? "failed" : complete ? "complete" : checkpoint === null ? "never_run" : "in_progress";
+    const blind_spots: SourceCoverageReport["blind_spots"] = [];
+    const add = (reason: string, detail: string, next_step: string) => blind_spots.push({ reason, detail, next_step });
+    if (!item.ok || unreadable) add("unreadable_state", "Source state is unreadable.", "Restore source state before retrying capture.");
+    if (item.ok && item.value.disconnected_at !== null) add("disabled_source", "Source is disconnected.", "Reconnect this source to resume capture.");
+    const grant = db.query<{ status: string }, [string]>("SELECT status FROM source_grants WHERE source_key=?").get(source);
+    if (grant?.status !== "active") add("paused_source", "Capture consent is absent or inactive.", "Inspect source consent before resuming capture.");
+    if (pass?.last_successful_pass_at == null && !complete) add("never_completed_pass", "No successful complete pass is recorded.", "Run backfill for this source and inspect its error class.");
+    if (scan == null && inventoryVisible) add("inventory_unknown", "This source has no recorded scan inventory.", "Run a capture pass; connectors without inventory report unknown counts.");
+    for (const exclusion of scan?.excluded ?? []) add("excluded_by_rule", `${exclusion.rule}: ${exclusion.count} matching entries (subtree contents unknown).`, "Inspect the exclusion rule and enroll omitted content separately if needed.");
+    for (const content of scan?.content_exclusions ?? []) add("content_excluded", content, "Capture this content through a supported separate source if needed.");
+    if (scan?.truncated) add("scan_truncated", "Scan stopped at a connector bound; remaining inventory is unknown.", "Split the source into smaller independent roots.");
+    if (errors > 0 || (scan?.failed ?? 0) > 0) add("failed_pass", "The latest capture pass has failures.", "Resolve the error class and retry this source.");
+    reports.push({ connector_id: connector, source_key: source, scanned: scan?.scanned ?? null, ingested: totals.ingested,
+      excluded: scan?.excluded ?? [], pending: scan?.pending ?? null, failed: scan == null ? (errors > 0 ? errors : null) : Math.max(scan.failed, errors),
+      truncated: scan?.truncated ?? null, first_occurred_at: totals.first, last_occurred_at: totals.last,
+      backfill_complete: complete, backfill_state: state, last_successful_pass_at: pass?.last_successful_pass_at ?? null,
+      last_error_class: unreadable ? "unreadable_state" : pass?.last_error_class ?? (errors > 0 ? "failed" : null), blind_spots });
+  }
+  return reports.sort((a, b) => a.source_key.localeCompare(b.source_key));
+}
+
+/** Trusted local owner diagnostics; includes enrolled sources with no readable records. */
+export function inspectSourceCoverage(db: Database): SourceCoverageReport[] {
+  return coverageReports(db, null, null);
+}
+
+/** Same authorization and source visibility as world reads. Inventory is owner-only. */
+export function readSourceCoverage(ctx: ServeContext): SourceCoverageReport[] {
+  if (!tableExists(ctx.db, "source_grants") || !tableExists(ctx.db, "source_event_bindings")) return [];
+  return coverageReports(ctx.db, visibleSources(ctx), authorizedEventSql(ctx), ctx.principal.kind === "owner");
 }

@@ -1321,3 +1321,11 @@ has been qualified by the synthetic test suite. See X's official
 [native app setup](https://docs.x.com/fundamentals/developer-apps),
 [OAuth authorization code flow](https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code)
 and [usage billing](https://docs.x.com/x-api/getting-started/pricing).
+
+
+### Source coverage diagnostics
+
+Doctor and connection status include per-source scan and ledger coverage,
+backfill state, occurrence bounds, successful-pass time, and blind spots with
+next steps. See [source coverage](source-coverage.md) for unknown-count and
+excluded-directory semantics.

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Disclose per-source coverage and blind spots in doctor and connection status;
+  persist complete folder sync passes and their last successful pass time.
+
 ### Fixed
 
 - Purge is physically total. After it, the purged text is gone from claim and
