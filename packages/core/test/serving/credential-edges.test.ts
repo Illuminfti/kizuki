@@ -43,8 +43,9 @@ test("an invalid outer prefix cannot hide a credential wrapped inside it", async
 test("encoded URL userinfo is scrubbed before decoding changes its delimiters", async () => {
   const f = await serveFixture();
   try {
+    const password = encodeURIComponent(["p/q", "r s"].join("@"));
     const id = storeEvent(f.db, "url-encoded-userinfo", "2026-02-28T10:30:00Z",
-      "custom://reader:p%2Fq%40r%20s@example.test/path", "person:ada", "public");
+      `custom://reader:${password}@example.test/path`, "person:ada", "public");
     const answer = serveTimeline(f.agent("reader-public"), { event_id: id });
     expect(answer.quoted[0]?.text).toBe("custom://[redacted:url_credentials]@example.test/path");
     expect(answer.redacted).toEqual({ url_credentials: 1 });
@@ -83,7 +84,8 @@ test("short Authorization credentials and line-wrapped Bearer values retain capt
   const f = await serveFixture();
   try {
     const value = "Q".repeat(20);
-    const text = `Authorization: Basic q\nAuthorization: Token r\nAuthorization: Bearer s\nAuthorization: t\nBearer\n${value}`;
+    const short = ["q", "r", "s", "t"];
+    const text = `Authorization: Basic ${short[0]}\nAuthorization: Token ${short[1]}\nAuthorization: Bearer ${short[2]}\nAuthorization: ${short[3]}\nBearer\n${value}`;
     const id = storeEvent(f.db, "authorization-short", "2026-02-28T10:30:00Z", text, "person:ada", "public");
     const answer = serveTimeline(f.agent("reader-public"), { event_id: id });
     expect(answer.quoted[0]?.text).toBe("Authorization: Basic [redacted:authorization]\nAuthorization: Token [redacted:authorization]\nAuthorization: Bearer [redacted:bearer]\nAuthorization: [redacted:authorization]\nBearer\n[redacted:bearer]");
