@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { serveContextPacket, serveSearch, OWNER, PACKET_TOKENIZER_ID, ServeError } from "../../../packages/core/src/index";
+import { serveContextPacket, serveSearch, OWNER, ServeError } from "../../../packages/core/src/index";
 import type { ServeContext } from "../../../packages/core/src/index";
+import { PACKET_TOKENIZER_ID } from "../../../packages/core/src/serving/packet-tokenizer";
 import { runSessionStart } from "../../../packages/cli/src/hook/session-start";
 import { AS_OF } from "./persona";
 import type { PersonaSize, PrincipalName, Question, Surface } from "./persona";
