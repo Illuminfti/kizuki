@@ -59,6 +59,8 @@ const FLAVOR: Readonly<Record<SessionsConnectorId, SessionFlavor>> = {
 
 export interface AgentSessionsDeps {
   now: () => number;
+  /** Descriptor reads can be counted without weakening the production open policy. */
+  openFile: typeof openSessionFile;
 }
 
 interface Visit {
@@ -73,6 +75,7 @@ export class AgentSessionsConnector implements Connector {
   readonly #flavor: SessionFlavor;
   readonly #config: ParsedAgentSessionsConfig;
   readonly #now: () => number;
+  readonly #openFile: typeof openSessionFile;
   readonly #manifest: Manifest;
   /** Counts since construction; `health()` reports them and no run state depends on them. */
   readonly #report: Counters = {};
@@ -87,6 +90,7 @@ export class AgentSessionsConnector implements Connector {
     this.#flavor = FLAVOR[id];
     this.#config = parseConfig(id, config);
     this.#now = deps.now ?? Date.now;
+    this.#openFile = deps.openFile ?? openSessionFile;
     this.#manifest = freezeManifest({
       schema: "kizuki.connector/v1",
       connector_id: id,
@@ -234,7 +238,7 @@ export class AgentSessionsConnector implements Connector {
         relpath: file.relpath,
         line: skipLines,
       };
-      const opened = await openSessionFile(file.absolute);
+      const opened = await this.#openFile(file.absolute);
       if ("reason" in opened) {
         count(this.#report, opened.reason);
         continue;
