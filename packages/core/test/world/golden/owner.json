@@ -252,7 +252,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -272,7 +272,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           }
         ],
         "relations": [
@@ -335,7 +335,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -355,7 +355,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -416,7 +416,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -436,7 +436,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -481,7 +481,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -501,7 +501,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -549,7 +549,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -569,7 +569,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -614,7 +614,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -634,7 +634,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           }
         ],
         "learning": [
@@ -686,7 +686,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "independent",
                   "evidence": [
                     {
                       "admission": {
@@ -706,7 +706,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             },
             "assistance": "unknown",
             "assistanceEvidence": []
@@ -821,7 +821,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -841,7 +841,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           }
         ],
         "relations": [
@@ -904,7 +904,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -924,7 +924,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -985,7 +985,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -1005,7 +1005,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -1050,7 +1050,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -1070,7 +1070,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -1118,7 +1118,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -1138,7 +1138,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -1183,7 +1183,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -1203,7 +1203,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           }
         ],
         "learning": [
@@ -1255,7 +1255,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "independent",
                   "evidence": [
                     {
                       "admission": {
@@ -1275,7 +1275,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             },
             "assistance": "unknown",
             "assistanceEvidence": []
@@ -1394,7 +1394,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -1414,7 +1414,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           }
         ],
         "relations": [
@@ -1477,7 +1477,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -1497,7 +1497,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -1558,7 +1558,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -1578,7 +1578,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -1623,7 +1623,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -1643,7 +1643,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -1691,7 +1691,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -1711,7 +1711,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -1756,7 +1756,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -1776,7 +1776,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           }
         ],
         "learning": [
@@ -1828,7 +1828,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "independent",
                   "evidence": [
                     {
                       "admission": {
@@ -1848,7 +1848,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             },
             "assistance": "unknown",
             "assistanceEvidence": []
@@ -1963,7 +1963,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -1983,7 +1983,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           }
         ],
         "relations": [],
@@ -2081,7 +2081,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -2101,7 +2101,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           }
         ],
         "relations": [],
@@ -2198,7 +2198,7 @@
                 "kind": "known",
                 "value": 0.5
               },
-              "independence": "unknown",
+              "independence": "independent",
               "evidence": [
                 {
                   "admission": {
@@ -2218,7 +2218,7 @@
               ]
             }
           ],
-          "conflict": "unknown"
+          "conflict": "none_observed"
         },
         "participants": [
           {
@@ -2270,7 +2270,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -2290,7 +2290,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -2335,7 +2335,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -2355,7 +2355,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           }
         ],
         "blocker": {
@@ -2401,7 +2401,7 @@
                 "kind": "known",
                 "value": 0.5
               },
-              "independence": "unknown",
+              "independence": "independent",
               "evidence": [
                 {
                   "admission": {
@@ -2421,7 +2421,7 @@
               ]
             }
           ],
-          "conflict": "unknown"
+          "conflict": "none_observed"
         },
         "recentChange": {
           "schema": "kizuki.relation/v1",
@@ -2466,7 +2466,7 @@
                 "kind": "known",
                 "value": 0.5
               },
-              "independence": "unknown",
+              "independence": "independent",
               "evidence": [
                 {
                   "admission": {
@@ -2486,7 +2486,7 @@
               ]
             }
           ],
-          "conflict": "unknown"
+          "conflict": "none_observed"
         },
         "uncertainty": [],
         "knownAt": {
@@ -2595,7 +2595,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -2615,7 +2615,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "present"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -2660,7 +2660,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -2680,7 +2680,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "present"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -2725,7 +2725,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -2745,7 +2745,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           }
         ],
         "knownAt": {
