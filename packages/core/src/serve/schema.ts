@@ -4,7 +4,6 @@ import { tableExists } from "../ledger/schema";
 import {
   SERVE_SCHEMA_VERSION,
   type RailId,
-  type RailSpec,
   type ScheduleRow,
 } from "./types";
 
@@ -131,13 +130,13 @@ export function initServe(db: Database): void {
   }).immediate();
 }
 
-/** Seed the registered schedule, or the given rails' schedules. Existing rows are left alone. */
-export function seedSchedules(db: Database, rails: readonly RailSpec[] = DEFAULT_RAILS): void {
+/** Seed every registered rail. Existing rows are left alone. */
+export function seedSchedules(db: Database): void {
   const insert = db.query(
     `INSERT OR IGNORE INTO schedules (rail, period_s, jitter_s, enabled)
      VALUES (?, ?, ?, 1)`,
   );
-  for (const spec of rails) {
+  for (const spec of DEFAULT_RAILS) {
     insert.run(spec.rail, spec.period_s, spec.jitter_s);
   }
 }
@@ -158,11 +157,8 @@ export function applyRailPeriod(db: Database, rail: RailId, periodSeconds: numbe
   }).immediate();
 }
 
-/** The schedule rows of the rails `known` accepts: registered rails by default. */
-export function listSchedules(
-  db: Database,
-  known: (rail: RailId) => boolean = isRailId,
-): ScheduleRow[] {
+/** The schedule rows of registered rails. */
+export function listSchedules(db: Database): ScheduleRow[] {
   if (!tableExists(db, "schedules")) return [];
   return db
     .query<
@@ -181,7 +177,7 @@ export function listSchedules(
         ORDER BY rail`,
     )
     .all()
-    .filter((row) => known(row.rail))
+    .filter((row) => isRailId(row.rail))
     .map((row) => ({
       rail: row.rail,
       period_s: row.period_s,

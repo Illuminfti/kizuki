@@ -2,7 +2,8 @@ import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-sco
 import { recoverCanonWrites } from "../canon/recovery";
 import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { retryCanonProjectionObligations } from "../canon/projection-obligations";
-import { pidAlive, readBootId } from "./leases";
+import { acquireLease, leaseState, pidAlive, readBootId, releaseLease, thisProcess, type LeaseProcess } from "./leases";
+import { resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { skipCaptureFanoutClaims } from "../claims/capture-fanout";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
@@ -388,6 +389,8 @@ export function runJournalPrune(context: RailRunContext): Partial<RunReceipt> {
 }
 
 const activeRuns = new Set<string>();
+/** One callback at a time per vault, including manual calls in this process. */
+const activeVaultRuns = new Set<string>();
 
 /**
  * Run one rail and resolve to its receipt. A scheduled run that did nothing is
@@ -431,6 +434,8 @@ async function runRailImpl(
   if (definition === undefined) throw new ServeDaemonError("unknown_rail", `no rail is registered as ${JSON.stringify(rail)}`);
   const runId = ulid();
   activeRuns.add(runId);
+  const vaultKey = resolve(vaultPath);
+  let activeVault = false;
   try {
     const now = options.now ?? (() => new Date().toISOString());
     const started = now();
@@ -443,6 +448,7 @@ async function runRailImpl(
     let budget: BudgetTracker | undefined;
     let runtime: AnyRailRuntime | undefined;
     let interrupted = false;
+    let lease: { process: LeaseProcess; release: boolean } | undefined;
     try {
       if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
         throw new Error("rail hooks and acquireRuntime are mutually exclusive");
@@ -493,12 +499,16 @@ async function runRailImpl(
     } finally {
       // Close before publication so failure cannot leave a successful receipt.
       // This also releases the binding before any journal persistence can fail.
-      if (runtime !== undefined) {
-        try { await runtime.close(); }
-        catch {
-          if (interrupted) throw new Error("rail runtime close failed after interruption");
-          partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "rail runtime close failed"] };
+      try {
+        if (runtime !== undefined) {
+          try { await runtime.close(); }
+          catch {
+            if (interrupted) throw new Error("rail runtime close failed after interruption");
+            partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "rail runtime close failed"] };
+          }
         }
+      } finally {
+        if (lease?.release === true) releaseLease(db, lease.process);
       }
     }
 
@@ -546,7 +556,10 @@ async function runRailImpl(
     const published = getRunReceipt(db, runId);
     if (published === null) throw new Error("persisted run receipt unavailable");
     return published;
-  } finally { activeRuns.delete(runId); }
+  } finally {
+    activeRuns.delete(runId);
+    if (activeVault) activeVaultRuns.delete(vaultKey);
+  }
 }
 
 export function runServeOnce(

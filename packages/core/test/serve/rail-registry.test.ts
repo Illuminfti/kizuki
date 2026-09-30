@@ -138,6 +138,7 @@ describe("running a registered rail", () => {
     const failed = await runRail(db, path, "fixture-boom");
     expect([ok.status, ok.events_synced]).toEqual(["ok", 1]);
     expect([failed.status, failed.errors]).toEqual(["failed", ["fixture rail exploded"]]);
+    expect(readLease(db, WRITER_LEASE)).toBeNull();
     expect(listRunReceipts(db).map((receipt) => [receipt.rail, receipt.status])).toEqual([["fixture-rail", "ok"], ["fixture-boom", "failed"]]);
     expect(readRunReceiptsLog(path).map((receipt) => receipt.run_id)).toEqual([ok.run_id, failed.run_id]);
   });
