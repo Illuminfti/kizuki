@@ -223,6 +223,7 @@ test("revisions filed before a pass runs still leave only the newest body", asyn
     revise(f, { text: "# Atlas\n\nfirst body" });
     expect((await f.pass()).errors).toEqual([]);
     revise(f, { text: "# Atlas\n\nsecond body" });
+    const intermediate = listClaims(f.db, { status: "live", limit: 20 }).find(c => c.target === TARGET)!;
     revise(f, { text: "# Atlas\n\nthird body" });
     const result = await f.pass();
     expect(result.errors).toEqual([]);
@@ -231,7 +232,9 @@ test("revisions filed before a pass runs still leave only the newest body", asyn
     expect(occurrences(page.body, "# Atlas")).toBe(1);
     expect(page.body).toContain("third body");
     const edit = listCanonReceipts(f.db, { page_path: PAGE }).find(r => r.page_action === "edit")!;
+    expect(edit.superseded.map(ref => ref.claim_id)).toContain(intermediate.claim_id);
     await undoReceipt({ db: f.db, vault_path: f.vault }, edit.receipt_id);
+    expect(getClaim(f.db, intermediate.claim_id)?.status).toBe("superseded");
     expect(readPage(f).body).toContain("first body");
     expect((await f.pass()).claims_written).toBe(0);
     expect(readPage(f).body).toContain("first body");

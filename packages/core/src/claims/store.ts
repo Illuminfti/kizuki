@@ -982,11 +982,11 @@ export function listSupersessions(
 export function supersessionsForReceipt(
   db: Database,
   receiptId: string,
-): { winner: string; loser: string; prior_valid_to: string | null }[] {
+): { winner: string; loser: string; prior_valid_to: string | null; rule: string }[] {
   if (!tableExists(db, "claim_supersessions")) return [];
   return db
-    .query<{ winner: string; loser: string; prior_valid_to: string | null }, [string]>(
-      `SELECT winner, loser, prior_valid_to FROM claim_supersessions
+    .query<{ winner: string; loser: string; prior_valid_to: string | null; rule: string }, [string]>(
+      `SELECT winner, loser, prior_valid_to, rule FROM claim_supersessions
         WHERE receipt_id = ? ORDER BY at, loser`,
     )
     .all(receiptId);
