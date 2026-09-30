@@ -29,6 +29,22 @@ function bigVault() {
   return setup;
 }
 
+function unrelatedVault() {
+  const setup = tempVault();
+  writeFileSync(join(setup.notes, "ambient.md"), "zqxbig unrelated synthetic note\n");
+  const imported = runCli(
+    setup.env,
+    "import",
+    "markdown-folder",
+    "--source",
+    setup.notes,
+    ...fixtureConsent(setup.root),
+  );
+  expect(imported.exitCode).toBe(0);
+  const dbPath = join(setup.vault, ".kizuki", "kizuki.db");
+  return { vault: setup.vault, dbPath, dbBytes: readFileSync(dbPath) };
+}
+
 function childEnv(overrides: Record<string, string | undefined>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries({ ...process.env, ...overrides })) {
@@ -40,12 +56,14 @@ function childEnv(overrides: Record<string, string | undefined>): Record<string,
 describe("machine output on a pipe", () => {
   test("a --json document larger than the pipe buffer arrives whole and matches the file", async () => {
     const setup = bigVault();
-    const env = childEnv(setup.env);
-    const args = ["query", "zqxbig", "--scope", "ledger", "--limit", "10", "--full-text", "--json"];
+    const ambient = unrelatedVault();
+    const env = childEnv({ ...setup.env, KIZUKI_VAULT: ambient.vault });
+    const args = ["--vault", setup.vault, "query", "zqxbig", "--scope", "ledger", "--limit", "10", "--full-text", "--json"];
 
     const target = join(tempDir(), "redirected.json");
     const redirected = Bun.spawnSync([process.execPath, MAIN, ...args], { env, stdout: Bun.file(target), stderr: "pipe" });
     expect(redirected.exitCode).toBe(0);
+    expect(readFileSync(ambient.dbPath).equals(ambient.dbBytes)).toBe(true);
     const fileBytes = readFileSync(target);
     expect(fileBytes.length).toBeGreaterThan(200_000);
 
@@ -57,6 +75,7 @@ describe("machine output on a pipe", () => {
     );
     const pipedBytes = Buffer.from(await new Response(piped.stdout).arrayBuffer());
     expect(await piped.exited).toBe(0);
+    expect(readFileSync(ambient.dbPath).equals(ambient.dbBytes)).toBe(true);
 
     expect(pipedBytes.length).toBe(fileBytes.length);
     const parsed = JSON.parse(pipedBytes.toString("utf8")) as { data: { hits: unknown[] } };
@@ -65,10 +84,12 @@ describe("machine output on a pipe", () => {
 
   test("a reader that closes early ends the command quietly", () => {
     const setup = bigVault();
+    const ambient = unrelatedVault();
     const result = Bun.spawnSync(
-      ["sh", "-c", '"$0" "$@" | head -c 100 >/dev/null;', process.execPath, MAIN, "query", "zqxbig", "--scope", "ledger", "--full-text", "--json"],
-      { env: childEnv(setup.env), stdout: "pipe", stderr: "pipe" },
+      ["sh", "-c", '"$0" "$@" | head -c 100 >/dev/null;', process.execPath, MAIN, "--vault", setup.vault, "query", "zqxbig", "--scope", "ledger", "--full-text", "--json"],
+      { env: childEnv({ ...setup.env, KIZUKI_VAULT: ambient.vault }), stdout: "pipe", stderr: "pipe" },
     );
     expect(result.stderr.toString()).not.toContain("EPIPE");
+    expect(readFileSync(ambient.dbPath).equals(ambient.dbBytes)).toBe(true);
   });
 });
