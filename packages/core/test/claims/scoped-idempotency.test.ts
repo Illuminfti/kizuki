@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { OWNER_AGENT_GRANT } from "../../src/agents";
 import { getClaim, insertClaim, listClaims, pendingRetrievalOps, prepareClaimInsert, retryRetrievalOps } from "../../src/claims/store";
 import { openLedger, LEDGER_SCHEMA_VERSION } from "../../src/ledger/db";
+import { seedConnectorSensitivity } from "../../src/sensitivity/store";
 import { claimReader } from "../../src/serving/claims";
 import { claimInput, FixtureVectorPort, putEvent } from "./helpers";
 
@@ -18,6 +19,7 @@ test("fresh and previous-schema databases support scoped exact twins without los
   const path = join(directory, "ledger.sqlite");
   let db = openLedger(path);
   try {
+    seedConnectorSensitivity(db, { connector_id: "fixture", source_key: "scoped-tests" }, { default_sensitivity: "public", sensitivity_floor: "public" });
     expect(indexSql(db)).not.toContain("UNIQUE");
     const hidden = await insertClaim({ db }, claimInput(putEvent(db), {
       target: "facts:employment", sensitivity: "private",
@@ -48,6 +50,7 @@ test("fresh and previous-schema databases support scoped exact twins without los
 test("scoped filing rolls back without changing hidden support and serializes prepared retries", async () => {
   const db = openLedger(":memory:");
   try {
+    seedConnectorSensitivity(db, { connector_id: "fixture", source_key: "scoped-tests" }, { default_sensitivity: "public", sensitivity_floor: "public" });
     const hidden = await insertClaim({ db }, claimInput(putEvent(db), { sensitivity: "private" }));
     if (hidden.outcome !== "stored") throw new Error(hidden.outcome);
     const original = getClaim(db, hidden.claim.claim_id);
@@ -71,6 +74,7 @@ test("scoped index publication retries readable work without touching or countin
   const retrieval = new FixtureVectorPort();
   const upsert = retrieval.upsert.bind(retrieval);
   try {
+    seedConnectorSensitivity(db, { connector_id: "fixture", source_key: "scoped-tests" }, { default_sensitivity: "public", sensitivity_floor: "public" });
     retrieval.upsert = async () => { throw new Error("synthetic index interruption"); };
     const hidden = await insertClaim({ db, retrieval }, claimInput(putEvent(db), { sensitivity: "private" }));
     if (hidden.outcome !== "stored") throw new Error(hidden.outcome);
