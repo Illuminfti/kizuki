@@ -14,7 +14,7 @@ import {
 } from "../../src/staging/producers";
 import { fileProposal, listProposals } from "../../src/staging/proposals";
 import { parseFrontmatter } from "../../src/vault/frontmatter";
-import { validEvent } from "../fixtures";
+import { documentEvent } from "../fixtures";
 import { openLedger } from "../../src/ledger/db";
 import { tempVault } from "../helpers/vault";
 import { ulid } from "../../src/util/ulid";
@@ -33,7 +33,7 @@ function statusOf(fixture: CanonFixture, pagePath: string): unknown {
 
 function setup() {
   const fixture = canonFixture();
-  const accepted = accept(fixture.db, validEvent());
+  const accepted = accept(fixture.db, documentEvent());
   if (accepted.status !== "stored") throw new Error("source admission failed");
   const proposal = fileProposal(
     fixture.db,
@@ -48,7 +48,7 @@ function setup() {
 }
 
 function deleteRecord(fixture: CanonFixture, text: string): string {
-  const deleted = accept(fixture.db, { ...validEvent(), deleted: true, text });
+  const deleted = accept(fixture.db, { ...documentEvent(), deleted: true, text });
   if (deleted.status !== "stored")
     throw new Error("tombstone admission failed");
   expect(
@@ -61,8 +61,8 @@ function deleteRecord(fixture: CanonFixture, text: string): string {
 
 function returnRecord(fixture: CanonFixture, epoch: number): void {
   const restored = accept(fixture.db, {
-    ...validEvent(),
-    metadata: { ...validEvent().metadata, revision_epoch: epoch },
+    ...documentEvent(),
+    metadata: { ...documentEvent().metadata, revision_epoch: epoch },
   });
   if (restored.status !== "stored")
     throw new Error("restored record was swallowed as a duplicate");
@@ -82,7 +82,7 @@ describe("a returned source record un-archives its page", () => {
     const fixture = { db, vault: temporary.path, io: { db, vault_path: temporary.path }, dispose: temporary.dispose };
     try {
       const archive = (record: string) => {
-        const input = { ...validEvent(), source_record_id: record, text: `body ${record}` };
+        const input = { ...documentEvent(), source_record_id: record, text: `body ${record}` };
         const accepted = accept(fixture.db, input);
         if (accepted.status !== "stored") throw new Error("source admission failed");
         const proposal = fileProposal(fixture.db, {
@@ -123,7 +123,7 @@ describe("a returned source record un-archives its page", () => {
           insert("claims", { ...claimRow, claim_id: claimId, receipt_id: receiptId, target: pagePath.slice(0, -3), content_hash: "" });
           db.query("INSERT INTO page_index (page_id,rel_path,last_receipt,last_hash) VALUES (?,?,?,?)")
             .run(pageId, pagePath, receiptId, first.receipt.after_hash);
-          writeFileSync(join(fixture.vault, pagePath), `${firstArchive}\nOwner note ${index}.\n`);
+          writeFileSync(join(fixture.vault, pagePath), `${firstArchive}\nOwner note ${index}.\n`, { mode: 0o600 });
         }
       })();
       const untouched = archive("last").path;
@@ -206,7 +206,7 @@ describe("a returned source record un-archives its page", () => {
     try {
       deleteRecord(fixture, "synthetic deletion one");
       const other = accept(fixture.db, {
-        ...validEvent(),
+        ...documentEvent(),
         source_record_id: "other-record",
         text: "another record",
       });

@@ -77,7 +77,8 @@ export async function restoreReturnedSources(
   if (archives.length === 0 && after !== "") {
     // Cycle through kept pages too: an owner can return one to its archived
     // bytes later. The cursor is progress only, never permission to restore.
-    writeRailCursor(io.db, RESTORE_RAIL, RESTORE_CURSOR, "");
+    io.db.query("DELETE FROM rail_cursors WHERE rail = ? AND source_key = ?")
+      .run(RESTORE_RAIL, RESTORE_CURSOR);
     archives = returnedSourceArchives(io.db, limit + KEPT_SCAN);
   }
   const advance = (archive: ReturnedArchive) =>

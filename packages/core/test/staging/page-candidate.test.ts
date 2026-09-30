@@ -18,7 +18,7 @@ import { parseFrontmatter } from "../../src/vault/frontmatter";
 import type { CaptureEvent } from "../../src/contracts/event";
 import type { ProposalInput } from "../../src/staging/proposals";
 import { write } from "../canon/helpers";
-import { documentEvent } from "../fixtures";
+import { documentEvent, validEvent } from "../fixtures";
 import { event, memoryDb, tempVault } from "./helpers";
 
 function candidateMetadata(
