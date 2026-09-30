@@ -40,9 +40,9 @@ interface CardRead {
 }
 
 /** The Concept card for the label, read as `ctx` through `world_view`. */
-function conceptCard(ctx = scene.owner, label = "Bayesian updating"): CardRead {
+function conceptCard(ctx = scene.owner, label = "Bayesian updating", requested?: WireObjectRef): CardRead {
   const reader = goldenReader(ctx);
-  const ref: WireObjectRef = reader.find("find", "find_concepts", label)[0]!.ref;
+  const ref: WireObjectRef = requested ?? reader.find("find", "find_concepts", label)[0]!.ref;
   const served = reader.card("card", "concept", ref) as {
     result: { status: string; data: ConceptCard; reasons?: string[] };
   };
@@ -152,7 +152,9 @@ describe("groupers", () => {
       resolution: "resolved",
     });
     const plain = conceptCard();
-    const merged = withWorldPipeline({ groupers: [merge] }, () => conceptCard());
+    const merged = withWorldPipeline({ groupers: [merge] }, () =>
+      conceptCard(scene.owner, "Bayesian updating", plain.card.concept.ref),
+    );
     expect(plain.card.concept.resolution).toBe("distinct");
     expect(merged.card.concept.resolution).toBe("resolved");
     expect(merged.card.concept.ref).toEqual(plain.card.concept.ref);

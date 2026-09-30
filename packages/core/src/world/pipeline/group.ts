@@ -11,7 +11,12 @@ export interface Cluster {
   readonly resolution: "distinct" | "resolved" | "ambiguous";
 }
 
-/** Refines the cluster the groupers before it left. It may widen `members` and never drops the anchor. */
+/**
+ * Refines the cluster the groupers before it left, retaining the anchor.
+ * Discovery requires a consistent component: for each member, grouping must
+ * return the same member set under this frame. Directional hints belong in a
+ * collector, not an identity component.
+ */
 export type Grouper = (frame: ReadFrame, cluster: Cluster) => Cluster;
 
 /** Ordered. A workstream adds one line under its marker. */
