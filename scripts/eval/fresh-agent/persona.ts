@@ -73,7 +73,7 @@ export function persona(size: PersonaSize) {
     ] },
     { id: "project-now", subject: "orchard", label: "Orchard", at: NOW, kind: "situation", claims: [
       { predicate: "situation.change", value: value("change") },
-      { predicate: "situation.blocker", value: "waiting for the paint samples" },
+      { predicate: "situation.blocker", value: value("mistaken-blocker") },
       { predicate: "situation.objective", value: value("uncertainty"), mode: "uncertain" },
     ] },
     { id: "survey-a", subject: "orchard", label: "Orchard", at: NOW, claims: [

@@ -87,7 +87,7 @@ export async function generateVault(root: string, size: PersonaSize) {
     initAgents(db);
     const mapping = { schema: "kizuki.legacy-events-mapping/v1", source_record_id: { column: "id" },
       kind: { const: "note" }, occurred_at: { column: "at", format: "rfc3339" },
-      observed_at: { column: "at", format: "rfc3339" }, text: { column: "text" },
+      observed_at: { column: "observed", format: "rfc3339" }, text: { column: "text" },
       subjects: [{ column: "label", role: "about", namespace: "persona", split: null }],
       sensitivity_hint: { column: "sensitivity", values: { personal: "personal", private: "private" } },
       metadata: { columns: [] },
@@ -98,7 +98,7 @@ export async function generateVault(root: string, size: PersonaSize) {
       const selected = scenario.records.filter(record =>
         (record.withheld ? "withheld" : record.sensitivity === "private" ? "ceiling" : record.subject === "family" ? "scope" : "shared") === group);
       const path = join(inputs, `${group}.jsonl`);
-      writeFileSync(path, selected.map(record => JSON.stringify({ id: record.id, at: record.at,
+      writeFileSync(path, selected.map(record => JSON.stringify({ id: record.id, at: record.at, observed: record.at,
         label: record.label, text: recordText(record), sensitivity: record.sensitivity ?? "personal" })).join("\n") + "\n");
       const connector = new LegacyEventsConnector({ path, format: "jsonl", mapping: join(inputs, "mapping.json") });
       const sourceKey = `fresh-agent-${group}`;
