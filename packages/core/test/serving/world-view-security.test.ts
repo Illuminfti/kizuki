@@ -33,20 +33,24 @@ function afterSnapshot(db: Database, mutate: () => void): Database {
     const value = Reflect.get(target, key, target);
     if (key === "transaction") return (run: () => unknown) => {
       const transaction = target.transaction(run);
-      return new Proxy(transaction, { get(inner, method) {
-        if (method === "immediate") return () => {
-          const result = inner.immediate();
-          if (!fired && !target.inTransaction) { fired = true; mutate(); }
-          return result;
-        };
-        return Reflect.get(inner, method, inner);
-      } });
+      const finish = (result: unknown) => {
+        // Audit admission commits first. Only the projection returns a Served
+        // body with `withheld`; nested savepoints must not trigger the race.
+        if (!fired && !target.inTransaction && result !== null && typeof result === "object" && "withheld" in result) {
+          fired = true; mutate();
+        }
+        return result;
+      };
+      return Object.assign(() => finish(transaction()), {
+        immediate: () => finish(transaction.immediate()),
+      });
     };
     return typeof value === "function" ? value.bind(target) : value;
   } });
 }
 
 test("unreadable resume handles preserve bytes, errors and work across hidden mutations", async () => {
+  let completed = 0;
   await assertNoninterference({ mutations: HIDDEN_MUTATIONS, cases: (made) => {
     const shared = readWorldView({ ...made.reader, principal: OWNER }, {
       operation: "share", of: { operation: "concept", concept: made.hidden.ref }, ...WHEN,
@@ -56,9 +60,11 @@ test("unreadable resume handles preserve bytes, errors and work across hidden mu
     return [{ name: "unreadable resume", run: (ctx) => {
       const value = serveWorldView(ctx, { operation: "resume", handle, ...WHEN });
       expect(value.data).toMatchObject({ result: REQUIRED });
+      completed++;
       return value;
     } }];
   } });
+  expect(completed).toBe(HIDDEN_MUTATIONS.length * 4);
 });
 
 test("source consent denial invalidates a conditional baseline uniformly and preserves fresh not_found", async () => {
@@ -90,18 +96,22 @@ test("purge erases discovery label payload and dependencies while independent ev
 
 test("hidden consent revoked after projection preserves conditional bytes, errors and work at the audited seam", async () => {
   const armed = new WeakSet<NoninterferenceScene>();
+  let completed = 0, revoked = 0;
   await assertNoninterference({
     mutations: [{ name: "hidden source revoke after snapshot", apply: (made) => { armed.add(made); } }],
     cases: (made) => {
       const priorView = baseline(made);
       return [{ name: "audited conditional read", run: (ctx) => {
-        const db = afterSnapshot(ctx.db, () => { if (armed.has(made)) revoke(made, made.hidden.sourceKey); });
+        const db = afterSnapshot(ctx.db, () => { if (armed.has(made)) { revoke(made, made.hidden.sourceKey); revoked++; } });
         const value = serveWorldView({ ...ctx, db }, { ...concept(made), priorView });
         expect(value.data).toMatchObject({ result: { status: "unchanged", view: priorView } });
+        completed++;
         return value;
       } }];
     },
   });
+  expect(completed).toBe(4);
+  expect(revoked).toBe(1);
 });
 
 test("visible consent revoked after projection prevents stale data and unchanged at the audited seam", async () => {
