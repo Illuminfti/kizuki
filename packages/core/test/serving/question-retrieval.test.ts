@@ -192,12 +192,14 @@ describe("bounded scan of withheld candidates", () => {
   test("a common word over hundreds of withheld captures still returns the ones it may serve, quickly", async () => {
     const live = await serveFixture();
     try {
-      for (let index = 0; index < 700; index += 1) {
-        storeEvent(live.db, `bulk-${index}`, "2026-02-01T00:00:00Z", `common widget report ${index}`, "person:ada", undefined);
-      }
-      const allowed = [0, 1, 2, 3, 4].map((index) =>
-        storeEvent(live.db, `ok-${index}`, "2026-02-02T00:00:00Z", `common widget approved ${index}`, "person:ada", "public"),
-      );
+      const allowed = live.db.transaction(() => {
+        for (let index = 0; index < 700; index += 1) {
+          storeEvent(live.db, `bulk-${index}`, "2026-02-01T00:00:00Z", `common widget report ${index}`, "person:ada", undefined);
+        }
+        return [0, 1, 2, 3, 4].map((index) =>
+          storeEvent(live.db, `ok-${index}`, "2026-02-02T00:00:00Z", `common widget approved ${index}`, "person:ada", "public"),
+        );
+      }).immediate();
       rebuildDerived(live.db, live.vaultPath);
       const started = performance.now();
       const envelope = await serveSearch(live.owner(), { query: "common widget", scope: "ledger", limit: 10 });

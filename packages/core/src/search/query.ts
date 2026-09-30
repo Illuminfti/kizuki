@@ -310,19 +310,25 @@ function searchPlan(
       bindings.push(...predicate.bindings);
     }
   }
-  const current = currentVersionSql(db, {
-    ceiling,
-    ...(types === undefined ? {} : { types }),
-    ...(subjects === undefined ? {} : { subjects }),
-    ...(opts.since === undefined ? {} : { since: opts.since }),
-    ...(opts.until === undefined ? {} : { until: opts.until }),
-    ...(source === undefined ? {} : { source }),
-  });
-  clauses.push(`(search_docs.scope != 'ledger' OR NOT EXISTS (
-    SELECT 1 FROM events
-    WHERE events.event_id = substr(search_docs.doc_id, 7) AND NOT (${current.sql})
-  ))`);
-  bindings.push(...current.bindings);
+  // A standalone floor projection can be queried without a ledger. Serving
+  // still requires live ledger evidence; when it is present, choose the
+  // reader's current source version before counting or limiting matches.
+  if (tableExists(db, "events")) {
+    const current = currentVersionSql(db, {
+      ceiling,
+      ...(types === undefined ? {} : { types }),
+      ...(subjects === undefined ? {} : { subjects }),
+      ...(opts.since === undefined ? {} : { since: opts.since }),
+      ...(opts.until === undefined ? {} : { until: opts.until }),
+      ...(source === undefined ? {} : { source }),
+    });
+    clauses.push(`(search_docs.scope != 'ledger' OR NOT EXISTS (
+      SELECT 1 FROM events WHERE events.event_id = CASE
+        WHEN search_docs.doc_id LIKE 'event:%' THEN substr(search_docs.doc_id, 7)
+        ELSE search_docs.doc_id END AND NOT (${current.sql})
+    ))`);
+    bindings.push(...current.bindings);
+  }
   const filters = clauses.map((clause) => ` AND ${clause}`).join("");
 
   // A question that finds almost nothing literally is retried as its content
