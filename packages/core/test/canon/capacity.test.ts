@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CanonWriteError } from "../../src/canon/errors";
 import { createBudgetTracker } from "../../src/canon/budget";
+import { undoReceipt } from "../../src/canon/undo";
 import { countUnwrittenLiveClaims } from "../../src/claims/store";
 import { openLedger } from "../../src/ledger/db";
 import { inspectServeDoctor } from "../../src/serve/doctor";
@@ -168,6 +169,35 @@ describe("live and archived counts", () => {
 });
 
 describe("the writer at the ceiling", () => {
+  test("receipted archiving frees a live slot and undo still works when that slot is used", async () => {
+    const { vault, db, io } = fixture(100);
+    const created = write(io, await storeClaim(db, putEvent(db)));
+    fill(vault, 99, "active");
+    expect(capacityOf(vault).state).toBe("full");
+
+    const deletion = await storeClaim(db, putEvent(db), {
+      kind: "deletion", predicate: null, object: null, body: "Archive the obsolete person page.",
+    });
+    const archived = write(io, deletion);
+    expect(archived.page_action).toBe("archive");
+    expect(archived.before_hash).toBe(created.after_hash);
+    expect(capacityOf(vault)).toMatchObject({ live: 99, archived: 1, state: "near" });
+    expect(listCanonPagesReport(vault, undefined, { include_archived: false }).pages
+      .some(page => page.relPath === created.page_path)).toBe(false);
+
+    const replacement = await storeClaim(db, putEvent(db), {
+      target: "people/ada", subject: "person:ada", subjects: ["person:ada"], body: "Ada builds engines.",
+      frontmatter: { type: "person", title: "Ada" },
+    });
+    expect(write(io, replacement).page_action).toBe("create");
+    expect(capacityOf(vault)).toMatchObject({ live: 100, archived: 1, state: "full" });
+
+    const reverted = await undoReceipt(io, archived.receipt_id);
+    expect(reverted.after_hash).toBe(created.after_hash);
+    expect(capacityOf(vault)).toMatchObject({ live: 101, archived: 0, state: "full" });
+    expect(listCanonPagesReport(vault).truncated).toBe(false);
+  });
+
   test("holds a new page under a named state while edits and reads continue", async () => {
     const { vault, db, io } = fixture(100);
     const first = await storeClaim(db, putEvent(db), { target: "people/grace" });

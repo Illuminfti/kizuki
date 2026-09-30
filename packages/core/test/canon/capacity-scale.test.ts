@@ -107,9 +107,7 @@ describe(`export and purge on a vault above ${OLD_CEILING} canon files`, () => {
   });
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-  // Exercise the large read at the public export seam. Small export tests cover
-  // durable copying/publication; syncing thousands of copies exceeds the shared
-  // machine's per-test deadline. Cancellation also proves staging cleanup.
+  // Cancellation after inventory must leave neither a publication nor private staging.
   test("export enumerates and hashes every page before payload copying", () => {
     const db = openLedger(":memory:");
     const controller = new AbortController();
@@ -135,6 +133,28 @@ describe(`export and purge on a vault above ${OLD_CEILING} canon files`, () => {
     expect(canon?.every(file => /^[a-f0-9]{64}$/.test(file.sha256))).toBe(true);
     expect(existsSync(join(root, "backup"))).toBe(false);
     expect(readdirSync(root).filter(entry => entry.includes(".kizuki-backup-"))).toEqual([]);
+  });
+
+  test("export publishes every live and archived page above the old ceiling", () => {
+    const db = openLedger(":memory:");
+    const destination = join(root, "complete-backup");
+    try {
+      const manifest = exportVault(db, vault, destination);
+      expect(manifest.complete).toBe(true);
+      expect(Object.keys(manifest.files).filter(path => path.startsWith("vault/bulk/"))).toHaveLength(BULK + ARCHIVED);
+      expect(readdirSync(join(destination, "vault", "bulk"))).toHaveLength(BULK + ARCHIVED);
+      const inventory = JSON.parse(readFileSync(join(destination, "export-inventory.json"), "utf8")) as {
+        files: { kind: string; sha256: string }[];
+      };
+      expect(inventory.files.filter(file => file.kind === "canon")).toHaveLength(BULK + ARCHIVED);
+      expect(readFileSync(join(destination, "vault", "bulk", "active-0.md"), "utf8"))
+        .toBe(readFileSync(join(vault, "bulk", "active-0.md"), "utf8"));
+      expect(readFileSync(join(destination, "vault", "bulk", "archived-0.md"), "utf8"))
+        .toBe(readFileSync(join(vault, "bulk", "archived-0.md"), "utf8"));
+      expect(readdirSync(root).filter(entry => entry.includes(".kizuki-backup-"))).toEqual([]);
+    } finally {
+      db.close();
+    }
   });
 
   test("purge removes an event and enumerates the vault to do it", () => {
