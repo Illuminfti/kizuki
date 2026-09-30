@@ -32,6 +32,8 @@ import { oneShotAll, oneShotRun, tableColumns, tableExists } from "./schema";
 import { applyLedgerV16 } from "./schema-v16";
 import { applyWorldTables } from "../world/schema";
 import { applyClaimV2TablesV31 } from "./migrations/claim-v2-v31";
+import { applyPurgeReingestV34 } from "./migrations/purge-reingest-v34";
+import { WORLD_MIGRATION_BASE } from "../world/tables/versions";
 
 interface Migration {
   version: number;
@@ -226,6 +228,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 31, apply: applyClaimV2TablesV31 },
   { version: 32, apply: applyWorldTables },
   { version: 33, apply: applyWorldCanonV33 },
+  { version: WORLD_MIGRATION_BASE, apply: applyPurgeReingestV34 },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

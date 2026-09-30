@@ -7,7 +7,7 @@ test("ledger33 represents retained and erased typed canon receipts in the existi
   expect(columns).toContain("record_codec");
   expect(columns).toContain("world_basis");
   expect(columns).toContain("erasure_integrity");
-  expect(db.query("SELECT version FROM schema_version").get()).toEqual({version:33});
+  expect(db.query("SELECT version FROM schema_version").get()).toEqual({version:34});
  }finally{db.close();}
 });
 

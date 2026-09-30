@@ -36,6 +36,7 @@ import { parseFrontmatter } from "../vault/frontmatter";
 import { MAX_CANON_PAGES, MAX_CANON_WALK_BYTES, listCanonPagesReport } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
 import { eventPurgeProofDigest, initPurgeOps, PURGE_SLA_SECONDS } from "./purge-schema";
+import { capturePurgeClaimScope, compactLedger, erasePurgedPayloads, markSupportPurgedClaims, proveLocalStores, truncateLedgerLog, type PurgeErasure, type PurgeStoreProof } from "./purge-stores";
 import { tableColumns, tableExists } from "./schema";
 
 export { PURGE_SLA_SECONDS, PURGE_SCHEMA_VERSION, applyPurgeV5 } from "./purge-schema";
@@ -129,6 +130,8 @@ export interface PurgeOutcome {
   purge_ops: PurgeOp[];
   rewritten: PurgeRewriteRef[];
   uncertain_pages: string[];
+  /** What the final erasure step removed. Empty until every held page is rewritten. */
+  erased: PurgeErasure;
 }
 
 export interface PurgeFilter {
@@ -165,12 +168,19 @@ export interface PurgePhaseOptions {
 
 export interface PurgeRunOptions extends PurgePhaseOptions {
   retrieval?: RetrievalPort;
+  /**
+   * Shared by the batches of one recovery sweep. A ledger rewrite drops every
+   * page freed before it ran, so the first batch's compaction covers the rest.
+   */
+  sweep?: { compacted: boolean };
 }
 
 export interface PurgeVerifyReport {
   receipt_id: string;
   batch_id: string | null;
   proofs: PurgeProof[];
+  /** One proof per store: events, claims, proposals, search, graph, canon, archive, receipt images, database. */
+  stores: PurgeStoreProof[];
   operations: PurgeOperationResult[];
   pages_rewritten: number;
   hold_lifted: boolean;
@@ -337,6 +347,10 @@ function parseProof(raw: string | null): PurgeProof | null {
   }
 }
 
+function emptyErasure(): PurgeErasure {
+  return { archive_copies: [], claims: 0, proposals: 0, database_sealed: false };
+}
+
 function emptyOutcome(): PurgeOutcome {
   return {
     receipts: [],
@@ -345,7 +359,15 @@ function emptyOutcome(): PurgeOutcome {
     purge_ops: [],
     rewritten: [],
     uncertain_pages: [],
+    erased: emptyErasure(),
   };
+}
+
+/** Freed pages keep their bytes unless secure_delete is on while the delete runs. */
+function enableSecureDelete(db: Database): () => void {
+  const prior = db.query<{ secure_delete: number }, []>("PRAGMA secure_delete").get()?.secure_delete ?? 0;
+  db.exec("PRAGMA secure_delete=ON");
+  return () => db.exec(`PRAGMA secure_delete=${prior}`);
 }
 
 const RECORDED_SELECTOR_KINDS = ["event", "connector", "record", "source", "subject", "event+connector"] as const;
@@ -943,7 +965,47 @@ export function listPurgeRecoveryReceipts(db: Database): string[] {
     if (op.state === "pending") receipts.add(readBatch(db, op.receipt_id)?.batch_id ?? op.receipt_id);
   }
   for (const hold of readHolds(db)) receipts.add(readBatch(db, hold.proposal_id)?.batch_id ?? hold.proposal_id);
+  // A batch whose last step never ran still holds claim text and archive copies.
+  if (tableExists(db, "purge_batches") && tableExists(db, "purge_erasures")) {
+    for (const row of db.query<{ batch_id: string }, []>(
+      "SELECT batch_id FROM purge_batches WHERE state='ready' AND batch_id NOT IN (SELECT batch_id FROM purge_erasures WHERE sealed = 1)",
+    ).all()) receipts.add(row.batch_id);
+  }
   return [...receipts].sort();
+}
+
+/** True while a purge still owes work: held pages, pending store operations or an unsealed erasure. */
+export function purgeNeedsCompletion(db: Database, receiptId: string): boolean {
+  const batch = readBatch(db, receiptId);
+  return listPurgeRecoveryReceipts(db).includes(batch?.batch_id ?? receiptId);
+}
+
+export interface PendingPurgeReport {
+  receipt_id: string;
+  ok: boolean;
+  /** Why this batch could not be finished, when it threw. Never the purged text. */
+  error?: string;
+}
+
+/**
+ * Finish every purge that stopped part way. The daemon sweep and `recover`
+ * share this entry. One batch failing does not stop the others.
+ */
+export async function resumePendingPurges(
+  db: Database,
+  vaultPath: string,
+  options: PurgeRunOptions = {},
+): Promise<PendingPurgeReport[]> {
+  const reports: PendingPurgeReport[] = [];
+  const sweep = options.sweep ?? { compacted: false };
+  for (const receiptId of listPurgeRecoveryReceipts(db)) {
+    try {
+      reports.push({ receipt_id: receiptId, ok: (await resumePurge(db, vaultPath, receiptId, { ...options, sweep })).ok });
+    } catch (error) {
+      reports.push({ receipt_id: receiptId, ok: false, error: error instanceof PurgeError ? error.code : "resume_failed" });
+    }
+  }
+  return reports;
 }
 
 function batchEventIds(db: Database, batchId: string): string[] {
@@ -1123,6 +1185,7 @@ export function purgeEvents(
   const io = snapshotCanonIo({ db, vault_path: vaultPath });
   filter = Object.freeze({ ...filter });
   options = Object.freeze({ ...options });
+  const restoreSecureDelete = enableSecureDelete(db);
   try {
     return withCanonMutationSync(io, (scope, owned) => {
       if (tableExists(owned.db, "canon_write_reservations")) settleWriteReservations(owned.db, owned.vault_path);
@@ -1133,7 +1196,7 @@ export function purgeEvents(
       throw new PurgeError("canon_changed", "canon writer is busy; retry purge", filter);
     }
     throw error;
-  }
+  } finally { restoreSecureDelete(); }
 }
 
 function purgeEventsOwned(
@@ -1222,6 +1285,12 @@ function purgeEventsOwned(
     );
 
     const selectorKind = recordedSelectorKind(filter);
+    // The evidence links of typed claims go with the events; name those claims first.
+    capturePurgeClaimScope(db, batchReceipt, [...purgedIds]);
+    const insertSuppressionSource = tableExists(db, "purge_suppression_sources") && tableExists(db, "source_event_bindings")
+      ? db.query<never, [string, string]>(
+          "INSERT OR IGNORE INTO purge_suppression_sources (receipt_id, source_key) SELECT ?, source_key FROM source_event_bindings WHERE event_id = ?")
+      : null;
     for (const candidate of candidates) {
       const receipt: PurgeReceipt = {
         receipt_id: receipts.length === 0 ? batchReceipt : mint(options.ids),
@@ -1239,6 +1308,7 @@ function purgeEventsOwned(
         eventPurgeProofDigest(candidate.content_hash, candidate.source_record_id, selectorKind),
       );
       insertProof.run(receipt.receipt_id, candidate.content_hash, candidate.source_record_id, selectorKind);
+      insertSuppressionSource?.run(receipt.receipt_id, candidate.event_id);
       db.query("INSERT INTO purge_batch_receipts VALUES(?,?)").run(receipt.receipt_id, batchReceipt);
       eraseWorldEventSupports(db,candidate.event_id);
       deleteSupportEvents?.run(candidate.event_id);
@@ -1264,6 +1334,7 @@ function purgeEventsOwned(
       subjectRefs,
     );
     markClaimsAfterPurge(db, purgedAt);
+    const supportPurged = markSupportPurgedClaims(db, batchReceipt, purgedAt);
     assertLegacyIdentityAbsent(
       db,
       purgedIds,
@@ -1280,7 +1351,7 @@ function purgeEventsOwned(
       }
     }
 
-    const retrievalClaimIds = citing.map((claim) => claim.claim_id);
+    const retrievalClaimIds = [...new Set([...citing.map((claim) => claim.claim_id), ...supportPurged])];
     const ops: PurgeOp[] = [];
     if (retrievalStore !== null) {
       const op: PurgeOp = {
@@ -1308,6 +1379,7 @@ function purgeEventsOwned(
       purge_ops: ops,
       rewritten: [],
       uncertain_pages: matched.uncertain,
+      erased: emptyErasure(),
     };
   }).immediate();
 
@@ -1613,7 +1685,52 @@ function rewriteHolds(
   return rewritten;
 }
 
-/** Phases 1–3 in one pass: hold, reconcile stores, rewrite canon. */
+/**
+ * Phase 3 and 4: rewrite held pages, then erase what only those rewrites still
+ * needed (claim text, archive copies). A batch that still holds a page keeps
+ * its claim text, so nothing is erased early.
+ */
+function settleBatch(
+  scope: VaultMutationScope,
+  io: CanonIo,
+  options: PurgeRunOptions,
+  batchId: string,
+): { rewritten: PurgeRewriteRef[]; erased: PurgeErasure } {
+  const { db, vault_path: vaultPath } = io;
+  const files = requireCanonFiles(scope, io);
+  const rewritten = rewriteHolds(scope, io, options);
+  eraseCanonStageTraces(files, db, vaultPath);
+  const finished = readBatch(db, batchId)?.state === "ready" && !readHolds(db).some(hold => hold.proposal_id === batchId);
+  if (!finished) return { rewritten, erased: emptyErasure() };
+  // A source authorization purge erases claim text, archive copies and the ledger
+  // file through source erasure, which still needs that text to redact its pages.
+  const owned = tableExists(db, "source_grants") && db.query("SELECT 1 FROM source_grants WHERE purge_receipt_id = ?").get(batchId) !== null;
+  const payloads = owned ? emptyErasure() : erasePurgedPayloads(db, files, vaultPath, batchId, batchEventIds(db, batchId));
+  // A batch is finished only once its freed pages and log frames are gone too;
+  // otherwise recover retries it. The first compaction of a sweep covers the rest.
+  const compacted = owned || options.sweep?.compacted === true || compactLedger(db);
+  if (compacted && options.sweep !== undefined) options.sweep.compacted = true;
+  const sealed = compacted && (owned || truncateLedgerLog(db));
+  const erased: PurgeErasure = { ...payloads, database_sealed: sealed };
+  recordErasure(db, batchId, nowIso(options.now), erased);
+  return { rewritten, erased };
+}
+
+/** Receipt what was erased, keeping what earlier unsealed attempts already removed. */
+function recordErasure(db: Database, batchId: string, at: string, erased: PurgeErasure): void {
+  const prior = db.query<{ archive_paths: string; claims: number; proposals: number }, [string]>(
+    "SELECT archive_paths, claims, proposals FROM purge_erasures WHERE batch_id = ?",
+  ).get(batchId);
+  const paths = [...new Set([...(prior === null ? [] : (JSON.parse(prior.archive_paths) as string[])), ...erased.archive_copies])].sort();
+  db.query(
+    `INSERT INTO purge_erasures (batch_id, erased_at, sealed, archive_paths, claims, proposals)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(batch_id) DO UPDATE SET erased_at = excluded.erased_at, sealed = excluded.sealed,
+       archive_paths = excluded.archive_paths, claims = excluded.claims, proposals = excluded.proposals`,
+  ).run(batchId, at, erased.database_sealed ? 1 : 0, JSON.stringify(paths), Math.max(erased.claims, prior?.claims ?? 0), Math.max(erased.proposals, prior?.proposals ?? 0));
+}
+
+/** Phases 1–4 in one pass: hold, reconcile stores, rewrite canon, erase payloads. */
 export async function runPurge(
   db: Database,
   vaultPath: string,
@@ -1640,8 +1757,11 @@ export async function runPurge(
   if (receiptId !== undefined) {
     phase1.purge_ops = await reconcileOps(db, receiptId, binding, clock);
   }
-  phase1.rewritten = rewriteHolds(scope, io, options);
-  eraseCanonStageTraces(requireCanonFiles(scope, io), db, vaultPath);
+  if (receiptId !== undefined) {
+    Object.assign(phase1, settleBatch(scope, io, options, receiptId));
+    // Truncate last: only then are the old page images gone from the log.
+    phase1.erased.database_sealed = truncateLedgerLog(db) && phase1.erased.database_sealed;
+  }
   return phase1;
   } finally { if (binding.owned) await binding.port?.close(); }
   }, filter);
@@ -1662,6 +1782,7 @@ function emptyVerifyReport(receiptId: string, batchId: string | null = null): Pu
     receipt_id: receiptId,
     batch_id: batchId,
     proofs: [],
+    stores: [],
     operations: [],
     pages_rewritten: 0,
     hold_lifted: false,
@@ -1683,9 +1804,9 @@ async function verifyPurgeOwned(
   scope: VaultMutationScope,
   io: CanonIo,
   receiptId: string,
-  options: { retrieval?: RetrievalPort; now?: () => string },
+  options: { retrieval?: RetrievalPort; now?: () => string; local_proofs?: boolean },
 ): Promise<PurgeVerifyReport> {
-  requireCanonFiles(scope, io);
+  const files = requireCanonFiles(scope, io);
   const { db, vault_path: vaultPath } = io;
   initPurgeOps(db);
   const clock = options.now ?? (() => new Date().toISOString());
@@ -1743,6 +1864,8 @@ async function verifyPurgeOwned(
   const heldPages = readHolds(db).filter(hold => hold.proposal_id === batchId).map(hold => hold.page_path);
   const holdLifted = heldPages.length === 0;
   const finalOps = listOps(db, batchId);
+  const stores = options.local_proofs === false ? [] : proveLocalStores(db, files, vaultPath, batchId, eventIds, clock(), truncateLedgerLog(db));
+  if (stores.some(store => store.found.length > 0 || store.unverifiable.length > 0)) ok = false;
   if (!holdLifted || !recognizedPurgeReceipt(db, receiptId) || !legacyIdentityAbsenceProvable(db) ||
       !eventPurgeIntegrityOk(db, batchId) || anyPurgedEventPresent(db, eventIds) ||
       JSON.stringify(batchEventIds(db, batchId)) !== JSON.stringify(eventIds) ||
@@ -1755,6 +1878,7 @@ async function verifyPurgeOwned(
     receipt_id: receiptId,
     batch_id: batchId,
     proofs: operations.flatMap((op) => (op.state === "done" && op.proof !== null ? [op.proof] : [])),
+    stores,
     operations,
     pages_rewritten: pagesRewritten,
     hold_lifted: holdLifted,
@@ -1780,10 +1904,9 @@ export async function resumePurge(db: Database, vaultPath: string, receiptId: st
   try {
     await reconcileOps(db, batch.batch_id, binding, clock);
     // Revalidate old done rows before a resumed rewrite can lift their holds.
-    await verifyPurgeOwned(scope, io, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
-    rewriteHolds(scope, io, options);
+    await verifyPurgeOwned(scope, io, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port}), local_proofs: false});
     // Recovery records and quarantined stage bytes follow their purged receipts.
-    eraseCanonStageTraces(requireCanonFiles(scope, io), db, vaultPath);
+    settleBatch(scope, io, options, batch.batch_id);
     return await verifyPurgeOwned(scope, io, receiptId, {...options,...(binding.port === null ? {} : {retrieval:binding.port})});
   } finally { if (binding.owned) await binding.port?.close(); }
   });
@@ -1794,12 +1917,13 @@ export async function underPurgeFence<T>(db: Database, vaultPath: string, option
   const io = snapshotCanonIo({ db, vault_path: vaultPath });
   options = Object.freeze({ ...options });
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const restoreSecureDelete = enableSecureDelete(db);
   const operation = withCanonMutationAsync(io, work).catch(error => {
     if (error instanceof VaultMutationError && error.code === "writer_busy") {
       throw new PurgeError("canon_changed", "canon writer is busy; retry purge", filter);
     }
     throw error;
-  }).finally(() => { if (timer !== undefined) clearTimeout(timer); });
+  }).finally(() => { if (timer !== undefined) clearTimeout(timer); restoreSecureDelete(); });
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       if (options.retrieval !== undefined) invalidateLocalSourcePort(options.retrieval);

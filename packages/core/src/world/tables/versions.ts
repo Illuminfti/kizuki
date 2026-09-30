@@ -9,8 +9,8 @@
 export const WORLD_SLOT_KEYS = ["view", "known", "consol", "ident", "attn", "refs", "fcst"] as const;
 export type WorldSlotKey = (typeof WORLD_SLOT_KEYS)[number];
 
-/** The last ledger version that MIGRATIONS declares without this file. */
-export const WORLD_MIGRATION_BASE = 33;
+/** The last ledger version that MIGRATIONS declares without this file. The purge tables migration is that version. */
+export const WORLD_MIGRATION_BASE = 34;
 
 export const WORLD_MIGRATION_VERSIONS = {
   // slot: view

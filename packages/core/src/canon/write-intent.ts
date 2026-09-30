@@ -173,7 +173,8 @@ export function parseCanonWriteIntent(value: unknown): CanonWriteIntent {
     validateWorldErasure(value.erasure,receipt);
   } else if ((before === null ? (receipt.kind === "revert" ? ABSENT_PAGE_HASH : null) : hashBytes(before)) !== receipt.before_hash ||
       (after === null ? ABSENT_PAGE_HASH : hashBytes(after)) !== receipt.after_hash ||
-      receipt.archive_path !== (before === null ? null : archiveRelPath(receipt.page_path, receipt.receipt_id))) recoveryFailure("intent_invalid");
+      (receipt.archive_path !== (before === null ? null : archiveRelPath(receipt.page_path, receipt.receipt_id)) &&
+       !(receipt.kind === "purge_rewrite" && receipt.archive_path === null))) recoveryFailure("intent_invalid");
   object(value.completion, ["mode", "claim_kind", "page_id", "subject_key", "original_receipt_id"]);
   oneOf(value.completion.mode, ["write", "purge", "revert"]); oneOf(value.completion.claim_kind, ["entity", "claim", "edit", "merge", "deletion", "purge_review", "revert"]);
   nullableText(value.completion.page_id); nullableText(value.completion.subject_key); nullableText(value.completion.original_receipt_id);

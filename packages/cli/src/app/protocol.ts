@@ -75,6 +75,7 @@ export interface AppOperation {
         stored: number;
         duplicates: number;
         errors: number;
+        suppressed?: number;
     } | null;
     result: {
         message: string;

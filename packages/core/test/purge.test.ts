@@ -24,6 +24,7 @@ import {
   verifyPurge,
 } from "../src/ledger/purge";
 import { eventPurgeProofDigest } from "../src/ledger/purge-schema";
+import { liftPurgeSuppressions } from "../src/ledger/purge-suppression";
 import { tableExists } from "../src/ledger/schema";
 import { setSourceGrant } from "../src/ledger/source-grants";
 import { ulid } from "../src/util/ulid";
@@ -414,6 +415,9 @@ describe("purgeEvents", () => {
     expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
     expect(inspectOpenLedgerHealth(db).ok).toBe(false);
 
+    // A purged record is refused until the owner lifts it; this run resurrects it on purpose.
+    expect(accept(db, event("source-verify"), { source: { source_key: source, expected_revision: 1 } }).status).toBe("suppressed");
+    liftPurgeSuppressions(db, receipt, "2026-09-02T12:00:00.000Z");
     const resurrected = storedEvent(db, event("source-verify"), source);
     expect(resurrected.event_id).not.toBe(target.event_id);
     expect((await verifyPurge(db, vaultPath, receipt)).ok).toBe(false);
@@ -565,6 +569,7 @@ describe("purgeEvents", () => {
       purge_ops: [],
       rewritten: [],
       uncertain_pages: [],
+      erased: { archive_copies: [], claims: 0, proposals: 0, database_sealed: false },
     });
     expect(count(db)).toBe(1);
     expect(

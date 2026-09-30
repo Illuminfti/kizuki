@@ -1,19 +1,26 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   PurgeError,
+  liftPurgeSuppressions,
+  listPurgeSuppressions,
   previewPurge,
+  purgeNeedsCompletion,
   resolvePurgeConnectorId,
   runPurge,
   resumePurge,
+  verifyPurge,
 } from "@kizuki/core";
-import type { PurgeFilter, PurgePreview } from "@kizuki/core";
+import type { PurgeFilter, PurgeOutcome, PurgePreview } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
+import { listHostConnections } from "../connections";
 import { withReadVault, withVault } from "../context";
 import { refreshAndPublishDerived } from "../derived";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 export const PURGE_IRREVERSIBLE =
-  "Purge physically deletes event evidence. Undo cannot resurrect purged events. Canon rewrites stay reversible by receipt.";
+  "Purge physically deletes event evidence. Undo cannot resurrect purged events, and a canon rewrite that removes purged text keeps no copy of it, so it cannot be undone either.";
 
 function plural(count: number, noun: string): string {
   return count === 1 ? `${count} ${noun}` : `${count} ${noun}s`;
@@ -60,16 +67,35 @@ function printPreview(io: CliIo, preview: PurgePreview): void {
   }
 }
 
+/** Paths where a just-purged source record is still present at its source. */
+function stillAtSource(
+  ctx: { db: Parameters<typeof listPurgeSuppressions>[0]; store: Parameters<typeof listHostConnections>[1] },
+  outcome: PurgeOutcome,
+): string[] {
+  const receipts = new Set(outcome.receipts.map((receipt) => receipt.receipt_id));
+  const found = new Set<string>();
+  for (const record of listPurgeSuppressions(ctx.db)) {
+    if (!receipts.has(record.receipt_id)) continue;
+    for (const { state } of listHostConnections(ctx.db, ctx.store, record.connector_id)) {
+      const root = state?.config.path;
+      if (root === undefined) continue;
+      const path = join(root, record.source_record_id);
+      if (existsSync(path)) found.add(path);
+    }
+  }
+  return [...found].sort();
+}
+
 export const PURGE_SCHEMA = {
-  options: ["--event", "--subject", "--source", "--connector", "--record", "--reason", "--verify"],
-  flags: ["--include-aliases", "--json", "--dry-run", "--confirm", "--allow-empty"],
+  options: ["--event", "--subject", "--source", "--connector", "--record", "--reason", "--verify", "--lift-suppression"],
+  flags: ["--include-aliases", "--json", "--dry-run", "--confirm", "--allow-empty", "--suppressions", "--repair"],
   irreversible: true,
 } as const satisfies CommandHelpSchema;
 
 export const purgeCommand: Command = {
   name: "purge",
   usage:
-    "purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json]",
+    "purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT [--repair]) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json] | purge --suppressions [--json] | purge --lift-suppression RECEIPT [--json]",
   summary:
     "physically delete matching events, hold affected pages, and prove absence",
   schema: PURGE_SCHEMA,
@@ -83,8 +109,43 @@ export const purgeCommand: Command = {
     const dryRun = parsed.flags.has("--dry-run");
     const confirm = parsed.flags.has("--confirm");
     const allowEmpty = parsed.flags.has("--allow-empty");
+    const repair = parsed.flags.has("--repair");
+
+    const liftId = parsed.options.get("--lift-suppression");
+    const listing = parsed.flags.has("--suppressions");
+    if (liftId !== undefined || listing) {
+      if (
+        (liftId !== undefined && listing) ||
+        ["--event", "--subject", "--source", "--connector", "--record", "--reason", "--verify"].some((name) => parsed.options.has(name)) ||
+        parsed.flags.has("--include-aliases") || dryRun || confirm || allowEmpty || repair
+      ) {
+        throw new UsageError(this.usage);
+      }
+      if (liftId === undefined) {
+        return withReadVault(io, async (ctx) => {
+          const records = listPurgeSuppressions(ctx.db);
+          if (asJson) io.out(jsonEnvelope("purge", "ok", { suppressions: records }));
+          else if (records.length === 0) io.out("no purged source record is being refused");
+          else {
+            for (const record of records) {
+              io.out(`${record.connector_id}  ${record.source_key === null ? "-" : record.source_key}  ${record.source_record_id}  purge ${record.receipt_id}  ${record.purged_at}`);
+            }
+            io.out("lift with: kizuki purge --lift-suppression RECEIPT");
+          }
+          return 0;
+        });
+      }
+      return withVault(io, async (ctx) => {
+        const lifted = liftPurgeSuppressions(ctx.db, liftId, new Date().toISOString());
+        if (asJson) io.out(jsonEnvelope("purge", lifted.length > 0 ? "ok" : "error", { lifted }));
+        else if (lifted.length > 0) io.out(`lifted ${plural(lifted.length, "suppression")}; the next sync may capture those source records again`);
+        if (lifted.length === 0) io.err(`no active suppression for purge ${liftId}`);
+        return lifted.length > 0 ? 0 : 1;
+      });
+    }
 
     const verifyId = parsed.options.get("--verify");
+    if (verifyId === undefined && repair) throw new UsageError("--repair only applies to --verify");
     if (verifyId !== undefined) {
       if (
         parsed.options.has("--event") ||
@@ -101,7 +162,21 @@ export const purgeCommand: Command = {
         throw new UsageError(this.usage);
       }
       return withVault(io, async (ctx) => {
-        const report = await resumePurge(ctx.db, ctx.vaultPath, verifyId, ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval });
+        const retrieval = ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval };
+        // A purge that still owes work is finished here, as it always was. A
+        // finished purge is only proved: a store that holds the text again is a
+        // failure to report, so it is erased only when the owner asks with --repair.
+        const finishing = purgeNeedsCompletion(ctx.db, verifyId);
+        let repairedStores: string[] = [];
+        let report;
+        if (finishing) report = await resumePurge(ctx.db, ctx.vaultPath, verifyId, retrieval);
+        else {
+          report = await verifyPurge(ctx.db, ctx.vaultPath, verifyId, retrieval);
+          if (repair && !report.ok) {
+            repairedStores = report.stores.filter((proof) => proof.found.length > 0).map((proof) => proof.store);
+            report = await resumePurge(ctx.db, ctx.vaultPath, verifyId, retrieval);
+          }
+        }
         // Verification rewrites held canon; the derived cursor has to follow the
         // shrunk ledger or doctor and query read the vault as permanently stale.
         const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval);
@@ -109,6 +184,7 @@ export const purgeCommand: Command = {
           io.out(
             jsonEnvelope("purge", report.ok ? "ok" : "error", {
               ...report,
+              repaired_stores: repairedStores,
               ops: report.operations.map((op) => ({
                 op_id: op.op_id,
                 store: op.store,
@@ -126,6 +202,15 @@ export const purgeCommand: Command = {
               `${pad(op.store, 23)} checked ${proof?.checked ?? 0}  found ${proof?.found.length ?? 0}   ${op.state}   provenance checked ${proof?.provenance.checked ?? 0}  found ${proof?.provenance.found.length ?? 0}`,
             );
           }
+          for (const proof of report.stores) {
+            io.out(
+              `${pad(proof.store, 23)} checked ${proof.checked}  found ${proof.found.length}   ${proof.found.length === 0 ? (proof.unverifiable.length === 0 ? "clean" : "unproven") : `still holds ${proof.found.join(", ")}`}`,
+            );
+            if (proof.unverifiable.length > 0) {
+              io.err(`${proof.store} could not be proven clean: ${proof.unverifiable.join(", ")}. Repair or remove the named path, then run: kizuki purge --verify ${verifyId}`);
+            }
+          }
+          if (repairedStores.length > 0) io.err(`repaired: ${repairedStores.join(", ")} held purged evidence again and were erased`);
           const hold = report.hold_lifted ? "hold lifted" : "hold remains";
           io.out(
             `${pad("canon", 23)} pages rewritten ${report.pages_rewritten}    ${hold}`,
@@ -148,6 +233,8 @@ export const purgeCommand: Command = {
               io.err(
                 `check kizuki doctor, and that each held page and its parent directories are owned by you and are not group- or world-writable, then retry: kizuki purge --verify ${verifyId}`,
               );
+            } else if (report.stores.some((proof) => proof.found.length > 0) && !finishing) {
+              io.err(`a store holds purged evidence; erase it with: kizuki purge --verify ${verifyId} --repair`);
             } else {
               io.err(`retry: kizuki purge --verify ${verifyId}`);
             }
@@ -235,12 +322,17 @@ export const purgeCommand: Command = {
         // refresh the counts never reconcile and every later read reports
         // index-behind-ledger.
         const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval);
+        const present = stillAtSource(ctx, outcome);
+        const receiptIds = new Set(outcome.receipts.map((receipt) => receipt.receipt_id));
+        const suppressed = listPurgeSuppressions(ctx.db).filter((record) => receiptIds.has(record.receipt_id));
         if (asJson) {
           io.out(
             jsonEnvelope("purge", "ok", {
               ...outcome,
               irreversible_events: true,
               undo_restores_canon_only: true,
+              source_records_still_present: present,
+              suppressions_created: suppressed.length,
             }, { degraded: derived.degraded }),
           );
         } else {
@@ -256,7 +348,21 @@ export const purgeCommand: Command = {
           for (const op of outcome.purge_ops) {
             io.out(`op ${op.store} state=${op.state}`);
           }
+          const erased = outcome.erased;
+          io.out(
+            `erased ${plural(erased.claims, "claim")}, ${plural(erased.proposals, "proposal")}, ${plural(erased.archive_copies.length, "archive file")}${erased.archive_copies.length > 0 ? `: ${erased.archive_copies.join(", ")}` : ""}; ledger files ${erased.database_sealed ? "compacted" : "not compacted, run kizuki purge --verify to retry"}`,
+          );
           for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
+          if (suppressed.length > 0) {
+            io.err(
+              `notice: a later sync will refuse ${plural(suppressed.length, "purged source record")} if the source offers ${suppressed.length === 1 ? "it" : "them"} again. List them with: kizuki purge --suppressions. Allow again with: kizuki purge --lift-suppression ${outcome.receipts[0]?.receipt_id ?? "RECEIPT"}`,
+            );
+          }
+          for (const path of present) {
+            io.err(
+              `warning: the source record still exists at ${path}. Remove it or move it out of the source, or a later sync will refuse it. Allow it again with: kizuki purge --lift-suppression ${outcome.receipts[0]?.receipt_id ?? "RECEIPT"}`,
+            );
+          }
         }
         return 0;
       } catch (error) {

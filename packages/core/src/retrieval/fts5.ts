@@ -153,6 +153,8 @@ export class Fts5RetrievalPort implements RetrievalPort {
     try {
       this.db.exec("PRAGMA busy_timeout = 0");
       this.db.exec("PRAGMA journal_mode = WAL");
+      // Freed pages must not keep the text of documents purge later removes.
+      this.db.exec("PRAGMA secure_delete = ON");
       initFts5RetrievalStore(this.db);
       chmodSync(dbPath, 0o600);
       this.ensureEngineJson();
@@ -428,7 +430,30 @@ export class Fts5RetrievalPort implements RetrievalPort {
         this.db.query<never, [string]>(`DELETE FROM ${table} WHERE ${condition}`).run(values);
       }
     }).immediate();
+    if (byProvenance) this.sealErasedEvidence();
     return { processed: ids.length };
+  }
+
+  /**
+   * Erasure by provenance is the purge path. Older FTS5 segments and earlier
+   * revisions keep the removed tokens until the index is rebuilt and the file
+   * compacted, so purge does both before it reports absence.
+   */
+  private sealErasedEvidence(): void {
+    this.db.exec("INSERT INTO search_docs(search_docs) VALUES ('rebuild')");
+    // A reader holding the file open keeps old pages in the log or the file. Say
+    // so, so the purge operation stays pending and is retried, instead of
+    // reporting absence over bytes that are still there.
+    const priorTimeout = this.db.query<{ timeout: number }, []>("PRAGMA busy_timeout").get()?.timeout ?? 0;
+    this.db.exec("PRAGMA busy_timeout=2000");
+    try {
+      const checkpoint = () => this.db.query<{ busy: number }, []>("PRAGMA wal_checkpoint(TRUNCATE)").get()?.busy !== 0;
+      if (checkpoint()) throw new Error("retrieval store files are busy; retry");
+      this.db.exec("VACUUM");
+      if (checkpoint()) throw new Error("retrieval store files are busy; retry");
+    } finally {
+      this.db.exec(`PRAGMA busy_timeout=${priorTimeout}`);
+    }
   }
 
   async verifyAbsent(ids: readonly string[]): Promise<AbsenceProof> {

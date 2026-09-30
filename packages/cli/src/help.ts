@@ -215,7 +215,7 @@ export function printCommandHelp(
   if (schema.irreversible === true) {
     write("");
     write("Irreversible");
-    write("  Physical event deletion cannot be undone. Canon rewrites stay reversible by receipt.");
+    write("  Physical event deletion cannot be undone. A canon rewrite that removes purged text keeps no copy of it, so it cannot be undone either.");
   }
   write("");
   write("Exit codes");
