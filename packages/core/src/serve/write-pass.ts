@@ -20,7 +20,6 @@ import { applyCanonWriteOwned } from "../canon/apply";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { machineOriginPath } from "../canon/origin";
-import { nowOf } from "../canon/store";
 import type { Claim } from "../contracts/proposal";
 import type { ClaimDraft, ProduceResult, ProducerDiagnostic, ProducerPort } from "../contracts/producer";
 import type { DroppedDraftV2, ProduceResultV2, ProducerV2Port } from "../contracts/producer-v2";
@@ -437,7 +436,7 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
       // The writer validates provenance before refusing a create over an existing file.
       // This terminal outcome consumes no canon write and must not retry forever.
       if (error instanceof CanonWriteError && error.code === "page_exists") {
-        if (skipUnwrittenClaim(db, claim.claim_id, nowOf(io))) {
+        if (skipUnwrittenClaim(db, claim.claim_id, io.now?.() ?? new Date().toISOString())) {
           tally.claims_skipped["page_exists"] = (tally.claims_skipped["page_exists"] ?? 0) + 1;
         }
         continue;
