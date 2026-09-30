@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
 import { setSourceGrant } from "../../src/ledger/source-grants";
 import { cardFixture } from "./card-fixture";
+import { observe } from "../helpers/noninterference";
 
 test("overlapping definitions and opposite polarities mark both claims conflicting", async () => {
   const f = await cardFixture();
@@ -33,9 +34,11 @@ test("a private conflicting definition changes neither narrow card bytes nor vis
   try {
     const agent = addAgent(f.db, "card-reader", { ...OWNER_AGENT_GRANT, ceiling: "public" });
     const reader = { ...f.ctx, principal: authenticate(f.db, agent.token)! };
-    const before = JSON.stringify(f.card(reader));
+    f.card(reader);
+    const read = { name: "card", run: (ctx: typeof reader) => f.card(ctx) };
+    const before = await observe(reader, read);
     await f.write("concept.definition", { kind: "literal", value: "A private contradiction" }, { floor: "private" });
-    expect(JSON.stringify(f.card(reader))).toBe(before);
+    expect(await observe(reader, read)).toEqual(before);
     expect(f.card().definitions.every((r) => r.conflict === "present")).toBe(true);
   } finally { f.dispose(); }
 });
@@ -76,9 +79,25 @@ test("repeated exact text adds no independent support and unknown lineage stays 
     await f.write("concept.definition", { kind: "literal", value: "Revise beliefs using evidence" }, { text: f.definition.event.text });
     const assessments = f.card().definitions[0]!.assessments;
     expect(assessments).toHaveLength(2);
-    expect(assessments.filter((a) => a.independence === "independent")).toHaveLength(1);
-    expect(assessments.filter((a) => a.independence === "dependent")).toHaveLength(1);
+    expect(assessments.filter((a) => a.independence === "independent")).toHaveLength(0);
+    expect(assessments.filter((a) => a.independence === "dependent")).toHaveLength(2);
     await f.write("concept.example", { kind: "literal", value: "Unresolved derivation" }, { metadata: { lineage: { status: "unknown" } } });
     expect(f.card().relations[0]!.assessments[0]!.independence).toBe("unknown");
+  } finally { f.dispose(); }
+});
+
+test("assistance for another actor, another task or a disjoint valid window cannot qualify this application", async () => {
+  const f = await cardFixture();
+  try {
+    await f.write("learning.application", { kind: "subject", ref: f.ref("topic:bayes") }, { subject: "person:ada", context: ["task:one"] });
+    const assistance = (value: string) => ({ kind: "vocabulary" as const, ref: { kind: "vocabulary" as const, id: value } });
+    await f.write("learning.assistance", assistance("learning/assisted"), { subject: "task:one", context: ["person:ada"] });
+    await f.write("learning.assistance", assistance("learning/unassisted"), { subject: "task:one", context: ["person:ben"] });
+    await f.write("learning.assistance", assistance("learning/unassisted"), { subject: "task:two", context: ["person:ada"] });
+    await f.write("learning.assistance", assistance("learning/unassisted"), { subject: "task:one", context: ["person:ada"], from: "2025-01-01T00:00:00Z", until: "2026-01-01T00:00:00Z" });
+    const application = f.card().learning[0]!;
+    expect(application.assistance).toBe("assisted");
+    expect(application.assistanceEvidence).toHaveLength(1);
+    expect(application.assistanceEvidence[0]!.conflict).toBe("none_observed");
   } finally { f.dispose(); }
 });

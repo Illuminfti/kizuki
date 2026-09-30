@@ -85,7 +85,7 @@ describe("enrichers", () => {
     expect(injected.reasons).toEqual(["stale_dependencies"]);
     expect(injected.card.coverage.gaps).toEqual(["stale_dependencies"]);
     expect(injected.card.definitions.map((relation) => relation.conflict)).toEqual(["present"]);
-    expect(injected.card.relations.every((relation) => relation.conflict === "unknown")).toBe(true);
+    expect(injected.card.relations.map((relation) => relation.conflict)).toEqual(before.card.relations.map((relation) => relation.conflict));
     expect(injected.text).not.toBe(before.text);
     expect(conceptCard().text).toBe(before.text);
   });

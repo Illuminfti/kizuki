@@ -87,6 +87,7 @@ export function assembleCard(
     own,
     relations,
     summary: body.summary,
+    learning: body.learning ?? [],
     coverage: coverageOf(frame, collection.overflow, body.gaps),
   });
 }
