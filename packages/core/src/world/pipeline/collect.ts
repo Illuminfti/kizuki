@@ -13,6 +13,8 @@ import { group, type Cluster, type Grouper } from "./group";
 
 const MAX_RELATIONS = 128;
 const DISCOVERY_SCAN = 256;
+/** The existing discovery wire grammar's label bound per match. */
+const MAX_MATCH_LABELS = 256;
 /** The page size of label discovery. */
 export const MAX_WORLD_MATCHES = 32;
 /** Most handles one discovery request examines before it hands back a cursor, so a rare label cannot hold the event loop across a whole vault. */
@@ -67,23 +69,32 @@ export function anchorOf(db: Database, handle: string): RawSubjectRef | null {
  */
 export type Collector = (frame: ReadFrame, cluster: Cluster) => readonly string[];
 
-/** Live claims that name an endpoint of the cluster as subject or as object, classification and labels first. */
+/** Live claims about members, with the anchor's classification and labels first. */
 const claimsAboutMembers: Collector = (frame, cluster) => {
   const permitted = authorizedSupportSql(frame.ctx),
     claim = authorizedClaimSql(frame.ctx),
     time = validMeaningSql(frame.valid);
   const candidates = frame.ctx.db.query<
-    { claim_id: string },
+    Binding & { claim_id: string; predicate: string },
     (string | number)[]
-  >(`SELECT c.claim_id FROM claim_v2_semantics c JOIN claims base USING(claim_id)
+  >(`SELECT c.claim_id,c.predicate,c.subject_kind AS raw_kind,c.subject_id AS raw_id,
+    coalesce(json_extract(payload,'$.subject.namespace'),'') AS raw_namespace
+    FROM claim_v2_semantics c JOIN claims base USING(claim_id)
     WHERE discriminator='assertion' AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql} AND
     ((subject_kind=? AND subject_id=? AND coalesce(json_extract(payload,'$.subject.namespace'),'')=?) OR (json_extract(payload,'$.object.ref.kind')=? AND json_extract(payload,'$.object.ref.id')=? AND coalesce(json_extract(payload,'$.object.ref.namespace'),'')=?))
     AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
     ORDER BY CASE WHEN c.predicate='world.kind' THEN 0 WHEN c.predicate IN (SELECT value FROM json_each(?)) THEN 1 ELSE 2 END,c.claim_id LIMIT ?`);
-  const labels = JSON.stringify(
-    activeWorldRegistry().kinds.map((kind) => kind.labelPredicate),
-  );
-  return cluster.members.flatMap((handle) => {
+  const labelPredicates = activeWorldRegistry().kinds.map((kind) => kind.labelPredicate);
+  const labels = JSON.stringify(labelPredicates);
+  const requested = bindingOf(frame.ctx.db, cluster.anchor);
+  const priority = (row: Binding & { predicate: string }): number => {
+    const predicate = row.predicate === "world.kind" ? 0 : labelPredicates.includes(row.predicate) ? 1 : 2;
+    if (predicate === 2) return 4;
+    const own = requested !== null && row.raw_kind === requested.raw_kind &&
+      row.raw_id === requested.raw_id && row.raw_namespace === requested.raw_namespace;
+    return predicate + (own ? 0 : 2);
+  };
+  const rows = cluster.members.flatMap((handle) => {
     const anchor = anchorOf(frame.ctx.db, handle);
     if (anchor === null) return [];
     return candidates
@@ -99,9 +110,12 @@ const claimsAboutMembers: Collector = (frame, cluster) => {
         ...permitted.bindings,
         labels,
         MAX_RELATIONS + 1,
-      )
-      .map((row) => row.claim_id);
+      );
   });
+  // Apply the shared claim limit only after merging member candidates. Member
+  // order cannot hide the anchor or change which remaining claims are served.
+  rows.sort((a, b) => priority(a) - priority(b) || a.claim_id.localeCompare(b.claim_id));
+  return rows.map((row) => row.claim_id);
 };
 
 /** Ordered. A workstream adds one line under its marker. */
@@ -274,6 +288,8 @@ export function scanMatches(
         // The smallest authorized member represents the cluster on every page.
         // Its wire token is still local to the reader's namespace.
         if (eligible[0]?.handle !== row.handle_id) continue;
+        if (eligible.reduce((count, member) => count + member.labels.length, 0) > MAX_MATCH_LABELS)
+          throw new WorldProjectionBudgetError();
         labels = eligible.flatMap((member) => member.labels);
         overflow ||= eligible.some((member) => member.overflow);
       }

@@ -34,6 +34,8 @@ An enricher fills in what the base projection leaves `unknown`. It receives the 
 
 A collector returns candidate claim ids for a cluster. Add one line under `ident` in `COLLECTORS`. A grouper takes a cluster and returns a wider one with a resolution; add one line under `ident` in `GROUPERS`. Collected ids are verified and a cluster that loses its anchor is refused.
 
+The built-in card collector prioritizes the requested anchor's classification and labels, then merges the remaining candidates by predicate priority and claim ID. Member order cannot let a saturated alias hide the requested card. Claims beyond the shared limit produce partial coverage with `traversal_limit`. Grouped discovery allows at most 256 combined labels per match; exceeding that wire bound returns `unavailable` with reason `budget` through Core and MCP.
+
 Discovery uses the same groupers. Proposed members must have an eligible asserted classification of the requested kind before their labels or handles influence the page. Claim type and asserted-time grant limits apply in SQL before candidate limits and work counters, as do support-event grants. Discovery counts eligible classifications before label filtering, so an unrelated label query does not make a populated kind look dark. A group has at most 128 authorized members; exceeding that bound returns the existing budget fallback. The smallest authorized handle represents a group consistently across pages, and a search can match any member's label. A grouper must return the same full component for each member under the same frame; directional membership hints do not define a discovery group. Groupers must derive membership from authorized evidence: returning hidden membership hints is not a substitute for passing the noninterference driver.
 
 A kind needs its vocabulary module (see [the vocabulary registry note](f4.md)), a card file built on the card kit, and an assembler:
@@ -63,6 +65,7 @@ bun test packages/core/test/world/pipeline-golden.test.ts
 bun test packages/core/test/world/pipeline.test.ts packages/core/test/world/pipeline-noninterference.test.ts
 bun test packages/core/test/world/pipeline-kinds.test.ts packages/core/test/world/discovery-population.test.ts
 bun test packages/core/test/world/discovery-grouping.test.ts
+ktest bun test packages/mcp/test/world-grouping.test.ts --timeout 120000
 bun test packages/core/test/contracts/world-card-kit.test.ts packages/core/test/contracts/concept-card.test.ts packages/core/test/contracts/situation-card.test.ts
 bun test packages/core/test/serving/world-projection.test.ts packages/core/test/serving/world-coverage.test.ts packages/core/test/serving/world-occurrence-correction.test.ts
 ```

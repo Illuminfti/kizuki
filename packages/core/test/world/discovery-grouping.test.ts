@@ -7,7 +7,7 @@ import type { ServeContext } from "../../src/serving/types";
 import type { Grouper } from "../../src/world/pipeline/group";
 import { checkNoninterference, HIDDEN_MUTATIONS, type ReadCase } from "../helpers/noninterference";
 import { worldSeed } from "../helpers/world-seed";
-import type { ConceptCard } from "../../src/contracts/concept-card";
+import { validateConceptCard, type ConceptCard } from "../../src/contracts/concept-card";
 
 setDefaultTimeout(120_000);
 
@@ -54,6 +54,42 @@ test("discovery joins aliases once, filters their combined labels and serves the
         .toEqual(["Alias label", "First label"]);
     });
     expect(page(first.ctx).matches).toHaveLength(2);
+  } finally {
+    db.close();
+  }
+});
+
+test("a saturated alias cannot crowd the requested anchor out of its grouped card", async () => {
+  const db = openLedger(":memory:");
+  try {
+    await worldSeed(db, {
+      subject: "topic:full-alias", label: "Full alias",
+      predicates: Array.from({ length: 128 }, (_, index) => ({
+        predicate: "concept.example",
+        object: { kind: "literal" as const, value: `Example ${index}` },
+      })),
+    });
+    const requested = await worldSeed(db, { subject: "topic:requested", label: "Requested concept" });
+    const members = [handleOf(db, "topic:full-alias"), handleOf(db, "topic:requested")];
+    const read = () => readWorldView(requested.ctx, {
+      operation: "concept", concept: requested.ref,
+      valid: { kind: "all" }, knownAt: { kind: "current" },
+    });
+    expect(read()).toMatchObject({ result: { status: "current" } });
+    const grouped = withWorldPipeline({ groupers: [joinHandles(members)] }, read);
+    expect(grouped).toMatchObject({
+      result: { status: "incomplete", reasons: ["traversal_limit"] },
+    });
+    if (!("result" in grouped) || grouped.result.status === "unavailable")
+      throw new Error("grouped card unavailable");
+    const card = grouped.result.data as ConceptCard;
+    expect(validateConceptCard(card).ok).toBe(true);
+    expect(card.concept.ref).toEqual(requested.ref!);
+    expect(card.concept.classificationClaims).toHaveLength(1);
+    expect(card.concept.labels.map((label) => label.text)).toContain("Requested concept");
+    expect(card.coverage).toMatchObject({ status: "partial", gaps: ["traversal_limit"] });
+    const reversed = withWorldPipeline({ groupers: [joinHandles([...members].reverse())] }, read);
+    expect(reversed).toEqual(grouped);
   } finally {
     db.close();
   }
