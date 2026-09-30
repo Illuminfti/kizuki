@@ -5,6 +5,8 @@ import * as ledger from "../../src/ledger/ledger";
 import * as pages from "../../src/vault/pages";
 import * as provenance from "../../src/vault/provenance";
 import { readDerivedMeta } from "../../src/derived-meta";
+import { clearGraphRegistry } from "../../src/graph/graph";
+import { tryWriteFlock } from "../../src/serve/flock";
 import { seedLivePages } from "../helpers/bulk-pages";
 import { recordedPage } from "../helpers/recorded-page";
 import { searchDb, tempVault } from "../search/helpers";
@@ -93,3 +95,32 @@ test("the receipted writer does no vault walk and assesses only its page", async
     scan.mockRestore(); walk.mockRestore(); assess.mockRestore();
   }
 });
+
+test("the first write after registry loss reconciles outside writer ownership", async () => {
+  const { db, vault } = vaultOf(4_000);
+  clearGraphRegistry(db);
+  const original = provenance.assessLivePageEvidence;
+  let outside = 0, inside = 0;
+  const assess = spyOn(provenance, "assessLivePageEvidence").mockImplementation((...args) => {
+    if (args[1].relPath !== "facts/first.md") {
+      if (outside === 0) {
+        const lock = tryWriteFlock(vault.path);
+        expect(lock).not.toBeNull(); lock?.release();
+      }
+      outside++;
+    } else {
+      const lock = tryWriteFlock(vault.path);
+      if (lock === null) inside++;
+      else lock.release();
+    }
+    return original(...args);
+  });
+  try {
+    await recordedPage(db, vault.path, "facts/first.md", { ...PAGE, id: "fact:first", title: "First" }, "First write.");
+    expect(outside).toBeGreaterThanOrEqual(4_000);
+    expect(inside).toBeGreaterThan(0);
+    const incremental = edges(db);
+    rebuildDerived(db, vault.path);
+    expect(edges(db)).toEqual(incremental);
+  } finally { assess.mockRestore(); }
+}, 120_000);

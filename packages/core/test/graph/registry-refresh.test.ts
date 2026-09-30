@@ -164,6 +164,26 @@ test("an older disposable registry is reconciled before indexed resolution", asy
   expect(graphRows(db)).toEqual(before);
 });
 
+test("discarding only the edges invalidates the cached registry before another write", async () => {
+  const db = searchDb();
+  const vault = tempVault();
+  disposers.push(() => db.close(), vault.dispose);
+  for (const slug of ["one", "two"]) {
+    await recordedPage(db, vault.path, `facts/${slug}.md`, {
+      id: `fact:${slug}`, title: slug, type: "fact", status: "active", sensitivity: "personal", taint: "clean",
+    }, "Synthetic page.");
+  }
+  rebuildDerived(db, vault.path);
+  db.exec("DROP TABLE graph_edges");
+  initGraph(db);
+  expect(graph.graphRegistryReady(db)).toBe(false);
+  await recordedPage(db, vault.path, "facts/three.md", {
+    id: "fact:three", title: "Three", type: "fact", status: "active", sensitivity: "personal", taint: "clean",
+  }, "Another page.");
+  expect(graphRows(db)).toHaveLength(3);
+  expect(graphRows(db)).toEqual(rebuiltRows(db, vault.path));
+});
+
 test("replacing an identity at the same path removes the old page's edges", async () => {
   const db = searchDb();
   const vault = tempVault();

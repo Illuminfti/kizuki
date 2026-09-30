@@ -37,6 +37,13 @@ CREATE TABLE IF NOT EXISTS graph_pages (
 CREATE INDEX IF NOT EXISTS graph_pages_path_idx ON graph_pages (rel_path);
 CREATE INDEX IF NOT EXISTS graph_pages_admission_idx ON graph_pages (active, admitted);
 
+CREATE TABLE IF NOT EXISTS graph_page_sources (
+  page_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  PRIMARY KEY (page_id, event_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS graph_page_sources_event_idx ON graph_page_sources (event_id, page_id);
+
 -- Indexed names let one page's links resolve without loading every page.
 CREATE TABLE IF NOT EXISTS graph_page_keys (
   key TEXT NOT NULL,
@@ -67,7 +74,9 @@ CREATE TABLE IF NOT EXISTS graph_files (
 -- files that walk could not read as pages.
 CREATE TABLE IF NOT EXISTS graph_registry (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-  skipped INTEGER NOT NULL CHECK (skipped >= 0)
+  skipped INTEGER NOT NULL CHECK (skipped >= 0),
+  event_rowid INTEGER NOT NULL,
+  source_epoch INTEGER NOT NULL
 ) STRICT;
 `;
 
@@ -84,11 +93,14 @@ export function graphSchemaNeedsRebuild(db: Database): boolean {
 
 export function initGraph(db: Database): void {
   if (graphSchemaNeedsRebuild(db)) {
-    db.exec("DROP TABLE graph_edges; DROP TABLE IF EXISTS graph_pages; DROP TABLE IF EXISTS graph_links; DROP TABLE IF EXISTS graph_files; DROP TABLE IF EXISTS graph_registry; DROP TABLE IF EXISTS graph_page_keys");
+    db.exec("DROP TABLE graph_edges; DROP TABLE IF EXISTS graph_pages; DROP TABLE IF EXISTS graph_links; DROP TABLE IF EXISTS graph_files; DROP TABLE IF EXISTS graph_registry; DROP TABLE IF EXISTS graph_page_keys; DROP TABLE IF EXISTS graph_page_sources");
   }
-  // Existing disposable registries predate the name index. One reconciliation
-  // fills both; never trust a registry with missing resolution keys.
-  if (tableExists(db, "graph_registry") && !tableExists(db, "graph_page_keys")) db.exec("DELETE FROM graph_registry");
+  // Older disposable registries lack resolution or evidence indexes. Reconcile
+  // once rather than treating their stale admission as current authority.
+  if (tableExists(db, "graph_registry") && (!tableExists(db, "graph_edges") || !tableExists(db, "graph_page_keys") || !tableExists(db, "graph_page_sources") ||
+      !db.query<{ name: string }, []>("PRAGMA table_info(graph_registry)").all().some(column => column.name === "source_epoch"))) {
+    db.exec("DROP TABLE graph_registry");
+  }
   db.exec(GRAPH_SCHEMA);
   initDerivedMeta(db);
 }

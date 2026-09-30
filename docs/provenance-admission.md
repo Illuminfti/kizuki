@@ -17,10 +17,13 @@ withdraws incoming relations to unrecorded active pages, including known
 aliases during an incomplete scan. Purge-held aliases remain suppressed even
 for inactive pages. Other inactive pages leave ordinary unresolved prose links
 unchanged. Page identity and owner bytes remain available to the arbiter.
-After registry initialization, the receipted writer assesses only the written
-page's evidence. The disposable graph registry (`graph_pages`, `graph_links`,
-`graph_page_keys`, `graph_files`) supplies the affected origins and link
-destinations through indexed lookups. A full reconciliation replaces it and
+Before writer acquisition, a cold or discarded registry is reconciled from
+canon and current evidence. Source-consent revisions and source tombstones
+reassess affected registered pages before acquisition too. The receipted writer
+assesses only the written page's evidence. The disposable graph registry
+(`graph_pages`, `graph_links`,
+`graph_page_keys`, `graph_page_sources`, `graph_files`) supplies the affected
+origins and link destinations through indexed lookups. A full reconciliation replaces it and
 purge clears it. Ordinary refresh and rebuild reconcile unrelated disk edits;
 the writer does not scan those files. Serving still checks a page's evidence
 on every read. Incoming relations whose resolution changes with the page

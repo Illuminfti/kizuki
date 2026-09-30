@@ -8,6 +8,7 @@ import type { DerivedStamp } from "../derived-meta";
 import { assertDerivedDiscoveryReady, markDerivedHeld, readDerivedHolds } from "../derived-holds";
 import { latestLedgerCursor } from "../ledger/ledger";
 import { tableExists } from "../ledger/schema";
+import { sourcePolicyEpoch } from "../ledger/source-grants";
 import { bareRetrievalId } from "../retrieval/ids";
 import { ulid } from "../util/ulid";
 import { compareText } from "../util/order";
@@ -348,6 +349,8 @@ function insertRow(db: Database, row: PageRow, links: PageLinks): void {
        (page_id, rel_path, title, active, admitted, sensitivity, taint, authority, provenance)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(row.id, row.relPath, row.title, row.active ? 1 : 0, row.admitted ? 1 : 0, row.sensitivity, row.taint, row.authority, row.provenance);
+  const source = db.query("INSERT OR IGNORE INTO graph_page_sources (page_id, event_id) VALUES (?, ?)");
+  for (const id of sourcesOf(row)) source.run(row.id, bareRetrievalId(id));
   const key = db.query("INSERT OR IGNORE INTO graph_page_keys (key, page_id) VALUES (?, ?)");
   for (const alias of linkKeys(row)) key.run(alias, row.id);
   const insert = db.query("INSERT OR IGNORE INTO graph_links (src, kind, target, key) VALUES (?, ?, ?, ?)");
@@ -362,6 +365,7 @@ function saveRow(db: Database, row: PageRow, links: PageLinks): void {
 }
 
 function removeRow(db: Database, id: string, relPath: string): void {
+  db.query("DELETE FROM graph_page_sources WHERE page_id IN (SELECT page_id FROM graph_pages WHERE page_id = ? OR rel_path = ?)").run(id, relPath);
   db.query("DELETE FROM graph_page_keys WHERE page_id IN (SELECT page_id FROM graph_pages WHERE page_id = ? OR rel_path = ?)").run(id, relPath);
   db.query("DELETE FROM graph_links WHERE src IN (SELECT page_id FROM graph_pages WHERE page_id = ? OR rel_path = ?)").run(id, relPath);
   db.query("DELETE FROM graph_pages WHERE page_id = ? OR rel_path = ?").run(id, relPath);
@@ -373,7 +377,7 @@ function registeredKeys(db: Database, id: string, relPath: string): string[] {
 }
 
 export function clearGraphRegistry(db: Database): void {
-  for (const table of ["graph_links", "graph_page_keys", "graph_pages", "graph_files", "graph_registry"]) {
+  for (const table of ["graph_links", "graph_page_keys", "graph_page_sources", "graph_pages", "graph_files", "graph_registry"]) {
     if (tableExists(db, table)) db.exec(`DELETE FROM ${table}`);
   }
 }
@@ -408,9 +412,9 @@ export function graphRegistryCurrent(
 }
 
 /**
- * Where the registry says the page with this id lives: a path, null when the
- * vault still matches the registry and holds no such page, undefined when only
- * a walk can tell.
+ * A cached locator, null when the registry has no entry, or undefined when
+ * the registry is incomplete or supplied file signatures disagree. A locator
+ * still needs its on-disk identity checked before arbitration can trust it.
  */
 export function registeredPagePath(
   db: Database,
@@ -423,6 +427,44 @@ export function registeredPagePath(
 
 function registrySkipped(db: Database): number {
   return db.query<{ skipped: number }, []>("SELECT skipped FROM graph_registry").get()?.skipped ?? 0;
+}
+
+function eventRowid(db: Database): number {
+  return db.query<{ n: number }, []>("SELECT coalesce(max(rowid), 0) AS n FROM events").get()!.n;
+}
+
+/** Metadata only: new ordinary captures do not invalidate any page admission. */
+export function graphEvidenceChanges(db: Database): string[] {
+  const prior = db.query<{ event_rowid: number; source_epoch: number }, []>("SELECT event_rowid,source_epoch FROM graph_registry").get();
+  if (prior === null) return [];
+  const ids = new Set<string>();
+  const epoch = sourcePolicyEpoch(db);
+  if (epoch !== prior.source_epoch) {
+    const changed = db.query<{ page_id: string }, [number]>(`SELECT DISTINCT p.page_id FROM graph_page_sources p
+      LEFT JOIN source_event_bindings b ON b.event_id=p.event_id
+      WHERE b.source_key IN (SELECT json_extract(receipt,'$.source_key') FROM source_grant_receipts WHERE sequence>?)
+      ${prior.source_epoch === 0 ? "OR b.source_key IS NULL" : ""}`).all(prior.source_epoch);
+    for (const row of changed) ids.add(row.page_id);
+  }
+  const current = eventRowid(db);
+  if (current < prior.event_rowid || epoch < prior.source_epoch) return readRegistry(db).map(row => row.id);
+  if (current !== prior.event_rowid) {
+    const changed = db.query<{ page_id: string }, [number]>(`WITH tombstones AS MATERIALIZED (
+        SELECT connector_id,source_record_id,event_id,accepted_at FROM events WHERE rowid>? AND deleted=1
+      ) SELECT DISTINCT p.page_id FROM tombstones tombstone JOIN events evidence
+        ON evidence.connector_id=tombstone.connector_id AND evidence.source_record_id=tombstone.source_record_id
+      JOIN graph_page_sources p ON p.event_id=evidence.event_id
+      WHERE (SELECT source_key FROM source_event_bindings WHERE event_id=tombstone.event_id)
+          IS (SELECT source_key FROM source_event_bindings WHERE event_id=evidence.event_id)
+        AND (tombstone.accepted_at>evidence.accepted_at OR
+          (tombstone.accepted_at=evidence.accepted_at AND tombstone.event_id>evidence.event_id))`).all(prior.event_rowid);
+    for (const row of changed) ids.add(row.page_id);
+  }
+  return [...ids];
+}
+
+export function checkpointGraphEvidence(db: Database): void {
+  db.query("UPDATE graph_registry SET event_rowid=?,source_epoch=?").run(eventRowid(db), sourcePolicyEpoch(db));
 }
 
 /** Replace the registry with a walk's pages, assessing each one's evidence. */
@@ -442,7 +484,8 @@ function syncRegistry(
     insertRow(db, assessed.row, assessed.links);
     return assessed.row;
   });
-  db.query("INSERT INTO graph_registry (singleton, skipped) VALUES (1, ?)").run(skipped);
+  db.query("INSERT INTO graph_registry (singleton, skipped, event_rowid, source_epoch) VALUES (1, ?, ?, ?)")
+    .run(skipped, eventRowid(db), sourcePolicyEpoch(db));
   return graphState(db, rows);
 }
 
@@ -519,6 +562,7 @@ function projectAll(db: Database, state: GraphState): void {
   // A missing held page leaves its title aliases unknown. Withhold this
   // projection until a complete page snapshot can exclude those relations.
   if (state.complete) projectPages(db, state, [...state.projected.keys()]);
+  else clearGraphRegistry(db);
   markDerivedHeld(db, "graph", state.withheldCount);
 }
 
@@ -629,6 +673,7 @@ function settleGraph(
 ): void {
   if (!state.complete) {
     db.exec("DELETE FROM graph_edges");
+    clearGraphRegistry(db);
     stampGraphIncomplete(db, skipped, state.withheldCount);
     return;
   }
@@ -718,8 +763,10 @@ function settleRegisteredGraph(db: Database, pageId: string, keys: readonly stri
     [JSON.stringify(ids), JSON.stringify(targets), JSON.stringify([...held.paths])]);
   const state = graphState(db, rows);
   if (!state.complete) {
+    const skipped = registrySkipped(db);
     db.exec("DELETE FROM graph_edges");
-    stampGraphIncomplete(db, registrySkipped(db), state.withheldCount);
+    clearGraphRegistry(db);
+    stampGraphIncomplete(db, skipped, state.withheldCount);
     return;
   }
   removeHeldEdges(db, state);
@@ -732,6 +779,14 @@ function settleRegisteredGraph(db: Database, pageId: string, keys: readonly stri
   if (registrySkipped(db) > 0) stampGraphIncomplete(db, registrySkipped(db), state.withheldCount);
   else if (state.withheldCount > 0) markDerivedHeld(db, "graph", state.withheldCount);
   else if (meta !== null && meta.status !== "ok") restoreGraphStamp(db, graphState(db, readRegistry(db)));
+}
+
+/** A lost registry never turns a page-local writer into a vault reconciliation. */
+export function deferGraphProjection(db: Database): void {
+  assertDerivedDiscoveryReady(db);
+  db.exec("DELETE FROM graph_edges");
+  clearGraphRegistry(db);
+  stampGraphIncomplete(db, 1, readDerivedHolds(db).paths.size);
 }
 
 function stampGraph(

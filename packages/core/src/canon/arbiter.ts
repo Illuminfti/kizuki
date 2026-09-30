@@ -5,6 +5,7 @@ import { tableExists } from "../ledger/schema";
 import { registeredPagePath } from "../graph/graph";
 import { findPageById } from "../vault/pages";
 import { CanonWriteError } from "./errors";
+import { canonFilesFor } from "./io";
 import { machineOriginPath } from "./origin";
 export { assertPageRelPath } from "./paths";
 import type { PageCandidate } from "./receipts";
@@ -62,6 +63,7 @@ export function pageRelPath(claim: { claim_id: string; target: string | null }):
 interface ResolvedPage {
   page_id: string;
   rel_path: string;
+  stale?: true;
 }
 
 function pageAt(io: CanonIo, relPath: string): ResolvedPage | null {
@@ -81,10 +83,16 @@ function resolvePageById(io: CanonIo, pageId: string): ResolvedPage | null {
   // The reconciled registry resolves IDs without a vault scan. The selected
   // file's identity is still checked before it can become a write target.
   const registered = registeredPagePath(io.db, undefined, pageId);
-  if (registered === null) return null;
-  if (registered !== undefined) {
+  if (registered === null && indexed === null) return null;
+  if (registered !== undefined && registered !== null) {
     const onDisk = pageAt(io, registered);
-    return onDisk !== null && onDisk.page_id === pageId ? onDisk : null;
+    if (onDisk !== null && onDisk.page_id === pageId) return onDisk;
+  }
+  // A disappeared cached locator is stale, never proof of absence. Standalone
+  // arbitration can discover a move; owned arbitration refuses without a walk.
+  const stalePath = indexed?.rel_path ?? registered;
+  if (canonFilesFor(io) !== undefined && typeof stalePath === "string") {
+    return { page_id: pageId, rel_path: stalePath, stale: true };
   }
   const scanned = findPageById(io.vault_path, pageId);
   return scanned === null ? null : { page_id: scanned.id, rel_path: scanned.relPath };
@@ -212,6 +220,7 @@ function onPage(
   reason: EditReason,
   supersession: Supersession,
 ): TargetDecision {
+  if (page.stale) return { action: "skip", reason: "owner_edited_body" };
   const decision: TargetDecision =
     supersession.losers.length > 0
       ? { action: "supersede", ...page, superseded: supersession.losers }

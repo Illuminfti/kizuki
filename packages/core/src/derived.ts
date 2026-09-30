@@ -1,4 +1,7 @@
 import type { Database } from "bun:sqlite";
+import { join } from "node:path";
+import { readPage } from "./canon/store";
+import { purgeDiscoveryPending } from "./derived-holds";
 import {
   derivedMetaNeedsRebuild,
   readDerivedMeta,
@@ -7,6 +10,10 @@ import {
 import {
   graphRegistryCurrent,
   graphRegistryReady,
+  graphEvidenceChanges,
+  checkpointGraphEvidence,
+  deferGraphProjection,
+  rebuildGraph,
   rebuildGraphLayer,
   refreshPageEdges,
   refreshRegisteredPage,
@@ -116,6 +123,26 @@ export function rebuildWorldLayer(db: Database): { layer: "world"; tables: strin
   return db.transaction(() => ({ layer: "world" as const, tables: resetWorldTables(db, readSchemaVersion(db)) })).immediate();
 }
 
+/** Disposable graph maintenance runs before acquiring canon writer ownership. */
+export function prepareCanonGraph(db: Database, vaultPath: string): void {
+  if (db.inTransaction || purgeDiscoveryPending(db)) return;
+  initGraph(db);
+  if (!graphRegistryReady(db)) { rebuildGraph(db, vaultPath); return; }
+  if (graphEvidenceChanges(db).length === 0) return;
+  db.transaction(() => {
+    for (const id of graphEvidenceChanges(db)) {
+      const row = db.query<{ rel_path: string }, [string]>("SELECT rel_path FROM graph_pages WHERE page_id=?").get(id);
+      if (row === null) continue;
+      const read = readPage({ db, vault_path: vaultPath }, row.rel_path);
+      if (read === null || read.page.data["id"] !== id) { rebuildGraph(db, vaultPath); return; }
+      refreshRegisteredPage(db, { id, relPath: row.rel_path, path: join(vaultPath, row.rel_path),
+        data: read.page.data, body: read.page.body, contentHash: read.hash });
+      if (!graphRegistryReady(db)) return;
+    }
+    checkpointGraphEvidence(db);
+  }).immediate();
+}
+
 /**
  * One incremental projection path. A live writer scope uses the reconciled
  * registry and assesses only this page. Ordinary refresh reconciles external
@@ -132,10 +159,17 @@ export function refreshDerivedPage(
   initGraph(db);
   // The writer already checked the exact receipted bytes and source admission.
   // Reconciliation of unrelated disk edits belongs to the normal refresh/rebuild.
-  if (scope !== undefined && graphRegistryReady(db)) {
-    db.transaction(() => { replacePage(db, page); refreshRegisteredPage(db, page); }).immediate();
+  if (scope !== undefined) {
+    db.transaction(() => {
+      replacePage(db, page);
+      if (graphRegistryReady(db) && graphEvidenceChanges(db).length === 0) {
+        refreshRegisteredPage(db, page); checkpointGraphEvidence(db);
+      }
+      else deferGraphProjection(db);
+    }).immediate();
     return;
   }
+  prepareCanonGraph(db, vaultPath);
   const signatures = scanCanonSignatures(vaultPath);
   const report = graphRegistryCurrent(db, signatures, page) ? null : listCanonPagesReport(vaultPath);
   db.transaction(() => {
@@ -154,10 +188,17 @@ export function removeDerivedPage(
   if (scope !== undefined) assertVaultMutationScope(scope, { db, vault_path: vaultPath });
   initSearch(db);
   initGraph(db);
-  if (scope !== undefined && graphRegistryReady(db)) {
-    db.transaction(() => { removeDoc(db, "canon", pageId); removeRegisteredPage(db, pageId); }).immediate();
+  if (scope !== undefined) {
+    db.transaction(() => {
+      removeDoc(db, "canon", pageId);
+      if (graphRegistryReady(db) && graphEvidenceChanges(db).length === 0) {
+        removeRegisteredPage(db, pageId); checkpointGraphEvidence(db);
+      }
+      else deferGraphProjection(db);
+    }).immediate();
     return;
   }
+  prepareCanonGraph(db, vaultPath);
   const signatures = scanCanonSignatures(vaultPath);
   const report = graphRegistryCurrent(db, signatures, { id: pageId }) ? null : listCanonPagesReport(vaultPath);
   db.transaction(() => {

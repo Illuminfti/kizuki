@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { appendFileSync, chmodSync, linkSync, readFileSync, renameSync, rmdirSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { snapshotCanonIo, withCanonMutationSync } from "../../src/canon/io";
@@ -196,4 +197,36 @@ test("withdrawal refuses foreign, duplicate, extra, corrupted-prefix and changed
     finally { stream.close(); }
   });
   expect(readFileSync(f.log)).toEqual(Buffer.concat([prior, line()]));
+});
+
+test("a warm validation cache cannot certify an externally rewritten prefix", () => {
+  const f = fixture(), prior = line("prior");
+  writeFileSync(f.log, prior, { mode: 0o600 });
+  const admitted = checkpoint(f);
+  const changed = Buffer.from(prior.toString().replace('"prior"', '"other"'));
+  expect(changed.length).toBe(prior.length);
+  writeFileSync(f.log, changed);
+  expect(() => reconcile(f, admitted)).toThrow("canon_receipt_stream_changed");
+  const refreshed = checkpoint(f);
+  expect(refreshed.prefix_sha256).toBe(hashBytes(changed));
+  expect(refreshed.prefix_sha256).not.toBe(admitted.prefix_sha256);
+});
+
+test("steady-state admission and completion read only the new journal suffix", () => {
+  const f = fixture(), exact = line();
+  writeFileSync(f.log, Buffer.concat(Array.from({ length: 500 }, (_, index) => line(`prior-${index}`))), { mode: 0o600 });
+  checkpoint(f);
+  const reads = spyOn(fs, "readSync");
+  try {
+    withCanonMutationSync(f.io, (scope, io) => {
+      const stream = openOrdinaryRecoveryReceiptStream(scope, io);
+      try { stream.reconcile(stream.checkpoint(), exact); } finally { stream.close(); }
+    });
+    const requested = reads.mock.calls.reduce((total, args) => {
+      const length = (args as readonly unknown[])[3];
+      return total + (typeof length === "number" ? length : 0);
+    }, 0);
+    expect(requested).toBe(exact.length);
+    expect(readFileSync(f.log).subarray(-exact.length)).toEqual(exact);
+  } finally { reads.mockRestore(); }
 });

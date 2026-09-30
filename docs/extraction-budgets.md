@@ -152,11 +152,18 @@ After the graph registry has been initialized, a receipted write assesses
 only that page's evidence and refreshes its edges and the incoming links whose
 resolution changed. Indexed page names resolve those links without loading
 the entire registry or walking the vault. A cold or discarded registry takes
-one full reconciliation. Ordinary derived refresh and rebuild still reconcile
-files added, removed or rewritten outside the writer; a canon write does not
+one full reconciliation before writer acquisition. Changed source consent and
+source tombstones reassess affected pages before acquisition as well. Ordinary
+derived refresh and rebuild still reconcile files added, removed or rewritten
+outside the writer; a canon write does not
 scan unrelated files for edits. Serving checks current evidence on each read.
 Pass accounting reads only receipts appended during the page's writer hold,
 plus live reservations and intents.
+
+Ordinary receipt checkpoints reuse process-local validation only while the
+journal's file identity, size, permissions and modification metadata match.
+Completion appends and reads back the exact new receipt line. Restart recovery,
+external journal changes and receipt redaction retain full prefix validation.
 
 A typed page group that fails three passes is named in the receipt's typed
 `canon_quarantined` entries with its handle, generated page path, failure

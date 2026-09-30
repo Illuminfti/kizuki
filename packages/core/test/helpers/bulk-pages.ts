@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { insertReceiptRow, upsertPageIndex } from "../../src/canon/store";
 import type { CanonReceipt } from "../../src/canon/receipts";
+import { RECEIPTS_PATH } from "../../src/canon/receipts";
 import { accept } from "../../src/ledger/ledger";
 import { seedConnectorSensitivity } from "../../src/sensitivity/store";
 import { serializePage } from "../../src/vault/frontmatter";
@@ -31,6 +32,7 @@ export function seedLivePages(
     default_sensitivity: "public", sensitivity_floor: "public",
   });
   const pages: BulkPage[] = [];
+  const journal: string[] = [];
   db.transaction(() => {
     for (let index = 0; index < count; index += 1) {
       const result = accept(db, {
@@ -58,6 +60,7 @@ export function seedLivePages(
         retrieval_ops: [], reverts: null, reverted_by: null, at: "2026-01-01T00:00:00.000Z",
       };
       insertReceiptRow(db, receipt, "entity");
+      journal.push(JSON.stringify(receipt));
       upsertPageIndex(db, {
         page_id: id, rel_path: relPath, subject_key: null,
         last_receipt: receipt.receipt_id, last_hash: receipt.after_hash,
@@ -65,5 +68,7 @@ export function seedLivePages(
       pages.push({ id, relPath, sourceId });
     }
   }).immediate();
+  mkdirSync(dirname(join(vaultPath, RECEIPTS_PATH)), { recursive: true });
+  writeFileSync(join(vaultPath, RECEIPTS_PATH), journal.map(line => `${line}\n`).join(""), { mode: 0o600 });
   return pages;
 }

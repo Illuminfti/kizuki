@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { prepareCanonGraph } from "../derived";
 import { readPage, type CanonIo } from "./store";
 import { assertCanonFiles, type CanonFiles } from "../vault/canon-files";
 import { withMutationFilesAsync, withMutationFilesSync } from "../vault/mutation-files";
@@ -70,6 +71,7 @@ export function snapshotCanonIo(io: CanonIo): CanonIo {
 export function withCanonMutationSync<T extends CanonIo, R>(io: T, work: (scope: VaultMutationScope, io: T) => PromiseLike<R>): Promise<R>;
 export function withCanonMutationSync<T extends CanonIo, R>(io: T, work: (scope: VaultMutationScope, io: T) => R): R;
 export function withCanonMutationSync<T extends CanonIo, R>(io: T, work: (scope: VaultMutationScope, io: T) => R | PromiseLike<R>): R | PromiseLike<R> {
+  prepareCanonGraph(io.db, io.vault_path);
   return withVaultMutationSync(io, scope => withMutationFilesSync(scope, io, files => work(scope, bindCanonFiles(scope, io, files))));
 }
 
@@ -77,5 +79,6 @@ export function withCanonMutationAsync<T extends CanonIo, R>(
   io: T,
   work: (scope: VaultMutationScope, io: T) => R | PromiseLike<R>,
 ): Promise<R> {
+  prepareCanonGraph(io.db, io.vault_path);
   return withVaultMutationAsync(io, scope => withMutationFilesAsync(scope, io, files => work(scope, bindCanonFiles(scope, io, files))));
 }
