@@ -212,12 +212,12 @@ test("hidden canon additions and malformed revisions preserve serving work count
   rebuildDerived(f.db, f.vaultPath);
   // An owner read must not invalidate the narrow reader's authority memo.
   await serveSearch(f.ctx, { query: "Tea" });
-  for (let n = 0; n < reads.length; n++) expect(await observe(ctx, reads[n]!)).toEqual(before[n]);
+  for (let n = 0; n < reads.length; n++) expect(await observe(ctx, reads[n]!)).toEqual(before[n]!);
   const file = join(f.vaultPath, "facts/private.md");
   writeFileSync(file, readFileSync(file, "utf8").replace(/^title:.*$/m, "title: ["));
-  for (let n = 0; n < reads.length; n++) expect(await observe(ctx, reads[n]!)).toEqual(before[n]);
+  for (let n = 0; n < reads.length; n++) expect(await observe(ctx, reads[n]!)).toEqual(before[n]!);
   f.db.query("INSERT INTO canon_holds VALUES (?, ?, ?, ?)").run("facts/private.md", "synthetic-hold", "synthetic recovery", "2026-09-29T12:00:00.000Z");
-  for (let n = 0; n < reads.length; n++) expect(await observe(ctx, reads[n]!)).toEqual(before[n]);
+  for (let n = 0; n < reads.length; n++) expect(await observe(ctx, reads[n]!)).toEqual(before[n]!);
   expect(f.doctor().skipped_pages_total).toBe(1);
   await expect(serveSearch(f.ctx, { query: "Tea" })).rejects.toThrow("serving failed");
 });
