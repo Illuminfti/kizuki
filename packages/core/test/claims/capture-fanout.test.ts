@@ -11,10 +11,13 @@ import {
   skipCaptureFanoutClaims,
 } from "../../src/claims/capture-fanout";
 import {
+  countUnwrittenLiveClaims,
   getClaim,
   listUnwrittenLiveClaims,
   reviveUncontestedSkipped,
 } from "../../src/claims/store";
+import { proposalsForEvent } from "../../src/staging/producers";
+import { event } from "../staging/helpers";
 import { countCanonReceipts } from "../../src/canon/receipts";
 import { canonFixture, putEvent, storeClaim, write } from "../canon/helpers";
 
@@ -136,6 +139,21 @@ describe("closing out capture notes filed for conversational events", () => {
     expect(countCaptureFanout(f.db)).toEqual({ pending: 0, skipped: 0 });
   });
 
+  test("a granted source page candidate may use the capture-day namespace", async () => {
+    const f = fixture();
+    const captured = event({ connector_id: "fixture", kind: "message", subjects: [],
+      metadata: { page_candidate: { schema: "kizuki.page-candidate/v1", type: "source", title: "Source page",
+        target: "captures/fixture/2026-09-01", confidence: 1, extensions: {} } },
+    });
+    const proposal = proposalsForEvent(captured, { page_candidates: true })[0]!;
+    expect(proposal.frontmatter["x-source-record-id"]).toBe(captured.source_record_id);
+    const eventId = putEvent(f.db, { event_id: captured.event_id, source_record_id: captured.source_record_id });
+    const claim = await storeClaim(f.db, eventId, { ...proposal, subject: null, predicate: null, object: null });
+    expect(skipCaptureFanoutClaims(f.db, AT)).toBe(0);
+    expect(getClaim(f.db, claim.claim_id)!.status).toBe("live");
+    expect(listUnwrittenLiveClaims(f.db).map(c => c.claim_id)).toContain(claim.claim_id);
+  });
+
   test("a claim that another sweep already closed is not counted twice", async () => {
     const f = fixture();
     const note = await legacyNote(f, 1);
@@ -145,6 +163,16 @@ describe("closing out capture notes filed for conversational events", () => {
     expect(skipCaptureFanoutClaims(f.db, AT)).toBe(0);
     // Skipped for another reason, so it is not reported as a capture fan-out skip.
     expect(countCaptureFanout(f.db)).toEqual({ pending: 0, skipped: 0 });
+  });
+
+  test("notes waiting past a bounded repair do not occupy the writer scan", async () => {
+    const f = fixture();
+    for (let index = 0; index < 4; index += 1) await legacyNote(f, index);
+    const writable = await storeClaim(f.db, putEvent(f.db));
+    expect(skipCaptureFanoutClaims(f.db, AT, 1)).toBe(1);
+    expect(countCaptureFanout(f.db)).toEqual({ pending: 3, skipped: 1 });
+    expect(countUnwrittenLiveClaims(f.db)).toBe(1);
+    expect(listUnwrittenLiveClaims(f.db, 1).map(c => c.claim_id)).toEqual([writable.claim_id]);
   });
 
   test("a repair stops at its limit and the next call takes the rest", async () => {

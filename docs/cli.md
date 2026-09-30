@@ -455,9 +455,11 @@ email records (one per message, all on one `captures/<connector>/<day>` page):
 each unwritten one becomes a `skipped` claim with `x-skip-reason:
 message_capture_fanout`, is never deleted, creates no canon page, and is counted
 as `captures_skipped` on the run receipt. Notes a receipt already wrote are left
-alone, a busy canon writer defers the repair to the next sweep, and a second
-run changes nothing. Doctor reads
-the newest 2,000 sync receipts and the newest 200 of every other rail.
+alone. A busy writer or pending canon-write intent defers the repair until
+recovery completes. Each batch commits its receipt progress with the skipped
+claims; restart finishes receipt publication. These notes are excluded from
+unwritten canon work even before the sweep, and a second run changes nothing.
+Doctor reads the newest 2,000 sync receipts and the newest 200 of every other rail.
 
 The model line reports the model the way the daemon's receipts do. From a shell
 that lacks the daemon's secret, doctor cannot bind the model, so it prints what

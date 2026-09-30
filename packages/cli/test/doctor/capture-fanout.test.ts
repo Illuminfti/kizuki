@@ -93,7 +93,8 @@ test("doctor counts capture notes of chat records apart from unwritten claims an
     pending: 3,
     skipped: 0,
   });
-  expect(beforeReport.data.claims.unwritten).toBe(3);
+  // These notes are repair work, never pending canon writes.
+  expect(beforeReport.data.claims.unwritten).toBe(0);
   const human = runCli(setup.env, "doctor");
   expect(human.stdout).toContain(
     "capture fan-out skipped=0 pending=3 repair: kizuki serve run doctor-sweep",

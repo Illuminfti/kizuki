@@ -18,6 +18,8 @@ import { isPlainObject } from "../util/validate";
 import { sha256Hex } from "../util/hash";
 import { readProducerDiagnostic } from "../producer/diagnostics";
 import { REDACTION_KINDS } from "../producer/scrub";
+import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-scope";
+import { pidAlive, readBootId } from "./leases";
 import { loadServeConfig } from "./config";
 import {
   DOCTOR_JOURNAL_TAIL_BYTES,
@@ -389,13 +391,35 @@ function appendJsonl(vaultPath: string, receipt: RunReceipt): void {
   appendFileSync(path, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
 }
 
+/** A repair batch has committed; its rail receipt still needs journal publication. */
+export const CAPTURE_REPAIR_RECEIPT_PENDING = "capture-repair:receipt-pending";
+
+/** Called inside the claim batch transaction. No filesystem effect precedes commit. */
+export function stageCaptureRepairReceipt(db: Database, receipt: RunReceipt): void {
+  if (!db.inTransaction || receipt.stopped !== CAPTURE_REPAIR_RECEIPT_PENDING ||
+      receipt.rail !== "doctor-sweep" || !(receipt.captures_skipped! > 0)) {
+    throw new Error("invalid capture repair progress");
+  }
+  const existing = getRunReceipt(db, receipt.run_id);
+  if (existing !== null && (existing.stopped !== CAPTURE_REPAIR_RECEIPT_PENDING ||
+      existing.captures_skipped! >= receipt.captures_skipped!)) throw new Error("conflicting capture repair progress");
+  db.query(`INSERT INTO run_receipts (run_id, rail, started_at, finished_at, status, stopped, report)
+    VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(run_id) DO UPDATE SET report=excluded.report`)
+    .run(receipt.run_id, receipt.rail, receipt.started_at, receipt.finished_at, receipt.status, receipt.stopped, JSON.stringify(receipt));
+}
+
 function insertReceiptRow(db: Database, receipt: RunReceipt, vaultPath: string): void {
   db.transaction(() => {
     const raw = db.query<{ report: string }, [string]>("SELECT report FROM run_receipts WHERE run_id = ?").get(receipt.run_id);
     const existing = getRunReceipt(db, receipt.run_id);
     if (raw !== null && raw !== undefined && existing === null) throw new Error("invalid existing run receipt");
-    if (existing !== null && canonicalReceiptContent(existing) !== canonicalReceiptContent(receipt)) throw new Error("conflicting run receipt");
-    if (existing !== null) return;
+    if (existing?.stopped === CAPTURE_REPAIR_RECEIPT_PENDING && receipt.stopped !== CAPTURE_REPAIR_RECEIPT_PENDING) {
+      if (receipt.rail !== existing.rail || receipt.started_at !== existing.started_at ||
+          receipt.captures_skipped !== existing.captures_skipped) throw new Error("conflicting capture repair receipt");
+      // Replacing only this staged receipt and applying its schedule is atomic.
+      db.query("DELETE FROM run_receipts WHERE run_id = ?").run(receipt.run_id);
+    } else if (existing !== null && canonicalReceiptContent(existing) !== canonicalReceiptContent(receipt)) throw new Error("conflicting run receipt");
+    if (existing !== null && existing.stopped !== CAPTURE_REPAIR_RECEIPT_PENDING) return;
     applyScheduleTransition(db, vaultPath, receipt);
     db.query(
       `INSERT INTO run_receipts
@@ -537,12 +561,38 @@ function applyScheduleTransition(db: Database, vaultPath: string, receipt: RunRe
  * before the row leaves an orphan the next start completes; a row that
  * already exists is ignored.
  */
-export function recoverRunJournal(db: Database, vaultPath: string): string[] {
+export function recoverRunJournal(db: Database, vaultPath: string, activeRunIds: ReadonlySet<string> = new Set()): string[] {
   const recovered: string[] = [];
   for (const receipt of readRunReceiptsLog(vaultPath)) {
     const existing = getRunReceipt(db, receipt.run_id);
     insertReceiptRow(db, receipt, vaultPath);
-    if (existing === null) recovered.push(receipt.run_id);
+    if (existing === null || existing.stopped === CAPTURE_REPAIR_RECEIPT_PENDING) recovered.push(receipt.run_id);
+  }
+  // A repair may stop before JSONL publication. Its committed progress row is
+  // the outbox, so restart publishes the same run identity and count once.
+  if (!tableExists(db, "run_receipts")) return recovered;
+  const pending = db.query<{ run_id: string }, [string]>(
+    "SELECT run_id FROM run_receipts WHERE stopped = ? ORDER BY run_id LIMIT 100",
+  ).all(CAPTURE_REPAIR_RECEIPT_PENDING);
+  if (pending.length > 0) {
+    try {
+      withVaultMutationSync({ db, vault_path: vaultPath }, () => {
+        for (const row of pending) {
+          // Re-read under the lock: another recovery may have published it.
+          const receipt = getRunReceipt(db, row.run_id);
+          if (receipt === null) throw new Error("invalid capture repair receipt");
+          if (receipt.stopped !== CAPTURE_REPAIR_RECEIPT_PENDING || activeRunIds.has(row.run_id) ||
+              (receipt.execution !== undefined && receipt.execution.boot_id === readBootId() &&
+               receipt.execution.pid !== process.pid && pidAlive(receipt.execution.pid))) continue;
+          persistRunReceipt(db, vaultPath, { ...receipt, status: "failed", stopped: null,
+            errors: ["capture repair interrupted before receipt publication"] });
+          recovered.push(row.run_id);
+        }
+      });
+    } catch (error) {
+      if (!(error instanceof VaultMutationError) || error.code !== "writer_busy") throw error;
+      // The durable progress remains until the next recovery gets the writer.
+    }
   }
   return recovered;
 }
@@ -563,10 +613,10 @@ export function pruneRunReceipts(
 ): { deleted: number; rewritten: number } {
   const before = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()?.n ?? 0;
   const rows = db
-    .query<{ run_id: string; report: string }, [string]>(
-      "SELECT run_id, report FROM run_receipts WHERE finished_at >= ? ORDER BY finished_at DESC, run_id DESC",
+    .query<{ run_id: string; report: string }, [string, string]>(
+      "SELECT run_id, report FROM run_receipts WHERE finished_at >= ? AND stopped IS NOT ? ORDER BY finished_at DESC, run_id DESC",
     )
-    .all(cutoff);
+    .all(cutoff, CAPTURE_REPAIR_RECEIPT_PENDING);
   const kept: string[] = [];
   let bytes = 0;
   for (const row of rows) {
@@ -591,9 +641,12 @@ export function pruneRunReceipts(
   }
   renameSync(staged, path);
   db.transaction(() => {
-    if (oldestKept === null) db.query("DELETE FROM run_receipts WHERE finished_at < ?").run(cutoff);
-    else db.query("DELETE FROM run_receipts WHERE finished_at < ? OR (finished_at = ? AND run_id < ?)")
-      .run(oldestKept.finished_at, oldestKept.finished_at, oldestKept.run_id);
+    // A staged repair is an outbox record, never a published journal line.
+    // Retention cannot erase it before its committed skips are receipted.
+    if (oldestKept === null) db.query("DELETE FROM run_receipts WHERE finished_at < ? AND stopped IS NOT ?")
+      .run(cutoff, CAPTURE_REPAIR_RECEIPT_PENDING);
+    else db.query("DELETE FROM run_receipts WHERE (finished_at < ? OR (finished_at = ? AND run_id < ?)) AND stopped IS NOT ?")
+      .run(oldestKept.finished_at, oldestKept.finished_at, oldestKept.run_id, CAPTURE_REPAIR_RECEIPT_PENDING);
   }).immediate();
   const after = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()?.n ?? 0;
   return { deleted: before - after, rewritten: kept.length };

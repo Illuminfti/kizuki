@@ -24,16 +24,17 @@ const KIND_LIST = CONVERSATION_EVENT_KINDS.map((kind) => `'${kind}'`).join(",");
  * A capture note the deterministic floor filed for a conversational event:
  * the connector-day target `captures/<segment>[/<day>]`, the `source` page
  * type and the capture kind it quoted. Typed pages an event proposes for
- * itself carry the same capture kind but never target `captures/`.
+ * itself carry a source-record stamp and may also target `captures/`.
  */
 const CAPTURE_NOTE_WHERE = `kind = 'claim' AND producer = 'deterministic'
   AND json_extract(frontmatter, '$.type') = 'source'
+  AND json_type(frontmatter, '$."x-source-record-id"') IS NULL
   AND json_extract(frontmatter, '$."x-capture-kind"') IN (${KIND_LIST})
   AND target GLOB 'captures/[^/]*' AND target NOT GLOB 'captures/*/*/*'
   AND (target NOT GLOB 'captures/*/*'
        OR target GLOB 'captures/*/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')`;
 
-const UNWRITTEN_NOTE_WHERE = `status = 'live' AND receipt_id IS NULL AND ${CAPTURE_NOTE_WHERE}`;
+export const UNWRITTEN_CAPTURE_NOTE_WHERE = `status = 'live' AND receipt_id IS NULL AND ${CAPTURE_NOTE_WHERE}`;
 
 /** True for a claim the capture fan-out repair closed out. */
 export function isCaptureFanoutSkip(claim: { readonly frontmatter: Readonly<Record<string, unknown>> }): boolean {
@@ -57,7 +58,7 @@ export function countCaptureFanout(db: Database): CaptureFanoutCounts {
       )
       .get(...binds)?.n ?? 0;
   return {
-    pending: count(UNWRITTEN_NOTE_WHERE),
+    pending: count(UNWRITTEN_CAPTURE_NOTE_WHERE),
     skipped: count(
       `status = 'skipped' AND json_extract(frontmatter, '$."${SKIP_REASON_KEY}"') = ?`,
       CAPTURE_FANOUT_SKIP_REASON,
@@ -76,16 +77,18 @@ export function skipCaptureFanoutClaims(
   db: Database,
   at: string,
   limit: number = CAPTURE_FANOUT_REPAIR_LIMIT,
+  /** Persist cumulative progress in the same transaction as each batch. */
+  recordProgress?: (skipped: number) => void,
 ): number {
   if (!tableExists(db, "claims")) return 0;
   const select = db.query<{ claim_id: string }, [number]>(
-    `SELECT claim_id FROM claims WHERE ${UNWRITTEN_NOTE_WHERE} ORDER BY claim_id LIMIT ?`,
+    `SELECT claim_id FROM claims WHERE ${UNWRITTEN_CAPTURE_NOTE_WHERE} ORDER BY claim_id LIMIT ?`,
   );
   const close = db.query(
     `UPDATE claims
         SET status = 'skipped', retracted_at = ?,
             frontmatter = json_set(frontmatter, '$."${SKIP_REASON_KEY}"', ?)
-      WHERE claim_id = ? AND ${UNWRITTEN_NOTE_WHERE}`,
+      WHERE claim_id = ? AND ${UNWRITTEN_CAPTURE_NOTE_WHERE}`,
   );
   const mirror = tableExists(db, "proposals")
     ? db.query(
@@ -103,6 +106,7 @@ export function skipCaptureFanoutClaims(
           if (result.changes > 0) mirror?.run(claim_id);
           changed += result.changes;
         }
+        if (changed > 0) recordProgress?.(skipped + changed);
         return changed;
       })
       .immediate();
