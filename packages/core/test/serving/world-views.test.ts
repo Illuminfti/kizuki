@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { OWNER } from "../../src/agents";
+import { OWNER, addAgent, authenticate, OWNER_AGENT_GRANT, setGrant } from "../../src/agents";
 import { readWorldView } from "@kizuki/core/world";
 import type { ServeContext } from "../../src/serving/types";
 import { hiddenScene } from "../helpers/noninterference";
@@ -47,6 +47,38 @@ const resultOf = (read: Read) => {
 };
 
 describe("view tokens on world_view", () => {
+  test("agent creation reserves a partition, and grant amendment can reserve a freed slot", async () => {
+    const { scene: made } = await scene();
+    const read = () => resultOf(readWorldView(made.reader, concept(made.refs.concept)));
+    expect(read()).toMatchObject({ status: "current", view: { kind: "view" } });
+    made.db.query("DELETE FROM world_view_partitions WHERE principal_id=?").run(
+      made.reader.principal.kind === "agent" ? made.reader.principal.agent.agent_id : "owner",
+    );
+    setGrant(made.db, "narrow-reader", {});
+    const found = readWorldView(made.reader, { operation: "find_concepts", label: "Bayesian", valid: { kind: "all" }, knownAt: { kind: "current" } });
+    if (!("result" in found) || !("data" in found.result) || !("matches" in found.result.data)) throw new Error("no discovery");
+    expect(resultOf(readWorldView(made.reader, concept(found.result.data.matches[0]!.ref)))).toMatchObject({ status: "current", view: { kind: "view" } });
+  });
+
+  test("share and resume reproject for a second principal and disclose only clipped coverage", async () => {
+    const { scene: made, owner } = await scene();
+    const share = resultOf(readWorldView(owner, {
+      operation: "share", of: { operation: "concept", concept: made.visible.concept.ref },
+      valid: { kind: "all" }, knownAt: { kind: "current" },
+    }));
+    if (!("data" in share) || !("handle" in share.data)) throw new Error("no handle");
+    expect(share.data.handle).toMatch(TOKEN);
+    const resumed = resultOf(readWorldView(made.reader, {
+      operation: "resume", handle: share.data.handle, valid: { kind: "all" }, knownAt: { kind: "current" },
+    }));
+    expect(resumed).toMatchObject({ status: "incomplete", reasons: ["coverage"], data: { concept: { ref: made.refs.concept }, coverage: { status: "partial", gaps: ["coverage"] } } });
+    const peer = addAgent(made.db, "wide-peer", OWNER_AGENT_GRANT);
+    const principal = authenticate(made.db, peer.token)!;
+    const full = resultOf(readWorldView({ ...owner, principal }, {
+      operation: "resume", handle: share.data.handle, valid: { kind: "all" }, knownAt: { kind: "current" },
+    }));
+    expect(full).toMatchObject({ status: "current", view: { kind: "view" } });
+  });
   test("a reserved principal reading a Concept gets a random 43-character view token and its lifetime", async () => {
     const { scene: made, owner } = await scene();
     const before = Date.now();
