@@ -760,6 +760,8 @@ export async function runSync(
 }
 
 export interface RunToCompletionOptions {
+  /** Finish and checkpoint the current bounded batch, then start no further batch. */
+  signal?: AbortSignal;
   /** Upper bound on batches per call; exceeding it is an error, not a silent stop. */
   maxBatches?: number;
   /** Host-owned vault path, required when a source tombstone targets receipted canon. */
@@ -814,11 +816,13 @@ export async function runToCompletion(
   const total: RunResult = emptyResult(stored());
   const context = opts?.vault_path === undefined ? undefined : { vault_path: opts.vault_path };
   for (let batch = 0; batch < maxBatches; batch += 1) {
+    if (opts?.signal?.aborted) return total;
     const before = stored();
     const { result, terminal, continue_empty } = await runConnector(db, connector, connector_id, source_key, mode, context, opts?.pace);
     opts?.pace?.();
     absorb(total, result);
     total.cursor = stored();
+    if (opts?.signal?.aborted) return total;
     if (result.errors.length > 0) return total;
     if (terminal) return total;
     if (total.cursor === null) return total;

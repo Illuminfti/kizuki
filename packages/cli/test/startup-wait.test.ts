@@ -55,3 +55,28 @@ test("any other refusal still ends the start at once", async () => {
   ).rejects.toBe(failure);
   expect(attempts).toBe(1);
 });
+
+test("busy cleanup after startup cannot restart the lifecycle", async () => {
+  let started = false;
+  let attempts = 0;
+  const failure = held();
+  await expect(untilLedgerFree(async () => {
+    attempts += 1;
+    started = true;
+    throw failure;
+  }, { log: () => undefined, shouldRetry: () => !started })).rejects.toBe(failure);
+  expect(attempts).toBe(1);
+});
+
+test("a stop interrupts startup backoff and remains terminal", async () => {
+  const stop = new AbortController();
+  let attempts = 0;
+  const result = untilLedgerFree(async () => {
+    attempts += 1;
+    throw held();
+  }, { signal: stop.signal, log: () => { queueMicrotask(() => stop.abort()); } });
+  expect(await result).toBeUndefined();
+  expect(attempts).toBe(1);
+  expect(await untilLedgerFree(async () => { attempts += 1; }, { signal: stop.signal, log: () => undefined })).toBeUndefined();
+  expect(attempts).toBe(1);
+});

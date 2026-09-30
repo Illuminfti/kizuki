@@ -6,6 +6,9 @@ export const STARTUP_HELD_BACKOFF_MS = { first: 2_000, cap: 30_000 } as const;
 export interface StartupWaitOptions {
   readonly log: (line: string) => void;
   readonly sleep?: (ms: number) => Promise<void>;
+  readonly signal?: AbortSignal;
+  /** False after startup: a stopped lifecycle can never be restarted by cleanup. */
+  readonly shouldRetry?: () => boolean;
 }
 
 /**
@@ -17,14 +20,26 @@ export interface StartupWaitOptions {
 export async function untilLedgerFree<T>(
   start: () => Promise<T>,
   options: StartupWaitOptions,
-): Promise<T> {
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+): Promise<T | undefined> {
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => {
+    const finish = (): void => {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    options.signal?.addEventListener("abort", finish, { once: true });
+    if (options.signal?.aborted) finish();
+  }));
   for (let attempt = 0; ; attempt += 1) {
+    if (options.signal?.aborted) return undefined;
     try {
       return await start();
     } catch (error) {
       if (!(error instanceof LedgerLeaseHeldError)) throw error;
-      const wait = Math.min(STARTUP_HELD_BACKOFF_MS.first * 2 ** attempt, STARTUP_HELD_BACKOFF_MS.cap);
+      if (options.signal?.aborted) return undefined;
+      if (options.shouldRetry?.() === false) throw error;
+      const wait = Math.min(STARTUP_HELD_BACKOFF_MS.first * 2 ** Math.min(attempt, 4), STARTUP_HELD_BACKOFF_MS.cap);
       options.log(JSON.stringify({
         event: "start_held",
         reason: error.code,

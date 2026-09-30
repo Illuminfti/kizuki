@@ -851,6 +851,41 @@ function page(index: number, count: number): SyncBatch {
 }
 
 describe("runToCompletion", () => {
+  test("cancellation commits the batch in flight and resumes at its checkpoint without draining later batches", async () => {
+    const db = database();
+    try {
+      const stop = new AbortController();
+      const connector = new ScriptedConnector([page(1, 1), page(2, 1), { events: [], cursor: "page-2" }]);
+      const backfill = connector.backfill.bind(connector);
+      connector.backfill = async cursor => {
+        const batch = await backfill(cursor);
+        stop.abort();
+        return batch;
+      };
+      const result = await runToCompletion(db, connector, "fixture", SOURCE, "backfill", { signal: stop.signal });
+      expect(result).toMatchObject({ stored: 1, errors: [], cursor: "page-1" });
+      expect(connector.cursors).toEqual([null]);
+      expect(getCheckpoint(db, "fixture", SOURCE)?.cursor).toBe("page-1");
+      connector.backfill = backfill;
+      const resumed = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
+      expect(resumed).toMatchObject({ stored: 1, errors: [], cursor: "page-2" });
+      expect(connector.cursors).toEqual([null, "page-1", "page-2"]);
+    } finally { db.close(); }
+  });
+
+  test("a cancelled drain calls no provider and changes no checkpoint", async () => {
+    const db = database();
+    try {
+      const stop = new AbortController();
+      stop.abort();
+      const connector = new ScriptedConnector([page(1, 1)]);
+      expect(await runToCompletion(db, connector, "fixture", SOURCE, "backfill", { signal: stop.signal }))
+        .toMatchObject({ stored: 0, errors: [], cursor: null });
+      expect(connector.cursors).toEqual([]);
+      expect(getCheckpoint(db, "fixture", SOURCE)).toBeNull();
+    } finally { db.close(); }
+  });
+
   test("a terminal snapshot commits its nonnull checkpoint without another provider call", async () => {
     const db = database();
     try {

@@ -1,5 +1,5 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isLedgerBusy } from "../../src/ledger/busy";
 import { openLedger } from "../../src/ledger/db";
@@ -14,7 +14,7 @@ import { railDoctor } from "../../src/serve/doctor-rails";
 import { runServeDaemon } from "../../src/serve/daemon";
 import { runRail } from "../../src/serve/rails";
 import { requestServeStop } from "../../src/serve/stop-control";
-import { persistRunReceipt, listRunReceipts, readRunReceiptsLog } from "../../src/serve/receipts";
+import { persistRunReceipt, listRunReceipts, readRunReceiptsLog, readPendingRunReceipts } from "../../src/serve/receipts";
 import { inspectServeDoctor } from "../../src/serve/doctor";
 import { listSchedules } from "../../src/serve/schema";
 import {
@@ -227,6 +227,39 @@ test("the doctor report carries the holder in the failing rail's line", () => {
   expect(line).toContain("last 5 runs ended stopped");
   expect(line).toContain("a running kizuki ingest (pid 4242)");
   expect(report.top_failure).toEqual({ kind: "rail", rail: "sync" });
+});
+
+test("doctor diagnoses pending skipped receipts while the writer still holds the ledger, without counting duplicates or malformed lines", async () => {
+  const { vault, db, dbPath } = openVault(0);
+  const now = new Date().toISOString();
+  const receipt = (index: number): RunReceipt => ({
+    ...skippedReceipt(index),
+    started_at: new Date(Date.parse(now) - (5 - index) * 1_000).toISOString(),
+    finished_at: new Date(Date.parse(now) - (5 - index) * 1_000).toISOString(),
+  });
+  persistRunReceipt(db, vault, receipt(0));
+  recordIngest(db, process.ppid);
+  const holder = await holdWriteLock(dbPath, 100_000);
+  for (let index = 1; index < 5; index++) {
+    await expect(runRail(db, vault, "sync", { ledgerHeld: true })).rejects.toBeDefined();
+  }
+  const journal = join(vault, ".kizuki", "run-receipts.jsonl");
+  // Duplicate pending and persisted ids must not lengthen the failure streak.
+  const pending = readRunReceiptsLog(vault).at(-1)!;
+  appendFileSync(journal, JSON.stringify(pending) + "\n" + JSON.stringify(receipt(0)) + "\n");
+  appendFileSync(journal, JSON.stringify({ ...receipt(98), schedule_transition: {} }) + '\nnot-json\n' +
+    JSON.stringify({ ...receipt(99), started_at: "bad", finished_at: "bad" }) + "\n");
+  const report = inspectServeDoctor(db, vault, { host_checks: false, page_walk: false });
+  expect(readPendingRunReceipts(db, vault)).toHaveLength(4);
+  const rail = report.rails.find(item => item.rail === "sync")!;
+  expect(rail.status).toBe("down");
+  expect(rail.reason).toContain("last 5 runs ended stopped");
+  expect(rail.reason).toContain("holds the ledger writer lease");
+  expect(rail.reason).toContain(`a running kizuki ingest (pid ${process.ppid})`);
+  expect(listRunReceipts(db)).toHaveLength(1);
+  expect(holder.exitCode).toBeNull();
+  holder.kill("SIGKILL");
+  await holder.exited;
 });
 
 test("the daemon survives a writer that holds the ledger past every wait, journals its skipped passes, and resumes when it lets go", async () => {

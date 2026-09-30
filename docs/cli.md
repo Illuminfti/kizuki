@@ -722,6 +722,12 @@ the pass as `serve:stop_requested`. A pass that meets a ledger another writer
 holds is skipped as `ledger:lease_held` and retried with backoff. See
 [extraction budgets](extraction-budgets.md#owner-throughput-settings).
 
+During connector draining, a stop finishes and checkpoints the current bounded
+batch, then starts no further batch or source. `serve stop` can queue its request
+while the ledger is busy. Startup retries end once the daemon is running; busy
+final sealing never restarts a stopped daemon. Doctor includes pending journal
+receipts in rail health while another writer prevents their ledger publication.
+
 A record too large for one typed request is extracted one segment per request.
 One that cannot be split, such as a single token longer than a request, is
 skipped with a `record_oversized_skipped` receipt and the cursor moves on.
