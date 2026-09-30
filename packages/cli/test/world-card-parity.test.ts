@@ -10,6 +10,7 @@ import { createHelpers } from "./helpers";
 test("one card and its evidence have the same meaning through Core, stdio MCP, HTTP, CLI and the App model", async () => {
   const clients = await twoClients({ seed: { subject: "topic:initial", label: "Initial topic" }, agent: { subjects: null } });
   const f = await cardFixture(clients.db), h = createHelpers();
+  const ctx = { ...f.ctx, vaultPath: clients.vaultPath };
   const env = h.isolatedEnv();
   const host = createAppHost({ env, vaultOverride: clients.vaultPath, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out: () => {}, err: () => {}, prompt: async () => "" });
   let http: Awaited<ReturnType<typeof startLoopback>> | undefined;
@@ -20,7 +21,7 @@ test("one card and its evidence have the same meaning through Core, stdio MCP, H
     await f.write("concept.example", { kind: "literal", value: "A worked observation" }, { mode: "reported", speaker: "person:ada" });
     await f.write("learning.application", { kind: "subject", ref: f.ref("topic:bayes") }, { subject: "person:ada", context: ["task:one"] });
     await f.write("learning.assistance", { kind: "vocabulary", ref: { kind: "vocabulary", id: "learning/assisted" } }, { subject: "task:one", context: ["person:ada"] });
-    const input = f.input("concept", { concept: f.find() }), core = serveWorldView(f.ctx, input);
+    const input = f.input("concept", { concept: f.find(ctx) }), core = serveWorldView(ctx, input);
     const mcp = envelopeOf(await clients.owner.call("world_view", input));
     expect(mcp.data).toEqual(core.data);
     const appCard = await app(input);
@@ -36,8 +37,8 @@ test("one card and its evidence have the same meaning through Core, stdio MCP, H
     const reply = await http.post("world_view", input);
     expect(reply.status).toBe(200);
     expect((reply.body as any).value.data).toEqual(core.data);
-    const card = f.card(), evidence = card.definitions[0]!.assessments[0]!.evidence[0]!;
-    const evidenceInput = f.input("evidence", { evidence }), source = serveWorldView(f.ctx, evidenceInput);
+    const card = f.card(ctx), evidence = card.definitions[0]!.assessments[0]!.evidence[0]!;
+    const evidenceInput = f.input("evidence", { evidence }), source = serveWorldView(ctx, evidenceInput);
     expect(envelopeOf(await clients.owner.call("world_view", evidenceInput)).quoted).toEqual(source.quoted);
     expect((await app(evidenceInput)).data.quoted).toEqual(source.quoted);
     expect(((await http.post("world_view", evidenceInput)).body as any).value.quoted).toEqual(source.quoted);
