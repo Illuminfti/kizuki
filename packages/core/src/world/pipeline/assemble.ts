@@ -1,3 +1,4 @@
+import { createRedactor } from "../../serving/redact";
 import type {
   ConceptCoverage,
   ViewGap,
@@ -119,9 +120,10 @@ export function assembleMatches<Schema extends string>(
     ref: issueWorldRef(db, frame.ns, "object", handle),
     labels,
   }));
+  const preview = createRedactor(frame.ctx.principal);
   matches.sort(
     (a, b) =>
-      (a.labels[0] ?? "").localeCompare(b.labels[0] ?? "") ||
+      preview.text(a.labels[0] ?? "").localeCompare(preview.text(b.labels[0] ?? "")) ||
       a.ref.token.localeCompare(b.ref.token),
   );
   const dark = first && scan.visibleHandles === 0 && !populationEnabled(kind);

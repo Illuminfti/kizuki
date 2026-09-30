@@ -5,6 +5,7 @@ import { authorize, sensitivity, SENSITIVITY_ORDER } from "../agents";
 import type { AuditDenial, AuditItem, Grant, Sensitivity, Servable } from "../agents";
 import type { IdentityLink } from "../claims/identity";
 import { getClaim } from "../claims/store";
+import { claimVisibilitySql } from "../claims/visibility";
 import type { Claim } from "../contracts/proposal";
 import { isAuthorityTier } from "../contracts/proposal";
 import { isRfc3339 } from "../util/time";
@@ -148,5 +149,6 @@ export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadS
     return item === undefined ? [] : [item];
   }
 
-  return { canRead, canReadAlias, invalidAlias, denied, auditClaim, auditGroup, auditAlias };
+  return { canRead, canReadAlias, invalidAlias, denied, auditClaim, auditGroup, auditAlias,
+    visibility: { ...claimVisibilitySql(db, grant, sourceScope.owner === true), canRead } };
 }

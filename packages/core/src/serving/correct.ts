@@ -401,7 +401,9 @@ function assertSufficientAuthority(
   replacement: string | undefined,
   at: string,
 ): void {
-  const rivals = listClaims(ctx.db, { claim_key: claimKey, status: "live" });
+  const visible = claimsIo(ctx).visibility;
+  const rivals = listClaims(ctx.db, { claim_key: claimKey, status: "live",
+    ...(visible === undefined ? {} : { visibility: visible }) });
   const live = rivals.length > 0 ? rivals : group;
   const incoming: ConflictClaim = {
     claim_id: "",

@@ -195,18 +195,32 @@ export async function serveGraph(
         limit: MAX_EDGES,
         ...(kinds === undefined ? {} : { kinds }),
       };
+      const authorizedDecisions = new Map<string, PageDecision>();
+      const authorizedDenials: AuditDenial[] = [];
+      const accept = (edge: GraphEdge): boolean => {
+        const facts = readServableEvents(ctx.db, edge.kind === "source" ? [edge.dst] : []);
+        const classified = classifyGraph([edge], index, grant, facts, new Set(), true, authorizedDecisions, true);
+        const allow = classified.kept.length > 0;
+        if (authorizedDenials.length < MAX_EDGES) authorizedDenials.push(...classified.withheld);
+        return allow;
+      };
+      const scopedFloor = () => neighbors(ctx.db, id, {
+        ...query, limit: MAX_EDGES + 1, ceiling: grant.ceiling, filter: accept,
+      });
       const found = walked.ok
         ? {
             id,
             edges: walked.edges,
             truncated: walked.truncated,
           }
-        : neighbors(ctx.db, id, { ...query, ceiling: grant.ceiling });
+        : ctx.principal.kind === "owner"
+          ? neighbors(ctx.db, id, { ...query, ceiling: grant.ceiling })
+          : scopedFloor();
       const foundKeys = new Set(found.edges.map(edgeKey));
       // Ceiling shapes the served cap on the local floor. A configured
       // engine already applied the requested ceiling; core still authorizes.
       const auditEdges =
-        walked.ok || grant.ceiling === undefined
+        ctx.principal.kind !== "owner" || walked.ok || grant.ceiling === undefined
           ? []
           : neighbors(ctx.db, id, query).edges.filter(
               (edge) => !foundKeys.has(edgeKey(edge)),
@@ -229,6 +243,16 @@ export async function serveGraph(
         decisions,
         !walked.ok,
       );
+      // A provider's raw overflow cannot reveal how many of its unseen edges
+      // survive Core authorization. The local floor can prove scoped overflow.
+      if (walked.ok && walked.truncated && ctx.principal.kind !== "owner") {
+        const floor = scopedFloor();
+        const extra = classifyGraph(floor.edges, index, grant,
+          readServableEvents(ctx.db, floor.edges.filter(edge => edge.kind === "source").map(edge => edge.dst)),
+          seen, true, decisions, true);
+        served.kept.push(...extra.kept);
+        served.withheld.push(...extra.withheld);
+      }
       const hidden = classifyGraph(
         auditEdges,
         index,
@@ -243,11 +267,11 @@ export async function serveGraph(
       return {
         canon: [],
         quoted: [],
-        withheld: [...served.withheld, ...hidden.withheld],
+        withheld: [...served.withheld, ...hidden.withheld, ...authorizedDenials],
         data: {
           id,
           edges: served.kept.slice(0, MAX_EDGES),
-          truncated: found.truncated || served.kept.length > MAX_EDGES,
+          truncated: (ctx.principal.kind === "owner" && found.truncated) || served.kept.length > MAX_EDGES,
         },
       };
     },

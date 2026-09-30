@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
+import { correct } from "../../src/correction/correct";
 import { getClaim, insertClaim } from "../../src/claims/store";
 import { accept } from "../../src/ledger/ledger";
 import { setSourceGrant } from "../../src/ledger/source-grants";
@@ -7,7 +8,11 @@ import { serveCorrect } from "../../src/serving/correct";
 import { serveEntities } from "../../src/serving/entities";
 import { serveGraph } from "../../src/serving/graph";
 import { servePropose } from "../../src/serving/propose";
+import { serveSearch } from "../../src/serving/search";
+import { serveContextPacket } from "../../src/serving/packet";
 import { serveWorldView } from "../../src/serving/world-view";
+import { temporaryPortContext } from "../contracts/fixtures";
+import { DIRECT_RETRIEVAL_DESCRIPTOR, ReferenceRetrievalPort } from "../contracts/reference-retrieval";
 import { claimInput } from "../claims/helpers";
 import { enrollSource, worldSeed } from "../helpers/world-seed";
 import { recordedPage, serveFixture } from "./helpers";
@@ -83,13 +88,24 @@ test("source permission for derivation does not make unreadable claims write can
       retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public",
     } });
     const visible = enrollSource(f.db, "readable.fixture", "public");
-    const incoming = accept(f.db, { ...event.event, connector_id: "readable.fixture", source_record_id: "incoming", text: "New evidence." },
+    const incoming = accept(f.db, {
+      schema: "kizuki.event/v1", connector_id: "readable.fixture", source_record_id: "incoming",
+      kind: "note", occurred_at: "2026-02-28T11:00:00Z", observed_at: "2026-03-01T00:00:00Z",
+      text: "New evidence.", subjects: [{ subject_id: "person:ada", role: "about" }],
+      sensitivity_hint: "public", deleted: false, attachments: [], metadata: {},
+    },
       { source: { source_key: visible, expected_revision: 1 } });
     if (incoming.status !== "stored") throw new Error(incoming.status);
     const before = getClaim(f.db, hidden.claim.claim_id);
     const answer = await servePropose(f.agent("reader-public"), proposal(incoming.event.event_id));
     expect(answer.data?.outcome).toBe("stored");
     expect(JSON.stringify(answer)).not.toContain(hidden.claim.claim_id);
+    expect(getClaim(f.db, hidden.claim.claim_id)).toEqual(before);
+    const corrected = await serveCorrect(f.agent("reader-public"), {
+      statement: "Ada lives in Paris.", target: { claim_id: answer.data!.claim_id }, object: "Paris",
+    });
+    expect(corrected.data?.superseded.map(item => item.claim_id)).toEqual([answer.data!.claim_id]);
+    expect(JSON.stringify(corrected)).not.toContain(hidden.claim.claim_id);
     expect(getClaim(f.db, hidden.claim.claim_id)).toEqual(before);
   } finally { f.dispose(); }
 });
@@ -107,6 +123,27 @@ test("entity name matching cannot probe a redacted title or handle", async () =>
     expect(answer.canon).toEqual([]);
     expect(answer.redacted).toBeUndefined();
     expect(serveEntities(f.agent("reader-public"), { name: "redacted" }).canon).toHaveLength(1);
+  } finally { f.dispose(); }
+});
+
+test("canon search and packets drop matches found only in redacted text", async () => {
+  const f = await serveFixture();
+  try {
+    const value = ["sk", "-", "fixture", "x".repeat(24)].join("");
+    await recordedPage(f.db, f.vaultPath, "facts/redacted-search.md", {
+      id: "fact:redacted-search", title: value, type: "fact", status: "active",
+      sensitivity: "public", taint: "clean", subjects: ["person:ada"],
+    }, "A synthetic searchable note.", [f.events.public!]);
+    expect((await serveSearch(f.owner(), { query: "fixturexxx" })).canon).toHaveLength(1);
+    const answer = await serveSearch(f.agent("reader-public"), { query: "fixturexxx" });
+    expect(answer.canon).toEqual([]);
+    expect(answer.redacted).toBeUndefined();
+    const packet = await serveContextPacket(f.agent("reader-public"), { query: "fixturexxx", include: ["canon"] });
+    expect(packet.canon).toEqual([]);
+    expect(packet.redacted).toBeUndefined();
+    const readable = await serveSearch(f.agent("reader-public"), { query: "synthetic searchable" });
+    expect(readable.canon.map(item => item.page_id)).toEqual(["fact:redacted-search"]);
+    expect(readable.canon[0]?.title).toBe("[redacted:api_token]");
   } finally { f.dispose(); }
 });
 
@@ -141,5 +178,44 @@ test("hidden subject-scoped graph edges neither crowd out visible edges nor set 
     const after = await serveGraph(f.agent("subjected"), { id: "person:ada", kinds: ["subject"], depth: 2 });
     expect(after.data).toEqual(before.data);
     expect(after.data?.truncated).toBe(false);
+  } finally { f.dispose(); }
+});
+
+test("a provider's hidden overflow does not set graph truncation", async () => {
+  const f = await serveFixture();
+  const descriptor = { ...DIRECT_RETRIEVAL_DESCRIPTOR, supports: ["lexical", "graph"] as const };
+  const temporary = temporaryPortContext(descriptor);
+  const retrieval = new ReferenceRetrievalPort(temporary.ctx, descriptor);
+  retrieval.neighbors = async entity => ({
+    entity: entity.entity_id, truncated: true,
+    edges: [{ from: "fact:linked", to: "person:grace", type: "wikilink", weight: 1, provenance: [] }],
+  });
+  try {
+    const ctx = f.agent("reader-public");
+    const before = await serveGraph(ctx, { id: "fact:linked" });
+    const after = await serveGraph({ ...ctx, retrieval }, { id: "fact:linked" });
+    expect(after.data).toEqual(before.data);
+    expect(after.data?.truncated).toBe(false);
+  } finally { f.dispose(); temporary.cleanup(); }
+});
+
+
+test("the shared correction writer also excludes hidden peers", async () => {
+  const f = await serveFixture();
+  try {
+    const open = await insertClaim({ db: f.db }, claimInput(f.events.public!, {
+      subject: "person:ada", predicate: "employment.works_at", object: "Acme", body: "Ada works at Acme.", sensitivity: "public",
+    }));
+    if (open.outcome !== "stored") throw new Error(open.outcome);
+    const hidden = await insertClaim({ db: f.db }, claimInput(f.events.private!, {
+      subject: "person:ada", predicate: "employment.works_at", object: "Private org", body: "Ada works at Private org.", sensitivity: "private",
+    }));
+    const hiddenId = hidden.outcome === "contested" ? hidden.incoming.claim_id : hidden.claim.claim_id;
+    const before = getClaim(f.db, hiddenId);
+    const answer = await correct({ db: f.db, vault_path: f.vaultPath, producer: "agent:reader-public", grant: f.agent("reader-public").principal.grant },
+      { statement: "Ada works at Globex.", target: { claim_id: open.claim.claim_id } });
+    expect(answer.superseded.map(item => item.claim_id)).toEqual([open.claim.claim_id]);
+    expect(getClaim(f.db, hiddenId)).toEqual(before);
+    expect(JSON.stringify(answer)).not.toContain(hiddenId);
   } finally { f.dispose(); }
 });

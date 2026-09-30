@@ -1,3 +1,9 @@
+import { OWNER, getAgent } from "../agents";
+import { principalForAgentId } from "../agents/identity";
+import type { ClaimVisibility } from "../claims/visibility";
+import { claimReader } from "../serving/claims";
+import { loadCanon, pageDecision } from "../serving/canon";
+import type { ServeContext } from "../serving/types";
 import { worldClaimHandle, worldCanonPath } from "../canon/world-materialization";
 import { semanticKey } from "../claims/claim-v2-keys";
 import { unsupportedCorrectionReason, UNSUPPORTED_ASSERTION_REASONS, type UnsupportedAssertionReason } from "../world/correction-support";
@@ -42,15 +48,15 @@ const STATEMENT_MAX = 2000;
 const TARGET_REQUIRED_HINT =
   'kizuki tell "…" --claim <id>  (see kizuki doctor).';
 
-function nowOf(io: CorrectIo): string {
+function nowOf(io: ScopedCorrectIo): string {
   return io.now?.() ?? new Date().toISOString();
 }
 
-function mintId(io: CorrectIo): string {
+function mintId(io: ScopedCorrectIo): string {
   return io.ids?.() ?? ulid();
 }
 
-function canonIo(io: CorrectIo): CanonIo {
+function canonIo(io: ScopedCorrectIo): CanonIo {
   return snapshotCanonIo(io);
 }
 
@@ -133,7 +139,7 @@ function assertScope(scope: CorrectInput["scope"]): void {
   }
 }
 
-function assertGrant(io: CorrectIo): void {
+function assertGrant(io: ScopedCorrectIo): void {
   if (io.grant === undefined) return;
   if (!toolAllowed(io.grant, "correct")) {
     throw new CorrectError("tool_not_granted", "grant.tools does not include correct");
@@ -160,6 +166,44 @@ function portableFrontmatter(live: Claim): Record<string, FrontmatterValue> {
   return out;
 }
 
+interface ScopedCorrectIo extends CorrectIo {
+  readonly readScope?: {
+    readonly claims: ClaimVisibility;
+    readonly page: (path: string) => boolean;
+  };
+}
+
+function scopeCorrection(io: CorrectIo): ScopedCorrectIo {
+  if (io.grant === undefined) return io;
+  const producer = io.producer ?? "owner";
+  let ctx: ServeContext;
+  if (producer.startsWith("agent:")) {
+    const agent = getAgent(io.db, producer.slice("agent:".length));
+    const resolved = agent === null ? null : principalForAgentId(io.db, agent.agent_id);
+    if (resolved === null) throw new CorrectError("tool_not_granted", "correction principal is unavailable");
+    ctx = { db: io.db, vaultPath: io.vault_path, principal: resolved };
+  } else {
+    ctx = { db: io.db, vaultPath: io.vault_path, principal: { ...OWNER, grant: io.grant } };
+  }
+  const reader = claimReader(io.db, ctx.principal.grant,
+    { owner: ctx.principal.kind === "owner", purpose: "recall" });
+  return { ...io, grant: ctx.principal.grant,
+    ...(ctx.principal.kind === "owner" ? {} : { relay_owner_corrections: ctx.principal.grant.relay_owner_corrections }),
+    readScope: {
+      claims: reader.visibility,
+      page(path) {
+        const index = loadCanon({ ...ctx, sourcePurpose: "recall" });
+        const page = index.byPath.get(path);
+        return page !== undefined && pageDecision(index, ctx.principal.grant, page).allow;
+      },
+    },
+  };
+}
+
+function pageReadable(io: ScopedCorrectIo, path: string): boolean {
+  return io.readScope?.page(path) ?? true;
+}
+
 function pagePathForClaim(db: Database, claim: Claim): string | null {
   if (db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(claim.claim_id) !== null) {
     const handle=worldClaimHandle(db,claim.claim_id);
@@ -177,6 +221,11 @@ function pagePathForClaim(db: Database, claim: Claim): string | null {
       .get(claim.receipt_id)?.page_path ?? null
   );
   return path === null ? null : activePagePath(path);
+}
+
+function readableClaimPage(io: ScopedCorrectIo, claim: Claim): string | null {
+  const path = pagePathForClaim(io.db, claim);
+  return path === null || !pageReadable(io, path) ? null : path;
 }
 
 function findOwnerEvent(db: Database, sourceId: string): string | null {
@@ -198,10 +247,10 @@ function ownerSubjects(target: CorrectTarget | undefined, live: Claim): SubjectR
   return [{ subject_id: subject, role: "about" }];
 }
 
-function loadExactGroup(io: CorrectIo, target: CorrectTarget, scope: CorrectInput["scope"]): Claim[] {
+function loadExactGroup(io: ScopedCorrectIo, target: CorrectTarget, scope: CorrectInput["scope"]): Claim[] {
   if (typeof target.claim_id === "string" && target.claim_id.length > 0) {
     const named = getClaim(io.db, target.claim_id);
-    if (named === null) {
+    if (named === null || !(io.readScope?.claims.canRead(named) ?? true)) {
       throw new CorrectError("claim_unknown", "target claim is not in the claims table");
     }
     if (named.status !== "live") {
@@ -210,12 +259,14 @@ function loadExactGroup(io: CorrectIo, target: CorrectTarget, scope: CorrectInpu
     if (named.claim_key === null) {
       return inScope(named, scope) ? [named] : [];
     }
-    return listClaims(io.db, { status: "live", claim_key: named.claim_key }).filter((claim) =>
+    return listClaims(io.db, { status: "live", claim_key: named.claim_key,
+      ...(io.readScope === undefined ? {} : { visibility: io.readScope.claims }) }).filter((claim) =>
       inScope(claim, scope),
     );
   }
   if (typeof target.claim_key === "string" && target.claim_key.length > 0) {
-    const group = listClaims(io.db, { status: "live", claim_key: target.claim_key }).filter((claim) =>
+    const group = listClaims(io.db, { status: "live", claim_key: target.claim_key,
+      ...(io.readScope === undefined ? {} : { visibility: io.readScope.claims }) }).filter((claim) =>
       inScope(claim, scope),
     );
     if (group.length === 0) {
@@ -268,7 +319,7 @@ function recordedCorrection(db: Database, eventId: string): Claim | null {
 }
 
 function reconstruct(
-  io: CorrectIo,
+  io: ScopedCorrectIo,
   eventId: string,
   winner: Claim,
 ): CorrectResult {
@@ -279,13 +330,13 @@ function reconstruct(
     .all(winner.claim_id);
   const superseded = losers.flatMap((row) => {
     const claim = getClaim(io.db, row.loser);
-    if (claim === null || claim.claim_key === null) return [];
+    if (claim === null || claim.claim_key === null || !(io.readScope?.claims.canRead(claim) ?? true)) return [];
     return [
       {
         claim_id: claim.claim_id,
         claim_key: claim.claim_key,
         was: answerTerms(io.db, claim).value,
-        page_path: pagePathForClaim(io.db, claim),
+        page_path: readableClaimPage(io, claim),
       },
     ];
   });
@@ -293,7 +344,7 @@ function reconstruct(
     (row) => row !== null,
   );
   const rewritten = receipts.flatMap((receipt) => {
-    if (activePagePath(receipt.page_path) === null) return [];
+    if (activePagePath(receipt.page_path) === null || !pageReadable(io, receipt.page_path)) return [];
     const page = readVaultPage(io, receipt.page_path);
     return [{
       page_path: receipt.page_path,
@@ -303,14 +354,14 @@ function reconstruct(
       diff: page === null ? "" : unifiedDiff("", page.content, receipt.page_path),
     }];
   });
-  const pending = correctionRecoveryPending(io.db, winner.claim_id);
+  const pending = correctionRecoveryPending(io.db, winner.claim_id).filter(item => pageReadable(io, item.page_path));
   const knownPaths = [...new Set(superseded.flatMap(row => row.page_path === null ? [] : [row.page_path]))].slice(0, CORRECTION_MAX_PAGES);
   for (const path of knownPaths) for (const item of correctionRecoveryPending(io.db, winner.claim_id, path)) {
     if (!pending.some(prior => prior.receipt_id === item.receipt_id)) pending.push(item);
   }
   return {
     ...(pending.length === 0 ? {} : { recovery_pending: pending }),
-    receipt_id: winner.receipt_id,
+    receipt_id: rewritten[0]?.receipt_id ?? null,
     event_id: eventId,
     claim_ids: [winner.claim_id],
     superseded,
@@ -320,11 +371,11 @@ function reconstruct(
   };
 }
 
-function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectResult | null {
+function replayRecordedCorrection(io: ScopedCorrectIo, input: CorrectInput): CorrectResult | null {
   const eventId = recordedOwnerEvent(io.db, sourceRecordId(input.statement, input.target, input.world));
   if (eventId === null) return null;
   const prior = recordedCorrection(io.db, eventId);
-  if (prior === null) return null;
+  if (prior === null || !(io.readScope?.claims.canRead(prior) ?? true)) return null;
   if (prior.status === "skipped") {
     throw new CorrectError("below_authority", "correction was below the live claim's authority");
   }
@@ -394,7 +445,7 @@ function formatAnswer(
  * claim. A typed correction is filed at the owner's authority, so a grant that
  * may not relay the owner cannot make one.
  */
-function correctionMeaning(io: CorrectIo, live: Claim): ClaimMeaning | null {
+function correctionMeaning(io: ScopedCorrectIo, live: Claim): ClaimMeaning | null {
   const prior = readClaimV2Semantic(io.db, live.claim_id);
   if (prior === null) return null;
   const unsupported = (reason: UnsupportedAssertionReason) =>
@@ -409,7 +460,7 @@ function correctionMeaning(io: CorrectIo, live: Claim): ClaimMeaning | null {
 }
 
 /** Every refusal a typed correction can meet, before anything is recorded. */
-function planCorrection(io: CorrectIo, input: CorrectInput, live: Claim, at: string): WorldPlan | null {
+function planCorrection(io: ScopedCorrectIo, input: CorrectInput, live: Claim, at: string): WorldPlan | null {
   const prior = correctionMeaning(io, live);
   if (prior === null) {
     if (input.world !== undefined) throw new CorrectError("correction_refused", "modes apply to typed world claims");
@@ -419,7 +470,7 @@ function planCorrection(io: CorrectIo, input: CorrectInput, live: Claim, at: str
 }
 
 function acceptOwnerEvent(
-  io: CorrectIo,
+  io: ScopedCorrectIo,
   input: CorrectInput,
   live: Claim,
   at: string,
@@ -455,7 +506,7 @@ function acceptOwnerEvent(
 }
 
 async function insertCorrection(
-  io: CorrectIo,
+  io: ScopedCorrectIo,
   input: CorrectInput,
   live: Claim,
   eventId: string,
@@ -469,7 +520,9 @@ async function insertCorrection(
   const intent = relay ? ("correct" as const) : ("propose" as const);
   const typedSemantic = plan?.build(eventId);
   const prepared = await prepareClaimInsert(
-    { db: io.db, now: () => at, ...(io.retrieval === undefined ? {} : { retrieval: io.retrieval }) },
+    { db: io.db, now: () => at,
+      ...(io.retrieval === undefined ? {} : { retrieval: io.retrieval }),
+      ...(io.readScope === undefined ? {} : { visibility: io.readScope.claims }), },
     {
       kind: live.kind === "entity" ? "entity" : "claim",
       target: live.target,
@@ -522,7 +575,10 @@ async function insertCorrection(
     if (error instanceof ClaimError && error.code.startsWith("world_")) throw new CorrectError("correction_refused", error.message, { cause: error });
     throw error;
   }
-  await retryRetrievalOps({db:io.db,...(io.retrieval===undefined?{}:{retrieval:io.retrieval})});
+  await retryRetrievalOps({ db: io.db,
+    ...(io.retrieval === undefined ? {} : { retrieval: io.retrieval }),
+    ...(io.readScope === undefined ? {} : { visibility: io.readScope.claims }),
+  });
   if (
     result.outcome === "skipped" ||
     (result.outcome === "duplicate" && result.claim.status === "skipped")
@@ -540,15 +596,15 @@ interface AffectedPage {
   relevance: number;
 }
 
-function affectedPages(io: CorrectIo, group: Claim[], winner: Claim): AffectedPage[] {
+function affectedPages(io: ScopedCorrectIo, group: Claim[], winner: Claim): AffectedPage[] {
   if(io.db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(winner.claim_id)!==null) {
-    const path=pagePathForClaim(io.db,winner);if(path===null)return [];
+    const path=pagePathForClaim(io.db,winner);if(path===null || !pageReadable(io,path))return [];
     const page=readVaultPage(io,path),id=page?.data["id"];
     return typeof id==="string"?[{page_id:id,rel_path:path,relevance:1}]:[];
   }
   const seen = new Map<string, AffectedPage>();
   const add = (pageId: string, relPath: string, relevance: number): void => {
-    if (activePagePath(relPath) === null) return;
+    if (activePagePath(relPath) === null || !pageReadable(io, relPath)) return;
     const current = seen.get(relPath);
     if (current === undefined || relevance > current.relevance) {
       seen.set(relPath, { page_id: pageId, rel_path: relPath, relevance });
@@ -660,8 +716,9 @@ function captureCorrectInput(input: CorrectInput): CorrectInput {
   });
 }
 
-async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: CorrectInput): Promise<CorrectResult> {
+async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, input: CorrectInput): Promise<CorrectResult> {
   requireCanonFiles(scope, io);
+  io = scopeCorrection(io);
   assertStatement(input.statement);
   assertScope(input.scope);
   assertGrant(io);
@@ -696,7 +753,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
       claim_id: claim.claim_id,
       claim_key: claim.claim_key ?? "",
       was: answerTerms(io.db, claim).value,
-      page_path: pagePathForClaim(io.db, claim),
+      page_path: readableClaimPage(io, claim),
     }));
     const previewPages = affectedPages(io, group, seed).slice(0, CORRECTION_MAX_PAGES);
     const rewritten = previewPages.flatMap((page) => {
@@ -735,7 +792,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
   }
 
   const winner = await insertCorrection(io, input, seed, accepted.event_id, at, provenance, plan);
-  supersedeLiveGroup(io.db, winner, at);
+  io.db.transaction(() => supersedeLiveGroup(io.db, winner, at, io.readScope?.claims)).immediate();
   const superseded = io.db
     .query<{ loser: string }, [string]>(
       "SELECT loser FROM claim_supersessions WHERE winner = ? ORDER BY at, loser",
@@ -743,13 +800,13 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     .all(winner.claim_id)
     .flatMap((row) => {
       const claim = getClaim(io.db, row.loser);
-      if (claim === null) return [];
+      if (claim === null || !(io.readScope?.claims.canRead(claim) ?? true)) return [];
       return [
         {
           claim_id: claim.claim_id,
           claim_key: claim.claim_key ?? winner.claim_key ?? "",
           was: answerTerms(io.db, claim).value,
-          page_path: pagePathForClaim(io.db, claim),
+          page_path: readableClaimPage(io, claim),
         },
       ];
     });
@@ -776,7 +833,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     let claim = winner;
     if (index > 0) {
       const extra = await insertClaim(
-        { db: io.db, now: () => at },
+        { db: io.db, now: () => at, ...(io.readScope === undefined ? {} : { visibility: io.readScope.claims }) },
         {
           kind: "claim",
           target: page.page_id,

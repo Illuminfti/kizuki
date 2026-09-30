@@ -1,3 +1,4 @@
+import type { ClaimVisibility } from "./visibility";
 import { UNWRITTEN_CAPTURE_NOTE_WHERE } from "./capture-fanout";
 import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { historicalSourceWriteAllowed, inspectSourceGrant, sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, type SourceReadScope } from "../ledger/source-grants";
@@ -67,6 +68,8 @@ export interface ClaimsIo {
   readonly now?: () => string;
   /** Internal exact-provenance capability for a pre-policy durable replay. */
   readonly historical_source_write?: object;
+  /** Non-owner filing compares and mutates only claims in this live read view. */
+  readonly visibility?: ClaimVisibility;
 }
 
 export interface InsertClaimInput {
@@ -530,23 +533,34 @@ function findExact(
   kind: ClaimKind,
   target: string | null,
   bodyHash: string,
+  visibility?: ClaimVisibility,
 ): Claim | null {
-  const row = db
-    .query<ClaimRow, [string, string, string]>(
-      `SELECT * FROM claims
-        WHERE kind = ? AND coalesce(target, '') = ? AND body_hash = ?`,
-    )
-    .get(kind, target ?? "", bodyHash);
-  return row === null ? null : rowToClaim(row);
+  const statement = db.prepare<ClaimRow, (string | number)[]>(
+    `SELECT * FROM claims
+      WHERE kind = ? AND coalesce(target, '') = ? AND body_hash = ?
+        ${visibility === undefined ? "" : `AND (${visibility.sql})`}
+      ORDER BY created_at, claim_id`,
+  );
+  try {
+    for (const row of statement.iterate(kind, target ?? "", bodyHash, ...(visibility?.bindings ?? []))) {
+      const claim = rowToClaim(row);
+      if (visibility?.canRead(claim) ?? true) return claim;
+    }
+    return null;
+  } finally {
+    statement.finalize();
+  }
 }
 
-function liveByKey(db: Database, key: string): Claim[] {
+function liveByKey(db: Database, key: string, visibility?: ClaimVisibility): Claim[] {
   return db
-    .query<ClaimRow, [string]>(
-      `SELECT * FROM claims WHERE claim_key = ? AND status = 'live'`,
+    .query<ClaimRow, (string | number)[]>(
+      `SELECT * FROM claims WHERE claim_key = ? AND status = 'live'
+        ${visibility === undefined ? "" : `AND (${visibility.sql})`}`,
     )
-    .all(key)
-    .map(rowToClaim);
+    .all(key, ...(visibility?.bindings ?? []))
+    .map(rowToClaim)
+    .filter(claim => visibility?.canRead(claim) ?? true);
 }
 
 function structuralMatch(incoming: Claim, live: Claim): boolean {
@@ -684,8 +698,26 @@ export function pendingRetrievalOps(
   db: Database,
   limit = RETRIEVAL_SWEEP_LIMIT,
   store?: string,
+  visibility?: ClaimVisibility,
 ): { op_id: string; doc_id: string }[] {
   if (!tableExists(db, "retrieval_ops")) return [];
+  if (visibility !== undefined) {
+    const selected: { op_id: string; doc_id: string }[] = [];
+    const statement = db.prepare<{ op_id: string; doc_id: string }, (string | number | null)[]>(
+      `SELECT op_id, doc_id FROM retrieval_ops JOIN claims ON claims.claim_id=retrieval_ops.doc_id
+       WHERE state='pending' AND (? IS NULL OR store=?) AND (${visibility.sql})
+       ORDER BY retrieval_ops.created_at, op_id`,
+    );
+    try {
+      for (const op of statement.iterate(store ?? null, store ?? null, ...visibility.bindings)) {
+        const claim = getClaim(db, op.doc_id);
+        if (claim === null || !visibility.canRead(claim)) continue;
+        selected.push(op);
+        if (selected.length >= limit) break;
+      }
+      return selected;
+    } finally { statement.finalize(); }
+  }
   return db
     .query<{ op_id: string; doc_id: string }, [string | null, string | null, number]>(
       `SELECT op_id, doc_id FROM retrieval_ops
@@ -714,6 +746,7 @@ export function countPendingRetrievalOps(db: Database, store?: string): number {
  */
 function retrievalClaimAllowed(io: ClaimsIo, claim: Claim): boolean {
   return claim.status === "live" &&
+    (io.visibility?.canRead(claim) ?? true) &&
     sourceEventsAllowed(io.db, claim.provenance, { owner: true, purpose: "derive", ...(io.retrieval === undefined ? {} : { port: io.retrieval }) }) &&
     externalEvidence(io.db, claim.provenance);
 }
@@ -730,10 +763,10 @@ export async function retryRetrievalOps(
 ): Promise<{ retried: number; pending: number }> {
   if (io.db.inTransaction) throw new Error("retrieval publication requires committed claims");
   if (io.retrieval === undefined || (sourcePolicyEpoch(io.db) > 0 && !isLocalSourcePort(io.retrieval))) {
-    return { retried: 0, pending: pendingRetrievalOps(io.db, limit).length };
+    return { retried: 0, pending: pendingRetrievalOps(io.db, limit, undefined, io.visibility).length };
   }
   let retried = 0;
-  for (const op of pendingRetrievalOps(io.db, limit, io.retrieval.descriptor.id)) {
+  for (const op of pendingRetrievalOps(io.db, limit, io.retrieval.descriptor.id, io.visibility)) {
     try {
       const claim = getClaim(io.db, op.doc_id);
       if (claim === null || !retrievalClaimAllowed(io, claim)) await cancelRetrievalOp(io, op);
@@ -750,7 +783,7 @@ export async function retryRetrievalOps(
       break;
     }
   }
-  return { retried, pending: pendingRetrievalOps(io.db, limit, io.retrieval.descriptor.id).length };
+  return { retried, pending: pendingRetrievalOps(io.db, limit, io.retrieval.descriptor.id, io.visibility).length };
 }
 
 
@@ -916,6 +949,8 @@ export function listClaims(
     limit?: number;
     /** Applied before the result limit; matching rows are streamed in query order. */
     filter?: (claim: Claim) => boolean;
+    /** Current read scope pushed below materialization and the result cap. */
+    visibility?: ClaimVisibility;
   } = {},
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
@@ -934,9 +969,16 @@ export function listClaims(
     params.push(opts.subject);
   }
   if (opts.keyed === true) clauses.push("claim_key IS NOT NULL");
+  if (opts.visibility !== undefined) {
+    clauses.push(`(${opts.visibility.sql})`);
+    params.push(...opts.visibility.bindings);
+  }
+  const visibility = opts.visibility;
+  const filter = visibility === undefined ? opts.filter
+    : (claim: Claim) => visibility.canRead(claim) && (opts.filter?.(claim) ?? true);
   const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
   const limit = opts.limit ?? 200;
-  if (opts.filter !== undefined) {
+  if (filter !== undefined) {
     if (!Number.isSafeInteger(limit)) throw new TypeError("claim limit must be a safe integer");
     if (limit === 0) return [];
     const selected: Claim[] = [];
@@ -948,7 +990,7 @@ export function listClaims(
     try {
       for (const row of statement.iterate(...params)) {
         const claim = rowToClaim(row);
-        if (!opts.filter(claim)) continue;
+        if (!filter(claim)) continue;
         selected.push(claim);
         if (limit > 0 && selected.length >= limit) break;
       }
@@ -1041,9 +1083,10 @@ export function supersedeLiveGroup(
   db: Database,
   winner: Claim,
   at: string,
+  visibility?: ClaimVisibility,
 ): { claim_id: string; claim_key: string; rule: "R5" }[] {
   if (winner.claim_key === null) return [];
-  const live = liveByKey(db, winner.claim_key).filter(
+  const live = liveByKey(db, winner.claim_key, visibility).filter(
     (claim) => claim.claim_id !== winner.claim_id,
   );
   const out: { claim_id: string; claim_key: string; rule: "R5" }[] = [];
@@ -1235,7 +1278,9 @@ export async function prepareClaimInsert(
     const { retrieval: _retrieval, ...local } = io;
     io = local;
   }
-  let mode = retrievalDedupMode(io.retrieval);
+  // The v1 vector window cannot express the complete read grant: hidden
+  // nominations would consume its cap before Core can filter them.
+  let mode = io.visibility === undefined ? retrievalDedupMode(io.retrieval) : "structural-only" as const;
   if (mode === "full" && await retrievalIsDegraded(io.retrieval)) mode = "structural-only";
   const nominees = mode === "full" ? await nominateSemantic(io, {
     body: input.body, subject: input.subject ?? input.subjects?.[0] ?? null, provenance: input.provenance,
@@ -1310,7 +1355,7 @@ function applyClaimInsert(
   const incomingWindow = { valid_from: input.valid_from ?? at, valid_to: input.valid_to ?? null };
   const hasCorroboration =
     key !== null &&
-    liveByKey(io.db, key).some(
+    liveByKey(io.db, key, io.visibility).some(
       (live) =>
         sourceEventsAllowed(io.db, live.provenance, sourceScope) &&
         externalEvidence(io.db, live.provenance) &&
@@ -1401,7 +1446,7 @@ function applyClaimInsert(
     return { outcome: "duplicate", claim: worldSemanticMatch, dedup: mode };
   }
   const exact = input.world_admission === undefined
-    ? findExact(io.db, claim.kind, claim.target, claim.body_hash)
+    ? findExact(io.db, claim.kind, claim.target, claim.body_hash, io.visibility)
     : null;
   if (exact !== null && sourceControl) {
     requireSourceTombstoneProposal(io.db, exact,
@@ -1424,8 +1469,8 @@ function applyClaimInsert(
   }
 
   const structuralCandidates = [
-    ...(claim.claim_key !== null ? liveByKey(io.db, claim.claim_key) : []),
-    ...semanticNomineeIds.map(id => getClaim(io.db, id)).filter((candidate): candidate is Claim => candidate !== null && candidate.status === "live"),
+    ...(claim.claim_key !== null ? liveByKey(io.db, claim.claim_key, io.visibility) : []),
+    ...semanticNomineeIds.map(id => getClaim(io.db, id)).filter((candidate): candidate is Claim => candidate !== null && candidate.status === "live" && (io.visibility?.canRead(candidate) ?? true)),
   ];
   const structural = structuralCandidates.find((live) =>
     sourceEventsAllowed(io.db, live.provenance, sourceScope) && externalEvidence(io.db, live.provenance) && structuralMatch(claim, live),
@@ -1441,7 +1486,7 @@ function applyClaimInsert(
 
   const conflicts = (claim.claim_key === null
     ? []
-    : liveByKey(io.db, claim.claim_key)
+    : liveByKey(io.db, claim.claim_key, io.visibility)
   ).filter((live) =>
     sourceEventsAllowed(io.db, live.provenance, sourceScope) && externalEvidence(io.db, live.provenance) && claimsConflict(toConflict(claim), toConflict(live, provenanceGone(io.db, live))),
   );

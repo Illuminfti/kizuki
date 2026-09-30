@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
 import {
@@ -116,6 +118,7 @@ test("A1 correct does not return the text of a canon page above the caller's cei
     );
     expect(secret.receipt.page_path).toBe(open.receipt.page_path);
 
+    const before = readFileSync(join(f.vaultPath, open.receipt.page_path), "utf8");
     const agent = f.agent("reader-public");
     // Precondition: the agent is refused this page everywhere it can ask.
     const direct = await serveGetPage(agent, { path: open.receipt.page_path });
@@ -132,6 +135,7 @@ test("A1 correct does not return the text of a canon page above the caller's cei
     expect(wire).not.toContain('sensitivity: \\"private\\"');
     expect(wire).not.toContain(f.events["private"] as string);
     expect(wire).not.toContain(open.receipt.page_path);
+    expect(readFileSync(join(f.vaultPath, open.receipt.page_path), "utf8")).toBe(before);
   } finally {
     f.dispose();
   }
