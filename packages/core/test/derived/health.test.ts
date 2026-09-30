@@ -365,7 +365,7 @@ test("source-denied malformed pages preserve the permitted serving corpus", asyn
     return result.event.event_id;
   };
   await recordedPage(f.db, f.vaultPath, "facts/tea.md", data, "Tea with [[Kettle]].", [capture(visibleSource)]);
-  const principal = authenticate(f.db, addAgent(f.db, "source-reader", { ...OWNER_AGENT_GRANT, ceiling: "public" }).token)!;
+  const principal = authenticate(f.db, addAgent(f.db, "source-reader", OWNER_AGENT_GRANT).token)!;
   const ctx = { ...f.ctx, principal };
   rebuildDerived(f.db, f.vaultPath);
   const read = { name: "source search", run: (ctx: ServeContext) => serveSearch(ctx, { query: "Tea" }) };
@@ -373,6 +373,7 @@ test("source-denied malformed pages preserve the permitted serving corpus", asyn
   const before = await observe(ctx, read);
   await recordedPage(f.db, f.vaultPath, "facts/hidden-source.md", { ...data, id: "fact:hidden-source" }, "Unrelated source prose.", [capture(hiddenSource)]);
   rebuildDerived(f.db, f.vaultPath);
+  await serveSearch(f.ctx, { query: "Tea" });
   expect(await observe(ctx, read)).toEqual(before);
   const file = join(f.vaultPath, "facts/hidden-source.md");
   writeFileSync(file, readFileSync(file, "utf8").replace(/^title:.*$/m, "title: ["));

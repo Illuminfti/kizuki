@@ -192,7 +192,7 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
     throw new CanonUnreadableError(fatal);
   }
   const grant = ctx.principal.grant;
-  const scopeKey = JSON.stringify([grant.ceiling, grant.types, grant.subjects, grant.since, grant.until]);
+  const scopeKey = JSON.stringify([ctx.principal.kind, ctx.sourcePurpose ?? "recall", grant.ceiling, grant.types, grant.subjects, grant.since, grant.until]);
   let authorityMemo = memo.authorities.get(scopeKey);
   if (authorityMemo === undefined) {
     if (memo.authorities.size >= MEMO_SCOPES) memo.authorities.delete(memo.authorities.keys().next().value!);
