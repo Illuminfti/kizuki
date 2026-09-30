@@ -266,6 +266,7 @@ describe("help", () => {
       expect(body.data.bounds).toMatchObject({
         "--since": "TIME",
         "--until": "TIME",
+        "--response-contract": "kizuki.envelope/v1|kizuki.envelope/v2",
         "--mode": "replace_object|retract|reclassify_mode",
         "--perspective-mode": "suggested|hypothetical|questioned",
       });
@@ -444,6 +445,7 @@ describe("help", () => {
         "--until": "RFC3339",
         "--task-event": "identifier",
         "--task-integrity": "sha256",
+        "--response-contract": "kizuki.envelope/v1|kizuki.envelope/v2",
       });
       expect(body.data.irreversible).toBe(false);
     }
