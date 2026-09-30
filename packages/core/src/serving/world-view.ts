@@ -305,7 +305,7 @@ export function serveWorldView(
       if (current === null) throw new ServeError("unknown_agent", "unknown agent");
       if (!toolAllowed(current.grant, "world_view")) throw new ServeError("tool_not_granted", "tool not granted");
       const changed = readPrincipal?.kind === "agent" && current.kind === "agent" && readPrincipal.grant_epoch !== current.grant_epoch;
-      const fresh = { ...live, principal: current, sourcePurpose: "recall" as const };
+      const fresh = { ...live, principal: current };
       if (!changed && worldDependenciesAuthorized(fresh, dependencies)) return served;
       const data = served.data;
       if (data !== undefined && "result" in data && "view" in data.result && "kind" in data.result.view) {

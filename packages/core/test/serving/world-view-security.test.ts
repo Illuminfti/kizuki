@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { OWNER, setGrant } from "../../src/agents";
 import { readWorldView, serveWorldView } from "@kizuki/core/world";
 import { purgeEvents } from "../../src/ledger/purge";
-import { revokeSourceGrant } from "../../src/ledger/source-grants";
+import { inspectSourceGrant, revokeSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
 import { assertNoninterference, hiddenScene, HIDDEN_MUTATIONS } from "../helpers/noninterference";
 import type { NoninterferenceScene } from "../helpers/noninterference";
 import { worldSeed } from "../helpers/world-seed";
@@ -136,4 +136,18 @@ test("a grant narrowed after projection invalidates the baseline under current a
   const made = await setup(), priorView = baseline(made);
   const db = afterSnapshot(made.db, () => setGrant(made.db, "narrow-reader", { subjects: [] }));
   expect(serveWorldView({ ...made.reader, db }, { ...concept(made), priorView }).data).toMatchObject({ result: REQUIRED });
+});
+
+test("source revalidation preserves the request purpose when recall remains authorized", async () => {
+  const made = await setup(), priorView = baseline(made);
+  const input = { ...concept(made), priorView };
+  const ctx = { ...made.reader, sourcePurpose: "derive" as const };
+  expect(readWorldView(ctx, input)).toMatchObject({ result: { status: "unchanged" } });
+  const grant = inspectSourceGrant(made.db, made.visible.concept.sourceKey)!;
+  const db = afterSnapshot(made.db, () => setSourceGrant(made.db, {
+    source_key: grant.source_key, expected_revision: grant.revision, operation_id: "view-purpose-withdrawal",
+    policy: { ...grant.policy, purposes: grant.policy.purposes.filter((purpose) => purpose !== "derive") },
+  }));
+  expect(serveWorldView({ ...ctx, db }, input).data).toMatchObject({ result: REQUIRED });
+  expect(readWorldView(made.reader, concept(made))).toMatchObject({ result: { status: "current" } });
 });
