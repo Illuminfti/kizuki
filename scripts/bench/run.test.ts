@@ -22,6 +22,7 @@ test("S smoke produces a validated synthetic report through the command seam in 
     expect(report.corpus.canon_pages).toBeGreaterThan(0);
     expect(Object.keys(report.metrics).sort()).toEqual([...METRICS].sort());
     expect(report.metrics["serve.idle_cpu_percent"]?.status).toBe("omitted");
+    expect(report.protocol).toMatchObject({ idle_warmup: "omitted", idle_repetitions: 0, idle_window_ms: 0, idle_observed_ms: [] });
     expect(Object.values(report.metrics).filter(metric => metric.status === "omitted")).toHaveLength(1);
     expect(readFileSync(join(out, "summary.md"), "utf8")).toContain(report.machine.git_sha);
     expect(JSON.parse(readFileSync(join(out, "report.schema.json"), "utf8")).properties.schema.const).toBe("kizuki.benchmark/v1");

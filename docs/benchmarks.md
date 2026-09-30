@@ -1,10 +1,13 @@
 # Synthetic scale benchmarks
 
-Run the harness from a source checkout with the pinned Bun version:
+Run the harness from a source checkout with the pinned Bun version. Compare
+clean, committed checkouts: the report git SHA identifies HEAD, not uncommitted
+file contents.
 
 ```sh
-bun scripts/bench/run.ts --size S --out "$TMPDIR/bench-S"
-bun scripts/bench/run.ts --size M --seed 1 --out "$TMPDIR/bench-M"
+bench_dir=$(mktemp -d)
+TMPDIR="$bench_dir" bun scripts/bench/run.ts --size S --out "$bench_dir/bench-S"
+TMPDIR="$bench_dir" bun scripts/bench/run.ts --size M --seed 1 --out "$bench_dir/bench-M"
 ```
 
 `--out` defaults to a new temporary directory outside the checkout. Reports
@@ -114,9 +117,12 @@ in each fresh build process, without a model or HTTP listener. RSS is sampled
 from its process high-water mark when the drain finishes, before extraction
 or canon writing. It includes startup and the entire drain. This captures peaks
 that a periodic sampler could miss. It is total RSS, not incremental heap.
-Idle CPU observes one running daemon for at least 60 seconds after initial due
-rails finish, retaining the real one-second sleep, heartbeat and schedules;
-CPU % is user plus system CPU divided by wall time, relative to one core.
+Idle CPU records three observations in separate daemon processes. Each process
+warms up until its initial due rails finish and its first sleep begins, then
+observes at least 60 seconds, retaining the real one-second sleep, heartbeat
+and schedules. Startup work is excluded from every observation. CPU % is user
+plus system CPU divided by observed wall time, relative to one core. The report
+retains all three CPU samples and their individual observed durations.
 The fixture has no configured model, embedding port or HTTP listener.
 
 ## CI smoke
@@ -149,7 +155,7 @@ Every report uses `schema: "kizuki.benchmark/v1"` and has exactly these fields:
 | `profile` | `full` or `smoke` |
 | `machine` | CPU count, three initial load averages, Bun version, git SHA, platform and architecture |
 | `corpus` | Size, integer seed, event/topic/page, unwritten-claim and unextracted-event counts, maximum records per topic and logical input SHA-256 |
-| `protocol` | Build, in-process read and cold-process warmups/repetitions, idle observation duration, retrieval and principal |
+| `protocol` | Build, in-process read and cold-process warmups/repetitions; idle warmup, repetitions, requested window and observed durations; retrieval and principal |
 | `metrics` | Closed inventory of metric names defined by `METRICS` |
 
 Each metric contains `unit`, `direction` (`lower` or `higher`), `status`, raw
@@ -159,6 +165,13 @@ and an explicit reason. Only smoke idle CPU may be omitted. The emitted JSON
 Schema describes the structural grammar; the runtime validator additionally
 checks the complete inventory, percentiles, units, corpus counts and profile
 semantics. Unknown report fields fail validation.
+
+Full idle protocol fields are `idle_warmup: "initial due rails"`,
+`idle_repetitions: 3`, `idle_window_ms: 60000`, and `idle_observed_ms`, an array
+with one elapsed duration per CPU sample in the same order. Validation requires
+at least two repetitions, a requested window of at least 60,000 ms and every
+observed duration at least as long as that window. Smoke records `"omitted"`
+warmup, zero repetitions/window and an empty duration array.
 
 ## Baselines and targets
 
@@ -177,8 +190,8 @@ proves resumption across the bounded passes required by XL.
 Values below are measured medians. Reports retain all samples and p95/p99.
 A throughput target multiplies its median by 10; a latency or CPU target
 divides by 10. Total RSS has a runtime floor, so a 10x total-RSS target is not
-meaningful; compare its growth with workload size. Idle CPU has one observation
-per size, not a sampled tail distribution. These are optimization targets,
+meaningful; compare its growth with workload size. Three idle observations per
+size have limited tail resolution. These are optimization targets,
 not achieved speedups or release gates.
 
 | Metric | Unit | S p50 | M p50 | S 10x target | M 10x target |

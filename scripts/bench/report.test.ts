@@ -6,7 +6,51 @@ import { createSource, sourceRow } from "./corpus";
 import { options, outputDirectory } from "./run";
 import { ROOT, childEnvironment, command } from "./process";
 import { assertCliRead, assertRead } from "./reads";
-import { distribution, percentile } from "./report";
+import { METRICS, distribution, parseReport, percentile, type Report } from "./report";
+
+function fullReport(): Report {
+  const metrics = Object.fromEntries(METRICS.map(name => {
+    const unit = name.endsWith("rss_bytes") ? "bytes" : name.endsWith("events_per_s") ? "events/s" : name.endsWith("writes_per_s") ? "writes/s" : name.endsWith("cpu_percent") ? "CPU %" : "ms";
+    return [name, distribution(unit, [1, 2, 3], unit.endsWith("/s") ? "higher" : "lower")];
+  }));
+  return {
+    schema: "kizuki.benchmark/v1", profile: "full",
+    machine: { cpu_count: 4, load_at_start: [0, 0, 0], bun_version: "1.3.14", git_sha: "0".repeat(40), platform: "linux", arch: "x64" },
+    corpus: { size: "S", seed: 1, events: 1_000, max_events_per_topic: 256, topics: 4, canon_pages: 8, unwritten_claims: 996, unextracted_events: 984, input_sha256: "0".repeat(64) },
+    protocol: { build_warmup: 1, build_repetitions: 3, read_warmup: 2, read_repetitions: 3, process_warmup: 2, process_repetitions: 3,
+      idle_warmup: "initial due rails", idle_repetitions: 3, idle_window_ms: 60_000, idle_observed_ms: [60_001, 60_002, 60_003], retrieval: "lexical floor", principal: "owner" },
+    metrics,
+  };
+}
+
+test("full reports retain repeated idle samples and a duration for each warmed observation", () => {
+  const report = parseReport(fullReport());
+  expect(report.metrics["serve.idle_cpu_percent"]).toMatchObject({ samples: [1, 2, 3], p50: 2, p95: 3, p99: 3 });
+  expect(report.protocol.idle_observed_ms).toEqual([60_001, 60_002, 60_003]);
+});
+
+test("full idle measurements reject a single sample, short windows and inconsistent protocols", () => {
+  const report = fullReport();
+  for (const protocol of [
+    { ...report.protocol, idle_repetitions: 1, idle_observed_ms: [60_001] },
+    { ...report.protocol, idle_observed_ms: [60_001, 59_999, 60_003] },
+    { ...report.protocol, idle_observed_ms: [60_001] },
+    { ...report.protocol, idle_window_ms: 59_999 },
+    { ...report.protocol, idle_warmup: "omitted" },
+  ]) expect(() => parseReport({ ...report, protocol })).toThrow();
+  expect(() => parseReport({ ...report, metrics: { ...report.metrics, "serve.idle_cpu_percent": distribution("CPU %", [1]) } })).toThrow();
+});
+
+test("smoke reports omit all idle observations and their warmup", () => {
+  const report = fullReport();
+  report.profile = "smoke";
+  report.protocol = { ...report.protocol, idle_warmup: "omitted", idle_repetitions: 0, idle_window_ms: 0, idle_observed_ms: [] };
+  report.metrics["serve.idle_cpu_percent"] = { unit: "CPU %", direction: "lower", status: "omitted", samples: [], p50: null, p95: null, p99: null, reason: "smoke skips the 60-second idle observation" };
+  expect(parseReport(report)).toEqual(report);
+  expect(() => parseReport({ ...report, protocol: { ...report.protocol, idle_observed_ms: [60_000] } })).toThrow();
+  expect(() => parseReport({ ...report, protocol: { ...report.protocol, idle_repetitions: 1 } })).toThrow();
+  expect(() => parseReport({ ...report, protocol: { ...report.protocol, idle_warmup: "initial due rails" } })).toThrow();
+});
 
 test("the seed reproduces the complete logical source; a different seed changes its hash", () => {
   const root = mkdtempSync(join(tmpdir(), "kizuki-bench-source-test-"));

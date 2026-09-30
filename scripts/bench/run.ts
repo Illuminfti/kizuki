@@ -56,8 +56,11 @@ export async function runBenchmark(config: ReturnType<typeof options>, out: stri
   const warmup = config.smoke ? 0 : 1, repetitions = config.smoke ? 1 : 3;
   const readWarmup = config.smoke ? 1 : 2, readRepetitions = config.smoke ? 2 : 20;
   const processWarmup = config.smoke ? 0 : readWarmup, processRepetitions = config.smoke ? 1 : readRepetitions;
+  const idleRepetitions = config.smoke ? 0 : 3;
+  const idleWindowMs = config.smoke ? 0 : 60_000;
+  const idleObservedMs: number[] = [];
   const metrics: Record<string, Metric> = {};
-  let vault = "", canonPages = 0, unwrittenClaims = 0, unextractedEvents = 0, observed = 0;
+  let vault = "", canonPages = 0, unwrittenClaims = 0, unextractedEvents = 0;
   try {
     progress("generate deterministic source");
     const digest = createSource(source, events, config.seed);
@@ -127,15 +130,18 @@ export async function runBenchmark(config: ReturnType<typeof options>, out: stri
     if (config.smoke) {
       metrics["serve.idle_cpu_percent"] = { unit: "CPU %", direction: "lower", status: "omitted", samples: [], p50: null, p95: null, p99: null, reason: "smoke skips the 60-second idle observation" };
     } else {
-      progress("serve idle CPU: 60-second observation");
-      const child = await command([WORKER, "idle", vault]);
-      const idle = JSON.parse(child.stdout) as { observed_ms: number; cpu_percent: number };
-      observed = idle.observed_ms;
-      record(metrics, "serve.idle_cpu_percent", "CPU %", idle.cpu_percent);
+      for (let index = 0; index < idleRepetitions; index++) {
+        progress(`serve idle CPU: 60-second observation ${index + 1}/${idleRepetitions}`);
+        const child = await command([WORKER, "idle", vault]);
+        const idle = JSON.parse(child.stdout) as { observed_ms: number; cpu_percent: number };
+        idleObservedMs.push(idle.observed_ms);
+        record(metrics, "serve.idle_cpu_percent", "CPU %", idle.cpu_percent);
+      }
     }
     const report = parseReport({ schema: "kizuki.benchmark/v1", profile: config.smoke ? "smoke" : "full", machine,
       corpus: { size: config.size, seed: config.seed, events, max_events_per_topic: 256, topics: Math.ceil(events / 256), canon_pages: canonPages, unwritten_claims: unwrittenClaims, unextracted_events: unextractedEvents, input_sha256: digest },
-      protocol: { build_warmup: warmup, build_repetitions: repetitions, read_warmup: readWarmup, read_repetitions: readRepetitions, process_warmup: processWarmup, process_repetitions: processRepetitions, idle_observed_ms: observed, retrieval: "lexical floor", principal: "owner" }, metrics });
+      protocol: { build_warmup: warmup, build_repetitions: repetitions, read_warmup: readWarmup, read_repetitions: readRepetitions, process_warmup: processWarmup, process_repetitions: processRepetitions,
+        idle_warmup: config.smoke ? "omitted" : "initial due rails", idle_repetitions: idleRepetitions, idle_window_ms: idleWindowMs, idle_observed_ms: idleObservedMs, retrieval: "lexical floor", principal: "owner" }, metrics });
     writeFileSync(join(out, "report.json"), JSON.stringify(report, null, 2) + "\n", { flag: "wx", mode: 0o600 });
     writeFileSync(join(out, "summary.md"), summary(report), { flag: "wx", mode: 0o600 });
     writeFileSync(join(out, "report.schema.json"), JSON.stringify(reportJsonSchema, null, 2) + "\n", { flag: "wx", mode: 0o600 });
