@@ -80,10 +80,14 @@ package conformance and boundary tests remain required.
 The new HTTP public-seam regressions cover non-object JSON silently becoming
 an empty call, malformed UTF-8 being accepted, and bodies larger than the
 small serving budget reaching dispatch. The standing and app HTTP endpoints
-now share a 128 KiB, five-second byte reader with fixed storage even for empty
-or tiny chunk floods. Standing HTTP also requires an
+now share a five-second byte reader with fixed storage even for empty
+or tiny chunk floods. Standing HTTP caps bodies at 1 MiB to accommodate the
+advertised proposal character limits even with escaped Unicode; app HTTP
+retains its 128 KiB limit. Standing HTTP also requires an
 object argument container and caps JSON depth at 64. Authentication and route
 checks still precede body reads. Errors remain generic and carry no input.
+An authenticated regression stores a maximal Unicode proposal as quoted
+evidence and deduplicates the same body when sent using JSON Unicode escapes.
 
 The pinned MCP SDK already caps its stdio read buffer. An absent-buffer-bound
 claim did not reproduce, so this branch does not replace the SDK transport.

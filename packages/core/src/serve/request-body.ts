@@ -1,6 +1,9 @@
 import { DeadlineError, withDeadline } from "../util/deadline";
 
-export const MAX_HTTP_BODY_BYTES = 128 * 1024;
+// Tool strings are bounded in characters. Leave room for JSON's escaped
+// Unicode representation of the proposal body and its frontmatter bag.
+export const MAX_HTTP_BODY_BYTES = 1024 * 1024;
+export const MAX_APP_HTTP_BODY_BYTES = 128 * 1024;
 export const HTTP_BODY_TIMEOUT_MS = 5000;
 const MAX_JSON_DEPTH = 64;
 
@@ -11,11 +14,11 @@ export class HttpBodyError extends Error {
 }
 
 /** Bound reads before decoding, including chunked bodies with no length header. */
-export async function readRequestText(request: Request): Promise<string> {
+export async function readRequestText(request: Request, maxBytes = MAX_HTTP_BODY_BYTES): Promise<string> {
   const reader = request.body?.getReader();
   if (reader === undefined) return "";
   // Fixed storage also bounds empty/tiny chunk floods independently of byte count.
-  const bytes = new Uint8Array(MAX_HTTP_BODY_BYTES);
+  const bytes = new Uint8Array(maxBytes);
   let size = 0;
   const deadline = Date.now() + HTTP_BODY_TIMEOUT_MS;
   try {
@@ -29,7 +32,7 @@ export async function readRequestText(request: Request): Promise<string> {
         throw new HttpBodyError(error instanceof DeadlineError ? 408 : 400);
       }
       if (next.done) break;
-      if (size + next.value.byteLength > MAX_HTTP_BODY_BYTES) throw new HttpBodyError(413);
+      if (size + next.value.byteLength > maxBytes) throw new HttpBodyError(413);
       bytes.set(next.value, size);
       size += next.value.byteLength;
     }

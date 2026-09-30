@@ -6,7 +6,8 @@
 
 - Standing HTTP refuses oversized bodies, malformed UTF-8, excessive JSON
   nesting and non-object argument containers before tool dispatch. Its body
-  reader shares the app endpoint's byte and time limits. Legacy JSONL import
+  reader shares the app endpoint's time limit and uses a 1 MiB byte limit
+  to fit Unicode proposals; the app retains its 128 KiB limit. Legacy JSONL import
   refuses symlinks and non-regular files through the open descriptor.
 - Google Calendar refuses invalid all-day dates with a typed connector error
   instead of throwing `RangeError`; valid leap-day dates remain accepted.

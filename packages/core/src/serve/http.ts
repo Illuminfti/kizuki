@@ -1,4 +1,4 @@
-import { HttpBodyError, parseRequestArguments, readRequestText } from "./request-body";
+import { HttpBodyError, MAX_APP_HTTP_BODY_BYTES, parseRequestArguments, readRequestText } from "./request-body";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -215,7 +215,7 @@ async function appRequest(request: Request, origin: string, token: string, optio
   if (presented === null || !sameToken(presented, token)) return error(401, "unauthorized");
   if (request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return error(400, "invalid_request");
   try {
-    const body = await readRequestText(request);
+    const body = await readRequestText(request, MAX_APP_HTTP_BODY_BYTES);
     return reply(await options.handle(new Request(url, { method: "POST", headers: request.headers, body })));
   } catch (cause) { return error(cause instanceof HttpBodyError ? cause.status : 400, "invalid_request"); }
 }
