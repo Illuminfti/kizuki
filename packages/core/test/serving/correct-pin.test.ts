@@ -5,6 +5,7 @@ import { applyCanonWrite, createBudgetTracker, resolveTarget } from "../../src/c
 import { SENSITIVITY_ORDER } from "../../src/agents/types";
 import { getClaim, insertClaim, listClaims, listSupersessions } from "../../src/claims/store";
 import { correct } from "../../src/correction/correct";
+import { CorrectError } from "../../src/correction/errors";
 import { serveCorrect } from "../../src/serving/correct";
 import { serveSearch } from "../../src/serving/search";
 import { ServeError } from "../../src/serving/types";
@@ -68,6 +69,55 @@ function eventHint(live: Fixture, eventId: string): "public" | "personal" | "pri
 }
 
 describe("a relayed correction cannot override the owner's own correction (R22-13)", () => {
+  test.each([false, true])("the native API pins a direct owner correction before recording relay evidence (relay=%s)", async (relay) => {
+    fixture = await serveFixture();
+    const live = fixture;
+    const { claimId, pagePath } = await writtenPublicClaim(live, true);
+    const io = { db: live.db, vault_path: live.vaultPath };
+    const owner = await correct(io, { statement: "Linus works at the workshop.", target: { claim_id: claimId } });
+    const winnerId = owner.claim_ids[0]!;
+    const before = readFileSync(join(live.vaultPath, pagePath), "utf8");
+    const eventsBefore = live.db.query("SELECT count(*) AS n FROM events").get();
+    const receiptsBefore = live.db.query("SELECT count(*) AS n FROM canon_receipts").get();
+    const supersessionsBefore = listSupersessions(live.db);
+    const held = await correct({ ...io, producer: "agent:downgraded", relay_owner_corrections: relay }, {
+      statement: "Linus works at Contoso.", target: { claim_id: winnerId },
+    }).catch((error: unknown) => error);
+    expect(held).toBeInstanceOf(CorrectError);
+    expect(held).toMatchObject({ code: "below_authority" });
+    expect((held as CorrectError).detail).toContain("owner's own correction");
+    expect(getClaim(live.db, winnerId)?.status).toBe("live");
+    expect(readFileSync(join(live.vaultPath, pagePath), "utf8")).toBe(before);
+    expect(live.db.query("SELECT count(*) AS n FROM events").get()).toEqual(eventsBefore);
+    expect(live.db.query("SELECT count(*) AS n FROM canon_receipts").get()).toEqual(receiptsBefore);
+    expect(listSupersessions(live.db)).toEqual(supersessionsBefore);
+    // Direct owner correction remains available through this same API.
+    await correct(io, { statement: "Linus works at Contoso.", target: { claim_id: winnerId } });
+    expect(getClaim(live.db, winnerId)?.status).toBe("superseded");
+  });
+
+  test("the native API checks authority on an unkeyed correction from another relay", async () => {
+    fixture = await serveFixture();
+    const live = fixture;
+    const { claimId, pagePath } = await writtenPublicClaim(live, true);
+    const io = { db: live.db, vault_path: live.vaultPath };
+    const relayed = await correct({ ...io, producer: "agent:reader-private", relay_owner_corrections: true }, {
+      statement: "Linus works at the workshop.", target: { claim_id: claimId },
+    });
+    const winnerId = relayed.claim_ids[0]!;
+    expect(getClaim(live.db, winnerId)).toMatchObject({ authority: "owner_correction", producer: "agent:reader-private" });
+    const before = readFileSync(join(live.vaultPath, pagePath), "utf8");
+    const eventsBefore = live.db.query("SELECT count(*) AS n FROM events").get();
+    const supersessionsBefore = listSupersessions(live.db);
+    await expect(correct({ ...io, producer: "agent:downgraded", relay_owner_corrections: false }, {
+      statement: "Linus works at Contoso.", target: { claim_id: winnerId },
+    })).rejects.toThrow("below_authority");
+    expect(getClaim(live.db, winnerId)?.status).toBe("live");
+    expect(readFileSync(join(live.vaultPath, pagePath), "utf8")).toBe(before);
+    expect(live.db.query("SELECT count(*) AS n FROM events").get()).toEqual(eventsBefore);
+    expect(listSupersessions(live.db)).toEqual(supersessionsBefore);
+  });
+
   test("a relay-enabled agent is held and the owner's claim stays live", async () => {
     fixture = await serveFixture();
     const live = fixture;

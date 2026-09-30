@@ -5,7 +5,7 @@ type ServeDoctor = ReturnType<typeof inspectServeDoctor>;
 interface NextInput {
   readonly ok: boolean;
   readonly serve: ServeDoctor;
-  /** `correctable` is false when the claim's source grant would refuse `tell`. */
+  /** False when consent or the typed correction writer would refuse `tell`. */
   readonly live_claims: readonly { readonly claim_id: string; readonly correctable: boolean }[];
   readonly filed_claims: readonly unknown[];
   readonly corrections_refused: readonly { readonly source_key: string; readonly revision: number }[];
@@ -15,7 +15,7 @@ interface NextInput {
  * The one step that follows from the report. A failed report is answered from
  * its top failure and never with a correction hint: `tell` names a live claim
  * and repairs nothing a failure is about. `tell` is only suggested for a claim
- * the source grants let the owner correct.
+ * consent and the correction writer let the owner correct.
  */
 export function nextStep(report: NextInput): string | null {
   if (!report.ok) return failureStep(report.serve);
@@ -26,7 +26,7 @@ export function nextStep(report: NextInput): string | null {
     return `next: kizuki connect grant --source ${refusal.source_key} --policy POLICY.json --expected-revision ${refusal.revision} --operation-id OPERATION (add "correction" to purposes; tell is refused until then)`;
   }
   if (report.live_claims.length > 0) {
-    return "next: kizuki connect status (tell is refused for these claims; a source grant does not permit correction)";
+    return "next: kizuki audit (these live claims cannot be corrected with tell; inspect their receipts and use undo to reverse a canon write)";
   }
   if (report.filed_claims.length > 0) {
     return "next: leftover skipped claims are not live; tell --claim needs a live claim. the writer is off until a model is configured.";

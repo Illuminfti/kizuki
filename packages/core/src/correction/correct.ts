@@ -27,6 +27,7 @@ import { ulid } from "../util/ulid";
 import { unifiedDiff } from "./diff";
 import { bumpClaimsEpoch, initClaimsEpoch } from "./epoch";
 import { ClaimError } from "../claims/errors";
+import { resolveConflict } from "../claims/conflict";
 import { CorrectError } from "./errors";
 import { correctionRecoveryPending } from "./recovery";
 import { describeAssertion, planWorldCorrection, type WorldPlan } from "./world-successor";
@@ -432,6 +433,30 @@ function planCorrection(io: CorrectIo, input: CorrectInput, live: Claim, at: str
   return planWorldCorrection(io.db, prior, input.world ?? { mode: "replace_object" }, input.statement, at);
 }
 
+/** Relays cannot replace direct owner corrections, including targets without a conflict key. */
+function assertRelayAuthority(io: CorrectIo, group: readonly Claim[], at: string): void {
+  if (!(io.producer ?? "owner").startsWith("agent:")) return;
+  if (group.some((claim) => claim.producer === "owner" && claim.authority === "owner_correction")) {
+    throw new CorrectError("below_authority", "the live claim is the owner's own correction, which a relayed correction cannot replace");
+  }
+  for (const claim of group) {
+    if (claim.claim_key !== null) continue;
+    // Keyless claims bypass the store's keyed conflict resolution. Compare at
+    // the tier insertCorrection will file, before native evidence is accepted.
+    const incoming = {
+      ...claim,
+      claim_id: "",
+      authority: io.relay_owner_corrections === false ? "connector_evidence" as const : "owner_correction" as const,
+      confidence: 1,
+      valid_from: at,
+      valid_to: null,
+    };
+    if (resolveConflict(incoming, claim).action === "skip") {
+      throw new CorrectError("below_authority", "correction was below the live claim's authority");
+    }
+  }
+}
+
 function acceptOwnerEvent(
   io: CorrectIo,
   input: CorrectInput,
@@ -700,6 +725,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
   requireCorrectionConsent(io, provenance);
   const seed = seedClaim(group, input.target as CorrectTarget);
   const at = nowOf(io);
+  assertRelayAuthority(io, group, at);
   const plan = planCorrection(io, input, seed, at);
   const accepted = acceptOwnerEvent(io, input, seed, at, plan);
 

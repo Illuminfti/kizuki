@@ -25,3 +25,5 @@ export { initGraph } from "./graph";
 export { rebuildDerived, rebuildWorldLayer } from "./derived";
 export { listSourcesRefusingCorrection, sourceEventsAllowed } from "./ledger/source-grants";
 export { writerHolderPid } from "./serve/flock";
+export { readClaimV2Semantic } from "./claims/claim-v2-commit";
+export { unsupportedCorrectionReason } from "./world/correction-support";

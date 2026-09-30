@@ -6,6 +6,7 @@ import {
   sourceConsentDenial,
   sourcePolicyEpoch,
   requireSourceEvents,
+  SourceGrantError,
 } from "../ledger/source-grants";
 import { claimReader } from "./claims";
 import type { Sensitivity } from "../agents";
@@ -214,13 +215,15 @@ function worldCorrection(change: CorrectionChange, statement: string, node: RawS
 }
 
 /** A typed correction's refusals, worded as the serving layer words every argument refusal. */
-function servableRefusal(error: unknown): unknown {
+function servableRefusal(error: unknown, ctx: ServeContext): unknown {
   if (!(error instanceof CorrectError)) return error;
   switch (error.code) {
     case "below_authority":
       return refuseAuthority();
     case "tool_not_granted":
       return new ServeError("tool_not_granted", "tool not granted");
+    case "source_access_denied":
+      return new ServeError("held", ctx.principal.kind === "owner" ? error.detail : "source authorization does not permit this correction");
     case "unsupported_assertion":
       return refuse("target", `unsupported_assertion: ${error.detail.split(":", 1)[0]}`);
     case "correction_refused":
@@ -263,7 +266,7 @@ async function correctWorldClaim(
     purpose: "correction",
   });
   if (!reader.canRead(claim))
-    throw new ServeError("held", "source authorization does not permit this correction");
+    throw new ServeError("held", sourceRefusal(ctx, [claim]));
   const owned = extendOwnedCanonIo(scope, io, {
       producer:
         ctx.principal.kind === "owner"
@@ -283,7 +286,7 @@ async function correctWorldClaim(
       ...(args.dry_run === true ? { dry_run: true } : {}),
     },
   ).catch((error: unknown) => {
-    throw servableRefusal(error);
+    throw servableRefusal(error, ctx);
   });
   return {
     canon: [],
@@ -494,6 +497,7 @@ function snapshot<T>(field: string, value: T): T {
 /** The refusal for a claim whose source grant lacks the correction purpose, naming the fix when one source is to blame. */
 function sourceRefusal(ctx: ServeContext, claims: readonly Claim[]): string {
   const generic = "source authorization does not permit this correction";
+  if (ctx.principal.kind !== "owner") return generic;
   const denial = sourceConsentDenial(
     ctx.db,
     [...new Set(claims.flatMap((claim) => claim.provenance))],
@@ -946,6 +950,12 @@ export async function serveCorrect(
       };
         });
       } catch (error) {
+        if (error instanceof SourceGrantError && error.code === "source_access_denied") {
+          const detail = ctx.principal.kind === "owner" && error.denial !== undefined
+            ? describeSourceConsentDenial(error.denial)
+            : "source authorization does not permit this correction";
+          throw new ServeError("held", detail);
+        }
         if (error instanceof VaultMutationError && error.code === "writer_busy") {
           throw new ServeError("error", "canon writer is busy; retry correction", { retry_after_seconds: 1 });
         }

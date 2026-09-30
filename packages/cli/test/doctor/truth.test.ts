@@ -6,6 +6,7 @@ import { openLedger } from "@kizuki/core/internal";
 import { createHelpers, fixtureConsent } from "../helpers";
 import { fakeSystemd } from "../serve/supervisor-fixture";
 import { nextStep } from "../../src/commands/doctor-next";
+import { worldFixture } from "../../../core/test/serving/world-fixture";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
 setDefaultTimeout(120_000);
@@ -60,6 +61,29 @@ const truncatedRun = {
 };
 
 describe("doctor tells the daemon's story from a shell without its secret", () => {
+  test("typed classifiers are not correctable and next selects a supported claim", async () => {
+    const setup = tempVault();
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    let ids: string[];
+    try {
+      ids = (await worldFixture(db)).claims;
+    } finally {
+      db.close();
+    }
+    const result = runCli(setup.env, "doctor", "--json");
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = JSON.parse(result.stdout).data;
+    expect(report.live_claims.find((claim: { claim_id: string }) => claim.claim_id === ids[0]).correctable).toBe(false);
+    for (const id of ids.slice(1)) {
+      expect(report.live_claims.find((claim: { claim_id: string }) => claim.claim_id === id).correctable).toBe(true);
+    }
+    const next = nextStep(report)!;
+    expect(next).not.toContain(ids[0]!);
+    expect(ids.slice(1).some((id) => next.endsWith(id))).toBe(true);
+    // A vault whose only live target is the classifier gets an honest fallback.
+    expect(nextStep({ ...report, live_claims: report.live_claims.filter((claim: { claim_id: string }) => claim.claim_id === ids[0]) })).toContain("kizuki audit");
+  });
+
   test("the model line reads receipts under the ref with the host, and next follows the failure", () => {
     const setup = tempVault();
     configuredModel(setup.vault);
@@ -217,7 +241,7 @@ describe("nextStep", () => {
     expect(grant).toContain("--expected-revision 3");
     const other = nextStep({ ok: true, serve: serve(null), live_claims: refused, filed_claims: [], corrections_refused: [] });
     expect(other).not.toContain("kizuki tell");
-    expect(other).toContain("kizuki connect status");
+    expect(other).toContain("kizuki audit");
     // A claim the owner can correct wins over a source that cannot be corrected.
     expect(
       nextStep({

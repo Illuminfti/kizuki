@@ -26,7 +26,13 @@ import {
   readVaultId,
 } from "@kizuki/core";
 import type { CaptureFanoutCounts, ClaimStatus, LiveClaimProducers } from "@kizuki/core";
-import { listSourcesRefusingCorrection, readSqliteRuntime, sourceEventsAllowed } from "@kizuki/core/internal";
+import {
+  listSourcesRefusingCorrection,
+  readClaimV2Semantic,
+  readSqliteRuntime,
+  sourceEventsAllowed,
+  unsupportedCorrectionReason,
+} from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
 import { listHostConnections, loadConnector } from "../connections";
@@ -76,7 +82,7 @@ interface DoctorClaim {
 }
 
 interface DoctorLiveClaim extends DoctorClaim {
-  /** False when the claim's source grant would refuse `kizuki tell` on it. */
+  /** False when the source grant or typed correction writer would refuse `kizuki tell`. */
   correctable: boolean;
 }
 
@@ -472,10 +478,14 @@ async function collect(
     predicate: claim.predicate,
   });
   const liveClaims = listClaims(ctx.db, { status: "live", limit: 8 }).map(
-    (claim): DoctorLiveClaim => ({
-      ...toDoctorClaim(claim),
-      correctable: sourceEventsAllowed(ctx.db, claim.provenance, { owner: true, purpose: "correction" }),
-    }),
+    (claim): DoctorLiveClaim => {
+      const semantic = readClaimV2Semantic(ctx.db, claim.claim_id);
+      return {
+        ...toDoctorClaim(claim),
+        correctable: (semantic === null || unsupportedCorrectionReason(semantic) === null) &&
+          sourceEventsAllowed(ctx.db, claim.provenance, { owner: true, purpose: "correction" }),
+      };
+    },
   );
   const filedClaims = listClaims(ctx.db, { status: "skipped", limit: 8, filter: (claim) => !isCaptureFanoutSkip(claim) }).map(
     toDoctorClaim,
