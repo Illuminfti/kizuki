@@ -29,6 +29,17 @@ test("URL userinfo credentials without a password delimiter are scrubbed", async
   } finally { f.dispose(); }
 });
 
+test("an invalid outer prefix cannot hide a credential wrapped inside it", async () => {
+  const f = await serveFixture();
+  try {
+    const text = `kzk_sk-${"A".repeat(12)}\n${"A".repeat(12)}`;
+    const id = storeEvent(f.db, "wrapped-nested-prefix", "2026-02-28T10:30:00Z", text, "person:ada", "public");
+    const answer = serveTimeline(f.agent("reader-public"), { event_id: id });
+    expect(answer.quoted[0]?.text).toBe("[redacted:api_token]");
+    expect(answer.redacted).toEqual({ api_token: 1 });
+  } finally { f.dispose(); }
+});
+
 test("YAML block scalar credentials are removed without consuming the next field", async () => {
   const f = await serveFixture();
   try {
