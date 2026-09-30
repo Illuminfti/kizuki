@@ -27,6 +27,7 @@ import {
   mintId,
   nowOf,
   pageIndexByPath,
+  pageSubjectKey,
 } from "./store";
 import type { CanonIo } from "./store";
 
@@ -99,11 +100,6 @@ function pageIdOf(page: VaultPage | null, fallback: string | null): string | nul
   const raw = page?.data["id"];
   if (typeof raw === "string" && raw.length > 0) return raw;
   return fallback;
-}
-
-function subjectOf(page: VaultPage | null): string | null {
-  const raw = page?.data["x-subject-id"];
-  return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
 const reversing = new Set<string>();
@@ -237,7 +233,9 @@ async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: Canon
     receipt_id: revertId, page_path: original.page_path, before_hash: original.after_hash, at,
   });
   commitCanonWrite(scope, io, { receipt: revert, before, after,
-    completion: { mode: "revert", claim_kind: "revert", page_id: pageId, subject_key: subjectOf(page), original_receipt_id: original.receipt_id },
+    completion: { mode: "revert", claim_kind: "revert", page_id: pageId,
+      subject_key: page === null ? null : pageSubjectKey(io.db, original.page_path, revert.after_hash, page.data, original),
+      original_receipt_id: original.receipt_id },
   }, () => requireSourceEvents(io.db, page === null ? original.provenance : stringArray(page.data["sources"]), { owner: true, purpose: "derive" }));
   return finishUndoProjection(scope, io, revert);
 }

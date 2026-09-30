@@ -279,7 +279,31 @@ export function inspectPageIndex(db: Database): string[] {
   return failures;
 }
 
-function subjectKeyOf(data: Record<string, unknown>): string | null {
+/**
+ * The materialized claim owns the index key. A source entity's displayed
+ * `x-subject-id` can still be connector-local; treating it as the index key
+ * loses its namespace after undo or rebuild. Use only a receipted image that
+ * matches these exact bytes, bounded by the write being undone when present.
+ * Owner-edited and historical pages without that binding keep their declared key.
+ */
+export function pageSubjectKey(
+  db: Database,
+  relPath: string,
+  contentHash: string,
+  data: Record<string, unknown>,
+  before?: Pick<CanonReceipt, "at" | "receipt_id">,
+): string | null {
+  if (tableExists(db, "claims") && tableExists(db, "canon_receipts")) {
+    const at = before?.at ?? "";
+    const bound = db.query<{ subject: string }, [string, string, string, string, string, string]>(
+      `SELECT c.subject AS subject FROM canon_receipts r
+         JOIN claims c ON c.claim_id = json_extract(r.claim_ids, '$[0]')
+        WHERE r.page_path = ? AND r.after_hash = ? AND c.subject IS NOT NULL
+          AND (? = '' OR r.at < ? OR (r.at = ? AND r.receipt_id < ?))
+        ORDER BY r.at DESC, r.receipt_id DESC LIMIT 1`,
+    ).get(relPath, contentHash, at, at, at, before?.receipt_id ?? "");
+    if (bound !== null) return bound.subject;
+  }
   const raw = data["x-subject-id"];
   return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
@@ -315,7 +339,7 @@ export function rebuildPageIndex(io: CanonIo): { pages: number; skipped: number 
       upsertPageIndex(io.db, {
         page_id: pageId,
         rel_path: relPath,
-        subject_key: subjectKeyOf(data),
+        subject_key: pageSubjectKey(io.db, relPath, contentHash, data),
         last_receipt: latest?.receipt_id ?? null,
         last_hash: latest?.after_hash ?? contentHash,
       });

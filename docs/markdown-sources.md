@@ -92,6 +92,8 @@ model-free path.
 
 These guarantees describe capture and archive reversal. Source revision body
 replacement is incomplete in the current compatibility writer: revisions can
-retain earlier source prose, and folder materialization can create an additional
-capture page. Event-level identity and a quiet next sync do not prove canon
-body replacement. The canon lifecycle regression tests track that remaining work.
+retain earlier source prose. Restored and rebuilt page indexes recover the
+connector-scoped subject key from a matching receipted claim rather than the
+displayed source-local label. Event-level identity and a quiet next sync do not
+prove canon body replacement. The canon lifecycle regression tests track that
+remaining work.
