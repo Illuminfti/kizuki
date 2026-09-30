@@ -52,6 +52,15 @@ test("assignments keep the name and survive as prose when they hold no secret", 
   expect(redact("TOKEN=$OTHER_VAR").text).toBe("TOKEN=$OTHER_VAR");
 });
 
+test("shared patterns retain short Authorization and wrapped Bearer coverage", () => {
+  for (const scheme of ["Basic ", "Token ", "Bearer ", ""]) {
+    const result = redact(`Authorization: ${scheme}q`);
+    const kind = scheme === "Bearer " ? "bearer" : "authorization";
+    expect(result).toEqual({ text: `Authorization: ${scheme}[redacted:${kind}]`, redactions: { [kind]: 1 } });
+  }
+  expect(redact(`Bearer\n${"Q".repeat(20)}`)).toEqual({ text: "Bearer\n[redacted:bearer]", redactions: { bearer: 1 } });
+});
+
 test("text without secrets is untouched", () => {
   const plain = "We decided to keep the export format stable.";
   expect(redact(plain)).toEqual({ text: plain, redactions: {} });

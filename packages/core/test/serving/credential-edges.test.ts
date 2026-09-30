@@ -42,3 +42,15 @@ test("YAML block scalar credentials are removed without consuming the next field
     }
   } finally { f.dispose(); }
 });
+
+test("short Authorization credentials and line-wrapped Bearer values retain capture scrub coverage", async () => {
+  const f = await serveFixture();
+  try {
+    const value = "Q".repeat(20);
+    const text = `Authorization: Basic q\nAuthorization: Token r\nAuthorization: Bearer s\nAuthorization: t\nBearer\n${value}`;
+    const id = storeEvent(f.db, "authorization-short", "2026-02-28T10:30:00Z", text, "person:ada", "public");
+    const answer = serveTimeline(f.agent("reader-public"), { event_id: id });
+    expect(answer.quoted[0]?.text).toBe("Authorization: Basic [redacted:authorization]\nAuthorization: Token [redacted:authorization]\nAuthorization: Bearer [redacted:bearer]\nAuthorization: [redacted:authorization]\nBearer\n[redacted:bearer]");
+    expect(answer.redacted).toEqual({ authorization: 3, bearer: 2 });
+  } finally { f.dispose(); }
+});
