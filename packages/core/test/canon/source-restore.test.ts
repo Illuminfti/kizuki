@@ -15,6 +15,8 @@ import {
 import { fileProposal, listProposals } from "../../src/staging/proposals";
 import { parseFrontmatter } from "../../src/vault/frontmatter";
 import { validEvent } from "../fixtures";
+import { openLedger } from "../../src/ledger/db";
+import { tempVault } from "../helpers/vault";
 import { canonFixture, write, type CanonFixture } from "./helpers";
 
 /**
@@ -71,6 +73,57 @@ const restore = (fixture: CanonFixture) =>
   );
 
 describe("a returned source record un-archives its page", () => {
+  test("a full window of edited archives cannot starve a later returned page across restarts", async () => {
+    const temporary = tempVault("kizuki-restore-progress-");
+    writeFileSync(join(temporary.path, ".kizuki", "serve.toml"), "[budget]\ncanon_writes_per_day = 1024\n");
+    const dbPath = join(temporary.path, ".kizuki", "kizuki.db");
+    const db = openLedger(":memory:");
+    const fixture = { db, vault: temporary.path, io: { db, vault_path: temporary.path }, dispose: temporary.dispose };
+    try {
+      let untouched = "";
+      let firstPath = "";
+      let firstArchive = "";
+      for (let index = 0; index < 257; index++) {
+        const input = { ...validEvent(), source_record_id: `record-${index}`, text: `body ${index}` };
+        const accepted = accept(fixture.db, input);
+        if (accepted.status !== "stored") throw new Error("source admission failed");
+        const proposal = fileProposal(fixture.db, {
+          kind: "claim", target: `sources/page-${index}`, body: input.text,
+          frontmatter: { type: "source", title: `Page ${index}` },
+          provenance: [accepted.event.event_id], producer: "deterministic", confidence: 1,
+        }).proposal;
+        const created = write(fixture.io, getClaim(fixture.db, proposal.proposal_id)!);
+        const deletion = accept(fixture.db, { ...input, text: "", deleted: true });
+        if (deletion.status !== "stored") throw new Error("tombstone admission failed");
+        const cascade = cascadeTombstone(fixture.db, deletion.event, fixture.io);
+        expect(cascade.retractions_filed).toHaveLength(1);
+        write(fixture.io, getClaim(fixture.db, cascade.retractions_filed[0]!)!);
+        if (index < 256) {
+          const path = join(fixture.vault, created.page_path);
+          const archived = readFileSync(path, "utf8");
+          if (index === 0) { firstPath = path; firstArchive = archived; }
+          writeFileSync(path, `${archived}\nOwner note.\n`);
+        } else untouched = created.page_path;
+        expect(accept(fixture.db, { ...input, metadata: { revision_epoch: 2 } }).status).toBe("stored");
+      }
+      // Each invocation is bounded. Progress belongs to the ledger, so a new
+      // IO snapshot (as after a restart) resumes beyond the edited prefix.
+      expect(await restore(fixture)).toEqual({ restored: 0, kept: 256 });
+      writeFileSync(dbPath, fixture.db.serialize());
+      fixture.db.close();
+      fixture.db = openLedger(dbPath);
+      fixture.io = { db: fixture.db, vault_path: fixture.vault };
+      expect(await restore(fixture)).toEqual({ restored: 1, kept: 0 });
+      expect(statusOf(fixture, untouched)).toBe("active");
+      // Progress cycles: restoring an edited page's archived bytes makes it
+      // eligible again, rather than permanently skipping it.
+      writeFileSync(firstPath, firstArchive);
+      expect(await restore(fixture)).toEqual({ restored: 1, kept: 255 });
+    } finally {
+      fixture.db.close();
+      temporary.dispose();
+    }
+  });
   test("delete then restore identical bytes leaves the page active with its original bytes", async () => {
     const { fixture, created, original } = setup();
     try {

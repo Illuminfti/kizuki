@@ -17,6 +17,7 @@ import { assertArchiveRelPath, assertPageRelPath, assertReceiptPaths } from "./p
 import { canonFilesFor, requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "./io";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { UndoError } from "./errors";
+import { chargeCanonWrite, type BudgetTracker } from "./budget";
 import {
   getCanonReceipt,
   laterReceiptsForPage,
@@ -133,7 +134,7 @@ export async function undoReceiptOwned(
   scope: VaultMutationScope,
   io: CanonIo,
   receiptId: string,
-  opts: UndoReceiptOptions = {},
+  opts: UndoReceiptOptions & { readonly budget?: BudgetTracker } = {},
 ): Promise<UndoReceiptResult> {
   requireCanonFiles(scope, io);
   if (io.db.inTransaction) recoveryFailure("nested_transaction");
@@ -182,7 +183,7 @@ export async function undoReceiptOwned(
   }
   reversing.add(receiptId);
   try {
-    return await applyUndo(scope, io, original, current);
+    return await applyUndo(scope, io, original, current, opts.budget);
   } finally {
     reversing.delete(receiptId);
   }
@@ -199,7 +200,7 @@ async function finishUndoProjection(scope: VaultMutationScope, io: CanonIo, rece
     ? receipt : { ...receipt, projection_pending: true };
 }
 
-async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: CanonReceipt, current: string): Promise<UndoReceiptResult> {
+async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: CanonReceipt, current: string, budget?: BudgetTracker): Promise<UndoReceiptResult> {
   const revertId = mintId(io), at = nowOf(io);
   const typedMetadata=isWorldCanonReceipt(original)?worldBasisMetadata(io.db,original.basis.before??original.basis.after,true):null;
   const authority = typedMetadata?.authority??new CanonAuthorityResolver(io.db, [original.page_path]).before(original.receipt_id);
@@ -230,6 +231,11 @@ async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: Canon
     reverts: original.receipt_id, reverted_by: null, at,
     ...(isWorldCanonReceipt(original) ? {schema:original.schema,state:original.state,own_id_origin:original.own_id_origin,prior_receipt_id:latestWorldReceiptRecord(io.db,original.page_path)?.receipt_id??null,basis:{schema:original.basis.schema,before:original.basis.after,after:original.basis.before}} : {}),
   };
+  // Automatic source restoration spends the loop's budget. Owner undo keeps
+  // its model-free, unmetered path by omitting this internal tracker.
+  if (budget !== undefined) chargeCanonWrite(io, budget, {
+    receipt_id: revertId, page_path: original.page_path, before_hash: original.after_hash, at,
+  });
   commitCanonWrite(scope, io, { receipt: revert, before, after,
     completion: { mode: "revert", claim_kind: "revert", page_id: pageId, subject_key: subjectOf(page), original_receipt_id: original.receipt_id },
   }, () => requireSourceEvents(io.db, page === null ? original.provenance : stringArray(page.data["sources"]), { owner: true, purpose: "derive" }));

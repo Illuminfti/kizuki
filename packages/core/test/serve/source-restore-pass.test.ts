@@ -160,3 +160,29 @@ test("a returned source record stays archived until a model is configured", asyn
     expect(pages().map((page) => page.status)).toEqual(["active"]);
   } finally { db.close(); }
 });
+
+for (const ceiling of ["run", "day"] as const) {
+  test(`automatic restoration respects the ${ceiling} canon write budget`, async () => {
+    const { db, path, ingest, pass, pages } = fixture();
+    try {
+      ingest([live()]);
+      await pass();
+      ingest([deleted("synthetic deletion one")]);
+      await pass();
+      ingest([live(2)]);
+      const result = await runWritePass(db, path, {
+        budget: createBudgetTracker({
+          canon_writes_per_run: ceiling === "run" ? 0 : 16,
+          ...(ceiling === "day" ? { canon_writes_per_day: { limit: 0, used: 0 } } : {}),
+        }),
+        model_ref: "kizuki.llm.synthetic:restore-test", producer, claims: { db },
+      });
+      expect(result.errors).toEqual([]);
+      expect(result.canon_writes).toBe(0);
+      expect(result.stopped).toBe(`budget:canon_writes_per_${ceiling}`);
+      expect(pages().map((page) => page.status)).toEqual(["archived"]);
+      expect((await pass()).errors).toEqual([]);
+      expect(pages().map((page) => page.status)).toEqual(["active"]);
+    } finally { db.close(); }
+  });
+}
