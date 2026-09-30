@@ -43,7 +43,8 @@ async function observe(fixture: Awaited<ReturnType<typeof generateVault>>, princ
     case "world_view": {
       const envelopes = discoveredCards(ctx, question.world.kind, question.world.label);
       const unavailable = envelopes.some(envelope => "result" in envelope.data && envelope.data.result.status === "unavailable");
-      return { output: JSON.stringify(envelopes), atoms: worldAtoms(envelopes), status: unavailable ? "skip:unavailable" : "ok" };
+      const incomplete = envelopes.some(envelope => "result" in envelope.data && envelope.data.result.status === "incomplete");
+      return { output: JSON.stringify(envelopes), atoms: worldAtoms(envelopes), status: unavailable ? "skip:unavailable" : incomplete ? "incomplete" : "ok" };
     }
   }
 }
@@ -64,7 +65,7 @@ export async function runEvaluation(options: { size?: PersonaSize; out?: string 
   const size = options.size ?? "full";
   // Output is a new synthetic sandbox, never an existing owner vault.
   const root = options.out ?? mkdtempSync(join(tmpdir(), "fresh-agent-"));
-  if (options.out !== undefined) mkdirSync(root, { recursive: false });
+  if (options.out !== undefined) mkdirSync(root, { recursive: false, mode: 0o700 });
   let fixture: Awaited<ReturnType<typeof generateVault>> | undefined;
   try {
     fixture = await generateVault(root, size);

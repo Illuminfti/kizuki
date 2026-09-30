@@ -8,10 +8,11 @@ The questions follow [the README's fresh-agent questions](../README.md#what-a-fr
 Run from a checkout with its pinned Bun and installed workspace dependencies:
 
 ```sh
-bun scripts/eval/fresh-agent/run.ts --out ./fresh-agent-result --size full
+bun scripts/eval/fresh-agent/run.ts --out "$TMPDIR/fresh-agent-result" --size full
 ```
 
-The destination must not exist. It receives a synthetic `vault/`, generated
+Use a private temporary directory with safe, owner-controlled ancestors. The
+destination must not exist. It receives a synthetic `vault/`, generated
 import `inputs/`, `questions.json`, `report.json` and `report.md`. No existing
 vault is read. The runner refuses an existing destination instead of replacing
 it. Exit status is 1 on a detected leak or unavailable surface, 2 on invalid
@@ -30,12 +31,15 @@ two incompatible survey statements, an explicitly uncertain flood estimate,
 and three privacy probes. The full persona adds six background facts to put
 more pressure on selection. Source text does not contain oracle fact IDs.
 
-Generation imports JSONL through the existing `LegacyEventsConnector` and Core
-`runBackfill`, repeats the imports to check idempotence, and runs the real v2
+Generation initializes a sealed vault through the CLI's `init` command with
+`--no-default --no-service`, then imports JSONL through the existing
+`LegacyEventsConnector` and Core `runBackfill`, repeats the imports to check
+idempotence, and runs the real v2
 model producer over a scripted in-process `LlmPort`. The real parser, grounding
 checks, source policy, filing and receipted writer all run. The script invokes
-`propose` and `correct` through Core serving and rebuilds the lexical floor
-through `rebuildRetrieval`. It never inserts claim rows or writes canon directly.
+`propose` as a narrowly granted fixture agent and `correct` as the owner through
+Core serving, and rebuilds the lexical floor through `rebuildRetrieval`.
+It never inserts claim rows or writes canon directly.
 The model endpoint named by the synthetic consent policy uses a reserved test
 domain; the fake LLM has no network transport and needs no credential.
 
@@ -97,7 +101,8 @@ A citation on an unrelated sibling cannot count. This measures reference
 presence, not source truth or whether every source expansion succeeds.
 Question rows with no authorized expected facts have `null` recall (`n/a` in
 Markdown). Empty output has zero tokens and `null` stale/provenance rates;
-unavailability is separately visible. Summaries are micro-averages of question
+unavailability is separately visible, as is incomplete world coverage.
+Summaries are micro-averages of question
 counts, so a fact relevant to several questions is counted once per question.
 Leaks and tokens are summed across observations; privacy failures cannot be
 averaged away by recall.

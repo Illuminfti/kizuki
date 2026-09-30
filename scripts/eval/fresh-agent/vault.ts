@@ -2,13 +2,14 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   OWNER, addAgent, authenticate, bindSourceModelPort, createBudgetTracker,
-  createModelProducerV2Port, initAgents, initVault, readSince, registerConnection,
+  createModelProducerV2Port, initAgents, readSince, registerConnection,
   rebuildRetrieval, runBackfill, runWritePass, seedConnectorSensitivity, serveCorrect, servePropose,
-  serveWorldView, setSourceGrant,
+  serveWorldView, setSourceGrant, ulid,
 } from "../../../packages/core/src/index";
 import type { LlmPort, ServeContext } from "../../../packages/core/src/index";
 import { openLedger } from "../../../packages/core/src/testing";
 import { LegacyEventsConnector } from "../../../packages/connectors/src/index";
+import { initCommand } from "../../../packages/cli/src/commands/init";
 import type { RichClaimDraft, ProducerV2SuppliedRef } from "../../../packages/core/src/contracts/producer-v2";
 import { AS_OF, persona } from "./persona";
 import type { PersonaSize, RecordSpec } from "./persona";
@@ -18,7 +19,7 @@ const MODEL = "scripted-persona-v1";
 const CONNECTOR = "kizuki.import-legacy-events";
 
 function recordText(record: RecordSpec): string {
-  return `${record.label}: ${record.claims.map(claim => claim.value).join("; ")}.`;
+  return `persona:${record.subject} (${record.label}): ${record.claims.map(claim => claim.value).join("; ")}.`;
 }
 
 /** Real model producer/parser over an in-process scripted LLM: no transport or egress. */
@@ -51,7 +52,7 @@ function scriptedModel(records: RecordSpec[]): LlmPort {
             perspective: { holder: null, speaker: null, addressee: null, mode: draft.mode ?? "asserted", interpretation: "explicit", anchors: [] },
             context: [], polarity: "positive", body: `${record.label}: ${draft.value}.`,
             valid_from: record.at, valid_to: draft.until ?? null, temporal_basis: "explicit",
-            confidence: 0.8, sensitivity: record.sensitivity ?? "personal", anchors: [anchor],
+            confidence: 0.8, sensitivity: record.sensitivity ?? "personal", anchors: [anchor, { event_id: eventId, start_utf16: 0, end_utf16: text.length }],
           });
         }
         if (record.kind !== undefined) claims.push({
@@ -78,10 +79,14 @@ export function discoveredCards(ctx: ServeContext, kind: "concept" | "situation"
 
 export async function generateVault(root: string, size: PersonaSize) {
   const scenario = persona(size), vaultPath = join(root, "vault");
-  initVault(vaultPath);
+  const initialized = await initCommand.run({ env: { KIZUKI_CONFIG: join(root, "unused-config.toml") },
+    vaultOverride: null, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false,
+    out: () => {}, err: () => {}, prompt: async () => { throw new Error("fixture cannot prompt"); },
+  }, [vaultPath, "--no-default", "--no-service"]);
+  if (initialized !== 0) throw new Error("fixture initialization failed");
   const db = openLedger(join(vaultPath, ".kizuki", "kizuki.db"));
   const inputs = join(root, "inputs");
-  mkdirSync(inputs);
+  mkdirSync(inputs, { mode: 0o700 });
   let producer: ReturnType<typeof createModelProducerV2Port> | undefined;
   try {
     initAgents(db);
@@ -101,14 +106,14 @@ export async function generateVault(root: string, size: PersonaSize) {
       writeFileSync(path, selected.map(record => JSON.stringify({ id: record.id, at: record.at, observed: record.at,
         label: record.label, text: recordText(record), sensitivity: record.sensitivity ?? "personal" })).join("\n") + "\n");
       const connector = new LegacyEventsConnector({ path, format: "jsonl", mapping: join(inputs, "mapping.json") });
-      const sourceKey = `fresh-agent-${group}`;
+      const sourceKey = ulid();
       registerConnection(db, CONNECTOR, sourceKey);
       // Host policy from the synthetic source class; the model cannot lower it.
       seedConnectorSensitivity(db, { connector_id: CONNECTOR, source_key: sourceKey }, {
         default_sensitivity: group === "ceiling" ? "private" : "personal", sensitivity_floor: "personal",
       });
       setSourceGrant(db, { source_key: sourceKey, expected_revision: 0, operation_id: `grant-${group}`,
-        policy: { purposes: ["capture", "derive", "extract", "correction", "export", ...(group === "withheld" ? [] : ["recall" as const])],
+        policy: { purposes: ["capture", "derive", "extract", "correction", "export", ...(group === "withheld" ? [] : ["recall" as const, "session" as const])],
           allowed_fields: ["text", "subjects", "metadata", "attachments"], retention: "persistent_owned_until_revoked",
           sensitivity_floor: group === "ceiling" ? "private" : "personal",
           egress: { model_endpoint: ENDPOINT, model: MODEL, external_retention: "provider_managed" } },
@@ -134,15 +139,20 @@ export async function generateVault(root: string, size: PersonaSize) {
     const ctx = { db, vaultPath, principal: OWNER };
     const event = readSince(db, null, 1000).events.find(item => item.source_record_id === "identity");
     if (event === undefined) throw new Error("fixture identity missing");
-    const proposed = await servePropose(ctx, { kind: "claim", body: "Ada collaborates with Grace.",
+    const proposer = addAgent(db, "fixture-proposer", { ceiling: "personal", subjects: ["persona:ada"],
+      types: null, tools: ["propose"], rate_limit_per_minute: 1000, relay_owner_corrections: false });
+    const proposalPrincipal = authenticate(db, proposer.token);
+    if (proposalPrincipal === null) throw new Error("fixture proposer authentication failed");
+    const proposed = await servePropose({ ...ctx, principal: proposalPrincipal }, { kind: "claim", body: "Ada collaborates with Grace.",
       subject: "persona:ada", subjects: ["persona:ada"], predicate: "relation.knows", object: "Grace", provenance: [event.event_id] });
     if (proposed.data?.outcome !== "stored") throw new Error("fixture proposal failed");
     const cards = discoveredCards(ctx, "situation", "Orchard");
-    const card = cards.find(envelope => "result" in envelope.data && envelope.data.result.status !== "unavailable" &&
-      "blocker" in envelope.data.result.data && envelope.data.result.data.blocker?.object.kind === "literal" &&
-      envelope.data.result.data.blocker.object.value === "waiting for the paint samples");
-    if (card === undefined || !("result" in card.data) || card.data.result.status === "unavailable" || !("blocker" in card.data.result.data) || card.data.result.data.blocker === null) throw new Error("fixture blocker missing");
-    const corrected = await serveCorrect(ctx, { statement: "waiting for the load test", target: { world_claim: card.data.result.data.blocker.claim } });
+    const blocker = cards.flatMap(envelope => "result" in envelope.data && envelope.data.result.status !== "unavailable" &&
+      "blocker" in envelope.data.result.data ? [envelope.data.result.data.blocker, ...envelope.data.result.data.uncertainty] : [])
+      .find(relation => relation?.predicate === "situation.blocker" && relation.object.kind === "literal" &&
+        relation.object.value === "waiting for the paint samples");
+    if (blocker === undefined || blocker === null) throw new Error("fixture blocker missing");
+    const corrected = await serveCorrect(ctx, { statement: "waiting for the load test", object: "waiting for the load test", target: { world_claim: blocker.claim } });
     if (corrected.data?.claim_id === null || corrected.data?.claim_id === undefined) throw new Error("fixture correction failed");
     await producer.close();
     producer = undefined;

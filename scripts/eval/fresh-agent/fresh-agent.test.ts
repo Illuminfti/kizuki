@@ -34,6 +34,9 @@ test("small synthetic persona is measured through four surfaces for two principa
     for (const [index, sample] of report.observations.entries()) {
       const question = report.questions.find(item => item.id === sample.question_id)!;
       expect(scoreObservation(report.facts, question, sample.principal, sample.surface, sample.observation)).toEqual(report.rows[index]!);
+      if (sample.surface === "session_hook" || sample.surface === "context_packet") {
+        expect(report.rows[index]!.tokens_used).toBeLessThanOrEqual(report.packet_budget);
+      }
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
