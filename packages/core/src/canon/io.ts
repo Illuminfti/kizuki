@@ -1,5 +1,7 @@
 import { resolve } from "node:path";
 import { readPage, type CanonIo } from "./store";
+// Domain preflights may read canon without acquiring the writer capability.
+export { readPage } from "./store";
 import { assertCanonFiles, type CanonFiles } from "../vault/canon-files";
 import { withMutationFilesAsync, withMutationFilesSync } from "../vault/mutation-files";
 import {
