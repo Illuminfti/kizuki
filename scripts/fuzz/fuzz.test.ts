@@ -7,7 +7,8 @@ import { cases, CORPUS_SIZE } from "./cases";
 import { CI_SEED, runFuzz, TARGETS } from "./run";
 import { supervise } from "./supervisor";
 import { parseCase } from "./parsers";
-import { surfaceDriver } from "./surfaces";
+import { OWNER_TOKEN, httpPost, httpTool, surfaceDriver } from "./surfaces";
+import { OWNER_AGENT_GRANT, addAgent } from "../../packages/core/src/index";
 
 const linuxTest = test.if(process.platform === "linux");
 
@@ -20,6 +21,30 @@ test("a generic HTTP serving failure fails the campaign instead of counting as r
     const text = "{}";
     await expect(driver.run({ id: "synthetic", text, bytes: Buffer.from(text) })).rejects.toThrow("http-crash");
   } finally { await driver.close(); rmSync(scratch, { recursive: true, force: true }); }
+});
+
+test("an internal failure inside a successful HTTP envelope fails the campaign for the owner and for an agent", async () => {
+  const scratch = mkdtempSync(join(tmpdir(), "kizuki-fuzz-http-"));
+  const driver = await surfaceDriver("http", scratch);
+  const db = new Database(join(scratch, "vault/.kizuki/kizuki.db"));
+  try {
+    const agent = addAgent(db, "synthetic-reader", { ...OWNER_AGENT_GRANT, tools: [...OWNER_AGENT_GRANT.tools] });
+    db.exec("DROP TABLE events");
+    const body = JSON.stringify({ purpose: "recall", budget_tokens: 1000 });
+    const envelopeFor = async (token: string) => {
+      const { status, text } = await httpPost(driver.httpOrigin!, "context_packet", body, token);
+      expect(status).toBe(200);
+      return JSON.parse(text) as { ok: boolean };
+    };
+    // The owner envelope reports the failure as an `error` denial.
+    const owner = await envelopeFor(OWNER_TOKEN);
+    expect(owner).toMatchObject({ ok: true, value: { denied: [{ reason: "error", count: 1 }] } });
+    await expect(httpTool(driver.httpOrigin!, "context_packet", body)).rejects.toThrow("http-crash");
+    // An agent envelope hides denials, so only the degradation names the failure.
+    const reader = await envelopeFor(agent.token);
+    expect(reader).toMatchObject({ ok: true, value: { denied: [], data: { retrieval_degraded: ["context-unavailable"] } } });
+    await expect(httpTool(driver.httpOrigin!, "context_packet", body, agent.token)).rejects.toThrow("http-crash");
+  } finally { db.close(); await driver.close(); rmSync(scratch, { recursive: true, force: true }); }
 });
 
 test("wrapped Gmail corpus reaches MIME body parsing and emits valid evidence", () => {
@@ -50,7 +75,7 @@ linuxTest("hostile parser corpus and seeded CI budget", async () => {
     expect(receipt).toMatchObject({ code: 0, limit: null, property: null, completed: CORPUS_SIZE + 8 });
     expect(receipt.peakRssKiB).toBeLessThanOrEqual(512 * 1024);
   }
-}, 120_000);
+}, 480_000);
 
 const PROBE = join(import.meta.dir, "supervisor-probe.ts");
 

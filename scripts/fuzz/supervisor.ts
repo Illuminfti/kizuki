@@ -1,11 +1,12 @@
 import { peakRssKiB as executablePeakRssKiB } from "./rss";
 
 export interface Budget { timeoutMs: number; rssMiB: number }
-export interface WorkerReceipt { code: number; limit: "time" | "memory" | "output" | null; lastCase: string; completed: number; peakRssKiB: number; property: string | null }
+export interface WorkerReceipt { code: number; limit: "time" | "memory" | "output" | null; lastCase: string; completed: number; peakRssKiB: number; elapsedMs: number; property: string | null }
 
 /** Owns and reaps exactly one child. Reads output incrementally with a line bound. */
 export async function supervise(command: string[], budget: Budget): Promise<WorkerReceipt> {
   if (process.platform !== "linux") throw new Error("fuzz supervision requires Linux RSS accounting");
+  const started = Date.now();
   const child = Bun.spawn(command, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
   let limit: WorkerReceipt["limit"] = null, lastCase = "startup", completed = 0, peakRssKiB = 0;
   let property: string | null = null;
@@ -61,7 +62,7 @@ export async function supervise(command: string[], budget: Budget): Promise<Work
     await consume;
     if (peakRssKiB > budget.rssMiB * 1024) limit = "memory";
     if (code === 0 && limit === null && property === null && !complete) property = "worker-incomplete";
-    return { code, limit, lastCase, completed, peakRssKiB, property };
+    return { code, limit, lastCase, completed, peakRssKiB, elapsedMs: Date.now() - started, property };
   } finally {
     clearTimeout(deadline); clearInterval(sample);
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");

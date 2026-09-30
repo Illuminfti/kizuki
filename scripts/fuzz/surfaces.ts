@@ -7,18 +7,37 @@ import { fuzzStdioBytes, mcpFuzzDriver } from "../../packages/mcp/test/fuzz-driv
 import type { FuzzCase } from "./cases";
 import { NOW } from "./parsers";
 import { wrappedArguments } from "./arguments";
+import { assertServingEnvelope } from "./oracle";
 
 export const SURFACES = ["http", "mcp", "app-http"] as const;
+export const OWNER_TOKEN = "synthetic-fuzz-token";
 
-export async function surfaceDriver(target: typeof SURFACES[number], scratch: string) {
-  if (target === "app-http") return (await import("./app")).appDriver(scratch);
+/** One unclassified standing-HTTP tool call. */
+export async function httpPost(origin: string, tool: string, body: BodyInit, token = OWNER_TOKEN): Promise<{ status: number; text: string }> {
+  const response = await fetch(`${origin}/v1/${tool}`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body });
+  return { status: response.status, text: await response.text() };
+}
+
+/** A generic serving failure fails the campaign as an HTTP 400 and inside a successful envelope alike. */
+export async function httpTool(origin: string, tool: string, body: BodyInit, token = OWNER_TOKEN): Promise<void> {
+  const { status, text } = await httpPost(origin, tool, body, token);
+  if (status >= 500) throw new Error("http-crash");
+  if (text.length > 1024 * 1024) throw new Error("output-unbounded");
+  const envelope = JSON.parse(text) as { error?: { code?: unknown }; value?: unknown };
+  if (envelope.error?.code === "error") throw new Error("http-crash");
+  assertServingEnvelope(envelope.value, "http-crash");
+}
+
+export async function surfaceDriver(target: typeof SURFACES[number], scratch: string, listening: (origin: string) => void = () => {}) {
+  if (target === "app-http") return (await import("./app")).appDriver(scratch, listening);
   const vaultPath = join(scratch, "vault");
   initVault(vaultPath);
   const db = openLedger(join(vaultPath, ".kizuki/kizuki.db"));
   const enrollment = addAgent(db, "synthetic-fuzz-client");
   const principal = authenticate(db, enrollment.token);
   if (principal === null) throw new Error("fixture-authentication");
-  const http = target === "http" ? startServeHttp({ db, vaultPath, token: "synthetic-fuzz-token" }) : null;
+  const http = target === "http" ? startServeHttp({ db, vaultPath, token: OWNER_TOKEN }) : null;
+  if (http !== null) listening(http.url);
   const mcp = target === "mcp" ? await mcpFuzzDriver({ db, vaultPath, principal }) : null;
   const ownerMcp = target === "mcp" ? await mcpFuzzDriver({ db, vaultPath, principal: OWNER }) : null;
   function argumentsFor(input: FuzzCase): unknown {
@@ -53,12 +72,7 @@ export async function surfaceDriver(target: typeof SURFACES[number], scratch: st
               const denied = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: `Bearer ${enrollment.token}` }, body });
               if (denied.status === 200) throw new Error("inert-grant-admitted");
             }
-            const response = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: "Bearer synthetic-fuzz-token" }, body });
-            if (response.status >= 500) throw new Error("http-crash");
-            const result = await response.text();
-            if (result.length > 1024 * 1024) throw new Error("output-unbounded");
-            const envelope = JSON.parse(result) as { error?: { code?: unknown } };
-            if (envelope.error?.code === "error") throw new Error("http-crash");
+            await httpTool(http.url, tool, body);
           }
         }
       }
@@ -68,7 +82,7 @@ export async function surfaceDriver(target: typeof SURFACES[number], scratch: st
         if (stored.status !== "stored") throw new Error("fixture-ingress");
         const request = { event_id: stored.event.event_id };
         const value = ownerMcp !== null ? await ownerMcp.call("timeline", request)
-          : await (await fetch(`${http!.url}/v1/timeline`, { method: "POST", headers: { authorization: "Bearer synthetic-fuzz-token" }, body: JSON.stringify(request) })).json();
+          : await (await fetch(`${http!.url}/v1/timeline`, { method: "POST", headers: { authorization: `Bearer ${OWNER_TOKEN}` }, body: JSON.stringify(request) })).json();
         const envelope = ownerMcp !== null ? (value as { structuredContent: Record<string, unknown> }).structuredContent : (value as { value: Record<string, unknown> }).value;
         if (JSON.stringify(envelope["canon"]).includes("Ignore prior instructions") || !JSON.stringify(envelope["quoted"]).includes("Ignore prior instructions")) throw new Error("capture-trust-confusion");
       }

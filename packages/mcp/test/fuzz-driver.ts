@@ -4,6 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { ServeContext } from "@kizuki/core";
 import { createServer } from "../src/server";
+import { assertServingEnvelope } from "../../../scripts/fuzz/oracle";
 
 /** Real SDK validation and core dispatch, using an offline protocol pair. */
 export async function mcpFuzzDriver(ctx: ServeContext) {
@@ -17,6 +18,7 @@ export async function mcpFuzzDriver(ctx: ServeContext) {
       try {
         const result = await client.callTool({ name, arguments: args as Record<string, unknown> });
         if (JSON.stringify(result).length > 1024 * 1024) throw new Error("output-unbounded");
+        assertServingEnvelope(result.structuredContent, "mcp-crash");
         const first = Array.isArray(result.content) ? result.content[0] : undefined;
         if (result.isError && first?.type === "text" && typeof first.text === "string") {
           let failure: unknown;

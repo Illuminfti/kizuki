@@ -37,8 +37,8 @@ async function outcome(parser: Parser, input: Parameters<typeof parseCase>[1], w
 let surface: Awaited<ReturnType<typeof surfaceDriver>> | undefined;
 try {
   if ((SURFACES as readonly string[]).includes(target)) {
-    surface = await surfaceDriver(target as typeof SURFACES[number], scratch);
-    httpOrigin = surface.httpOrigin;
+    // A driver announces its own loopback origin before its first request, including fixture setup.
+    surface = await surfaceDriver(target as typeof SURFACES[number], scratch, origin => { httpOrigin = origin; });
   }
   for (const input of cases(seed, count)) {
     activeCase = input.id;
@@ -58,7 +58,7 @@ try {
   process.stdout.write(JSON.stringify({ completed, maxRssKiB: peakRssKiB() }) + "\n");
 } catch (error) {
   // Never print error messages/causes or captured text. Case ids and seed replay it.
-  const properties = ["invalid-ingress", "sensitivity-lowered", "output-unbounded", "nondeterministic-parser", "prototype-pollution", "network-egress", "symlink-admitted", "invalid-encoding-admitted", "archive-expansion-admitted", "resume-lost", "oversized-file-admitted", "projection-unreached", "inert-grant-admitted", "http-crash", "mcp-crash", "capture-trust-confusion"];
+  const properties = ["invalid-ingress", "sensitivity-lowered", "output-unbounded", "nondeterministic-parser", "prototype-pollution", "network-egress", "symlink-admitted", "invalid-encoding-admitted", "archive-expansion-admitted", "resume-lost", "oversized-file-admitted", "projection-unreached", "inert-grant-admitted", "http-crash", "mcp-crash", "app-crash", "capture-trust-confusion"];
   const property = error instanceof Error && properties.includes(error.message) ? error.message : "unexpected-exception";
   process.stdout.write(JSON.stringify({ failed: true, case: activeCase, property, completed }) + "\n");
   process.exitCode = 1;
