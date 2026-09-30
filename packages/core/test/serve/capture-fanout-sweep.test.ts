@@ -32,40 +32,42 @@ async function vaultWithNotes(count: number) {
   const vault = join(root, "vault");
   initVault(vault);
   const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
-  const ids: string[] = [];
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    for (let index = 0; index < count; index += 1) {
-      const eventId = putEvent(db, {
-        source_record_id: `session-1/${index}`,
-        text: `turn ${index}`,
-      });
-      const note = await storeClaim(db, eventId, {
-        kind: "claim",
-        target: "captures/session-connector/2026-09-01",
-        subject: null,
-        predicate: null,
-        object: null,
-        body: `Captured from \`session-connector\` (message) at 2026-09-01T09:00:00Z.\n\n> turn ${index}`,
-        frontmatter: {
-          type: "source",
-          title: "Capture from session-connector at 2026-09-01T09:00:00Z",
-          "x-connector": "session-connector",
-          "x-capture-kind": "message",
-        },
-        subjects: [],
-        confidence: 1,
-        taint: "quoted",
-        sensitivity: "private",
-      });
-      ids.push(note.claim_id);
+  const eventId = putEvent(db, { source_record_id: "session-1/0", text: "turn 0" });
+  const note = await storeClaim(db, eventId, {
+    kind: "claim",
+    target: "captures/session-connector/2026-09-01",
+    subject: null,
+    predicate: null,
+    object: null,
+    body: "Captured from `session-connector` (message) at 2026-09-01T09:00:00Z.\n\n> turn 0",
+    frontmatter: {
+      type: "source",
+      title: "Capture from session-connector at 2026-09-01T09:00:00Z",
+      "x-connector": "session-connector",
+      "x-capture-kind": "message",
+    },
+    subjects: [],
+    confidence: 1,
+    taint: "quoted",
+    sensitivity: "private",
+  });
+  const ids = [note.claim_id];
+  // Seed historical stored notes directly: the current floor cannot generate
+  // them, and public claim admission owns its own top-level transaction.
+  const seed = db.query(`INSERT INTO claims (
+    claim_id, kind, target, body, frontmatter, provenance, subjects,
+    producer, confidence, status, created_at, body_hash, sensitivity, taint
+  ) SELECT ?, kind, target, ?, frontmatter, provenance, subjects, producer,
+    confidence, status, created_at, ?, sensitivity, taint
+    FROM claims WHERE claim_id = ?`);
+  db.transaction(() => {
+    for (let index = 1; index < count; index += 1) {
+      const body = `${note.body}\n\n> historical turn ${index}`;
+      const id = `legacy-fanout-${index}`;
+      seed.run(id, body, hashBody(body), note.claim_id);
+      ids.push(id);
     }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    db.close();
-    throw error;
-  }
+  }).immediate();
   return { vault, db, ids };
 }
 
@@ -182,28 +184,13 @@ describe("the doctor sweep closes out capture notes filed for conversational eve
   });
 
   test("sync never writes legacy message captures before or beyond a bounded sweep", async () => {
-    const f = await vaultWithNotes(1);
+    const f = await vaultWithNotes(10001);
     const producer: ProducerPort = {
       descriptor: { id: "fixture.producer", contract: "kizuki.producer/v1" as const, contract_minor: 0, kind: "producer", supports: ["model"], requires_lease: false, optional_package: null },
       health: async () => ({ status: "ready" as const, detail: {} }), close: async () => {},
       produce: async () => ({ status: "ok" as const, claims: [], usage: { calls: 1, input_tokens: 0, output_tokens: 0 } }),
     };
     try {
-      // Seed stored legacy rows beyond one sweep's limit without running a
-      // modern producer (which intentionally cannot file these notes).
-      const note = getClaim(f.db, f.ids[0]!)!;
-      const seed = f.db.query(`INSERT INTO claims (
-        claim_id, kind, target, body, frontmatter, provenance, subjects,
-        producer, confidence, status, created_at, body_hash, sensitivity, taint
-      ) SELECT ?, kind, target, ?,
-        frontmatter, provenance, subjects, producer, confidence, status,
-        created_at, ?, sensitivity, taint FROM claims WHERE claim_id = ?`);
-      f.db.transaction(() => {
-        for (let index = 1; index <= 10000; index += 1) {
-          const body = `${note.body}\n\n> historical turn ${index}`;
-          seed.run(`legacy-fanout-${index}`, body, hashBody(body), note.claim_id);
-        }
-      }).immediate();
       expect(countCaptureFanout(f.db)).toEqual({ pending: 10001, skipped: 0 });
       const sync = await runRail(f.db, f.vault, "sync", {
         hooks: { model_ref: "fixture-model", producer, claims: { db: f.db } },
