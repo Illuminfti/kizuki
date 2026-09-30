@@ -47,7 +47,7 @@ max_output_tokens_per_day = 4000000  # 1024..1000000000; billed output tokens pe
 ```
 
 A value outside its range, a fraction or a string keeps that key's default.
-`kizuki doctor` and `kizuki serve status` print the effective values on one
+`kizuki doctor` and `kizuki serve status` print the extraction limits and sync period on one
 `throughput` line, and `doctor --json` and `serve status --json` report them as
 `serve.throughput`.
 
@@ -148,11 +148,12 @@ follow a single order.
 
 ## Records with nothing to extract
 
-Before it plans a request, the loop passes over records a model could not turn
-into a claim. The check is deterministic and looks only at the record's text:
+Before it plans a request, the loop classifies trivial records using a fixed,
+deterministic rule over their kind and text:
 
 | Reason | Record |
 | --- | --- |
+| `service` | An explicit `service` or `service_message` kind, even with text. Ordinary message text is never interpreted as a service marker. |
 | `empty` | No text at all, such as an attachment or a service notice on its own. |
 | `no_words` | Text with no letter or digit, such as emoji or punctuation. |
 | `too_short` | Fewer than 12 letters and digits, such as `ok`, `thanks!` or `12:30`. Each Han, kana or hangul character counts four. |
@@ -163,6 +164,10 @@ run receipt counts them by reason in `records_prefiltered`, and only for
 records its committed cursor passed: a step that reads more records than one
 request takes counts the rest when a later step passes them. The ledger keeps
 every record, so search, timeline, context and a source purge are unaffected.
+Older deferred records are checked too, under their current extraction grant,
+and removed from that queue in the same durable step. This is a minimum-content
+rule, not a semantic classifier: a short fact below the threshold is also
+passed over. Owner corrections still use the correction path.
 
 A step that only passes over such records makes no request, so it does not use
 one of the `max_calls_per_pass` steps, and a pass keeps going through them

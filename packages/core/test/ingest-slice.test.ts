@@ -107,6 +107,35 @@ class PagedConnector implements Connector {
 }
 
 describe("runToCompletion in bounded slices", () => {
+  test("a slice at the safety ceiling yields instead of reporting a failed drain", async () => {
+    const db = database();
+    try {
+      const connector = new PagedConnector(BATCHES);
+      const result = await runToCompletion(db, connector, "fixture", SOURCE, "sync", {
+        maxBatches: 3, slice: { max_batches: 3 },
+      });
+      expect(result).toMatchObject({ stored: 3, errors: [], cursor: "page-3", has_more: true });
+    } finally { db.close(); }
+  });
+
+  test("invalid slice bounds refuse before reading a connector", async () => {
+    const db = database();
+    try {
+      const connector = new PagedConnector(BATCHES);
+      for (const max_batches of [0, -1, 1.5, NaN, Infinity]) {
+        await expect(runToCompletion(db, connector, "fixture", SOURCE, "sync", {
+          slice: { max_batches },
+        })).rejects.toThrow("slice.max_batches must be a positive integer");
+      }
+      for (const deadline_ms of [-1, NaN, Infinity]) {
+        await expect(runToCompletion(db, connector, "fixture", SOURCE, "sync", {
+          slice: { deadline_ms },
+        })).rejects.toThrow("slice.deadline_ms must be finite and non-negative");
+      }
+      expect(connector.cursors).toEqual([]);
+    } finally { db.close(); }
+  });
+
   test("a batch cap returns has_more and the next call resumes from the cursor", async () => {
     const db = database();
     try {

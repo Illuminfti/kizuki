@@ -817,17 +817,24 @@ export async function runToCompletion(
   if (!Number.isSafeInteger(maxBatches) || maxBatches <= 0) {
     throw new TypeError("runToCompletion: maxBatches must be a positive integer");
   }
+  const slice = opts?.slice;
+  if (slice?.max_batches !== undefined && (!Number.isSafeInteger(slice.max_batches) || slice.max_batches <= 0)) {
+    throw new TypeError("runToCompletion: slice.max_batches must be a positive integer");
+  }
+  if (slice?.deadline_ms !== undefined && (!Number.isFinite(slice.deadline_ms) || slice.deadline_ms < 0)) {
+    throw new TypeError("runToCompletion: slice.deadline_ms must be finite and non-negative");
+  }
   const stored = (): string | null =>
     checkpointModeCursor(getCheckpoint(db, connector_id, source_key), mode);
   const total: RunResult = emptyResult(stored());
   const context = opts?.vault_path === undefined ? undefined : { vault_path: opts.vault_path };
-  const slice = opts?.slice;
   const started = performance.now();
+  const sliceSpent = (batches: number): boolean => slice !== undefined &&
+    (batches >= (slice.max_batches ?? Infinity) || performance.now() - started >= (slice.deadline_ms ?? Infinity));
   for (let batch = 0; batch < maxBatches; batch += 1) {
     if (opts?.stopRequested?.() === true) return { ...total, has_more: true };
     // A slice always reads one batch, so a spent deadline cannot starve a source.
-    if (batch > 0 && slice !== undefined &&
-        (batch >= (slice.max_batches ?? Infinity) || performance.now() - started >= (slice.deadline_ms ?? Infinity))) {
+    if (batch > 0 && sliceSpent(batch)) {
       return { ...total, has_more: true };
     }
     const before = stored();
@@ -843,6 +850,7 @@ export async function runToCompletion(
       return total;
     }
   }
+  if (sliceSpent(maxBatches)) return { ...total, has_more: true };
   total.errors.push(`run did not complete within ${maxBatches} batches`);
   return total;
 }

@@ -1011,7 +1011,7 @@ export async function mineLiveDrafts(
  * by the next one. A record part-way through its segments holds the cursor.
  */
 function withPrefiltered(mined: MineResult, prefiltered: ReadonlyMap<string, PrefilterReason>): MineResult {
-  if (prefiltered.size === 0 || mined.mode !== "frontier" || mined.cursor === null || mined.segment !== undefined) return mined;
+  if (prefiltered.size === 0 || mined.cursor === null || mined.segment !== undefined) return mined;
   const counts: Partial<Record<PrefilterReason, number>> = {};
   for (const id of mined.input_ids ?? []) {
     const reason = prefiltered.get(id);
@@ -1068,6 +1068,15 @@ async function mineBatch(
       if (usable.length === 0) advanceExtractCheckpoint(db, DEFERRED_SCAN_KEY, queued.at(-1)!.event_id);
     }).immediate();
     if (usable.length > 0) {
+      // Old deferred state can contain trivial records. Consume a trivial
+      // prefix as an empty decision; meaningful prefixes still use the same
+      // durable input partition and never send those records to the model.
+      const firstSkipped = usable.findIndex(event => prefilterReason(event) !== null);
+      const skipping = firstSkipped === 0;
+      const boundary = skipping
+        ? usable.findIndex(event => prefilterReason(event) === null)
+        : firstSkipped;
+      if (boundary > 0) usable = usable.slice(0, boundary);
       mode = "deferred";
       inputIds = usable.map(event => event.event_id);
       modelInputs = usable.map(event => sourceInput(db, event, producer));
@@ -1075,6 +1084,11 @@ async function mineBatch(
       const row = db.query<{ accepted_at: string }, [string]>("SELECT accepted_at FROM events WHERE event_id=?").get(last.event_id);
       if (row === null) throw new Error("deferred extraction input is missing");
       cursor = { event_id: last.event_id, accepted_at: row.accepted_at };
+      if (skipping) {
+        for (const event of usable) prefiltered.set(event.event_id, prefilterReason(event)!);
+        return { source_epoch, mined: { status: "empty" }, drafts: [], previous_cursor, cursor,
+          input_ids: inputIds, mode, model_inputs: modelInputs, deferred_inputs: [] };
+      }
     }
   }
 

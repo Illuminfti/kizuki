@@ -4,7 +4,7 @@ import {
   MIN_RECORD_CONTENT_CHARS,
   prefilterReason,
 } from "../../src/serve/extract-prefilter";
-import { readExtractCursor } from "../../src/serve/extract";
+import { readExtractCursor, requeuePassedOverRecords } from "../../src/serve/extract";
 import { runRail } from "../../src/serve/rails";
 import { listRunReceipts } from "../../src/serve/receipts";
 import {
@@ -118,6 +118,26 @@ test("a thousand short messages cost no model call, and the receipt counts each 
       (item) => item.run_id === receipt.run_id,
     )?.records_prefiltered,
   ).toEqual(receipt.records_prefiltered);
+});
+
+test("previously deferred short records are consumed without a model call", async () => {
+  const vault = throughputVault(16, index => index % 2 === 0 ? "ok" : recordText(index));
+  const db = openLedger(vault.ledger);
+  disposers.push(vault.dispose, () => db.close());
+  db.transaction(() => requeuePassedOverRecords(db, vault.eventIds))();
+  const { producer, calls } = fixtureProducer(() => db);
+  const receipt = await runRail(db, vault.vault, "sync", {
+    hooks: { producer, claims: { db }, model_ref: MODEL },
+  });
+  expect(calls.flatMap(call => call.event_ids).some(id => vault.eventIds.indexOf(id) % 2 === 0)).toBe(false);
+  expect(receipt.records_prefiltered).toEqual({ too_short: 1 });
+  expect(db.query("SELECT 1 FROM extract_deferred_inputs WHERE event_id=?").get(vault.eventIds[0]!)).toBeNull();
+});
+
+test("explicit service records are skipped even when their notice contains words", () => {
+  expect(prefilterReason({ kind: "service", text: "A participant joined this conversation." })).toBe("service");
+  expect(prefilterReason({ kind: "service_message", text: "The conversation title was changed." })).toBe("service");
+  expect(prefilterReason({ kind: "message", text: "A participant joined this conversation." })).toBeNull();
 });
 
 test("short messages between real ones never reach the model and never hold the cursor back", async () => {
