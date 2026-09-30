@@ -8,6 +8,7 @@ import type { Principal, Tool } from "../agents";
 import { initAgents } from "../agents/schema";
 import { ServeError, dispatchServeTool } from "../serving";
 import { RESPONSE_CONTRACT_KEY } from "../serving/contract";
+import { ENVELOPE_V2_SCHEMA } from "../serving/types";
 import type { ServeContext } from "../serving";
 import { isPlainObject } from "../util/validate";
 import { SERVE_TOKEN_PATH, ServeDaemonError } from "./types";
@@ -163,7 +164,9 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
         });
       }
       let args: Record<string, unknown> = {};
-      let response_contract: unknown;
+      // The adapter selects the safe default; callers may still explicitly
+      // select legacy until Core's separate compatibility decision lands.
+      let response_contract: unknown = principal.kind === "agent" ? ENVELOPE_V2_SCHEMA : undefined;
       try {
         const body = await request.json();
         if (body !== null && typeof body === "object" && !Array.isArray(body)) {
