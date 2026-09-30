@@ -4,6 +4,7 @@
  */
 export { WORLD_DESCRIBE_SCHEMA } from "./ops/describe";
 export type { WorldDescribe } from "./ops/describe";
+export type { ShareData } from "./views/resume";
 export { WORLD_KINDS, worldKindState } from "./ops/kinds";
 export type { WorldKindEntry, WorldKindPopulation } from "./ops/kinds";
 export { NOT_FOUND, coveredOutcome } from "./ops/outcome";

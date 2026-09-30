@@ -2,6 +2,8 @@ import { conceptOp } from "./concept";
 import { describeOp } from "./describe";
 import { discoverConceptsOp, discoverSituationsOp } from "./discover";
 import { situationOp } from "./situation";
+import { shareOp } from "./share";
+import { resumeOp } from "./resume";
 import type { WorldOp, WorldOpRegistry } from "./types";
 
 const COMMON_KEYS = ["operation", "valid", "knownAt", "priorView"];
@@ -66,6 +68,7 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   // slot: CARD
   // slot: KNOWN
   // slot: VIEW
+  shareOp, resumeOp,
   // slot: QUEST
   // slot: PEOPLE
   // slot: SKILL

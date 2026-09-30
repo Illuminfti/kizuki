@@ -38,6 +38,8 @@ describe("the operation registry", () => {
       "concept",
       "situation",
       "describe",
+      "share",
+      "resume",
     ]);
   });
 

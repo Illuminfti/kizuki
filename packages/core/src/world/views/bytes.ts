@@ -25,6 +25,9 @@ export function wireRefs(data: unknown): string[] {
       for (const item of value) visit(item);
     } else if (value !== null && typeof value === "object") {
       const record = value as Record<string, unknown>;
+      // Discovery carries its issued object reference as a bare cursor string,
+      // including an empty final page whose body names no other reference.
+      if (typeof record.cursor === "string" && isWorldWireToken(record.cursor)) found.add(record.cursor);
       const { kind, token } = record;
       if (
         Object.keys(record).length === 2 &&

@@ -1,4 +1,4 @@
-import { expect, test, setDefaultTimeout } from "bun:test";
+import { afterEach, beforeEach, expect, test, setDefaultTimeout, setSystemTime } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   HIDDEN_MUTATIONS,
@@ -16,6 +16,9 @@ import { worldSeed } from "../helpers/world-seed";
 
 // Each scenario builds a real ledger, so bound the tests for a loaded host.
 setDefaultTimeout(120_000);
+// Issued lifetimes vary with request time; freeze that input so every lifetime byte remains compared.
+beforeEach(() => setSystemTime(new Date("2030-01-01T00:00:00.000Z")));
+afterEach(() => setSystemTime());
 
 test("the four world_view operations do not change when hidden evidence changes", async () => {
   await assertNoninterference({ cases: worldViewCases });

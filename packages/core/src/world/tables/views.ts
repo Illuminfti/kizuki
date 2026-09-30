@@ -51,7 +51,9 @@ const HANDLES = `
     handle_id TEXT NOT NULL REFERENCES semantic_handles(handle_id) ON DELETE CASCADE,
     operation TEXT NOT NULL CHECK(length(operation) BETWEEN 1 AND 64),
     valid TEXT NOT NULL CHECK(length(valid)<=1024),
-    scope TEXT NOT NULL CHECK(length(scope)<=16384),
+    scope TEXT NOT NULL CHECK(length(scope)<=32768),
+    scope_digest TEXT NOT NULL ${HEX64("scope_digest")},
+    recorded_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
   ) STRICT;
@@ -103,7 +105,7 @@ const handles: WorldTableSpec = {
   name: "world_resume_handles",
   class: "cache",
   since,
-  columns: ["handle_hash", "partition_id", "handle_id", "operation", "valid", "scope", "created_at", "expires_at"],
+  columns: ["handle_hash", "partition_id", "handle_id", "operation", "valid", "scope", "scope_digest", "recorded_at", "created_at", "expires_at"],
   erasure: { via: "cascade", parent: "semantic_handles" },
   create: (db) => db.exec(HANDLES),
 };
