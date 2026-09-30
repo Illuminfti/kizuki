@@ -170,27 +170,32 @@
   no orphans and status ok. Restore prints the agents to enroll again.
 - Typed extraction no longer lets model output launder injected text into clean
   canon. Every typed claim read from external text is stored `taint: quoted`
-  and renders into a quoted page. A literal must be contained, after
-  normalization, in the span it cites, or the claim is admitted only as an
-  uncertain inferred interpretation; `health.*` and `preference.*` claims about
-  a name the model found in the text are dropped without a quoted basis; a
-  literal or body that repeats an instruction-shaped span from its own record
-  is dropped unless the claim reports it as a quotation. `identity.same_as`,
-  `identity.handle_on` and `decision.*` claims that name an owner, agent, grant,
-  permission, policy, access or audit are held, invisible to reads and canon,
-  until two independent source records support them. See
-  [docs/model-output-trust.md](docs/model-output-trust.md).
+  and renders into a quoted page; in a context packet such a page sits under the
+  quoted-capture heading as a block quotation, not under canon. A literal must
+  be contained, on whole tokens and after normalization, in the span it cites,
+  or the claim is admitted only as an uncertain inferred interpretation;
+  `health.*` and `preference.*` claims need a quoted basis for every subject; a
+  literal or body, of any object kind, that repeats an instruction-shaped span
+  from its own record is dropped unless the claim reports it as a quotation.
+  `identity.same_as`, `identity.handle_on`, `decision.*` claims that name an
+  owner, agent, grant, permission, policy, access or audit, and claims whose
+  page body uses any of those terms are held, invisible to reads and
+  canon, until two independent enrolled sources support them or the owner does.
+  See [docs/model-output-trust.md](docs/model-output-trust.md).
 - The legacy wiki and events importers refuse, with
   `source_contains_kizuki_vault`, a source that is or contains a Kizuki vault,
   as the Markdown folder connector already did. An ignore pattern cannot hide
   a nested vault.
-- Machine-origin detection recognizes a copy of a written page that changed
-  only its line endings, trailing whitespace or final newline; a copy that lost
-  its frontmatter is not recognized by hash (see
-  [docs/event-identity-origin.md](docs/event-identity-origin.md)).
+- Machine-origin detection recognizes copied page bodies with stripped or
+  rewritten frontmatter, changed line endings, trailing whitespace or final
+  newlines. Linear normalization bounds hostile whitespace work. The writer
+  records durable body hashes before publication; backup/restore preserves
+  them, and withdrawal and erasure remove them. Historical writes gain body
+  hashes on their next receipted rewrite. See
+  [docs/event-identity-origin.md](docs/event-identity-origin.md).
 - A claim's `corroboration` count rises only for a source record it did not
-  already rest on. A re-sync of the same record, whatever its bytes, no longer
-  counts as a second witness.
+  already rest on, on both the typed and the staged path. A re-sync of the same
+  record, whatever its bytes, no longer counts as a second witness.
 - The daily brief is stamped private when it names a page that ever received a
   private receipt (a repair never lowers it), says when rail failure groups
   were omitted, and the brief repair also rewrites the run-id

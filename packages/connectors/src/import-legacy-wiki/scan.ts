@@ -71,6 +71,7 @@ interface Walk {
   considered: number;
   /** Directories entered only to look for a vault, bounded like the walk itself. */
   hidden: number;
+  maxHidden: number;
   truncated: boolean;
 }
 
@@ -213,7 +214,12 @@ async function walkDirectory(
     if (entry.name.startsWith(".") || entry.name === MAPPING_FILE_NAME)
       continue;
     if (!collect) {
-      if (!entry.isDirectory() || entry.isSymbolicLink() || walk.hidden >= MAX_FILES) continue;
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      // An unvisited remainder could hold a nested vault, so an exhausted
+      // budget is a refusal to verify, never a silent pass.
+      if (walk.hidden >= walk.maxHidden) {
+        throw new KizukiError("misconfigured", "source_path_depth: ignored folders exceed the verification bound");
+      }
       walk.hidden += 1;
     } else if (walk.considered >= MAX_FILES) {
       walk.truncated = true;
@@ -252,6 +258,7 @@ async function walkDirectory(
 export async function scanLegacyWiki(
   root: string,
   ignore: string[],
+  maxHidden = MAX_FILES,
 ): Promise<ScanResult> {
   const walk: Walk = {
     // Canonical, so containment below is decided against where the wiki
@@ -262,6 +269,7 @@ export async function scanLegacyWiki(
     skipped: [],
     considered: 0,
     hidden: 0,
+    maxHidden,
     truncated: false,
   };
   try {

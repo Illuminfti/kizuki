@@ -9,7 +9,7 @@ import {
 } from "../contracts/producer-v2";
 import { mintOccurrenceId, type OccurrenceEventIdentity } from "../claims/occurrences";
 import type { InsertClaimInput } from "../claims/store";
-import { guardLiteral } from "./world-guards";
+import { guardClaim, normalizedInstructionSpans } from "./world-guards";
 
 /** The portion of the shared writer input produced by the model adapter. */
 export interface WorldDraftInsert extends InsertClaimInput {
@@ -136,6 +136,12 @@ export function prepareWorldDrafts(
     return { kind: "occurrence", id: mintOccurrenceId(event, event.source_key, mention.anchor) };
   };
 
+  const instructionSpanCache = new Map<string, string[]>();
+  const instructionSpansOf = (eventId: string): string[] => {
+    let spans = instructionSpanCache.get(eventId);
+    if (spans === undefined) instructionSpanCache.set(eventId, spans = normalizedInstructionSpans(eventById.get(eventId)!.text));
+    return spans;
+  };
   const dropped: DroppedDraftV2[] = [];
   const drafts = response.claims.flatMap(claim => {
     const anchors = completeAnchors(claim);
@@ -174,9 +180,9 @@ export function prepareWorldDrafts(
     }
     // The model's literal is checked against the exact text it cited, so what
     // it wrote about the record cannot outrank what the record says.
-    const semantic = guardLiteral(resolved, claim.body, {
+    const semantic = guardClaim(resolved, claim.body, {
       spans: anchors.map(anchor => eventById.get(anchor.event_id)!.text.slice(anchor.start_utf16, anchor.end_utf16)),
-      events: [...new Set(anchors.map(anchor => anchor.event_id))].map(id => eventById.get(id)!.text),
+      instructionSpans: [...new Set(anchors.map(anchor => anchor.event_id))].flatMap(instructionSpansOf),
     });
     if (semantic === null || !validateClaimV2Semantic(semantic).ok) {
       dropped.push({ reason: "invalid_claim", id: claim.id });

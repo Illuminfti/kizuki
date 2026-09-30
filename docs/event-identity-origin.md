@@ -54,10 +54,20 @@ bare-CR to LF form, the form with trailing spaces and tabs stripped from every
 line, and each of those with no, one or the original trailing newlines, and
 marks the event `self` when any of them matches a registered image. Whitespace
 alone never matches. A changed word is a different document and stays external.
-A copy that has lost or rewritten its frontmatter no longer hashes to a
-registered image and is not recognized here; the importers that read files
-refuse a source inside or containing a vault instead (see
-[legacy-import.md](legacy-import.md)).
+The writer also registers normalized body hashes, with the opening frontmatter
+block removed, CRLF/CR normalized to LF, trailing spaces and tabs removed per
+line, and surrounding whitespace trimmed. Copies with stripped or rewritten
+frontmatter match that body registry. Normalization runs in linear time, even
+for long runs of hostile whitespace. Empty bodies never register.
+
+The body registry is durable bookkeeping, backed up as
+`world/canon_machine_body_images.jsonl` on ledgers that support it. Restore
+requires each row to refer to a retained loop receipt or pending byte intent;
+withdrawal and receipt erasure remove its hashes. Older backups and upgraded
+ledgers start with no body hashes for completed historical writes; exact image
+matching remains available, and the next receipted write records the page bytes.
+Already admitted events keep their immutable origin stamp. Importers also
+refuse sources inside or containing a vault (see [legacy-import.md](legacy-import.md)).
 
 Before publishing a loop file or archive, the writer commits a minimal byte
 intent and its final source/evidence admission check in one top-level SQLite

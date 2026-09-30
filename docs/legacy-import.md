@@ -408,9 +408,13 @@ so a defaulted page never looks like a decision the previous system made.
 - **A Kizuki vault is never a source.** A vault's pages, archives and control
   data are machine output, so an importer that read them back would turn
   Kizuki's own prose into external evidence. The wiki importer refuses, with
-  `source_contains_kizuki_vault`, a source root that is or sits inside a vault,
-  that holds a vault anywhere beneath it (an ignore pattern cannot hide one),
-  or that reaches one through a link; the events importer refuses an export
+  `source_contains_kizuki_vault`, a source root that is or sits inside a vault
+  (a root reached through a link is resolved first), or that holds a vault
+  anywhere in the folders it walks, including under an ignore pattern. The walk
+  is bounded: a symlinked entry inside the tree is skipped, not followed; a
+  folder deeper than the depth bound, or past the file bound, is reported as
+  skipped and not searched for a vault; and an ignored tree with more folders
+  than the walk's budget is refused as unverifiable rather than passed. The events importer refuses an export
   file that lives inside a vault, including the vault's own control data. The
   test is the `.kizuki` marker, the same one the Markdown folder connector
   uses, and it runs before any page or row is read.

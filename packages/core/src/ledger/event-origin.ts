@@ -3,7 +3,9 @@ import type { CaptureEvent } from "../contracts/event";
 import { sha256Hex } from "../util/hash";
 import { isUlid } from "../util/ulid";
 import { eventFromRow, type EventRow } from "./event-record";
-import { machineImageHashes } from "./machine-image";
+import { readSchemaVersion } from "./integrity";
+import { WORLD_MIGRATION_VERSIONS } from "../world/tables/versions";
+import { machineBodyHash, machineImageHashes } from "./machine-image";
 
 export const ABSENT_BYTE_HASH = sha256Hex("");
 export interface MachineByteIntent {
@@ -49,11 +51,17 @@ function classify(db: Database, event: Pick<CaptureEvent, "text" | "text_hash">)
   const matching = statement.get(candidates, candidates, candidates, candidates);
   if (matching !== null && (!hash(matching.after_hash) ||
       (matching.before_hash !== null && !hash(matching.before_hash)))) throw new EventOriginError();
-  return matching !== null ? "self" : "external";
+  if (matching !== null) return "self";
+  // Historical event migration predates this registry; current admissions require it.
+  if (readSchemaVersion(db) < WORLD_MIGRATION_VERSIONS.machine_images) return "external";
+  const bodyHash = machineBodyHash(event.text);
+  if (bodyHash === null) return "external";
+  using body = db.prepare("SELECT 1 FROM canon_machine_body_images WHERE body_hash=? LIMIT 1");
+  return body.get(bodyHash) !== null ? "self" : "external";
 }
 
 /** Admission and the exact byte intent have one durable SQLite linearization. */
-export function commitMachineByteIntent(db: Database, intent: MachineByteIntent, admit: () => void): void {
+export function commitMachineByteIntent(db: Database, intent: MachineByteIntent, admit: () => void, images?: { before: string | null; after: string | null }): void {
   if (db.inTransaction) throw new Error("loop byte admission requires a top-level transaction");
   if (!isUlid(intent.receipt_id) || !hash(intent.after_hash) ||
       (intent.before_hash !== null && !hash(intent.before_hash))) throw new EventOriginError();
@@ -72,7 +80,20 @@ export function commitMachineByteIntent(db: Database, intent: MachineByteIntent,
       using insert = db.prepare("INSERT INTO canon_machine_byte_intents VALUES (?,?,?)");
       insert.run(intent.receipt_id, intent.before_hash, intent.after_hash);
     }
+    if (images !== undefined) recordMachineBodyImages(db, intent, images);
   }).immediate();
+}
+
+/** Called only in the byte admission or recovery transaction, over verified images. */
+export function recordMachineBodyImages(db: Database, intent: MachineByteIntent, images: { before: string | null; after: string | null }): void {
+  if (!db.inTransaction) throw new EventOriginError();
+  for (const [text, expected] of [[images.before, intent.before_hash], [images.after, intent.after_hash]] as const) {
+    if (text === null) continue;
+    if (!hash(expected) || sha256Hex(text) !== expected) throw new EventOriginError();
+    const bodyHash = machineBodyHash(text);
+    if (bodyHash !== null) db.query("INSERT OR IGNORE INTO canon_machine_body_images(receipt_id,image_hash,body_hash) VALUES(?,?,?)")
+      .run(intent.receipt_id, expected, bodyHash);
+  }
 }
 
 /** Validate the immutable admission stamp; later intents cannot restamp evidence. */

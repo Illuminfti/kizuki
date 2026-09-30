@@ -90,7 +90,8 @@ export function assertWorldBasis(db:Database,basis:readonly WorldClaimBasis[]|nu
 /** Distinct bounded queue: neutral typed parents never enter the legacy materializer. */
 export function pendingWorldCanonClaims(db:Database,limit=32):Claim[][] {
  const ctx=context(db),permitted=authorizedSupportSql(ctx);
- const ids=db.query<{claim_id:string},(string|number)[]>(`SELECT c.claim_id FROM claims c WHERE c.is_world_typed=1 AND c.status='live' AND c.receipt_id IS NULL AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${heldClaimSql("c")} ORDER BY c.claim_id LIMIT ?`).all(...permitted.bindings,Math.min(limit,32)*MAX_PAGE_CLAIMS);
+ const held=heldClaimSql("c",permitted);
+ const ids=db.query<{claim_id:string},(string|number)[]>(`SELECT c.claim_id FROM claims c WHERE c.is_world_typed=1 AND c.status='live' AND c.receipt_id IS NULL AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql} ORDER BY c.claim_id LIMIT ?`).all(...permitted.bindings,...held.bindings,Math.min(limit,32)*MAX_PAGE_CLAIMS);
  const groups=new Map<string,Claim[]>();
  for(const {claim_id} of ids) {
   const handle=worldClaimHandle(db,claim_id),claim=getClaim(db,claim_id);if(handle===null||claim===null)continue;
