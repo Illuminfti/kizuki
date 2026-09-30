@@ -68,7 +68,7 @@ describe("fetchTransport", () => {
   });
 
   test("lifts Bun's own five-minute fetch cutoff so the configured deadline is the only limit", async () => {
-    // A 330 s reply is verified by hand; here the option that removes the cutoff is pinned.
+    // Pin the option without waiting for a long-running request.
     const real = globalThis.fetch;
     let seen: (RequestInit & { timeout?: unknown }) | undefined;
     globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {

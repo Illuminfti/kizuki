@@ -10,6 +10,7 @@ import { accept } from "../../src/ledger/ledger";
 import { setSourceGrant } from "../../src/ledger/source-grants";
 import { MODEL_PRODUCER_ID } from "../../src/producer";
 import { inspectServeDoctor } from "../../src/serve/doctor";
+import { egressDoctor } from "../../src/serve/doctor-extraction";
 import { runRail } from "../../src/serve/rails";
 import {
   persistRunReceipt,
@@ -635,8 +636,12 @@ describe("egress and skipped pages", () => {
         endpoint_host: new URL(ENDPOINT).host,
         model: MODEL,
         retention: "provider_managed",
+        judge: null,
       },
     ]);
+    // With a judge configured, each line says whether its grant consents to it.
+    const judge = { model_endpoint: "https://judge.example.test/v1/systemone", model: "synthetic-judge" };
+    expect(egressDoctor(db, judge).egress[0]!.judge).toEqual({ host: "judge.example.test", model: "synthetic-judge", consented: false });
     db.close();
   });
 

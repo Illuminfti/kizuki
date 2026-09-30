@@ -82,8 +82,11 @@ export async function saveModelSettings(vaultPath: string, input: AppModelSaveIn
   if (selection.kind === "none" && Object.keys(selection).join() === "kind") llm = { id: NONE };
   else if (selection.kind === "openai_compatible" && Object.keys(selection).sort().join() === "base_url,kind,model") {
     const checked = configured({ id: OPENAI, base_url: selection.base_url, model: selection.model });
-    llm = { ...(isPlainObject(previous.llm) && previous.llm.id === OPENAI ? previous.llm : {}),
-      id: OPENAI, base_url: checked.config!.base_url, model: checked.config!.model };
+    const prior = isPlainObject(previous.llm) && previous.llm.id === OPENAI ? previous.llm : {};
+    const sameDestination = prior.base_url === checked.config!.base_url && prior.model === checked.config!.model;
+    // A retention class and provider controls describe one destination; another one starts undeclared.
+    const { retention: _retention, provider: _provider, ...rest } = prior;
+    llm = { ...(sameDestination ? prior : rest), id: OPENAI, base_url: checked.config!.base_url, model: checked.config!.model };
   } else invalid();
   const keys = Object.keys(input.credential).sort().join();
   if (keys !== (input.credential.action === "replace" ? "action,value" : "action")) invalid();

@@ -27,7 +27,10 @@ describe("typed extraction prompt is prefix-stable", () => {
 
   test("the fixed part is the bulk of a small request", () => {
     const [system, user] = buildExtractionV2Messages(worldProduceInput(events("x".repeat(500))), "d".repeat(32));
+    expect(system!.content.length).toBeGreaterThan(user!.content.length);
     expect(system!.content.length).toBeGreaterThan(6_500);
     expect(user!.content.length).toBeLessThan(1_000);
+    expect(user!.content).toContain("x".repeat(500));
+    expect(system!.content).not.toContain("x".repeat(500));
   });
 });

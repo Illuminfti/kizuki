@@ -64,8 +64,13 @@
   the user message holds only per-request fenced data, so serving models can
   reuse the shared prefix.
 - A configured System One judge is model egress: events are sent only when the
-  source grant names the judge's exact endpoint and model, and are held
-  otherwise.
+  source grant names the judge as its own optional `judge_endpoint` and
+  `judge_model` beside the extraction model, and are held otherwise. `kizuki
+  doctor` and `connect status` name the hold. `connect grant --policy FILE`
+  accepts the pair; the app's model-only permit action does not grant judge
+  access. A grant without the pair keeps its form and digest.
+- Saving another endpoint or model in the app no longer carries over the earlier
+  `retention` and `provider` declarations; a new destination starts undeclared.
 - `scripts/evaluate-extraction-model.ts` scores a real model on the synthetic
   fixture, refuses a non-loopback endpoint without `--allow-remote`, and labels
   the result as a fixture measurement, never a model-quality claim.
@@ -140,8 +145,8 @@
   documented heuristic, not a guarantee. It covers the `[ports.llm]` extraction
   path and the text its admission judge receives. A configured
   `[ports.systemone]` judge is a separate destination at its own `base_url`: it
-  is not named by source consent, not covered by `[ports.llm.provider]`, and not
-  shown by `connect status` or `--json` egress. The judge the reflex path uses
+  is not covered by `[ports.llm.provider]`, and source consent covers it only
+  when the grant names it. The judge the reflex path uses
   is not scrubbed.
 - `[ports.llm.provider]` passes an allow-listed `provider` object
   (`data_collection`, `zdr`, `order`, `only`, `ignore`, `allow_fallbacks`) to

@@ -300,8 +300,15 @@ grant working unchanged. The configured model declares its own class in
 Text is sent only when the model's declared class is at least as strict as the
 class the grant accepts; otherwise the source's events are held, not sent. A
 configured System One judge is sent the same events and claims, so it needs the
-same consent: the grant's `egress` must name the judge's exact endpoint and model
-too, or the events are held. See
+same consent, and its destination differs from the model's. A grant names the
+judge as its own pair beside the model, `judge_endpoint` (the judge's
+`<base_url>/systemone`) and `judge_model`; both or neither, and a grant without
+the pair keeps its earlier form and digest. With a judge configured and no pair
+that matches it, the source's events are held, not sent and not filed as empty,
+and `kizuki doctor` and `connect status` say `held` next to the source. The judge
+declares no retention class, so the grant must accept `logged_and_trained` or
+`provider_managed`. Use `connect grant --policy FILE` to supply this explicit
+pair; the app's model-only permit action does not grant judge access. See
 [`@kizuki/llm`](../packages/llm/README.md#retention-classes).
 
 `connect status --json` reports the same view as `egress` on each connection
@@ -331,15 +338,15 @@ sent to the model is. The model's anchors into scrubbed text are moved back onto
 the original record. The per-kind counts appear as `model.redacted` in each run
 receipt, and are absent when nothing was redacted.
 
-**Known limit: the admission judge is a separate destination.** When
+**The admission judge is a separate destination.** When
 `[ports.systemone]` is configured, the extraction-path admission judge (typed
 and legacy) receives the same scrubbed extraction text at its own `base_url`
-(the default host is `api.typesafe.ai`), not at the `[ports.llm]` endpoint. That
-destination is not named by source consent, is not covered by
-`[ports.llm.provider]`, and is not shown by `connect status` or its `--json`
-`egress`. Scrubbing applies to it; the egress and retention view does not.
-Leave `[ports.systemone]` unset to keep extraction text on the `[ports.llm]`
-destination alone. The judge the reflex path uses is not scrubbed.
+(the default host is `api.typesafe.ai`), not at the `[ports.llm]` endpoint. Source
+consent covers it only when the grant names it (`judge_endpoint`, `judge_model`,
+above); `connect status` and `kizuki doctor` show whether it does. It is not
+covered by `[ports.llm.provider]`. Scrubbing applies to it. Leave `[ports.systemone]`
+unset to keep extraction text on the `[ports.llm]` destination alone. The judge
+the reflex path uses is not scrubbed.
 
 ## backfill / sync
 

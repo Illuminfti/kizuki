@@ -213,7 +213,7 @@ export function validateResponseSet(value: unknown, corpus: QualityCorpus): Qual
   const observed = typeof value === "object" && value !== null && RUNNER_OBSERVED.has(value);
   const root = object(value, ["schema", "mode", "corpus_sha256", "model_reference", "responses"], observed ? ["provenance"] : []);
   requireValue(root.schema === "kizuki.extraction-quality-responses/v1", "unsupported response contract");
-  requireValue(root.mode === "scripted_contract" || (observed && root.mode === "runner_observed_model"), "recorded model provenance is unsupported; a response file accepts scripted contracts only");
+  requireValue(root.mode === "scripted_contract" || (observed && root.mode === "runner_observed_model"), "recorded model provenance is unsupported; v1 accepts scripted contracts only");
   requireValue(root.corpus_sha256 === corpusDigest(corpus), "corpus hash mismatch");
   const responses = list(root.responses, corpus.cases.length, corpus.cases.length).map((raw): QualityResponse => {
     const row = object(raw, ["case_id", "status", "response", "usage"], ["dropped"]);

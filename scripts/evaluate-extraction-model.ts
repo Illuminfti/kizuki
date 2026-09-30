@@ -1,9 +1,7 @@
-import { createHash, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { ulid } from "../packages/core/src/util/ulid";
 import { createModelProducerV2Port } from "../packages/core/src/producer/model-v2";
-import { EXTRACTION_V2_SYSTEM_PROMPT } from "../packages/core/src/producer/prompt-v2";
 import { worldProduceInput } from "../packages/core/src/serve/extract-v2";
 import type { ExtractResponseV2, ProduceResultV2 } from "../packages/core/src/contracts/producer-v2";
 import { createOpenAiCompatibleLlmPort } from "../packages/llm/src/openai-compatible";
@@ -71,7 +69,14 @@ export async function runModelEvaluation(options: ModelRunOptions) {
   if (!loopback && options.allow_remote !== true) throw new Error("a non-loopback endpoint needs --allow-remote and is limited to the synthetic corpus");
   const corpus = loadCorpus(options.corpus_path ?? join(import.meta.dir, "fixtures/extraction-quality-v1.json"));
   const requestHashes: string[] = [], responseHashes: string[] = [];
+  let promptHash: string | null = null;
   const transport: ChatTransport = async (request) => {
+    // The prompt that identifies a run is the system message as sent: instructions and the registry.
+    const first = (request.body as { messages?: { role?: unknown; content?: unknown }[] }).messages?.[0];
+    if (first?.role !== "system" || typeof first.content !== "string") throw new Error("evaluation request has no system prompt");
+    const hash = sha256(first.content);
+    if (promptHash !== null && promptHash !== hash) throw new Error("evaluation system prompt changed between cases");
+    promptHash = hash;
     requestHashes.push(sha256(canonicalJson(request.body)));
     const result = await fetchTransport(request);
     responseHashes.push(sha256(result.ok ? canonicalJson(result.body) : `${result.kind}:${result.status}`));
@@ -108,7 +113,7 @@ export async function runModelEvaluation(options: ModelRunOptions) {
       calls: requestHashes.length, request_sha256: requestHashes, response_sha256: responseHashes },
   });
   const report = scoreExtraction(corpus, set);
-  return { ...report, prompt_sha256: createHash("sha256").update(EXTRACTION_V2_SYSTEM_PROMPT).digest("hex"), run_nonce: randomBytes(4).toString("hex"), per_case_wall: details };
+  return { ...report, prompt_sha256: promptHash, run_nonce: randomBytes(4).toString("hex"), per_case_wall: details };
 }
 
 if (import.meta.main) {

@@ -389,6 +389,8 @@ export interface EgressDoctor {
   readonly model: string;
   /** The loosest class of destination the source's grant accepts. */
   readonly retention: ExternalRetention;
+  /** The configured System One judge and whether this source's grant consents to it; null when no judge is configured. A source that does not consent is held. */
+  readonly judge: { readonly host: string; readonly model: string; readonly consented: boolean } | null;
 }
 
 /** One derived layer as its last rebuild stamped it. */

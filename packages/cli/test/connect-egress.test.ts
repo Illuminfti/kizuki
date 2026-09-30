@@ -32,7 +32,7 @@ const row = (f: ReturnType<typeof source>) => h.runCli(f.env, "connect", "status
 
 test("a source without consent shows no destination", () => {
   const f = source();
-  expect(egress(f)).toEqual({ destination: "none", host: null, model: null, retention: "none", declared_retention: null, provider_controls: null, configured: false });
+  expect(egress(f)).toEqual({ destination: "none", host: null, model: null, retention: "none", declared_retention: null, provider_controls: null, configured: false, judge: null });
   expect(row(f)).toContain("Egress");
   expect(row(f)).toContain("Retention");
 });
@@ -48,7 +48,7 @@ test("a model grant names its host, model, retention and the provider controls t
   const f = source();
   grant(f, remote);
   configure(f, `[ports.llm]\n${llm}[ports.llm.provider]\ndata_collection = "deny"\nzdr = true\n`);
-  expect(egress(f)).toEqual({ destination: "model_endpoint", host: "models.example.test", model: MODEL, retention: "provider_managed", declared_retention: null, provider_controls: { data_collection: "deny", zdr: true }, configured: true });
+  expect(egress(f)).toEqual({ destination: "model_endpoint", host: "models.example.test", model: MODEL, retention: "provider_managed", declared_retention: null, provider_controls: { data_collection: "deny", zdr: true }, configured: true, judge: null });
   const text = row(f);
   expect(text).toContain("models.example.test synthetic-model");
   expect(text).toContain("provider-managed; requests data_collection=deny zdr=true");
@@ -102,3 +102,19 @@ test("connect status --source reports the same egress view", () => {
   expect(text).toContain("egress=models.example.test synthetic-model");
   expect(text).toContain("retention=provider-managed; requests data_collection=deny");
 });
+
+const JUDGE = "https://judge.example.test/v1/systemone";
+const judge = 'id = "kizuki.systemone.jev"\nbase_url = "https://judge.example.test/v1"\nmodel = "synthetic-judge"\n';
+
+test("a configured judge is held until the grant names it, and then shown as consented", () => {
+  const f = source();
+  grant(f, remote);
+  configure(f, `[ports.llm]\n${llm}[ports.systemone]\n${judge}`);
+  expect(egress(f)).toMatchObject({ judge: { host: "judge.example.test", model: "synthetic-judge", consented: false } });
+  expect(row(f)).toContain("held: judge not consented judge.example.test synthetic-judge");
+  // A grant that names the judge as its own destination lifts the hold.
+  grant(f, { ...local, egress: { ...remote.egress, judge_endpoint: JUDGE, judge_model: "synthetic-judge" } }, 1);
+  expect(egress(f)).toMatchObject({ judge: { host: "judge.example.test", model: "synthetic-judge", consented: true } });
+  expect(row(f)).toContain("; judge judge.example.test synthetic-judge");
+  expect(row(f)).not.toContain("held:");
+}, 120_000);

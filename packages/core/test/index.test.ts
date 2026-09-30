@@ -272,6 +272,7 @@ describe("public surface", () => {
       "conformanceContext",
       "connectRemotePort",
       "connectorSensitivityFor",
+      "consentsToJudge",
       "correct",
       "count",
       "countCanonReceipts",

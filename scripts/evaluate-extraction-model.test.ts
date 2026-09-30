@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { loadCorpus } from "./evaluate-extraction";
+import { loadCorpus, sha256 } from "./evaluate-extraction";
 import { referenceSubject, runModelEvaluation, toScorerShape } from "./evaluate-extraction-model";
+import { startFakeEndpoint } from "../packages/llm/test/fake-endpoint";
 import type { ExtractResponseV2 } from "../packages/core/src/contracts/producer-v2";
 
 const corpus = loadCorpus(join(import.meta.dir, "fixtures/extraction-quality-v1.json"));
@@ -13,26 +14,26 @@ describe("model evaluation runner", () => {
   });
 
   test("a loopback run sends only the configured sampling keys, labels the score as a fixture measurement and makes no quality claim", async () => {
-    const bodies: Record<string, unknown>[] = [];
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-      bodies.push(await request.json() as Record<string, unknown>);
-      return Response.json({ id: "c", object: "chat.completion", created: 1, model: "synthetic", usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-        choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }) } }] });
-    } });
+    const server = startFakeEndpoint(() => Response.json({ id: "c", object: "chat.completion", created: 1, model: "synthetic", usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }) } }] }));
+    const bodies = (): Record<string, unknown>[] => server.requests.map((request) => request.body as Record<string, unknown>);
     try {
-      const base_url = `http://127.0.0.1:${server.port}/v1`;
+      const base_url = server.base_url;
       const report = await runModelEvaluation({ base_url, model: "synthetic", temperature: 0, json_mode: true });
       expect(report.qualification).toBe("synthetic_fixture_measured");
       expect(report.model_quality_claim).toBe(false);
       expect(report.provenance).toMatchObject({ loopback: true, calls: corpus.cases.length });
-      expect(bodies).toHaveLength(corpus.cases.length);
-      expect(bodies[0]).toMatchObject({ temperature: 0, response_format: { type: "json_object" } });
-      bodies.length = 0;
+      expect(bodies()).toHaveLength(corpus.cases.length);
+      expect(bodies()[0]).toMatchObject({ temperature: 0, response_format: { type: "json_object" } });
+      const prompts = bodies().map(body => (body.messages as { role: string; content: string }[])[0]!.content);
+      expect(new Set(prompts).size).toBe(1);
+      expect(report.prompt_sha256).toBe(sha256(prompts[0]!));
+      server.requests.length = 0;
       await runModelEvaluation({ base_url, model: "synthetic", corpus_path: join(import.meta.dir, "fixtures/extraction-quality-v1.json") });
-      expect("temperature" in bodies[0]!).toBe(false);
-      expect("response_format" in bodies[0]!).toBe(false);
+      expect("temperature" in bodies()[0]!).toBe(false);
+      expect("response_format" in bodies()[0]!).toBe(false);
     } finally {
-      server.stop(true);
+      server.stop();
     }
   });
 

@@ -38,6 +38,8 @@ describe("retention classes in source consent", () => {
     // Existing grants named provider_managed and bound undeclared models: they keep working.
     expect(retentionAccepted("provider_managed", undefined)).toBe(true);
     expect(retentionAccepted("provider_managed", "logged_and_trained")).toBe(true);
+    expect(retentionAccepted("provider_managed", "unknown" as never)).toBe(false);
+    expect(retentionAccepted("unknown" as never, "zero_retention")).toBe(false);
   });
 
   test("a grant accepts each class, refuses an unknown one, and a legacy grant keeps its digest", () => {

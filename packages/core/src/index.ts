@@ -1176,7 +1176,7 @@ export { isLedgerBusy } from "./ledger/busy";
 export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./serve/qualification";
 export type { QualificationProfile, QualificationRail, QualificationReceipt, QualificationProcess, QualificationSample } from "./serve/qualification";
 
-export { DECLARED_RETENTION_CLASSES, EXTERNAL_RETENTION_CLASSES, retentionAccepted, SOURCE_PURPOSES, SOURCE_FIELDS, SourceGrantError, sourcePolicyEpoch, sourceCaptureAdmission, inspectSourceGrant, setSourceGrant, revokeSourceGrant, resumeSourceRevocation, bindLocalSourcePort, bindSourceModelPort, bindSourceJudgePort, bindEpochZeroProducerPort } from "./ledger/source-grants";
+export { DECLARED_RETENTION_CLASSES, EXTERNAL_RETENTION_CLASSES, retentionAccepted, consentsToJudge, SOURCE_PURPOSES, SOURCE_FIELDS, SourceGrantError, sourcePolicyEpoch, sourceCaptureAdmission, inspectSourceGrant, setSourceGrant, revokeSourceGrant, resumeSourceRevocation, bindLocalSourcePort, bindSourceModelPort, bindSourceJudgePort, bindEpochZeroProducerPort } from "./ledger/source-grants";
 export type { ExternalRetention, DeclaredRetention, SourcePurpose, SourceModelEgress, SourceGrantPolicy, SourceGrant, SourceGrantRequest, SourceGrantReceipt, SourceAdmission } from "./ledger/source-grants";
 
 export type { OwnedSourceRetrievalInventory, OwnedSourceRetrievalStore, SourceStoreStatus } from "./ledger/source-stores";

@@ -54,12 +54,13 @@ model binding, so changing it re-checks deferred work.
 
 A configured `kizuki.systemone.jev` judge is sent the same events and the
 extracted claims, so it is model egress too. The serving host treats it as a
-second destination of the producer: events are sent only when the source grant's
-`egress` names the judge's exact endpoint (`<base_url>/systemone`) and model, and
-the judge declares no retention class, so the grant must accept
-`logged_and_trained` or `provider_managed`. A grant names one destination, so a
-judge at a different destination than the extraction model holds those events
-instead of sending them; nothing is kept as an empty result.
+second destination of the producer. Events are sent only when the source grant
+consents to it: `egress` names the judge as `judge_endpoint`
+(`<base_url>/systemone`) and `judge_model`, beside the extraction model. The
+judge declares no retention class, so the grant must accept `logged_and_trained`
+or `provider_managed`. A grant without the pair holds those events instead of
+sending them; nothing is kept as an empty result, and `kizuki doctor` names the
+hold.
 
 ### Provider privacy controls (`[ports.llm.provider]`)
 

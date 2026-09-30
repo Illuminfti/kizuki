@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
-import { EXTERNAL_RETENTION_CLASSES, type ExternalRetention } from "../ledger/source-grants";
+import { consentsToJudge, EXTERNAL_RETENTION_CLASSES, type ExternalRetention, type SourceGrantPolicy } from "../ledger/source-grants";
 import { isPlainObject } from "../util/validate";
 import { extractBacklog } from "./doctor-rails";
 import {
@@ -87,7 +87,7 @@ const EGRESS_SOURCE_CAP = 256;
  * model, and who holds the text afterwards. Only the host is shown, never the
  * endpoint path. A source whose policy cannot be read is a failure, not a gap.
  */
-export function egressDoctor(db: Database): {
+export function egressDoctor(db: Database, judge: { readonly model_endpoint: string; readonly model: string } | null = null): {
   readonly egress: EgressDoctor[];
   readonly failures: string[];
 } {
@@ -106,6 +106,7 @@ export function egressDoctor(db: Database): {
     let host: string | null = null;
     let model: string | null = null;
     let retention: ExternalRetention | null = null;
+    let consented: boolean | null = null;
     let local = false;
     try {
       const policy: unknown = JSON.parse(row.policy);
@@ -120,6 +121,8 @@ export function egressDoctor(db: Database): {
         host = new URL(target["model_endpoint"]).host;
         model = target["model"];
         retention = target["external_retention"] as ExternalRetention;
+        // The judge declares no class, so its own destination must sit within the accepted class.
+        if (judge !== null) consented = consentsToJudge(target as unknown as SourceGrantPolicy["egress"], judge);
       }
     } catch {
       /* reported below */
@@ -135,6 +138,7 @@ export function egressDoctor(db: Database): {
       endpoint_host: host,
       model,
       retention,
+      judge: judge === null || consented === null ? null : { host: new URL(judge.model_endpoint).host, model: judge.model, consented },
     });
   }
   return { egress, failures };

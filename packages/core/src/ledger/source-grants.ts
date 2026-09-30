@@ -61,12 +61,20 @@ export type ExternalRetention = (typeof EXTERNAL_RETENTION_CLASSES)[number];
 export type DeclaredRetention = (typeof DECLARED_RETENTION_CLASSES)[number];
 /** True when a destination's declared class is within the class the grant accepts. */
 export function retentionAccepted(accepted: ExternalRetention, declared: DeclaredRetention | undefined): boolean {
-  return EXTERNAL_RETENTION_CLASSES.indexOf(declared ?? "logged_and_trained") <= EXTERNAL_RETENTION_CLASSES.indexOf(accepted);
+  const acceptedRank = EXTERNAL_RETENTION_CLASSES.indexOf(accepted);
+  const declaredRank = DECLARED_RETENTION_CLASSES.indexOf(declared ?? "logged_and_trained");
+  return acceptedRank >= 0 && declaredRank >= 0 && declaredRank <= acceptedRank;
 }
 export interface SourceModelEgress {
   model_endpoint: string;
   model: string;
   external_retention: ExternalRetention;
+  /**
+   * A second destination the same events may go to, such as a configured System One judge. Both keys
+   * are present or both absent, and an absent pair leaves the policy, and so its digest, as it was.
+   */
+  judge_endpoint?: string;
+  judge_model?: string;
 }
 export interface SourceGrantPolicy {
   purposes: SourcePurpose[];
@@ -192,7 +200,9 @@ function modelEndpoint(value: unknown): string {
 export { modelEndpoint as normalizeSourceModelEndpoint, modelName as normalizeSourceModelName };
 function egress(value: unknown): SourceGrantPolicy["egress"] {
   if (value === "local_only") return value;
-  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "external_retention,model,model_endpoint") {
+  const keys = isPlainObject(value) ? Object.keys(value).sort().join(",") : "";
+  if (!isPlainObject(value) || (keys !== "external_retention,model,model_endpoint" &&
+    keys !== "external_retention,judge_endpoint,judge_model,model,model_endpoint")) {
     fail("unsupported_egress");
   }
   const retention = value.external_retention;
@@ -201,6 +211,9 @@ function egress(value: unknown): SourceGrantPolicy["egress"] {
     model_endpoint: modelEndpoint(value.model_endpoint),
     model: modelName(value.model),
     external_retention: retention as ExternalRetention,
+    ...(Object.hasOwn(value, "judge_endpoint")
+      ? { judge_endpoint: modelEndpoint(value.judge_endpoint), judge_model: modelName(value.judge_model) }
+      : {}),
   };
 }
 function policyOf(value: unknown): SourceGrantPolicy {
@@ -816,6 +829,20 @@ function consentsTo(egress: SourceGrantPolicy["egress"], to: ModelDestination): 
   return egress !== "local_only" && egress.model_endpoint === to.model_endpoint && egress.model === to.model &&
     retentionAccepted(egress.external_retention, to.retention);
 }
+/**
+ * True when a grant consents to a judge destination: it names the judge as its own pair, or the
+ * judge is served from the very destination the grant already names for the model. Either way the
+ * judge's declared class must sit within the class the grant accepts.
+ */
+export function consentsToJudge(
+  egress: SourceGrantPolicy["egress"],
+  judge: Readonly<{ model_endpoint: string; model: string; retention?: DeclaredRetention }>,
+): boolean {
+  if (egress === "local_only") return false;
+  if (consentsTo(egress, judge)) return true;
+  return egress.judge_endpoint === judge.model_endpoint && egress.judge_model === judge.model &&
+    retentionAccepted(egress.external_retention, judge.retention);
+}
 export interface SourceReadScope {
   owner: boolean;
   purpose?: SourcePurpose;
@@ -873,9 +900,9 @@ export function sourceEventsAllowed(
     )
       return false;
     if (model !== undefined && !consentsTo(grant.policy.egress, model)) return false;
-    // A grant names one destination, so a judge elsewhere is not consented and its events are held.
+    // A judge elsewhere is consented only when the grant names it too; otherwise the events are held.
     const judge = scope.port === undefined ? undefined : judgePorts.get(scope.port);
-    if (judge !== undefined && !consentsTo(grant.policy.egress, judge)) return false;
+    if (judge !== undefined && !consentsToJudge(grant.policy.egress, judge)) return false;
     if (
       (row.text.length > 0 && !grant.policy.allowed_fields.includes("text")) ||
       (["subjects", "attachments", "metadata"] as const).some(

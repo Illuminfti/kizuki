@@ -180,6 +180,29 @@ describe("doctor tells the daemon's story from a shell without its secret", () =
       `egress source=${key} connector=kizuki.markdown-folder host=models.example.test model=synthetic-model retention=${retention} (${RETENTION_MEANING[retention]})`,
     );
   });
+
+  test("a configured judge the grant does not name is reported as a hold, and named it is not", () => {
+    const setup = tempVault();
+    const connected = runCli(setup.env, "connect", "markdown-folder", "--source", setup.notes);
+    expect(connected.exitCode, connected.stderr).toBe(0);
+    const key = connected.stdout.match(/source=([0-9A-HJKMNPQRSTVWXYZ]{26})/)![1]!;
+    writeFileSync(join(setup.vault, ".kizuki", "serve.toml"),
+      '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "https://models.example.test/v1"\nmodel = "synthetic-model"\n[ports.systemone]\nid = "kizuki.systemone.jev"\nbase_url = "https://judge.example.test/v1"\nmodel = "synthetic-judge"\n', { mode: 0o600 });
+    const egress = { model_endpoint: "https://models.example.test/v1/chat/completions", model: "synthetic-model", external_retention: "provider_managed" };
+    const grant = (value: object, expected: number) => {
+      const policy = join(setup.root, `judge-policy-${expected}.json`);
+      writeFileSync(policy, JSON.stringify({ purposes: ["capture", "recall", "derive", "extract"], allowed_fields: ["text"], retention: "persistent_owned_until_revoked", egress: value, sensitivity_floor: "public" }), { mode: 0o600 });
+      const granted = runCli(setup.env, "connect", "grant", "--source", key, "--policy", policy, "--expected-revision", String(expected), "--operation-id", `judge-${expected}`);
+      expect(granted.exitCode, granted.stderr).toBe(0);
+    };
+    grant(egress, 0);
+    expect(runCli(setup.env, "doctor").stdout).toContain(`egress source=${key} judge host=judge.example.test model=synthetic-judge retention=logged_and_trained (undeclared); held: judge not consented`);
+    grant({ ...egress, judge_endpoint: "https://judge.example.test/v1/systemone", judge_model: "synthetic-judge" }, 1);
+    const named = runCli(setup.env, "doctor").stdout;
+    expect(named).toContain(`egress source=${key} connector=kizuki.markdown-folder host=models.example.test`);
+    expect(named).toContain(`egress source=${key} judge host=judge.example.test model=synthetic-judge retention=logged_and_trained (undeclared)`);
+    expect(named).not.toContain("held: judge not consented");
+  });
 });
 
 describe("nextStep", () => {
