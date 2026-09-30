@@ -12,6 +12,9 @@ import { correctionRecoveryPending } from "../correction/recovery";
 import { CanonRecoveryError, readCanonWriteIntent } from "../canon/write-intent";
 import type { CanonRecoveryPending } from "../correction/types";
 import type { ServeContext } from "./types";
+import { pageSnapshotDecision } from "./canon";
+import { validatePage } from "../vault/schema";
+import { CanonPageUnreadable, type ExistingPage } from "../canon/store";
 
 /**
  * RFC 0002 §6.3 step 5 bounds the blast radius of one correction. The writer
@@ -49,9 +52,19 @@ const NOTHING: CanonRewrite = {
   failed: false,
 };
 
-function pageText(io: CanonIo, relPath: string): string {
+export function pageSnapshot(io: CanonIo, ctx: ServeContext, relPath: string): { content: string; readable: boolean } {
   assertPageRelPath(relPath);
-  return readOwnedCanonPage(io, relPath)?.content ?? "";
+  let saved: ExistingPage | null;
+  try { saved = readOwnedCanonPage(io, relPath); }
+  catch (error) {
+    if (!(error instanceof CanonPageUnreadable || error instanceof SyntaxError)) throw error;
+    return { content: "", readable: false };
+  }
+  if (saved === null || validatePage(saved.page.data).length > 0) return { content: saved?.content ?? "", readable: false };
+  const id = saved.page.data["id"];
+  if (typeof id !== "string") return { content: saved.content, readable: false };
+  const page = { id, path: saved.path, relPath, ...saved.page, contentHash: saved.hash };
+  return { content: saved.content, readable: pageSnapshotDecision(ctx, ctx.principal.grant, page, true).allow };
 }
 
 /** A unified body, truncated by line count so one page cannot flood a reply. */
@@ -91,7 +104,7 @@ export function pendingCanonRewrite(ctx: ServeContext, claim: Claim): CanonRecov
       if (!pending.some(prior => prior.receipt_id === item.receipt_id)) pending.push(item);
     }
   }
-  if (pending.length > 0) return pending;
+  if (pending.length > 0) return ctx.principal.kind === "owner" ? pending : [];
   // The global writer hold also blocks this unreceipted correction's known
   // page. Report that fact without attributing the unrelated receipt to it.
   if (claim.receipt_id === null && bound.length > 0 && readCanonWriteIntent(ctx.db) !== null) return [];
@@ -120,48 +133,51 @@ export function rewriteCanon(
   let targetPath: string | undefined;
 
   try {
+    // The write may retire evidence, but cannot authorize the before bytes.
+    const readableBound = bound.filter(path => pageSnapshot(io, ctx, path).readable);
     const held = pendingCanonRewrite(ctx, claim);
-    if (held !== undefined) return { ...NOTHING, unreached: bound, failed: true, recovery_pending: held };
+    if (held !== undefined) return { ...NOTHING, unreached: readableBound, failed: true, recovery_pending: held };
     const decision = resolveTarget(io, claim);
     // A correction rewrites what exists. It never mints a page for a reading
     // nothing ever materialized: that claim is the writer's own work.
     if (decision.action === "skip" || decision.action === "create") {
-      return { ...NOTHING, unreached: bound };
+      return { ...NOTHING, unreached: readableBound };
     }
     const relPath =
       decision.action === "conflict"
         ? decision.chosen.rel_path
         : decision.rel_path;
     targetPath = relPath;
-    const before = pageText(io, relPath);
+    const before = pageSnapshot(io, ctx, relPath);
     const receipt = applyCanonWriteOwned(scope, io, claim, decision, {
       writer: "correction",
       budget,
     });
-    const after = pageText(io, receipt.page_path);
+    const after = pageSnapshot(io, ctx, receipt.page_path);
+    const disclose = before.readable && after.readable;
     const pending = correctionRecoveryPending(io.db, claim.claim_id, receipt.page_path);
     return {
-      ...(pending.length === 0 ? {} : { recovery_pending: pending }),
-      receipt_id: receipt.receipt_id,
-      rewritten: [
+      ...(pending.length === 0 ? {} : { recovery_pending: disclose ? pending : [] }),
+      receipt_id: disclose ? receipt.receipt_id : null,
+      rewritten: disclose ? [
         {
           page_path: receipt.page_path,
           page_action: receipt.page_action,
           before_hash: receipt.before_hash,
           after_hash: receipt.after_hash,
           receipt_id: receipt.receipt_id,
-          diff: unified(receipt.page_path, before, after),
+          diff: unified(receipt.page_path, before.content, after.content),
         },
-      ],
-      unreached: bound.filter((path) => path !== receipt.page_path),
+      ] : [],
+      unreached: readableBound.filter((path) => path !== receipt.page_path && pageSnapshot(io, ctx, path).readable),
       failed: false,
     };
   } catch (error) {
     // The claim stays durable. A failed row commit can follow file publication;
     // only the matching durable recovery record may identify that uncertainty.
     const pending = correctionRecoveryPending(io.db, claim.claim_id, targetPath);
-    return { ...NOTHING, unreached: bound, failed: true,
-      ...(pending.length > 0 || error instanceof CanonRecoveryError ? { recovery_pending: pending } : {}),
+    return { ...NOTHING, unreached: [], failed: true,
+      ...(pending.length > 0 || error instanceof CanonRecoveryError ? { recovery_pending: ctx.principal.kind === "owner" ? pending : [] } : {}),
     };
   }
 }

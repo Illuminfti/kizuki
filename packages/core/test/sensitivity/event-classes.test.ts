@@ -10,6 +10,8 @@ import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 import {
   credentialShaped,
   classesOfEvents,
+  backfillCredentialClasses,
+  restampSourceClasses,
 } from "../../src/ledger/event-classes";
 import { registerConnection } from "../../src/ledger/connections";
 import { accept } from "../../src/ledger/ledger";
@@ -84,6 +86,26 @@ function classesOf(db: Database, id: string): string[] {
 }
 
 describe("credential class", () => {
+  test("deep and wide accepted metadata stays protected through backfill and restamping", () => {
+    const db = openLedger(":memory:");
+    try {
+      enroll(db);
+      const deep = { a: { b: { c: { d: { password: "synthetic-canary-482" } } } } };
+      const wide = { values: Array.from({ length: 1_024 }, () => "a clean note"), password: "synthetic-canary-483" };
+      for (const [name, metadata] of Object.entries({ deep, wide })) {
+        const id = store(db, name, "a clean note", metadata);
+        const original = db.query("SELECT content_hash FROM events WHERE event_id = ?").get(id);
+        expect(classesOf(db, id)).toEqual(["credential"]);
+        db.exec("DELETE FROM event_classes");
+        backfillCredentialClasses(db);
+        expect(classesOf(db, id)).toEqual(["credential"]);
+        restampSourceClasses(db, SOURCE, []);
+        expect(classesOf(db, id)).toEqual(["credential"]);
+        expect(db.query("SELECT content_hash FROM events WHERE event_id = ?").get(id)).toEqual(original);
+      }
+    } finally { db.close(); }
+  });
+
   test("the shared secret patterns mark text and metadata, and nothing else", () => {
     expect(credentialShaped("the deploy password = hunter2hunter2", {})).toBe(
       true,
@@ -111,6 +133,7 @@ describe("credential class", () => {
     expect(credentialShaped("the password reset page was redesigned", {})).toBe(
       false,
     );
+    expect(credentialShaped("a clean note", { password: 123456 })).toBe(true);
   });
 
   test("capture stamps a credential-shaped event and leaves the event revision alone", () => {
@@ -305,8 +328,17 @@ describe("class migration", () => {
       source_record_id: "plain",
       text: "kettle notes",
     });
+    const nested = accept(first, {
+      ...validEvent(), source_record_id: "nested", text: "a clean note",
+      metadata: { a: { b: { c: { d: { password: "synthetic-canary-482" } } } } },
+    });
+    const wide = accept(first, {
+      ...validEvent(), source_record_id: "wide", text: "a clean note",
+      metadata: { values: Array.from({ length: 1_024 }, () => "a clean note"), password: "synthetic-canary-483" },
+    });
     if (secret.status !== "stored" || plain.status !== "stored")
       throw new Error("fixture");
+    if (nested.status !== "stored" || wide.status !== "stored") throw new Error("fixture metadata");
     const agent = addAgent(first, "older-agent", {
       ceiling: "private",
       tools: ["search"],
@@ -324,6 +356,8 @@ describe("class migration", () => {
         "credential",
       ]);
       expect(classesOf(upgraded, plain.event.event_id)).toEqual([]);
+      expect(classesOf(upgraded, nested.event.event_id)).toEqual(["credential"]);
+      expect(classesOf(upgraded, wide.event.event_id)).toEqual(["credential"]);
       const principal = authenticate(upgraded, agent.token);
       expect(principal?.grant.ceiling).toBe("private");
       // Nothing was written into the old grant: it takes the default denial.

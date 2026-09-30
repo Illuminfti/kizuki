@@ -1,4 +1,5 @@
 import { isErasedReceipt } from "./receipts";
+import { stampPageClasses, removePageClasses } from "./page-classes";
 import { eraseReceiptRow, insertErasedReceiptRow } from "./store";
 import { refreshDerivedPage, removeDerivedPage } from "../derived";
 import { parseFrontmatter } from "../vault/frontmatter";
@@ -118,6 +119,14 @@ function completeRows(io: CanonIo, intent: CanonWriteIntent): void {
     page_id: completion.page_id, rel_path: receipt.page_path, subject_key: completion.subject_key,
     last_receipt: receipt.receipt_id, last_hash: receipt.after_hash,
   });
+  if (completion.page_id !== null) {
+    const after = decodeCanonImage(intent.after_base64);
+    if (after === null) removePageClasses(io.db, completion.page_id);
+    else {
+      const page = parseFrontmatter(after.toString("utf8"));
+      stampPageClasses(io.db, { id: completion.page_id, contentHash: receipt.after_hash, ...page });
+    }
+  }
   enqueueCanonProjection(io.db, intent);
   io.db.query("DELETE FROM canon_write_intents WHERE singleton=1 AND receipt_id=?").run(receipt.receipt_id);
   advanceCanonReadGeneration(io.db);

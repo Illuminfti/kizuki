@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { EVENT_CLASSES, isEventClass } from "../agents/types";
 import type { EventClass } from "../agents/types";
 import { scrubText } from "../producer/scrub";
+import { EVENT_LIMITS } from "../contracts/event";
 import { placeholders } from "../util/sql";
 import { tableExists } from "./schema";
 
@@ -20,25 +21,26 @@ export interface ClassRule {
   class: EventClass;
 }
 
-const MAX_METADATA_STRINGS = 1_000;
-const MAX_METADATA_DEPTH = 4;
+const MAX_METADATA_VALUES = 1_000;
 const ID_CHUNK = 500;
 
-function metadataLines(value: unknown, key: string, out: string[], depth: number): void {
-  if (out.length >= MAX_METADATA_STRINGS || depth > MAX_METADATA_DEPTH) return;
-  if (typeof value === "string") out.push(`${key}=${value}`);
+/** False means the scan was truncated, never that the unscanned tail was clean. */
+function metadataLines(value: unknown, key: string, out: string[], depth: number): boolean {
+  if (out.length >= MAX_METADATA_VALUES || depth > EVENT_LIMITS.metadataDepth) return false;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") out.push(`${key}=${value}`);
   else if (Array.isArray(value)) {
-    for (const item of value) metadataLines(item, key, out, depth + 1);
+    for (const item of value) if (!metadataLines(item, key, out, depth + 1)) return false;
   } else if (value !== null && typeof value === "object") {
-    for (const [name, item] of Object.entries(value)) metadataLines(item, name, out, depth + 1);
+    for (const [name, item] of Object.entries(value)) if (!metadataLines(item, name, out, depth + 1)) return false;
   }
+  return true;
 }
 
-/** Text and every metadata string, each as `name=value` so a labelled secret reads as one. */
+/** Text and metadata scalars as `name=value`; an incomplete scan is credential. */
 export function credentialShaped(text: string, metadata: unknown): boolean {
   if (scrubText(text).redactions.length > 0) return true;
   const lines: string[] = [];
-  metadataLines(metadata, "metadata", lines, 0);
+  if (!metadataLines(metadata, "metadata", lines, 0)) return true;
   return lines.length > 0 && scrubText(lines.join("\n")).redactions.length > 0;
 }
 

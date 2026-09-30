@@ -243,6 +243,25 @@ function searchPlan(
       ))`);
       bindings.push(...predicate.bindings);
     }
+    const denied = source.deny_classes ?? [];
+    if (!source.owner && denied.length > 0) {
+      // Filter classes before the ranked window, so hidden canon does not
+      // consume candidate slots. Snapshot authorization still verifies bytes.
+      if (denied.includes("credential") && tableExists(db, "canon_page_classes")) {
+        clauses.push(`(search_docs.scope != 'canon' OR NOT EXISTS (
+          SELECT 1 FROM canon_page_classes pc WHERE pc.credential=1
+            AND (search_docs.doc_id=pc.page_id OR search_docs.doc_id='page:' || pc.page_id)
+        ))`);
+      }
+      if (tableExists(db, "event_classes")) {
+        clauses.push(`(search_docs.scope != 'canon' OR NOT EXISTS (
+          SELECT 1 FROM json_each(search_docs.provenance) src JOIN event_classes ec
+            ON ec.event_id=CASE WHEN src.value LIKE 'event:%' THEN substr(src.value, 7) ELSE src.value END
+           WHERE ec.class IN (${placeholders(denied.length)})
+        ))`);
+        bindings.push(...denied);
+      }
+    }
   }
   bindings.push(limit);
   if (skip !== 0) bindings.push(skip);

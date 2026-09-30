@@ -1,5 +1,5 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
-import { accept } from "@kizuki/core";
+import { accept, setGrant } from "@kizuki/core";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
 import {
   FORGED_STAMP,
@@ -28,6 +28,8 @@ const HIDDEN = /[\u{E0000}-\u{E007F}‪-‮⁦-⁩]/u;
 
 async function seeded(): Promise<McpFixture> {
   const made = mcpFixture();
+  // Class access is explicit here; the wire must still redact allowed content.
+  for (const name of ["reader-public", "reader-private"]) setGrant(made.db, name, { deny_classes: [] });
   accept(made.db, {
     schema: "kizuki.event/v1",
     connector_id: "fixture",
@@ -134,6 +136,7 @@ test("over stdio system_health tells an agent nothing the owner alone may see", 
 
 test("world_view labels are redacted over stdio and the strict output schema accepts the counts", async () => {
   fixture = mcpFixture();
+  setGrant(fixture.db, "reader-private", { deny_classes: [] });
   await worldFixture(fixture.db, {
     label: `Kettle DB_PASSWORD=${"w".repeat(12)}`,
   });
@@ -151,6 +154,7 @@ test("world_view labels are redacted over stdio and the strict output schema acc
 
 test("a label near the bound made of secret assignments still passes the strict schema for an agent", async () => {
   fixture = mcpFixture();
+  setGrant(fixture.db, "reader-private", { deny_classes: [] });
   const label = "DB_PASSWORD=abcd ".repeat(11).trim();
   await worldFixture(fixture.db, { label });
   const agent = await connectClient(fixture.agent("reader-private"), open);

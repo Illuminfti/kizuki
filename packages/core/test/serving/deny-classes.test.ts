@@ -16,6 +16,7 @@ import { serveContextPacket } from "../../src/serving/packet";
 import { serveGetPage } from "../../src/serving/page";
 import { serveSearch } from "../../src/serving/search";
 import { serveTimeline } from "../../src/serving/timeline";
+import { serveHealth } from "../../src/serving/health";
 import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
 import { claimInput, eventFacts } from "../claims/helpers";
@@ -189,6 +190,10 @@ describe("credential-classed evidence", () => {
     expect(
       serveGetPage(fixture.agent("cred-default"), { id: "fact:plain" }).canon,
     ).toHaveLength(1);
+    const deniedHealth = serveHealth(fixture.agent("cred-default")).data!;
+    const openHealth = serveHealth(fixture.agent("cred-open")).data!;
+    expect(openHealth.events).toBe(deniedHealth.events + 1);
+    expect(openHealth.pages.servable).toBe(deniedHealth.pages.servable + 1);
   });
 
   test("a claim citing it inherits the class", async () => {

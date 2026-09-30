@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
 import { classesOfEvents } from "../ledger/event-classes";
+import { classesOfPage } from "../canon/page-classes";
 import { compareRfc3339 } from "../agents/time";
 import { placeholders } from "../util/sql";
 import { canonPageRecoveryPending, canonReadGeneration } from "../canon/write-intent";
@@ -199,14 +200,14 @@ export function eligible(page: CanonPage): boolean {
   return isLiveCanonPage(page);
 }
 
-export function pageServable(index: CanonIndex, page: CanonPage): Servable {
+function snapshotServable(ctx: ServeContext, page: CanonPage): Servable {
   const type = stringField(page, "type");
   return {
     id: page.id,
     sensitivity: stringField(page, "sensitivity"),
     ...(type === null ? {} : { type }),
     subjects: stringArray(page.data["subjects"]),
-    held: index.generation !== canonReadGeneration(index.sourceContext.db) || index.holds.has(page.relPath) || canonReadHeld(index.sourceContext, page),
+    held: canonReadHeld(ctx, page),
   };
 }
 
@@ -244,6 +245,17 @@ export function pageDecision(
   index: CanonIndex,
   grant: Grant,
   page: CanonPage,
+): ReturnType<typeof pageSnapshotDecision> {
+  if (index.generation !== canonReadGeneration(index.sourceContext.db) || index.holds.has(page.relPath)) return { allow: false, reason: "held" };
+  return pageSnapshotDecision(index.sourceContext, grant, page);
+}
+
+/** The writer checks each exact snapshot before disclosing correction content. */
+export function pageSnapshotDecision(
+  sourceCtx: ServeContext,
+  grant: Grant,
+  page: CanonPage,
+  historicalSnapshot = false,
 ):
   | { allow: true; sensitivity: Sensitivity; taint: PageTaint; evidence: Extract<LivePageEvidence, { admitted: true }> }
   | { allow: false; reason: DenyReason } {
@@ -251,9 +263,8 @@ export function pageDecision(
   // instead of casts. A page missing either is withheld from everyone, the
   // owner included: an unstamped page may be verbatim capture, and serving
   // it as canon would hand a reader capture dressed as produced prose.
-  const sourceCtx = index.sourceContext;
-  if (index.generation !== canonReadGeneration(sourceCtx.db) || canonReadHeld(sourceCtx, page)) return { allow: false, reason: "held" };
-  const evidence = assessLivePageEvidence(sourceCtx.db, page, undefined, {...sourceCtx,principal:{...sourceCtx.principal,grant}});
+  if (canonReadHeld(sourceCtx, page)) return { allow: false, reason: "held" };
+  const evidence = assessLivePageEvidence(sourceCtx.db, page, undefined, {...sourceCtx,principal:{...sourceCtx.principal,grant}}, historicalSnapshot);
   if (!evidence.admitted) return { allow: false, reason: "held" };
   if (!sourceEventsAllowed(sourceCtx.db, evidence.sourceIds, { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
   const original = sensitivity(page.data["sensitivity"]);
@@ -264,9 +275,9 @@ export function pageDecision(
   // A page is as old as its evidence and carries the classes of its sources.
   const span = grant.since === null && grant.until === null ? null : sourceSpan(sourceCtx.db, evidence.sourceIds);
   const decision = authorize(grant, {
-    ...pageServable(index, page),
+    ...snapshotServable(sourceCtx, page),
     ...(span === null ? {} : { occurred_span: span }),
-    classes: classesOfEvents(sourceCtx.db, evidence.sourceIds),
+    classes: [...new Set([...classesOfPage(sourceCtx.db, page), ...classesOfEvents(sourceCtx.db, evidence.sourceIds)])],
     sensitivity: label,
   });
   return decision.allow

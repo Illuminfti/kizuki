@@ -224,10 +224,10 @@ describe("one unreadable canon page is skipped with a named problem", () => {
         },
       ]);
 
-      // An agent learns that a page was withheld, not which one.
+      // Unreadable page diagnostics belong to the owner, including counts.
       const agent = serveHealth(fixture.agent("reader-private")).data;
-      expect(agent?.pages.withheld).toBe(1);
-      expect(agent?.withheld_pages).toEqual([]);
+      expect(agent?.pages).not.toHaveProperty("withheld");
+      expect(agent).not.toHaveProperty("withheld_pages");
     } finally {
       rmSync(join(fixture.vaultPath, "entities", "zz-link.md"), {
         force: true,
@@ -260,7 +260,7 @@ describe("one unreadable canon page is skipped with a named problem", () => {
       });
       expect(found.canon.length).toBeGreaterThan(0);
       expect(
-        serveHealth(fixture.owner()).data?.withheld_pages.map(
+        serveHealth(fixture.owner()).data?.withheld_pages?.map(
           (entry) => entry.path,
         ),
       ).toEqual(["entities/zz-locked.md"]);

@@ -1,4 +1,4 @@
-import { countAgents } from "../agents";
+import { countAgents, denyClassesOf } from "../agents";
 import { listClaims } from "../claims/store";
 import { timelineSelection } from "../query/timeline";
 import type { Sensitivity, Tool } from "../agents";
@@ -94,7 +94,7 @@ function connectorReadable(ctx: ServeContext, connectorId: string): boolean {
       ceiling: grant.ceiling,
       limit: CONNECTOR_PAGE,
       connector_id: connectorId,
-      source: { owner: false, purpose: "recall" },
+      source: { owner: false, purpose: "recall", deny_classes: denyClassesOf(grant) },
       ...(after === undefined ? {} : { after }),
       ...(grant.subjects === null ? {} : { subjects: [...grant.subjects] }),
       ...(grant.types === null ? {} : { kinds: [...grant.types] }),
@@ -120,7 +120,7 @@ function readableView(ctx: ServeContext): { events: number; connectors: Set<stri
   const selected = timelineSelection(ctx.db, {
     ceiling: grant.ceiling,
     limit: AGENT_VIEW_CAP,
-    source: { owner: false, purpose: "recall" },
+    source: { owner: false, purpose: "recall", deny_classes: denyClassesOf(grant) },
     ...(grant.subjects === null ? {} : { subjects: [...grant.subjects] }),
     ...(grant.types === null ? {} : { kinds: [...grant.types] }),
   });
@@ -230,10 +230,7 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
               .length,
             withheld: index.withheld.length,
           },
-          withheld_pages:
-            ctx.principal.kind === "owner"
-              ? index.withheld.map((entry) => ({ path: entry.relPath, problem: entry.reason }))
-              : [],
+          withheld_pages: index.withheld.map((entry) => ({ path: entry.relPath, problem: entry.reason })),
           events: count(ctx.db),
           live_claims: countClaims(ctx.db, { status: "live" }),
           pending_retrieval_ops: countPendingRetrievalOps(ctx.db),

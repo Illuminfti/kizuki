@@ -73,16 +73,21 @@ revision, so a stamp never changes what an event is:
 
 | class | set by |
 | --- | --- |
-| `credential` | capture, when the text or a metadata value matches the secret-pattern set the model-egress scrubber uses (PEM blocks, JWTs, provider tokens, `Authorization: Bearer` values, `NAME=value` assignments whose name contains `secret`, `token`, `password` or `api_key`, and mnemonic-like word runs) |
+| `credential` | capture and canon writing, when text or metadata matches the secret-pattern set the model-egress scrubber uses (PEM blocks, JWTs, provider tokens, `Authorization: Bearer` values, `NAME=value` assignments whose name contains `secret`, `token`, `password` or `api_key`, and mnemonic-like word runs) |
 | `machine_exhaust` | your source policy's `class_rules`, by path glob |
 
 The credential test is deliberately broad and fails closed, so it has false
 positives: a run of a dozen or more short lowercase words, or config text such
 as `max_tokens=100000`, is stamped `credential` and withheld from default
-agents, with only a `class_denied` reason. The stamp reads the event text and
-metadata at capture; it does not scan the body of a claim or page, which
-carries only the classes of the events it cites. A secret typed into a proposed
-claim that cites clean events is therefore not stamped.
+agents, with only a `class_denied` reason. Capture scans metadata through the
+ingress depth bound; reaching the 1,000-value scan budget classifies the
+unscanned remainder as credential. Canon writing additionally scans the
+produced body and frontmatter, even when the cited events are clean. Its
+disposable side-table stamp is bound to the exact page hash and recomputed
+on rewrite, undo, rebuild and restore. A missing or stale stamp triggers a
+content scan. Claims inherit event classes; pages combine those inherited
+classes with their produced-content class. Correction replies disclose a
+page diff and its metadata only when both page snapshots are readable.
 
 A claim or page carries the classes of the events it cites, so one credential
 event withholds every page and claim built on it. `deny_classes` lists the
