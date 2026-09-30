@@ -35,6 +35,7 @@ import { chatCompletionsUrl, parseOpenAiCompatibleConfig, parseSystemOneJevConfi
 import type { ReasoningEffort } from "@kizuki/llm";
 import { listHostConnections, loadConnector, closeHostConnector } from "./connections";
 import { DERIVED_PASS_RECORDS, tryRefreshDerived } from "./derived";
+import { serveTomlModeHint } from "./config-custody";
 import { embeddingConfigured } from "./retrieval-runtime";
 import { tokenResolver } from "./secrets";
 import { loadSystemOneBinding } from "./vault-config";
@@ -136,6 +137,11 @@ async function syncConnections(
         events_stored += result.stored;
         events_duplicate += result.duplicates;
         events_synced += result.stored + result.duplicates;
+        // A refused purged record is stored nowhere and advances the cursor, so
+        // the receipt is the only place the owner learns why it never arrived.
+        if (result.suppressed !== undefined && errors.length < MAX_SYNC_ERRORS) {
+          errors.push(`connector ${selected.connection.connector_id} refused ${result.suppressed} purged source record(s); see: kizuki purge --suppressions`);
+        }
         // Why, not only that: the receipt is where an owner looks first.
         if (result.errors.length > 0 && errors.length < MAX_SYNC_ERRORS) {
           errors.push(`connector ${selected.connection.connector_id} sync failed: ${redactReceiptError(result.errors[0])}`);
@@ -210,7 +216,11 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
   let document: ReturnType<typeof readAppModelConfiguration>;
   try {
     document = readAppModelConfiguration(options.vaultPath, value => { parseLlmSelection(value); });
-  } catch { runtimeError("configuration snapshot unavailable"); }
+  } catch {
+    const hint = serveTomlModeHint(options.vaultPath);
+    if (hint !== null) options.err(hint);
+    runtimeError("configuration snapshot unavailable");
+  }
   const selected = parseLlmSelection(document.llm);
   let secret: string | null = null;
   if (selected.secret_ref !== null) {

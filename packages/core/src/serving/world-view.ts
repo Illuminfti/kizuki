@@ -1,62 +1,47 @@
 import { resolvePrincipal, toolAllowed } from "../agents";
-import type {
-  ConceptCard,
-  ConceptCoverage,
-  ViewGap,
-} from "../contracts/concept-card";
-import type { SituationCard } from "../contracts/situation-card";
 import { tableExists } from "../ledger/schema";
-import {
-  projectWorldCard,
-  discoverWorld,
-  WorldProjectionBudgetError,
-} from "../world/projection";
+import { WorldProjectionBudgetError } from "../world/projection";
+import type { discoverWorld } from "../world/projection";
+import type { WorldDescribe } from "../world/ops/describe";
+import type { ConceptCard } from "../contracts/concept-card";
+import type { SituationCard } from "../contracts/situation-card";
+import { hasWorldKeys, parseWorldKnownAt, parseWorldValid } from "../world/ops/parse";
+import { activeWorldOps, findWorldOp } from "../world/ops/registry";
+import { WorldViewError, worldOpKeys } from "../world/ops/types";
+import type {
+  WorldKnownAt,
+  WorldObjectRef,
+  WorldOp,
+  WorldOpOutcome,
+  WorldOpRegistry,
+  WorldSnapshotRef,
+  WorldUnavailableReason,
+  WorldValidQuery,
+  WorldViewResult,
+} from "../world/ops/types";
 import {
   issueWorldRef,
-  resolveWorldObject,
   worldNamespace,
   type WireRef,
 } from "../world/references";
-import { compareRfc3339 } from "../agents/time";
-import { isRfc3339 } from "../util/time";
 import { isPlainObject } from "../util/validate";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
+import type { RedactionCounts } from "./redact";
+import { clampWorldData } from "./world-clamp";
 import { ServeError } from "./types";
 import type { ServeContext } from "./types";
 
-const WIRE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
-
-export class WorldViewError extends Error {
-  override name = "WorldViewError";
-  readonly code = "invalid_input" as const;
-
-  constructor() {
-    super("invalid world-view input");
-  }
-}
-
-export type WorldObjectRef = {
-  readonly kind: "object";
-  readonly token: string;
+export { WorldViewError } from "../world/ops/types";
+export { isWorldWireToken } from "../world/ops/parse";
+export type {
+  WorldKnownAt,
+  WorldObjectRef,
+  WorldSnapshotRef,
+  WorldValidQuery,
 };
 
-export type WorldSnapshotRef = {
-  readonly kind: "snapshot";
-  readonly token: string;
-};
-
-export type WorldValidQuery =
-  | { readonly kind: "all" }
-  | { readonly kind: "at"; readonly at: string }
-  | { readonly kind: "overlap"; readonly from: string; readonly until: string }
-  | { readonly kind: "unknown_only" };
-
-export type WorldKnownAt =
-  | { readonly kind: "current" }
-  | { readonly kind: "time"; readonly at: string }
-  | { readonly kind: "snapshot"; readonly ref: WorldSnapshotRef };
-
+/** The typed request of the shipped operations; the reader itself takes `unknown` and the registry decides. */
 export type WorldReadInput =
   | {
       readonly operation: "find_concepts" | "find_situations";
@@ -77,32 +62,21 @@ export type WorldReadInput =
       readonly concept: WorldObjectRef;
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
-    };
+    }
+  | { readonly operation: "describe" };
 
+/** The bodies the shipped operations return; each operation's `dataSchemas` say which one it is. */
 export type WorldData =
   | ConceptCard
   | SituationCard
-  | ReturnType<typeof discoverWorld>;
+  | ReturnType<typeof discoverWorld>
+  | WorldDescribe;
 export type WorldReadResult =
   | { readonly status: "not_found" }
   | {
       readonly schema: "kizuki.world-view/v1";
-      readonly operation: WorldReadInput["operation"];
-      readonly result:
-        | {
-            readonly status: "current";
-            readonly view: { readonly status: "not_issued" };
-            readonly data: WorldData;
-          }
-        | {
-            readonly status: "incomplete";
-            readonly data: WorldData;
-            readonly reasons: readonly ViewGap[];
-          }
-        | {
-            readonly status: "unavailable";
-            readonly reason: "history" | "storage" | "budget";
-          };
+      readonly operation: string;
+      readonly result: WorldViewResult<WorldData>;
     };
 export type WorldViewEnvelope = {
   readonly schema: "kizuki.envelope/v2";
@@ -111,92 +85,58 @@ export type WorldViewEnvelope = {
   readonly at: string;
   readonly canon: readonly [];
   readonly quoted: readonly [];
+  /** Credential-shaped spans replaced in this response, per kind. Never the values. */
+  readonly redacted?: RedactionCounts;
   readonly data: WorldReadResult;
 };
 
-function exact(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-): boolean {
-  const actual = Object.keys(value);
-  return (
-    actual.length === keys.length &&
-    keys.every((key) => Object.hasOwn(value, key))
+const MAX_RESPONSE_BYTES = 256 * 1024;
+const ALL_VALID: WorldValidQuery = { kind: "all" };
+const CURRENT: WorldKnownAt = { kind: "current" };
+
+function answer(
+  operation: string,
+  result: WorldViewResult<WorldData>,
+): WorldReadResult {
+  return { schema: "kizuki.world-view/v1", operation, result };
+}
+
+function unavailable(
+  operation: string,
+  reason: WorldUnavailableReason,
+): WorldReadResult {
+  return answer(operation, { status: "unavailable", reason });
+}
+
+/** Maps what an operation found to the result the reader serves; a body over the response bound is never partly served. */
+function present(op: WorldOp, outcome: WorldOpOutcome): WorldReadResult {
+  if (outcome.status === "not_found") return { status: "not_found" };
+  if (outcome.status === "unavailable")
+    return unavailable(op.name, outcome.reason);
+  const { gaps } = outcome;
+  if (Buffer.byteLength(JSON.stringify(outcome.data), "utf8") > MAX_RESPONSE_BYTES)
+    throw new WorldProjectionBudgetError();
+  // Every adapter states a grammar per declared schema; a body outside them is a defect, never served.
+  if (!op.dataSchemas.includes(outcome.data.schema))
+    throw new ServeError("error", "serving failed");
+  // The registry is open and `WorldData` names the shipped bodies; the check above ties `data` to a declared schema.
+  const data = outcome.data as WorldData;
+  return answer(
+    op.name,
+    gaps === null
+      ? { status: "current", view: { status: "not_issued" }, data }
+      : { status: "incomplete", data, reasons: gaps },
   );
 }
 
-export function isWorldWireToken(value: string): boolean {
-  if (!WIRE_TOKEN.test(value)) return false;
-  try {
-    const bytes = Buffer.from(value, "base64url");
-    return bytes.byteLength === 32 && bytes.toString("base64url") === value;
-  } catch {
-    return false;
-  }
-}
-
-function parseRef(
-  value: unknown,
-  kind: "object" | "snapshot",
-): WorldObjectRef | WorldSnapshotRef | null {
-  if (!isPlainObject(value) || !exact(value, ["kind", "token"])) return null;
-  if (
-    value.kind !== kind ||
-    typeof value.token !== "string" ||
-    !isWorldWireToken(value.token)
-  ) {
-    return null;
-  }
-  return { kind, token: value.token };
-}
-
-function parseValid(value: unknown): WorldValidQuery | null {
-  if (!isPlainObject(value) || typeof value.kind !== "string") return null;
-  if (value.kind === "all")
-    return exact(value, ["kind"]) ? { kind: "all" } : null;
-  if (value.kind === "unknown_only") {
-    return exact(value, ["kind"]) ? { kind: "unknown_only" } : null;
-  }
-  if (value.kind === "at") {
-    if (!exact(value, ["kind", "at"]) || !isRfc3339(value.at)) return null;
-    return { kind: "at", at: value.at };
-  }
-  if (value.kind === "overlap") {
-    if (
-      !exact(value, ["kind", "from", "until"]) ||
-      !isRfc3339(value.from) ||
-      !isRfc3339(value.until)
-    ) {
-      return null;
-    }
-    if (compareRfc3339(value.from, "from", value.until, "until") >= 0)
-      return null;
-    return { kind: "overlap", from: value.from, until: value.until };
-  }
-  return null;
-}
-
-function parseKnownAt(value: unknown): WorldKnownAt | null {
-  if (!isPlainObject(value) || typeof value.kind !== "string") return null;
-  if (value.kind === "current")
-    return exact(value, ["kind"]) ? { kind: "current" } : null;
-  if (value.kind === "time") {
-    if (!exact(value, ["kind", "at"]) || !isRfc3339(value.at)) return null;
-    return { kind: "time", at: value.at };
-  }
-  if (value.kind === "snapshot") {
-    if (!exact(value, ["kind", "ref"])) return null;
-    const ref = parseRef(value.ref, "snapshot");
-    if (ref === null || ref.kind !== "snapshot") return null;
-    return { kind: "snapshot", ref };
-  }
-  return null;
-}
-
-/** Fresh model-free projection. References carry lookup identity, never authority. */
+/**
+ * Fresh model-free projection through the registered operation the input
+ * names. References carry lookup identity, never authority.
+ */
 export function readWorldView(
   ctx: ServeContext,
   input: unknown,
+  registry: WorldOpRegistry = activeWorldOps(),
 ): WorldReadResult {
   const principal = resolvePrincipal(ctx.db, ctx.principal);
   if (principal === null)
@@ -205,79 +145,41 @@ export function readWorldView(
     throw new ServeError("tool_not_granted", "tool not granted");
   ctx = { ...ctx, principal, sourcePurpose: "recall" };
   if (!isPlainObject(input)) throw new WorldViewError();
-  const operation = input.operation;
-  if (
-    operation !== "situation" &&
-    operation !== "concept" &&
-    operation !== "find_concepts" &&
-    operation !== "find_situations"
-  )
-    throw new WorldViewError();
-  const discovery =
-    operation === "find_concepts" || operation === "find_situations";
-  const paged = discovery && Object.hasOwn(input, "cursor");
-  const expected = discovery
-    ? ["operation", "label", "valid", "knownAt", ...(paged ? ["cursor"] : [])]
-    : ["operation", operation, "valid", "knownAt"];
-  if (!exact(input, expected)) throw new WorldViewError();
-  const anchor = discovery ? null : parseRef(input[operation], "object");
-  if (
-    paged &&
-    (typeof input.cursor !== "string" || !isWorldWireToken(input.cursor))
-  )
-    throw new WorldViewError();
-  if (
-    discovery
-      ? typeof input.label !== "string" || input.label.length > 200
-      : anchor === null
-  )
-    throw new WorldViewError();
-  const valid = parseValid(input.valid),
-    knownAt = parseKnownAt(input.knownAt);
-  if (valid === null || knownAt === null) throw new WorldViewError();
-  const unavailable = (
-    reason: "history" | "storage" | "budget",
-  ): WorldReadResult => ({
-    schema: "kizuki.world-view/v1",
-    operation,
-    result: { status: "unavailable", reason },
-  });
-  if (knownAt.kind !== "current") return unavailable("history");
-  if (!tableExists(ctx.db, "world_authorization_namespaces"))
-    return unavailable("storage");
-  const project = (): WorldReadResult => {
-    const ns = worldNamespace(ctx.db, principal);
-    const kind =
-      operation === "concept" || operation === "find_concepts"
-        ? "concept"
-        : "situation";
-    const handle =
-      anchor === null ? null : resolveWorldObject(ctx.db, ns, anchor.token);
-    if (!discovery && handle === null) return { status: "not_found" };
-    // A cursor is an object reference this principal was issued for the last match of the previous page.
-    const after = paged ? resolveWorldObject(ctx.db, ns, input.cursor as string) : null;
-    if (paged && after === null) throw new WorldViewError();
-    const data = discovery
-      ? discoverWorld(ctx, ns, kind, input.label as string, valid, after)
-      : projectWorldCard(ctx, ns, handle!, kind, valid);
-    if (data === null) return { status: "not_found" };
-    if (Buffer.byteLength(JSON.stringify(data), "utf8") > 256 * 1024)
-      throw new WorldProjectionBudgetError();
-    return {
-      schema: "kizuki.world-view/v1",
-      operation,
-      result:
-        data.coverage.status === "partial"
-          ? { status: "incomplete", data, reasons: data.coverage.gaps }
-          : { status: "current", view: { status: "not_issued" }, data },
-    };
-  };
-  // A nested transaction is a savepoint: failed/budgeted projections issue no refs.
+  const op = findWorldOp(registry, input.operation);
+  if (op === undefined) throw new WorldViewError();
+  const { required, optional } = worldOpKeys(op);
+  if (!hasWorldKeys(input, required, optional)) throw new WorldViewError();
   try {
-    return ctx.db.transaction(project).immediate();
+    if (op.source === "build") {
+      const valid = Object.hasOwn(input, "valid") ? parseWorldValid(input.valid) : ALL_VALID,
+        knownAt = Object.hasOwn(input, "knownAt") ? parseWorldKnownAt(input.knownAt) : CURRENT;
+      if (valid === null || knownAt === null) throw new WorldViewError();
+      if (knownAt.kind !== "current") return unavailable(op.name, "history");
+      return present(op, op.run(registry));
+    }
+    const query = op.parse(input),
+      valid = parseWorldValid(input.valid),
+      knownAt = parseWorldKnownAt(input.knownAt);
+    if (query === null || valid === null || knownAt === null)
+      throw new WorldViewError();
+    if (knownAt.kind !== "current") return unavailable(op.name, "history");
+    if (!tableExists(ctx.db, "world_authorization_namespaces"))
+      return unavailable(op.name, "storage");
+    // A nested transaction is a savepoint: failed/budgeted projections issue no refs.
+    return ctx.db
+      .transaction(() =>
+        present(
+          op,
+          op.run({ ctx, ns: worldNamespace(ctx.db, principal) }, query, {
+            valid,
+            knownAt,
+          }),
+        ),
+      )
+      .immediate();
   } catch (error) {
     if (error instanceof WorldProjectionBudgetError)
-      return unavailable("budget");
+      return unavailable(op.name, "budget");
     throw error;
   }
 }
@@ -285,6 +187,7 @@ export function readWorldView(
 export function serveWorldView(
   ctx: ServeContext,
   args: Record<string, unknown>,
+  registry: WorldOpRegistry = activeWorldOps(),
 ): WorldViewEnvelope {
   // The gate is not wrapped in a transaction: a refusal rolls back everything
   // inside one, and the audit row and rate reservation of a denied call must
@@ -300,7 +203,7 @@ export function serveWorldView(
           canon: [],
           quoted: [],
           withheld: [],
-          data: readWorldView(live, args),
+          data: readWorldView(live, args, registry),
         };
       } catch (error) {
         if (error instanceof WorldViewError)
@@ -325,7 +228,8 @@ export function serveWorldView(
         at: envelope.at,
         canon: [],
         quoted: [],
-        data: envelope.data!,
+        ...(envelope.redacted === undefined ? {} : { redacted: envelope.redacted }),
+        data: clampWorldData(envelope.data!),
       };
     })
     .immediate();

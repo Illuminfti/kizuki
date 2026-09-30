@@ -210,6 +210,10 @@ function restartStep(status: SupervisorStatus, exit: SupervisorLastExit | null, 
  * from. Unrelated failures are returned untouched. */
 export function supervisorFailureLine(failure: string, status: SupervisorStatus, exit: SupervisorLastExit | null = null, vaultPath: string | null = null): string {
   if (!/^supervisor (unknown|active|disabled|masked|absent|none)( but not enabled)?$/.test(failure)) return failure;
+  if (status.bound_elsewhere !== undefined) {
+    const own = vaultPath === null ? "<vault>" : shellQuote(vaultPath);
+    return `supervisor service serves another vault at ${status.bound_elsewhere}; this vault is a copy, so run the loop here: ${INVOCATION} serve --vault ${own}`;
+  }
   const inspect = inspectCommand(status), observed = observedSupervisorState(status), step = restartStep(status, exit, vaultPath);
   return `supervisor ${status.unit ?? status.kind} state=${observed}`
     + ` enabled=${status.enabled ? "yes" : "no"}${status.detail === observed ? "" : ` (${status.detail})`}`

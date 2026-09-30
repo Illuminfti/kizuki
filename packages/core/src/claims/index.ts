@@ -77,6 +77,7 @@ export type { ValidityGap } from "./gaps";
 export {
   countClaims,
   countUnwrittenLiveClaims,
+  countLiveClaimsByProducer,
   countWrittenLiveClaims,
   getClaim,
   insertClaim,
@@ -94,4 +95,4 @@ export {
   supersedeLiveGroup,
   supersessionsForReceipt,
 } from "./store";
-export type { ClaimsIo, InsertClaimInput, InsertClaimResult } from "./store";
+export type { ClaimsIo, InsertClaimInput, InsertClaimResult, LiveClaimProducers } from "./store";

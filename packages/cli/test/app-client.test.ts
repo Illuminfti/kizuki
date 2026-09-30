@@ -1109,6 +1109,19 @@ test('typed correction shows the admitted value and submits its opaque target wi
     expect(f.storageWrites).toHaveLength(0);
 });
 
+test('claims that link to another item are listed for kizuki tell and offered no text form', async () => {
+    const linked = { ...worldBelief, object_kind: 'node', object: null, predicate: 'concept.requires', body: 'A linked belief.' };
+    const only = fixture(); await openCorrection(only, [linked]);
+    expect(only.dialog.textContent).toContain('A linked belief.');
+    expect(only.dialog.textContent).toContain('to another item or a fixed value');
+    expect(only.dialog.textContent).toContain('kizuki tell');
+    expect(only.dialog.querySelector('form')).toBeNull();
+    expect(only.requests).toHaveLength(0);
+    const mixed = fixture(); await openCorrection(mixed, [{ ...worldBelief, object_kind: 'literal' }, linked]);
+    expect(mixed.dialog.querySelector('#correction-claim')!.children).toHaveLength(1);
+    expect(mixed.dialog.textContent).toContain('A linked belief.');
+});
+
 test('unsupported typed assertions expose no write controls and typed replacement budgets fail before requests', async () => {
     const unsupported = fixture();
     await openCorrection(unsupported, [{ ...worldBelief, target: null, unsupported_reason: 'unsupported_assertion' }]);

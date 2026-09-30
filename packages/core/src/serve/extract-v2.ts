@@ -1,8 +1,6 @@
 import type { CaptureEvent } from "../contracts/event";
 import { PREDICATE_REGISTRY } from "../claims/predicates";
-import {
-  WORLD_VOCABULARY,
-} from "../contracts/world-vocabulary";
+import { activeWorldRegistry } from "../contracts/world-vocabulary";
 import {
   PRODUCER_V2_CONTRACT,
   type ProduceInputV2,
@@ -31,14 +29,16 @@ const objectKinds = (objects: readonly string[]): ProduceInputV2["predicates"][n
   return [...new Set(mapped)].sort() as ProduceInputV2["predicates"][number]["object_kinds"];
 };
 
-const WORLD_PREDICATES: ProduceInputV2["predicates"] = [...PREDICATE_REGISTRY.map(spec => ({
-  id: spec.id,
-  object_kinds: ["literal"] as const,
-})), ...WORLD_VOCABULARY.map(spec => ({
-  id: spec.predicate,
-  object_kinds: objectKinds(spec.objects),
-}))];
-const WORLD_VOCABULARY_REFS = [...new Set(WORLD_VOCABULARY.flatMap(spec => spec.vocabulary_values ?? []))].sort();
+/** The legacy registry, then the world rows of every kind offered to the producer. */
+function worldPredicates(): ProduceInputV2["predicates"] {
+  return [...PREDICATE_REGISTRY.map(spec => ({
+    id: spec.id,
+    object_kinds: ["literal"] as const,
+  })), ...activeWorldRegistry().offered.vocabulary.map(spec => ({
+    id: spec.predicate,
+    object_kinds: objectKinds(spec.objects),
+  }))];
+}
 
 /**
  * One typed request's reservations. A typed response spends roughly 200 tokens
@@ -56,8 +56,8 @@ export function worldProduceInput(
   return {
     events: events.map(event => ({ event_id: event.event_id, text: event.text })),
     supplied_refs: suppliedRefs,
-    vocabulary_refs: WORLD_VOCABULARY_REFS,
-    predicates: WORLD_PREDICATES,
+    vocabulary_refs: activeWorldRegistry().offered.refs,
+    predicates: worldPredicates(),
     budget: { max_calls: 1, max_input_tokens: budget.max_input_tokens, max_output_tokens: budget.max_output_tokens },
   };
 }

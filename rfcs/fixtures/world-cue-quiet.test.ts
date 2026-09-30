@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-cue-quiet-design.json");
@@ -38,7 +39,7 @@ function load(): Fixture {
 function quietErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-cue-quiet-design", example.status));
   if (example.id !== "volume-is-not-urgency") errors.push("unexpected example id");
   if (example.candidate.mention_count < 2) errors.push("volume example lost its mention count");
   if (example.candidate.material_change) errors.push("no-change candidate marked material");

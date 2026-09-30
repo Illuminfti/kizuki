@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-concept-absence-design.json");
@@ -43,7 +44,7 @@ function load(): Fixture {
 function conceptErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-concept-absence-design", example.status));
   if (example.id !== "missing-concept-sections-stay-absent") errors.push("unexpected example id");
   if (!example.card.definition_present) errors.push("present definition dropped");
   if (example.card.applications_present) errors.push("missing applications invented");

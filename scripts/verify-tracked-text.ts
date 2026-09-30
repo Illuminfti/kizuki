@@ -13,11 +13,16 @@ function publicOwnerOccurrence(text: string, offset: number): boolean {
     (after === undefined || delimiter.test(after) || after === "/" || after === "?" || after === "#");
 }
 
+export interface TrackedTextRecord {
+  readonly path: string;
+  readonly line: string;
+  readonly text: string;
+}
+
 /** Parse git grep -n -z records without confusing newlines in tracked paths. */
-function scanTrackedText(records: string, identifierPattern: string): string[] {
+export function parseTrackedTextRecords(records: string): TrackedTextRecord[] {
   if (records.length === 0) throw new Error("empty tracked-text producer output");
-  const pattern = new RegExp(identifierPattern, "giu");
-  const failures: string[] = [];
+  const parsed: TrackedTextRecord[] = [];
   let offset = 0;
   while (offset < records.length) {
     const pathEnd = records.indexOf("\0", offset);
@@ -28,10 +33,19 @@ function scanTrackedText(records: string, identifierPattern: string): string[] {
     const line = records.slice(pathEnd + 1, lineEnd);
     const text = records.slice(lineEnd + 1, textEnd);
     if (path.length === 0 || !/^[1-9][0-9]*$/.test(line) || text.includes("\0")) throw new Error("malformed tracked-text producer record");
+    parsed.push({ path, line, text });
+    offset = textEnd + 1;
+  }
+  return parsed;
+}
+
+function scanTrackedText(records: string, identifierPattern: string): string[] {
+  const pattern = new RegExp(identifierPattern, "giu");
+  const failures: string[] = [];
+  for (const { path, line, text } of parseTrackedTextRecords(records)) {
     if ([...text.matchAll(pattern)].some(match => !publicOwnerOccurrence(text, match.index))) {
       failures.push(`${JSON.stringify(path)}:${line}: forbidden identifier`);
     }
-    offset = textEnd + 1;
   }
   return failures;
 }

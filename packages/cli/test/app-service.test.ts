@@ -1,7 +1,7 @@
 import { afterEach, expect, test, setDefaultTimeout } from 'bun:test';
-import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { readServeIntent, readVaultId, type SupervisorHost } from '@kizuki/core';
+import { readServeIntent, readVaultId, writeServeIntent, type SupervisorHost } from '@kizuki/core';
 import { createAppHost } from '../src/app/host';
 import type { CliIo } from '../src/commands';
 import { createHelpers } from './helpers';
@@ -16,16 +16,17 @@ function fixture(noService = false) {
     mkdirSync(env.HOME!, { recursive: true, mode: 0o700 });
     mkdirSync(env.XDG_CONFIG_HOME!, { recursive: true, mode: 0o700 });
     let active = false, installs = 0, queries = 0, fail = false;
-    const supervisor: SupervisorHost = {
-        kind: 'systemd', home: env.HOME!, configHome: env.XDG_CONFIG_HOME!, execStart: ['/synthetic/kizuki', 'serve'],
+    const supervisor = (vault: string): SupervisorHost => ({
+        kind: 'systemd', home: env.HOME!, configHome: env.XDG_CONFIG_HOME!, execStart: ['/synthetic/kizuki', 'serve', '--vault', vault],
         query() { queries++; return { kind: 'systemd', state: active ? 'active' : 'absent', enabled: active, unit: null, detail: 'must-not-be-disclosed' }; },
         reload: () => ({ ok: true, detail: '' }),
         enable() { installs++; active = !fail; return { ok: !fail, detail: '' }; },
         disable() { active = false; return { ok: true, detail: '' }; },
-    };
+    });
     const io: CliIo = { env, vaultOverride: null, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => { throw Error('unexpected prompt'); } };
-    const open = () => createAppHost(io, { supervisor: () => supervisor }, { noService });
-    return { env, open, get installs() { return installs; }, get queries() { return queries; }, fail(value: boolean) { fail = value; }, stop() { active = false; } };
+    const open = () => createAppHost(io, { supervisor: (_env, vault) => supervisor(vault) }, { noService });
+    const openAt = (vault: string) => createAppHost({ ...io, vaultOverride: vault }, { supervisor: (_env, vault) => supervisor(vault) }, { noService });
+    return { env, open, openAt, get installs() { return installs; }, get queries() { return queries; }, fail(value: boolean) { fail = value; }, stop() { active = false; } };
 }
 async function call(host: ReturnType<typeof createAppHost>, route: string, body: unknown = {}) {
     return (await host.handle(new Request('http://127.0.0.1/app/v1/' + route, { method: 'POST', body: JSON.stringify(body) }))).json() as Promise<any>;
@@ -69,6 +70,26 @@ test('default app setup installs the existing native service and reopening obser
         expect((await call(reopened, 'service_status')).data.state).toBe('absent');
         expect(f.installs).toBe(1);
     } finally { await reopened.close(); }
+}, 40_000);
+
+test('a copied workspace does not offer to enable the original workspace service and refuses install with its own reason', async () => {
+    const f = fixture(), host = f.open(), path = join(f.env.HOME!, 'Kizuki'), copy = join(f.env.HOME!, 'Copy');
+    try { expect((await done(host, 'initialize')).state).toBe('succeeded'); } finally { await host.close(); }
+    cpSync(path, copy, { recursive: true });
+    for (const dir of [copy, join(copy, '.kizuki')]) chmodSync(dir, 0o700);
+    writeServeIntent(copy, 'installed');
+    const installsBefore = f.installs;
+    const copied = f.openAt(copy);
+    try {
+        const status = (await call(copied, 'service_status')).data;
+        expect(status.state).toBe('absent');
+        expect(status.other_workspace).toBe(true);
+        expect(status.detail).toContain('another workspace');
+        expect(JSON.stringify(status)).not.toContain(path);
+        const install = await done(copied, 'install_service');
+        expect(install.state).toBe('failed');
+        expect(f.installs).toBe(installsBefore);
+    } finally { await copied.close(); }
 }, 40_000);
 
 test.each(['request', 'launcher'])('explicit %s opt-out persists and can enable the native service later', async source => {

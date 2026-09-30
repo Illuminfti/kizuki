@@ -1,5 +1,6 @@
 import { worldClaimHandle, worldCanonPath } from "../canon/world-materialization";
 import { semanticKey } from "../claims/claim-v2-keys";
+import { unsupportedCorrectionReason, UNSUPPORTED_ASSERTION_REASONS, type UnsupportedAssertionReason } from "../world/correction-support";
 import type { Database } from "bun:sqlite";
 import { assertStoredPageRelPath } from "../canon/paths";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
@@ -15,7 +16,7 @@ import type { CanonIo } from "../canon";
 import { getCanonReceipt } from "../canon/receipts";
 import { getClaim, insertClaim, prepareClaimInsert, retryRetrievalOps, listClaims, supersedeLiveGroup, supersedeExactWorldClaim } from "../claims/store";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
-import { CLAIM_V2_SCHEMA } from "../contracts/claim-v2";
+import { CLAIM_MEANING_SCHEMA, type ClaimMeaning } from "../contracts/claim-v2";
 import type { Claim, FrontmatterValue, Producer } from "../contracts/proposal";
 import { recordNativeCorrection } from "./evidence";
 import { requireSourceEvents } from "../ledger/source-grants";
@@ -25,8 +26,10 @@ import { isRfc3339 } from "../util/time";
 import { ulid } from "../util/ulid";
 import { unifiedDiff } from "./diff";
 import { bumpClaimsEpoch, initClaimsEpoch } from "./epoch";
+import { ClaimError } from "../claims/errors";
 import { CorrectError } from "./errors";
 import { correctionRecoveryPending } from "./recovery";
+import { describeAssertion, planWorldCorrection, type WorldPlan } from "./world-successor";
 import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { hasExactTarget, objectFromStatement, sourceRecordId } from "./parse";
 import {
@@ -318,7 +321,7 @@ function reconstruct(
 }
 
 function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectResult | null {
-  const eventId = recordedOwnerEvent(io.db, sourceRecordId(input.statement, input.target));
+  const eventId = recordedOwnerEvent(io.db, sourceRecordId(input.statement, input.target, input.world));
   if (eventId === null) return null;
   const prior = recordedCorrection(io.db, eventId);
   if (prior === null) return null;
@@ -345,9 +348,7 @@ function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectRe
 /** A typed claim keeps its meaning in its semantic payload; its legacy columns are empty. */
 function answerTerms(db: Database, claim: Claim): { readonly label: string; readonly value: string } {
   const semantic = readClaimV2Semantic(db, claim.claim_id);
-  if (semantic !== null && semantic.discriminator === "assertion" && semantic.object.kind === "literal") {
-    return { label: semantic.predicate, value: semantic.object.value };
-  }
+  if (semantic !== null && semantic.discriminator === "assertion") return describeAssertion(semantic);
   return { label: `${claim.subject ?? "subject"} ${claim.predicate ?? "claim"}`, value: claim.object ?? claim.body };
 }
 
@@ -388,15 +389,33 @@ function formatAnswer(
     .concat(extra, pending !== undefined ? "\nCanon recovery is pending. Run kizuki recover --json; unknown external operations require inspection before another change." : "", undo);
 }
 
-function correctionMeaning(io:CorrectIo,live:Claim) {
-  const prior=readClaimV2Semantic(io.db,live.claim_id);
-  if(prior===null) return null;
-  if(prior.schema!=="kizuki.claim-meaning/v1" || prior.discriminator!=="assertion" || prior.object.kind!=="literal" ||
-    (prior.subject.kind!=="occurrence" && !("namespace" in prior.subject)) || prior.context.length!==0 || prior.polarity!=="positive" ||
-    prior.perspective.holder!==null || prior.perspective.speaker!==null || prior.perspective.addressee!==null ||
-    prior.perspective.mode!=="asserted" || prior.perspective.interpretation!=="explicit" || io.relay_owner_corrections===false)
-    throw new CorrectError("ledger_rejected","typed correction requires a plain qualified-subject literal assertion");
+/**
+ * The meaning of a typed claim the writer can correct, or null for a legacy
+ * claim. A typed correction is filed at the owner's authority, so a grant that
+ * may not relay the owner cannot make one.
+ */
+function correctionMeaning(io: CorrectIo, live: Claim): ClaimMeaning | null {
+  const prior = readClaimV2Semantic(io.db, live.claim_id);
+  if (prior === null) return null;
+  const unsupported = (reason: UnsupportedAssertionReason) =>
+    new CorrectError("unsupported_assertion", `${reason}: ${UNSUPPORTED_ASSERTION_REASONS[reason]}`);
+  if (prior.schema !== CLAIM_MEANING_SCHEMA) throw unsupported("not_an_assertion");
+  const reason = unsupportedCorrectionReason(prior);
+  if (reason !== null) throw unsupported(reason);
+  if (io.relay_owner_corrections === false) {
+    throw new CorrectError("below_authority", "a typed correction is filed at the owner's authority, which this grant may not relay");
+  }
   return prior;
+}
+
+/** Every refusal a typed correction can meet, before anything is recorded. */
+function planCorrection(io: CorrectIo, input: CorrectInput, live: Claim, at: string): WorldPlan | null {
+  const prior = correctionMeaning(io, live);
+  if (prior === null) {
+    if (input.world !== undefined) throw new CorrectError("correction_refused", "modes apply to typed world claims");
+    return null;
+  }
+  return planWorldCorrection(io.db, prior, input.world ?? { mode: "replace_object" }, input.statement, at);
 }
 
 function acceptOwnerEvent(
@@ -404,10 +423,9 @@ function acceptOwnerEvent(
   input: CorrectInput,
   live: Claim,
   at: string,
+  plan: WorldPlan | null,
 ): { event_id: string; duplicate: boolean } {
-  const prior=correctionMeaning(io,live);
-  if(prior!==null && (input.statement.length>400 || Buffer.byteLength(input.statement,"utf8")>1200)) throw new CorrectError("ledger_rejected","typed literal correction must fit 400 characters and 1200 UTF-8 bytes");
-  const sourceId = sourceRecordId(input.statement, input.target);
+  const sourceId = sourceRecordId(input.statement, input.target, input.world);
   const existing = findOwnerEvent(io.db, sourceId);
   const event: CaptureEventInput = {
     schema: "kizuki.event/v1",
@@ -417,7 +435,7 @@ function acceptOwnerEvent(
     occurred_at: at,
     observed_at: at,
     text: input.statement,
-    subjects: prior===null ? ownerSubjects(input.target, live) : [{subject_id:prior.subject.id,role:"about"}],
+    subjects: plan===null ? ownerSubjects(input.target, live) : [{subject_id:plan.prior.subject.id,role:"about"}],
     sensitivity_hint: "private",
     deleted: false,
     attachments: [],
@@ -425,7 +443,8 @@ function acceptOwnerEvent(
       taint: "owner",
       origin: "external",
       target: input.target ?? {},
-      ...(prior===null ? {} : {world_target:{claim_id:live.claim_id,semantic_key:semanticKey(prior),subject:prior.subject,predicate:prior.predicate}}),
+      ...(plan===null ? {} : {world_target:{claim_id:live.claim_id,semantic_key:semanticKey(plan.prior),subject:plan.prior.subject,predicate:plan.prior.predicate,
+        ...(plan.endpoints.length===0 ? {} : {endpoints:plan.endpoints})}}),
     },
   };
   if (input.dry_run === true) {
@@ -442,22 +461,13 @@ async function insertCorrection(
   eventId: string,
   at: string,
   provenance: readonly string[],
+  plan: WorldPlan | null,
 ): Promise<Claim> {
-  const parsed = objectFromStatement(input.statement, live);
+  const parsed = plan === null ? objectFromStatement(input.statement, live) : null;
   const producer: Producer = io.producer ?? "owner";
   const relay = io.relay_owner_corrections !== false;
   const intent = relay ? ("correct" as const) : ("propose" as const);
-  const priorSemantic = correctionMeaning(io,live);
-  const typedSemantic = priorSemantic === null ? undefined : {
-    ...priorSemantic,
-    schema: CLAIM_V2_SCHEMA,
-    object: { kind: "literal" as const, value: input.statement },
-    perspective: { ...priorSemantic.perspective, anchors: [] },
-    valid_from: at,
-    valid_to: null,
-    temporal_basis: "observed" as const,
-    anchors: [{ event_id: eventId, start_utf16: 0, end_utf16: input.statement.length }],
-  };
+  const typedSemantic = plan?.build(eventId);
   const prepared = await prepareClaimInsert(
     { db: io.db, now: () => at, ...(io.retrieval === undefined ? {} : { retrieval: io.retrieval }) },
     {
@@ -465,8 +475,7 @@ async function insertCorrection(
       target: live.target,
       subject: live.subject,
       predicate: live.predicate,
-      object: parsed.object,
-      polarity: parsed.polarity,
+      ...(parsed === null ? {} : { object: parsed.object, polarity: parsed.polarity }),
       body: input.statement,
       frontmatter: portableFrontmatter(live),
       provenance: typedSemantic === undefined ? [...new Set([eventId, ...provenance])] : [eventId],
@@ -499,13 +508,20 @@ async function insertCorrection(
       }),
     },
   );
-  const result=io.db.transaction(()=>{
-    const inserted=prepared.apply();
-    if(typedSemantic!==undefined && (inserted.outcome==="stored" || inserted.outcome==="duplicate")) {
-      supersedeExactWorldClaim(io, inserted.claim, live.claim_id, at);
-    }
-    return inserted;
-  }).immediate();
+  let result;
+  try {
+    result=io.db.transaction(()=>{
+      const inserted=prepared.apply();
+      if(typedSemantic!==undefined && (inserted.outcome==="stored" || inserted.outcome==="duplicate")) {
+        supersedeExactWorldClaim(io, inserted.claim, live.claim_id, at);
+      }
+      return inserted;
+    }).immediate();
+  } catch (error) {
+    // The plan already ran the vocabulary check; this is the same check meeting a world that moved since.
+    if (error instanceof ClaimError && error.code.startsWith("world_")) throw new CorrectError("correction_refused", error.message, { cause: error });
+    throw error;
+  }
   await retryRetrievalOps({db:io.db,...(io.retrieval===undefined?{}:{retrieval:io.retrieval})});
   if (
     result.outcome === "skipped" ||
@@ -635,11 +651,12 @@ export async function correctWithinMutation(
 }
 
 function captureCorrectInput(input: CorrectInput): CorrectInput {
-  const { statement, target, scope, dry_run } = input;
+  const { statement, target, scope, dry_run, world } = input;
   return Object.freeze({ statement,
     ...(target === undefined ? {} : { target: Object.freeze({ ...target }) }),
     ...(scope === undefined ? {} : { scope: Object.freeze({ ...scope }) }),
     ...(dry_run === undefined ? {} : { dry_run }),
+    ...(world === undefined ? {} : { world: structuredClone(world) }),
   });
 }
 
@@ -667,10 +684,14 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
   requireSourceEvents(io.db, provenance, { owner: !(io.producer ?? "owner").startsWith("agent:"), purpose: "correction" });
   const seed = seedClaim(group, input.target as CorrectTarget);
   const at = nowOf(io);
-  const accepted = acceptOwnerEvent(io, input, seed, at);
+  const plan = planCorrection(io, input, seed, at);
+  const accepted = acceptOwnerEvent(io, input, seed, at, plan);
 
   if (input.dry_run === true) {
-    const parsed = objectFromStatement(input.statement, seed);
+    // A typed correction says what it would file; a legacy one its parsed object.
+    const said = plan === null
+      ? { label: answerTerms(io.db, seed).label, value: objectFromStatement(input.statement, seed).object }
+      : describeAssertion(plan.build(accepted.event_id));
     const superseded = group.map((claim) => ({
       claim_id: claim.claim_id,
       claim_key: claim.claim_key ?? "",
@@ -681,6 +702,8 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     const rewritten = previewPages.flatMap((page) => {
       const existing = readVaultPage(io, page.rel_path);
       if (existing === null) return [];
+      // A typed page is rewritten from its admitted claims, so a preview cannot show its bytes.
+      if (plan !== null) return [{ page_path: page.rel_path, before_hash: existing.hash, after_hash: "", receipt_id: null, diff: "" }];
       const after = existing.content.replace(seed.body, input.statement);
       return [
         {
@@ -700,8 +723,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
       rewritten,
       ambiguous: [],
       answer: formatAnswer(
-        // A typed correction records the owner's literal statement; a legacy one its parsed object.
-        { label: answerTerms(io.db, seed).label, now: readClaimV2Semantic(io.db, seed.claim_id) === null ? parsed.object ?? input.statement : input.statement },
+        { label: said.label, now: said.value },
         superseded,
         rewritten,
         null,
@@ -712,7 +734,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     };
   }
 
-  const winner = await insertCorrection(io, input, seed, accepted.event_id, at, provenance);
+  const winner = await insertCorrection(io, input, seed, accepted.event_id, at, provenance, plan);
   supersedeLiveGroup(io.db, winner, at);
   const superseded = io.db
     .query<{ loser: string }, [string]>(

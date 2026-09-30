@@ -13,6 +13,7 @@ import {
   type ConflictClaim,
 } from "../claims/conflict";
 import { insertClaim, getClaim, listClaims } from "../claims/store";
+import type { RawSubjectRef } from "../contracts/claim-v2";
 import type { AuthorityTier, Claim } from "../contracts/proposal";
 import { recordNativeCorrection } from "../correction/evidence";
 import { text } from "./arguments";
@@ -21,13 +22,19 @@ import type { Served } from "./gate";
 import { pendingCanonRewrite, rewriteCanon } from "./rewrite";
 import type { RewrittenPage, CanonRewrite } from "./rewrite";
 import type { CanonRecoveryPending } from "../correction/types";
-import { groupByKey, readable, resolve } from "./target";
+import { claimVisibleTo, groupByKey, readable, resolve } from "./target";
 import type { CorrectTarget } from "./target";
 import { ServeError } from "./types";
 import type { Envelope, ServeContext } from "./types";
 import { resolveWorldClaim, worldNamespace } from "../world/references";
-import { isWorldWireToken } from "./world-view";
+import { readableWorldNode } from "../world/endpoint-access";
+import { isWorldWireToken, readWorldView, WorldViewError } from "./world-view";
+import type { WorldReadResult } from "./world-view";
 import { correctWithinMutation } from "../correction/correct";
+import { CorrectError } from "../correction/errors";
+import type { CorrectionMode, WorldCorrection } from "../correction/types";
+import { parseIntent } from "./correct-args";
+import type { CorrectionIntent, CorrectObject, CorrectRefresh, CorrectionChange } from "./correct-args";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { getCanonReceipt } from "../canon/receipts";
 import { resolvePrincipal } from "../agents";
@@ -52,9 +59,15 @@ export interface CorrectArgs {
    * reading a replacement out of the sentence needs a model, and none is
    * bound here (RFC 0002 §6.3 step 2).
    */
-  object?: string;
+  object?: string | CorrectObject;
   /** Resolve and report, write nothing (RFC 0002 §6.2). */
   dry_run?: boolean;
+  /** What to do to a typed world claim. Absent, its object is replaced. Only a `world_claim` target takes it. */
+  mode?: CorrectionMode;
+  /** The perspective a `reclassify_mode` correction gives the claim. */
+  perspective_mode?: "suggested" | "hypothetical" | "questioned";
+  /** A concept or situation read to run after the correction commits. */
+  refresh_world?: CorrectRefresh;
 }
 
 export interface CorrectData {
@@ -71,6 +84,14 @@ export interface CorrectData {
   /** Groups that also matched and were deliberately left alone. */
   ambiguous: { claim_key: string; claim_ids: string[] }[];
   answer: string;
+  /** The mode a typed world correction applied. Absent for a legacy claim. */
+  mode?: CorrectionMode;
+  /**
+   * The world read asked for with `refresh_world`, taken after the commit; null
+   * when none was asked for or nothing was written. A refresh that could not be
+   * taken is an unavailable view: the correction it follows still stands.
+   */
+  refreshedWorld?: WorldReadResult | null;
 }
 
 function refuse(field: string, rule: string): ServeError {
@@ -141,17 +162,18 @@ function exactWorldClaimTarget(target: CorrectTarget): { readonly kind: "claim";
 function resolvedWorldTarget(
   ctx: ServeContext,
   token: string,
-): { ctx: ServeContext; target: CorrectTarget & { claim_id: string } } {
+  object: CorrectObject | undefined,
+): { ctx: ServeContext; target: CorrectTarget & { claim_id: string }; node: RawSubjectRef | null } {
   const principal = resolvePrincipal(ctx.db, ctx.principal);
   if (principal === null) throw new ServeError("unknown_agent", "unknown agent");
   const current = Object.freeze({ ...ctx, principal });
-  const claimId = resolveWorldClaim(
-    current.db,
-    worldNamespace(current.db, current.principal),
-    token,
-  );
+  const namespace = worldNamespace(current.db, current.principal);
+  const claimId = resolveWorldClaim(current.db, namespace, token);
   if (claimId === null) throw refuse("target", "names no live claim");
-  return { ctx: current, target: { claim_id: claimId } };
+  // The object token is looked up in the same namespace and must still be readable now.
+  const node = object?.kind === "node" ? readableWorldNode(current, namespace, object.ref.token) : null;
+  if (object?.kind === "node" && node === null) throw refuse("object", "names no node you can read");
+  return { ctx: current, target: { claim_id: claimId }, node };
 }
 
 /**
@@ -167,25 +189,63 @@ function isWorldClaimTarget(
   return target?.claim_id !== undefined && readClaimV2Semantic(ctx.db, target.claim_id) !== null;
 }
 
+/** The correction a caller asked for, with a node token replaced by the endpoint it names for them. */
+function worldCorrection(change: CorrectionChange, statement: string, node: RawSubjectRef | null): WorldCorrection {
+  if (change.mode !== "replace_object") return change;
+  const object = change.object;
+  // The statement is the default object, so naming it changes nothing and must not make a new record.
+  if (object === undefined || (object.kind === "literal" && object.value === statement)) return { mode: "replace_object" };
+  if (object.kind === "literal") return { mode: "replace_object", object };
+  if (object.kind === "vocabulary") {
+    return { mode: "replace_object", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: object.id } } };
+  }
+  return { mode: "replace_object", object: { kind: "subject", ref: node! } };
+}
+
+/** A typed correction's refusals, worded as the serving layer words every argument refusal. */
+function servableRefusal(error: unknown): unknown {
+  if (!(error instanceof CorrectError)) return error;
+  switch (error.code) {
+    case "below_authority":
+      return refuseAuthority();
+    case "tool_not_granted":
+      return new ServeError("tool_not_granted", "tool not granted");
+    case "unsupported_assertion":
+      return refuse("target", `unsupported_assertion: ${error.detail.split(":", 1)[0]}`);
+    case "correction_refused":
+      return refuse("correction", error.detail);
+    case "statement_invalid":
+      return refuse("statement", error.detail);
+    case "claim_unknown":
+    case "claim_not_live":
+    case "target_required":
+      return refuse("target", "names no live claim");
+    default:
+      return error;
+  }
+}
+
 async function correctWorldClaim(
   scope: VaultMutationScope,
   io: CorrectIo,
   ctx: ServeContext,
   args: CorrectArgs,
   token: string,
+  intent: CorrectionIntent,
 ): Promise<Served<CorrectData>> {
   const resolved = ctx.db
-    .transaction(() => resolvedWorldTarget(ctx, token))
+    .transaction(() => resolvedWorldTarget(ctx, token, intent.change.mode === "replace_object" ? intent.change.object : undefined))
     .immediate();
   ctx = resolved.ctx;
   const target = resolved.target;
   if (!isWorldClaimTarget(ctx, target))
     throw refuse("target", "names no live claim");
-  if (args.object !== undefined && args.object !== args.statement)
-    throw refuse("object", "must equal statement for a typed world correction");
   const claim = getClaim(ctx.db, target.claim_id);
   if (claim === null || claim.status !== "live")
     throw refuse("target", "names no live claim");
+  // A typed correction is filed at the owner's authority; a grant that cannot relay the owner cannot file one.
+  if (ctx.principal.kind !== "owner" && !ctx.principal.grant.relay_owner_corrections)
+    throw new ServeError("held", "correction relay is not granted");
   const reader = claimReader(ctx.db, ctx.principal.grant, {
     owner: ctx.principal.kind === "owner",
     purpose: "correction",
@@ -207,9 +267,12 @@ async function correctWorldClaim(
     {
       statement: args.statement,
       target,
+      world: worldCorrection(intent.change, args.statement, resolved.node),
       ...(args.dry_run === true ? { dry_run: true } : {}),
     },
-  );
+  ).catch((error: unknown) => {
+    throw servableRefusal(error);
+  });
   return {
     canon: [],
     quoted: [],
@@ -221,6 +284,7 @@ async function correctWorldClaim(
       ...(result.recovery_pending === undefined
         ? {}
         : { recovery_pending: result.recovery_pending }),
+      mode: intent.change.mode,
       receipt_id: result.receipt_id,
       event_id: result.event_id,
       claim_id: result.claim_ids[0] ?? null,
@@ -246,6 +310,7 @@ async function correctWorldClaim(
         claim_ids,
       })),
       answer: result.answer,
+      refreshedWorld: null,
     },
     audit_ids: {
       claim_ids: [
@@ -254,6 +319,33 @@ async function correctWorldClaim(
       ],
     },
   };
+}
+
+/**
+ * The read a caller asked to have taken after its correction committed. The
+ * correction is already durable, so a read that cannot be taken is reported as
+ * an unavailable view and never as a failed correction.
+ */
+function refreshedWorld(ctx: ServeContext, refresh: NonNullable<CorrectionIntent["refresh"]>): WorldReadResult {
+  try {
+    return readWorldView(ctx, refresh);
+  } catch {
+    return {
+      schema: "kizuki.world-view/v1",
+      operation: refresh["operation"] as "concept" | "situation",
+      result: { status: "unavailable", reason: "storage" },
+    };
+  }
+}
+
+/** Refuses a malformed refresh, or one this principal may not read, before the correction writes anything. */
+function checkRefresh(ctx: ServeContext, refresh: NonNullable<CorrectionIntent["refresh"]>): void {
+  try {
+    readWorldView(ctx, refresh);
+  } catch (error) {
+    if (error instanceof WorldViewError) throw refuse("refresh_world", "must be a valid concept or situation read");
+    throw error;
+  }
 }
 
 function recordStatement(
@@ -357,6 +449,15 @@ function sentence(
   return `${retired}${written}${left}`;
 }
 
+/** One read of caller data, so validation and use see the same value even from a getter. */
+function snapshot<T>(field: string, value: T): T {
+  try {
+    return structuredClone(value);
+  } catch {
+    throw refuse(field, "must be plain data");
+  }
+}
+
 /**
  * The owner's correction, and the only write that outranks everything else in
  * the store. It supersedes the contradicted claims and rewrites the canon
@@ -367,7 +468,7 @@ export async function serveCorrect(
   ctx: ServeContext,
   args: CorrectArgs,
 ): Promise<Envelope<CorrectData>> {
-  const { statement, target, object, dry_run } = args;
+  const { statement, target, object, dry_run, mode, perspective_mode, refresh_world } = args;
   const worldClaim =
     target !== undefined &&
     typeof target === "object" &&
@@ -382,8 +483,11 @@ export async function serveCorrect(
         ...target,
         ...(worldClaim === undefined ? {} : { world_claim: worldClaim }),
       }) }),
-    ...(object === undefined ? {} : { object }),
+    ...(object === undefined ? {} : { object: snapshot("object", object) }),
     ...(dry_run === undefined ? {} : { dry_run }),
+    ...(mode === undefined ? {} : { mode }),
+    ...(perspective_mode === undefined ? {} : { perspective_mode }),
+    ...(refresh_world === undefined ? {} : { refresh_world: snapshot("refresh_world", refresh_world) }),
   });
   return gateAsync(
     ctx,
@@ -397,10 +501,20 @@ export async function serveCorrect(
       });
       ctx = Object.freeze({ ...ctx, db: io.db, vaultPath: io.vault_path });
       try {
-        if (worldClaim !== undefined)
-          return await withCanonMutationAsync(io, (scope, owned) =>
-            correctWorldClaim(scope, owned, ctx, args, worldClaim.token),
+        if (worldClaim !== undefined) {
+          const intent = parseIntent(args);
+          if (intent.refresh !== undefined) checkRefresh(ctx, intent.refresh);
+          const served = await withCanonMutationAsync(io, (scope, owned) =>
+            correctWorldClaim(scope, owned, ctx, args, worldClaim.token, intent),
           );
+          // Taken after the writer is released: the correction is durable, whatever the read finds.
+          if (intent.refresh !== undefined && served.data !== undefined && served.data.claim_id !== null) {
+            served.data.refreshedWorld = refreshedWorld(ctx, intent.refresh);
+          }
+          return served;
+        }
+        if (args.mode !== undefined || args.perspective_mode !== undefined || args.refresh_world !== undefined || typeof args.object === "object")
+          throw refuse("target", "mode, perspective_mode, refresh_world and a typed object need a world_claim target");
         return await withCanonMutationAsync(io, async (scope, canon) => {
       const grant = ctx.principal.grant;
       const statement = text("statement", args.statement, MAX_STATEMENT_CHARS);
@@ -436,8 +550,9 @@ export async function serveCorrect(
             .get(recorded.event_id);
           const prior =
             filedRow === null ? null : getClaim(ctx.db, filedRow.claim_id);
-          if (prior !== null) {
-            readable(grant, [prior]);
+          // A recording the caller could not have read is treated as absent and
+          // falls through to resolve, so a replay is no tier oracle.
+          if (prior !== null && claimVisibleTo(ctx, prior)) {
             requireSourceEvents(ctx.db, prior.provenance, {
               owner: ctx.principal.kind === "owner",
               purpose: "correction",

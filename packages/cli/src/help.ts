@@ -13,7 +13,7 @@ const GROUPS: readonly { title: string; names: readonly string[] }[] = [
   { title: "Sources", names: ["connect", "backfill", "sync"] },
   { title: "Correct", names: ["tell", "undo", "audit"] },
   { title: "Run", names: ["serve", "models", "agent"] },
-  { title: "Custody", names: ["purge", "export", "restore", "rebuild", "recover"] },
+  { title: "Custody", names: ["purge", "backup", "export", "restore", "rebuild", "recover"] },
   { title: "Meta", names: ["version"] },
 ];
 
@@ -76,8 +76,10 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
     `${INVOCATION} purge --event EVENT_ID --reason "owner request"`,
     `${INVOCATION} purge --verify RECEIPT_ID`,
   ],
+  backup: [`${INVOCATION} backup --out ./snapshot`],
   export: [`${INVOCATION} export --out ./export`],
   restore: [
+    `${INVOCATION} restore --from ./snapshot --verify`,
     `${INVOCATION} restore --from ./export --verify`,
     `${INVOCATION} restore --from ./export --into ./restored`,
   ],
@@ -213,7 +215,7 @@ export function printCommandHelp(
   if (schema.irreversible === true) {
     write("");
     write("Irreversible");
-    write("  Physical event deletion cannot be undone. Canon rewrites stay reversible by receipt.");
+    write("  Physical event deletion cannot be undone. A canon rewrite that removes purged text keeps no copy of it, so it cannot be undone either.");
   }
   write("");
   write("Exit codes");

@@ -1,0 +1,23 @@
+/**
+ * The only file that holds ledger migration numbers past the base. A schema
+ * packet adds one line under its own slot marker and reads the number in
+ * ledger/db.ts and in its table module as WORLD_MIGRATION_VERSIONS.<key>.
+ * Numbers are claimed contiguously, in merge order. If another migration lands
+ * first, add its count to WORLD_MIGRATION_BASE and to every entry in one commit.
+ * A key that is not built keeps its marker and has no entry.
+ */
+export const WORLD_SLOT_KEYS = ["view", "known", "consol", "ident", "attn", "refs", "fcst"] as const;
+export type WorldSlotKey = (typeof WORLD_SLOT_KEYS)[number];
+
+/** The last ledger version that MIGRATIONS declares without this file. The purge tables migration is that version. */
+export const WORLD_MIGRATION_BASE = 34;
+
+export const WORLD_MIGRATION_VERSIONS = {
+  // slot: view
+  // slot: known
+  // slot: consol
+  // slot: ident
+  // slot: attn
+  // slot: refs
+  // slot: fcst
+} as const satisfies Partial<Record<WorldSlotKey, number>>;

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Grant } from "../agents/types";
+import type { ClaimV2Object } from "../contracts/claim-v2";
 import type { BudgetTracker } from "../canon/budget";
 import type { RetrievalPort } from "../contracts/retrieval";
 import type { Producer } from "../contracts/proposal";
@@ -15,12 +16,30 @@ export interface CorrectTarget {
   claim_key?: string;
 }
 
+export const CORRECTION_MODES = ["replace_object", "retract", "reclassify_mode"] as const;
+export type CorrectionMode = (typeof CORRECTION_MODES)[number];
+/** The perspective modes a claim can be reclassified to: what the owner calls an idea rather than a fact. */
+export const RECLASSIFIED_MODES = ["suggested", "hypothetical", "questioned"] as const;
+export type ReclassifiedMode = (typeof RECLASSIFIED_MODES)[number];
+
+/**
+ * What a correction does to a typed world claim. Every mode files one new
+ * owner-authority claim beside the old one and retires the old one; none is a
+ * second write path. Without it the claim's object is replaced by the statement.
+ */
+export type WorldCorrection =
+  | { readonly mode: "replace_object"; readonly object?: ClaimV2Object }
+  | { readonly mode: "retract" }
+  | { readonly mode: "reclassify_mode"; readonly to: ReclassifiedMode };
+
 export interface CorrectInput {
   /** 1..2000 chars; the owner's words, stored verbatim. */
   statement: string;
   target?: CorrectTarget;
   scope?: { since?: string; until?: string };
   dry_run?: boolean;
+  /** Typed world claims only; a legacy claim refuses it. */
+  world?: WorldCorrection;
 }
 
 export interface CanonRecoveryPending {

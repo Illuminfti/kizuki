@@ -2,10 +2,12 @@ import { appCommand } from "./app";
 import { agentCommand } from "./agent";
 import { auditCommand } from "./audit";
 import { backfillCommand } from "./backfill";
+import { backupCommand } from "./backup";
 import { connectCommand } from "./connect";
 import { contextCommand } from "./context";
 import { doctorCommand } from "./doctor";
 import { exportCommand } from "./export";
+import { hookCommand } from "./hook";
 import { importCommand } from "./import";
 import { rebuildCommand } from "./rebuild";
 import { recoverCommand } from "./recover";
@@ -13,6 +15,7 @@ import { reflexCommand } from "./reflex";
 import { restoreCommand } from "./restore";
 import { initCommand } from "./init";
 import { modelsCommand } from "./models";
+import { parityCommand } from "./parity";
 import { purgeCommand } from "./purge";
 import { queryCommand } from "./query";
 import { serveCommand } from "./serve";
@@ -31,6 +34,8 @@ export interface CliIo {
   out(line: string): void;
   err(line: string): void;
   prompt(question: string, opts?: { secret?: boolean }): Promise<string>;
+  /** Piped standard input, at most `maxBytes`; empty on a terminal. Absent in fixtures with no input. */
+  readStdin?(maxBytes: number): Promise<string>;
 }
 
 export interface CommandHelpSchema {
@@ -63,14 +68,18 @@ export const COMMANDS: readonly Command[] = [
   undoCommand,
   queryCommand,
   contextCommand,
+  hookCommand,
   worldCommand,
   doctorCommand,
   serveCommand,
   purgeCommand,
+  backupCommand,
   exportCommand,
   restoreCommand,
   rebuildCommand,
   recoverCommand,
   reflexCommand,
   versionCommand,
+  // slot: parity
+  parityCommand,
 ];

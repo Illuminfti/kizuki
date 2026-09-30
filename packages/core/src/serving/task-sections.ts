@@ -4,6 +4,7 @@ import type { AuditDenial } from "../agents";
 import { identifier } from "./arguments";
 import { eventDecision, currentQuotedSource } from "./ledger";
 import { packetTokens } from "./packet-tokenizer";
+import { redactorOf } from "./redact";
 import { ServeError } from "./types";
 import type { QuotedChunk, ServeContext } from "./types";
 
@@ -26,7 +27,8 @@ const MAX_LINES = 24;
 const MAX_PER_KIND = 8;
 const MAX_TEXT = 200;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
-const FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+/** Controls, plus every line break a renderer honours besides "\n", so a value cannot open a packet line. */
+const FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u0085\u2028\u2029]/;
 
 export interface TaskAttachment {
   status: "current" | "incomplete" | "unavailable";
@@ -35,8 +37,7 @@ export interface TaskAttachment {
     | "constraints_absent"
     | "budget"
     | "bounds"
-    | "unparsed"
-    | "denied";
+    | "unparsed";
   /** SHA-256 of the current capture. Absent when the text is withheld. */
   integrity?: string;
   sections?: Record<TaskKind, string[]>;
@@ -108,6 +109,7 @@ function parseRecord(
 ): { ok: true; sections: Record<TaskKind, string[]> } | { ok: false; reason: "unparsed" | "bounds" } {
   if (FORBIDDEN.test(text)) return { ok: false, reason: "unparsed" };
   const lines = text.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+  if (lines.some((line) => line.includes("\r"))) return { ok: false, reason: "unparsed" };
   if (lines[0] !== TASK_MARKER) return { ok: false, reason: "unparsed" };
   const body = lines.slice(1);
   if (body.length === 0 || body.length > MAX_LINES) {
@@ -238,8 +240,10 @@ export function readTaskAttachment(
   if (source === null) return { task: { status: "unavailable" }, block: "", quoted: [], withheld: [] };
   const decision = eventDecision(ctx.principal.grant, source, ctx);
   if (!decision.allow) {
+    // The same answer as an absent capture: the owner's audit row and count
+    // keep the reason, the caller learns nothing about what exists.
     return {
-      task: { status: "unavailable", reason: "denied" },
+      task: { status: "unavailable" },
       block: "",
       quoted: [],
       withheld: [{ id: args.event_id, reason: decision.reason }],
@@ -262,8 +266,12 @@ export function readTaskAttachment(
       withheld: [],
     };
   }
-  const packed = pack(args.event_id, integrity, parsed.sections, soFar, budget);
-  const sections = servedSections(parsed.sections, packed.included);
+  // Redact each line before it is packed, so the budget counts what is served.
+  const redactor = redactorOf(ctx);
+  const redacted = blankSections();
+  for (const kind of TASK_KINDS) redacted[kind] = parsed.sections[kind].map((value) => redactor.text(value));
+  const packed = pack(args.event_id, integrity, redacted, soFar, budget);
+  const sections = servedSections(redacted, packed.included);
   const task: TaskAttachment = {
     status: packed.status,
     ...(packed.reason === undefined ? {} : { reason: packed.reason }),

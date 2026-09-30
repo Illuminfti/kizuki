@@ -691,7 +691,7 @@ test("ledger31 migration is atomic on failure and preserves legacy rows", () => 
     db.close();
     db = openLedger(path);
     expect(db.query("SELECT version FROM schema_version").get()).toEqual({
-      version: 33,
+      version: 34,
     });
     expect(
       db.query("SELECT count(*) AS n FROM semantic_handles").get(),
@@ -943,7 +943,7 @@ test("unsupported nonliteral correction fails before recording native evidence",
           target: { claim_id: f.claims[0]! },
         },
       ),
-    ).rejects.toThrow("plain qualified-subject literal");
+    ).rejects.toThrow("unsupported_assertion: classification_claim");
     expect(
       db.query("SELECT count(*) AS n FROM native_owner_evidence").get(),
     ).toEqual(before);

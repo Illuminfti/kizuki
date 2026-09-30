@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-outcome-confounded-design.json");
@@ -37,7 +38,7 @@ function load(): Fixture {
 function confoundedErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-outcome-confounded-design", example.status));
   if (example.id !== "confounded-is-not-success") errors.push("unexpected example id");
   if (example.report.kind !== "self_report") errors.push("agent report kind drifted");
   if (example.report.independent_root) errors.push("self-report treated as independent proof");

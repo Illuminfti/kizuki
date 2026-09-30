@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-cue-dismissal-design.json");
@@ -43,7 +44,7 @@ function load(): Fixture {
 function dismissalErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-cue-dismissal-design", example.status));
   if (example.id !== "cue-dismissal-preserves-fact") errors.push("unexpected example id");
   if (example.dismissal.candidate_ref !== example.candidate.id) errors.push("dismissal left its candidate");
   if (example.dismissal.purpose !== example.candidate.purpose) errors.push("dismissal left its purpose");

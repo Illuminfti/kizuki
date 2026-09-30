@@ -1,163 +1,68 @@
-import {
-  OWNER,
-  ServeError,
-  WorldViewError,
-  isWorldWireToken,
-  serveWorldView,
-} from "@kizuki/core";
-import type { WorldReadResult } from "@kizuki/core";
+import { OWNER, ServeError, serveWorldView } from "@kizuki/core";
+import { WorldViewError } from "@kizuki/core/world";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
-import { clean, jsonEnvelope } from "../output";
+import { jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
+import { WORLD_CLI_OPS } from "./world/ops";
+import type { WorldCliEntry } from "./world/ops";
 
-const OPERATIONS = [
-  "situation",
-  "concept",
-  "find_concepts",
-  "find_situations",
-] as const;
-export const WORLD_SCHEMA = {
-  options: ["--operation", "--ref", "--label", "--cursor"],
-  flags: ["--json"],
-  bounds: {
-    "--operation": "situation|concept|find_concepts|find_situations",
-    "--ref": "32-byte base64url object token",
-    "--label": "up to 200 characters",
-    "--cursor": "32-byte base64url token from the previous page",
-  },
-} as const satisfies CommandHelpSchema;
-
-const SITUATION_LABELS: Readonly<Record<string, string>> = {
-  "situation.objective": "Objective",
-  "situation.blocker": "Blocker",
-  "situation.change": "Recent change",
-  "situation.commitment": "Commitment",
-};
-
-function coverageLine(coverage: {
-  status: string;
-  gaps: readonly string[];
-  history?: string;
-}): string {
-  const gaps = coverage.gaps.length === 0 ? "" : ` (${coverage.gaps.join(", ")})`;
-  return `Coverage: ${coverage.status}${gaps}${coverage.history === undefined ? "" : `; history: ${coverage.history}`}.`;
+/** `kizuki world`, generated from the entries: usage, options and bounds all follow the operations that have a command-line form. */
+export function createWorldCommand(entries: readonly WorldCliEntry[]): Command {
+  const ops = entries.flatMap((entry) => (entry.cli === null ? [] : [{ name: entry.name, cli: entry.cli }]));
+  const schema: CommandHelpSchema = {
+    options: ["--operation", ...new Set(ops.flatMap((op) => op.cli.options))],
+    flags: ["--json"],
+    bounds: {
+      ...ops.reduce((all, op) => ({ ...all, ...op.cli.bounds }), {}),
+      "--operation": ops.map((op) => op.name).join("|"),
+    },
+  };
+  const usage = ops
+    .map((op) => ["world --operation", op.name, op.cli.usage, "[--json]"].filter((part) => part !== "").join(" "))
+    .join(" | ");
+  return {
+    name: "world",
+    usage,
+    summary: "discover and read admitted Concepts and Situations in your current scope",
+    schema,
+    async run(io: CliIo, args: string[]): Promise<number> {
+      const parsed = parseArguments(args, { options: [...schema.options], flags: [...schema.flags] });
+      if (parsed.positionals.length !== 0) throw new UsageError(usage);
+      const name = parsed.options.get("--operation");
+      const op = ops.find((candidate) => candidate.name === name);
+      if (op === undefined) throw new UsageError(usage);
+      for (const option of parsed.options.keys())
+        if (option !== "--operation" && !op.cli.options.includes(option)) throw new UsageError(usage);
+      const built = op.cli.buildInput(parsed.options);
+      if (built === null) throw new UsageError(usage);
+      const input = { operation: op.name, ...built };
+      // Reference issuance is durable bookkeeping and needs the normal bound ledger writer.
+      return withVault(
+        io,
+        async (ctx) => {
+          try {
+            const envelope = serveWorldView({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }, input);
+            const data = envelope.data;
+            if (parsed.flags.has("--json")) io.out(jsonEnvelope("world", "ok", envelope));
+            else if ("status" in data) io.out("not found");
+            else if (data.result.status === "unavailable") io.out(`World view unavailable: ${data.result.reason}.`);
+            else for (const line of op.cli.render(data.result.data)) io.out(line);
+            if (!("status" in data) && data.result.status !== "unavailable") {
+              const notice = op.cli.notice?.(data.result.data);
+              if (notice) io.err(notice);
+            }
+          } catch (error) {
+            if (error instanceof WorldViewError || (error instanceof ServeError && error.code === "invalid_arguments"))
+              throw new UsageError(usage);
+            throw error;
+          }
+          return 0;
+        },
+        { retrieval: "none" },
+      );
+    },
+  };
 }
 
-function render(result: WorldReadResult): string[] {
-  if ("status" in result) return ["not found"];
-  if (result.result.status === "unavailable")
-    return [`World view unavailable: ${result.result.reason}.`];
-  const data = result.result.data;
-  if ("matches" in data) {
-    return [
-      ...(data.matches.length === 0
-        ? ["No admitted matches in your current scope."]
-        : data.matches.map(
-            (match) =>
-              `${clean(match.labels.join(" / ")) || "Unlabelled"}  ${match.ref.token}`,
-          )),
-      ...(data.coverage.status === "partial" ? [coverageLine(data.coverage)] : []),
-      ...(data.cursor === null ? [] : [`More matches: --cursor ${data.cursor}`]),
-    ];
-  }
-  if (data.schema === "kizuki.concept-card/v1")
-    return [
-      clean(data.concept.labels.map((label) => label.text).join(" / ")) ||
-        "Concept",
-      ...data.definitions.map((definition) =>
-        definition.object.kind === "literal"
-          ? clean(definition.object.value)
-          : "Qualified linked definition",
-      ),
-      coverageLine(data.coverage),
-    ];
-  return [
-    clean(data.situation.labels.map((label) => label.text).join(" / ")) ||
-      "Situation",
-    ...[
-      data.objective,
-      data.blocker,
-      data.recentChange,
-      ...data.commitments,
-    ].flatMap((item) =>
-      item?.object.kind === "literal"
-        ? [`${SITUATION_LABELS[item.predicate] ?? item.predicate}: ${clean(item.object.value)}`]
-        : [],
-    ),
-    coverageLine(data.coverage),
-  ];
-}
-
-export const worldCommand: Command = {
-  name: "world",
-  usage:
-    "world --operation concept|situation --ref TOKEN [--json] | world --operation find_concepts|find_situations [--label TEXT] [--cursor TOKEN] [--json]",
-  summary:
-    "discover and read admitted Concepts and Situations in your current scope",
-  schema: WORLD_SCHEMA,
-  async run(io: CliIo, args: string[]): Promise<number> {
-    const parsed = parseArguments(args, {
-      options: [...WORLD_SCHEMA.options],
-      flags: [...WORLD_SCHEMA.flags],
-    });
-    if (parsed.positionals.length !== 0) throw new UsageError(this.usage);
-    const operation = parsed.options.get("--operation"),
-      ref = parsed.options.get("--ref"),
-      label = parsed.options.get("--label"),
-      cursor = parsed.options.get("--cursor");
-    if (
-      operation === undefined ||
-      !(OPERATIONS as readonly string[]).includes(operation)
-    )
-      throw new UsageError(this.usage);
-    const discovery =
-      operation === "find_concepts" || operation === "find_situations";
-    if (
-      discovery
-        ? ref !== undefined ||
-          (label?.length ?? 0) > 200 ||
-          (cursor !== undefined && !isWorldWireToken(cursor))
-        : label !== undefined ||
-          cursor !== undefined ||
-          ref === undefined ||
-          !isWorldWireToken(ref)
-    )
-      throw new UsageError(this.usage);
-    const input = {
-      operation,
-      ...(discovery
-        ? { label: label ?? "", ...(cursor === undefined ? {} : { cursor }) }
-        : { [operation]: { kind: "object", token: ref } }),
-      valid: { kind: "all" },
-      knownAt: { kind: "current" },
-    };
-    // Reference issuance is durable bookkeeping and needs the normal bound ledger writer.
-    return withVault(
-      io,
-      async (ctx) => {
-        try {
-          const envelope = serveWorldView(
-            { db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER },
-            input,
-          );
-          if (parsed.flags.has("--json"))
-            io.out(jsonEnvelope("world", "ok", envelope));
-          else for (const line of render(envelope.data)) io.out(line);
-          const data = envelope.data;
-          if (!("status" in data) && data.result.status !== "unavailable" && "matches" in data.result.data && data.result.data.matches.length === 0)
-            io.err("next: Concepts and Situations appear once the model loop admits them; kizuki doctor shows whether canon writing is on");
-        } catch (error) {
-          if (
-            error instanceof WorldViewError ||
-            (error instanceof ServeError && error.code === "invalid_arguments")
-          )
-            throw new UsageError(this.usage);
-          throw error;
-        }
-        return 0;
-      },
-      { retrieval: "none" },
-    );
-  },
-};
+export const worldCommand: Command = createWorldCommand(WORLD_CLI_OPS);

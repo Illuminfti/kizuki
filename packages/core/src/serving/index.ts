@@ -34,7 +34,8 @@ export {
   serveContextPacket,
 } from "./packet";
 export type { ContextPacketArgs, ContextPacketData } from "./packet";
-export type { PacketPurpose, PacketSection } from "./sections";
+export type { PacketPurpose, PacketSection, SessionSection } from "./sections";
+export type { SessionEmptyReason, SessionReport, SessionSectionReport } from "./session-sections";
 export { servePropose } from "./propose";
 export type { ProposeArgs, ProposeData } from "./propose";
 export { serveCorrect } from "./correct";

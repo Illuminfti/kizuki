@@ -378,6 +378,7 @@ describe("servePropose files a claim for the receipted writer", () => {
       ).code,
     ).toBe("invalid_arguments");
 
+    // A record above the ceiling is refused like a missing one, so no tier is named.
     expect(
       (
         await refusal(() =>
@@ -387,7 +388,7 @@ describe("servePropose files a claim for the receipted writer", () => {
           }),
         )
       ).code,
-    ).toBe("above_ceiling");
+    ).toBe("invalid_arguments");
 
     expect(
       (

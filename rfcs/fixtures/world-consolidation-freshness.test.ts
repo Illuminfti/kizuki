@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-consolidation-freshness-design.json");
@@ -30,7 +31,7 @@ function load(): Fixture {
 function freshnessErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-consolidation-freshness-design", example.status));
   if (example.id !== "stale-deadline-is-not-current") errors.push("unexpected example id");
   if (!example.later_change.before_worker) errors.push("later change was not before the worker");
   if (example.later_change.deadline_value === example.summary.deadline_value) {

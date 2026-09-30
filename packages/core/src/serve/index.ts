@@ -124,9 +124,11 @@ export {
   serveExecHint,
 } from "./doctor";
 export type { ServeDoctorOptions } from "./doctor";
+export { readServeEndpoint } from "./endpoint";
+export type { ServeEndpoint } from "./endpoint";
 export { startServeHttp } from "./http";
 export type { ServeHttpHandle, ServeHttpOptions } from "./http";
-export { readServePid, runServeDaemon, servePidPath, serveStatus } from "./daemon";
+export { readServePid, readServeProcessMarker, runServeDaemon, servePidPath, serveStatus } from "./daemon";
 export {
   asLeaseHeld,
   LEASE_HELD_CODE,

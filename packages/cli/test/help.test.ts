@@ -220,8 +220,10 @@ describe("help", () => {
       "--record",
       "--reason",
       "--verify",
+      "--lift-suppression",
     ]);
     expect(body.data.flags).toContain("--dry-run");
+    expect(body.data.flags).toContain("--suppressions");
   });
 
   test("command help --json with extra arguments is usage", () => {
@@ -247,9 +249,25 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("tell");
-      expect(body.data.options).toEqual(["--claim", "--world-claim", "--since", "--until"]);
+      expect(body.data.options).toEqual([
+        "--claim",
+        "--world-claim",
+        "--since",
+        "--until",
+        "--mode",
+        "--object",
+        "--object-ref",
+        "--object-vocabulary",
+        "--perspective-mode",
+        "--refresh-concept-ref",
+      ]);
       expect(body.data.flags).toEqual(["--dry-run", "--json", "--verbose"]);
-      expect(body.data.bounds).toEqual({ "--since": "TIME", "--until": "TIME" });
+      expect(body.data.bounds).toMatchObject({
+        "--since": "TIME",
+        "--until": "TIME",
+        "--mode": "replace_object|retract|reclassify_mode",
+        "--perspective-mode": "suggested|hypothetical|questioned",
+      });
       expect(body.data.irreversible).toBe(false);
     }
     const text = runCli(env, "tell", "--help");
@@ -257,6 +275,8 @@ describe("help", () => {
     expect(text.stdout).toContain("--world-claim");
     expect(text.stdout).toContain("--since");
     expect(text.stdout).toContain("--until");
+    expect(text.stdout).toContain("--mode");
+    expect(text.stdout).toContain("--refresh-concept-ref");
     expect(text.stdout).toContain("--dry-run");
     expect(text.stdout).not.toContain("--about");
     expect(text.stdout).not.toContain("--page");
@@ -510,7 +530,7 @@ describe("help", () => {
       };
       expect(body.data.name).toBe("rebuild");
       expect(body.data.usage).toBe(
-        "rebuild [--layer all|search|graph] [--port ID] [--prune-old] [--confirm]" +
+        "rebuild [--layer all|search|graph|world] [--port ID] [--prune-old] [--confirm]" +
           " [--max-records N] [--max-entries N] [--max-source-bytes N] [--json]",
       );
       expect(body.data.options).toEqual([
@@ -530,7 +550,7 @@ describe("help", () => {
         "--max-source-bytes": "67108864",
       });
       expect(body.data.bounds).toEqual({
-        "--layer": "all|search|graph",
+        "--layer": "all|search|graph|world",
         "--max-records": "N",
         "--max-entries": "N",
         "--max-source-bytes": "N",
@@ -538,7 +558,7 @@ describe("help", () => {
       expect(body.data.irreversible).toBe(false);
     }
     const rendered = runCli(env, "rebuild", "--help").stdout;
-    expect(rendered).toContain("--layer  all|search|graph  default all");
+    expect(rendered).toContain("--layer  all|search|graph|world  default all");
     expect(rendered).toContain("--max-records  N  default 1000000");
     expect(rendered).toContain("--max-entries  N  default 200000");
     expect(rendered).toContain("--max-source-bytes  N  default 67108864");
@@ -559,7 +579,7 @@ describe("help", () => {
     const extra = runCli(env, "rebuild", "extra");
     expect(extra.exitCode).toBe(2);
     expect(extra.stdout).toBe("");
-    expect(extra.stderr).toContain("error: rebuild supports --layer all, search, or graph");
+    expect(extra.stderr).toContain("error: rebuild supports --layer all, search, graph, or world");
     expect(extra.stderr).toContain("usage: kizuki rebuild");
     // Eight CLI subprocesses, two fewer than before. The explicit deadline
     // matches the other subprocess-heavy suites; process startup, not this

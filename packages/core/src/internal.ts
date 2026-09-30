@@ -22,4 +22,4 @@ export type { ServiceCustodyFailure, ServiceCustodyHandle } from "./serve/custod
 export { indexEvent, indexEvents, indexPage, initSearch, removeCanonPath, removeDoc } from "./search";
 export { eventRetrievalDoc, publishLedgerEvent } from "./retrieval/events";
 export { initGraph } from "./graph";
-export { rebuildDerived } from "./derived";
+export { rebuildDerived, rebuildWorldLayer } from "./derived";

@@ -1,5 +1,5 @@
 /** Local browser protocol. Only the app bearer belongs in sessionStorage. */
-import type { SourceGrantPolicy, Grant, AgentEnrollmentResult, SubjectLabel, WorldReadInput, WorldReadResult } from '@kizuki/core';
+import type { SourceGrantPolicy, Grant, AgentEnrollmentResult, SubjectLabel, WorldReadResult } from '@kizuki/core';
 import type { ServeIntent, SupervisorKind, SupervisorState } from '@kizuki/core';
 import type { inspectOwnerPageCorrectionTargets } from '@kizuki/core';
 export type AppWorldCorrectionTarget = { readonly world_claim: { readonly kind: 'claim'; readonly token: string } };
@@ -12,6 +12,8 @@ export interface AppServiceStatus {
     state: SupervisorState;
     detail: string;
     checked_at: string;
+    /** True when the native service belongs to another workspace with the same identity, so enabling here would be refused. */
+    other_workspace?: true;
 }
 export const APP_API_PREFIX = '/app/v1/';
 export interface AppError {
@@ -73,6 +75,7 @@ export interface AppOperation {
         stored: number;
         duplicates: number;
         errors: number;
+        suppressed?: number;
     } | null;
     result: {
         message: string;
@@ -110,7 +113,7 @@ export interface AppReceipt {
     reverted: boolean;
 }
 export interface AppProtocol {
-    world_view: { request: WorldReadInput; response: WorldReadResult };
+    world_view: { request: Record<string, unknown>; response: WorldReadResult };
     status: {
         request: {};
         response: {

@@ -10,8 +10,10 @@ import { SENSITIVITY_ORDER, isSensitivity } from "../agents/types";
 import { getClaim } from "../claims/store";
 import { semanticKey } from "../claims/claim-v2-keys";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
-import { rawSubjectNamespace } from "../contracts/claim-v2";
+import { rawSubjectNamespace, type ClaimV2Assertion } from "../contracts/claim-v2";
 import { AUTHORITY_TIERS, type AuthorityTier, type Claim } from "../contracts/proposal";
+import { activeWorldRegistry } from "../contracts/world-vocabulary";
+import type { PageType } from "../vault/schema";
 import type { WorldAdmission } from "../contracts/world-admission";
 import { canonicalJson, sha256Hex } from "../util/hash";
 import { eligibleWorldClaim, type EligibleSupport, type ReadBudget } from "../world/projection";
@@ -36,27 +38,35 @@ export function worldCanonTarget(db:Database,claimId:string):TargetDecision {
  return indexed===null?{action:"create",rel_path:path}:{action:"edit",page_id:indexed.page_id,rel_path:path,reason:"explicit"};
 }
 
+const DEFAULT_PAGE_TYPE:PageType="topic";
+/** A classification claim decides the page type and a label claim its title; the registry knows both. The first kind that leaves the default keeps it. */
+function pageTypeOf(semantic:ClaimV2Assertion,current:PageType):PageType {
+ if(current!==DEFAULT_PAGE_TYPE||semantic.predicate!=="world.kind"||semantic.object.kind!=="vocabulary")return current;
+ return activeWorldRegistry().kindByVocabularyId(semantic.object.ref.id)?.pageType??current;
+}
+function titleOf(semantic:ClaimV2Assertion,current:string):string {
+ return activeWorldRegistry().isLabelPredicate(semantic.predicate)&&semantic.object.kind==="literal"?semantic.object.value:current;
+}
 function context(db:Database):ServeContext {return {db,vaultPath:"",principal:OWNER,sourcePurpose:"derive"};}
 function render(claim:Claim,support:EligibleSupport):Claim {
  return {...claim,body:support.admission.rendering.body,frontmatter:{},authority:support.admission.authority,confidence:support.admission.confidence,provenance:support.events.map(event=>event.event_id)};
 }
 export interface WorldMaterialization {
  readonly handle:string; readonly claims:readonly Claim[];readonly basis:readonly WorldClaimBasis[];
- readonly title:string;readonly pageType:"topic"|"project";
+ readonly title:string;readonly pageType:PageType;
 }
 /** Select one complete admitted rendering per assertion; never pool partial or denied support. */
 export function selectWorldMaterialization(db:Database,handle:string):WorldMaterialization|null {
  const ctx=context(db),permitted=authorizedSupportSql(ctx),budget:ReadBudget={bytes:0};
  const candidates=db.query<{claim_id:string},(string|number)[]>(`SELECT DISTINCT c.claim_id FROM claims c JOIN claim_v2_support s USING(claim_id) JOIN semantic_allocations a USING(support_key) JOIN semantic_bindings b USING(handle_id) JOIN claim_v2_semantics m ON m.claim_id=c.claim_id AND m.subject_kind=b.raw_kind AND m.subject_id=b.raw_id AND (b.raw_kind='occurrence' OR (json_extract(m.payload,'$.subject.namespace.connector_id')=json_extract(b.raw_namespace,'$.connector_id') AND json_extract(m.payload,'$.subject.namespace.source_key')=json_extract(b.raw_namespace,'$.source_key'))) WHERE c.is_world_typed=1 AND c.status='live' AND a.handle_id=? AND ${permitted.sql} ORDER BY c.claim_id LIMIT ?`).all(handle,...permitted.bindings,MAX_PAGE_CLAIMS+1);
- const claims:Claim[]=[],basis:WorldClaimBasis[]=[];let title="Knowledge record",pageType:"topic"|"project"="topic";
+ const claims:Claim[]=[],basis:WorldClaimBasis[]=[];let title="Knowledge record",pageType:PageType=DEFAULT_PAGE_TYPE;
  for(const candidate of candidates) {
   if(worldClaimHandle(db,candidate.claim_id)!==handle)continue;
   const eligible=eligibleWorldClaim(ctx,candidate.claim_id,{kind:"all"},budget),support=eligible?.supports[0],claim=getClaim(db,candidate.claim_id);
   if(eligible===null||support===undefined||claim===null)continue;
   if(claims.length===MAX_PAGE_CLAIMS)throw new CanonWriteError("batch_too_large","world page exceeds its bounded materialization");
   const semantic=eligible.semantic;
-  if(semantic.predicate==="world.kind"&&semantic.object.kind==="vocabulary"&&semantic.object.ref.id==="world/situation")pageType="project";
-  if((semantic.predicate==="concept.label"||semantic.predicate==="situation.label")&&semantic.object.kind==="literal"&&typeof semantic.object.value==="string")title=semantic.object.value;
+  pageType=pageTypeOf(semantic,pageType);title=titleOf(semantic,title);
   claims.push(render(claim,support));basis.push({claim_id:claim.claim_id,semantic_key:semanticKey(semantic),supports:[{support_key:support.row.support_key,admission_hash:worldAdmissionHash(support.admission)}]});
  }
  return claims.length===0?null:{handle,claims,basis,title,pageType};
@@ -177,7 +187,7 @@ export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonRecei
  if(basis===null||hashBytes(bytes)!==expected)throw new Error("typed canon image differs from receipt");
  assertWorldBasis(db,basis,true);
  const ctx=context(db),budget:ReadBudget={bytes:0},bodies:string[]=[],sources:string[]=[];
- let title="Knowledge record",type="topic",minimumSensitivity=0,quoted=false;
+ let title="Knowledge record",type:PageType=DEFAULT_PAGE_TYPE,minimumSensitivity=0,quoted=false;
  for(const item of basis) {
   const handle=worldClaimHandle(db,item.claim_id);if(handle===null||worldCanonPath(handle)!==receipt.page_path)throw new Error("typed receipt handle mismatch");
   const eligible=eligibleWorldClaim(ctx,item.claim_id,{kind:"all"},budget,{historical:true,supportKeys:item.supports.map(support=>support.support_key)})!;
@@ -187,8 +197,7 @@ export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonRecei
   const body=support.admission.rendering.body.trim();if(body.length)bodies.push(body);
   for(const event of support.events)if(!sources.includes(event.event_id))sources.push(event.event_id);
   const semantic=eligible.semantic;
-  if(semantic.predicate==="world.kind"&&semantic.object.kind==="vocabulary"&&semantic.object.ref.id==="world/situation")type="project";
-  if((semantic.predicate==="concept.label"||semantic.predicate==="situation.label")&&semantic.object.kind==="literal"&&typeof semantic.object.value==="string")title=semantic.object.value;
+  type=pageTypeOf(semantic,type);title=titleOf(semantic,title);
  }
  const page=parseFrontmatter(Buffer.from(bytes).toString("utf8"));
  const body=`${bodies.join(bodies.some(body=>body.includes("\n"))?"\n\n":" ")}\n`;

@@ -1,6 +1,9 @@
 import { AUTHORITY_TIERS, ENVELOPE_SCHEMA, PAGE_TAINTS, TOOLS } from "@kizuki/core";
 import type { Tool } from "@kizuki/core";
 import { z } from "zod";
+import { REDACTED } from "./redaction";
+import { MCP_WORLD_OPS } from "./world/ops";
+import { buildWorldSurface } from "./world/surface";
 
 /**
  * The advertised bounds mirror the engine's own validators. They are a
@@ -75,6 +78,7 @@ export const ENVELOPE_SHAPE = z.strictObject({
   /** Owner envelopes only; omitted when nothing was withheld. */
   has_withheld: z.literal(true).optional(),
   source_policy: SOURCE_POLICY.optional(),
+  redacted: REDACTED.optional(),
   data: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -194,6 +198,15 @@ function frontmatterChars(bag: Record<string, unknown>): number {
   return total;
 }
 
+const CORRECT_TOKEN = z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/);
+const CORRECT_OBJECT_REF = z.strictObject({ kind: z.literal("object"), token: CORRECT_TOKEN });
+
+/**
+ * A bare string is the legacy replacement object. The typed forms are for a
+ * world claim: a literal, a registered vocabulary value, or a node named by an
+ * object token from `world_view`. Which mode takes which argument is the
+ * engine's judgement, made on every call, so a mismatch is refused and audited.
+ */
 export const CORRECT_INPUT = z.strictObject({
   statement: z.string().min(1).max(2000),
   target: z
@@ -201,10 +214,26 @@ export const CORRECT_INPUT = z.strictObject({
       claim_id: ID.optional(),
       claim_key: z.string().regex(/^[0-9a-f]{64}$/).optional(),
       subject: ID.optional(),
-      world_claim: z.strictObject({ kind: z.literal("claim"), token: z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/) }).optional(),
+      world_claim: z.strictObject({ kind: z.literal("claim"), token: CORRECT_TOKEN }).optional(),
     }).refine((target) => [target.claim_id, target.claim_key, target.subject, target.world_claim].filter((value) => value !== undefined).length <= 1, "target names exactly one selector")
     .optional(),
-  object: z.string().min(1).max(1024).optional(),
+  object: z
+    .union([
+      z.string().min(1).max(1024),
+      z.strictObject({ kind: z.literal("literal"), value: z.string().min(1).max(400) }),
+      z.strictObject({ kind: z.literal("vocabulary"), id: z.string().min(1).max(128) }),
+      z.strictObject({ kind: z.literal("node"), ref: CORRECT_OBJECT_REF }),
+    ])
+    .optional(),
+  mode: z.enum(["replace_object", "retract", "reclassify_mode"]).optional(),
+  perspective_mode: z.enum(["suggested", "hypothetical", "questioned"]).optional(),
+  refresh_world: z
+    .strictObject({
+      operation: z.enum(["concept", "situation"]),
+      concept: CORRECT_OBJECT_REF.optional(),
+      situation: CORRECT_OBJECT_REF.optional(),
+    })
+    .optional(),
   dry_run: z.boolean().optional(),
 });
 
@@ -232,80 +261,10 @@ export const PROPOSE_INPUT = z.strictObject({
   confidence: z.number().min(0).max(1).optional(),
 });
 
-const WIRE_TOKEN = z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/);
-const WORLD_OBJECT_REF = z.strictObject({
-  kind: z.literal("object"),
-  token: WIRE_TOKEN,
-});
-const WORLD_SNAPSHOT_REF = z.strictObject({
-  kind: z.literal("snapshot"),
-  token: WIRE_TOKEN,
-});
-const WORLD_VALID = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("all") }),
-  z.strictObject({ kind: z.literal("unknown_only") }),
-  z.strictObject({ kind: z.literal("at"), at: RFC3339 }),
-  z.strictObject({ kind: z.literal("overlap"), from: RFC3339, until: RFC3339 }),
-]);
-const WORLD_KNOWN_AT = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("current") }),
-  z.strictObject({ kind: z.literal("time"), at: RFC3339 }),
-  z.strictObject({ kind: z.literal("snapshot"), ref: WORLD_SNAPSHOT_REF }),
-]);
-
-const WORLD_OPERATIONS = ["find_concepts", "find_situations", "concept", "situation"] as const;
-
-/**
- * One object, not a union of three: the SDK advertises only an object shape,
- * and a union of objects reaches `tools/list` as an empty schema a client
- * cannot call. Which fields an operation takes is the engine's judgement, made
- * on every call, so a mismatch is refused there and audited. An omitted
- * `label`, `valid` or `knownAt` takes the default the description advertises.
- */
-export const WORLD_VIEW_INPUT = z.strictObject({
-  operation: z.enum(WORLD_OPERATIONS),
-  label: z.string().max(200).default(""),
-  cursor: WIRE_TOKEN.optional(),
-  concept: WORLD_OBJECT_REF.optional(),
-  situation: WORLD_OBJECT_REF.optional(),
-  valid: WORLD_VALID.default({ kind: "all" }),
-  knownAt: WORLD_KNOWN_AT.default({ kind: "current" }),
-});
-
-const worldRef = <K extends string>(kind:K) => z.strictObject({kind:z.literal(kind),token:z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/)});
-const worldEvidence=z.strictObject({admission:worldRef("admission"),eventVersion:worldRef("event_version"),span:z.union([
-  z.strictObject({kind:z.literal("text"),startUtf16:z.number().int().nonnegative(),endUtf16:z.number().int().positive()}),
-  z.strictObject({kind:z.literal("metadata"),field:z.string().max(128)}),
-])});
-const worldRelation=z.strictObject({schema:z.literal("kizuki.relation/v1"),claim:worldRef("claim"),subject:WORLD_OBJECT_REF,predicate:z.string().max(128),
-  object:z.union([z.strictObject({kind:z.literal("literal"),value:z.string().max(400)}),z.strictObject({kind:z.literal("vocabulary"),id:z.string().max(128)}),z.strictObject({kind:z.literal("node"),ref:WORLD_OBJECT_REF})]),
-  perspective:z.strictObject({holder:WORLD_OBJECT_REF.nullable(),speaker:WORLD_OBJECT_REF.nullable(),addressee:WORLD_OBJECT_REF.nullable(),
-    mode:z.enum(["asserted","quoted","reported","hypothetical","suggested","questioned","uncertain"]),interpretation:z.enum(["explicit","inferred"]),evidence:z.array(worldEvidence).max(256)}),
-  context:z.array(WORLD_OBJECT_REF).max(256),polarity:z.enum(["positive","negative"]),
-  valid:z.union([z.strictObject({kind:z.literal("unknown")}),z.strictObject({kind:z.literal("known"),from:z.string(),until:z.string().nullable()})]),
-  temporalBasis:z.enum(["explicit","observed","unknown"]),assessments:z.array(z.strictObject({admission:worldRef("admission"),
-    epistemicKind:z.enum(["observed","reported","owner_assertion","model_inference","hypothesis","recommendation","scenario"]),
-    authority:z.enum(["owner_correction","owner_authored","connector_evidence","model_inference"]),
-    confidence:z.union([z.strictObject({kind:z.literal("unknown")}),z.strictObject({kind:z.literal("known"),value:z.number().min(0).max(1)})]),
-    independence:z.enum(["independent","dependent","unknown"]),evidence:z.array(worldEvidence).max(256)})).max(256),
-  conflict:z.enum(["none_observed","present","unknown"])});
-const worldGaps=z.enum(["coverage","pending_consolidation","stale_dependencies","required_context_overflow","traversal_limit"]);
-const worldCoverage=z.strictObject({status:z.enum(["complete_for_query","partial"]),gaps:z.array(worldGaps).max(5),validWindow:WORLD_VALID,history:z.enum(["retained_for_query","baseline_only","unavailable"])});
-const worldNode=<K extends string>(kind:K)=>z.strictObject({schema:z.literal("kizuki.knowledge-node/v1"),ref:WORLD_OBJECT_REF,kind:z.literal(kind),classificationClaims:z.array(worldRef("claim")).max(256),
-  labels:z.array(z.strictObject({text:z.string().max(400),claim:worldRef("claim")})).max(256),resolution:z.enum(["distinct","resolved","ambiguous"])});
-const worldCommon={summary:z.strictObject({text:z.string().max(1200),admissions:z.array(worldRef("admission")).max(256)}).nullable(),knownAt:z.strictObject({kind:z.literal("current")}),coverage:worldCoverage};
-const worldData=z.union([
-  z.strictObject({schema:z.literal("kizuki.concept-card/v1"),concept:worldNode("concept"),...worldCommon,definitions:z.array(worldRelation).max(256),relations:z.array(worldRelation).max(256),
-    learning:z.array(z.strictObject({facet:z.enum(["exposure","explanation","application","demonstration"]),assertion:worldRelation,assistance:z.enum(["assisted","unassisted","unknown"]),assistanceEvidence:z.array(worldRelation).max(256)})).max(256)}),
-  z.strictObject({schema:z.literal("kizuki.situation-card/v1"),situation:worldNode("situation"),...worldCommon,objective:worldRelation.nullable(),participants:z.array(WORLD_OBJECT_REF).max(256),commitments:z.array(worldRelation).max(256),blocker:worldRelation.nullable(),recentChange:worldRelation.nullable(),uncertainty:z.array(worldRelation).max(256)}),
-  z.strictObject({schema:z.enum(["kizuki.concept-matches/v1","kizuki.situation-matches/v1"]),matches:z.array(z.strictObject({ref:WORLD_OBJECT_REF,labels:z.array(z.string().max(400)).max(256)})).max(32),cursor:WIRE_TOKEN.nullable(),coverage:worldCoverage}),
-]);
-export const WORLD_ENVELOPE_SHAPE={schema:z.literal("kizuki.envelope/v2"),tool:z.literal("world_view"),principal:worldRef("principal"),at:z.string(),canon:z.array(z.never()).max(0),quoted:z.array(z.never()).max(0),
-  data:z.union([z.strictObject({status:z.literal("not_found")}),z.strictObject({schema:z.literal("kizuki.world-view/v1"),operation:z.enum(["concept","situation","find_concepts","find_situations"]),result:z.union([
-    z.strictObject({status:z.literal("current"),view:z.strictObject({status:z.literal("not_issued")}),data:worldData}),
-    z.strictObject({status:z.literal("incomplete"),data:worldData,reasons:z.array(worldGaps).max(5)}),
-    z.strictObject({status:z.literal("unavailable"),reason:z.enum(["storage","history","budget"])}),
-  ])})])};
+/** Generated from the registered operations' fragments; see `world/surface.ts`. */
+export const WORLD = buildWorldSurface(MCP_WORLD_OPS);
+export const WORLD_VIEW_INPUT = WORLD.input;
+export const WORLD_ENVELOPE_SHAPE = WORLD.envelope;
 
 /**
  * The whole envelope grammar. Written out, its cards run to about 140 KB of
@@ -313,32 +272,7 @@ export const WORLD_ENVELOPE_SHAPE={schema:z.literal("kizuki.envelope/v2"),tool:z
  * server holds each world_view answer to this before it leaves, and
  * advertises the smaller shape below.
  */
-export const WORLD_ENVELOPE = z.strictObject(WORLD_ENVELOPE_SHAPE);
+export const WORLD_ENVELOPE = WORLD.answer;
 
 /** The card grammar is named by `schema` and left to `kizuki.concept-card/v1` and its siblings. */
-export const WORLD_ENVELOPE_LISTED = {
-  schema: z.literal("kizuki.envelope/v2"),
-  tool: z.literal("world_view"),
-  principal: worldRef("principal"),
-  at: z.string(),
-  canon: z.array(z.never()).max(0),
-  quoted: z.array(z.never()).max(0),
-  data: z.union([
-    z.strictObject({ status: z.literal("not_found") }),
-    z.strictObject({
-      schema: z.literal("kizuki.world-view/v1"),
-      operation: z.enum(WORLD_OPERATIONS),
-      result: z.strictObject({
-        status: z.enum(["current", "incomplete", "unavailable"]),
-        view: z.strictObject({ status: z.literal("not_issued") }).optional(),
-        data: z
-          .looseObject({
-            schema: z.enum(["kizuki.concept-card/v1", "kizuki.situation-card/v1", "kizuki.concept-matches/v1", "kizuki.situation-matches/v1"]),
-          })
-          .optional(),
-        reasons: z.array(worldGaps).max(5).optional(),
-        reason: z.enum(["storage", "history", "budget"]).optional(),
-      }),
-    }),
-  ]),
-};
+export const WORLD_ENVELOPE_LISTED = WORLD.listed;

@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-outcome-purge-design.json");
@@ -31,7 +32,7 @@ function load(): Fixture {
 function purgeErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-outcome-purge-design", example.status));
   if (example.id !== "purge-invalidates-learned-state") errors.push("unexpected example id");
   if (example.learned.kind !== "learned_procedure") errors.push("learned kind drifted");
   if (!example.learned.support_refs.includes("x_r_observed_artifact")) errors.push("support refs dropped");

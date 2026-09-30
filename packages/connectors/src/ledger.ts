@@ -56,6 +56,9 @@ export class InMemoryLedger {
       if (result.status === "error") {
         return { status: "error", errors: [result.error] };
       }
+      if (result.status === "suppressed") {
+        return { status: "error", errors: ["event: source record was purged and is suppressed"] };
+      }
       if (result.status === "duplicate") {
         const existing = this.#byKey.get(key);
         if (existing === undefined) {

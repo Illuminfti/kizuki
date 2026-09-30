@@ -160,6 +160,17 @@ async function dispatch(argv: string[]): Promise<number> {
     err(line) {
       process.stderr.write(`${line}\n`);
     },
+    async readStdin(maxBytes) {
+      if (process.stdin.isTTY === true) return "";
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      for await (const chunk of Bun.stdin.stream()) {
+        chunks.push(chunk);
+        size += chunk.byteLength;
+        if (size > maxBytes) break;
+      }
+      return Buffer.concat(chunks).subarray(0, maxBytes).toString("utf8");
+    },
     async prompt(question, opts) {
       if (opts?.secret) {
         return readSecretPrompt(process.stdin, process.stderr, question);

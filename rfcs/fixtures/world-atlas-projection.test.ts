@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-atlas-projection-design.json");
@@ -45,7 +46,7 @@ function load(): Fixture {
 function atlasErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-atlas-projection-design", example.status));
   if (example.id !== "shared-concept-card-projection") errors.push("unexpected example id");
   if (example.concept.attributed_is_fact) errors.push("attributed statement treated as fact");
   if (example.concept.summary_available) errors.push("unavailable summary presented as available");

@@ -47,6 +47,7 @@ export const syncCommand: Command = {
         try {
           const receipt = await runRail(ctx.db, ctx.vaultPath, "sync", { hooks: runtime.hooks });
           io.out(`sync events_stored=${receipt.events_stored} duplicates=${receipt.events_duplicate} errors=${receipt.errors.length}`);
+          for (const text of receipt.errors) io.err(`error: ${text}`);
           return receipt.status === "failed" || receipt.errors.length > 0 ? 1 : 0;
         } finally {
           await runtime.close();
@@ -91,6 +92,9 @@ export const syncCommand: Command = {
             io.out(
               `${selected.connection.connector_id} source=${selected.connection.source_key} ${formatRunCounts(result)}`,
             );
+            if (result.suppressed !== undefined) {
+              io.err(`notice: ${result.suppressed} source record(s) purged earlier were refused; see: kizuki purge --suppressions`);
+            }
             for (const text of result.errors) {
               io.err(`error: ${text}`);
               failed = true;

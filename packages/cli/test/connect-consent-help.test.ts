@@ -75,7 +75,7 @@ describe("connect consent help", () => {
         if (irreversible) {
           expect(result.stdout).toContain("Irreversible");
           expect(result.stdout).toContain(
-            "Physical event deletion cannot be undone. Canon rewrites stay reversible by receipt.",
+            "Physical event deletion cannot be undone. A canon rewrite that removes purged text keeps no copy of it, so it cannot be undone either.",
           );
         } else {
           expect(result.stdout).not.toContain("Irreversible");

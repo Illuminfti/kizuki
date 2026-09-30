@@ -46,6 +46,7 @@ export {
   AgentEnrollmentError,
   amendAgentGrant,
   authenticateAgentCredential,
+  readAgentCredentialToken,
   enrollAgent,
   previewAgentEnrollment,
   revokeAgentEnrollment,

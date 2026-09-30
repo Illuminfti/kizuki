@@ -2,7 +2,62 @@
 
 ## Unreleased
 
+### Fixed
+
+- Purge is physically total. After it, the purged text is gone from claim and
+  proposal payloads (ids, provenance and receipts stay), from archive copies
+  and stage images, from the search index and retrieval store, and from freed
+  database pages and the write-ahead log (`secure_delete`, a truncating
+  checkpoint and a compaction). The canon rewrite of a held page no longer
+  archives the page it replaces. `purge --verify` prints one proof per store
+  and fails while any store still holds the text; its previous `ok` could be
+  empty. A finished purge is only proved, and `--repair` erases what the proofs
+  found; a page or archive file the proof cannot read is reported as
+  unverifiable. Typed claims bound to a purged event by their support are
+  erased too. `kizuki recover` and the daemon sweep finish a purge interrupted after
+  its first phase. The ledger migration adds `purge_erasures`,
+  `purge_claim_scope`, `purge_suppression_lifts` and
+  `purge_suppression_sources`.
+- A source record that was purged is no longer captured again silently. Sync
+  refuses a record whose connector and source record id match a purge, reports
+  `suppressed=N`, and keeps going; `purge` warns with the path of a record that
+  still exists at its source. The daemon sync path reports the refusal in the run
+  receipt. `kizuki purge --suppressions` lists the refusals
+  and `kizuki purge --lift-suppression RECEIPT` lifts them. Purges recorded
+  earlier refuse too until lifted.
+
+### Operator safety
+
+- `serve status`, `serve --install`, `serve --uninstall` and doctor no longer
+  read or change the service of a different vault that has the same vault id.
+  The installed definition's `--vault` path is compared with the vault in use;
+  on a copy, status reports the service as absent for it and names the other
+  path, and install and uninstall refuse. An unreadable definition reports the
+  service as unknown for this vault, doctor prints a short copy-specific line
+  with the command to run, and the app shows a copy as belonging to another
+  workspace instead of offering to enable it.
+- The verify gate fails on machine-specific absolute home or data paths in
+  tracked text, including file URLs and doubled leading slashes, with a small
+  allowlist of synthetic names. The existing
+  occurrences were removed.
+- `undo` on a page changed since the receipt says whether later receipts or a
+  hand edit caused it and what to do next. Doctor names `chmod 600` when a
+  loosely permissioned `serve.toml` blocks model inspection. Doctor and
+  `serve status` fail on a canon write intent pending for over 300 seconds. A
+  command with no vault says how to pass or set one. Doctor's claim counts add
+  a `live_by_producer` split separating model-extracted claims from
+  deterministic-floor claims (page mirrors, capture notes, entity stubs).
+
 ### Added
+
+- `kizuki backup --out DIR` snapshots a live vault: it takes the canon writer,
+  waits while a canon write is pending, takes an SQLite snapshot of the ledger,
+  copies canon and the receipt stream, and writes a hashed `kizuki.snapshot/v1`
+  manifest. It needs no `export` purpose, carries no credential and refuses
+  while a source revocation is purging. `kizuki restore` reads it and verifies
+  it with `--verify`. The manifest and command output report the vault entries
+  a snapshot does not carry (non-canon pages, `.kizuki` configuration), and
+  restore checks page bytes against their receipts before publishing.
 
 - `kizuki agent list [--json]` shows enrolled agents with their state, grant
   epoch and grant summary, and never a credential. `kizuki agent grant NAME
@@ -82,9 +137,48 @@
   unreadable stored history counts as a fresh wait, never as none.
 - Run receipts carry `model.consecutive_rejections` and
   `model.last_rejection_rule` while a refusal streak lasts.
+- `kizuki hook session-start --harness claude-code|codex|generic` injects a
+  compact, bounded, provenance-labelled context block at harness session start.
+  It reads the hook JSON on standard input, prefers the running daemon's
+  loopback endpoint, falls back to a direct read it can stop at `--timeout-ms`,
+  attributes the call to the agent named by `--token-ref`, and exits 0 with no
+  output on a timeout, denial, missing vault or any error. The daemon now
+  records where its loopback endpoint listens in `.kizuki/serve.endpoint`, an
+  owner-only file that holds no credential and is removed at shutdown.
+- A default `purpose=session` context packet gains `owner`, `now`,
+  `commitments` and `uncertain` sections read from authorized claims and
+  Situations, each bounded and each listed with a reason when empty. The
+  response reports them in `data.session`. Situation content needs the
+  `world_view` grant.
+- Session sections list only claims that are current at the packet's time, label
+  every member of a contradiction with its taint and sensitivity, and report
+  `unavailable` when a full candidate window held nothing usable. A one-line
+  note tells the reader that state lines are data unless clean and owner
+  authored. The daemon's endpoint file is trusted only when it belongs to the
+  current boot, and a failed write of it no longer stops the daemon.
+- [Integration recipes](docs/integrations.md) for Claude Code, Codex and any
+  stdio MCP client.
+- Everything Kizuki serves to an agent passes one output seam that reuses the
+  model-prompt scrubber. PEM blocks, JWTs, `sk-`, `ghp_`, `github_pat_`, `xox`
+  and `AKIA` tokens, `Authorization: Bearer` values, `NAME=value` secret
+  assignments and mnemonic-like word runs become `[redacted:<kind>]` in search,
+  `get_page`, `timeline` and its expansion, every `context_packet` section,
+  `query_entities`, `graph_neighbors` and `world_view`, over MCP stdio, loopback
+  HTTP and the session hook. The envelope adds `redacted`, the per-kind count of
+  replaced spans, and never a value. Redaction runs before an excerpt, preview
+  or expansion window is cut and before a packet is packed, so a secret cannot
+  survive a cut and the token budget stays exact. The owner keeps raw text. The
+  scrubber is a heuristic; see [what an agent is served](docs/agent-enrollment.md#what-an-agent-is-served).
 
 ### Fixed
 
+- Export no longer refuses because of a disconnected source that holds no
+  exported event, and it checks each source's grant once instead of once per
+  claim and per event; a 3,000-event, 3-source vault exports in seconds where
+  a production-size vault took over an hour. `connect status`, `grant`,
+  `revoke` and `resume-revocation` now work on a disconnected source.
+- A restored vault recreates its receipt journal, so `kizuki doctor` reports
+  no orphans and status ok. Restore prints the agents to enroll again.
 - The daily brief is stamped private when it names a page that ever received a
   private receipt (a repair never lowers it), says when rail failure groups
   were omitted, and the brief repair also rewrites the run-id
@@ -211,6 +305,25 @@
 - Doctor reads the newest 2,000 sync receipts and the newest 200 of each other
   rail instead of a week of receipts, and the `doctor-sweep` rail now records
   the failures doctor would report, so its status matches.
+- Captured and canon text in a context packet is blockquoted line by line, and
+  titles and paths stay on one line, so a page or capture that contains a line
+  imitating a packet stamp cannot pass for one. Unicode tag characters and
+  bidirectional controls are removed from served text for every principal.
+- `system_health` for an agent reports counts over what its grant can read and
+  the connections that feed that view; the vault-wide page, event and claim
+  totals, agent counts, runtime, derived-index times, retrieval backlog and
+  per-connection run results are owner only.
+- `correct`, `propose` and a `context_packet` task capture refuse an id the agent
+  cannot read exactly as they refuse one that does not exist, so neither
+  existence nor tier can be probed. A denied task capture no longer reports
+  `reason: "denied"`.
+- A claim object or a task-capture value with a Unicode line separator can no
+  longer start a packet line of its own, and the packet hash covers the served
+  path. `world_view` labels lengthened by redaction are cut back to the schema
+  bound, `system_health` for an agent reports `counts_capped` when its counts
+  stop at the bound and derives connections without that bound, and an unreadable
+  provenance or correction target is refused generically while the owner's audit
+  row keeps the real reason.
 
 ### Changed
 

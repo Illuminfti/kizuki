@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-consolidation-corpus-design.json");
@@ -106,7 +107,7 @@ function nearestRank(samples: number[], percentile: number): number | null {
 function corpusErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-consolidation-corpus-design", example.status));
   if (example.result_class !== "illustrative") errors.push("illustrative arithmetic was promoted to a measured result");
   if (example.id !== "large-corpus-bounded-work-and-unrun-measurements") errors.push("unexpected example id");
 

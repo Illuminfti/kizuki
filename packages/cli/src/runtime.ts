@@ -19,6 +19,12 @@ export function serveArgs(vaultPath: string): string[] {
   return [process.execPath, entry, "serve", "--vault", vaultPath];
 }
 
+/** This CLI, invoked again with `rest`: for a child that a caller can kill on a deadline. */
+export function cliArgs(rest: string[]): string[] {
+  if (IS_COMPILED) return [process.execPath, ...rest];
+  return [process.execPath, fileURLToPath(new URL("./main.ts", import.meta.url)), ...rest];
+}
+
 /** One POSIX shell word: a plain path prints as it is, anything else is single-quoted. */
 export function shellQuote(value: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;

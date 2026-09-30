@@ -17,7 +17,10 @@ Global option: `--vault <path|name>` on every verb. User config is
 an unset environment fails closed instead of writing beside the working
 directory. Vault aliases are `[A-Za-z][A-Za-z0-9_-]{0,63}`. Writes are
 atomic under a lock. Port, model, budget, and sensitivity selection live
-in `<vault>/.kizuki/serve.toml` and appear in `doctor`.
+in `<vault>/.kizuki/serve.toml` and appear in `doctor`. The vault comes from
+`--vault`, else `$KIZUKI_VAULT`, else `default_vault` in the user config. With
+none of these a command exits with the three ways to set one and the
+`kizuki init <path>` command that creates a vault.
 
 Value options also accept `--key=value`, including `--vault=PATH`. Use that
 form when a value starts with `--`; everything after the first `=` is the
@@ -228,8 +231,20 @@ and the fix: a source without the purpose gets the `connect grant` command with
 its current revision, and a revoked source with its purge pending gets the
 `connect resume-revocation` command. To make export work, add `"export"` to the
 purposes of each named source and grant the edited policy at that revision.
-Export never widens a grant by itself, and a backup that must not depend on
-grants is the file-level copy in the [upgrade runbook](upgrade.md).
+Export never widens a grant by itself. Export ignores a disconnected source
+that holds no exported event, whatever its grant state, and a purged grant never
+blocks it. A source that holds events still needs the purpose or its purge.
+Consent outlives the connection: `connect status`, `grant`, `revoke` and
+`resume-revocation` work on a disconnected source, so its consent can be
+inspected, widened for a backup or revoked without reconnecting it.
+
+`kizuki backup` does not ask for the `export` purpose. The `export` purpose
+governs a portable bundle that another consumer can read, and the source grant
+already fixes what the vault may retain. A snapshot is not portable: only
+`kizuki restore` reads it, it restores into the owner's custody and it holds
+nothing the vault does not already hold under its retention. It still refuses
+while a revocation is purging, because a second physical copy of a payload the
+owner has revoked would outlive the purge, which erases only the live vault.
 
 ```bash
 kizuki connect grant --source KEY --policy POLICY.json --expected-revision 0 --operation-id grant-1
@@ -375,7 +390,11 @@ files, or claim that hybrid retrieval ran. Unknown engine IDs still refuse.
 usage: kizuki doctor [--json] [--integrity]
 ```
 
-Vault path, event count, claim counts (filed/live/written/unwritten), live
+Vault path, event count, claim counts (filed/live/written/unwritten) with a
+`live_by_producer` split on the same line that separates `model_extracted`
+claims from `deterministic_floor` (claims the deterministic floor staged
+without a model: imported page mirrors, verbatim capture notes and entity
+stubs; JSON: `claims.by_producer`), live
 claim ids (for `tell --claim`), leftover skipped rows, connections,
 checkpoints (with the first error of each source's last run as `last_error`),
 derived-index freshness, writer ROLE stamps, machine vs human
@@ -456,6 +475,13 @@ backfill run sets, beside `last_run_clean`. The closing `next:` line follows fro
 the structured top failure of a failed report and never suggests `kizuki tell`;
 for a down rail it points at `kizuki serve status`, which only reads.
 
+Doctor names the fix when it can. A `serve.toml` that is not mode 600 stops the
+model configuration from being read; the report then names the file's mode and
+the `chmod 600` command instead of only saying the inspection is unavailable.
+A canon write intent pending for more than 300 seconds fails doctor and
+`serve status` with the pending receipt and `kizuki recover --json`; a write
+that is still in flight is not flagged.
+
 Doctor validates existing configuration and credentials without constructing a
 model runtime. Pending model or connection-state journals remain untouched and
 make the report degraded; inspecting the vault does not authorize recovery or
@@ -481,7 +507,16 @@ usage: kizuki context [--purpose session|recall|correction|audit] [--budget N] [
 ```
 
 Purpose-scoped compilation of canon, graph, timeline, and working-knowledge
-claims with provenance stamps and a token budget. Same engine as MCP
+claims with provenance stamps and a token budget. A default `--purpose session`
+packet starts with four bounded sections that answer what a fresh agent asks:
+`owner` (identity facts with owner authority), `now` (current Situations and
+recently recorded changes), `commitments` (open commitments) and `uncertain`
+(contradictions and hedged statements). Each is read from authorized claims and
+the world model and never inferred. An empty section is listed under
+`not recorded` with its reason (`none_recorded`, `not_granted`, `unavailable` or
+`budget`), and `--json` reports the same in `data.session`. The four sections
+use at most half of the room after the header. Situations need the `world_view`
+grant. Other purposes are unchanged. Same engine as MCP
 `context_packet`. Does not write canon. Empty packets keep the machine header
 on stdout and offer a next step on stderr. If gathering fails, the CLI returns
 exit 1 and reports `degraded` in JSON instead of presenting the header as a
@@ -498,6 +533,42 @@ not a grant. Grant-bound clamping and denial stay in Core.
 Claims and derived statements follow the live grant and
 [context privacy rules](context-privacy.md), including fail-closed provenance
 and bounded audit coverage.
+Canon excerpts and captured text in the packet are quoted line by line so a
+body line cannot imitate a stamp, and an agent's packet is redacted as described
+in [what an agent is served](agent-enrollment.md#what-an-agent-is-served).
+
+## hook
+
+Status: shipped
+
+```text
+usage: kizuki hook session-start --harness claude-code|codex|generic [--budget N] [--timeout-ms MS] [--token-ref env:VAR|file:/absolute/path] [--direct] [--verbose]
+```
+
+Prints a compact, bounded, provenance-labelled context block
+for a harness that runs a command at session start. It reads the harness's
+hook JSON on standard input (only the working directory's last segment becomes
+the search query), asks the running daemon's loopback endpoint for a
+`context_packet` with `purpose=session`, falls back to a direct read in a child
+process it can stop at the deadline, and prints the block. `--harness
+claude-code` and `--harness codex` print
+`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":...}}`;
+`--harness generic` prints the plain text. Quoted and taint labels stay on the
+lines. `--budget` is 50 to 2000 tokens (default 450) and `--timeout-ms` is 100
+to 60000 (default 2500). `--token-ref` reads as an enrolled agent, so the call is
+audited under that agent's name; without it the hook reads as the owner. The
+reference is a file or an environment variable, never the token itself.
+
+It exits 0 and prints nothing on a timeout, a denied or revoked credential, a
+missing or uninitialized vault, an empty result or any other error. An empty
+vault prints no block. `--verbose` writes one line naming the class of failure
+to standard error and never a path, token or captured text. `--direct` reads in
+the current process without contacting the daemon; its deadline cannot interrupt
+a read already running. A misconfigured command is silent and exits 0 too, and
+out-of-range numbers are clamped to their bounds, so a settings typo never
+fails a session. The hook writes nothing and
+contacts only the loopback daemon. See [integrations](integrations.md) for
+Claude Code, Codex and generic recipes.
 
 ## world
 
@@ -563,7 +634,13 @@ noncanonical tokens are usage errors before the vault is opened.
 usage: kizuki undo <receipt_id> [--cascade]
 ```
 
-Restores prior canon bytes from a write receipt.
+Restores prior canon bytes from a write receipt. Undo only restores a page that
+still matches what the receipt wrote. When a later receipt changed the page, the
+refusal lists those receipts and names `kizuki undo <receipt_id> --cascade`,
+which reverses them newest first. When nothing later explains the change, the
+page was edited outside Kizuki: the refusal says so and tells you to put the
+page back to the receipt's version by hand, or keep your edit and leave the
+receipt as it is. `--cascade` cannot help there, and the refusal says why.
 
 ## audit
 
@@ -670,7 +747,7 @@ those pins.
 ## purge
 
 ```text
-usage: kizuki purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json]
+usage: kizuki purge (--event ID | --connector ID [--record ID | --subject ID [--source KEY] [--include-aliases]] | --verify RECEIPT [--repair]) [--reason TEXT] [--dry-run] [--confirm] [--allow-empty] [--json] | purge --suppressions [--json] | purge --lift-suppression RECEIPT [--json]
 ```
 
 Physical deletion plus a receipt. `--reason` is required except `--verify`,
@@ -680,9 +757,12 @@ writes a completion receipt. `--dry-run` prints a bounded plan and writes
 nothing. Connector selectors use ledger identity, including retired ids.
 Broad subject or connector-only deletes require `--confirm`. Exact `--event`
 and `--connector --record` paths stay noninteractive. Purged events are not
-resurrected by undo; canon rewrites stay reversible. `--include-aliases` is
-retired and refuses before planning or deletion. `--verify` prints per-store
-absence proofs and `pending`/`done`/`failed` operation state. While any inert
+resurrected by undo, and a canon rewrite that removes purged text keeps no
+copy of it, so undo of that rewrite refuses. `--include-aliases` is
+retired and refuses before planning or deletion. `--verify` finishes any step
+of a purge that has not run (held pages, pending store operations, an unsealed
+erasure); on a finished purge it only proves. It prints one proof per store and
+`pending`/`done`/`failed` operation state. While any inert
 legacy identity row remains, identity absence is unprovable rather than
 successful. If the canon scan stops at its page-count or byte bound, the
 affected pages cannot be enumerated, so preview and deletion both refuse with
@@ -695,6 +775,94 @@ the canon rewrite itself failed: `--verify` then names the held page paths and
 points at `kizuki doctor` and page ownership and permissions, instead of
 offering a bare retry that replays the same failure. `--json` reports the same
 paths as `data.held_pages`, which is empty once the hold is lifted.
+
+### What purge erases
+
+Purge removes the purged text from every store Kizuki keeps, not only the
+event rows. Once every held page is rewritten, the final step:
+
+- blanks the body, frontmatter, object, subject, predicate and target of every
+  claim whose whole provenance is purged, whatever its status (a superseded claim
+  keeps its text as surely as a live one), and drops its typed meaning. The claim
+  id, provenance, hashes, receipts and status stay;
+- blanks the body, frontmatter and target of every proposal whose whole
+  provenance is purged;
+- deletes every file under `archive/` that cites a purged event or repeats a
+  purged claim body (16 characters or more), and lists each one in the command
+  output as `erased ... archive file`. The canon rewrite of a held page no
+  longer archives the page it replaces. `kizuki undo` of an earlier write
+  refuses, because the page changed or its archive copy is gone, instead of
+  restoring purged text; the receipt itself stays;
+- removes recovery records and quarantined stage bytes of receipts that cite
+  purged events, and rebuilds the search index so older index segments drop
+  the tokens;
+- turns `PRAGMA secure_delete` on for the whole purge, then truncates the
+  write-ahead log and compacts the ledger file (`VACUUM`). The retrieval
+  store is rebuilt, truncated and compacted the same way when its documents are
+  removed. Copies made outside Kizuki (backups, exports, other machines, a
+  filesystem snapshot) are out of scope.
+
+`--verify` proves absence per store, keyed by the purged event ids because the
+text itself is gone. It prints one line per store and `--json` reports the same
+list as `data.stores` (`store`, `checked`, `found`, `unverifiable`, `method`, `at`):
+
+| Store | Absent means |
+| --- | --- |
+| `events` | no ledger row for any purged event |
+| `claims` | every claim whose provenance is purged has a blank payload |
+| `proposals` | every such proposal has a blank payload |
+| `search` | no search row cites a purged event |
+| `graph` | no graph edge names or cites a purged event |
+| `canon` | no page cites a purged event and no hold remains |
+| `archive` | no file under `archive/` cites a purged event |
+| `receipt_images` | no stage record, quarantined stage image or pending write intent cites a purged event |
+| `database` | the ledger file was compacted and its write-ahead log truncated; another connection holding it open reports `ledger_files_busy` |
+
+On a finished purge, `--verify` changes nothing. It exits nonzero and names the
+paths or ids while any store still holds evidence, so a copy that reappeared is
+reported rather than quietly removed. `--verify RECEIPT --repair` erases what
+the proofs found and reports the stores it repaired as `data.repaired_stores`.
+A page or archive file the proof could not read or scan (a page that does not
+parse, a duplicate page id, an archive file over 16 MiB, more than 20000
+archive files, a canon walk that hit its page limit) is listed as
+`unverifiable` in the store's proof and printed as `unproven`. It is not
+evidence, but the store cannot be shown clean until the named path is repaired
+or removed. A proof cannot find a copy that cites no purged event id, for
+example a hand copy of the text into an unrelated note.
+
+The erasure is receipted in `purge_erasures`: the archive files removed, the
+claim and proposal counts, and whether the ledger files were compacted and
+truncated. A typed (claim/v2) claim whose every evidence link was purged is
+purged with the rest, even when its provenance names another event, and its
+semantics and support anchors are deleted.
+
+### Purged records are not captured again silently
+
+Deleting an event does not delete the record at its source. When a source
+record of a path-based source (a markdown folder and similar) still exists,
+`purge` warns on stderr with its path (and the JSON output lists them as
+`data.source_records_still_present`); remove it or move it out of the source.
+Every purge that creates a suppression also prints the notice and the lift
+command, whatever the connector. Until the owner lifts it, `sync` refuses to
+capture a record with the same connector, source and source record id,
+whatever its new content. A purged event bound to an enrolled source refuses
+only that source's record; an unbound event refuses the record from any source
+of its connector. Refused records do not fail the run or hold back the cursor:
+`sync` reports `suppressed=N` and prints a notice on stderr, and the daemon
+sync (`serve`, `sync --once`, the app's processing pass) records a
+`refused N purged source record(s)` line in the run receipt's errors, so the
+rail shows as degraded until the next sync that refuses nothing. `kizuki purge
+--suppressions [--json]` lists the refused records with the purge receipt that
+holds each one. `kizuki purge --lift-suppression RECEIPT` lifts every
+suppression of that purge, and the next sync may capture the records again once
+the source offers them (the cursor already moved past a refused record, so it
+returns when the source changes it again, or after a backfill);
+purging one again makes a new receipt and a new suppression. Purges made by
+revoking a source's authorization are not suppressed, since the owner
+re-authorizes that source through its own consent step. The refusal is derived
+from the purge history, so backup and restore carry it, and a restored vault
+refuses again until the owner lifts it. Purges recorded before this behavior
+refuse too.
 
 Subject purges use an exact raw `subject_id` in its emitting connector's
 namespace: `--subject ID --connector ID`. Bare subject IDs are refused,
@@ -713,6 +881,39 @@ The same scope check runs again inside the deletion transaction.
 `PurgeError` codes `subject_namespace_required` or `subject_source_required`
 for incomplete scope. `--source` is a subject qualifier, not a source-wide
 purge command. `--subject` cannot be combined with `--event` or `--record`.
+
+## backup
+
+```text
+usage: kizuki backup --out DIR [--wait SECONDS]
+```
+
+Snapshots a live vault into an empty directory, safe while the service runs.
+It takes the canon writer, so no canon write is in flight, and waits (default
+30 seconds, `--wait 0` to refuse at once) while another process holds the
+writer or a crashed canon write is still pending; a pending write is finished
+by the service or `kizuki recover`. It then takes an SQLite snapshot of the
+ledger, copies canon pages, their archived revisions and the receipt stream,
+checks that the stream and the ledger's receipts agree, and writes
+`kizuki.snapshot/v1` with a SHA-256 for every file. A directory that is
+missing its manifest is unfinished and unusable. The destination must be empty
+and outside the vault.
+
+The snapshot holds ledger content, so keep it as private as the vault. It
+carries no credential: agent enrollments and token hashes, connector state,
+credential references and secret files are left out of the copied ledger.
+
+A snapshot is not a copy of the whole directory. It carries receipted canon
+pages, their archived revisions and the receipt stream. Pages that no receipt
+covers, other files, and hidden entries such as `.kizuki/serve.toml` (the model,
+port and extraction settings) are not in it. The manifest records how many
+entries it left out (`excluded_entries`) and lists the limits, and `backup` and
+`restore` print a `warning=` line when any were skipped. Keep your own copy of
+`serve.toml` and any pages outside canon. It is restore-only and needs no `export` purpose, but
+refuses while a source revocation is purging; see [Source
+consent](#source-consent). Unlike a file-level copy of a running vault, it
+cannot capture a half-finished canon write, which a copy refuses to recover.
+Use `export` for a portable bundle another consumer reads.
 
 ## export
 
@@ -733,10 +934,20 @@ Every enrolled source must grant the `export` purpose first; see
 usage: kizuki restore --from DIR [--into DIR] [--verify]
 ```
 
-Verifies a `kizuki.backup/v3` directory and accepts `kizuki.backup/v1` and
-`kizuki.backup/v2` as legacy restore inputs. With `--into` it restores into an
-empty target after that verification. `--from DIR` alone, or with `--verify`,
-checks hashes and completeness without writing.
+Verifies a `kizuki.backup/v3` export or a `kizuki.snapshot/v1` snapshot and
+accepts `kizuki.backup/v1` and `kizuki.backup/v2` as legacy restore inputs.
+With `--into` it restores into an empty target after that verification.
+`--from DIR` alone, or with `--verify`, checks hashes and completeness without
+writing.
+
+A snapshot restore also checks that every receipted page holds bytes one of its
+receipts produced and fails when doctor finds an invalid page. A restored vault
+recreates its receipt journal, so `kizuki doctor` reports no orphans, and it
+accepts canon writes. Restore prints `reenroll_agents=`: no
+backup carries a credential, so every agent enrolls again with `kizuki agent
+add`. A snapshot names each agent it was taken with (`reenroll_agent=NAME`); an
+export does not record agent names and prints `unknown`. Restored connections
+are disconnected; reconnect each source.
 
 Current backups include the bounded deferred-input queue and any one pending
 model decision, so a restore can resume without sending the source text to the
@@ -751,10 +962,15 @@ extracted in segments and the receipts of skipped records.
 usage: kizuki recover [--json]
 ```
 
-Resumes interrupted memory writes and their retrieval updates. Exits 0 when
-nothing remains pending. If recovery is still pending, stderr names the
-reason when known and points at `kizuki doctor --json`. Existing holds stay
-in place.
+Resumes interrupted memory writes, their retrieval updates and interrupted
+purges. A purge stopped after its first phase keeps its page hold and the
+purged claim text until it is finished; `recover` lifts the hold, completes the
+batch and erases the remaining payloads, exactly as `kizuki serve` does on its
+next sweep. The JSON report lists `purges_resumed` and `purges_pending`. Exits 0
+when nothing remains pending. If recovery is still pending, stderr names the
+reason when known and points at `kizuki doctor --json`, or at `kizuki purge
+--verify RECEIPT` for a purge that could not finish. Existing holds stay in
+place until their purge finishes.
 
 ## rebuild
 
@@ -832,6 +1048,47 @@ secret references.
 contradiction matrix and source lineage. It carries no script and fetches
 nothing, so it opens without a network. Exported copies live outside the vault
 and are not reached by purge.
+
+## parity
+
+```text
+usage: kizuki parity run --queries FILE [--k 1..20] [--timeout-ms N] [--min-overlap 0..1] [--json] --estate-cmd [--] ARGV...
+```
+
+Shadow parity run. For each query in `FILE` (one per line, at most 200, blank
+lines and `#` lines skipped) it asks Kizuki for its recall context and runs one
+local command for the existing memory stack, then compares the sources each one
+returned. It never injects context, never writes canon or ledger events, and
+opens no network connection of its own. Each Kizuki read is an ordinary
+audited owner read, logged with its arguments the same as `context`.
+
+`--estate-cmd` takes the rest of the command line. The query replaces `{query}`
+in any argument, or is appended as the last argument when none contains it. Put
+`--` right after `--estate-cmd` so the CLI does not read the command's own
+flags. The command runs without a shell, with no stdin, and prints one source
+key per line on stdout. A key matches a Kizuki result when it equals a canon
+page path, a source reference listed on a canon page, or a ledger event id.
+`--k` bounds both lists (default 5). `--timeout-ms` bounds each command run
+(default 10000, at most 120000); stdout is capped at 1 MiB. A query starting
+with `-` can be read as an option by the command, so have a wrapper put `--`
+before it.
+
+The receipt is written to `.kizuki/receipts/parity/<run id>.json`, mode 0600.
+Per query it holds a SHA-256 of the query, top-k counts, latency, an error
+class, the overlap ratio (shared stack keys over the stack's keys), and short
+hashes of the sources only one side returned. It holds no query text, result
+text or source name in the clear, and the stack's stderr is discarded. Hashes
+are unsalted so they stay stable from run to run, which means a guessable query
+or page path can be confirmed by anyone who can read the receipt file. Purge and
+prune do not touch parity receipts. On timeout the command's whole process
+group is killed.
+
+Exit status: `0` parity met, `1` a Kizuki-side failure, `2` usage error, `3` the
+external command failed for at least one query (recorded in the receipt, the
+run continues), `4` mean overlap below `--min-overlap` (default 0.5) or fewer
+than half the queries had a comparable answer. Parity is never reported as met
+when under half the set could be compared. See [the parity run](world/parity.md) for the receipt fields.
+Scheduling a run on a machine is an owner action.
 
 ## version
 

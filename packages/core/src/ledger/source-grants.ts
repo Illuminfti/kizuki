@@ -773,6 +773,8 @@ export interface SourceReadScope {
   purpose?: SourcePurpose;
   port?: object;
   model?: boolean;
+  /** Resolves a source grant; a bulk caller passes a memoized lookup so each source is inspected once. */
+  grantOf?: (sourceKey: string) => SourceGrant | null;
 }
 export function sourceEventsAllowed(
   db: Database,
@@ -815,7 +817,7 @@ export function sourceEventsAllowed(
       if (!scope.owner || scope.model || scope.port !== undefined) return false;
       continue;
     }
-    const grant = inspectSourceGrant(db, row.source_key);
+    const grant = scope.grantOf === undefined ? inspectSourceGrant(db, row.source_key) : scope.grantOf(row.source_key);
     if (
       grant === null ||
       grant.status !== "active" ||

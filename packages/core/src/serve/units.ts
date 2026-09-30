@@ -131,6 +131,40 @@ export function renderLaunchdPlist(spec: UnitSpec): string {
   ].join("\n");
 }
 
+/** systemd command words as rendered by systemdValue: bare, or a JSON string with %% and $$ escapes. */
+function systemdWords(line: string): string[] {
+  return (line.match(/"(?:[^"\\]|\\.)*"|\S+/g) ?? []).map((word) => {
+    if (!word.startsWith("\"")) return word;
+    try { return (JSON.parse(word) as string).replaceAll("$$", "$").replaceAll("%%", "%"); } catch { return word; }
+  });
+}
+
+function unescapeXml(value: string): string {
+  return value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&amp;", "&");
+}
+
+/**
+ * The `--vault` path a rendered definition launches, or null when the
+ * definition names none. The unit name carries only the vault id, and a copy
+ * of a vault has the same id, so this is what says which vault a unit serves.
+ */
+export function unitVaultPath(kind: "systemd" | "launchd", body: string): string | null {
+  let words: string[];
+  if (kind === "systemd") {
+    const line = body.split("\n").find((candidate) => candidate.startsWith("ExecStart="));
+    words = line === undefined ? [] : systemdWords(line.slice("ExecStart=".length));
+  } else {
+    const args = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(body)?.[1] ?? "";
+    words = [...args.matchAll(/<string>([^<]*)<\/string>/g)].map((match) => unescapeXml(match[1]!));
+  }
+  const at = words.indexOf("--vault");
+  return at >= 0 && at + 1 < words.length ? words[at + 1]! : null;
+}
+
 /** Supervisor commands are argument vectors; paths are never shell code. */
 function validateSpec(spec: UnitSpec): void {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(spec.vaultId)) {

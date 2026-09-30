@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureStatusErrors } from "./status";
 
 const ROOT = join(import.meta.dir, "../..");
 const EXAMPLE = join(ROOT, "rfcs/fixtures/world-forecast-baseline-design.json");
@@ -27,7 +28,7 @@ function load(): Fixture {
 function baselineErrors(example: Fixture): string[] {
   const errors: string[] = [];
   if (example.evaluation_state !== "not_run") errors.push("example must remain not_run");
-  if (example.status !== "future_unimplemented") errors.push("example must remain unimplemented");
+  errors.push(...fixtureStatusErrors("world-forecast-baseline-design", example.status));
   if (example.id !== "deterministic-baseline-before-learned-model") errors.push("unexpected example id");
   if (example.question.kind !== "prerequisite_deadline") errors.push("question kind drifted");
   if (!example.question.deterministic) errors.push("question is not deterministic");

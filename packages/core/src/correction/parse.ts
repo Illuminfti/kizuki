@@ -1,6 +1,7 @@
 import type { Claim, ClaimPolarity } from "../contracts/proposal";
 import { normalizeObject } from "../claims/hash";
-import type { CorrectTarget } from "./types";
+import { canonicalJson } from "../util/hash";
+import type { CorrectTarget, WorldCorrection } from "./types";
 
 /**
  * Deterministic object/polarity for a `--claim` correction. This is not a
@@ -33,12 +34,29 @@ export function targetJson(target: CorrectTarget | undefined): string {
   return JSON.stringify(out);
 }
 
-export function sourceRecordId(statement: string, target: CorrectTarget | undefined): string {
-  return new Bun.CryptoHasher("sha256")
+/**
+ * One statement aimed at one claim is one record, unless it asks for something
+ * else of it: the same words can retract a claim or reclassify it. The default,
+ * which replaces the object with the statement, adds nothing so a record filed
+ * before modes existed keeps its identity.
+ */
+function intentJson(world: WorldCorrection | undefined): string | null {
+  if (world === undefined || (world.mode === "replace_object" && world.object === undefined)) return null;
+  return canonicalJson(world);
+}
+
+export function sourceRecordId(
+  statement: string,
+  target: CorrectTarget | undefined,
+  world?: WorldCorrection,
+): string {
+  const hash = new Bun.CryptoHasher("sha256")
     .update(statement)
     .update("\0")
-    .update(targetJson(target))
-    .digest("hex");
+    .update(targetJson(target));
+  const intent = intentJson(world);
+  if (intent !== null) hash.update("\0").update(intent);
+  return hash.digest("hex");
 }
 
 export function hasExactTarget(target: CorrectTarget | undefined): boolean {

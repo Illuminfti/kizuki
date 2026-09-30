@@ -69,6 +69,7 @@ export {
   claimsConflict,
   countClaims,
   countUnwrittenLiveClaims,
+  countLiveClaimsByProducer,
   countWrittenLiveClaims,
   getClaim,
   getPredicate,
@@ -113,6 +114,7 @@ export type {
   IdentityLinkStatus,
   InsertClaimInput,
   InsertClaimResult,
+  LiveClaimProducers,
   LiveConflict,
   LiveConflictMember,
   PredicateCardinality,
@@ -713,12 +715,18 @@ export {
   listHistoricalConnectorIds,
   normalizePurgeReason,
   previewPurge,
+  purgeNeedsCompletion,
   readHolds,
   resolvePurgeConnectorId,
+  resumePendingPurges,
   resumePurge,
   runPurge,
   verifyPurge,
 } from "./ledger/purge";
+export { PURGE_STORE_NAMES } from "./ledger/purge-stores";
+export type { PurgeErasure, PurgeStoreName, PurgeStoreProof } from "./ledger/purge-stores";
+export { findPurgeSuppression, liftPurgeSuppressions, listPurgeSuppressions } from "./ledger/purge-suppression";
+export type { PurgeSuppression } from "./ledger/purge-suppression";
 export type {
   CanonHold,
   PurgeErrorCode,
@@ -727,6 +735,7 @@ export type {
   PurgeHealthFailure,
   PurgeOp,
   PurgeOperationResult,
+  PendingPurgeReport,
   PurgeOutcome,
   PurgePhaseOptions,
   PurgePreview,
@@ -791,6 +800,8 @@ export {
 export { MAX_PROPOSAL_BODY_CHARS } from "./staging/proposals";
 export type { DeterministicProduceResult } from "./staging/producers";
 export { BACKUP_SCHEMA, exportVault, restoreVault, verifyBackup } from "./export";
+export { SNAPSHOT_SCHEMA, backupVault, exclusionWarnings, isSnapshotBackup, restoreSnapshot, verifySnapshot } from "./snapshot";
+export type { BackupOptions, SnapshotExclusions, SnapshotManifest, SnapshotRestoreReport } from "./snapshot";
 export type {
   BackupSchemaVersions,
   BackupSnapshot,
@@ -839,6 +850,7 @@ export {
   addAgent,
   amendAgentGrant,
   authenticateAgentCredential,
+  readAgentCredentialToken,
   applyAgentsV9,
   authenticate,
   authorize,
@@ -950,6 +962,10 @@ export type {
   CanonChunk,
   ContextPacketArgs,
   ContextPacketData,
+  SessionEmptyReason,
+  SessionReport,
+  SessionSection,
+  SessionSectionReport,
   CorrectArgs,
   CorrectData,
   CorrectTarget,
@@ -1046,7 +1062,9 @@ export {
   readLease,
   readRunReceiptsLog,
   readServeIntent,
+  readServeEndpoint,
   readServePid,
+  readServeProcessMarker,
   requestServeStop,
   retrySkippedRecords,
   ServeStopError,
@@ -1103,6 +1121,7 @@ export type {
   ServeDaemonOptionsV2,
   ServeDoctorOptions,
   ServeDoctorReport,
+  ServeEndpoint,
   ServeHttpHandle,
   ServeHttpOptions,
   ServeIntent,
