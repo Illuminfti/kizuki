@@ -17,8 +17,8 @@ function derivation(metadata: unknown): Independence {
   if (!isPlainObject(metadata)) return "unknown";
   if (COPY_FIELDS.some((key) => metadata[key] !== undefined && metadata[key] !== null && metadata[key] !== false)) return "dependent";
   if (metadata.lineage === undefined) return "independent";
-  if (!isPlainObject(metadata.lineage)) return "unknown";
-  return ["copy", "forward", "summary", "paraphrase", "derived"].includes(String(metadata.lineage.kind)) ? "dependent" : "unknown";
+  if (!isPlainObject(metadata.lineage) || typeof metadata.lineage.kind !== "string") return "unknown";
+  return ["copy", "forward", "summary", "paraphrase", "derived"].includes(metadata.lineage.kind) ? "dependent" : "unknown";
 }
 
 /**
