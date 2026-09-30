@@ -161,7 +161,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -244,7 +244,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -325,7 +325,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -390,7 +390,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -458,7 +458,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -523,7 +523,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -595,7 +595,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "independent",
                   "evidence": [
                     {
                       "admission": {
@@ -715,7 +715,7 @@
                 "kind": "known",
                 "value": 0.5
               },
-              "independence": "unknown",
+              "independence": "independent",
               "evidence": [
                 {
                   "admission": {
@@ -787,7 +787,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -852,7 +852,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "dependent",
                 "evidence": [
                   {
                     "admission": {
@@ -918,7 +918,7 @@
                 "kind": "known",
                 "value": 0.5
               },
-              "independence": "unknown",
+              "independence": "independent",
               "evidence": [
                 {
                   "admission": {
@@ -983,7 +983,7 @@
                 "kind": "known",
                 "value": 0.5
               },
-              "independence": "unknown",
+              "independence": "independent",
               "evidence": [
                 {
                   "admission": {
