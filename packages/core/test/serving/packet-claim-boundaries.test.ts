@@ -198,12 +198,14 @@ test("claim scope uses the primary subject, declared type and valid time", async
   expect(windowed).not.toContain("old-fact-new-assertion");
 });
 
-test("owner-declassified claims do not expose their private source text", async () => {
+test("an unproven correction cannot declassify private evidence", async () => {
   const f = await fixture();
   const event = f.events["private"] as string;
-  await claim(f, "public-announcement", { provenance: [event], intent: "correct", producer: "owner", sensitivity: "public" });
+  const corrected = await claim(f, "public-announcement", { provenance: [event], intent: "correct", producer: "owner", sensitivity: "public" });
+  expect(corrected.sensitivity).toBe("private");
+  expect(await md(f)).toContain("public-announcement");
   const text = (await md(f, "reader-public"));
-  expect(text).toContain("public-announcement");
+  expect(text).not.toContain("public-announcement");
   expect(text).not.toContain(event);
   expect(text).not.toContain("private kettle");
 });
