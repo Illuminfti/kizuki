@@ -641,8 +641,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
         !isPlainObject(raw) ||
         raw["port"] !== this.descriptor.id ||
         raw["contract"] !== this.descriptor.contract ||
-        !Number.isSafeInteger(raw["contract_minor"]) ||
-        (raw["contract_minor"] as number) < 0 || (raw["contract_minor"] as number) > this.descriptor.contract_minor ||
+        raw["contract_minor"] !== this.descriptor.contract_minor ||
         raw["space"] !== null
       ) {
         throw new PortError(

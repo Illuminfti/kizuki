@@ -421,12 +421,11 @@ test("a fence error or mismatched proof cannot schedule an unknown publication",
   expect(readCanonProjectionObligation(f.db, receipt.receipt_id)?.value.external_execution).toEqual(["started"]);
 });
 
-for (const missing of ["capability", "minor", "method"] as const) {
+for (const missing of ["capability", "method"] as const) {
   test(`unknown publication stays held without a fence ${missing}`, async () => {
     const f = await fixture(), temporary = temporaryPortContext(FTS5_RETRIEVAL_DESCRIPTOR);
     cleanup.push(temporary.cleanup);
     const descriptor = { ...FTS5_RETRIEVAL_DESCRIPTOR,
-      ...(missing === "minor" ? { contract_minor: 0 } : {}),
       ...(missing === "capability" ? { supports: ["lexical", "provenance-erasure/v1"] } : {}),
     };
     const port = createFts5RetrievalPort(temporary.ctx, descriptor); cleanup.push(() => { void port.close(); });

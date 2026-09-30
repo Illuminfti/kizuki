@@ -149,7 +149,8 @@ page bytes, receipt, store identity and read generation before acknowledging the
 same obligation by digest. A lost response, thrown operation or process death
 does not prove that an old write can no longer arrive.
 
-Retrieval contract minor 1 adds `mutation-fence/v1`. Its `fenceMutations`
+The opt-in `mutation-fence/v1` capability adds `fenceMutations` without changing
+existing retrieval store formats. Its
 method must prove exclusive ownership of the current store generation and that
 all prior mutations have stopped and cannot publish later. Ownership lasts
 until the instance closes. Native FTS5 provides this through its lifetime kernel

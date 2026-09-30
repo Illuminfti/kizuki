@@ -65,16 +65,15 @@ for (const target of ["writer.lock", "store", "root"] as const) {
   });
 }
 
-test("a minor-zero native store opens and upgrades its engine manifest without a ledger migration", async () => {
+test("an existing native store opens with fencing without changing its manifest format", async () => {
   const temporary = temporaryPortContext(FTS5_RETRIEVAL_DESCRIPTOR);
   const path = join(temporary.ctx.data_dir, "engine.json");
-  const first = createFts5RetrievalPort(temporary.ctx);
+  const first = createFts5RetrievalPort(temporary.ctx, { ...FTS5_RETRIEVAL_DESCRIPTOR, supports: ["lexical", "provenance-erasure/v1"] });
   await first.upsert(SYNTHETIC_DOCS); await first.close();
-  const manifest = JSON.parse(readFileSync(path, "utf8"));
-  writeFileSync(path, JSON.stringify({ ...manifest, contract_minor: 0 }), { mode: 0o600 });
+  const manifest = readFileSync(path, "utf8");
   const reopened = createFts5RetrievalPort(temporary.ctx);
   try {
-    expect(JSON.parse(readFileSync(path, "utf8")).contract_minor).toBe(1);
+    expect(readFileSync(path, "utf8")).toBe(manifest);
     expect(await reopened.fenceMutations()).toEqual({ store: reopened.descriptor.id });
     expect((await reopened.verifyAbsent(SYNTHETIC_DOCS.map(doc => doc.doc_id))).found).toHaveLength(SYNTHETIC_DOCS.length);
   } finally { await reopened.close(); temporary.cleanup(); }

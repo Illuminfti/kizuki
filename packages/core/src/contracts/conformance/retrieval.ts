@@ -77,7 +77,7 @@ export async function runRetrievalConformance(
     port = await harness.create(context.ctx);
     await port.upsert(harness.fixtures.docs.map(validateRetrievalDoc));
     if (port.descriptor.supports.includes(MUTATION_FENCE_CAPABILITY)) {
-      if (port.descriptor.contract_minor < 1 || typeof port.fenceMutations !== "function" ||
+      if (typeof port.fenceMutations !== "function" ||
           (await port.fenceMutations()).store !== port.descriptor.id) {
         failures.push("retrieval: declared mutation fence is unavailable or names another store");
       }

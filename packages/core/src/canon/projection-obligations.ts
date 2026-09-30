@@ -160,7 +160,7 @@ export async function retryCanonProjectionObligationsOwned(scope: VaultMutationS
     const port = io.retrieval;
     const unknown = saved.value.external_execution.includes("started");
     if (unknown && (port === undefined || ops.some(op => op.store !== port.descriptor.id) ||
-        port.descriptor.contract_minor < 1 || !port.descriptor.supports.includes(MUTATION_FENCE_CAPABILITY) ||
+        !port.descriptor.supports.includes(MUTATION_FENCE_CAPABILITY) ||
         typeof port.fenceMutations !== "function")) recoveryFailure("projection_pending", receipt_id);
     if (port === undefined || ops.some(op => op.store !== port.descriptor.id)) continue;
     const store = port.descriptor.id;
