@@ -6,12 +6,14 @@ test("two-line credentials are scrubbed even when the first fragment is short", 
   const f = await serveFixture();
   try {
     for (const first of [0, 1, 5, 51]) {
-      const body = "A".repeat(52);
-      const text = `kzk_${body.slice(0, first)}\n${body.slice(first)}`;
-      const id = storeEvent(f.db, `wrapped-${first}`, "2026-02-28T10:30:00Z", text, "person:ada", "public");
-      const answer = serveTimeline(f.agent("reader-public"), { event_id: id });
-      expect(answer.quoted[0]?.text).toBe("[redacted:api_token]");
-      expect(answer.redacted).toEqual({ api_token: 1 });
+      for (const suffix of ["", "Q"]) {
+        const body = "A".repeat(52);
+        const text = `kzk_${body.slice(0, first)}\n${body.slice(first)}${suffix}`;
+        const id = storeEvent(f.db, `wrapped-${first}-${suffix.length}`, "2026-02-28T10:30:00Z", text, "person:ada", "public");
+        const answer = serveTimeline(f.agent("reader-public"), { event_id: id });
+        expect(answer.quoted[0]?.text).toBe("[redacted:api_token]");
+        expect(answer.redacted).toEqual({ api_token: 1 });
+      }
     }
   } finally { f.dispose(); }
 });
