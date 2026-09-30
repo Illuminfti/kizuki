@@ -6,7 +6,7 @@ import { accept } from "../src/ledger/ledger";
 import { openLedger } from "../src/ledger/db";
 import { registerConnection } from "../src/ledger/connections";
 import {
-  bindSourceJudgePort, bindSourceModelPort, inheritSourcePortBindings, inspectSourceGrant, setSourceGrant, sourceEventsAllowed, sourcePortBindingDigest,
+  bindSourceJudgePort, bindSourceModelPort, inheritSourcePortBindings, inspectSourceGrant, setSourceGrant, sourceEventsAllowed, sourcePolicyEpoch, sourcePortBindingDigest,
 } from "../src/ledger/source-grants";
 import { validEvent } from "./fixtures";
 import { initVault } from "../src/vault/init";
@@ -48,6 +48,22 @@ function ledgerWithEvent() {
 const scope = (port: object) => ({ owner: false, purpose: "extract" as const, model: true, port });
 
 describe("a configured System One judge is model egress", () => {
+  test("epoch-zero compatibility never implies consent to a configured judge", () => {
+    const vault = mkdtempSync(join(tmpdir(), "judge-consent-")); dirs.push(vault); initVault(vault);
+    const db = openLedger(join(vault, ".kizuki", "kizuki.db")); databases.push(db);
+    const stored = accept(db, validEvent());
+    if (stored.status !== "stored") throw new Error("fixture capture failed");
+    expect(sourcePolicyEpoch(db)).toBe(0);
+    const plain = bindSourceModelPort({}, model);
+    const judged = bindSourceJudgePort(bindSourceModelPort({}, model), judge);
+    expect(sourceEventsAllowed(db, [stored.event.event_id], scope(plain))).toBe(true);
+    expect(sourceEventsAllowed(db, [stored.event.event_id], { owner: true })).toBe(true);
+    for (const port of [judged, inheritSourcePortBindings(judged, {})]) {
+      expect(sourceEventsAllowed(db, [], scope(port))).toBe(false);
+      expect(sourceEventsAllowed(db, [stored.event.event_id], scope(port))).toBe(false);
+    }
+  });
+
   test("events are sent only when the grant consents to the judge's exact endpoint and model", () => {
     const { db, grant, event } = ledgerWithEvent();
     const plain = bindSourceModelPort({}, model);

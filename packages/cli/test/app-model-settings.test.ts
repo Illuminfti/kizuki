@@ -180,7 +180,7 @@ test("direct external file and env credentials still bind once through the actua
   expect(seen).toEqual(["Bearer synthetic-external-model-key", "Bearer synthetic-external-model-key"]);
 });
 
-test("a retention class and provider controls belong to one destination and do not follow a changed model", async () => {
+test("changing the model clears its retention declaration and preserves provider privacy controls", async () => {
   const raw = '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "http://127.0.0.1:1/v1"\nmodel = "declared"\nretention = "zero_retention"\ntimeout_ms = 2300\n[ports.llm.provider]\ndata_collection = "deny"\nzdr = true\nallow_fallbacks = false\n';
   const root = fixture(raw), before = await readModelSettings(root);
   // The same destination, saved again, keeps what the owner declared for it.
@@ -191,7 +191,9 @@ test("a retention class and provider controls belong to one destination and do n
     const current = await readModelSettings(root);
     await saveModelSettings(root, { expected_revision: current.revision, selection: selection(url, model), credential: { action: "keep" } });
     const llm = (Bun.TOML.parse(readFileSync(join(root, ".kizuki/serve.toml"), "utf8")) as { ports: { llm: Record<string, unknown> } }).ports.llm;
-    expect(llm.retention).toBeUndefined(); expect(llm.provider).toBeUndefined(); expect(llm.timeout_ms).toBe(2300);
+    expect(llm.retention).toBeUndefined();
+    expect(llm.provider).toEqual({ data_collection: "deny", zdr: true, allow_fallbacks: false });
+    expect(llm.timeout_ms).toBe(2300);
     // Restore the declaration to check the next change independently.
     writeFileSync(join(root, ".kizuki/serve.toml"), raw);
   }

@@ -84,8 +84,8 @@ export async function saveModelSettings(vaultPath: string, input: AppModelSaveIn
     const checked = configured({ id: OPENAI, base_url: selection.base_url, model: selection.model });
     const prior = isPlainObject(previous.llm) && previous.llm.id === OPENAI ? previous.llm : {};
     const sameDestination = prior.base_url === checked.config!.base_url && prior.model === checked.config!.model;
-    // A retention class and provider controls describe one destination; another one starts undeclared.
-    const { retention: _retention, provider: _provider, ...rest } = prior;
+    // A new destination starts undeclared; the owner's provider privacy controls still apply.
+    const { retention: _retention, ...rest } = prior;
     llm = { ...(sameDestination ? prior : rest), id: OPENAI, base_url: checked.config!.base_url, model: checked.config!.model };
   } else invalid();
   const keys = Object.keys(input.credential).sort().join();

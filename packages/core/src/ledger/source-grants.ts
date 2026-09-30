@@ -856,7 +856,8 @@ export function sourceEventsAllowed(
   ids: readonly string[],
   scope: SourceReadScope,
 ): boolean {
-  if (sourcePolicyEpoch(db) === 0) return true;
+  // Historical compatibility supplies no consent for a configured judge.
+  if (sourcePolicyEpoch(db) === 0) return scope.port === undefined || !judgePorts.has(scope.port);
   const local = isLocalSourcePort(scope.port);
   const model = scope.port === undefined ? undefined : modelPorts.get(scope.port);
   if (scope.port !== undefined && !local && model === undefined) return false;
