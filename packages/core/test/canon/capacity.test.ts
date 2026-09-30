@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { previewPurge } from "../../src/ledger/purge";
+import { OWNER } from "../../src/agents";
+import { serveSearch } from "../../src/serving/search";
+import { rebuildDerived } from "../../src/derived";
+import { worldFixture } from "../serving/world-fixture";
+import { getClaim } from "../../src/claims/store";
+import { pendingWorldCanonClaims, worldCanonTarget } from "../../src/canon/world-materialization";
+import { applyCanonWrite } from "../../src/canon/apply";
 import { CanonWriteError } from "../../src/canon/errors";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { undoReceipt } from "../../src/canon/undo";
@@ -15,6 +23,7 @@ import {
   canonCapacity,
   canonLimitsFor,
   loadCanonLimits,
+  validateCanonLimits,
 } from "../../src/vault/canon-limits";
 import { serializePage } from "../../src/vault/frontmatter";
 import { initVault } from "../../src/vault/init";
@@ -88,6 +97,17 @@ describe("canon limits", () => {
       expect(loadCanonLimits(vault).live_pages).toBe(expected);
     }
   });
+  test("backup canon limits reject malformed, excessive and unrelated configuration", () => {
+    const valid = canonLimitsFor(DEFAULT_LIVE_PAGE_CEILING);
+    expect(validateCanonLimits(valid)).toEqual(valid);
+    expect(validateCanonLimits(canonLimitsFor(LIVE_PAGE_CEILING_BOUNDS.max)).walk_bytes).toBe(1_073_741_824);
+    for (const value of [null, {}, { ...valid, live_pages: 99 }, { ...valid, walk_files: 1_000_001 },
+      { ...valid, walk_bytes: 1_073_741_825 }, { ...valid, walk_bytes: "65536" },
+      { ...valid, endpoint: "https://synthetic.invalid" }]) {
+      expect(() => validateCanonLimits(value)).toThrow("backup canon limits are invalid");
+    }
+  });
+
   test("explicit scan budgets are independent of writer capacity and bounded", () => {
     const { vault } = fixture(100);
     const config = join(vault, ".kizuki", "serve.toml");
@@ -234,7 +254,8 @@ describe("the writer at the ceiling", () => {
   });
 
   test("a write pass reports the held state once, keeps the claims live and writes edits", async () => {
-    const { vault, db } = fixture(100);
+    const { vault, db: originalDb } = fixture(100);
+    let db = originalDb;
     const model = {
       descriptor: { id: "kizuki.producer.idle-test", kind: "producer", contract: "kizuki.producer/v1", contract_minor: 1, supports: ["model"], requires_lease: false, optional_package: null },
       health: async () => ({ status: "ready", detail: {} }),
@@ -251,18 +272,88 @@ describe("the writer at the ceiling", () => {
     expect((await pass()).canon_writes).toBe(1);
     fill(vault, 99, "active");
 
-    await claim("topics/one", "First held topic.");
-    await claim("topics/two", "Second held topic.");
+    for (let index = 0; index < 256; index++) await claim(`topics/held-${index}`, `Held topic ${index}.`);
     await claim("topics/kept", "The kept topic gained a note.");
     const result = await pass();
     expect(result.errors.filter((line) => line.includes("canon_ceiling"))).toHaveLength(1);
     expect(result.stopped).toBeNull();
-    expect(existsSync(join(vault, "auto/topics/one.md"))).toBe(false);
-    expect(existsSync(join(vault, "auto/topics/two.md"))).toBe(false);
-    // The edit of the existing page was written; the two held creates stay live and unwritten.
+    expect(existsSync(join(vault, "auto/topics/held-0.md"))).toBe(false);
+    expect(existsSync(join(vault, "auto/topics/held-255.md"))).toBe(false);
+    // An edit behind a full scan of held creates still receives its receipt.
     expect(result.canon_writes).toBe(1);
-    expect(countUnwrittenLiveClaims(db)).toBe(2);
+    expect(countUnwrittenLiveClaims(db)).toBe(256);
+    expect((await pass()).canon_writes).toBe(0);
+    databases.splice(databases.indexOf(db), 1);
+    db.close();
+    db = openLedger(join(vault, ".kizuki", "kizuki.db"));
+    databases.push(db);
+    await claim("topics/kept", "The kept topic gained another note after restart.");
+    expect((await pass()).canon_writes).toBe(1);
+    expect(countUnwrittenLiveClaims(db)).toBe(256);
   });
+  test("growing edits and archive transitions reserve bytes before publishing, while shrinking edits and undo work", async () => {
+    const { vault, db, io } = fixture(100);
+    const source = putEvent(db);
+    const original = write(io, await storeClaim(db, source));
+    fill(vault, 99, "active");
+    writeFileSync(join(vault, ".kizuki", "serve.toml"), "[canon]\nmax_live_pages = 100\nmax_scan_bytes = 65536\n");
+    const before = readFileSync(join(vault, original.page_path));
+    const receipts = db.query("SELECT COUNT(*) AS n FROM canon_receipts").get();
+    const large = await storeClaim(db, source, {
+      kind: "edit", predicate: "employment.role", object: "large", body: "A synthetic note. ".repeat(5000),
+    });
+    expect(() => write(io, large)).toThrow(expect.objectContaining({ code: "canon_scan_incomplete" }));
+    const deletion = await storeClaim(db, source, {
+      kind: "deletion", predicate: null, object: null, frontmatter: { "x-notes": Array.from({ length: 24 }, (_, index) => `Note ${index}. ${"Synthetic. ".repeat(350)}`) },
+    });
+    expect(() => write(io, deletion)).toThrow(expect.objectContaining({ code: "canon_scan_incomplete" }));
+    expect(readFileSync(join(vault, original.page_path))).toEqual(before);
+    expect(db.query("SELECT COUNT(*) AS n FROM canon_receipts").get()).toEqual(receipts);
+    expect(db.query("SELECT COUNT(*) AS n FROM canon_write_intents").get()).toEqual({ n: 0 });
+    expect(listCanonPagesReport(vault).truncated).toBe(false);
+    await expect(serveSearch({ db, vaultPath: vault, principal: OWNER }, { query: "Grace" })).resolves.toBeDefined();
+    expect(previewPurge(db, vault, { event_id: source }, "fixture cleanup").event_count).toBe(1);
+    expect(() => rebuildDerived(db, vault)).not.toThrow();
+    const small = await storeClaim(db, source, { kind: "edit", predicate: "employment.role", object: "small", body: "A note." });
+    const edited = write(io, small);
+    expect(edited.page_action).toBe("edit");
+    await undoReceipt(io, edited.receipt_id);
+    expect(readFileSync(join(vault, original.page_path))).toEqual(before);
+  });
+
+  test("typed edits precede more held handles than a bounded typed pass can select, including restart", async () => {
+    const { vault, db: initialDb } = fixture(100);
+    let db = initialDb;
+    const first = await worldFixture(db);
+    const initial = first.claims.map(id => getClaim(db, id)!);
+    applyCanonWrite({ db, vault_path: vault }, initial, worldCanonTarget(db, initial[0]!.claim_id), {
+      writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+    });
+    fill(vault, 99, "active");
+    for (let index = 0; index < 34; index++) {
+      await worldFixture(db, { sourceKey: first.sourceKey, subject: `topic:held-${index}`, label: `Synthetic held concept ${index}` });
+    }
+    const model = {
+      descriptor: { id: "kizuki.producer.idle-test", kind: "producer", contract: "kizuki.producer/v1", contract_minor: 1, supports: ["model"], requires_lease: false, optional_package: null },
+      health: async () => ({ status: "ready", detail: {} }), close: async () => undefined,
+      produce: async () => ({ status: "ok", claims: [], usage: { calls: 0, input_tokens: 0, output_tokens: 0 } }),
+    } as never;
+    const pass = () => runWritePass(db, vault, {
+      budget: createBudgetTracker({ canon_writes_per_run: 8 }), model_ref: "fixture:idle", producer: model, claims: { db },
+    });
+    const changed = await worldFixture(db, { sourceKey: first.sourceKey, label: "Synthetic revised concept" });
+    expect(pendingWorldCanonClaims(db, 1)[0]?.some(claim => changed.claims.includes(claim.claim_id))).toBe(true);
+    expect((await pass()).canon_writes).toBe(1);
+    expect((await pass()).canon_writes).toBe(0);
+    databases.splice(databases.indexOf(db), 1);
+    db.close();
+    db = openLedger(join(vault, ".kizuki", "kizuki.db"));
+    databases.push(db);
+    await worldFixture(db, { sourceKey: first.sourceKey, label: "Synthetic revised concept after restart" });
+    expect((await pass()).canon_writes).toBe(1);
+    expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM claims WHERE is_world_typed=1 AND status='live' AND receipt_id IS NULL").get()?.n).toBeGreaterThanOrEqual(34);
+  });
+
   test("creation cannot push a complete inventory past its resource budget", async () => {
     const { vault, db, io } = fixture(100);
     writeFileSync(join(vault, ".kizuki", "serve.toml"), "[canon]\nmax_live_pages = 100\nmax_scan_files = 100\n");

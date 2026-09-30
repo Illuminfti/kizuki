@@ -8,6 +8,8 @@ const MIN_WALK_FILES = 40_000;
 const MIN_WALK_BYTES = 64 * 1_048_576;
 const WALK_BYTES_PER_FILE = 4_096;
 const CONFIG_BYTES = 65_536;
+export const CANON_SCAN_FILE_BOUNDS = { min: 100, max: 1_000_000 } as const;
+export const CANON_SCAN_BYTE_BOUNDS = { min: 65_536, max: 1_073_741_824 } as const;
 
 /** Writer capacity and independent resource budgets for complete reads. */
 export interface CanonLimits {
@@ -22,7 +24,7 @@ export function canonLimitsFor(livePages: number): CanonLimits {
   return {
     live_pages: livePages,
     walk_files: walkFiles,
-    walk_bytes: Math.max(MIN_WALK_BYTES, walkFiles * WALK_BYTES_PER_FILE),
+    walk_bytes: Math.min(CANON_SCAN_BYTE_BOUNDS.max, Math.max(MIN_WALK_BYTES, walkFiles * WALK_BYTES_PER_FILE)),
   };
 }
 
@@ -41,8 +43,8 @@ export function loadCanonLimits(vaultPath: string): CanonLimits {
     const defaults = canonLimitsFor(integer(table["max_live_pages"], DEFAULT_LIVE_PAGE_CEILING, LIVE_PAGE_CEILING_BOUNDS.min, LIVE_PAGE_CEILING_BOUNDS.max));
     return {
       live_pages: defaults.live_pages,
-      walk_files: integer(table["max_scan_files"], defaults.walk_files, 100, 1_000_000),
-      walk_bytes: integer(table["max_scan_bytes"], defaults.walk_bytes, 65_536, 1_073_741_824),
+      walk_files: integer(table["max_scan_files"], defaults.walk_files, CANON_SCAN_FILE_BOUNDS.min, CANON_SCAN_FILE_BOUNDS.max),
+      walk_bytes: integer(table["max_scan_bytes"], defaults.walk_bytes, CANON_SCAN_BYTE_BOUNDS.min, CANON_SCAN_BYTE_BOUNDS.max),
     };
   } catch {
     return canonLimitsFor(DEFAULT_LIVE_PAGE_CEILING);
@@ -84,4 +86,15 @@ export function canonCapacity(
     walk_files: limits.walk_files, walk_bytes: limits.walk_bytes,
     next: state === "ok" ? null : next,
   };
+}
+
+/** Backups carry only validated canon resources, never runtime endpoints or secrets. */
+export function validateCanonLimits(value: unknown): CanonLimits {
+  if (!isPlainObject(value) || Object.keys(value).length !== 3 ||
+      integer(value["live_pages"], -1, LIVE_PAGE_CEILING_BOUNDS.min, LIVE_PAGE_CEILING_BOUNDS.max) === -1 ||
+      integer(value["walk_files"], -1, CANON_SCAN_FILE_BOUNDS.min, CANON_SCAN_FILE_BOUNDS.max) === -1 ||
+      integer(value["walk_bytes"], -1, CANON_SCAN_BYTE_BOUNDS.min, CANON_SCAN_BYTE_BOUNDS.max) === -1) {
+    throw new Error("backup canon limits are invalid");
+  }
+  return { live_pages: value["live_pages"] as number, walk_files: value["walk_files"] as number, walk_bytes: value["walk_bytes"] as number };
 }

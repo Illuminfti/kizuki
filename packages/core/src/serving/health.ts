@@ -144,7 +144,7 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
     auditArguments({}),
     ({ ctx }): Served<HealthData> => {
       const grant = ctx.principal.grant;
-      const index = loadCanon(ctx);
+      const index = loadCanon(ctx, { include_archived: ctx.principal.kind === "owner" });
 
       let active = 0;
       let labeled = 0;

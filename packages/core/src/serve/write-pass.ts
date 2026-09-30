@@ -412,7 +412,7 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
     }
   }
 
-  const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN);
+  const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN, true);
   for (const claim of pending) {
     if (tally.canon_writes >= WRITE_PASS_LIMIT) break;
     try {

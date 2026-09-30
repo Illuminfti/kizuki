@@ -124,3 +124,10 @@ and store obligations are preserved; pending purge work refuses export.
 Connection re-enrollment semantics remain separate work. Existing durable extraction streams are preserved without
 another model call. Review the inventory's limits and unavailable archive count
 before relying on an export for recovery.
+
+New exports also declare a hashed `canon/limits.json` containing only the
+validated live-page ceiling and scan file/byte budgets. Restore validates
+these bounded integers and installs a canon-only `serve.toml` before typed
+canon validation and mandatory derived rebuilding. No model endpoint, secret
+reference or other runtime configuration enters this file. Older backups
+without the declared file use the default canon limits.

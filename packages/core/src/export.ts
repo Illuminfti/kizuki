@@ -89,7 +89,7 @@ import { ensureVaultId, readVaultId, vaultIdPath } from "./serve/vault-id";
 import { doctorVault } from "./vault/doctor";
 import { hardenLedgerFile, initVault } from "./vault/init";
 import { parseFrontmatter } from "./vault/frontmatter";
-import { loadCanonLimits } from "./vault/canon-limits";
+import { loadCanonLimits, validateCanonLimits } from "./vault/canon-limits";
 import { MAX_CANON_DEPTH, MAX_CANON_PAGE_BYTES } from "./vault/pages";
 import { validatePage } from "./vault/schema";
 
@@ -121,6 +121,7 @@ const CLAIM_V2_SUPPORT_EVENTS_BACKUP = "claims/claim_v2_support_events.jsonl";
 const MAX_IDENTITY_BACKUP_BYTES = 8_388_608;
 const MAX_IDENTITY_BACKUP_ROW_BYTES = 131_072;
 const SOURCE_INVENTORY_BACKUP = "ledger/source_store_inventory.jsonl";
+const CANON_LIMITS_BACKUP = "canon/limits.json";
 const EXPORT_INVENTORY = "export-inventory.json";
 const MAX_INVENTORY_ENTRIES = 100_000;
 const SOURCE_EXPORT_REFUSALS_SHOWN = 5;
@@ -1844,6 +1845,8 @@ function exportVaultOwned(
       const inventoryBytes = Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
       if (preview !== undefined && !preview.bytes.equals(inventoryBytes)) throw new Error("export inventory file changed before capture");
       const files: Record<string, ExportManifestEntry> = {};
+      writePrivateFile(join(staging, CANON_LIMITS_BACKUP), Buffer.from(`${JSON.stringify(loadCanonLimits(vaultPath))}\n`));
+      trackFile(files, CANON_LIMITS_BACKUP, 1, hashFile(join(staging, CANON_LIMITS_BACKUP)));
       if (preview === undefined) writePrivateFile(join(staging, EXPORT_INVENTORY), inventoryBytes);
       trackFile(files, EXPORT_INVENTORY, 1, hashFile(join(staging, EXPORT_INVENTORY)));
       for (const entry of inventory.files) {
@@ -2877,6 +2880,19 @@ export function restoreVault(
       );
     }
     initVault(staging);
+    // Install canon-only limits before typed validation and mandatory rebuild.
+    // Older backups retain the bounded defaults; no runtime config is copied.
+    const limitEntry = manifest.files[CANON_LIMITS_BACKUP];
+    if (limitEntry !== undefined) {
+      if (limitEntry.size > 1024 || limitEntry.count !== 1) throw new Error("backup canon limits exceed their bound");
+      const limitBytes = readFileSyncNoFollow(join(source, CANON_LIMITS_BACKUP), limitEntry.size);
+      let limitValue: unknown;
+      try { limitValue = JSON.parse(limitBytes.toString("utf8")); }
+      catch { throw new Error("backup canon limits are invalid"); }
+      const limits = validateCanonLimits(limitValue);
+      writePrivateFile(join(staging, CONTROL_DIR, "serve.toml"), Buffer.from(
+        `[canon]\nmax_live_pages = ${limits.live_pages}\nmax_scan_files = ${limits.walk_files}\nmax_scan_bytes = ${limits.walk_bytes}\n`));
+    }
     if (manifest.vault_id !== null) {
       const idPath = vaultIdPath(staging);
       if (!existsSync(idPath)) {
