@@ -347,10 +347,11 @@ export function insertErasedReceiptRow(db:Database, input:import("./world-receip
 }
 export function eraseReceiptRow(db:Database,input:import("./world-receipt").ErasedWorldCanonReceipt):void {
   const record=checkedErasedReceipt(input);
-  const result=db.query(`UPDATE canon_receipts SET sensitivity='private',receipt_state='erased',world_basis=NULL,own_id_origin='core',purge_receipt_id=?,erased_at=?,erasure_integrity=?,
+  const result=db.query<{receipt_id:string},(string|null)[]>(`UPDATE canon_receipts SET sensitivity='private',receipt_state='erased',world_basis=NULL,own_id_origin='core',purge_receipt_id=?,erased_at=?,erasure_integrity=?,
     claim_ids=NULL,provenance=NULL,page_path=NULL,kind=NULL,before_hash=NULL,after_hash=NULL,at=NULL,receipt_kind=NULL,page_action=NULL,archive_path=NULL,writer=NULL,producer=NULL,model_ref=NULL,authority=NULL,confidence=NULL,taint=NULL,candidates=NULL,superseded=NULL,retrieval_ops=NULL,reverts=NULL,reverted_by=NULL
-    WHERE receipt_id=? AND record_codec='kizuki.canon-receipt/v2' AND prior_receipt_id IS ?`).run(record.purge_receipt_id,record.erased_at,record.integrity,record.receipt_id,record.prior_receipt_id);
-  if(result.changes!==1)throw new Error("typed canon receipt unavailable for erasure");
+    WHERE receipt_id=? AND record_codec='kizuki.canon-receipt/v2' AND prior_receipt_id IS ? RETURNING receipt_id`).get(record.purge_receipt_id,record.erased_at,record.integrity,record.receipt_id,record.prior_receipt_id);
+  // RETURNING identifies the erased receipt even when cleanup triggers remove hash rows.
+  if(result?.receipt_id!==record.receipt_id)throw new Error("typed canon receipt unavailable for erasure");
 }
 function checkedErasedReceipt(input:import("./world-receipt").ErasedWorldCanonReceipt):import("./world-receipt").ErasedWorldCanonReceipt {
   const record=parseWorldCanonReceipt(input);

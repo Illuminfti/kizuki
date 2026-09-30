@@ -1,5 +1,5 @@
 import { expect,test } from "bun:test";
-import { openLedger } from "../../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 
 test("ledger33 represents retained and erased typed canon receipts in the existing receipt table",()=>{
  const db=openLedger(":memory:");try {
@@ -7,7 +7,7 @@ test("ledger33 represents retained and erased typed canon receipts in the existi
   expect(columns).toContain("record_codec");
   expect(columns).toContain("world_basis");
   expect(columns).toContain("erasure_integrity");
-  expect(db.query("SELECT version FROM schema_version").get()).toEqual({version:34});
+  expect(db.query("SELECT version FROM schema_version").get()).toEqual({version:LEDGER_SCHEMA_VERSION});
  }finally{db.close();}
 });
 

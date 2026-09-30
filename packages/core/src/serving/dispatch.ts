@@ -19,7 +19,7 @@ import type { TimelineArgs } from "./timeline";
 import type { WorldViewEnvelope } from "./world-view";
 import { serveWorldView } from "./world-view";
 import { ServeError } from "./types";
-import type { Envelope, ServeContext } from "./types";
+import type { Envelope, QuotedChunk, QuotedPageChunk, ServeContext } from "./types";
 
 /**
  * One routing table for every serve host (stdio MCP and loopback HTTP).
@@ -29,7 +29,7 @@ export async function dispatchServeTool(
   ctx: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
-): Promise<Envelope<unknown> | WorldViewEnvelope> {
+): Promise<Envelope<unknown, QuotedChunk | QuotedPageChunk> | WorldViewEnvelope> {
   switch (tool) {
     case "search":
       return serveSearch(ctx, args as unknown as SearchArgs);

@@ -226,15 +226,15 @@ describe("serveContextPacket", () => {
       packet.indexOf("## related"),
     );
     expect(packet.indexOf("## related")).toBeLessThan(
-      packet.indexOf("## quoted capture"),
+      packet.lastIndexOf("## quoted capture"),
     );
     expect(packet).toContain("[page:");
     expect(packet).toContain("(ev:");
-    expect(envelope.canon.length).toBe(
+    expect(envelope.canon.length + envelope.quoted.filter(chunk => "page_id" in chunk).length).toBe(
       (envelope.data?.sections.canon ?? 0) +
         (envelope.data?.sections.graph ?? 0),
     );
-    expect(envelope.quoted.length).toBe(envelope.data?.sections.timeline ?? 0);
+    expect(envelope.quoted.filter(chunk => "event_id" in chunk).length).toBe(envelope.data?.sections.timeline ?? 0);
   });
 
   test("the packet is deterministic apart from its timestamp", async () => {
@@ -260,8 +260,9 @@ describe("serveContextPacket", () => {
       include: ["canon"],
       budget_tokens: 2_000,
     }));
-    expect(envelope.quoted).toEqual([]);
-    expect(envelope.data?.packet_md).not.toContain("## quoted capture");
+    expect(envelope.quoted.filter(chunk => "event_id" in chunk)).toEqual([]);
+    expect(envelope.quoted.filter(chunk => "page_id" in chunk)).toHaveLength(1);
+    expect(envelope.data?.packet_md).toContain("## quoted capture");
     expect(envelope.data?.sections.timeline).toBe(0);
   });
 
@@ -399,7 +400,7 @@ describe("the packet is scoped by the grant, not by the request", () => {
       "2026-02-28T11:00:00Z",
       "2026-02-28T12:00:00Z",
     ]);
-    expect(packet.quoted.map((chunk) => chunk.occurred_at)).toEqual(
+    expect(packet.quoted.filter(chunk => "event_id" in chunk).map((chunk) => chunk.occurred_at)).toEqual(
       direct.quoted.map((chunk) => chunk.occurred_at),
     );
     expect(packet.data?.sections.timeline).toBe(2);
@@ -430,7 +431,7 @@ describe("the packet is scoped by the grant, not by the request", () => {
       query: "Atlas",
       budget_tokens: 2_000,
     });
-    expect(session.quoted.every((chunk) => chunk.occurred_at !== occurredAt)).toBe(true);
+    expect(session.quoted.every((chunk) => !("event_id" in chunk) || chunk.occurred_at !== occurredAt)).toBe(true);
     expect(session.data?.packet_md ?? "").not.toContain("Atlas");
 
     const widened = await serveContextPacket(live.owner(), {
@@ -442,7 +443,7 @@ describe("the packet is scoped by the grant, not by the request", () => {
     });
     expect(
       widened.quoted.some(
-        (chunk) => chunk.text.includes("Atlas") && chunk.occurred_at === occurredAt,
+        (chunk) => "event_id" in chunk && chunk.text.includes("Atlas") && chunk.occurred_at === occurredAt,
       ),
     ).toBe(true);
     expect(widened.data?.sections.timeline ?? 0).toBeGreaterThan(0);
@@ -455,8 +456,8 @@ describe("the packet is scoped by the grant, not by the request", () => {
       budget_tokens: 2_000,
       include: ["timeline" as const],
     });
-    expect(restricted.quoted.every((chunk) => chunk.occurred_at !== occurredAt)).toBe(true);
-    expect(restricted.quoted.map((chunk) => chunk.occurred_at)).toEqual([
+    expect(restricted.quoted.every((chunk) => !("event_id" in chunk) || chunk.occurred_at !== occurredAt)).toBe(true);
+    expect(restricted.quoted.filter(chunk => "event_id" in chunk).map((chunk) => chunk.occurred_at)).toEqual([
       "2026-02-28T11:00:00Z",
       "2026-02-28T12:00:00Z",
     ]);
@@ -799,7 +800,7 @@ describe("context timeline authorization starvation", () => {
         budget_tokens: 2_000,
       },
     );
-    expect(envelope.quoted.map((chunk) => chunk.event_id)).toContain(allowed);
+    expect(envelope.quoted.filter(chunk => "event_id" in chunk).map((chunk) => chunk.event_id)).toContain(allowed);
     expect(envelope.denied).toEqual([]);
     expect(envelope.data?.packet_md).toContain(allowed);
     expect(envelope.data?.truncated).toBe(false);
@@ -833,7 +834,7 @@ describe("context timeline authorization starvation", () => {
       until: "2026-03-01T00:00:00Z",
       budget_tokens: 2_000,
     });
-    expect(envelope.quoted.map((chunk) => chunk.event_id)).toEqual([allowed]);
+    expect(envelope.quoted.filter(chunk => "event_id" in chunk).map((chunk) => chunk.event_id)).toEqual([allowed]);
     expect(envelope.denied).toEqual([]);
     const rendered = JSON.stringify(envelope);
     expect(envelope.data?.packet_md).toContain(allowed);
@@ -872,7 +873,7 @@ describe("context timeline authorization starvation", () => {
       until: "2026-03-01T00:00:00Z",
       budget_tokens: 2_000,
     });
-    const ids = envelope.quoted.map((chunk) => chunk.event_id);
+    const ids = envelope.quoted.filter(chunk => "event_id" in chunk).map((chunk) => chunk.event_id);
     expect(ids).toContain(grace);
     expect(ids.some((id) => ada.includes(id))).toBe(true);
     expect(envelope.data?.packet_md).toContain(grace);

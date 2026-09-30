@@ -6,7 +6,7 @@
  * first, add its count to WORLD_MIGRATION_BASE and to every entry in one commit.
  * A key that is not built keeps its marker and has no entry.
  */
-export const WORLD_SLOT_KEYS = ["view", "known", "consol", "ident", "attn", "refs", "fcst"] as const;
+export const WORLD_SLOT_KEYS = ["view", "known", "consol", "ident", "attn", "refs", "fcst", "machine_images"] as const;
 export type WorldSlotKey = (typeof WORLD_SLOT_KEYS)[number];
 
 /** The last ledger version that MIGRATIONS declares without this file. The purge tables migration is that version. */
@@ -20,4 +20,6 @@ export const WORLD_MIGRATION_VERSIONS = {
   // slot: attn
   // slot: refs
   // slot: fcst
+  // slot: machine_images
+  machine_images: 35,
 } as const satisfies Partial<Record<WorldSlotKey, number>>;

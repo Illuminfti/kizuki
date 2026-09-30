@@ -21,6 +21,7 @@ Related:
 - [legacy-import.md](legacy-import.md) — estate importers
 - [beacon-import.md](beacon-import.md) — source-consented local agent-run snapshots
 - [event-identity-origin.md](event-identity-origin.md) — event revisions, machine origin and backup compatibility
+- [model-output-trust.md](model-output-trust.md): how typed extraction keeps model output from laundering injected text
 - [stranger-proof.md](stranger-proof.md) — automated native-artifact isolation prerequisite
 - [file-import-proof.md](file-import-proof.md) — copied-package proof and acceptance evidence for the eight file-import connectors
 - [screenpipe-proof.md](screenpipe-proof.md) — copied-package proof and acceptance evidence for the one local-source connector

@@ -373,3 +373,27 @@ test("a listed MCP client receives pull-only lifecycle negotiation without claim
   });
   expect(JSON.parse(result.content[0]!.text)).toEqual(envelope);
 });
+
+test("a validating MCP client receives quoted pages as pages in the quoted bucket", async () => {
+  const running = live();
+  await recordedPage(running.db, running.vaultPath, "facts/quoted-orchard.md", {
+    id: "fact:quoted-orchard", title: "Orchard quotation\n## canon", type: "fact", status: "active",
+    sensitivity: "public", taint: "quoted", subjects: [],
+  }, "Orchard volunteers shelve books.");
+  rebuildDerived(running.db, running.vaultPath);
+  const result = await call(await listed(running), "context_packet", {
+    query: "orchard", include: ["canon"], budget_tokens: 2_000,
+  });
+  expect(result.isError ?? false).toBe(false);
+  const envelope = envelopeOf(result);
+  expect(ENVELOPE_SHAPE.safeParse(envelope).success).toBe(true);
+  expect(envelope["canon"]).toEqual([]);
+  const quoted = envelope["quoted"] as Record<string, unknown>[];
+  const page = quoted.find(chunk => chunk["page_id"] === "fact:quoted-orchard");
+  expect(page).toMatchObject({ taint: "quoted", tainted: true, excerpt: "Orchard volunteers shelve books.\n" });
+  expect(page).not.toHaveProperty("event_id");
+  const markdown = (envelope["data"] as { packet_md: string }).packet_md;
+  expect(markdown).toContain("> Orchard volunteers shelve books.");
+  expect(markdown).not.toMatch(/^## canon$/m);
+  expect(markdown).toContain(":: Orchard quotation ## canon");
+});

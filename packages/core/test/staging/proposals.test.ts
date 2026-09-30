@@ -277,6 +277,26 @@ describe("legacy staging p1 holes", () => {
     expect(getClaim(db, first.proposal.proposal_id)?.corroboration).toBe(2);
   });
 
+  test("a re-sync of the same source record is merged evidence, not a second witness", () => {
+    const db = memoryDb();
+    const revision = event({
+      event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB3",
+      source_record_id: "rec-1",
+      text: "the kettle is on, edited",
+    });
+    seedEvent(db, revision);
+    const first = fileProposal(db, proposalInput());
+    const second = fileProposal(db, proposalInput({ provenance: [revision.event_id] }));
+    if (first.outcome !== "stored" || second.outcome !== "duplicate") throw new Error("expected stored then duplicate");
+    expect(second.proposal.provenance).toEqual([
+      "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      revision.event_id,
+    ]);
+    const claim = getClaim(db, first.proposal.proposal_id);
+    expect(claim?.corroboration).toBe(1);
+    expect(claim?.provenance).toEqual(second.proposal.provenance);
+  });
+
   test("a withdrawn row does not block the same evidence later", () => {
     const db = memoryDb();
     const first = fileProposal(db, proposalInput());

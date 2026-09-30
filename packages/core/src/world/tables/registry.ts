@@ -1,3 +1,4 @@
+import { MACHINE_BODY_TABLE } from "../../ledger/machine-body-schema";
 import type { Database } from "bun:sqlite";
 import { LedgerStoreError } from "../../ledger/errors";
 import { tableColumns, tableExists } from "../../ledger/schema";
@@ -96,6 +97,8 @@ export const WORLD_TABLE_SPECS: readonly WorldTableSpec[] = [
   // slot: attn
   // slot: refs
   // slot: fcst
+  // slot: machine_images
+  MACHINE_BODY_TABLE,
 ];
 
 /** Durable classes must reach purge; only derived and cache tables may opt out with `none`. */
