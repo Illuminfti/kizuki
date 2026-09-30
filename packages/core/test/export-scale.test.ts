@@ -9,6 +9,7 @@ import { loadCanonLimits } from "../src/vault/canon-limits";
 import { listCanonPagesReport } from "../src/vault/pages";
 import { serializePage } from "../src/vault/frontmatter";
 import { ulid } from "../src/util/ulid";
+import { OwnedDirectory } from "../src/util/owned-directory";
 import { validEvent } from "./fixtures";
 
 setDefaultTimeout(120_000);
@@ -20,6 +21,27 @@ const policy = {
   allowed_fields: ["text", "subjects", "attachments", "metadata"],
   retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private",
 };
+
+test("export keeps ownership rechecks bounded without a progress listener", () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-export-rechecks-"));
+  dirs.push(root);
+  const vault = join(root, "vault");
+  initVault(vault);
+  mkdirSync(join(vault, "facts"), { recursive: true });
+  for (let index = 0; index < 128; index++) {
+    writeFileSync(join(vault, "facts", `note-${index}.md`), serializePage({
+      data: { id: `fact:note-${index}`, type: "fact", title: "Synthetic note", status: "active", sensitivity: "private", taint: "clean", sources: [] },
+      body: "Synthetic evidence.\n",
+    }));
+  }
+  const db = openLedger(":memory:");
+  const inspect = spyOn(OwnedDirectory.prototype, "assertCurrent");
+  try {
+    const manifest = exportVault(db, vault, join(root, "backup"));
+    expect(Object.keys(manifest.files).filter(path => path.startsWith("vault/facts/"))).toHaveLength(128);
+    expect(inspect.mock.calls.length).toBeLessThan(100);
+  } finally { inspect.mockRestore(); db.close(); }
+});
 
 test("export inspects each source grant once, not once per event, and finishes quickly", () => {
   const root = mkdtempSync(join(tmpdir(), "kizuki-export-scale-"));

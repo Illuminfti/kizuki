@@ -1946,8 +1946,11 @@ function exportVaultOwned(
     const manifest = capture.manifest;
     const manifestContent = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
     writePrivateFile(join(staging, "manifest.json"), manifestContent);
-    // Bound progress bookkeeping by a count, rather than retaining a label per file.
-    for (let file = 0; file < capture.vaultFiles; file += 1) notify("vault");
+    // Recheck per-file admission around callbacks when a listener exists.
+    // Phase and publication checks still revalidate the sealed capture below.
+    if (options.onProgress !== undefined) {
+      for (let file = 0; file < capture.vaultFiles; file += 1) notify("vault");
+    }
     for (const phase of ["ledger", "claims", "receipts"]) notify(phase);
 
     assertExportTransactionAvailable(db);
