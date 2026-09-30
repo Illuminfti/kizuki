@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { KizukiError } from "@kizuki/core";
 import type { SecretResolver } from "@kizuki/core";
 import { createImapConnector } from "../src/connector";
+import { hostStore } from "./host";
 import { secretSpellings } from "../src/imap/codes";
 import { serializeImapState } from "../src/state";
 import type { ImapState } from "../src/state";
@@ -56,7 +57,7 @@ describe("manifest", () => {
       contract_minor: 1,
       implementation: "@kizuki/connector-imap",
       allowed_egress: [],
-      cursor_schema: "kizuki.imap-cursor/v1",
+      cursor_schema: "kizuki.imap-cursor/v2",
       kinds: ["email"],
       capabilities: {
         backfill: true,
@@ -65,6 +66,7 @@ describe("manifest", () => {
         purge: true,
         fixture: true,
         sync_from_backfill_before_first_success: true,
+        cursor_store: "host",
       },
       required_secrets: [],
       emits_sensitivity_hint: true,
@@ -127,7 +129,7 @@ describe("connect fails closed", () => {
 
       await connector.connect(resolve);
       expect((await connector.health()).state).toBe("ok");
-      expect((await connector.backfill(null)).events.length).toBeGreaterThan(0);
+      expect((await connector.backfill(null, hostStore().context)).events.length).toBeGreaterThan(0);
     },
   );
 
@@ -169,11 +171,12 @@ describe("health", () => {
     const fake = server();
     const { connector, resolve } = connectorFor(fake);
     await connector.connect(resolve);
-    const first = await connector.backfill(null);
+    const host = hostStore();
+    const first = host.commit(await connector.backfill(null, host.context));
     expect((await connector.health()).state).toBe("ok");
 
     fake.resetUidValidity("INBOX");
-    const second = await connector.sync(first.cursor);
+    const second = await connector.sync(first.cursor, host.context);
     expect(second.events.some((event) => event.deleted)).toBe(true);
 
     const degraded = await connector.health();
@@ -188,7 +191,7 @@ describe("health", () => {
     await connector.connect(resolve);
     fake.withholdBody("INBOX", 1);
 
-    const batch = await connector.backfill(null);
+    const batch = await connector.backfill(null, hostStore().context);
     expect(batch.events.some((event) => event.metadata["uid"] === 1)).toBe(
       false,
     );
@@ -233,7 +236,7 @@ describe("health", () => {
   test("records the last success once a walk has run", async () => {
     const { connector, resolve } = connectorFor(server());
     await connector.connect(resolve);
-    await connector.backfill(null);
+    await connector.backfill(null, hostStore().context);
     const report = await connector.health();
     expect(report.last_success_at).toBe("2026-03-02T00:00:00.000Z");
   });
@@ -396,8 +399,10 @@ describe("revocation and redaction", () => {
   test("the cursor never carries the credentials", async () => {
     const { connector, resolve } = connectorFor(server());
     await connector.connect(resolve);
-    const batch = await connector.backfill(null);
+    const batch = await connector.backfill(null, hostStore().context);
     expect(batch.cursor).not.toBeNull();
+    expect(JSON.stringify(batch.cursor_store)).not.toContain(FIXTURE_PASSWORD);
+    expect(JSON.stringify(batch.cursor_store)).not.toContain(FIXTURE_USERNAME);
     expect(batch.cursor ?? "").not.toContain(FIXTURE_PASSWORD);
     expect(batch.cursor ?? "").not.toContain(FIXTURE_USERNAME);
     expect(JSON.stringify(batch.events)).not.toContain(FIXTURE_PASSWORD);

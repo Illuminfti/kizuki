@@ -80,6 +80,16 @@ export function addUid(ranges: UidRange[], uid: number): UidRange[] {
   return normalize([...ranges, { first: uid, last: uid }]);
 }
 
+/** `addUid` for many at once: one normalisation instead of one per UID. */
+export function addUids(ranges: UidRange[], added: readonly number[]): UidRange[] {
+  for (const uid of added) {
+    if (!isUid(uid)) {
+      throw new KizukiError("parse_error", "sequence set: uid out of range");
+    }
+  }
+  return normalize([...ranges, ...added.map((uid) => ({ first: uid, last: uid }))]);
+}
+
 export function removeUid(ranges: UidRange[], uid: number): UidRange[] {
   const result: UidRange[] = [];
   for (const range of normalize(ranges)) {

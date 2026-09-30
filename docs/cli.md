@@ -132,8 +132,9 @@ usage: kizuki connect [--list|status] [--json]
 
 Browse sources, inspect saved sync status, or enroll a source. Local Beeper
 enrollment checks its authenticated Desktop API before saving a secret
-reference. IMAP enrollment uses a local interactive prompt and stores its
-opaque connector state in the owner-only connection-state store. File sources
+reference. IMAP enrollment uses a local interactive prompt, ending with an
+optional date floor, and stores its opaque connector state in the owner-only
+connection-state store. File sources
 remain supported. `connect telegram` uses native phone/code sign-in and
 optional two-step verification in an interactive terminal. Project app
 credentials are required; missing credentials refuse before any prompt or
@@ -1228,8 +1229,11 @@ Telegram enrollment captures no history. Use `backfill telegram --source KEY`
 after the source is authorized. The first backfill has no date floor: it reads
 every listed dialog back to its beginning in batches of at most 500 events,
 across at most 5,000 dialogs, and reports degraded health when the listing
-bound truncates the view. Each later pass re-reads only the last 200 messages
-of a dialog for edits. The connection's opaque protected session holds
+bound truncates the view. A batch stops between dialogs after about 40 seconds
+so a slow account takes more batches rather than passing the 60 second limit on
+one call, and the per-dialog progress is held in the ledger beside the
+checkpoint so it does not have to fit the 8 KiB cursor bound. Each later pass
+re-reads only the last 200 messages of a dialog for edits. The connection's opaque protected session holds
 provider cooldowns, and the native CLI persists those before returning a wait;
 reopening the source checks the cooldown before opening transport. Transport
 cleanup never logs out the Telegram session. Source-consent revocation and

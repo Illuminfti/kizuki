@@ -5,8 +5,12 @@ import { join } from "node:path";
 import type {
   CaptureEventInput,
   ConnectionStateWriter,
+  Cursor,
+  RunContext,
   SignInIo,
+  SyncBatch,
 } from "@kizuki/core";
+import { decodeDialogs } from "../src/cursor";
 import { TelegramConnectorError } from "../src/api";
 import type { ProviderErrors } from "../src/guard";
 import { TelegramConnector } from "../src/connector";
@@ -42,8 +46,52 @@ afterEach(() => {
   }
 });
 
+/**
+ * Plays the host for a call made without one: lends the store, then commits
+ * the batch's delta to it as the host does when the checkpoint advances. A call
+ * that arrives with a host's own context is passed through untouched.
+ */
+async function withHostStore(
+  store: Map<string, string>,
+  context: RunContext | undefined,
+  run: (context: RunContext) => Promise<SyncBatch>,
+): Promise<SyncBatch> {
+  if (context !== undefined) return run(context);
+  const batch = await run({ cursor_store: store });
+  for (const [key, value] of Object.entries(batch.cursor_store ?? {})) {
+    if (value === null) store.delete(key);
+    else store.set(key, value);
+  }
+  return batch;
+}
+
+export class HostedTelegramConnector extends TelegramConnector {
+  constructor(
+    config: TelegramConnectorConfig,
+    deps: Partial<TelegramDeps>,
+    readonly store: Map<string, string>,
+  ) {
+    super(config, deps);
+  }
+
+  override backfill(cursor: Cursor | null, context?: RunContext): Promise<SyncBatch> {
+    return withHostStore(this.store, context, (lent) => super.backfill(cursor, lent));
+  }
+
+  override sync(cursor: Cursor | null, context?: RunContext): Promise<SyncBatch> {
+    return withHostStore(this.store, context, (lent) => super.sync(cursor, lent));
+  }
+}
+
+/** The per-dialog map a host holds for this harness, as the walk sees it. */
+export function dialogsOf(built: { store: Map<string, string> }) {
+  return decodeDialogs(built.store);
+}
+
 export interface Harness {
   connector: TelegramConnector;
+  /** The host's cursor store: shared by every connector this harness makes. */
+  store: Map<string, string>;
   api: ScriptedTelegramApi;
   account: ScriptedAccount;
   clock: { now: number };
@@ -72,13 +120,14 @@ export function harness(options: {
     },
   };
   const config = options.config ?? { state_ref: STATE_REF };
-  const connector = new TelegramConnector(config, deps);
+  const store = new Map<string, string>();
+  const connector = new HostedTelegramConnector(config, deps, store);
   const restart = async (): Promise<TelegramConnector> => {
-    const fresh = new TelegramConnector(config, deps);
+    const fresh = new HostedTelegramConnector(config, deps, store);
     await fresh.connect(stateResolver());
     return fresh;
   };
-  return { connector, api, account, clock, sleeps, restart };
+  return { connector, store, api, account, clock, sleeps, restart };
 }
 
 export function stateText(

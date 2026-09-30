@@ -38,7 +38,7 @@ smoke(
     const report = await connector.health();
     expect(report.state).toBe("ok");
 
-    const batch = await connector.backfill(null);
+    const batch = await connector.backfill(null, { cursor_store: new Map() });
     expect(batch.cursor).not.toBeNull();
     for (const event of batch.events) {
       expect(validateEventInput(event).ok).toBe(true);
