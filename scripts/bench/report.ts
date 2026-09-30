@@ -25,7 +25,7 @@ export interface Report {
   schema: "kizuki.benchmark/v1";
   profile: "full" | "smoke";
   machine: { cpu_count: number; load_at_start: number[]; bun_version: string; git_sha: string; platform: string; arch: string };
-  corpus: { size: Size; seed: number; events: number; events_per_topic: 256; topics: number; canon_pages: number; unwritten_claims: number; input_sha256: string };
+  corpus: { size: Size; seed: number; events: number; max_events_per_topic: 256; topics: number; canon_pages: number; unwritten_claims: number; unextracted_events: number; input_sha256: string };
   protocol: { build_warmup: number; build_repetitions: number; read_warmup: number; read_repetitions: number; process_warmup: number; process_repetitions: number; idle_observed_ms: number; retrieval: "lexical floor"; principal: "owner" };
   metrics: Record<string, Metric>;
 }
@@ -45,7 +45,7 @@ const metricGrammar = object({
 const grammar = object({
   schema: { const: "kizuki.benchmark/v1" }, profile: { enum: ["full", "smoke"] },
   machine: object({ cpu_count: positive, load_at_start: { type: "array", items: number, minItems: 3, maxItems: 3 }, bun_version: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+$" }, git_sha: { type: "string", pattern: "^[0-9a-f]{40}$" }, platform: { enum: ["linux", "darwin", "win32"] }, arch: { type: "string", pattern: "^[a-z0-9]+$" } }),
-  corpus: object({ size: { enum: Object.keys(SIZES) }, seed: { ...integer, maximum: 0xffffffff }, events: positive, events_per_topic: { const: 256 }, topics: positive, canon_pages: positive, unwritten_claims: integer, input_sha256: { type: "string", pattern: "^[0-9a-f]{64}$" } }),
+  corpus: object({ size: { enum: Object.keys(SIZES) }, seed: { ...integer, maximum: 0xffffffff }, events: positive, max_events_per_topic: { const: 256 }, topics: positive, canon_pages: positive, unwritten_claims: integer, unextracted_events: integer, input_sha256: { type: "string", pattern: "^[0-9a-f]{64}$" } }),
   protocol: object({ build_warmup: integer, build_repetitions: positive, read_warmup: integer, read_repetitions: positive, process_warmup: integer, process_repetitions: positive, idle_observed_ms: number, retrieval: { const: "lexical floor" }, principal: { const: "owner" } }),
   metrics: object(Object.fromEntries(METRICS.map(name => [name, metricGrammar]))),
 });
@@ -79,6 +79,7 @@ export function parseReport(value: unknown): Report {
   const reject = (): never => { throw new Error("invalid benchmark report semantics"); };
   const { corpus, protocol } = report;
   if (corpus.events !== SIZES[corpus.size] || corpus.topics !== Math.ceil(corpus.events / 256) || corpus.canon_pages !== 2 * corpus.topics || corpus.unwritten_claims !== corpus.events - corpus.topics) reject();
+  if (corpus.unextracted_events >= corpus.events || corpus.unextracted_events > corpus.events - corpus.topics) reject();
   if (report.profile === "full" && (protocol.build_warmup < 1 || protocol.build_repetitions < 2 || protocol.read_warmup < 1 || protocol.read_repetitions < 2 || protocol.process_warmup < 1 || protocol.process_repetitions < 2)) reject();
   for (const [name, metric] of Object.entries(report.metrics)) {
     const unit = name.endsWith("rss_bytes") ? "bytes" : name.endsWith("events_per_s") ? "events/s" : name.endsWith("writes_per_s") ? "writes/s" : name.endsWith("cpu_percent") ? "CPU %" : "ms";

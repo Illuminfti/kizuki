@@ -57,7 +57,7 @@ export async function runBenchmark(config: ReturnType<typeof options>, out: stri
   const readWarmup = config.smoke ? 1 : 2, readRepetitions = config.smoke ? 2 : 20;
   const processWarmup = config.smoke ? 0 : readWarmup, processRepetitions = config.smoke ? 1 : readRepetitions;
   const metrics: Record<string, Metric> = {};
-  let vault = "", canonPages = 0, unwrittenClaims = 0, observed = 0;
+  let vault = "", canonPages = 0, unwrittenClaims = 0, unextractedEvents = 0, observed = 0;
   try {
     progress("generate deterministic source");
     const digest = createSource(source, events, config.seed);
@@ -65,7 +65,7 @@ export async function runBenchmark(config: ReturnType<typeof options>, out: stri
       progress(`build ${index < 0 ? "warmup" : index + 1}`);
       const next = join(root, `build-${index}`);
       const built = await command([WORKER, "build", next, source, String(events)]);
-      const result = JSON.parse(built.stdout) as { ingest_ms: number; drain_ms: number; drain_rss_bytes: number; writes: number; write_ms: number; cpu_ms: number; pages: number; unwritten_claims: number };
+      const result = JSON.parse(built.stdout) as { ingest_ms: number; drain_ms: number; drain_rss_bytes: number; writes: number; write_ms: number; cpu_ms: number; pages: number; unwritten_claims: number; unextracted_events: number };
       if (index >= 0) {
         record(metrics, "ingest.events_per_s", "events/s", events * 1000 / result.ingest_ms, "higher");
         record(metrics, "canon.writes_per_s", "writes/s", result.writes * 1000 / result.write_ms, "higher");
@@ -74,7 +74,7 @@ export async function runBenchmark(config: ReturnType<typeof options>, out: stri
         record(metrics, "daemon.drain_peak_rss_bytes", "bytes", result.drain_rss_bytes);
       }
       if (vault) rmSync(vault, { recursive: true, force: true });
-      vault = next; canonPages = result.pages; unwrittenClaims = result.unwritten_claims;
+      vault = next; canonPages = result.pages; unwrittenClaims = result.unwritten_claims; unextractedEvents = result.unextracted_events;
     }
     // The native read commands require the CLI's durable freshness cursor too.
     await command([CLI, "rebuild", "--layer", "search", "--max-records", String(2 * events + 5 * Math.ceil(events / 256)), "--max-source-bytes", String(events * 1024), "--json", "--vault", vault]);
@@ -134,7 +134,7 @@ export async function runBenchmark(config: ReturnType<typeof options>, out: stri
       record(metrics, "serve.idle_cpu_percent", "CPU %", idle.cpu_percent);
     }
     const report = parseReport({ schema: "kizuki.benchmark/v1", profile: config.smoke ? "smoke" : "full", machine,
-      corpus: { size: config.size, seed: config.seed, events, events_per_topic: 256, topics: Math.ceil(events / 256), canon_pages: canonPages, unwritten_claims: unwrittenClaims, input_sha256: digest },
+      corpus: { size: config.size, seed: config.seed, events, max_events_per_topic: 256, topics: Math.ceil(events / 256), canon_pages: canonPages, unwritten_claims: unwrittenClaims, unextracted_events: unextractedEvents, input_sha256: digest },
       protocol: { build_warmup: warmup, build_repetitions: repetitions, read_warmup: readWarmup, read_repetitions: readRepetitions, process_warmup: processWarmup, process_repetitions: processRepetitions, idle_observed_ms: observed, retrieval: "lexical floor", principal: "owner" }, metrics });
     writeFileSync(join(out, "report.json"), JSON.stringify(report, null, 2) + "\n", { flag: "wx", mode: 0o600 });
     writeFileSync(join(out, "summary.md"), summary(report), { flag: "wx", mode: 0o600 });

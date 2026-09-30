@@ -11,33 +11,30 @@ import { nativePeakRssBytes } from "./process";
 async function build(vault: string, source: string, events: number) {
   createVault(vault);
   const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
-  const producer = scriptedProducer(vault);
+  const scripted = scriptedProducer(vault);
+  const { producer } = scripted;
+  const topics = Math.ceil(events / 256);
   try {
     const imported = await drain(db, vault, source, events);
     const extraction = {
       max_calls_per_pass: 256, records_per_request: 8, max_input_tokens: 32_000, max_output_tokens: 8_192,
       max_pass_seconds: 600, max_calls_per_day: 100_000, max_output_tokens_per_day: 1_000_000_000,
     };
-    // Real per-day limits remain in force. A long local run can span synthetic budget days.
-    let budgetDay = 0;
-    let calls = 0;
-    const now = () => new Date(Date.now() + budgetDay * 86_400_000).toISOString();
-    const extractionStart = performance.now();
+    const now = () => new Date().toISOString();
     for (;;) {
-      const pass = await runWritePass(db, vault, { budget: createBudgetTracker({ canon_writes_per_run: 0 }), producer, claims: { db }, extraction, now });
-      calls += pass.model.calls;
-      if (pass.stopped === "model:budget_day" && pass.errors.every(error => error.startsWith("model budget:"))) { budgetDay++; continue; }
+      const pass = await runWritePass(db, vault, { budget: createBudgetTracker({ canon_writes_per_run: 0 }), producer, claims: { db }, extraction, now, stopRequested: () => scripted.topics.size === topics });
       if (pass.errors.length > 0) throw new Error("synthetic extraction refused");
+      if (scripted.topics.size === topics && pass.stopped === "serve:stop_requested") break;
       if (pass.stopped !== null) throw new Error("synthetic extraction stopped");
-      if (pass.model.calls === 0) break;
+      if (scripted.topics.size === topics) break;
+      if (pass.model.calls === 0) throw new Error("synthetic extraction did not cover every topic");
     }
-    const extractionMs = performance.now() - extractionStart;
     let writes = 0;
-    const target = 2 * Math.ceil(events / 256);
+    const target = 2 * topics;
     const writeStart = performance.now(), cpuStart = process.cpuUsage();
     while (writes < target) {
       const pass = await runWritePass(db, vault, {
-        budget: createBudgetTracker({ canon_writes_per_run: Math.min(32, target - writes) }), producer, model_ref: MODEL, claims: { db }, extraction, now,
+        budget: createBudgetTracker({ canon_writes_per_run: Math.min(32, target - writes) }), producer, model_ref: MODEL, claims: { db }, extraction: { ...extraction, max_calls_per_pass: 1 }, now,
       });
       if (pass.errors.length > 0 || (pass.stopped !== null && pass.stopped !== "budget:canon_writes_per_run") || pass.canon_writes === 0) throw new Error(`synthetic canon materialization refused: ${pass.stopped ?? pass.errors.join(",")}`);
       writes += pass.canon_writes;
@@ -45,7 +42,7 @@ async function build(vault: string, source: string, events: number) {
     const writeMs = performance.now() - writeStart, cpu = process.cpuUsage(cpuStart);
     const pages = listCanonPagesReport(vault);
     if (pages.skipped.length > 0 || pages.pages.length !== 2 * Math.ceil(events / 256)) throw new Error("synthetic canon inventory mismatch");
-    return { ingest_ms: imported.ingest_ms, drain_ms: imported.wall_ms, drain_rss_bytes: imported.rss_bytes, extraction_ms: extractionMs, model_calls: calls, writes, write_ms: writeMs, cpu_ms: (cpu.user + cpu.system) / 1000, pages: pages.pages.length, unwritten_claims: countUnwrittenLiveClaims(db) };
+    return { ingest_ms: imported.ingest_ms, drain_ms: imported.wall_ms, drain_rss_bytes: imported.rss_bytes, writes, write_ms: writeMs, cpu_ms: (cpu.user + cpu.system) / 1000, pages: pages.pages.length, unwritten_claims: countUnwrittenLiveClaims(db), unextracted_events: events - scripted.events.size };
   } finally { await producer.close(); db.close(); }
 }
 async function ingest(db: ReturnType<typeof openLedger>, vault: string, source: string, events: number) {

@@ -2,14 +2,15 @@ import { OWNER, type ServeContext } from "../../packages/core/src/index";
 import { createServer } from "../../packages/mcp/src/index";
 import { READS, distribution, type Metric, type Read } from "./report";
 import { CLI, MCP, command } from "./process";
+const SINCE = "2020-01-01T00:00:00.000Z", UNTIL = "5000-01-01T00:00:00.000Z";
 
 export function request(read: Read, pageId: string): { name: string; arguments: Record<string, unknown> } {
   switch (read) {
     case "search": return { name: "search", arguments: { query: "synthetic", scope: "all", limit: 10 } };
-    case "context_session": return { name: "context_packet", arguments: { purpose: "session", budget_tokens: 1000 } };
-    case "context_query": return { name: "context_packet", arguments: { purpose: "recall", query: "synthetic", budget_tokens: 1000 } };
+    case "context_session": return { name: "context_packet", arguments: { purpose: "session", budget_tokens: 1000, since: SINCE, until: UNTIL } };
+    case "context_query": return { name: "context_packet", arguments: { purpose: "recall", query: "synthetic", budget_tokens: 1000, since: SINCE, until: UNTIL } };
     case "get_page": return { name: "get_page", arguments: { id: pageId } };
-    case "timeline": return { name: "timeline", arguments: { since: "2020-01-01T00:00:00.000Z", until: "5000-01-01T00:00:00.000Z", limit: 10 } };
+    case "timeline": return { name: "timeline", arguments: { since: SINCE, until: UNTIL, limit: 10 } };
     case "world_discovery": return { name: "world_view", arguments: { operation: "find_concepts", label: "Topic" } };
     case "graph_neighbors": return { name: "graph_neighbors", arguments: { id: pageId, depth: 1 } };
   }
@@ -29,7 +30,7 @@ export function assertRead(read: Read, result: unknown): void {
   const world = data?.result as { status?: string; data?: { matches?: unknown[] } } | undefined;
   if (read === "world_discovery" && !world?.data?.matches?.length) throw new Error(`empty world discovery (${world?.status ?? "missing"})`);
   if (read === "graph_neighbors" && !(data?.edges as unknown[] | undefined)?.length) throw new Error("empty benchmark graph");
-  if (read.startsWith("context_") && (typeof data?.packet_md !== "string" || data.packet_md.length === 0 || (!canon?.length && !quoted?.length))) throw new Error("empty context packet");
+  if (read.startsWith("context_") && (typeof data?.packet_md !== "string" || data.packet_md.length === 0 || (!canon?.length && !quoted?.length))) throw new Error(`empty context packet (${JSON.stringify({ canon: canon?.length, quoted: quoted?.length, sections: data?.sections, degraded: data?.retrieval_degraded })})`);
 }
 export function assertCliRead(read: string, value: unknown): void {
   if (value === null || typeof value !== "object") throw new Error("missing CLI result");
@@ -91,8 +92,8 @@ export async function measureReads(ctx: ServeContext, pageId: string, warmup: nu
     }
     for (const [read, args] of Object.entries({
       search: ["query", "synthetic", "--scope", "all", "--limit", "10", "--json"],
-      context_session: ["context", "--purpose", "session", "--budget", "1000", "--json"],
-      context_query: ["context", "--purpose", "recall", "--query", "synthetic", "--budget", "1000", "--json"],
+      context_session: ["context", "--purpose", "session", "--budget", "1000", "--since", SINCE, "--until", UNTIL, "--json"],
+      context_query: ["context", "--purpose", "recall", "--query", "synthetic", "--budget", "1000", "--since", SINCE, "--until", UNTIL, "--json"],
       world_discovery: ["world", "--operation", "find_concepts", "--label", "Topic", "--json"],
     })) {
       const samples = [];

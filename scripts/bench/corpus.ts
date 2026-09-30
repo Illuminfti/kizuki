@@ -23,8 +23,8 @@ const MAPPING: LegacyEventsMapping = {
 };
 
 /** Logical source rows repeat by topic; ids remain distinct and seed changes the content. */
-export function sourceRow(index: number, seed: number) {
-  const topic = Math.floor(index / EVENTS_PER_TOPIC);
+export function sourceRow(index: number, seed: number, topics: number) {
+  const topic = index % topics;
   const label = `Topic${String(topic).padStart(6, "0")}`;
   const variant = (Math.imul(seed ^ topic, 1664525) + 1013904223) >>> 0;
   const text = `${label} defines synthetic pattern ${variant}. Its example is a neutral numbered tile.`;
@@ -39,7 +39,7 @@ export function createSource(path: string, events: number, seed: number): string
     const insert = source.query("INSERT INTO records VALUES(?,?,?,?,?)");
     source.transaction(() => {
       for (let index = 0; index < events; index++) {
-        const row = sourceRow(index, seed);
+        const row = sourceRow(index, seed, Math.ceil(events / EVENTS_PER_TOPIC));
         hash.update(JSON.stringify(row) + "\n");
         insert.run(row.record_id, row.at, row.observed, row.text, row.ordinal);
       }
@@ -63,7 +63,7 @@ export function createVault(vault: string) {
     setSourceGrant(db, {
       source_key: SOURCE_KEY, expected_revision: 0, operation_id: "synthetic-benchmark-grant",
       policy: {
-        purposes: ["capture", "recall", "derive", "extract", "export"],
+        purposes: ["capture", "recall", "session", "derive", "extract", "export"],
         allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked",
         sensitivity_floor: "private", egress: { model_endpoint: ENDPOINT, model: MODEL, external_retention: "provider_managed" },
       },
@@ -75,6 +75,7 @@ export { SOURCE_KEY };
 /** Only the uncontrollable model boundary is scripted; parsing, admission, claims and the writer are real. */
 export function scriptedProducer(vault: string) {
   const seen = new Set<string>();
+  const observedEvents = new Set<string>();
   const llm: LlmPort = {
     descriptor: { id: "kizuki.llm.benchmark", kind: "llm", contract: LLM_CONTRACT, contract_minor: 0, supports: ["chat"], requires_lease: false, optional_package: null },
     model_ref: MODEL,
@@ -82,6 +83,7 @@ export function scriptedProducer(vault: string) {
     async complete(request) {
       const mentions = [], claims = [];
       for (const match of request.messages.map(message => message.content).join("\n").matchAll(/<<<KZ-QUOTE ([0-9a-f]{32}) event:([0-9A-HJKMNP-TV-Z]{26})>>>\n(Topic\d{6})([^\n]*)\n<<<KZ-END \1>>>/g)) {
+        observedEvents.add(match[2]!);
         const label = match[3]!;
         if (seen.has(label)) continue;
         seen.add(label);
@@ -106,6 +108,6 @@ export function scriptedProducer(vault: string) {
     vault_path: vault, data_dir: join(vault, ".kizuki"), config: {},
     secrets: async () => { throw new Error("benchmark has no secrets"); }, clock: () => new Date().toISOString(), logger: () => undefined,
   }, { llm });
-  return bindSourceModelPort(producer, { model_endpoint: ENDPOINT, model: MODEL });
+  return { producer: bindSourceModelPort(producer, { model_endpoint: ENDPOINT, model: MODEL }), topics: seen, events: observedEvents };
 }
 export { MODEL };

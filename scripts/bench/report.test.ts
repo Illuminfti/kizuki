@@ -14,9 +14,9 @@ test("the seed reproduces the complete logical source; a different seed changes 
     const first = createSource(join(root, "first.sqlite"), 1_000, 1);
     expect(createSource(join(root, "second.sqlite"), 1_000, 1)).toBe(first);
     expect(createSource(join(root, "third.sqlite"), 1_000, 2)).not.toBe(first);
-    expect(sourceRow(0, 1).text).toBe(sourceRow(255, 1).text);
-    expect(sourceRow(0, 1).record_id).not.toBe(sourceRow(255, 1).record_id);
-    expect(sourceRow(256, 1).text).not.toBe(sourceRow(0, 1).text);
+    expect(sourceRow(0, 1, 4).text).toBe(sourceRow(4, 1, 4).text);
+    expect(sourceRow(0, 1, 4).record_id).not.toBe(sourceRow(4, 1, 4).record_id);
+    expect(sourceRow(1, 1, 4).text).not.toBe(sourceRow(0, 1, 4).text);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
