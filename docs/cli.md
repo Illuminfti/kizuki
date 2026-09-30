@@ -530,6 +530,12 @@ accepts the opaque claim token emitted by `kizuki world` for the current owner
 namespace. The options are mutually exclusive. Rewrites affected canon in the
 same pass. No model required. Prints an undo line for every receipt it minted.
 
+Correction statements are recorded as private evidence. A correction keeps
+the corrected claim's tier as a minimum and cannot file below its statement
+events, including when the owner speaks directly. A public page rewritten
+with a private correction becomes private; lower-ceiling readers no longer
+receive the page or its source event ids.
+
 A claim an importer produced has no subject and no predicate, so there is no
 claim key to supersede a group by. `--claim` on such a claim supersedes exactly
 that claim, records the supersession, and rewrites the page that already holds

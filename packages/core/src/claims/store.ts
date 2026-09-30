@@ -1423,10 +1423,10 @@ function applyClaimInsert(
       ...(input.sensitivity === undefined
         ? {}
         : input.intent === "correct"
-          // Only the owner speaking may set the label directly. A relay's label
-          // can only raise: its text is never public because the claim it
-          // corrects was, and the statement event's own hint still applies.
-          ? { owner_label: input.sensitivity, owner_override: !input.producer.startsWith("agent:") }
+          // A conversational correction keeps the target's tier as a minimum.
+          // Even the owner's own words retain their statement event's hint;
+          // inheriting a public target is not an instruction to declassify them.
+          ? { owner_label: input.sensitivity }
           : { model_label: input.sensitivity }),
     }).sensitivity,
     taint: input.taint ?? "clean",

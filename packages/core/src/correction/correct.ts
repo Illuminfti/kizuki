@@ -497,7 +497,7 @@ async function insertCorrection(
       producer,
       confidence: 1,
       sensitivity: live.sensitivity,
-      taint: "clean",
+      taint: producer.startsWith("agent:") ? "quoted" : "clean",
       valid_from: at,
       intent,
       events: [
@@ -806,7 +806,7 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
           producer: winner.producer,
           confidence: 1,
           sensitivity: winner.sensitivity,
-          taint: "clean",
+          taint: winner.taint,
           intent: io.relay_owner_corrections === false ? "propose" : "correct",
           events: [
             {

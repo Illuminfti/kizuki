@@ -541,6 +541,19 @@ async function correctUnkeyedClaim(
     };
   }
   refuseRelayOverOwnerCorrection(ctx, [claim]);
+  // Exact retractions have no keyed conflict group, but still obey the same
+  // authority comparator before recording evidence or changing durable state.
+  const incoming: ConflictClaim = {
+    ...claim,
+    claim_id: "",
+    authority: relayCeiling(ctx) ?? "owner_correction",
+    confidence: 1,
+    valid_from: at,
+    valid_to: null,
+  };
+  if (resolveConflict(incoming, claim).action === "skip") {
+    throw refuseAuthority();
+  }
   requireSourceEvents(ctx.db, claim.provenance, {
     owner: ctx.principal.kind === "owner",
     purpose: "correction",

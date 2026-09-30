@@ -3,13 +3,17 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { applyCanonWrite, createBudgetTracker, resolveTarget } from "../../src/canon";
 import { SENSITIVITY_ORDER } from "../../src/agents/types";
-import { getClaim, insertClaim, listClaims } from "../../src/claims/store";
+import { getClaim, insertClaim, listClaims, listSupersessions } from "../../src/claims/store";
+import { correct } from "../../src/correction/correct";
 import { serveCorrect } from "../../src/serving/correct";
 import { serveSearch } from "../../src/serving/search";
 import { ServeError } from "../../src/serving/types";
 import { parseFrontmatter } from "../../src/vault/frontmatter";
 import { serveFixture } from "./helpers";
 import type { Fixture } from "./helpers";
+import { worldFixture } from "./world-fixture";
+import { readWorldView } from "../../src/serving/world-view";
+import { worldCanonTarget } from "../../src/canon/world-materialization";
 
 let fixture: Fixture | null = null;
 afterEach(() => {
@@ -29,8 +33,8 @@ async function refusal(run: () => Promise<unknown>): Promise<ServeError> {
   throw new Error("expected a ServeError");
 }
 
-/** A public, keyed claim the receipted writer has already put on a page. */
-async function writtenPublicClaim(live: Fixture): Promise<{ claimId: string; claimKey: string; pagePath: string }> {
+/** A public claim the receipted writer has already put on a page. */
+async function writtenPublicClaim(live: Fixture, unkeyed = false): Promise<{ claimId: string; claimKey: string; pagePath: string }> {
   const filed = await insertClaim(
     { db: live.db },
     {
@@ -39,9 +43,7 @@ async function writtenPublicClaim(live: Fixture): Promise<{ claimId: string; cla
       body: "Linus works at acme.",
       frontmatter: { type: "fact", title: "Where Linus works" },
       subjects: ["person:linus"],
-      subject: "person:linus",
-      predicate: "employment.works_at",
-      object: "acme",
+      ...(unkeyed ? {} : { subject: "person:linus", predicate: "employment.works_at", object: "acme" }),
       provenance: [live.events["public"] as string],
       producer: "deterministic",
       confidence: 1,
@@ -54,7 +56,7 @@ async function writtenPublicClaim(live: Fixture): Promise<{ claimId: string; cla
     writer: "loop",
     budget: createBudgetTracker({ canon_writes_per_run: 4 }),
   });
-  return { claimId: filed.claim.claim_id, claimKey: filed.claim.claim_key as string, pagePath: receipt.page_path };
+  return { claimId: filed.claim.claim_id, claimKey: filed.claim.claim_key ?? "", pagePath: receipt.page_path };
 }
 
 function eventHint(live: Fixture, eventId: string): "public" | "personal" | "private" {
@@ -135,6 +137,32 @@ describe("a relayed correction cannot override the owner's own correction (R22-1
     }
     expect(getClaim(live.db, ownerClaim)?.status).toBe("live");
   });
+
+  test("a downgraded relay cannot retire another relay's unkeyed owner correction", async () => {
+    fixture = await serveFixture();
+    const live = fixture;
+    const { claimId, pagePath } = await writtenPublicClaim(live, true);
+    const relayed = await serveCorrect(live.agent("reader-private"), {
+      statement: "Linus works at the workshop.", target: { claim_id: claimId },
+    });
+    const winnerId = relayed.data!.claim_id!;
+    expect(getClaim(live.db, winnerId)?.authority).toBe("owner_correction");
+    expect(getClaim(live.db, winnerId)?.producer).toBe("agent:reader-private");
+    const before = readFileSync(join(live.vaultPath, pagePath), "utf8");
+    const eventsBefore = live.db.query("SELECT count(*) AS n FROM events").get();
+    const receiptsBefore = live.db.query("SELECT count(*) AS n FROM canon_receipts").get();
+    const supersessionsBefore = listSupersessions(live.db);
+    const held = await refusal(() => serveCorrect(live.agent("downgraded"), {
+      statement: "Linus works at Contoso.", target: { claim_id: winnerId },
+    }));
+    expect(held.code).toBe("held");
+    expect(held.message).toBe("correction is below the live claim's authority");
+    expect(getClaim(live.db, winnerId)?.status).toBe("live");
+    expect(readFileSync(join(live.vaultPath, pagePath), "utf8")).toBe(before);
+    expect(live.db.query("SELECT count(*) AS n FROM events").get()).toEqual(eventsBefore);
+    expect(live.db.query("SELECT count(*) AS n FROM canon_receipts").get()).toEqual(receiptsBefore);
+    expect(listSupersessions(live.db)).toEqual(supersessionsBefore);
+  });
 });
 
 describe("a relayed correction cannot launder or declassify text (R26-3)", () => {
@@ -177,18 +205,85 @@ describe("a relayed correction cannot launder or declassify text (R26-3)", () =>
     expect(priv.canon.map((chunk) => chunk.path)).toContain(pagePath);
   });
 
-  test("the owner speaking directly keeps the corrected claim's own tier", async () => {
+  test.each([false, true])("the owner's MCP correction respects statement sensitivity (unkeyed=%s)", async (unkeyed) => {
     fixture = await serveFixture();
     const live = fixture;
-    const { claimId } = await writtenPublicClaim(live);
+    const { claimId, pagePath } = await writtenPublicClaim(live, unkeyed);
     const direct = await serveCorrect(live.owner(), {
       statement: "Linus works at the workshop.",
       target: { claim_id: claimId },
-      object: "the workshop",
+      ...(unkeyed ? {} : { object: "the workshop" }),
     });
     const correction = getClaim(live.db, direct.data!.claim_id!)!;
-    expect(correction.sensitivity).toBe("public");
+    expect(correction.sensitivity).toBe("private");
     expect(correction.taint).toBe("clean");
     expect(correction.frontmatter["x-relayed-by"]).toBeUndefined();
+    const page = parseFrontmatter(readFileSync(join(live.vaultPath, pagePath), "utf8"));
+    const tier = SENSITIVITY_ORDER[page.data["sensitivity"] as "private"];
+    expect(page.data["sources"]).toContain(direct.data!.event_id!);
+    for (const source of page.data["sources"] as string[]) {
+      expect(SENSITIVITY_ORDER[eventHint(live, source)]).toBeLessThanOrEqual(tier);
+    }
+    const found = await serveSearch(live.agent("reader-public"), { query: "workshop" });
+    expect(found.canon.map((chunk) => chunk.path)).not.toContain(pagePath);
+    expect(JSON.stringify(found)).not.toContain(direct.data!.event_id!);
+  });
+
+  test.each([false, true])("the tell core seam respects statement sensitivity (unkeyed=%s)", async (unkeyed) => {
+    fixture = await serveFixture();
+    const live = fixture;
+    const { claimId, pagePath } = await writtenPublicClaim(live, unkeyed);
+    const direct = await correct({ db: live.db, vault_path: live.vaultPath }, {
+      statement: "Linus works at the workshop.", target: { claim_id: claimId },
+    });
+    expect(getClaim(live.db, direct.claim_ids[0]!)?.sensitivity).toBe("private");
+    const page = parseFrontmatter(readFileSync(join(live.vaultPath, pagePath), "utf8"));
+    const tier = SENSITIVITY_ORDER[page.data["sensitivity"] as "private"];
+    expect(page.data["sources"]).toContain(direct.event_id);
+    for (const source of page.data["sources"] as string[]) {
+      expect(SENSITIVITY_ORDER[eventHint(live, source)]).toBeLessThanOrEqual(tier);
+    }
+    const found = await serveSearch(live.agent("reader-public"), { query: "workshop" });
+    expect(found.canon.map((chunk) => chunk.path)).not.toContain(pagePath);
+    expect(JSON.stringify(found)).not.toContain(direct.event_id);
+  });
+
+  test("a typed-world relay is quoted in the stored claim and rewritten page", async () => {
+    fixture = await serveFixture();
+    const live = fixture;
+    const world = await worldFixture(live.db);
+    const original = getClaim(live.db, world.claims[2]!)!;
+    const io = { db: live.db, vault_path: live.vaultPath };
+    const receipt = applyCanonWrite(io, original, worldCanonTarget(live.db, original.claim_id), {
+      writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }),
+    });
+    const ctx = live.agent("reader-private");
+    const discovery = readWorldView(ctx, {
+      operation: "find_concepts", label: world.label,
+      valid: { kind: "all" }, knownAt: { kind: "current" },
+    });
+    if ("status" in discovery || discovery.result.status !== "current" || !("matches" in discovery.result.data)) {
+      throw new Error("missing world discovery");
+    }
+    const ref = discovery.result.data.matches[0]!.ref;
+    const card = readWorldView(ctx, {
+      operation: "concept", concept: ref,
+      valid: { kind: "all" }, knownAt: { kind: "current" },
+    });
+    if ("status" in card || card.result.status !== "current" || !("definitions" in card.result.data)) {
+      throw new Error("missing world definition");
+    }
+    const relayed = await serveCorrect(ctx, {
+      statement: "Use posterior odds after new evidence.",
+      target: { world_claim: card.result.data.definitions[0]!.claim },
+    });
+    const correction = getClaim(live.db, relayed.data!.claim_id!)!;
+    expect(correction.taint).toBe("quoted");
+    expect(correction.frontmatter["x-relayed-by"]).toBe("agent:reader-private");
+    expect(correction.sensitivity).toBe("private");
+    expect(relayed.data!.rewritten.map((page) => page.page_path)).toEqual([receipt.page_path]);
+    const page = parseFrontmatter(readFileSync(join(live.vaultPath, receipt.page_path), "utf8"));
+    expect(page.data["taint"]).toBe("quoted");
+    expect(page.data["sensitivity"]).toBe("private");
   });
 });
