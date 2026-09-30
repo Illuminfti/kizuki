@@ -56,8 +56,10 @@ export function registerRail(rail: RailDefinition): () => void {
   if (registered.has(rail.id)) throw new Error(`duplicate rail id: ${rail.id}`);
   registered.set(rail.id, rail);
   refreshDefaults();
+  let removed = false;
   return () => {
-    if (registered.get(rail.id) !== rail) return;
+    if (removed) return;
+    removed = true;
     registered.delete(rail.id);
     refreshDefaults();
   };

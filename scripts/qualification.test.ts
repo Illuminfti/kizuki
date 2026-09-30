@@ -11,6 +11,7 @@ import { cliDiagnostic, initQualification, sampleQualification, statusQualificat
 import { initVault } from "../packages/core/src/vault/init";
 import { openLedger } from "../packages/core/src/ledger/db";
 import { initServe } from "../packages/core/src/serve/schema";
+import { defineRail, registerRail } from "../packages/core/src/serve/rail-registry";
 import { ARTIFACT_PACKAGE_FILES, ArtifactProofError, artifactProofSteps, SQLITE_ENGINE_POLICY } from "./artifact-proof";
 import type { ArtifactProofSchema } from "./artifact-proof";
 import type { SqliteRuntime } from "../packages/core/src/ledger/runtime";
@@ -398,4 +399,17 @@ test("the embed rail's back-off period is accepted at init and while sampling, o
  const result=sampleQualification(later.out);
  expect(result.issues).not.toContain("schedule-profile-changed");
  expect(result.issues).not.toContain("collection-rejected");
+});
+
+test("an extension rail's declared back-off cadence is accepted while sampling", () => {
+ const remove=registerRail(defineRail({id:"fixture-backoff",summary:"Fixture back-off rail.",period_s:300,jitter_s:0,idle_period_s:1800,expects_output:false,run:()=>({status:"ok"})}));
+ try {
+  const f=fixture();initQualification(f.artifact,f.proof,f.scope,f.out);
+  const db=openLedger(join(f.vault,".kizuki/kizuki.db"));
+  try { db.exec("UPDATE schedules SET period_s=1800 WHERE rail='fixture-backoff'"); } finally { db.close(); }
+  expect(sampleQualification(f.out).issues).not.toContain("schedule-profile-changed");
+  const changed=openLedger(join(f.vault,".kizuki/kizuki.db"));
+  try { changed.exec("UPDATE schedules SET period_s=1801 WHERE rail='fixture-backoff'"); } finally { changed.close(); }
+  expect(sampleQualification(f.out).issues).toContain("schedule-profile-changed");
+ } finally { remove(); }
 });

@@ -13,7 +13,7 @@ import { readProducerDiagnostic } from "../packages/core/src/producer/diagnostic
 import { readServeProcessMarker, servePidPath } from "../packages/core/src/serve/daemon";
 import { parseRunExecution, canonicalReceiptContent, readModelReferenceDigest } from "../packages/core/src/serve/receipts";
 import { RUN_STATUSES } from "../packages/core/src/serve/types";
-import { RAIL_IDS } from "../packages/core/src/serve/rail-registry";
+import { RAIL_IDS, railDefinition } from "../packages/core/src/serve/rail-registry";
 
 // Exact native producer spellings, not arbitrary labels carrying source content.
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
@@ -238,8 +238,8 @@ function collect(manifest: Manifest, known: Map<string,string>): QualificationSa
     return !old && qualificationDate(r.finished_at) >= qualificationDate(manifest.profile.start_at);
   });
   if (loadServeConfig(manifest.vault).brief_hour !== manifest.profile.brief_hour) issues.push("schedule-profile-changed");
-  // The embed rail's period follows its port configuration; the evaluator accepts either supported period.
-  const fixedPolicy = ({rail, period_s, jitter_s}: {rail: string; period_s: number; jitter_s: number}) => ({rail, jitter_s, period_s: rail === "embed-backfill" ? 0 : period_s});
+  // A rail with an idle cadence follows its configuration; the evaluator checks each supported period.
+  const fixedPolicy = ({rail, period_s, jitter_s}: {rail: string; period_s: number; jitter_s: number}) => ({rail, jitter_s, period_s: railDefinition(rail)?.idle_period_s === undefined ? period_s : 0});
   if (canonical(current.map(fixedPolicy)) !== canonical(manifest.profile.rails.map(fixedPolicy))) issues.push("schedule-profile-changed");
   let processBinding: QualificationSample["process"] = null;
   const db = openObservationDb(manifest.vault);
