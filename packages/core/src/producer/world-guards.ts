@@ -84,11 +84,15 @@ export interface CitedEvidence {
  */
 export function guardClaim(semantic: ClaimV2Assertion, body: string, cited: CitedEvidence): ClaimV2Assertion | null {
   const quoted = semantic.perspective.mode === "quoted";
-  if (!quoted && repeatsInstruction(body, cited.instructionSpans)) return null;
+  const bodyRepeats = repeatsInstruction(body, cited.instructionSpans);
+  if (!quoted && bodyRepeats) return null;
   if (semantic.object.kind !== "literal") return isPersonStatePredicate(semantic.predicate) ? null : semantic;
-  if (!quoted && repeatsInstruction(semantic.object.value, cited.instructionSpans)) return null;
+  const literalRepeats = repeatsInstruction(semantic.object.value, cited.instructionSpans);
+  if (!quoted && literalRepeats) return null;
   if (isPersonStatePredicate(semantic.predicate) && normalizeForGrounding(semantic.object.value).split(" ").length < 2) return null;
   if (literalGrounded(semantic.object.value, cited.spans)) return semantic;
-  if (isPersonStatePredicate(semantic.predicate)) return null;
+  // Downgrading removes the quotation mode, so an instruction repeat cannot
+  // survive an ungrounded literal by arriving with mode=quoted.
+  if (isPersonStatePredicate(semantic.predicate) || bodyRepeats || literalRepeats) return null;
   return { ...semantic, perspective: { ...semantic.perspective, interpretation: "inferred", mode: "uncertain" } };
 }

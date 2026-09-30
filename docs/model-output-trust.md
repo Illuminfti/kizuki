@@ -25,6 +25,10 @@ that is not a letter or digit collapsed to one space. A literal that normalizes
 to nothing is not grounded, and a literal is grounded only as whole tokens: `ill`
 is not in `will`, and `5` is not in `15`.
 
+An ungrounded literal cannot preserve instruction text by arriving as a
+quotation: if becoming uncertain would remove the quotation mode from an
+instruction repeat in either the literal or the body, the claim is dropped.
+
 ## Held claims
 
 A held claim is stored in the ledger with its evidence. It is invisible to
