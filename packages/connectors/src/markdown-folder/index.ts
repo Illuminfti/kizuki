@@ -123,6 +123,7 @@ export interface MarkdownCursor {
 }
 
 interface ScanResult {
+  directories: Array<RootIdentity & { mtimeMs: number; ctimeMs: number }>;
   coverage: ScanCoverage;
   files: MarkdownFile[];
   errors: ImportRecordError[];
@@ -220,7 +221,8 @@ export class MarkdownFolderConnector implements Connector {
     const pending = this.continuation;
     this.continuation = null;
     const continuing = pending !== null && pending.cursor === cursor &&
-      pending.root.realpath === root.realpath && pending.root.dev === root.dev && pending.root.ino === root.ino;
+      pending.root.realpath === root.realpath && pending.root.dev === root.dev && pending.root.ino === root.ino &&
+      await inventoryDirectoriesUnchanged(root, pending.scan);
     const scan = continuing ? pending.scan : await scanMarkdownFiles(root, this.exclude);
     const observedAt = new Date().toISOString();
     const current = new Map(
@@ -575,7 +577,7 @@ async function pinnedDescent(
   root: string,
   directory: string,
 ): Promise<
-  | { kind: "directory"; realpath: string; dev: number; ino: number }
+  | { kind: "directory"; realpath: string; dev: number; ino: number; mtimeMs: number; ctimeMs: number }
   | { kind: "symlink" }
   | { kind: "unreadable"; reason: string }
 > {
@@ -608,7 +610,17 @@ async function pinnedDescent(
     await assertOutsideVault(resolved);
     return { kind: "symlink" };
   }
-  return { kind: "directory", realpath: resolved, dev: info.dev, ino: info.ino };
+  return { kind: "directory", realpath: resolved, dev: info.dev, ino: info.ino, mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs };
+}
+
+/** A changed listing starts a new inventory, so pagination never hides new identities. */
+async function inventoryDirectoriesUnchanged(root: RootIdentity, scan: ScanResult): Promise<boolean> {
+  for (const previous of scan.directories) {
+    const current = await pinnedDescent(root.realpath, previous.realpath);
+    if (current.kind !== "directory" || current.dev !== previous.dev || current.ino !== previous.ino ||
+        current.mtimeMs !== previous.mtimeMs || current.ctimeMs !== previous.ctimeMs) return false;
+  }
+  return true;
 }
 
 async function scanMarkdownFiles(
@@ -616,6 +628,7 @@ async function scanMarkdownFiles(
   exclude: readonly string[],
 ): Promise<ScanResult> {
   const files: MarkdownFile[] = [];
+  const directories: ScanResult["directories"] = [];
   const errors: ImportRecordError[] = [];
   let truncated = false;
   let considered = 0;
@@ -665,6 +678,7 @@ async function scanMarkdownFiles(
       });
       return;
     }
+    directories.push(descent);
     let parent: FileHandle;
     try {
       parent = await openPinnedDirectory(descent);
@@ -752,7 +766,7 @@ async function scanMarkdownFiles(
     if (!excluded.some(entry => entry.rule === rule.rule) && excluded.length < 512) excluded.push({ rule: rule.rule, count: 0 });
   }
   excluded.sort((a, b) => compareStrings(a.rule, b.rule));
-  return { files, errors, truncated, coverage: { scanned, excluded, failed: errors.length, pending: 0, truncated, content_exclusions: ["attachments and non-Markdown content are not captured"] } };
+  return { directories, files, errors, truncated, coverage: { scanned, excluded, failed: errors.length, pending: 0, truncated, content_exclusions: ["attachments and non-Markdown content are not captured"] } };
 }
 
 async function readStableMarkdown(

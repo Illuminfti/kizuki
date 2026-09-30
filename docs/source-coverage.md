@@ -54,8 +54,10 @@ scope; it does not mean Kizuki knows omitted content.
 A successful folder drain reuses one bounded inventory across pages. A new
 sync or a new connector instance scans again. Markdown continuation pages
 reopen emitted files through the descriptor-bound reader and refuse byte
-drift before capture. Directory replacement, cursor mismatch and a terminal
-failure invalidate the continuation. Failed inventories also reuse their walk
+drift before capture. Directory identity or listing changes start a new
+inventory; pinned directory metadata is checked without listing contents
+again. This preserves capture of new identities during pagination. Cursor
+mismatch and a terminal failure invalidate the continuation. Failed inventories also reuse their walk
 while delivering readable pages, then report failure without declaring
 completion. Wiki continuation uses the planned snapshot;
 changes are discovered on the next pass.

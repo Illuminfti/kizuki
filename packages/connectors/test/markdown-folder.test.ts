@@ -442,7 +442,7 @@ describe("MarkdownFolderConnector", () => {
       expect(health.state).toBe("degraded");
       expect(health.detail ?? "").toContain("not_utf8");
       const terminal = await connector.backfill(batch.cursor);
-      expect(terminal).toEqual({ events: [], cursor: batch.cursor, status: "unavailable",
+      expect(terminal).toEqual({ events: [], cursor: batch.cursor, status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
         detail: "partial_import: 1 record errors (not_utf8=1)" });
       expect(await connector.backfill(batch.cursor)).toEqual(terminal);
     } finally {
@@ -470,7 +470,7 @@ describe("MarkdownFolderConnector", () => {
       expect([b, c, removed].map(batch => batch.events.map(event => [event.source_record_id, event.deleted])))
         .toEqual([[["b-new.md", false]], [["c-new.md", false]], [["a-removed.md", true]]]);
       const terminal = await connector.sync(removed.cursor);
-      expect(terminal).toEqual({ events: [], cursor: removed.cursor, status: "unavailable",
+      expect(terminal).toEqual({ events: [], cursor: removed.cursor, status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
         detail: "partial_import: 1 record errors (not_utf8=1)" });
       expect(JSON.parse(terminal.cursor!).files.map(([name]: [string]) => name))
         .toEqual(["b-new.md", "c-new.md", "z-private-name.md"]);
@@ -584,7 +584,7 @@ describe("MarkdownFolderConnector", () => {
       listing = spyOn(filesystem, "readdir").mockImplementation(((...args: Parameters<typeof original>) =>
         String(args[0]) === root ? Promise.resolve(crowded) : original(...args)) as typeof original);
       const result = await connector.sync(first.cursor);
-      expect(result).toEqual({ events: [], cursor: first.cursor, status: "unavailable",
+      expect(result).toEqual({ events: [], cursor: first.cursor, status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
         detail: "partial_import: 1 record errors (scan_limit=1); scan truncated" });
       expect(await connector.sync(first.cursor)).toEqual(result);
       listing.mockRestore(); listing = undefined;
@@ -614,7 +614,7 @@ describe("MarkdownFolderConnector", () => {
         expect(
           second.events.map((event) => event.source_record_id),
         ).not.toContain("nested/hidden.md");
-        expect(second).toEqual({ events: [], cursor: first.cursor, status: "unavailable",
+        expect(second).toEqual({ events: [], cursor: first.cursor, status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
           detail: "partial_import: 1 record errors (unreadable=1)" });
       } finally {
         await chmod(nested, 0o755);
@@ -661,7 +661,7 @@ describe("MarkdownFolderConnector", () => {
       const health = await connector.health();
       expect(health.state).toBe("degraded");
       expect(health.detail ?? "").toContain("depth");
-      expect(await connector.backfill(batch.cursor)).toEqual({ events: [], cursor: batch.cursor, status: "unavailable",
+      expect(await connector.backfill(batch.cursor)).toEqual({ events: [], cursor: batch.cursor, status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
         detail: "partial_import: 1 record errors (depth=1)" });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -720,7 +720,7 @@ describe("MarkdownFolderConnector", () => {
       expect(await connector.backfill(batch.cursor)).toEqual({
         events: [],
         cursor: batch.cursor,
-        status: "unavailable",
+        status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
         detail: "partial_import: 1 record errors (too_large=1)",
       });
     } finally {
@@ -1446,7 +1446,7 @@ describe("markdown folder committed identities", () => {
       expect(second).toEqual({
         events: [],
         cursor: first.cursor,
-        status: "unavailable",
+        status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
         detail: "partial_import: 1 record errors (unreadable=1)",
       });
     } finally {

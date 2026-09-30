@@ -54,7 +54,7 @@ interface DoctorConnection {
   connector_id: string;
   source_key: string;
   path: string;
-  state: "present" | "missing";
+  state: "present" | "missing" | "disconnected";
   health: string;
   checkpoint: string;
   stored: number;
@@ -323,6 +323,10 @@ async function collect(
       backfill_complete: checkpoint?.backfill_complete === true,
       last_run_clean: checkpoint !== null && checkpoint.last_result.errors.length === 0,
     };
+    if (host.connection.disconnected_at !== null) {
+      connections.push({ ...base, path: "-", state: "disconnected", health: "disabled", problem: null });
+      continue;
+    }
     if (host.state === null) {
       connections.push({
         ...base,
@@ -422,7 +426,7 @@ async function collect(
     problems.push({ page: "-", error: errorText(error) });
   }
 
-  const unhealthy = connections.some((item) => item.health !== "ok");
+  const unhealthy = connections.some((item) => item.state !== "disconnected" && item.health !== "ok");
   const host = serveSupervisorHost(env, vaultPath);
   let boundModel: ModelBindingSummary | null = null;
   let modelConfigError: string | null = null;

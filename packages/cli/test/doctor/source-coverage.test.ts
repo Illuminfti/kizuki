@@ -1,12 +1,15 @@
 import { rmSync } from "node:fs";
 import { afterEach, expect, test } from "bun:test";
 import { createHelpers, fixtureConsent } from "../helpers";
+import { disconnect } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
+import { join } from "node:path";
 
 const h = createHelpers();
 afterEach(h.cleanup);
 
 test("doctor and both connect status forms disclose the same persisted coverage", () => {
-  const { env, root, notes } = h.tempVault();
+  const { env, root, notes, vault } = h.tempVault();
   const connected = h.runCli(env, "connect", "markdown-folder", "--source", notes);
   expect(connected.exitCode).toBe(0);
   const source = connected.stdout.match(/source=([0-9A-HJKMNPQRSTVWXYZ]{26})/)![1]!;
@@ -25,6 +28,14 @@ test("doctor and both connect status forms disclose the same persisted coverage"
     expect(output).toContain("backfill_complete=yes");
     expect(output).toContain("attachments");
   }
+  const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
+  try { disconnect(db, "kizuki.markdown-folder", source); } finally { db.close(); }
+  const disabled = h.runCli(env, "doctor", "--json");
+  expect(disabled.exitCode).toBe(0);
+  expect(JSON.parse(disabled.stdout).data.connections[0]).toMatchObject({
+    state: "disconnected", health: "disabled", coverage: { backfill_complete: true,
+      blind_spots: expect.arrayContaining([expect.objectContaining({ reason: "disabled_source" })]) },
+  });
 }, 120_000);
 
 

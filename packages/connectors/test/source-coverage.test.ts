@@ -69,6 +69,25 @@ test("wiki coverage names excluded mapping roots and types and counts only obser
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("a changed nested directory starts a new inventory without hiding identities below the cursor", async () => {
+  const root = await mkdtemp(join(tmpdir(), "kizuki-coverage-new-inventory-"));
+  const listing = spyOn(filesystem, "readdir");
+  try {
+    await mkdir(join(root, "nested"));
+    for (const name of ["a", "z"]) await writeFile(join(root, "nested", `${name}.md`), name);
+    const connector = createMarkdownFolderConnector({ path: root, page_size: 1 });
+    const first = await connector.backfill(null);
+    expect(first.events.map(event => event.source_record_id)).toEqual(["nested/a.md"]);
+    await writeFile(join(root, "nested", "0.md"), "Synthetic new note");
+    const second = await connector.backfill(first.cursor);
+    expect(second.events.map(event => event.source_record_id)).toEqual(["nested/0.md"]);
+    const last = await connector.backfill(second.cursor);
+    expect(last.events.map(event => event.source_record_id)).toEqual(["nested/z.md"]);
+    expect(last.has_more).toBe(false);
+    expect(listing).toHaveBeenCalledTimes(4); // Two directories in each of two inventories.
+  } finally { listing.mockRestore(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("an unreadable wiki record cannot declare a complete pass", async () => {
   const root = await mkdtemp(join(tmpdir(), "kizuki-wiki-failed-"));
   try {
