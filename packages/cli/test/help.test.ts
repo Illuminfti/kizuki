@@ -191,10 +191,10 @@ describe("help", () => {
     expect(body.schema).toBe("kizuki.cli.help/v1");
     expect(body.status).toBe("ok");
     expect(body.data.name).toBe("query");
-    expect(body.data.options).toEqual(["--scope", "--limit"]);
+    expect(body.data.options).toEqual(["--scope", "--limit", "--response-contract"]);
     expect(body.data.flags).toEqual(["--json", "--degraded", "--full-text"]);
     expect(body.data.defaults).toEqual({ "--scope": "all", "--limit": "20" });
-    expect(body.data.bounds).toEqual({ "--scope": "canon|ledger|all", "--limit": "1..50" });
+    expect(body.data.bounds).toEqual({ "--scope": "canon|ledger|all", "--limit": "1..50", "--response-contract": "kizuki.envelope/v1|kizuki.envelope/v2" });
     expect(body.data.irreversible).toBe(false);
     expect(body.data.exit_codes.map((item) => item.code)).toEqual([0, 1, 2]);
   });
@@ -260,6 +260,7 @@ describe("help", () => {
         "--object-vocabulary",
         "--perspective-mode",
         "--refresh-concept-ref",
+        "--response-contract",
       ]);
       expect(body.data.flags).toEqual(["--dry-run", "--json", "--verbose"]);
       expect(body.data.bounds).toMatchObject({
@@ -433,7 +434,7 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("context");
-      expect(body.data.options).toEqual(["--purpose", "--budget", "--query", "--since", "--until", "--task-event", "--task-integrity"]);
+      expect(body.data.options).toEqual(["--purpose", "--budget", "--query", "--since", "--until", "--task-event", "--task-integrity", "--response-contract"]);
       expect(body.data.flags).toEqual(["--json"]);
       expect(body.data.defaults).toEqual({ "--purpose": "session" });
       expect(body.data.bounds).toEqual({
