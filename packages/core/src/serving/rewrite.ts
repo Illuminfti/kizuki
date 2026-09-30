@@ -1,8 +1,7 @@
 import { assertPageRelPath } from "../canon/paths";
-import { createBudgetTracker, resolveTarget } from "../canon";
+import { CanonPageUnreadable, createBudgetTracker, resolveTarget } from "../canon";
 import { applyCanonWriteOwned } from "../canon/apply";
-import { requireCanonFiles } from "../canon/io";
-import { readOwnedCanonPage } from "../canon/io";
+import { readOwnedCanonPage, requireCanonFiles } from "../canon/io";
 import { assertVaultMutationScope, type VaultMutationScope } from "../vault/mutation-scope";
 import type { CanonIo, PageAction } from "../canon";
 import type { Claim } from "../contracts/proposal";
@@ -14,7 +13,6 @@ import type { CanonRecoveryPending } from "../correction/types";
 import type { ServeContext } from "./types";
 import { pageSnapshotDecision } from "./canon";
 import { validatePage } from "../vault/schema";
-import { CanonPageUnreadable, type ExistingPage } from "../canon/store";
 
 /**
  * RFC 0002 §6.3 step 5 bounds the blast radius of one correction. The writer
@@ -54,13 +52,16 @@ const NOTHING: CanonRewrite = {
 
 export function pageSnapshot(io: CanonIo, ctx: ServeContext, relPath: string): { content: string; readable: boolean } {
   assertPageRelPath(relPath);
-  let saved: ExistingPage | null;
+  let saved: ReturnType<typeof readOwnedCanonPage>;
   try { saved = readOwnedCanonPage(io, relPath); }
   catch (error) {
     if (!(error instanceof CanonPageUnreadable || error instanceof SyntaxError)) throw error;
     return { content: "", readable: false };
   }
-  if (saved === null || validatePage(saved.page.data).length > 0) return { content: saved?.content ?? "", readable: false };
+  // An absent snapshot contains no protected bytes; any produced after image
+  // still needs its own authorization before the reply can disclose it.
+  if (saved === null) return { content: "", readable: true };
+  if (validatePage(saved.page.data).length > 0) return { content: saved.content, readable: false };
   const id = saved.page.data["id"];
   if (typeof id !== "string") return { content: saved.content, readable: false };
   const page = { id, path: saved.path, relPath, ...saved.page, contentHash: saved.hash };
