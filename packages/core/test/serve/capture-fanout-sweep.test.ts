@@ -172,7 +172,7 @@ describe("the doctor sweep closes out capture notes filed for conversational eve
     } finally { if (originalOpen) f.db.close(); }
   });
 
-  test("sync before the sweep never writes a legacy message capture", async () => {
+  test("sync never writes legacy message captures before or beyond a bounded sweep", async () => {
     const f = await vaultWithNotes(1);
     const producer: ProducerPort = {
       descriptor: { id: "fixture.producer", contract: "kizuki.producer/v1" as const, contract_minor: 0, kind: "producer", supports: ["model"], requires_lease: false, optional_package: null },
@@ -180,6 +180,18 @@ describe("the doctor sweep closes out capture notes filed for conversational eve
       produce: async () => ({ status: "ok" as const, claims: [], usage: { calls: 1, input_tokens: 0, output_tokens: 0 } }),
     };
     try {
+      // Seed stored legacy rows beyond one sweep's limit without running a
+      // modern producer (which intentionally cannot file these notes).
+      f.db.query(`WITH RECURSIVE turns(n) AS (
+        VALUES(1) UNION ALL SELECT n + 1 FROM turns WHERE n < 10000
+      ) INSERT INTO claims (
+        claim_id, kind, target, body, frontmatter, provenance, subjects,
+        producer, confidence, status, created_at, body_hash, sensitivity, taint
+      ) SELECT printf('legacy-fanout-%05d', n), kind, target, body,
+        frontmatter, provenance, subjects, producer, confidence, status,
+        created_at, body_hash, sensitivity, taint
+        FROM turns CROSS JOIN claims WHERE claim_id = ?`).run(f.ids[0]!);
+      expect(countCaptureFanout(f.db)).toEqual({ pending: 10001, skipped: 0 });
       const sync = await runRail(f.db, f.vault, "sync", {
         hooks: { model_ref: "fixture-model", producer, claims: { db: f.db } },
       });
@@ -192,7 +204,16 @@ describe("the doctor sweep closes out capture notes filed for conversational eve
       expect(pass.canon_writes).toBe(0);
       expect(getClaim(f.db, f.ids[0]!)!.receipt_id).toBeNull();
       const sweep = await runRail(f.db, f.vault, "doctor-sweep");
-      expect(sweep.captures_skipped).toBe(1);
+      expect(sweep.captures_skipped).toBe(10000);
+      expect(countCaptureFanout(f.db)).toEqual({ pending: 1, skipped: 10000 });
+      const afterSweep = await runRail(f.db, f.vault, "sync", {
+        hooks: { model_ref: "fixture-model", producer, claims: { db: f.db } },
+      });
+      expect(afterSweep.canon_writes).toBe(0);
+      const retry = await runRail(f.db, f.vault, "doctor-sweep");
+      expect(retry.captures_skipped).toBe(1);
+      expect(countCaptureFanout(f.db)).toEqual({ pending: 0, skipped: 10001 });
+      expect(readRunReceiptsLog(f.vault).reduce((sum, r) => sum + (r.captures_skipped ?? 0), 0)).toBe(10001);
       expect(countCanonReceipts(f.db)).toBe(0);
       expect(existsSync(join(f.vault, "auto", "captures"))).toBe(false);
     } finally { f.db.close(); }
