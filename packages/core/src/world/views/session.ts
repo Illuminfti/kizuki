@@ -21,6 +21,7 @@ export interface ViewSession {
   /** A prior view was named and cannot be used, for any reason at all. */
   readonly stale: boolean;
   readonly now: string;
+  readonly requestRefs: readonly string[];
 }
 
 /** The digest of a request: every key it carries except the baseline it names. */
@@ -40,7 +41,7 @@ export function openView(db: Database, ns: WorldNamespace, input: WorldRecord, p
   const digest = requestDigest(input);
   const baseline =
     prior === null || partition === null ? null : lookupView(db, partition, ns.id, digest, prior.token, now);
-  return { ns, partition, digest, prior, baseline, stale: prior !== null && baseline === null, now };
+  return { ns, partition, digest, prior, baseline, stale: prior !== null && baseline === null, now, requestRefs: wireRefs(input) };
 }
 
 function sameBytes(baseline: StoredView, bytes: Uint8Array): boolean {
@@ -73,7 +74,7 @@ export function settleView<T extends WorldOpData>(
     try {
       // A nested transaction is a savepoint: a refused insert leaves no half-issued token.
       const issued = db.transaction(() =>
-        issueView(db, partition, session.ns, session.digest, bytes, wireRefs(data), session.now),
+        issueView(db, partition, session.ns, session.digest, bytes, [...new Set([...session.requestRefs, ...wireRefs(data)])], session.now),
       )();
       if (issued !== null)
         return { status: "current", view: { kind: "view", token: issued.token }, data, validUntil: issued.validUntil };

@@ -29,6 +29,11 @@ import { revokeSourceGrant } from "../../src/ledger/source-grants";
 import { worldFixture } from "./world-fixture";
 import { assertWorldState } from "../../src/world/integrity";
 
+function currentData(read: ReturnType<typeof readWorldView>) {
+  if (!("result" in read) || read.result.status !== "current") throw new Error("expected a fresh complete projection");
+  return read.result.data;
+}
+
 const lookup = (
   ref: { kind: "object"; token: string },
   kind = "concept",
@@ -138,14 +143,14 @@ test("issued references survive reopen, rebuild and mandatory ledger32 backup/re
     initSearch(db);
     initGraph(db);
     rebuildDerived(db, vault.path);
-    expect(readWorldView({ ...f.ctx, vaultPath: vault.path }, input)).toEqual(
-      before,
+    expect(currentData(readWorldView({ ...f.ctx, vaultPath: vault.path }, input))).toEqual(
+      currentData(before),
     );
     db.close();
     db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
     expect(
-      readWorldView({ db, vaultPath: vault.path, principal: OWNER }, input),
-    ).toEqual(before);
+      currentData(readWorldView({ db, vaultPath: vault.path, principal: OWNER }, input)),
+    ).toEqual(currentData(before));
     const backup = join(out.path, "world-backup");
     const manifest = exportVault(db, vault.path, backup);
     // World streams are mandatory from ledger32 on; the export carries the current ledger.
@@ -157,11 +162,11 @@ test("issued references survive reopen, rebuild and mandatory ledger32 backup/re
     const restored = openLedger(join(destination, ".kizuki/kizuki.db"));
     try {
       expect(
-        readWorldView(
+        currentData(readWorldView(
           { db: restored, vaultPath: destination, principal: OWNER },
           input,
-        ),
-      ).toEqual(before);
+        )),
+      ).toEqual(currentData(before));
       assertWorldState(restored);
     } finally {
       restored.close();
@@ -299,8 +304,11 @@ test("denied-only source additions and revocation do not affect narrow payload o
       subjects: ["topic:bayes"],
     });
     const ctx = { ...visible.ctx, principal: authenticate(db, added.token)! };
-    const ref = matches(ctx)[0]!.ref,
-      before = serveWorldView(ctx, lookup(ref));
+    const ref = matches(ctx)[0]!.ref;
+    const baseline = serveWorldView(ctx, lookup(ref)).data;
+    if (!("result" in baseline) || baseline.result.status !== "current" || !("validUntil" in baseline.result)) throw new Error("no baseline");
+    const conditional = { ...lookup(ref), priorView: baseline.result.view };
+    const before = serveWorldView(ctx, conditional);
     const beforeRefs = db
       .query<
         { n: number },
@@ -319,7 +327,7 @@ test("denied-only source additions and revocation do not affect narrow payload o
       expected_revision: 1,
       operation_id: "denied-only-revoke",
     });
-    const after = serveWorldView(ctx, lookup(ref));
+    const after = serveWorldView(ctx, conditional);
     expect({ ...after, at: before.at }).toEqual(before);
     expect(matches(ctx, "missing-label")).toHaveLength(0);
     expect(

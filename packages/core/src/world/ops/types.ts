@@ -76,33 +76,9 @@ export type WorldOpData = {
 };
 
 /** The subset of `ViewResult` the reader produces: every state but `denied`, which a missing grant reports as a refusal. */
-export type WorldViewResult<T = WorldOpData> =
-  | {
-      readonly status: "current";
-      readonly view: ViewToken;
-      readonly data: T;
-      readonly validUntil: string;
-    }
-  | {
-      readonly status: "current";
-      readonly view: { readonly status: "not_issued" };
-      readonly data: T;
-    }
-  | {
-      readonly status: "unchanged";
-      readonly view: ViewToken;
-      readonly validUntil: string;
-    }
-  | {
-      readonly status: "incomplete";
-      readonly data: T;
-      readonly reasons: readonly ViewGap[];
-    }
-  | { readonly status: "new_view_required" }
-  | {
-      readonly status: "unavailable";
-      readonly reason: WorldUnavailableReason;
-    };
+export type WorldViewResult<T = WorldOpData> = Exclude<ViewResult<T>,
+  { readonly status: "denied" } | { readonly status: "unavailable" }
+> | { readonly status: "unavailable"; readonly reason: WorldUnavailableReason };
 // A runtime state that is not an RFC state fails to compile here.
 export const worldViewResultIsViewResult = <T>(
   result: WorldViewResult<T>,

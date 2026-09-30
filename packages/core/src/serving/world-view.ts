@@ -27,6 +27,7 @@ import {
 } from "../world/references";
 import { openView, settleView } from "../world/views/session";
 import type { ViewSession } from "../world/views/session";
+import type { ShareData } from "../world/views/resume";
 import { isPlainObject } from "../util/validate";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
@@ -71,14 +72,30 @@ export type WorldReadInput =
       readonly knownAt: WorldKnownAt;
       readonly priorView?: ViewToken;
     }
-  | { readonly operation: "describe" };
+  | { readonly operation: "describe" }
+  | {
+      readonly operation: "share";
+      readonly of:
+        | { readonly operation: "concept"; readonly concept: WorldObjectRef }
+        | { readonly operation: "situation"; readonly situation: WorldObjectRef };
+      readonly valid: WorldValidQuery;
+      readonly knownAt: WorldKnownAt;
+    }
+  | {
+      readonly operation: "resume";
+      readonly handle: string;
+      readonly valid: WorldValidQuery;
+      readonly knownAt: WorldKnownAt;
+      readonly priorView?: ViewToken;
+    };
 
 /** The bodies the shipped operations return; each operation's `dataSchemas` say which one it is. */
 export type WorldData =
   | ConceptCard
   | SituationCard
   | ReturnType<typeof discoverWorld>
-  | WorldDescribe;
+  | WorldDescribe
+  | ShareData;
 export type WorldReadResult =
   | { readonly status: "not_found" }
   | {
@@ -203,11 +220,17 @@ export function readWorldView(
     // A nested transaction is a savepoint: failed/budgeted projections issue no refs.
     return ctx.db
       .transaction(() => {
-        const ns = worldNamespace(ctx.db, principal);
+        // Admission can precede a grant amendment. Read authority and evidence
+        // from the same snapshot, including discovery without an issued ref.
+        const current = resolvePrincipal(ctx.db, ctx.principal);
+        if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+        if (!toolAllowed(current.grant, "world_view")) throw new ServeError("tool_not_granted", "tool not granted");
+        const live = { ...ctx, principal: current };
+        const ns = worldNamespace(ctx.db, current);
         // The baseline is judged before any projection work, so an unusable one costs the same for every cause.
         const view = op.views === true ? openView(ctx.db, ns, input, prior) : null;
         if (view?.stale === true) return answer(op.name, { status: "new_view_required" });
-        return present(op, op.run({ ctx, ns, registry }, query, { valid, knownAt }), view, ctx.db);
+        return present(op, op.run({ ctx: live, ns, registry }, query, { valid, knownAt }), view, ctx.db);
       })
       .immediate();
   } catch (error) {
@@ -236,18 +259,21 @@ export function serveWorldView(
   // inside one, and the audit row and rate reservation of a denied call must
   // outlive the refusal. The projection opens its own transaction, so a failed
   // projection still issues no references.
+  let wirePrincipal: WireRef<"principal"> | undefined;
   const envelope = gate(
     ctx,
     "world_view",
     auditArguments(args),
     ({ ctx: live }): Served<WorldReadResult> => {
       try {
-        return {
-          canon: [],
-          quoted: [],
-          withheld: [],
-          data: readWorldView(live, args, registry),
-        };
+        return ctx.db.transaction(() => {
+          const data = readWorldView(live, args, registry);
+          const principal = resolvePrincipal(ctx.db, live.principal);
+          if (principal === null) throw new ServeError("unknown_agent", "unknown agent");
+          const ns = worldNamespace(ctx.db, principal);
+          wirePrincipal = issueWorldRef(ctx.db, ns, "principal", ns.principalId);
+          return { canon: [], quoted: [], withheld: [], data };
+        }).immediate();
       } catch (error) {
         if (error instanceof WorldViewError)
           throw new ServeError(
@@ -258,22 +284,11 @@ export function serveWorldView(
       }
     },
   );
-  return ctx.db
-    .transaction((): WorldViewEnvelope => {
-      const principal = resolvePrincipal(ctx.db, ctx.principal);
-      if (principal === null)
-        throw new ServeError("unknown_agent", "unknown agent");
-      const ns = worldNamespace(ctx.db, principal);
-      return {
-        schema: "kizuki.envelope/v2",
-        tool: "world_view",
-        principal: issueWorldRef(ctx.db, ns, "principal", ns.principalId),
-        at: envelope.at,
-        canon: [],
-        quoted: [],
-        ...(envelope.redacted === undefined ? {} : { redacted: envelope.redacted }),
-        data: clampWorldData(envelope.data!),
-      };
-    })
-    .immediate();
+  if (wirePrincipal === undefined) throw new ServeError("error", "serving failed");
+  return {
+    schema: "kizuki.envelope/v2", tool: "world_view", principal: wirePrincipal,
+    at: envelope.at, canon: [], quoted: [],
+    ...(envelope.redacted === undefined ? {} : { redacted: envelope.redacted }),
+    data: clampWorldData(envelope.data!),
+  };
 }

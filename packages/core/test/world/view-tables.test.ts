@@ -4,10 +4,12 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OWNER, OWNER_AGENT_GRANT, addAgent, revokeAgent } from "../../src/agents";
+import { enrollAppAgent } from "../../src/agents/app-enrollment";
 import { rebuildWorldLayer } from "../../src/derived";
 import { exportVault, restoreVault } from "../../src/export";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 import { initVault } from "../../src/vault/init";
+import { initializeEnrollmentLedger } from "../agents/custody-fixture";
 import {
   reserveViewPartition,
   seedViewPartitions,
@@ -57,6 +59,15 @@ function seedToken(db: Database, principalId: string, tag: string): { namespace:
 }
 
 describe("the view tables", () => {
+  test("app enrollment uses the shared identity activation and reserves a partition", () => {
+    const vault = tempDir();
+    initVault(vault);
+    initializeEnrollmentLedger(join(vault, ".kizuki", "kizuki.db"));
+    const enrolled = enrollAppAgent(vault, { name: "app-reader", operation_id: "view-app-enrollment", grant: OWNER_AGENT_GRANT });
+    expect(enrolled.receipt.authority).toBe("active");
+    const db = ledger(join(vault, ".kizuki", "kizuki.db"));
+    expect(viewPartitionOf(db, enrolled.receipt.agent_id!)).toBe(1);
+  });
   test("a new ledger has the four cache tables and a reservation for the owner", () => {
     const db = ledger();
     for (const spec of WORLD_VIEW_TABLE_SPECS) {

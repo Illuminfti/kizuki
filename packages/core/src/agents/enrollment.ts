@@ -10,6 +10,7 @@ import { ulid } from "../util/ulid";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../ledger/db";
 import { assertLedgerSchema } from "../ledger/integrity";
 import { oneShotGet as readOne, tableExists } from "../ledger/schema";
+import { reserveViewPartition } from "../world/views/partitions";
 
 const SCHEMA = "kizuki.agent-enrollment/v1" as const;
 const GRANT_SCHEMA = "kizuki.agent-grant/v1" as const;
@@ -296,6 +297,7 @@ function activate(ledger: EnrollmentLedger, directory: CredentialDirectory, deli
     const at = new Date().toISOString();
     db.run("INSERT INTO agents (agent_id,name,token_hash,created_at) VALUES (?,?,?,?)", [current.agent_id, current.name, current.token_hash, at]);
     writeAgentGrant(db, current.agent_id, grant, at, 1);
+    reserveViewPartition(db, current.agent_id, at);
     recordLifecycle(db, current.agent_id, "agent.create", { after: grant }, at);
     db.run("UPDATE agent_enrollments SET state='completed',completed_at=?,updated_at=? WHERE operation_id=?", [at, at, current.operation_id]);
     return readRow(db, current.operation_id)!;

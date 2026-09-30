@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { tableExists } from "../../ledger/schema";
 
 /** RFC 0004: at most 64 principal partitions per vault, so at most 256 MiB of retained view payload. */
 export const VIEW_PARTITIONS = 64;
@@ -23,6 +24,17 @@ export function viewPartitionOf(db: Database, principalId: string): number | nul
  * vault answers false and never displaces a reservation another principal holds.
  */
 export function reserveViewPartition(db: Database, principalId: string, at: string = new Date().toISOString()): boolean {
+  // Older-ledger migrations create agent grants before the view cache exists.
+  if (!tableExists(db, "world_view_partitions")) return false;
+  try {
+    return db.transaction(() => reserve(db, principalId, at))();
+  } catch (error) {
+    if (error instanceof Error && error.name === "SQLiteError") return false;
+    throw error;
+  }
+}
+
+function reserve(db: Database, principalId: string, at: string): boolean {
   if (viewPartitionOf(db, principalId) !== null) return true;
   const used = new Set(
     db
@@ -45,13 +57,12 @@ export function reserveViewPartition(db: Database, principalId: string, at: stri
 /**
  * The reservations a vault starts with: the owner first, then every agent that
  * is not revoked, oldest first, until the 64 partitions are taken. The
- * migration and a world rebuild both start from this, so restore never leaves a
- * live principal without one.
+ * migration and a world rebuild both start from this bounded owner-plane map.
  */
 export function seedViewPartitions(db: Database): void {
   reserveViewPartition(db, OWNER_PRINCIPAL);
   for (const { agent_id } of db
-    .query<{ agent_id: string }, []>("SELECT agent_id FROM agents WHERE revoked_at IS NULL ORDER BY created_at, agent_id")
+    .query<{ agent_id: string }, []>("SELECT agent_id FROM agents WHERE revoked_at IS NULL AND quarantined_at IS NULL ORDER BY created_at, agent_id")
     .all()) {
     if (!reserveViewPartition(db, agent_id)) return;
   }

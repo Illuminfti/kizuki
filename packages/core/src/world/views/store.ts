@@ -84,19 +84,18 @@ export function issueView(
   now: string,
 ): IssuedView | null {
   if (projection.byteLength > VIEW_TOKEN_BYTES) return null;
-  db.query("DELETE FROM world_view_tokens WHERE partition_id=? AND expires_at<=?").run(partition, now);
-  db.query(MAKE_ROOM).run(partition, VIEW_SLOTS - 1, VIEW_PRINCIPAL_BYTES - projection.byteLength);
   const validUntil = new Date(Date.parse(now) + VIEW_TTL_MS).toISOString();
   const insert = db.query(
-    `INSERT OR IGNORE INTO world_view_tokens(token_hash,partition_id,namespace_id,query_digest,projection,fingerprint,bytes,created_at,expires_at)
+    `INSERT INTO world_view_tokens(token_hash,partition_id,namespace_id,query_digest,projection,fingerprint,bytes,created_at,expires_at)
      VALUES (?,?,?,?,?,?,?,?,?)`,
   );
-  for (;;) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     const token = randomBytes(32).toString("base64url");
     const hash = wireDigest(token);
-    // A collision of 256-bit values is not expected; the ignore only makes the retry loop total.
-    const { changes } = insert.run(hash, partition, ns.id, queryDigest, projection, fingerprintOf(projection), projection.byteLength, now, validUntil);
-    if (changes === 0) continue;
+    if (db.query("SELECT 1 FROM world_view_tokens WHERE token_hash=?").get(hash) !== null) continue;
+    db.query("DELETE FROM world_view_tokens WHERE partition_id=? AND expires_at<=?").run(partition, now);
+    db.query(MAKE_ROOM).run(partition, VIEW_SLOTS - 1, VIEW_PRINCIPAL_BYTES - projection.byteLength);
+    insert.run(hash, partition, ns.id, queryDigest, projection, fingerprintOf(projection), projection.byteLength, now, validUntil);
     const link = db.query(
       `INSERT OR IGNORE INTO world_view_token_deps(token_hash,namespace_id,wire_ref)
        SELECT ?,namespace_id,wire_ref FROM world_wire_refs WHERE namespace_id=? AND wire_ref=?`,
@@ -104,6 +103,7 @@ export function issueView(
     for (const ref of refs) link.run(hash, ns.id, ref);
     return { token, validUntil };
   }
+  return null;
 }
 
 /** A service start invalidates every token, as a restore does: the next use of any is `new_view_required`. */
