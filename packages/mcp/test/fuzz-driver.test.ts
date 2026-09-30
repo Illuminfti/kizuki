@@ -21,3 +21,12 @@ test("non-object MCP arguments are protocol refusals rather than campaign failur
     }
   } finally { await driver.close(); fixture.dispose(); }
 });
+
+test("a generic MCP serving failure fails the campaign instead of counting as refusal", async () => {
+  const fixture = mcpFixture();
+  const driver = await mcpFuzzDriver(fixture.owner());
+  try {
+    fixture.db.close();
+    await expect(driver.call("system_health", {})).rejects.toThrow("mcp-crash");
+  } finally { await driver.close(); fixture.dispose(); }
+});
