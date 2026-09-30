@@ -19,7 +19,7 @@ import {
   stringArray,
 } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
-import { projectablePageEvidence } from "../vault/provenance";
+import { isDeterministicBrief, projectablePageEvidence } from "../vault/provenance";
 import { linkIndexFromPages, resolveWikilink } from "./resolve";
 import type { LinkIndex } from "./resolve";
 import { initGraph } from "./schema";
@@ -296,7 +296,7 @@ function graphExclusions(db: Database, pages: readonly CanonPage[]) {
     missing.delete(page.relPath);
     // Unheld inactive pages do not resolve links or suppress ordinary prose targets.
     if (!held.paths.has(page.relPath) && (!isLiveCanonPage(page) || evidence.has(page.relPath))) continue;
-    if (!held.paths.has(page.relPath) && isLiveCanonPage(page)) withheldCount += 1;
+    if (!held.paths.has(page.relPath) && isLiveCanonPage(page) && !isDeterministicBrief(page)) withheldCount += 1;
     held.paths.add(page.relPath);
     held.pageIds.add(page.id);
     const base = page.relPath.split("/").pop()!;
@@ -372,7 +372,7 @@ function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount:
     layer: "graph",
     generation: existing?.generation ?? ulid(),
     rebuilt_at: new Date().toISOString(),
-    doc_count: existing?.doc_count ?? 0,
+    doc_count: db.query<{ n: number }, []>("SELECT count(*) AS n FROM graph_edges").get()!.n,
     source_count: existing?.source_count ?? 0,
     skipped_count: skippedCount + withheldCount,
     status: "degraded",
@@ -384,10 +384,10 @@ function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount:
   });
 }
 
-function restoreGraphStamp(db: Database, pages: readonly CanonPage[]): void {
+export function refreshGraphHealth(db: Database, pages: readonly CanonPage[], skipped = 0): void {
+  assertDerivedDiscoveryReady(db);
   const excluded = graphExclusions(db, pages);
-  const existing = readDerivedMeta(db, "graph");
-  if (excluded.withheldCount === 0 && (existing === null || existing.status === "ok")) return;
+  if (skipped > 0 || !excluded.complete) { stampGraphIncomplete(db, skipped, excluded.withheldCount); return; }
   const live = pages.filter(page => excluded.evidence.has(page.relPath) && !excluded.paths.has(page.relPath));
   const edges =
     db
@@ -434,7 +434,7 @@ export function refreshPageEdges(
   removeHeldEdges(db, held);
   if (skipped === 0) {
     replacePageEdges(db, pages);
-    restoreGraphStamp(db, pages);
+    refreshGraphHealth(db, pages);
     return;
   }
   const index = linkIndexFromPages(pages);
@@ -471,7 +471,7 @@ export function removePageEdges(
   removeHeldEdges(db, held);
   if (skipped === 0) {
     replacePageEdges(db, pages);
-    restoreGraphStamp(db, pages);
+    refreshGraphHealth(db, pages);
     return;
   }
   db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(pageId, pageId);

@@ -1,3 +1,4 @@
+import { visibleIndexDegraded, visibleLedgerIndexMissing } from "./index-health";
 import type { Database } from "bun:sqlite";
 import type { AuditDenial, AuditItem, Grant } from "../agents";
 import { canonReadGeneration } from "../canon/write-intent";
@@ -251,7 +252,7 @@ export async function serveSearch(
         ...rankedOpts,
         ...(offset === 0 ? {} : { offset }),
       });
-      for (const reason of ranked.degraded) degraded.add(reason);
+      for (const reason of ranked.degraded) if (!reason.startsWith("index-")) degraded.add(reason);
       if (ranked.candidates.length === 0) break;
       const pageKey = ranked.candidates.map((hit) => hit.doc_id).join("\0");
       if (pageKey === previousPage) break;
@@ -268,6 +269,8 @@ export async function serveSearch(
       }
       offset += ranked.candidates.length;
     }
+    if ((scope !== "ledger" && visibleIndexDegraded(index, narrowed, "search"))
+      || (scope !== "canon" && visibleLedgerIndexMissing(ctx, narrowed))) degraded.add("index-degraded");
     const canon = classified.canon.slice(0, rows), quoted = classified.quoted.slice(0, Math.max(0, rows - classified.canon.length)).map(chunk => boundedQuote(chunk, fullText, index.sourceContext));
     const canonicalSubjects = new Map(canon.map(chunk => [chunk.page_id, canonSubjects(index, index.byId.get(chunk.page_id)!)]));
     const projection = projectSubjectLabels(index, narrowed, at, [...canonicalSubjects.values()].flat().concat(quoted.flatMap(chunk => chunk.subjects)), canon.length + quoted.length);

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { refreshSearchHealth } from "./derived-health";
 import {
   derivedMetaNeedsRebuild,
   readDerivedMeta,
@@ -121,6 +122,7 @@ export function refreshDerivedPage(
   db.transaction(() => {
     replacePage(db, page);
     refreshPageEdges(db, page, report.pages, report.skipped.length);
+    refreshSearchHealth(db, report);
   }).immediate();
 }
 
@@ -135,5 +137,6 @@ export function removeDerivedPage(
   db.transaction(() => {
     removeDoc(db, "canon", pageId);
     removePageEdges(db, pageId, report.pages, report.skipped.length);
+    refreshSearchHealth(db, report);
   }).immediate();
 }

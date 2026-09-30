@@ -58,10 +58,9 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
       query: "kettle",
     }));
     expect(pageIds(priv)).toContain("fact:kettle");
-    // The shared fixture keeps unlabeled and unstamped notes so those
-    // withhold paths stay covered; the scan reports them and search names
-    // the incomplete index instead of pretending the walk was clean.
-    expect(priv.data).toEqual({ degraded: ["index-degraded"] });
+    // Unlabeled pages and pages with unavailable evidence cannot be read by
+    // this principal, so they do not disclose a vault-wide health flag.
+    expect(priv.data).toBeUndefined();
   });
 
   test("an unlabeled page is withheld from every principal, owner included", async () => {

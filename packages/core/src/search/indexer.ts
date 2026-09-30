@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent } from "../contracts/event";
 import type { RetrievalAuthority } from "../contracts/retrieval";
-import { stampDerived } from "../derived-meta";
+import { readDerivedMeta, stampDerived } from "../derived-meta";
 import type { DerivedStamp } from "../derived-meta";
 import { assertDerivedDiscoveryReady, markDerivedHeld, readDerivedHolds } from "../derived-holds";
-import { latestLedgerCursor, replayLive } from "../ledger/ledger";
+import { latestLedgerCursor, readSince, replayLive } from "../ledger/ledger";
+import { MAX_READ_SINCE } from "../ledger/limits";
 import { tableExists } from "../ledger/schema";
 import { retrievalDocId } from "../retrieval/ids";
 import { ulid } from "../util/ulid";
@@ -15,7 +16,7 @@ import {
   stringArray,
 } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
-import { projectablePageEvidence } from "../vault/provenance";
+import { isDeterministicBrief, projectablePageEvidence } from "../vault/provenance";
 import { initSearch } from "./schema";
 
 export type DocScope = "canon" | "ledger";
@@ -249,7 +250,7 @@ export function replacePage(db: Database, page: CanonPage): void {
   const held = readDerivedHolds(db).paths;
   const evidence = projectablePageEvidence(db, [page]).get(page.relPath);
   if (evidence === undefined || held.has(page.relPath)) {
-    markDerivedHeld(db, "search", held.size + (isLiveCanonPage(page) && evidence === undefined ? 1 : 0));
+    markDerivedHeld(db, "search", held.size + (isLiveCanonPage(page) && !isDeterministicBrief(page) && evidence === undefined ? 1 : 0));
     return;
   }
   insertDoc(db, pageDocument(page, evidence.revision.authority));
@@ -296,6 +297,27 @@ export function indexEvents(db: Database, events: readonly CaptureEvent[]): void
   initSearch(db);
   db.transaction(() => {
     for (const event of events) replaceEvent(db, event);
+    const previous = readDerivedMeta(db, "search");
+    const parts = previous?.ledger_watermark?.split("\t");
+    let since = parts?.length === 2 ? { accepted_at: parts[0]!, event_id: parts[1]! } : null;
+    // Advance only a contiguous indexed prefix, never the latest unprocessed event.
+    const ids = new Set(events.map(event => event.event_id));
+    let watermark = previous?.ledger_watermark ?? null;
+    for (let offset = 0; offset < events.length; offset += MAX_READ_SINCE) {
+      const next = readSince(db, since, Math.min(MAX_READ_SINCE, events.length - offset));
+      if (!next.events.every(event => ids.has(event.event_id))) break;
+      if (next.cursor === null || next.events.length === 0) break;
+      since = next.cursor;
+      watermark = `${since.accepted_at}\t${since.event_id}`;
+    }
+    const count = db.query<{ n: number }, []>("SELECT count(*) AS n FROM search_documents").get()!.n;
+    stampDerived(db, {
+      layer: "search", generation: previous?.generation ?? ulid(), rebuilt_at: new Date().toISOString(),
+      doc_count: count, source_count: count + (previous?.skipped_count ?? 0),
+      skipped_count: previous?.skipped_count ?? 0, status: previous?.status ?? "ok",
+      ledger_watermark: watermark, canon_hash: previous?.canon_hash ?? null,
+      port_id: "kizuki.retrieval.fts5", contract: "kizuki.retrieval/v1",
+    });
   }).immediate();
 }
 
@@ -352,7 +374,7 @@ function stampSearch(
     generation: input.generation,
     rebuilt_at: input.rebuilt_at,
     doc_count: pageCount + eventCount,
-    source_count: input.pages.length + eventCount,
+    source_count: input.pages.filter(page => !isDeterministicBrief(page)).length + eventCount,
     skipped_count: input.skipped.length + withheld,
     status: input.skipped.length + withheld > 0 ? "degraded" : "ok",
     ledger_watermark:
@@ -375,7 +397,7 @@ export function projectSearchDocs(db: Database, pages: readonly CanonPage[] = []
   db.exec("DELETE FROM search_documents WHERE scope='canon'");
   let withheld = held.size;
   for (const page of pages) {
-    if (!isLiveCanonPage(page) || held.has(page.relPath)) continue;
+    if (!isLiveCanonPage(page) || isDeterministicBrief(page) || held.has(page.relPath)) continue;
     const admitted = evidence.get(page.relPath);
     if (admitted === undefined) { withheld += 1; continue; }
     insertDocument(db, pageDocument(page, admitted.revision.authority));

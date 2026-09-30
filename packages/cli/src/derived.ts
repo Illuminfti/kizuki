@@ -13,7 +13,7 @@ import {
   pendingRetrievalOps,
   readSince,
 } from "@kizuki/core";
-import { indexEvents, indexPage, publishLedgerEvent, removeCanonPath } from "@kizuki/core/internal";
+import { indexEvents, indexPage, publishLedgerEvent, reconcileDerivedPages, removeCanonPath } from "@kizuki/core/internal";
 import { writeAtomicFile } from "./atomic-file";
 
 export const INDEX_CURSOR_SCHEMA = "kizuki.cli.index-cursor/v1" as const;
@@ -268,6 +268,7 @@ export function refreshDerived(
     // Only a walk that reached the end may claim the ledger is fully indexed.
     events_seen: events.done ? count(db) : start.events_seen,
   };
+  reconcileDerivedPages(db, vaultPath);
   writeIndexCursor(vaultPath, cursor);
   return {
     events: events.indexed,

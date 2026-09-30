@@ -7,6 +7,7 @@ import { isMachineOriginPath } from "../canon/origin";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { SINGLE_SOURCE_CAP } from "../claims/authority";
 import { countPendingRetrievalOps } from "../claims/store";
+import { derivedPageSkips } from "../derived-health";
 import { readDerivedMeta } from "../derived-meta";
 import { readDerivedHolds } from "../derived-holds";
 import { inspectConnectionStateRecovery } from "../ledger/connection-state";
@@ -443,7 +444,8 @@ function storeDoctor(
   // Skipped and held documents are what make an index degraded; a stamp that
   // says so after the last of them was fixed is stale, and both are empty.
   const held = readDerivedHolds(db).paths.size;
-  if (pages.skipped.length > 0 || held > 0) degraded.push("index-degraded");
+  const skippedPages = derivedPageSkips(db, pages);
+  if (skippedPages.length > 0 || held > 0) degraded.push("index-degraded");
   if (pages.truncated) degraded.push("canon-walk-truncated");
   const search = readDerivedMeta(db, "search");
   const graph = readDerivedMeta(db, "graph");
@@ -461,16 +463,18 @@ function storeDoctor(
         doc_count: search?.doc_count ?? 0,
         status: search?.status ?? null,
         skipped_count: search?.skipped_count ?? 0,
+        ledger_watermark: search?.ledger_watermark ?? null,
       },
       graph: {
         rebuilt_at: graph?.rebuilt_at ?? null,
         doc_count: graph?.doc_count ?? 0,
         status: graph?.status ?? null,
         skipped_count: graph?.skipped_count ?? 0,
+        ledger_watermark: graph?.ledger_watermark ?? null,
       },
     },
-    skipped_pages: pages.skipped.slice(0, DOCTOR_SKIPPED_PAGES).map((page) => ({ path: page.relPath, reason: page.code })),
-    skipped_pages_total: pages.skipped.length,
+    skipped_pages: skippedPages.slice(0, DOCTOR_SKIPPED_PAGES),
+    skipped_pages_total: skippedPages.length,
     held_pages: held,
     pages_truncated: pages.truncated,
     writers: countWriterRoles(db),

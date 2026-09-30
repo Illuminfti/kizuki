@@ -1,3 +1,4 @@
+import { visibleIndexDegraded } from "./index-health";
 import type { AuditDenial, Grant } from "../agents";
 import { neighbors } from "../graph/graph";
 import type { GraphEdge, GraphEdgeKind } from "../graph/graph";
@@ -27,6 +28,7 @@ export interface GraphData {
   id: string;
   edges: GraphEdge[];
   truncated: boolean;
+  degraded?: string[];
 }
 
 function depthOf(value: unknown): 1 | 2 {
@@ -185,7 +187,9 @@ export async function serveGraph(
             canon: [],
             quoted: [],
             withheld: [{ id: root.id, reason: decision.reason }],
-            data: { id, edges: [], truncated: false },
+            data: { id, edges: [], truncated: false,
+              ...(visibleIndexDegraded(index, grant, "graph", [root]) ? { degraded: ["index-degraded"] } : {}),
+            },
           };
         }
       }
@@ -248,6 +252,7 @@ export async function serveGraph(
           id,
           edges: served.kept.slice(0, MAX_EDGES),
           truncated: found.truncated || served.kept.length > MAX_EDGES,
+          ...((root !== undefined || served.kept.length > 0) && visibleIndexDegraded(index, grant, "graph") ? { degraded: ["index-degraded"] } : {}),
         },
       };
     },
