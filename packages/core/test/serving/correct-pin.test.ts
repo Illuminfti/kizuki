@@ -138,12 +138,13 @@ describe("a relayed correction cannot override the owner's own correction (R22-1
     expect(getClaim(live.db, ownerClaim)?.status).toBe("live");
   });
 
-  test("a downgraded relay cannot retire another relay's unkeyed owner correction", async () => {
+  test.each([false, true])("a downgraded relay cannot retire another relay's owner correction (unkeyed=%s)", async (unkeyed) => {
     fixture = await serveFixture();
     const live = fixture;
-    const { claimId, pagePath } = await writtenPublicClaim(live, true);
+    const { claimId, claimKey, pagePath } = await writtenPublicClaim(live, unkeyed);
     const relayed = await serveCorrect(live.agent("reader-private"), {
       statement: "Linus works at the workshop.", target: { claim_id: claimId },
+      ...(unkeyed ? {} : { object: "the workshop" }),
     });
     const winnerId = relayed.data!.claim_id!;
     expect(getClaim(live.db, winnerId)?.authority).toBe("owner_correction");
@@ -153,7 +154,9 @@ describe("a relayed correction cannot override the owner's own correction (R22-1
     const receiptsBefore = live.db.query("SELECT count(*) AS n FROM canon_receipts").get();
     const supersessionsBefore = listSupersessions(live.db);
     const held = await refusal(() => serveCorrect(live.agent("downgraded"), {
-      statement: "Linus works at Contoso.", target: { claim_id: winnerId },
+      statement: "Linus works at Contoso.",
+      target: unkeyed ? { claim_id: winnerId } : { claim_key: claimKey },
+      ...(unkeyed ? {} : { object: "Contoso" }),
     }));
     expect(held.code).toBe("held");
     expect(held.message).toBe("correction is below the live claim's authority");
@@ -216,9 +219,11 @@ describe("a relayed correction cannot launder or declassify text (R26-3)", () =>
     });
     const correction = getClaim(live.db, direct.data!.claim_id!)!;
     expect(correction.sensitivity).toBe("private");
+    expect(eventHint(live, direct.data!.event_id!)).toBe("private");
     expect(correction.taint).toBe("clean");
     expect(correction.frontmatter["x-relayed-by"]).toBeUndefined();
     const page = parseFrontmatter(readFileSync(join(live.vaultPath, pagePath), "utf8"));
+    expect(page.data["sensitivity"]).toBe("private");
     const tier = SENSITIVITY_ORDER[page.data["sensitivity"] as "private"];
     expect(page.data["sources"]).toContain(direct.data!.event_id!);
     for (const source of page.data["sources"] as string[]) {
@@ -237,7 +242,9 @@ describe("a relayed correction cannot launder or declassify text (R26-3)", () =>
       statement: "Linus works at the workshop.", target: { claim_id: claimId },
     });
     expect(getClaim(live.db, direct.claim_ids[0]!)?.sensitivity).toBe("private");
+    expect(eventHint(live, direct.event_id)).toBe("private");
     const page = parseFrontmatter(readFileSync(join(live.vaultPath, pagePath), "utf8"));
+    expect(page.data["sensitivity"]).toBe("private");
     const tier = SENSITIVITY_ORDER[page.data["sensitivity"] as "private"];
     expect(page.data["sources"]).toContain(direct.event_id);
     for (const source of page.data["sources"] as string[]) {
