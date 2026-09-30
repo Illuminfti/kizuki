@@ -19,11 +19,12 @@ const vault = join(root, "vault");
 const db = ledger(vault);
 
 type Acknowledgment = { kind: "event" | "receipt"; id: string } | { kind: "artifact"; target: "output" | "restored" };
-function acknowledge(value: Acknowledgment): void {
+async function acknowledge(value: Acknowledgment): Promise<void> {
   appendFileSync(join(root, "acknowledged.jsonl"), JSON.stringify(value) + "\n", { mode: 0o600 });
+  if (cut === "acknowledged") await checkpoint();
 }
 
-/** Only the deterministic regression waits here. Random trials add no write-path hooks. */
+/** Only deterministic boundary regressions wait here. Random trials add no write-path hooks. */
 async function checkpoint(): Promise<void> {
   process.send?.({ event: "checkpoint" });
   await new Promise<void>(() => {});
@@ -33,7 +34,7 @@ async function operate(): Promise<void> {
   const io = { db, vault_path: vault };
   switch (fixture.operation) {
     case "capture":
-      for (let record = 0; record < 128; record++) acknowledge({ kind: "event", id: capture(db, record) });
+      for (let record = 0; record < 128; record++) await acknowledge({ kind: "event", id: capture(db, record) });
       break;
     case "extraction":
       await runServeDaemon(db, vault, { once: true, http: false, rails: ["sync"],
@@ -53,7 +54,7 @@ async function operate(): Promise<void> {
         for (const stored of fixtureClaims(db, fixture)) {
           const receipt = applyCanonWrite(target, stored, resolveTarget(target, stored), { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 32 }) });
           await retryCanonProjectionObligations(target);
-          acknowledge({ kind: "receipt", id: receipt.receipt_id });
+          await acknowledge({ kind: "receipt", id: receipt.receipt_id });
         }
       } finally { await port?.close(); }
       break;
@@ -61,19 +62,19 @@ async function operate(): Promise<void> {
     case "correction":
       for (const id of fixture.claimIds) {
         const result = await correct(io, { statement: "The researcher now works at Northwind.", target: { claim_id: id } });
-        if (result.receipt_id !== null) acknowledge({ kind: "receipt", id: result.receipt_id });
+        if (result.receipt_id !== null) await acknowledge({ kind: "receipt", id: result.receipt_id });
       }
       break;
     case "undo":
-      for (const id of fixture.receiptIds) acknowledge({ kind: "receipt", id: (await undoReceipt(io, id)).receipt_id });
+      for (const id of fixture.receiptIds) await acknowledge({ kind: "receipt", id: (await undoReceipt(io, id)).receipt_id });
       break;
     case "purge":
       await runPurge(db, vault, { connector_id: "chaos.target" }, "retire synthetic evidence");
       break;
-    case "export": exportVault(db, vault, join(root, "output")); acknowledge({ kind: "artifact", target: "output" }); break;
-    case "backup": await backupVault(db, vault, join(root, "output")); acknowledge({ kind: "artifact", target: "output" }); break;
-    case "restore": restoreVault(join(root, "artifact"), join(root, "restored")); acknowledge({ kind: "artifact", target: "restored" }); break;
-    case "restore-snapshot": restoreSnapshot(join(root, "artifact"), join(root, "restored")); acknowledge({ kind: "artifact", target: "restored" }); break;
+    case "export": exportVault(db, vault, join(root, "output")); await acknowledge({ kind: "artifact", target: "output" }); break;
+    case "backup": await backupVault(db, vault, join(root, "output")); await acknowledge({ kind: "artifact", target: "output" }); break;
+    case "restore": restoreVault(join(root, "artifact"), join(root, "restored")); await acknowledge({ kind: "artifact", target: "restored" }); break;
+    case "restore-snapshot": restoreSnapshot(join(root, "artifact"), join(root, "restored")); await acknowledge({ kind: "artifact", target: "restored" }); break;
     case "rebuild": await rebuildRetrieval(db, vault); break;
   }
 }

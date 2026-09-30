@@ -6,7 +6,7 @@ import { prepare } from "./fixture";
 
 export const OPERATIONS = ["capture", "extraction", "canon", "correction", "undo", "purge", "export", "backup", "restore", "restore-snapshot", "rebuild"] as const;
 export type Operation = typeof OPERATIONS[number];
-export type Cut = "random" | "projection-started";
+export type Cut = "random" | "projection-started" | "acknowledged";
 export interface CampaignOptions {
   seed: number;
   trials: number;
@@ -90,7 +90,10 @@ export async function runCampaign(options: CampaignOptions): Promise<{ schema: "
   if (!Number.isSafeInteger(maxDelay) || maxDelay < 0 || maxDelay > 1000) throw new Error("delay_must_be_0_to_1000");
   const operations = options.operations ?? OPERATIONS;
   if (operations.length === 0 || operations.some(value => !OPERATIONS.includes(value))) throw new Error("unknown_operation");
+  if (options.cut !== undefined && !["random", "projection-started", "acknowledged"].includes(options.cut)) throw new Error("unknown_cut");
   if (options.cut === "projection-started" && (operations.length !== 1 || operations[0] !== "canon")) throw new Error("projection_cut_requires_canon");
+  const acknowledgedOperations: readonly Operation[] = ["capture", "canon", "correction", "undo"];
+  if (options.cut === "acknowledged" && operations.some(value => !acknowledgedOperations.includes(value))) throw new Error("acknowledged_cut_requires_repeated_writes");
   const next = random(options.seed);
   const trials: Trial[] = [];
   if (options.artifacts !== undefined) mkdirSync(options.artifacts, { recursive: true, mode: 0o700 });

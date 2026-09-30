@@ -19,6 +19,7 @@ test("a seed reproduces kill delays; invalid budgets refuse before creating vaul
   await expect(runCampaign({ seed: -1, trials: 1 })).rejects.toThrow("seed_must_be_uint32");
   await expect(runCampaign({ seed: 1, trials: 0 })).rejects.toThrow("trials_must_be_1_to_10000");
   await expect(runCampaign({ seed: 1, trials: 1, maxDelayMs: 1001 })).rejects.toThrow("delay_must_be_0_to_1000");
+  await expect(runCampaign({ seed: 1, trials: 1, operations: ["purge"], cut: "acknowledged" })).rejects.toThrow("acknowledged_cut_requires_repeated_writes");
 });
 
 test("the oracle refuses unrelated file changes and projection loss before rebuilding", async () => {
@@ -41,6 +42,14 @@ test("SIGKILL after a real retrieval upsert reproduces the unknown-execution rec
   expect(report.trials[0]?.failure).toBe("canon_recovery_needed");
   expect(report.ok).toBe(false);
 }, 60_000);
+
+test("acknowledged writes survive SIGKILL before the next write", async () => {
+  for (const operation of ["capture", "canon", "correction", "undo"] as const) {
+    const report = await runCampaign({ seed: 17, trials: 1, operations: [operation], cut: "acknowledged" });
+    expect(report.ok).toBe(true);
+    expect(report.trials[0]).toMatchObject({ killed: true, failure: null, acknowledgments: 1 });
+  }
+}, 120_000);
 
 test.skip("DEFECT: local retrieval started operations cannot recover automatically after SIGKILL (requires fenced replay contract)", async () => {
   const report = await runCampaign({ seed: 17, trials: 1, operations: ["canon"], cut: "projection-started" });

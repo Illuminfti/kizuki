@@ -61,6 +61,12 @@ child has a bounded deadline and is killed and reaped on timeout. The seed
 reproduces selected delays, not OS scheduling or generated IDs. Use a fixed
 boundary regression to reproduce a specific state transition.
 
+The separate `acknowledged` boundary regression kills a child after its first
+capture, canon write, correction, or undo returns and records its acknowledgment,
+before the next write begins. Restart must preserve that returned work as well
+as the unrelated baseline. This supplements random trials that may die before
+any operation returns.
+
 ## Current limits
 
 This is sampled process-death evidence, not a proof of every instruction or
@@ -92,7 +98,8 @@ retrieval mutation is covered by the deterministic hold reproduction.
 `scripts/chaos/harness.test.ts` is discovered by the existing Bun test gate.
 It runs one short seeded trial per operation, checks actual signal delivery,
 tests argument bounds and seed repeatability, and reproduces the retrieval
-hold. The skipped acceptance is an explicit unresolved recovery requirement,
+hold. Four fixed cuts also check preservation of acknowledged writes. The
+skipped acceptance is an explicit unresolved recovery requirement,
 not a passing crash-recovery claim. Focused verification is:
 
 ```sh
