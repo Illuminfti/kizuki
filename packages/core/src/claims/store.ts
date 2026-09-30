@@ -1089,7 +1089,9 @@ export function supersedePageRevisions(db: Database, winnerId: string, at: strin
   const older = db
     .query<ClaimRow, [string, string, string, string]>(
       `SELECT * FROM claims
-        WHERE status = 'live' AND claim_id <> ? AND kind IN ('entity', 'claim')
+        WHERE (status = 'live' OR
+               (status = 'skipped' AND claim_key IS NULL AND retracted_at IS NULL AND superseded_by IS NULL))
+          AND claim_id <> ? AND kind IN ('entity', 'claim')
           AND (claim_key = ?
                OR (claim_key IS NULL AND producer = 'deterministic' AND authority = 'connector_evidence'
                    AND json_extract(frontmatter, '$."x-connector"') = ?

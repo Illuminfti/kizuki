@@ -507,3 +507,24 @@ test("failure journaling supersession rolls back the revision's claims and propo
     expect(readPage(f).body).toContain("next body");
   } finally { f.db.close(); }
 });
+
+
+test("a new revision retires legacy pending claims before the writer revives them", async () => {
+  const f = fixture();
+  try {
+    reviseLegacy(f, { text: "# Atlas\n\nlegacy written" });
+    expect((await f.pass()).errors).toEqual([]);
+    reviseLegacy(f, { text: "# Atlas\n\nlegacy pending" });
+    const pending = listClaims(f.db, { status: "live", limit: 20 }).find(c => c.target === TARGET && c.receipt_id === null)!;
+    // Older pending proposals migrated to this revivable claim state.
+    f.db.query("UPDATE claims SET status = 'skipped', retracted_at = NULL WHERE claim_id = ?").run(pending.claim_id);
+    revise(f, { text: "# Atlas\n\nnewest body" });
+    expect(getClaim(f.db, pending.claim_id)).toMatchObject({ claim_key: null, status: "superseded" });
+    const result = await f.pass();
+    expect(result.errors).toEqual([]);
+    expect(result.claims_written).toBe(1);
+    expect(occurrences(readPage(f).body, "# Atlas")).toBe(1);
+    expect(readPage(f).body).toContain("newest body");
+    expect(readPage(f).body).not.toContain("legacy");
+  } finally { f.db.close(); }
+});
