@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { SENSITIVITY_ORDER, type Grant } from "../../agents/types";
 import { OWNER_AGENT_GRANT } from "../../agents/types";
 import { validateAgentGrant } from "../../agents/identity";
+import { compareRfc3339 } from "../../agents/time";
 import { canonicalJson } from "../../util/hash";
 import { isPlainObject } from "../../util/validate";
 import type { WorldNamespace } from "../references";
@@ -31,8 +32,8 @@ export function scopeClipped(reader: Grant, issuer: Scope): boolean {
     wide === null || (narrow !== null && narrow.every((item) => wide.includes(item)));
   return SENSITIVITY_ORDER[reader.ceiling] < SENSITIVITY_ORDER[issuer.ceiling] ||
     !covers(reader.types, issuer.types) || !covers(reader.subjects, issuer.subjects) ||
-    (reader.since !== null && (issuer.since === null || Date.parse(reader.since) > Date.parse(issuer.since))) ||
-    (reader.until !== null && (issuer.until === null || Date.parse(reader.until) < Date.parse(issuer.until)));
+    (reader.since !== null && (issuer.since === null || compareRfc3339(reader.since, "since", issuer.since, "since") > 0)) ||
+    (reader.until !== null && (issuer.until === null || compareRfc3339(reader.until, "until", issuer.until, "until") < 0));
 }
 
 /** The caller holds the read transaction; a savepoint contains every cache mutation on failure. */

@@ -81,6 +81,26 @@ describe("view tokens on world_view", () => {
     }));
     expect(full).toMatchObject({ status: "current", view: { kind: "view" } });
   });
+  test("resume clipping preserves grant time precision and leap-second ordering", async () => {
+    const { scene: made, owner } = await scene();
+    const grant = { ...OWNER_AGENT_GRANT, since: "2016-12-31T23:59:59Z", until: "2099-01-01T00:00:00.000000001Z" };
+    const issuer = addAgent(made.db, "time-issuer", grant);
+    const ctx = { ...owner, principal: authenticate(made.db, issuer.token)! };
+    const discovery = resultOf(readWorldView(ctx, { operation: "find_concepts", label: "Bayesian updating", valid: { kind: "all" }, knownAt: { kind: "current" } }));
+    if (!("data" in discovery) || !("matches" in discovery.data)) throw new Error("no discovery");
+    const shared = resultOf(readWorldView(ctx, { operation: "share", of: { operation: "concept", concept: discovery.data.matches[0]!.ref }, valid: { kind: "all" }, knownAt: { kind: "current" } }));
+    if (!("data" in shared) || shared.data.schema !== "kizuki.resume-handle/v1") throw new Error("no handle");
+    const cases = [
+      { ...grant, until: "2099-01-01T00:00:00.000000000Z", clipped: true },
+      { ...grant, since: "2016-12-31T23:59:60Z", clipped: true },
+      { ...grant, until: "2099-01-01T01:00:00.000000001+01:00", clipped: false },
+    ];
+    for (const [index, { clipped, ...peerGrant }] of cases.entries()) {
+      const peer = addAgent(made.db, `time-peer-${index}`, peerGrant);
+      const result = resultOf(readWorldView({ ...owner, principal: authenticate(made.db, peer.token)! }, { operation: "resume", handle: shared.data.handle, valid: { kind: "all" }, knownAt: { kind: "current" } }));
+      expect(result).toMatchObject(clipped ? { status: "incomplete", reasons: ["coverage"] } : { status: "current" });
+    }
+  });
   test("a reserved principal reading a Concept gets a random 43-character view token and its lifetime", async () => {
     const { scene: made, owner } = await scene();
     const before = Date.now();
