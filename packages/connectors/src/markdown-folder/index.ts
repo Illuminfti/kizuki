@@ -115,34 +115,14 @@ export interface MarkdownFolderDeps {
 /** A file with its bytes in hand. */
 type LoadedFile = MarkdownFile & { content: string };
 
-/** What `lstat` and `fstat` agree on for one file at one moment. */
-interface StatKey {
-  size: number;
-  mtimeMs: number;
-  ctimeMs: number;
-  ino: number;
-}
-
 interface MarkdownFile {
-  /** Null when the scan reused a cached hash; read it again before emitting. */
+  /** Null on a continuation page; read it again before emitting. */
   content: string | null;
   sha256: string;
   size: number;
   relpath: string;
   mtimeMs: number;
-  stat: StatKey;
-  /** When the bytes were read; a cache entry is trusted only well after the file last changed. */
-  readAtMs: number;
 }
-
-/**
- * A file this connector hashed on an earlier batch. While its stat still
- * matches, later batches of the same drain skip reading it. Git's racy-entry
- * rule applies: a file modified within the window before it was read could
- * change again without moving its stat, so it is always read again.
- */
-type KnownFiles = ReadonlyMap<string, Pick<MarkdownFile, "sha256" | "size" | "stat" | "readAtMs">>;
-const RACY_WINDOW_MS = 2_000;
 
 interface RootIdentity {
   realpath: string;
@@ -206,7 +186,6 @@ export class MarkdownFolderConnector implements Connector {
   private readonly committedFiles: MarkdownFolderDeps["committedFiles"];
   private readonly recordHistory: MarkdownFolderDeps["recordHistory"];
   private readonly confirmedWithdrawals: number;
-  private known: KnownFiles = new Map();
   /** A bounded scan reused only by the next page of this drain, never a later sync. */
   private continuation: { cursor: Cursor; root: RootIdentity; scan: ScanResult } | null = null;
 
@@ -273,8 +252,7 @@ export class MarkdownFolderConnector implements Connector {
     this.continuation = null;
     const continuing = pending !== null && pending.cursor === cursor &&
       pending.root.realpath === root.realpath && pending.root.dev === root.dev && pending.root.ino === root.ino;
-    const scan = continuing ? pending.scan : await scanMarkdownFiles(root, this.exclude, this.known);
-    if (!continuing) this.known = knownFiles(scan.files);
+    const scan = continuing ? pending.scan : await scanMarkdownFiles(root, this.exclude);
     const observedAt = new Date().toISOString();
     const current = new Map(
       scan.files.map((file) => [file.relpath, file] as const),
@@ -506,7 +484,7 @@ export class MarkdownFolderConnector implements Connector {
     });
   }
 
-  /** The file with its bytes, reading again when the scan reused a cached hash. */
+  /** Reopen a continuation file through the same descriptor-bound reader. */
   private async loadFile(
     root: RootIdentity,
     file: MarkdownFile,
@@ -528,15 +506,6 @@ export class MarkdownFolderConnector implements Connector {
     if (this.committedFiles === undefined) return new Map(previous.files);
     return new Map(parseCommittedIdentities(await this.committedFiles()));
   }
-}
-
-function knownFiles(files: readonly MarkdownFile[]): KnownFiles {
-  return new Map(
-    files.map((file) => [
-      file.relpath,
-      { sha256: file.sha256, size: file.size, stat: file.stat, readAtMs: file.readAtMs },
-    ]),
-  );
 }
 
 export function createMarkdownFolderConnector(
@@ -723,7 +692,6 @@ async function pinnedDescent(
 async function scanMarkdownFiles(
   root: RootIdentity,
   exclude: readonly string[],
-  known: KnownFiles = new Map(),
 ): Promise<ScanResult> {
   const files: MarkdownFile[] = [];
   const errors: ImportRecordError[] = [];
@@ -835,19 +803,6 @@ async function scanMarkdownFiles(
           });
           return;
         }
-        const cached = known.get(relpath);
-        if (cached !== undefined && trustedCache(cached, info)) {
-          files.push({
-            content: null,
-            sha256: cached.sha256,
-            size: cached.size,
-            relpath,
-            mtimeMs: info.mtimeMs,
-            stat: cached.stat,
-            readAtMs: cached.readAtMs,
-          });
-          continue;
-        }
         const read = await readStableMarkdown(parent.fd, entry.name, relpath);
         if ("error" in read) {
           errors.push(read.error);
@@ -875,7 +830,6 @@ async function readStableMarkdown(
     let fd: number | undefined;
     try {
       fd = openSourceChild(parentFd, name);
-      const readAtMs = Date.now();
       const before = fstatSync(fd);
       if (!before.isFile()) {
         return {
@@ -930,13 +884,6 @@ async function readStableMarkdown(
           size: bytes.byteLength,
           relpath,
           mtimeMs: after.mtimeMs,
-          stat: {
-            size: after.size,
-            mtimeMs: after.mtimeMs,
-            ctimeMs: after.ctimeMs,
-            ino: after.ino,
-          },
-          readAtMs,
         },
       };
     } catch (error) {
@@ -972,25 +919,6 @@ async function readStableMarkdown(
       reason: "file changed while it was read",
     },
   };
-}
-
-/**
- * Whether a cached hash still describes the file. The stat must match, and the
- * file must have been quiet for the racy window before it was read: a write
- * inside that window can leave size and mtime as they were.
- */
-function trustedCache(
-  cached: { stat: StatKey; readAtMs: number },
-  info: { size: number; mtimeMs: number; ctimeMs: number; ino: number },
-): boolean {
-  return (
-    cached.readAtMs - cached.stat.mtimeMs > RACY_WINDOW_MS &&
-    cached.readAtMs - cached.stat.ctimeMs > RACY_WINDOW_MS &&
-    cached.stat.size === info.size &&
-    cached.stat.mtimeMs === info.mtimeMs &&
-    cached.stat.ctimeMs === info.ctimeMs &&
-    cached.stat.ino === info.ino
-  );
 }
 
 /** Reads one file again through its pinned parent directory, as the scan does. */

@@ -63,3 +63,34 @@ test("a file changed during a folder drain is retried from a fresh scan", async 
     expect(retried.events.map((event) => event.text)).toEqual(["after\n"]);
   } finally { rmSync(source, { recursive: true, force: true }); }
 });
+
+test("a replaced root revalidates content even when a restored file has identical stat fields", async () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-folder-restore-"));
+  const source = join(root, "source");
+  const file = join(source, "a.md");
+  const originalLstat = filesystem.lstat;
+  let listing: ReturnType<typeof spyOn> | undefined;
+  const clock = spyOn(Date, "now").mockReturnValue(Date.now() + 10_000);
+  try {
+    mkdirSync(source);
+    writeFileSync(file, "A\n");
+    const before = await originalLstat(file);
+    const connector = createMarkdownFolderConnector({ path: source });
+    const first = await connector.backfill(null);
+    clock.mockRestore();
+    renameSync(source, join(root, "old"));
+    mkdirSync(source);
+    writeFileSync(file, "B\n");
+    // A restored disk image may preserve inode numbers and timestamps. The
+    // new root is real; only the restored file's metadata is simulated.
+    listing = spyOn(filesystem, "lstat").mockImplementation(((input) =>
+      input === file ? Promise.resolve(before) : originalLstat(input)) as typeof filesystem.lstat);
+    const restored = await connector.sync(first.cursor);
+    expect(restored.events.map((event) => event.text)).toEqual(["B\n"]);
+    expect(restored.events.some((event) => event.deleted)).toBe(false);
+  } finally {
+    listing?.mockRestore();
+    clock.mockRestore();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -62,6 +62,7 @@
   files. A successful capture drain walks the tree once, revalidates emitted
   folder files, and defaults to 1,000 files per page. Wiki drains reuse their
   bounded plan until exhaustion; a later sync scans again.
+  Folder scans hash current bytes even when restored file metadata is unchanged.
 - Filing a proposal no longer reads the whole proposals and claims tables: two
   content-hash indexes (created on open for existing ledgers) make a
   5,000-file backfill cost work proportional to its size, not to its square.

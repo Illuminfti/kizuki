@@ -78,5 +78,5 @@ Each sync brings the ledger to where the folder is:
   through the descriptor-bound reader. A file whose bytes changed is retried
   from a fresh scan; an interrupted drain, replaced root or later sync also
   walks anew. New files added during a drain are discovered by the next sync.
-  A fresh scan may reuse a hash only while size, modification time, change time
-  and inode agree and the file was quiet for two seconds before it was read.
+  A fresh scan hashes the current bytes: restored metadata never stands in for
+  content identity.
