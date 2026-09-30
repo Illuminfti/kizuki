@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
+import { withCanonMutationSync } from "../../src/canon/io";
+import { rewriteCanon } from "../../src/serving/rewrite";
 import { undoReceipt } from "../../src/canon/undo";
 import { recoverCanonWrites } from "../../src/canon/recovery";
 import { getClaim, insertClaim } from "../../src/claims/store";
@@ -65,9 +67,10 @@ describe("produced canon classes", () => {
     const data = { id: "fact:produced-secret", type: "fact", title: "Produced kettle", status: "active", sensitivity: "public", taint: "clean", sources: [source] };
     const protectedRead = async () => {
       expect(serveGetPage(f.agent("reader-private"), { path }).canon).toEqual([]);
-      for (const ctx of [f.owner(), f.agent("open")]) {
-        expect(serveGetPage(ctx, { path }).canon[0]?.excerpt).toContain(CREDENTIAL_PROSE);
-      }
+      expect(serveGetPage(f.owner(), { path }).canon[0]?.excerpt).toContain(CREDENTIAL_PROSE);
+      const allowed = serveGetPage(f.agent("open"), { path }).canon;
+      expect(allowed).toHaveLength(1);
+      expect(allowed[0]?.excerpt).toContain("[redacted:secret_assignment]");
       const search = await serveSearch(f.agent("reader-private"), { query: "synthetic", scope: "canon" });
       expect(search.canon.map(page => page.path)).not.toContain(path);
     };
@@ -117,9 +120,19 @@ describe("correction page snapshots", () => {
     const receipt = write({ db: f.db, vault_path: f.vaultPath }, filed.claim);
     const ctx = f.agent("reader-private");
     expect(serveGetPage(ctx, { path: receipt.page_path }).canon).toHaveLength(1);
-    const corrected = await serveCorrect(ctx, { statement: CREDENTIAL_PROSE, target: { claim_id: filed.claim.claim_id } });
-    expect(corrected.data?.rewritten).toEqual([]);
-    expect(corrected.data?.receipt_id).toBeNull();
+    // The writer can produce credential prose from clean evidence. A reader's
+    // permission to the old page does not authorize these new produced bytes.
+    const incoming = await insertClaim({ db: f.db }, claimInput(source, {
+      body: CREDENTIAL_PROSE, object: "studio", confidence: 1,
+      frontmatter: { type: "person", title: "Grace" },
+    }));
+    const claim = incoming.outcome === "contested" ? incoming.incoming : incoming.outcome === "stored" ? incoming.claim : null;
+    if (claim === null || filed.claim.claim_key === null) throw new Error("fixture replacement");
+    const corrected = withCanonMutationSync({ db: f.db, vault_path: f.vaultPath }, (scope, io) =>
+      rewriteCanon(scope, io, ctx, claim, [filed.claim.claim_key!]));
+    expect(corrected.failed).toBe(false);
+    expect(corrected.rewritten).toEqual([]);
+    expect(corrected.receipt_id).toBeNull();
     expect(JSON.stringify(corrected)).not.toContain(receipt.page_path);
     expect(serveGetPage(f.owner(), { path: receipt.page_path }).canon[0]?.excerpt).toContain(CREDENTIAL_PROSE);
   });
@@ -156,7 +169,7 @@ describe("correction page snapshots", () => {
           for (const value of [CREDENTIAL_PROSE, receipt.page_path, receipt.after_hash]) expect(bytes).not.toContain(value);
         } else {
           expect(result.data?.rewritten).toHaveLength(1);
-          expect(result.data?.rewritten[0]?.diff).toContain(CREDENTIAL_PROSE);
+          expect(result.data?.rewritten[0]?.diff).toContain(name === "owner" ? CREDENTIAL_PROSE : "[redacted:secret_assignment]");
         }
         expect(getClaim(f.db, visible.claim_id)?.status).toBe("superseded");
       }
