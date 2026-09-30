@@ -12,12 +12,14 @@ still applies the rules under "One result per record" to whatever it nominates.
 2. If the query is question-shaped and matched fewer than three records, it
    runs again on its content words. Question-shaped means three or more words
    that end in `?` or start with a question or instruction word, with no quotes
-   or `*`. More than twelve distinct content terms keeps the literal form. Stopwords are dropped; a word of four or more letters matches by
-   stem (`decide` finds `decided`).
+   or `*`. More than twelve distinct content terms keeps the literal form.
+   Stopwords are dropped; a word of four or more letters matches by stem.
+   `decide`, `decided`, `deciding` and `decision` share one content term.
 3. A relaxed result must contain at least 60% of the distinct content words in
-   its title or body, counted exactly. Results order by how many they contain,
-   then by weighted match frequency. Titles count four times as much as body
-   matches, and length normalization is capped for long entity pages.
+   its title or body, counted exactly. After the exact-title boost, results order
+   by how many they contain, then by saturating weighted match frequency. Titles
+   count four times as much as body matches, and length normalization is capped
+   for long entity pages.
 
 A relaxed answer carries `query-relaxed` in `degraded` and a `coverage` share
 per hit. When nothing holds enough of the words the answer is empty and carries
@@ -38,8 +40,10 @@ page still returns that page, at a `coverage` the caller can inspect.
 ## One result per record
 
 - A capture that a returned canon page cites is folded into that page.
-- When a source record is edited the ledger keeps every capture as evidence, but
-  only the newest is indexed and served as current.
+- When a source record is edited the ledger and shared index keep every live
+  capture. Queries serve the newest version inside the reader's scope; a hidden
+  later revision cannot withdraw a visible answer. The owner sees the newest
+  version across the full scope.
 - A packet with a query picks its canon pages and, within its window, its
   captures by that query. Named subjects add their other recent captures after
   the matches. Without a query the packet is the window's recent captures.

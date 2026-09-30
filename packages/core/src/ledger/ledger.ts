@@ -415,7 +415,7 @@ export const LIVE_PREDICATE = `
  * version. Both names are `events` aliases. The ledger keeps every version as
  * evidence; readers that want the current text exclude the earlier ones.
  */
-function laterVersionSql(later: string, earlier: string): string {
+export function laterVersionSql(later: string, earlier: string): string {
   const binding = (alias: string): string =>
     `(SELECT source_key FROM source_event_bindings WHERE event_id = ${alias}.event_id)`;
   return `(
@@ -428,31 +428,6 @@ function laterVersionSql(later: string, earlier: string): string {
       OR (${later}.accepted_at = ${earlier}.accepted_at AND ${later}.event_id > ${earlier}.event_id)
     )
   )`;
-}
-
-/** True when the record behind this event has a newer version in the ledger. */
-export function isSupersededVersion(db: Database, eventId: string): boolean {
-  return db.query<{ found: number }, [string]>(
-    `SELECT 1 AS found FROM events
-      WHERE event_id = ? AND EXISTS (SELECT 1 FROM events AS later WHERE ${laterVersionSql("later", "events")})`,
-  ).get(eventId) !== null;
-}
-
-/** Every event that has a newer version, in one scan for a whole-index rebuild. */
-export function allSupersededVersionIds(db: Database): Set<string> {
-  return new Set(
-    db.query<{ event_id: string }, []>(
-      `SELECT event_id FROM events WHERE EXISTS (SELECT 1 FROM events AS later WHERE ${laterVersionSql("later", "events")})`,
-    ).all().map((row) => row.event_id),
-  );
-}
-
-/** Event ids of every earlier version of the record behind this event. */
-export function earlierVersionIds(db: Database, eventId: string): string[] {
-  return db.query<{ event_id: string }, [string]>(
-    `SELECT earlier.event_id FROM events AS earlier, events AS anchor
-      WHERE anchor.event_id = ? AND ${laterVersionSql("anchor", "earlier")}`,
-  ).all(eventId).map((row) => row.event_id);
 }
 
 function replayWhere(

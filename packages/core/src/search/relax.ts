@@ -56,6 +56,11 @@ export function isQuestionQuery(raw: string): boolean {
  * "decide" also finds "decided" and "deciding"; short words stay exact.
  */
 function termExpression(word: string): string {
+  // The noun does not share the verb's stem: a decision note still answers
+  // "what did we decide?". Count these variants as one content term.
+  if (/^(?:decid(?:e|ed|ing)|decisions?)$/.test(word)) {
+    return '("decid"* OR "decision"*)';
+  }
   let stem = word;
   if (/^\p{L}+$/u.test(word)) {
     for (const suffix of INFLECTIONS) {

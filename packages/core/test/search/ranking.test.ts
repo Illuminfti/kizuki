@@ -39,6 +39,14 @@ describe("exact-title boost", () => {
     indexRow(db, "other", "notes/other.md", "Other", "Kestrel Kestrel Kestrel Kestrel Kestrel.", "topic");
     expect(search(db, "  kestrel ", OPTIONS)[0]?.doc_id).toBe(entity);
   });
+
+  test("an exact question title keeps its boost when the query is relaxed", () => {
+    const db = searchDb();
+    const query = "What is the launch date?";
+    const exact = indexRow(db, "exact", "notes/launch.md", query, "The launch date is March. ".repeat(80), "topic");
+    indexRow(db, "other", "notes/other.md", "Launch date", "Launch date is April.", "topic");
+    expect(search(db, query, OPTIONS)[0]?.doc_id).toBe(exact);
+  });
 });
 
 describe("machine-exhaust ranking", () => {

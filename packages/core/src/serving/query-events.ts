@@ -1,5 +1,4 @@
 import type { AuditDenial } from "../agents";
-import { isSupersededVersion } from "../ledger/ledger";
 import { bareRetrievalId } from "../retrieval/ids";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import { RELAXED_LABEL, searchAuditCandidates } from "../search/query";
@@ -56,7 +55,7 @@ export function matchingEvents(
     if (page.degraded.includes(RELAXED_LABEL)) degraded.add(RELAXED_LABEL);
     for (const candidate of page.candidates) {
       const eventId = bareRetrievalId(candidate.doc_id);
-      if (seen.has(eventId) || isSupersededVersion(ctx.db, eventId)) continue;
+      if (seen.has(eventId)) continue;
       seen.add(eventId);
       const source = currentQuotedSource(ctx.db, eventId);
       if (source === null) continue;

@@ -16,13 +16,18 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  OWNER,
+  initAgents,
   initVault,
+  rebuildDerived,
   isPlainObject,
   MAX_CURSOR_BYTES,
   MAX_PROPOSAL_BODY_CHARS,
   MAX_SYNC_BATCH_BYTES,
   MAX_SYNC_BATCH_EVENTS,
   runBatch,
+  serveContextPacket,
+  serveTimeline,
 } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import { openLedger, timeline } from "@kizuki/core/testing";
@@ -274,6 +279,16 @@ describe("backfill and sync", () => {
     const since = timeline(db, { ceiling: "private", since: "2026-03-01T00:00:00Z" });
     expect(since.map((entry) => entry.text_preview)).toEqual(["Second draft."]);
     expect(timeline(db, { ceiling: "private", until: "2026-02-01T00:00:00Z" }).map((entry) => entry.text_preview)).toEqual(["First draft."]);
+    const vaultPath = join(root, "vault");
+    initVault(vaultPath);
+    initAgents(db);
+    rebuildDerived(db, vaultPath);
+    const ctx = { db, vaultPath, principal: OWNER };
+    const window = { since: "2026-03-01T00:00:00Z", until: "2026-04-01T00:00:00Z" };
+    const served = await serveTimeline(ctx, window);
+    expect(served.quoted.map(chunk => chunk.text)).toEqual(["Second draft."]);
+    const packet = await serveContextPacket(ctx, { query: "draft", include: ["timeline"], ...window });
+    expect(packet.quoted.map(chunk => chunk.text)).toEqual(["Second draft."]);
     db.close();
   });
 

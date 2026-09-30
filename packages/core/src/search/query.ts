@@ -12,6 +12,7 @@ import { placeholders } from "../util/sql";
 import type { DocScope } from "./indexer";
 import { isQuestionQuery, RELAX_BELOW_MATCHES, toRelaxedFtsQuery } from "./relax";
 import type { RelaxedQuery } from "./relax";
+import { currentVersionSql } from "./versions";
 
 export interface SearchOptions {
   scope?: DocScope | "all";
@@ -309,6 +310,19 @@ function searchPlan(
       bindings.push(...predicate.bindings);
     }
   }
+  const current = currentVersionSql(db, {
+    ceiling,
+    ...(types === undefined ? {} : { types }),
+    ...(subjects === undefined ? {} : { subjects }),
+    ...(opts.since === undefined ? {} : { since: opts.since }),
+    ...(opts.until === undefined ? {} : { until: opts.until }),
+    ...(source === undefined ? {} : { source }),
+  });
+  clauses.push(`(search_docs.scope != 'ledger' OR NOT EXISTS (
+    SELECT 1 FROM events
+    WHERE events.event_id = substr(search_docs.doc_id, 7) AND NOT (${current.sql})
+  ))`);
+  bindings.push(...current.bindings);
   const filters = clauses.map((clause) => ` AND ${clause}`).join("");
 
   // A question that finds almost nothing literally is retried as its content
@@ -325,17 +339,11 @@ function searchPlan(
         .get(ftsQuery, ...bindings)!.found;
   const relaxed = question !== null && literal < RELAX_BELOW_MATCHES ? question : null;
 
-  const order: string[] = [];
-  const orderBindings: (string | number)[] = [];
-  if (relaxed === null) {
-    // Searching a name finds the page called that before longer pages that mention it.
-    order.push("CASE WHEN lower(search_docs.title) = ? THEN 0 ELSE 1 END", ADJUSTED_RANK_SQL);
-    orderBindings.push(titleKey(query));
-  } else {
-    // Coverage comes before match frequency and origin weighting.
-    order.push("covered.terms DESC", ADJUSTED_RANK_SQL);
-  }
-  order.push("scope", "doc_id");
+  // An exact title keeps its boost even when a question takes the relaxed path.
+  const order = ["CASE WHEN lower(search_docs.title) = ? THEN 0 ELSE 1 END"];
+  const orderBindings = [titleKey(query)];
+  if (relaxed !== null) order.push("covered.terms DESC");
+  order.push(ADJUSTED_RANK_SQL, "scope", "doc_id");
 
   const covered = relaxed === null ? null : coverageCte(relaxed);
   const tailBindings = [

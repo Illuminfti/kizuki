@@ -4,7 +4,7 @@ import type { RetrievalAuthority } from "../contracts/retrieval";
 import { stampDerived } from "../derived-meta";
 import type { DerivedStamp } from "../derived-meta";
 import { assertDerivedDiscoveryReady, markDerivedHeld, readDerivedHolds } from "../derived-holds";
-import { allSupersededVersionIds, earlierVersionIds, isSupersededVersion, latestLedgerCursor, replayLive } from "../ledger/ledger";
+import { latestLedgerCursor, replayLive } from "../ledger/ledger";
 import { tableExists } from "../ledger/schema";
 import { retrievalDocId } from "../retrieval/ids";
 import { ulid } from "../util/ulid";
@@ -274,11 +274,9 @@ function replaceEvent(db: Database, event: CaptureEvent): void {
     ).run(event.connector_id, event.source_record_id);
     return;
   }
-  // Search shows the current text of a record. An earlier version stays in the
-  // ledger as evidence but leaves the index once a later one is accepted, and
-  // a late replay of an earlier version never displaces the later one.
-  for (const earlier of earlierVersionIds(db, event.event_id)) deleteDoc(db, "ledger", earlier);
-  if (isSupersededVersion(db, event.event_id)) return;
+  // Keep every live version in the shared projection. Search selects the
+  // current version in the reader's scope, so hidden revisions cannot erase
+  // answers visible at a lower ceiling.
   insertDoc(db, eventDocument(event));
 }
 
@@ -413,9 +411,8 @@ export function rebuildSearchLayer(
 ): SearchRebuildResult {
   assertDerivedDiscoveryReady(db);
   db.exec("DELETE FROM search_documents");
-  const superseded = allSupersededVersionIds(db);
   for (const event of replayLive(db, {})) {
-    if (!superseded.has(event.event_id)) insertDocument(db, eventDocument(event));
+    insertDocument(db, eventDocument(event));
   }
   const withheld = projectSearchDocs(db, input.pages);
   const counts = db

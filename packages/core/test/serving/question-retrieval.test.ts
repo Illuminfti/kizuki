@@ -104,7 +104,9 @@ describe("one result per real record", () => {
     const count = fixture.db
       .query<{ count: number }, []>("SELECT count(*) AS count FROM search_docs WHERE doc_id LIKE 'event:%' AND body LIKE 'The rollout owner%'")
       .get()!.count;
-    expect(count).toBe(1);
+    // Both versions remain in the shared projection; the reader-scoped query
+    // chooses the current one without letting a hidden edit withdraw an answer.
+    expect(count).toBe(2);
   });
 });
 

@@ -28,8 +28,8 @@ const OPTIONS = { ceiling: "private", scope: "ledger" } as const;
 describe("toRelaxedFtsQuery", () => {
   test("drops stopwords and ORs the content words of a question", () => {
     const relaxed = toRelaxedFtsQuery("What did we decide about market makers for the launch?");
-    expect(relaxed?.terms).toEqual(['"decid"*', '"market"*', '"maker"*', '"launch"*']);
-    expect(relaxed?.fts).toBe('"decid"* OR "market"* OR "maker"* OR "launch"*');
+    expect(relaxed?.terms).toEqual(['("decid"* OR "decision"*)', '"market"*', '"maker"*', '"launch"*']);
+    expect(relaxed?.fts).toBe('("decid"* OR "decision"*) OR "market"* OR "maker"* OR "launch"*');
     expect(relaxed?.required).toBe(3);
   });
 
@@ -47,6 +47,13 @@ describe("toRelaxedFtsQuery", () => {
 });
 
 describe("relaxed question search", () => {
+  test("a short decision question matches a note phrased as a decision", () => {
+    const { db, ids } = corpus();
+    const result = searchResult(db, "What did we decide about the launch?", OPTIONS);
+    expect(result.hits.map(hit => hit.doc_id)).toEqual([ids.get("launch-mm") as string]);
+    expect(result.hits[0]?.coverage).toBe(1);
+  });
+
   test("a paraphrased decision question finds the decision the AND query misses", () => {
     const { db, ids } = corpus();
     const question = "What did we decide about market makers for the launch?";

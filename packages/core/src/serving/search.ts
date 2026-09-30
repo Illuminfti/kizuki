@@ -4,7 +4,8 @@ import { canonReadGeneration } from "../canon/write-intent";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import { purgeReadEpoch } from "../derived-holds";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
-import { isSupersededVersion } from "../ledger/ledger";
+import { requireCeiling } from "../query/sql";
+import { isCurrentVersion } from "../search/versions";
 import { bareRetrievalId } from "../retrieval/ids";
 import { NO_MATCH_LABEL, RELAXED_LABEL, searchAuditCandidates } from "../search/query";
 import type { SearchHit, SearchOptions } from "../search/query";
@@ -101,7 +102,14 @@ function classify(
     }
 
     // An earlier version of an edited record is evidence, not a current answer.
-    if (isSupersededVersion(db, bareRetrievalId(hit.doc_id))) continue;
+    if (!isCurrentVersion(db, bareRetrievalId(hit.doc_id), {
+      ceiling: requireCeiling(grant.ceiling),
+      ...(grant.types === null ? {} : { types: grant.types }),
+      ...(grant.subjects === null ? {} : { subjects: grant.subjects }),
+      ...(grant.since === null ? {} : { since: grant.since }),
+      ...(grant.until === null ? {} : { until: grant.until }),
+      source: { owner: index.sourceContext.principal.kind === "owner", purpose: index.sourceContext.sourcePurpose ?? "recall" },
+    })) continue;
     const quoted = currentQuotedSource(db, bareRetrievalId(hit.doc_id));
     if (quoted === null) continue;
     const decision = eventDecision(grant, quoted, index.sourceContext);
