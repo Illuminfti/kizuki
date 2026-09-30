@@ -56,7 +56,7 @@ async function hook(
   // A shared host can take seconds to start a process; only the timeout tests choose a short deadline.
   const deadline = args.includes("--timeout-ms") ? [] : ["--timeout-ms", "60000"];
   const child = Bun.spawn(
-    [process.execPath, mainPath, "hook", "session-start", ...deadline, ...args],
+    [process.execPath, mainPath, "hook", "session-start", ...(args.includes("--token-ref") ? [] : ["--owner"]), ...deadline, ...args],
     {
       env: spawnEnv,
       stdin: "pipe",

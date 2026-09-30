@@ -23,3 +23,7 @@ export { indexEvent, indexEvents, indexPage, initSearch, removeCanonPath, remove
 export { eventRetrievalDoc, publishLedgerEvent } from "./retrieval/events";
 export { initGraph } from "./graph";
 export { rebuildDerived, rebuildWorldLayer } from "./derived";
+
+/** Shared output scrubber for composition roots; hooks always select the agent grade. */
+export { createRedactor } from "./serving/redact";
+export { sanitize, stripAnsi } from "./terminal-text";

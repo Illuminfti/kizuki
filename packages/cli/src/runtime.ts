@@ -22,7 +22,8 @@ export function serveArgs(vaultPath: string): string[] {
 /** This CLI, invoked again with `rest`: for a child that a caller can kill on a deadline. */
 export function cliArgs(rest: string[]): string[] {
   if (IS_COMPILED) return [process.execPath, ...rest];
-  return [process.execPath, fileURLToPath(new URL("./main.ts", import.meta.url)), ...rest];
+  return [process.execPath, "--no-env-file", `--config=${fileURLToPath(new URL("../hook.bunfig.toml", import.meta.url))}`,
+    fileURLToPath(new URL("./main.ts", import.meta.url)), ...rest];
 }
 
 /** One POSIX shell word: a plain path prints as it is, anything else is single-quoted. */

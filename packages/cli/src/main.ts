@@ -179,7 +179,19 @@ async function dispatch(argv: string[]): Promise<number> {
     },
   };
 
-  const extracted = extractVault(argv);
+  let extracted: ReturnType<typeof extractVault>;
+  try {
+    extracted = extractVault(argv);
+  } catch (error) {
+    // Global vault parsing happens before command dispatch, but hooks promise silence on errors.
+    let verbIndex = 0;
+    while (argv[verbIndex] === "--vault" || argv[verbIndex]?.startsWith("--vault=")) {
+      verbIndex += argv[verbIndex] === "--vault" ? 2 : 1;
+    }
+    if (!(error instanceof UsageError) || argv[verbIndex] !== "hook" || argv[verbIndex + 1] !== "session-start") throw error;
+    if (argv.includes("--verbose")) io.err("hook: nothing injected (usage)");
+    return 0;
+  }
   io.vaultOverride = extracted.vault;
   const verb = extracted.rest[0];
   const args = extracted.rest.slice(1);
@@ -236,7 +248,7 @@ async function dispatch(argv: string[]): Promise<number> {
     return 2;
   }
 
-  if (args.includes("--help")) {
+  if (args.includes("--help") && !(verb === "hook" && args[0] === "session-start")) {
     const json = args.includes("--json");
     const rest = args.filter((token) => token !== "--help" && token !== "--json");
     const topic = rest.length === 0 ? command : lookupCommandHelp(command.name, rest);
