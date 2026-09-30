@@ -259,7 +259,9 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     "system_health",
     {
       title: "Report system health",
-      description: TOOL_DESCRIPTIONS.system_health,
+      description: scoped
+        ? "Unavailable under the scoped v2 contract; returns unsupported_contract."
+        : TOOL_DESCRIPTIONS.system_health,
       inputSchema: HEALTH_INPUT,
       outputSchema: outputOf("system_health"),
       annotations: READ_ONLY,
