@@ -1,3 +1,4 @@
+import type { DoctorRailHistory } from "./doctor-receipts";
 import type { Database } from "bun:sqlite";
 import { countUnwrittenLiveClaims, oldestUnwrittenLiveClaimAt } from "../claims/store";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
@@ -280,6 +281,7 @@ export function railDoctor(
   context: WorkContext,
   /** The schedule's last run: a coalesced idle run advances it without a receipt. */
   lastRunAt: string | null = null,
+  history?: DoctorRailHistory,
 ): RailDoctor {
   const last = receipts.at(-1) ?? null;
   const lastActiveAt = [last?.finished_at ?? null, lastRunAt].reduce<string | null>(
@@ -338,6 +340,7 @@ export function railDoctor(
       break;
     badRuns.push(receipt);
   }
+  const badCount = history?.degraded_streak ?? badRuns.length;
   const grace = period_s + wait_s;
   const stale = age !== null && age > 2 * period_s + grace;
   let status: RailDoctor["status"] = "ok";
@@ -355,13 +358,13 @@ export function railDoctor(
   } else if (
     rail !== "doctor-sweep" &&
     !stale &&
-    badRuns.length >= DEGRADED_STREAK
+    badCount >= DEGRADED_STREAK
   ) {
     status = "down";
-    const kinds = [...new Set(badRuns.map((run) => run.status))].join(" or ");
-    const why = dominantError(badRuns);
+    const kinds = history?.kinds ?? [...new Set(badRuns.map((run) => run.status))].join(" or ");
+    const why = history === undefined ? dominantError(badRuns) : history.dominant_error;
     reason = cap(
-      `last ${badRuns.length} runs ended ${kinds}${why === null ? "" : `: ${why}`}`,
+      `last ${badCount} runs ended ${kinds}${why === null ? "" : `: ${why}`}`,
     );
   } else if (empty >= EMPTY_STREAK && expectLiveness) {
     status = "down";
@@ -379,7 +382,7 @@ export function railDoctor(
     status,
     reason,
     empty_streak: empty,
-    degraded_streak: badRuns.length,
+    degraded_streak: badCount,
     pending_work: workNow?.count ?? 0,
   };
 }

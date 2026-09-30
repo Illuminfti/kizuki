@@ -77,7 +77,7 @@ export function pageProvenanceErrors(db: Database, data: Record<string, unknown>
   if (!sources.ok) return sources.errors;
   if (data["status"] === "archived") return [];
   try {
-    using event = db.prepare<{ event_id: string }, [string]>(
+    const event = db.query<{ event_id: string }, [string]>(
       "SELECT event_id FROM events WHERE event_id=?",
     );
     if (sources.value.some((id) => event.get(id) === null)) {

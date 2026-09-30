@@ -13,13 +13,14 @@ import { inspectConnectionStateRecovery } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
 import { tableExists } from "../ledger/schema";
 import { inspectPurgeHealth } from "../ledger/purge";
-import { listCanonPagesReport, type CanonPageReport } from "../vault/pages";
+import { scanCanonPages, type CanonScanReport } from "../vault/pages";
 import { loadConfiguredModelRef, loadEmbeddingSelection, loadServeConfig, type EmbeddingSelection } from "./config";
 import { ageSeconds, railDoctor, syncPassWait } from "./doctor-rails";
 import { egressDoctor, extractionDoctor } from "./doctor-extraction";
 import { readServeIntent } from "./intent";
 import { serviceFile } from "./service-files";
-import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readEmbeddingReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
+import { isRedactedModelReference, orphanJournalReceipts, readEmbeddingReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
+import { readDoctorReceiptTotals, readDoctorExtractingClock, readDoctorRailHistory, readDoctorTruncationHistory, type DoctorReceiptTotals } from "./doctor-receipts";
 import { sha256Hex } from "../util/hash";
 import { listSchedules } from "./schema";
 import { countOversizedRecords, RETRY_SKIPPED_COMMAND } from "./extract-oversized";
@@ -72,6 +73,8 @@ export interface ServeDoctorOptions {
    * to true.
    */
   readonly page_walk?: boolean;
+  /** A validated header snapshot from the same doctor invocation. */
+  readonly canon_scan?: CanonScanReport;
   /**
    * False when the caller runs inside the service: its supervisor, intent and
    * liveness are the service's own to know, so they are neither checked nor a
@@ -116,21 +119,6 @@ type ExtractingClock =
   | { readonly kind: "unparseable" }
   | { readonly kind: "at"; readonly started_at: string };
 
-function latestExtractingStartedAt(receipts: RunReceipt[]): ExtractingClock {
-  let startedAt: string | null = null;
-  let latest = Number.NEGATIVE_INFINITY;
-  for (const receipt of receipts) {
-    if (receipt.claims_extracted <= 0 && receipt.claims_written <= 0) continue;
-    const at = Date.parse(receipt.started_at);
-    if (!Number.isFinite(at)) return { kind: "unparseable" };
-    if (at >= latest) {
-      latest = at;
-      startedAt = receipt.started_at;
-    }
-  }
-  return startedAt === null ? { kind: "none" } : { kind: "at", started_at: startedAt };
-}
-
 /** True first fill only when every live/superseded asserted_at parses. */
 function initialCapture(db: Database, startedAt: string): boolean {
   if (!tableExists(db, "claims")) return false;
@@ -158,9 +146,9 @@ function initialCapture(db: Database, startedAt: string): boolean {
   return Number(row?.prior ?? 0) === 0 && Number(row?.current ?? 0) !== 0;
 }
 
-function calibration(db: Database, receipts: RunReceipt[], now: string): CalibrationDoctor {
+function calibration(db: Database, totals: DoctorReceiptTotals, clock: ExtractingClock, now: string): CalibrationDoctor {
   const failures: string[] = [];
-  if (receipts.length === 0) {
+  if (totals.count === 0) {
     return {
       window_days: RUN_RECEIPT_RETENTION_DAYS,
       write_rate: null,
@@ -173,12 +161,9 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
       failures,
     };
   }
-  const extracted = receipts.reduce((sum, receipt) => sum + receipt.claims_extracted, 0);
-  const written = receipts.reduce((sum, receipt) => sum + (receipt.claims_written_extracted ?? receipt.claims_written), 0);
-  const deduped = receipts.reduce((sum, receipt) => sum + receipt.claims_deduped, 0);
+  const { extracted, written, deduped } = totals;
   const writeRate = written / Math.max(1, extracted);
   const dedupRate = deduped / Math.max(1, extracted);
-  const clock = latestExtractingStartedAt(receipts);
   // An unreadable receipt clock cannot tell a first fill from drift. Say so
   // rather than quietly judging the vault as if it were in steady state.
   if (clock.kind === "unparseable") failures.push("calibration_clock_unreadable");
@@ -224,10 +209,7 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
   if (measurable.length >= MIN_CALIBRATION_SAMPLE && spread !== null && spread < CONFIDENCE_SPREAD_MIN) {
     failures.push("confidence_not_produced");
   }
-  const today = now.slice(0, 10);
-  const canonToday = receipts
-    .filter((receipt) => receipt.finished_at.startsWith(today))
-    .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
+  const canonToday = totals.canon_today;
   const subjects = tableExists(db, "claims")
     ? db
         .query<{ subject: string; writes: number }, []>(
@@ -379,7 +361,7 @@ function countWriterRoles(db: Database): StoreDoctor["writers"] {
   return writers;
 }
 
-function countOriginPages(report: CanonPageReport): StoreDoctor["origin"] {
+function countOriginPages(report: CanonScanReport): StoreDoctor["origin"] {
   let machine = 0;
   let human = 0;
   for (const relPath of [
@@ -405,7 +387,7 @@ function storeDoctor(
   vaultPath: string,
   now: string,
   embeddingReceipts: RunReceipt[],
-  pages: CanonPageReport,
+  pages: CanonScanReport,
   embedding: EmbeddingSelection,
 ): StoreDoctor {
   const pendingRetrieval = countPendingRetrievalOps(db);
@@ -512,23 +494,29 @@ export function inspectServeDoctor(
   const modelConfigured = Boolean(modelRef || configuredModelRef);
   // Bounded reads: the newest sync passes, and the newest runs of every other
   // rail. A week of receipts is mostly no-op maintenance runs that judge nothing.
-  const syncHistory = readModelRunHistory(db, since, DOCTOR_SYNC_RECEIPTS);
+  const syncHistory = modelConfigured ? readModelRunHistory(db, since, DOCTOR_SYNC_RECEIPTS) : { receipts: [], truncated: false };
+  const totals = readDoctorReceiptTotals(db, since, DOCTOR_SYNC_RECEIPTS, now.slice(0, 10));
   const syncReceipts = syncHistory.receipts.filter((receipt): receipt is RunReceipt => receipt !== null);
   const work = { db, model_configured: modelConfigured, embedding_configured: options.embedding_configured ?? embedding.state === "configured" };
-  const rails = DEFAULT_RAILS.map((spec) => railDoctor(
-    spec.rail,
-    spec.rail === "sync" ? syncReceipts : listRunReceipts(db, { rail: spec.rail, since, limit: DOCTOR_RAIL_RECEIPTS }),
-    schedules.get(spec.rail)?.period_s ?? spec.period_s,
-    now,
-    expectLive,
-    syncPassWait(config.extraction),
-    work,
-    schedules.get(spec.rail)?.last_run_at ?? null,
-  ));
-  const usedToday = syncReceipts
-    .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
-    .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
-  const lastSync = syncReceipts.at(-1);
+  const histories = new Map(DEFAULT_RAILS.map(spec => [spec.rail,
+    readDoctorRailHistory(db, spec.rail, since, spec.rail === "sync" ? DOCTOR_SYNC_RECEIPTS : DOCTOR_RAIL_RECEIPTS),
+  ]));
+  const rails = DEFAULT_RAILS.map((spec) => {
+    const history = histories.get(spec.rail)!;
+    return railDoctor(
+      spec.rail,
+      history.receipts,
+      schedules.get(spec.rail)?.period_s ?? spec.period_s,
+      now,
+      expectLive,
+      syncPassWait(config.extraction),
+      work,
+      schedules.get(spec.rail)?.last_run_at ?? null,
+      history,
+    );
+  });
+  const usedToday = totals.canon_today;
+  const lastSync = histories.get("sync")?.receipts.at(-1);
   const lastRunUsed = lastSync?.budget.canon_writes_per_run?.used ?? lastSync?.canon_writes ?? 0;
   const model = modelDoctor(
     modelConfigured ? syncHistory : { receipts: [], truncated: false },
@@ -540,16 +528,16 @@ export function inspectServeDoctor(
     config.canon_writes_per_run,
     lastRunUsed,
   );
-  const skipped = syncReceipts.reduce((sum, receipt) => sum + (receipt.records_skipped ?? 0), 0);
+  const skipped = totals.skipped;
   const throughput = throughputDoctor(config, schedules.get("sync")?.period_s ?? config.sync_period_s, skipped);
   const oversized = oversizedDoctor(db);
-  const pages: CanonPageReport =
+  const pages: CanonScanReport =
     options.page_walk === false
       ? { pages: [], skipped: [], truncated: false }
-      : listCanonPagesReport(vaultPath);
+      : options.canon_scan ?? scanCanonPages(vaultPath);
   const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
-  const cal = calibration(db, syncReceipts, now);
-  const extraction = extractionDoctor(db, syncReceipts, model.canon_writing !== "off");
+  const cal = calibration(db, totals, totals.extracting_count === 0 ? { kind: "none" } : readDoctorExtractingClock(db, since, DOCTOR_SYNC_RECEIPTS), now);
+  const extraction = extractionDoctor(db, modelConfigured ? syncReceipts : totals.model_attempts === 0 ? [] : readDoctorTruncationHistory(db, since, DOCTOR_SYNC_RECEIPTS), model.canon_writing !== "off");
   const { egress, failures: egressFailures } = egressDoctor(db);
   const found: { text: string; top: TopFailure }[] = [];
   const fail = (text: string, kind: TopFailure["kind"] = "other", rail: RailId | null = null): void => {

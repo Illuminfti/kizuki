@@ -31,7 +31,7 @@ export const EXTRACT_BACKLOG_CAP = 10_000;
 /** Most skipped canon files doctor names. */
 export const DOCTOR_SKIPPED_PAGES = 16;
 export const RUN_RECEIPT_RETENTION_DAYS = 7;
-/** Size ceiling for `run-receipts.jsonl` after a journal prune, oldest receipts dropped first. */
+/** Above this size, journal-prune replays and retires the recovery log; SQL history keeps its age retention. */
 export const RUN_RECEIPT_JOURNAL_MAX_BYTES = 8 * 1024 * 1024;
 /** A scheduled run that did nothing appends a receipt at most this often per rail. */
 export const NOOP_RECEIPT_HEARTBEAT_S = 60 * 60;

@@ -181,7 +181,7 @@ export function validatePage(data: Record<string, unknown>): string[] {
   }
 
   for (const key of Object.keys(data)) {
-    if (keyLooksHostile(key)) {
+    if (!KNOWN_KEYS.has(key) && keyLooksHostile(key)) {
       errors.push(`${key}: unknown key; extensions must start with "x-"`);
       continue;
     }

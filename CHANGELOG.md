@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Doctor shares a header-only canon scan and aggregates run counters and rail
+  streaks in SQLite. Journal pruning retires replayed publication logs without
+  rewriting retained run history.
+
 - Purge is physically total. After it, the purged text is gone from claim and
   proposal payloads (ids, provenance and receipts stay), from archive copies
   and stage images, from the search index and retrieval store, and from freed
