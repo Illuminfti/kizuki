@@ -35,10 +35,10 @@ async function group(f: CanonFixture, index: number) {
 /** An unrecorded predecessor is preserved by the real writer and refuses this group. */
 function unrecordedPredecessor(vault: string, path: string) {
   const file = join(vault, path);
-  mkdirSync(dirname(file), { recursive: true });
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   writeFileSync(file, serializePage({ data: {
     id: `topic:${path.slice("auto/world/".length, -3)}`, type: "topic", status: "active", sensitivity: "private", taint: "quoted", sources: [],
-  }, body: "Synthetic unrecorded predecessor." }));
+  }, body: "Synthetic unrecorded predecessor." }), { mode: 0o600 });
 }
 
 test("stuck typed pages do not starve a healthy one, and are set aside after three failed passes", async () => {
