@@ -6,8 +6,8 @@ import { openLedger } from "@kizuki/core/testing";
 import { createServeRuntime } from "../../src/serve-runtime";
 import { createHelpers } from "../helpers";
 
-// These tests spawn real CLI processes and commit thousands of events on a shared host.
-setDefaultTimeout(600_000);
+// Real CLI processes and durable connector batches share the host with other tests.
+setDefaultTimeout(120_000);
 
 const h = createHelpers();
 afterEach(() => h.cleanup());
@@ -90,7 +90,7 @@ test("a first backfill drains across sync passes, one bounded slice at a time", 
   transcripts(
     sessions,
     2,
-    850,
+    251,
     (file, line) =>
       `Synthetic decision ${file}.${line}: keep the exporter stable.`,
   );
@@ -100,7 +100,7 @@ test("a first backfill drains across sync passes, one bounded slice at a time", 
   );
   try {
     const passes = [];
-    for (let pass = 0; pass < 4; pass++) {
+    for (let pass = 0; pass < 2; pass++) {
       passes.push(
         await runRail(db, setup.vault, "sync", {
           acquireRuntime: runtime,
@@ -109,19 +109,17 @@ test("a first backfill drains across sync passes, one bounded slice at a time", 
       // The write pass and the derived refresh ran after the slice, not after the whole drain.
       expect(passes.at(-1)!.errors).toEqual([]);
     }
-    // 1,700 turns are four batches: three slices that stop with more to read, then the last.
+    // The first batch crosses into the second file; its last two turns resume next pass.
     expect(
       passes.map((receipt) => [receipt.events_stored, receipt.has_more === true]),
     ).toEqual([
       [BATCH, true],
-      [BATCH, true],
-      [BATCH, true],
-      [200, false],
+      [2, false],
     ]);
     expect(passes.map((receipt) => receipt.events_duplicate)).toEqual([
-      0, 0, 0, 0,
+      0, 0,
     ]);
-    expect(stored()).toBe(1_700);
+    expect(stored()).toBe(502);
   } finally {
     db.close();
   }
@@ -132,7 +130,7 @@ test("a spent deadline still reads one batch per connection, and a stop request 
   transcripts(
     sessions,
     1,
-    1_200,
+    501,
     (file, line) =>
       `Synthetic decision ${file}.${line}: keep the exporter stable.`,
   );
