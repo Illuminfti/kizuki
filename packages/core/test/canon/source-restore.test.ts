@@ -17,6 +17,7 @@ import { parseFrontmatter } from "../../src/vault/frontmatter";
 import { validEvent } from "../fixtures";
 import { openLedger } from "../../src/ledger/db";
 import { tempVault } from "../helpers/vault";
+import { ulid } from "../../src/util/ulid";
 import { canonFixture, write, type CanonFixture } from "./helpers";
 
 /**
@@ -80,16 +81,13 @@ describe("a returned source record un-archives its page", () => {
     const db = openLedger(":memory:");
     const fixture = { db, vault: temporary.path, io: { db, vault_path: temporary.path }, dispose: temporary.dispose };
     try {
-      let untouched = "";
-      let firstPath = "";
-      let firstArchive = "";
-      for (let index = 0; index < 257; index++) {
-        const input = { ...validEvent(), source_record_id: `record-${index}`, text: `body ${index}` };
+      const archive = (record: string) => {
+        const input = { ...validEvent(), source_record_id: record, text: `body ${record}` };
         const accepted = accept(fixture.db, input);
         if (accepted.status !== "stored") throw new Error("source admission failed");
         const proposal = fileProposal(fixture.db, {
-          kind: "claim", target: `sources/page-${index}`, body: input.text,
-          frontmatter: { type: "source", title: `Page ${index}` },
+          kind: "claim", target: `sources/${record}`, body: input.text,
+          frontmatter: { type: "source", title: record },
           provenance: [accepted.event.event_id], producer: "deterministic", confidence: 1,
         }).proposal;
         const created = write(fixture.io, getClaim(fixture.db, proposal.proposal_id)!);
@@ -97,15 +95,38 @@ describe("a returned source record un-archives its page", () => {
         if (deletion.status !== "stored") throw new Error("tombstone admission failed");
         const cascade = cascadeTombstone(fixture.db, deletion.event, fixture.io);
         expect(cascade.retractions_filed).toHaveLength(1);
-        write(fixture.io, getClaim(fixture.db, cascade.retractions_filed[0]!)!);
-        if (index < 256) {
-          const path = join(fixture.vault, created.page_path);
-          const archived = readFileSync(path, "utf8");
-          if (index === 0) { firstPath = path; firstArchive = archived; }
-          writeFileSync(path, `${archived}\nOwner note.\n`);
-        } else untouched = created.page_path;
+        const receipt = write(fixture.io, getClaim(fixture.db, cascade.retractions_filed[0]!)!);
         expect(accept(fixture.db, { ...input, metadata: { revision_epoch: 2 } }).status).toBe("stored");
-      }
+        return { path: created.page_path, receipt, claim: cascade.retractions_filed[0]! };
+      };
+      const first = archive("first");
+      const firstPath = join(fixture.vault, first.path);
+      const firstArchive = readFileSync(firstPath, "utf8");
+      writeFileSync(firstPath, `${firstArchive}\nOwner note.\n`);
+
+      // Seed the already-edited inventory from one real archive. Only the
+      // two pages this test actually restores need full writer histories;
+      // 514 fixture writes would measure receipt materialization, not scan
+      // progress. Every seeded entry has changed bytes and must be kept.
+      type Row = Record<string, string | number | null>;
+      const receiptRow = db.query<Row, [string]>("SELECT * FROM canon_receipts WHERE receipt_id = ?").get(first.receipt.receipt_id)!;
+      const claimRow = db.query<Row, [string]>("SELECT * FROM claims WHERE claim_id = ?").get(first.claim)!;
+      const insert = (table: "canon_receipts" | "claims", row: Row) => {
+        db.query(`INSERT INTO ${table} (${Object.keys(row).join(",")}) VALUES (${Object.keys(row).map(() => "?").join(",")})`)
+          .run(...Object.values(row));
+      };
+      db.transaction(() => {
+        for (let index = 1; index < 256; index++) {
+          const receiptId = ulid(), claimId = ulid(), pageId = ulid();
+          const pagePath = `sources/held-${index}.md`;
+          insert("canon_receipts", { ...receiptRow, receipt_id: receiptId, page_path: pagePath, claim_ids: JSON.stringify([claimId]) });
+          insert("claims", { ...claimRow, claim_id: claimId, receipt_id: receiptId, target: pagePath.slice(0, -3), content_hash: "" });
+          db.query("INSERT INTO page_index (page_id,rel_path,last_receipt,last_hash) VALUES (?,?,?,?)")
+            .run(pageId, pagePath, receiptId, first.receipt.after_hash);
+          writeFileSync(join(fixture.vault, pagePath), `${firstArchive}\nOwner note ${index}.\n`);
+        }
+      })();
+      const untouched = archive("last").path;
       // Each invocation is bounded. Progress belongs to the ledger, so a new
       // IO snapshot (as after a restart) resumes beyond the edited prefix.
       expect(await restore(fixture)).toEqual({ restored: 0, kept: 256 });
