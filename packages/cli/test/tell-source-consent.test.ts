@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { applyCanonWrite, createBudgetTracker, getClaim, resolveTarget } from "@kizuki/core";
+import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "./helpers";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
@@ -35,8 +37,22 @@ describe("correction consent", () => {
     const f = importedWithoutCorrection();
     writeFileSync(f.file, JSON.stringify({ ...base, purposes: [...base.purposes, "correction", "audit"] }));
     expect(h.runCli(f.env, "connect", "grant", "--source", f.key, "--policy", f.file, "--expected-revision", "1", "--operation-id", "allow-correction").exitCode).toBe(0);
-    expect(h.runCli(f.env, "tell", "That reading is wrong.", "--claim", f.claimId).exitCode).toBe(0);
-    const liveId = JSON.parse(h.runCli(f.env, "doctor", "--json").stdout).data.live_claims[0].claim_id;
+    const db = openLedger(join(f.vault, ".kizuki", "kizuki.db"));
+    let pagePath: string;
+    try {
+      const claim = getClaim(db, f.claimId);
+      if (claim === null) throw new Error("synthetic claim is missing");
+      const io = { db, vault_path: f.vault };
+      pagePath = applyCanonWrite(io, claim, resolveTarget(io, claim), {
+        writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 1 }),
+      }).page_path;
+    } finally { db.close(); }
+    const corrected = h.runCli(f.env, "tell", "That reading is wrong.", "--claim", f.claimId, "--json");
+    expect(corrected.exitCode, corrected.stderr).toBe(0);
+    const result = JSON.parse(corrected.stdout).data;
+    expect(result.rewritten.map((page: { page_path: string }) => page.page_path)).toEqual([pagePath]);
+    const liveId = result.claim_ids[0];
+    const before = readFileSync(join(f.vault, pagePath), "utf8");
     writeFileSync(f.file, JSON.stringify({ ...base, purposes: ["capture", "recall", "session", "correction", "audit"] }));
     expect(h.runCli(f.env, "connect", "grant", "--source", f.key, "--policy", f.file, "--expected-revision", "2", "--operation-id", "withdraw-derive").exitCode).toBe(0);
     const doctor = h.runCli(f.env, "doctor");
@@ -48,6 +64,7 @@ describe("correction consent", () => {
     expect(told.exitCode).toBe(1);
     expect(told.stderr).toContain(`source ${f.key} does not permit derive`);
     expect(told.stderr).toContain(`kizuki connect grant --source ${f.key} --policy POLICY.json --expected-revision 3 --operation-id OPERATION`);
+    expect(readFileSync(join(f.vault, pagePath), "utf8")).toBe(before);
   });
 
   test("a refused tell names the missing purpose and the exact grant command", () => {
