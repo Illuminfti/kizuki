@@ -22,8 +22,8 @@ replays the journal, retires it when expired rows exist or its size exceeds
 the journal ceiling, and deletes expired rows with one SQL range operation.
 It does not serialize surviving history back into JSONL or shorten SQLite
 retention to fit the journal ceiling. A publication lock serializes replay,
-retirement and append-plus-row publication. A conflicting or unreadable row
-prevents retirement. Pending capture-repair outbox rows are never age-pruned.
+retirement and append-plus-row publication. A conflicting or unreadable SQL row
+named by the journal prevents retirement. Pending capture-repair outbox rows are never age-pruned.
 A crash after retirement can leave extra SQLite rows until the next prune;
 replay cannot resurrect already-pruned history from the retired file.
 

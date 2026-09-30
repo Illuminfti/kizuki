@@ -679,7 +679,12 @@ export function pruneRunReceipts(
     replayRunJournal(db, vaultPath, []);
     if (existsSync(path)) {
       const fd = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW);
-      try { ftruncateSync(fd, 0); fsyncSync(fd); } finally { closeSync(fd); }
+      try {
+        const stat = fstatSync(fd);
+        if (!stat.isFile() || stat.nlink !== 1) throw new Error("run receipt journal is not a regular private file");
+        ftruncateSync(fd, 0);
+        fsyncSync(fd);
+      } finally { closeSync(fd); }
     }
     const deleted = db.transaction(() => db.query(
       "DELETE FROM run_receipts WHERE finished_at < ? AND stopped IS NOT ?",
