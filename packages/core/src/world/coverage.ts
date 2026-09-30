@@ -29,14 +29,10 @@ function visibleSources(ctx: ServeContext): string[] {
 }
 
 /** Import unfinished, last run errored, or the run record unreadable. A source with no checkpoint has no recorded run and adds no gap. */
-function sourceIncomplete(db: Database, visible: ReadonlySet<string>): boolean {
+function sourceIncomplete(db: Database, visible: readonly string[]): boolean {
   if (!tableExists(db, "checkpoints")) return false;
-  return inspectCheckpoints(db).some((item) =>
-    !item.ok
-      ? visible.has(item.source_key)
-      : visible.has(item.value.source_key) &&
-        (!item.value.backfill_complete ||
-          item.value.last_result.errors.length > 0),
+  return inspectCheckpoints(db, visible).some((item) =>
+    !item.ok || !item.value.backfill_complete || item.value.last_result.errors.length > 0,
   );
 }
 
@@ -101,7 +97,7 @@ export function sourceCoverage(ctx: ServeContext): SourceCoverageGap[] {
   const visible = visibleSources(ctx);
   if (visible.length === 0) return [];
   const gaps: SourceCoverageGap[] = [];
-  if (sourceIncomplete(db, new Set(visible))) gaps.push("coverage");
+  if (sourceIncomplete(db, visible)) gaps.push("coverage");
   if (extractBacklog(ctx, visible)) gaps.push("pending_consolidation");
   return gaps;
 }
