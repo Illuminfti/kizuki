@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Authorize claim windows before their limits, retain recent contradictions and
+  readable coverage gaps in large vaults, rank recall by relevance and recency,
+  skip oversized packet pieces, and scope health connections to exact sources.
+
 - Purge is physically total. After it, the purged text is gone from claim and
   proposal payloads (ids, provenance and receipts stay), from archive copies
   and stage images, from the search index and retrieval store, and from freed

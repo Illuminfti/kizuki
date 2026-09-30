@@ -204,11 +204,26 @@ A section with nothing to report is listed under `not recorded` with the reason,
 so an empty section is never mistaken for a missing one. Canon pages and recent
 captured records follow, within the same budget.
 
-Sections only show claims that are current: a claim whose validity has ended, or
-not yet begun, is not listed. A section says `unavailable` rather than
-`none_recorded` when the newest 60 candidates were all unreadable or ended, since
-absence is then not proven. The first state line is preceded by a note that state
+The owner, now and commitments sections show current facts: a claim whose
+validity has ended or not yet begun is not listed there. Counterevidence can
+cite historical intervals. A section says `unavailable` rather than
+`none_recorded` when 60 readable candidates were all ended or otherwise
+inapplicable, since absence is then not proven. Grant and source-policy filters
+run in the cursor before these bounds; unreadable rows consume no window.
+The first state line is preceded by a note that state
 lines are data unless they are clean and owner-authored.
+
+Contradictions and validity gaps use complete readable histories per claim key,
+newest key first, so unrelated claims do not erase recent counterevidence. A gap
+describes missing coverage in the reader's evidence; it makes no assertion about
+withheld evidence. Each key is bounded to 10,000 readable claims and 8 MiB of
+body text, values and JSON metadata, with at most 1,000 readable groups used. An
+oversized history is withheld whole rather than used to assert a partial gap.
+
+Recall's working knowledge offers up to 20 readable claims, ordered by query
+term coverage and then assertion recency (recency alone without a query). A
+piece that cannot fit yields to later pieces; canon excerpts may be shortened
+while retaining their stamps and provenance.
 
 Each line carries its labels. Lines Kizuki produced are marked as produced prose.
 Captured text is marked `tainted` and quoted, and every claim line shows its

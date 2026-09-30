@@ -6,7 +6,9 @@ import type { Database } from "bun:sqlite";
 import { isMachineOriginPath } from "../canon/origin";
 import { listValidityGaps } from "../claims/gaps";
 import { listLiveConflicts } from "../claims/identity";
-import { listClaims } from "../claims/store";
+import { getClaim } from "../claims/store";
+import { claimReadSql, type ClaimReadScope } from "../claims/read-scope";
+import { instantSecondSql, instantNanoSql } from "../query/sql";
 import { neighbors } from "../graph/graph";
 import { bareRetrievalId } from "../retrieval/ids";
 import { search } from "../search/query";
@@ -75,8 +77,7 @@ function longestFit(max: number, ok: (n: number) => boolean): number | null {
 /**
  * Bound a canon atom's excerpt, then its title projection, until `fits`
  * accepts the rendered block. Returns null when even the provenance-only
- * form (stamps, page id, path) cannot fit — the packer must then stop
- * rather than skip ahead.
+ * form (stamps, page id, path) cannot fit; the packer can skip this atom.
  */
 export function boundCanonAtom(
   piece: Piece,
@@ -158,36 +159,35 @@ export interface PieceRequest {
  * Narrow in SQL, then authorize in the store cursor before the accepted-result
  * cap. Filtering a default page after LIMIT hides later allowed rows.
  */
-function loadWorkingClaims(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean) {
-  if (wanted === undefined || wanted.length === 0) {
-    return listClaims(db, { status: "live", keyed: true, limit: 400, filter: canRead }).slice(0, CANDIDATE_LIMIT);
-  }
-  const seen = new Set<string>();
-  const out: ReturnType<typeof listClaims> = [];
-  for (const subject of wanted) {
-    for (const claim of listClaims(db, {
-      status: "live",
-      keyed: true,
-      subject,
-      limit: 400,
-      filter: canRead,
-    }).slice(0, CANDIDATE_LIMIT)) {
-      if (seen.has(claim.claim_id)) continue;
-      seen.add(claim.claim_id);
-      out.push(claim);
-    }
+function loadWorkingClaims(db: Database, wanted: string[] | undefined, reader: ReturnType<typeof claimReader>, query?: string): Claim[] {
+  const permitted = claimReadSql(db, reader.scope);
+  const terms = [...new Set(query?.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])].slice(0, 32);
+  const relevance = terms.length === 0 ? "0.0" : terms.map(() => "(instr(lower(coalesce(claims.subject,'')||' '||coalesce(claims.predicate,'')||' '||coalesce(claims.object,'')),?)>0)").join("+");
+  const subjects = wanted === undefined || wanted.length === 0 ? undefined : JSON.stringify(wanted);
+  const params = [...permitted.bindings, ...(subjects === undefined ? [] : [subjects]), ...terms];
+  const out: Claim[] = [];
+  // Rank the readable cursor, not an oldest-first prefix that was already cut.
+  for (const row of db.query<{ claim_id: string }, (string | number)[]>(`
+    SELECT claim_id FROM claims WHERE status='live' AND claim_key IS NOT NULL AND ${permitted.sql}
+      ${subjects === undefined ? "" : "AND claims.subject IN (SELECT value FROM json_each(?))"}
+    ORDER BY (${relevance}) DESC, ${instantSecondSql("claims.asserted_at")} DESC,
+      ${instantNanoSql("claims.asserted_at")} DESC, claim_id DESC`).iterate(...params)) {
+    const claim = getClaim(db, row.claim_id);
+    if (claim === null || !reader.canRead(claim)) continue;
+    out.push(claim);
+    if (out.length === CANDIDATE_LIMIT) break;
   }
   return out;
 }
 
-export function loadSubjectConflicts(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean) {
+export function loadSubjectConflicts(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean, scope?: ClaimReadScope) {
   if (wanted === undefined || wanted.length === 0) {
-    return listLiveConflicts(db, { limit: 8, canRead });
+    return listLiveConflicts(db, { limit: 8, canRead, ...(scope === undefined ? {} : { scope }) });
   }
   const seen = new Set<string>();
   const out: ReturnType<typeof listLiveConflicts> = [];
   for (const subject of wanted) {
-    for (const conflict of listLiveConflicts(db, { subject, limit: 8, canRead })) {
+    for (const conflict of listLiveConflicts(db, { subject, limit: 8, canRead, ...(scope === undefined ? {} : { scope }) })) {
       if (seen.has(conflict.claim_key)) continue;
       seen.add(conflict.claim_key);
       out.push(conflict);
@@ -196,14 +196,14 @@ export function loadSubjectConflicts(db: Database, wanted: string[] | undefined,
   return out;
 }
 
-export function loadSubjectGaps(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean) {
+export function loadSubjectGaps(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean, scope?: ClaimReadScope) {
   if (wanted === undefined || wanted.length === 0) {
-    return listValidityGaps(db, { limit: 8, canRead });
+    return listValidityGaps(db, { limit: 8, canRead, ...(scope === undefined ? {} : { scope }) });
   }
   const seen = new Set<string>();
   const out: ReturnType<typeof listValidityGaps> = [];
   for (const subject of wanted) {
-    for (const gap of listValidityGaps(db, { subject, limit: 8, canRead })) {
+    for (const gap of listValidityGaps(db, { subject, limit: 8, canRead, ...(scope === undefined ? {} : { scope }) })) {
       if (seen.has(gap.claim_key)) continue;
       seen.add(gap.claim_key);
       out.push(gap);
@@ -394,7 +394,7 @@ export async function collectPieces(
   if (request.include.includes("claims")) {
     const wanted = request.subjects;
     const reader = claimReader(ctx.db, grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
-    const live = loadWorkingClaims(ctx.db, wanted, reader.canRead);
+    const live = loadWorkingClaims(ctx.db, wanted, reader, request.query);
     for (const claim of live) {
       pieces.push({
         section: "claims",
@@ -403,7 +403,7 @@ export async function collectPieces(
         audit: reader.auditClaim(claim.claim_id),
       });
     }
-    for (const conflict of loadSubjectConflicts(ctx.db, wanted, reader.canRead)) {
+    for (const conflict of loadSubjectConflicts(ctx.db, wanted, reader.canRead, reader.scope)) {
       pieces.push({
         section: "claims",
         heading: "## counterevidence",
@@ -413,7 +413,7 @@ export async function collectPieces(
           ` :: ${conflict.claims.map((item) => inline(item.claim_id)).join(",")}\n`,
       });
     }
-    for (const gap of loadSubjectGaps(ctx.db, wanted, reader.canRead)) {
+    for (const gap of loadSubjectGaps(ctx.db, wanted, reader.canRead, reader.scope)) {
       pieces.push({
         section: "claims",
         heading: "## counterevidence",
