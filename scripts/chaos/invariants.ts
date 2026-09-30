@@ -1,9 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
-  doctorVault, getCanonReceiptRecord, inspectCanonRecovery, inspectLedgerHealth,
+  doctorVault, getCanonReceiptRecord, inspectCanonRecoveryDetail, inspectLedgerHealth,
   inspectServeDoctor, listCanonPagesReport, readHolds, RECEIPTS_PATH, sha256Hex, verifyPurge,
 } from "../../packages/core/src";
 import { rebuildDerived } from "../../packages/core/src/internal";
@@ -16,11 +16,45 @@ export class InvariantFailure extends Error {
   constructor(code: string, readonly detail?: unknown) { super(code); this.name = "InvariantFailure"; }
 }
 
-function requireInvariant(condition: boolean, code: string): void {
+function requireInvariant(condition: boolean, code: string): asserts condition {
   if (!condition) throw new InvariantFailure(code);
 }
 
 const json = (value: unknown): string => JSON.stringify(value);
+
+/** Build the exact permitted lifecycle image; content and provenance never get a blanket exemption. */
+function expectedClaim(db: Database, row: Record<string, unknown>, current: Record<string, unknown>, operation: string): Record<string, unknown> {
+  const expected = { ...row };
+  const id = row.claim_id as string;
+  if (operation === "canon" && current.receipt_id !== row.receipt_id) {
+    const receipt = getCanonReceiptRecord(db, current.receipt_id as string);
+    requireInvariant(receipt !== null && "claim_ids" in receipt && receipt.kind === "write" && receipt.writer === "loop" && receipt.claim_ids.includes(id), "committed_claim_changed");
+    expected.receipt_id = current.receipt_id;
+  } else if (operation === "correction" && current.status !== row.status) {
+    const transition = db.query<{ winner: string; at: string; rule: string }, [string]>("SELECT winner,at,rule FROM claim_supersessions WHERE loser=? ORDER BY at DESC LIMIT 1").get(id);
+    const winner = transition === null ? null : db.query<{ authority: string; valid_from: string }, [string]>("SELECT authority,valid_from FROM claims WHERE claim_id=?").get(transition.winner);
+    requireInvariant(transition?.rule === "R5" && winner?.authority === "owner_correction", "committed_claim_changed");
+    expected.status = "superseded";
+    expected.superseded_by = transition.winner;
+    expected.retracted_at = transition.at;
+    expected.valid_to = row.valid_to === null || Date.parse(winner.valid_from) < Date.parse(row.valid_to as string) ? winner.valid_from : row.valid_to;
+  } else if (operation === "undo" && current.status !== row.status) {
+    const original = getCanonReceiptRecord(db, row.receipt_id as string);
+    const revert = original !== null && "reverted_by" in original && original.reverted_by !== null ? getCanonReceiptRecord(db, original.reverted_by) : null;
+    requireInvariant(revert !== null && "kind" in revert && revert.kind === "revert" && revert.reverts === row.receipt_id && revert.claim_ids.includes(id), "committed_claim_changed");
+    expected.status = "reverted";
+    expected.retracted_at = revert.at;
+  } else if (operation === "purge" && current.status !== row.status) {
+    const provenance = JSON.parse(row.provenance as string) as string[];
+    const purges = provenance.map(event => db.query<{ purged_at: string }, [string]>("SELECT purged_at FROM event_purges WHERE event_id=?").get(event));
+    requireInvariant(provenance.length > 0 && purges.every(receipt => receipt !== null) && new Set(purges.map(receipt => receipt!.purged_at)).size === 1, "committed_claim_changed");
+    Object.assign(expected, { status: "purged", retracted_at: purges[0]!.purged_at,
+      body: "", object: null, target: null, subject: null, predicate: null,
+      subjects: "[]", frontmatter: "{}", model_ref: null,
+    });
+  }
+  return expected;
+}
 
 /** Only the operation's explicit targets may differ from the committed baseline. */
 function checkPreservation(db: Database, vault: string, fixture: Fixture, portableRestore: boolean): void {
@@ -52,19 +86,34 @@ function checkPreservation(db: Database, vault: string, fixture: Fixture, portab
         producer: row.producer as string, confidence: row.confidence as number,
       }),
     } : row;
-    if (!changedClaims.has(id)) requireInvariant(isDeepStrictEqual(db.query("SELECT * FROM claims WHERE claim_id=?").get(id), expected), "committed_claim_changed");
+    const current = db.query("SELECT * FROM claims WHERE claim_id=?").get(id) as Record<string, unknown> | null;
+    requireInvariant(current !== null, "committed_claim_changed");
+    const permitted = changedClaims.has(id) ? expectedClaim(db, expected, current, operation) : expected;
+    requireInvariant(isDeepStrictEqual(current, permitted), "committed_claim_changed");
   }
   for (const row of fixture.baseline.receipts) {
     const id = row.receipt_id as string;
-    if (!changedReceipts.has(id)) requireInvariant(isDeepStrictEqual(getCanonReceiptRecord(db, id), row), "committed_receipt_changed");
+    const current = getCanonReceiptRecord(db, id);
+    if (changedReceipts.has(id) && operation === "undo" && current !== null && "reverted_by" in current && current.reverted_by !== row.reverted_by) {
+      const revert = current.reverted_by === null ? null : getCanonReceiptRecord(db, current.reverted_by);
+      requireInvariant(revert !== null && "kind" in revert && revert.kind === "revert" && revert.reverts === id, "committed_receipt_changed");
+      requireInvariant(isDeepStrictEqual(current, { ...row, reverted_by: current.reverted_by }), "committed_receipt_changed");
+    } else if (!changedReceipts.has(id) || operation !== "purge") requireInvariant(isDeepStrictEqual(current, row), "committed_receipt_changed");
   }
   for (const file of fixture.baseline.files) {
     if (!changedPaths.has(file.path)) requireInvariant(existsSync(join(vault, file.path)) && readFileSync(join(vault, file.path), "utf8") === file.bytes, "committed_file_changed");
   }
   for (const table of fixture.baseline.typed) {
     for (const row of table.rows) {
-      if (operation === "purge") continue;
       const current = db.query(`SELECT * FROM ${table.table} WHERE ${table.key}=?`).all(row[table.key] as string);
+      if (operation === "purge" && purgeStarted && changedClaims.has(row.claim_id as string)) {
+        requireInvariant(current.length === 0, "purge_typed_support_remaining");
+        continue;
+      }
+      if (operation === "purge" && purgeStarted && table.table === "claim_v2_support_events" && fixture.eventIds.includes(row.event_id as string)) {
+        requireInvariant(current.length === 0, "purge_typed_support_remaining");
+        continue;
+      }
       requireInvariant(current.some(value => isDeepStrictEqual(value, row)), "committed_typed_support_changed");
     }
   }
@@ -99,13 +148,17 @@ function fileNames(root: string): string[] {
 }
 
 /** Check the recovered state before rebuilding, then compare the complete floor projection. */
-export async function checkVault(db: Database, vault: string, fixture: Fixture, portableRestore = false): Promise<void> {
+export async function checkVault(db: Database, vault: string, fixture: Fixture, portableRestore = false, port?: RetrievalPort): Promise<void> {
   requireInvariant(inspectLedgerHealth(db, { full: true }).ok, "ledger_integrity");
   assertWorldState(db);
-  requireInvariant(doctorVault(vault, db).counts.invalid === 0, "doctor_pages");
+  const doctor = doctorVault(vault, db);
+  requireInvariant(doctor.counts.invalid === 0, "doctor_pages");
+  requireInvariant(doctor.doctrine.every(item => item.state === "current" || item.state === "owner-edited"), "doctor_doctrine");
+  requireInvariant(doctor.control.length === 0, "doctor_control");
   requireInvariant(inspectServeDoctor(db, vault, { host_checks: false }).ok, "doctor_runtime");
-  const recovery = inspectCanonRecovery(db);
+  const recovery = inspectCanonRecoveryDetail(db, vault);
   requireInvariant(!recovery.pending && recovery.projection_pending === 0, "canon_recovery_pending");
+  requireInvariant(recovery.quarantine.state !== "unsafe" && recovery.quarantined === 0, "doctor_quarantine");
   requireInvariant(readHolds(db).length === 0, "canon_holds");
   requireInvariant(db.query("SELECT 1 FROM extract_batches LIMIT 1").get() === null, "extraction_journal_pending");
 
@@ -134,7 +187,10 @@ export async function checkVault(db: Database, vault: string, fixture: Fixture, 
     const file = join(vault, row.rel_path);
     requireInvariant(existsSync(file) || row.last_hash === sha256Hex(new Uint8Array()), "receipted_file_missing");
   }
-  requireInvariant(!fileNames(vault).some(path => path.endsWith(".stage")), "orphan_stage");
+  requireInvariant(!fileNames(vault).some(path => {
+    const name = basename(path);
+    return name.endsWith(".stage") || /^\..+\.[0-9A-HJKMNP-TV-Z]{26}\.tmp$/.test(name) || /^\.canon-[a-f0-9]{64}\.tmp$/.test(name);
+  }), "orphan_stage");
   const archives = db.query<{ archive_path: string; before_hash: string }, []>("SELECT archive_path,before_hash FROM canon_receipts WHERE archive_path IS NOT NULL").all();
   for (const row of archives) {
     requireInvariant(existsSync(join(vault, row.archive_path)), "archive_missing");
@@ -148,7 +204,7 @@ export async function checkVault(db: Database, vault: string, fixture: Fixture, 
     const erased = db.query<{ receipt_id: string }, []>("SELECT receipt_id FROM event_purges ORDER BY receipt_id").all();
     if (erased.length > 0) {
       requireInvariant(db.query("SELECT 1 FROM events WHERE connector_id='chaos.target' LIMIT 1").get() === null, "purge_incomplete");
-      for (const receipt of erased) requireInvariant((await verifyPurge(db, vault, receipt.receipt_id)).ok, "purge_absence_proof");
+      for (const receipt of erased) requireInvariant((await verifyPurge(db, vault, receipt.receipt_id, port === undefined ? {} : { retrieval: port })).ok, "purge_absence_proof");
     }
   } else {
     for (const id of fixture.eventIds) requireInvariant(db.query("SELECT 1 FROM events WHERE event_id=?").get(id) !== null, "committed_event_lost");

@@ -39,7 +39,7 @@ test("persistConfiguredRetrieval activates serve.toml and port_state", () => {
       kind: "retrieval",
       port_id: "kizuki.retrieval.embedded-pg",
       contract: "kizuki.retrieval/v1",
-      contract_minor: 0,
+      contract_minor: 1,
       space: null,
       bound_at: "2026-09-16T00:00:00Z",
     });

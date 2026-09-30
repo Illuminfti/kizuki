@@ -9,7 +9,7 @@ import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-s
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
 import { openWorldErasureReceiptStream, openOrdinaryRecoveryReceiptStream, type WorldErasureReceiptStream, type OrdinaryRecoveryReceiptStream } from "./receipt-stream";
 import { commitMachineByteIntent } from "../ledger/event-origin";
-import { getClaim, markClaimReverted, minTimestamp, reinstateClaim, resupersedeClaim, supersessionsForReceipt } from "../claims/store";
+import { enqueueClaimRetrieval, getClaim, markClaimReverted, minTimestamp, reinstateClaim, resupersedeClaim, supersessionsForReceipt } from "../claims/store";
 import { tableExists } from "../ledger/schema";
 import { getCanonReceipt, type CanonReceipt } from "./receipts";
 import { insertReceiptRow, deletePageIndex, markReceiptReverted, upsertPageIndex, type CanonIo } from "./store";
@@ -85,6 +85,14 @@ function restoreClaimLifecycle(io: CanonIo, original: CanonReceipt, at: string):
     for (const id of original.claim_ids) markClaimReverted(io.db, id, at);
     const prior = new Map(supersessionsForReceipt(io.db, original.receipt_id).map(row => [row.loser, row.prior_valid_to]));
     for (const ref of original.superseded) reinstateClaim(io.db, ref.claim_id, prior.get(ref.claim_id) ?? null);
+  }
+  // Queue in the same completion transaction, using the durable store binding
+  // even when recovery has not opened that port yet. The existing claim sweep
+  // reloads current lifecycle and authority before publishing or removing it.
+  const stores = new Set(original.retrieval_ops.map(op => op.store));
+  for (const id of new Set([...original.claim_ids, ...original.superseded.map(ref => ref.claim_id)])) {
+    const claim = getClaim(io.db, id);
+    if (claim !== null) for (const store of stores) enqueueClaimRetrieval(io.db, store, claim, at);
   }
 }
 function completeRows(io: CanonIo, intent: CanonWriteIntent): void {

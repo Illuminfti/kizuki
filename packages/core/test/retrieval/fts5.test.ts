@@ -70,7 +70,7 @@ describe("kizuki.retrieval.fts5", () => {
       listed.find(({ id }) => id === FTS5_RETRIEVAL_ID),
     ).toMatchObject({
       contract: "kizuki.retrieval/v1",
-      supports: ["lexical", "provenance-erasure/v1"],
+      supports: ["lexical", "provenance-erasure/v1", "mutation-fence/v1"],
       requires_lease: true,
       optional_package: null,
     });

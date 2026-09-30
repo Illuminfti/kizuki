@@ -6,10 +6,9 @@ import {
   retryCanonProjectionObligations, runPurge, runServeDaemon, undoReceipt,
   rebuildRetrieval,
 } from "../../packages/core/src";
-import type { CanonIo } from "../../packages/core/src";
-import { capture, fixtureClaims, ledger, MODEL, producer, readFixture, retrieval } from "./fixture";
+import { capture, fixtureClaims, ledger, MODEL, producer, readFixture, retrieval, usesRetrieval } from "./fixture";
 import { checkVault, InvariantFailure, retrievalProjection } from "./invariants";
-import { tryRefreshDerived } from "../../packages/cli/src/derived";
+import { refreshAndPublishDerived } from "../../packages/cli/src/derived";
 import { worldCanonTarget } from "../../packages/core/src/canon/world-materialization";
 import { journalExtractBatch, mineLiveDrafts } from "../../packages/core/src/serve/extract";
 import { setPurgeRecoveryHook } from "../../packages/core/src/ledger/purge";
@@ -51,79 +50,76 @@ async function checkpoint(): Promise<void> {
 }
 
 async function operate(): Promise<void> {
-  const io = { db, vault_path: vault };
-  switch (fixture.operation) {
-    case "capture":
-      for (let record = 0; record < 128; record++) await acknowledge({ kind: "event", id: capture(db, record) });
-      break;
-    case "extraction":
-      if (cut === "extraction-journaled") {
-        const mined = await mineLiveDrafts(db, extractionProducer);
-        if (!journalExtractBatch(db, mined, MODEL, extractionProducer).journaled) throw new Error("fixture_decision_not_journaled");
-        writeFileSync(join(root, "journaled-inputs.json"), JSON.stringify({
-          inputs: mined.model_inputs?.map(input => input.event_id) ?? mined.input_ids,
-          drafts: mined.drafts,
-        }), { mode: 0o600 });
-        await checkpoint();
-      }
-      await runServeDaemon(db, vault, { once: true, http: false, rails: ["sync"],
-        hooks: { producer: extractionProducer, model_ref: MODEL, claims: { db } }, log: () => {} });
-      break;
-    case "canon": case "typed-canon": {
-      const port = cut === "projection-started" ? retrieval(vault) : undefined;
-      try {
-        if (port) {
+  const port = usesRetrieval(fixture.operation) ? retrieval(vault) : undefined;
+  const io = { db, vault_path: vault, ...(port === undefined ? {} : { retrieval: port, retrieval_store: port.descriptor.id }) };
+  try {
+    switch (fixture.operation) {
+      case "capture":
+        for (let record = 0; record < 128; record++) await acknowledge({ kind: "event", id: capture(db, record) });
+        break;
+      case "extraction":
+        if (cut === "extraction-journaled") {
+          const mined = await mineLiveDrafts(db, extractionProducer);
+          if (!journalExtractBatch(db, mined, MODEL, extractionProducer).journaled) throw new Error("fixture_decision_not_journaled");
+          writeFileSync(join(root, "journaled-inputs.json"), JSON.stringify({
+            inputs: mined.model_inputs?.map(input => input.event_id) ?? mined.input_ids,
+            drafts: mined.drafts,
+          }), { mode: 0o600 });
+          await checkpoint();
+        }
+        await runServeDaemon(db, vault, { once: true, http: false, rails: ["sync"],
+          hooks: { producer: extractionProducer, model_ref: MODEL, claims: { db } }, log: () => {} });
+        break;
+      case "canon": case "typed-canon": {
+        if (port && cut === "projection-started") {
           const upsert = port.upsert.bind(port);
           port.upsert = async docs => { const result = await upsert(docs); await checkpoint(); return result; };
         }
-        const target: CanonIo = { ...io, ...(port === undefined ? {} : { retrieval: port, retrieval_store: port.descriptor.id }) };
         for (const stored of fixtureClaims(db, fixture)) {
           begin([stored.claim_id]);
-          const decision = fixture.operation === "typed-canon" ? worldCanonTarget(db, stored.claim_id) : resolveTarget(target, stored);
-          const receipt = applyCanonWrite(target, stored, decision, { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 32 }) });
-          await retryCanonProjectionObligations(target);
+          const decision = fixture.operation === "typed-canon" ? worldCanonTarget(db, stored.claim_id) : resolveTarget(io, stored);
+          const receipt = applyCanonWrite(io, stored, decision, { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 32 }) });
+          await retryCanonProjectionObligations(io);
           await acknowledge({ kind: "receipt", id: receipt.receipt_id });
         }
-      } finally { await port?.close(); }
-      break;
-    }
-    case "correction": case "typed-correction":
-      for (const id of fixture.claimIds) {
-        const previous = fixture.baseline.claims.find(row => row.claim_id === id)?.receipt_id;
-        begin([id], typeof previous === "string" ? [previous] : []);
-        const result = await correct(io, { statement: "The researcher now works at Northwind.", target: { claim_id: id } });
-        if (result.receipt_id !== null) await acknowledge({ kind: "receipt", id: result.receipt_id });
+        break;
       }
-      break;
-    case "undo": case "typed-undo":
-      for (const id of fixture.receiptIds) {
-        const previous = getCanonReceiptRecord(db, id) as { claim_ids: string[] };
-        begin(previous.claim_ids, [id]);
-        await acknowledge({ kind: "receipt", id: (await undoReceipt(io, id)).receipt_id });
+      case "correction": case "typed-correction":
+        for (const id of fixture.claimIds) {
+          const previous = fixture.baseline.claims.find(row => row.claim_id === id)?.receipt_id;
+          begin([id], typeof previous === "string" ? [previous] : []);
+          const result = await correct(io, { statement: "The researcher now works at Northwind.", target: { claim_id: id } });
+          if (result.receipt_id !== null) await acknowledge({ kind: "receipt", id: result.receipt_id });
+        }
+        break;
+      case "undo": case "typed-undo":
+        for (const id of fixture.receiptIds) {
+          const previous = getCanonReceiptRecord(db, id) as { claim_ids: string[] };
+          begin(previous.claim_ids, [id]);
+          await acknowledge({ kind: "receipt", id: (await undoReceipt(io, id)).receipt_id });
+        }
+        break;
+      case "purge": case "typed-purge":
+        begin(fixture.claimIds, fixture.receiptIds);
+        if (cut === "purge-admitted") setPurgeRecoveryHook(stage => {
+          if (stage !== "phase-one-committed") return;
+          writeFileSync(join(root, "checkpoint"), stage, { mode: 0o600 });
+          // Freeze inside the synchronous writer scope until the parent delivers SIGKILL.
+          process.kill(process.pid, "SIGSTOP");
+        });
+        await runPurge(db, vault, { connector_id: "chaos.target" }, "retire synthetic evidence", port === undefined ? {} : { retrieval: port });
+        break;
+      case "export": exportVault(db, vault, join(root, "output")); await acknowledge({ kind: "artifact", target: "output" }); break;
+      case "backup": await backupVault(db, vault, join(root, "output")); await acknowledge({ kind: "artifact", target: "output" }); break;
+      case "restore": restoreVault(join(root, "artifact"), join(root, "restored")); await acknowledge({ kind: "artifact", target: "restored" }); break;
+      case "restore-snapshot": restoreSnapshot(join(root, "artifact"), join(root, "restored")); await acknowledge({ kind: "artifact", target: "restored" }); break;
+      case "rebuild": await rebuildRetrieval(db, vault); break;
+      case "retrieval-rebuild": {
+        await rebuildRetrieval(db, vault, port!);
+        break;
       }
-      break;
-    case "purge": case "typed-purge":
-      begin(fixture.claimIds, fixture.receiptIds);
-      if (cut === "purge-admitted") setPurgeRecoveryHook(stage => {
-        if (stage !== "phase-one-committed") return;
-        writeFileSync(join(root, "checkpoint"), stage, { mode: 0o600 });
-        // Freeze inside the synchronous writer scope until the parent delivers SIGKILL.
-        process.kill(process.pid, "SIGSTOP");
-      });
-      await runPurge(db, vault, { connector_id: "chaos.target" }, "retire synthetic evidence");
-      break;
-    case "export": exportVault(db, vault, join(root, "output")); await acknowledge({ kind: "artifact", target: "output" }); break;
-    case "backup": await backupVault(db, vault, join(root, "output")); await acknowledge({ kind: "artifact", target: "output" }); break;
-    case "restore": restoreVault(join(root, "artifact"), join(root, "restored")); await acknowledge({ kind: "artifact", target: "restored" }); break;
-    case "restore-snapshot": restoreSnapshot(join(root, "artifact"), join(root, "restored")); await acknowledge({ kind: "artifact", target: "restored" }); break;
-    case "rebuild": await rebuildRetrieval(db, vault); break;
-    case "retrieval-rebuild": {
-      const port = retrieval(vault);
-      try { await rebuildRetrieval(db, vault, port); }
-      finally { await port.close(); }
-      break;
     }
-  }
+  } finally { await port?.close(); }
 }
 
 try {
@@ -137,7 +133,7 @@ try {
     writeFileSync(join(root, "operation-completed"), "complete\n", { mode: 0o600 });
     process.send?.({ event: "completed" });
   } else {
-    const port = cut === "projection-started" || fixture.operation === "retrieval-rebuild" ? retrieval(vault) : undefined;
+    const port = usesRetrieval(fixture.operation) ? retrieval(vault) : undefined;
     try {
       const io = { db, vault_path: vault, ...(port === undefined ? {} : { retrieval: port }) };
       let recoveryFailure: unknown;
@@ -153,7 +149,7 @@ try {
           : port === undefined ? {} : { claims: { db, retrieval: port } }),
           // The public refresh seam catches a capture committed before its index update.
           refresh: async () => {
-            const result = tryRefreshDerived(db, vault);
+            const result = await refreshAndPublishDerived(db, vault, port);
             return { indexed: result.events + result.pages, remaining: result.remaining, degraded: result.degraded };
           } },
         log: () => {} });
@@ -190,11 +186,11 @@ try {
       const begunPath = join(root, "begun.jsonl");
       const begun = existsSync(begunPath) ? readFileSync(begunPath, "utf8").split("\n").slice(0, -1).map(line => JSON.parse(line) as NonNullable<typeof fixture.activeTargets>) : [];
       fixture.activeTargets = { claims: begun.flatMap(value => value.claims), receipts: begun.flatMap(value => value.receipts) };
-      await checkVault(db, vault, fixture);
-      if (fixture.operation === "retrieval-rebuild" && port !== undefined) {
+      await checkVault(db, vault, fixture, false, port);
+      if (port !== undefined) {
         if ((await port.health()).status !== "ready") throw new InvariantFailure("retrieval_health");
         const before = await retrievalProjection(port);
-        if (before !== fixture.retrievalProjection) throw new InvariantFailure("committed_retrieval_changed");
+        if (fixture.operation === "retrieval-rebuild" && before !== fixture.retrievalProjection) throw new InvariantFailure("committed_retrieval_changed");
         await rebuildRetrieval(db, vault, port);
         if (await retrievalProjection(port) !== before) throw new InvariantFailure("retrieval_rebuild_not_equal");
       }

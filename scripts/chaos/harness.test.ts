@@ -1,11 +1,47 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OPERATIONS, random, runCampaign } from "./harness";
 import { ledger, prepare } from "./fixture";
 import { checkVault } from "./invariants";
 import { restoreVault } from "../../packages/core/src";
+import { canonStageRelPath } from "../../packages/core/src/vault/write";
+
+for (const damage of ["doctrine", "control", "quarantine", "stage", "bounded-stage", "active-body", "active-provenance", "active-status"] as const) {
+  test(`the oracle rejects ${damage} damage even without an acknowledgment`, async () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-chaos-negative-"));
+    const fixture = await prepare(root, "undo");
+    const vault = join(root, "vault"), db = ledger(vault);
+    try {
+      await checkVault(db, vault, fixture);
+      fixture.activeTargets = { claims: [fixture.claimIds[0]!], receipts: [fixture.receiptIds[0]!] };
+      let code: string;
+      if (damage === "doctrine") {
+        rmSync(join(vault, "CANON.md")); code = "doctor_doctrine";
+      } else if (damage === "control") {
+        chmodSync(join(vault, ".kizuki", "kizuki.db"), 0o644); code = "doctor_control";
+      } else if (damage === "quarantine") {
+        const directory = join(vault, ".kizuki", "quarantine", "canon-stage");
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        writeFileSync(join(directory, "foreign-stage"), "partial synthetic write", { mode: 0o600 });
+        code = "doctor_quarantine";
+      } else if (damage === "stage" || damage === "bounded-stage") {
+        const path = damage === "stage" ? fixture.sentinelPath : `archive/${"a".repeat(240)}.md`;
+        const stage = canonStageRelPath(path, fixture.receiptIds[0]!);
+        mkdirSync(join(vault, "archive"), { recursive: true, mode: 0o700 });
+        writeFileSync(join(vault, stage), "partial synthetic write", { mode: 0o600 });
+        code = "orphan_stage";
+      } else {
+        const field = damage === "active-body" ? "body='corrupted synthetic claim'"
+          : damage === "active-provenance" ? "provenance='[]'" : "status='skipped'";
+        db.query(`UPDATE claims SET ${field} WHERE claim_id=?`).run(fixture.claimIds[0]!);
+        code = "committed_claim_changed";
+      }
+      await expect(checkVault(db, vault, fixture)).rejects.toThrow(code);
+    } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+}
 
 for (const operation of OPERATIONS) {
   test(`seeded SIGKILL recovers ${operation}`, async () => {
@@ -73,11 +109,11 @@ test("a later write's target stays protected until its call begins", async () =>
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test("SIGKILL after a real retrieval upsert reproduces the unknown-execution recovery hold", async () => {
+test("SIGKILL after a real retrieval upsert recovers through the native mutation fence", async () => {
   const report = await runCampaign({ seed: 17, trials: 1, operations: ["canon"], cut: "projection-started" });
   expect(report.trials[0]?.killed).toBe(true);
-  expect(report.trials[0]?.failure).toBe("canon_recovery_needed");
-  expect(report.ok).toBe(false);
+  expect(report.trials[0]?.failure).toBeNull();
+  expect(report.ok).toBe(true);
 }, 60_000);
 
 test("acknowledged writes survive SIGKILL before the next write", async () => {
@@ -87,11 +123,6 @@ test("acknowledged writes survive SIGKILL before the next write", async () => {
     expect(report.trials[0]).toMatchObject({ killed: true, failure: null, acknowledgments: 1 });
   }
 }, 120_000);
-
-test.skip("DEFECT: local retrieval started operations cannot recover automatically after SIGKILL (requires fenced replay contract)", async () => {
-  const report = await runCampaign({ seed: 17, trials: 1, operations: ["canon"], cut: "projection-started" });
-  expect(report.ok).toBe(true);
-});
 
 test("a journaled extraction decision survives SIGKILL without another producer call for its inputs", async () => {
   const report = await runCampaign({ seed: 17, trials: 1, operations: ["extraction"], cut: "extraction-journaled" });

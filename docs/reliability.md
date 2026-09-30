@@ -34,7 +34,8 @@ injected daemon clock by 31 seconds to exercise the dead-PID lease reclaim rule
 without waiting through its heartbeat grace; process identity and SIGKILL are real.
 Typed trials admit source-bound assertions with synthetic grants through the
 ordinary claim API, then use the same receipted writer, correction and undo
-APIs as legacy claims. `retrieval-rebuild` opens the native FTS5 port and
+APIs as legacy claims. Ordinary canon, correction, undo and purge trials bind
+the native FTS5 port on both the write and recovery paths. `retrieval-rebuild`
 exercises its atomic authoritative rebuild separately from the SQLite floor.
 
 Each killed child is reaped before a new child opens the vault. The new child
@@ -48,7 +49,9 @@ runtime doctor; pending canon, projection, extraction and purge work; receipt
 journal IDs and payloads; current file and archive hashes; unreceipted pages
 and remaining canon stages; independent committed evidence, claims, receipts
 and bytes; every baseline event, claim, receipt and file outside the operation's
-explicit targets whose calls have begun; typed support integrity and preservation; and per-receipt
+explicit targets whose calls have begun; immutable fields of every baseline
+claim, including active targets; receipted lifecycle transitions and purge
+erasure; typed support integrity and preservation; and per-receipt
 purge absence proofs. A purge with any committed deletion must have deleted
 every selected event and retained a receipt for each one.
 The complete lexical-floor document and graph rows must equal their full
@@ -58,9 +61,9 @@ Published exports and backups are also restored to another temporary vault and
 compared to that baseline. Portable restore can regenerate an empty legacy
 content signature; the oracle checks the exact expected signature using the
 existing core hash contract. Every other claim field and all snapshot rows
-remain exact. Native FTS5 rebuild trials compare complete hits,
+remain exact. All native FTS5 trials compare complete hits,
 scores, snippets and trust labels for two fixture queries before and after a
-second rebuild, and with the pre-crash result.
+second rebuild. Native rebuild trials also compare with the pre-crash result.
 
 Stdout is a `kizuki.chaos/v1` JSON receipt. Stderr records operation, trial,
 chosen delay, actual SIGKILL versus completion, and the fixed failure code.
@@ -114,33 +117,26 @@ An interrupted export, backup, or restore can leave an unpublished private
 never opened as a vault, and removed with the synthetic trial. Runtime recovery
 does not claim to collect such artifacts outside the vault.
 
-Automatic recovery of unknown retrieval execution remains incomplete. The
-deterministic `projection-started` regression mutates a real FTS5 retrieval
-store, sends SIGKILL before its acknowledgment, restarts, attempts recovery,
-and runs a serve pass. The operation remains held with `canon_recovery_needed`.
-This matches the existing [canon recovery contract](canon-write-recovery.md):
-an operation in `started` has an unknown outcome even after a local lease is
-reacquired. Replaying it without a fenced store-generation contract would
-weaken the fail-closed guarantee. A passing characterization test and a skipped
-acceptance test name this defect in `scripts/chaos/harness.test.ts`.
-
-Until that contract is implemented and the skipped acceptance passes, this
-workstream does **not** establish universal automatic recovery after SIGKILL.
-Random canon trials do not bind an external retrieval port; the real retrieval
-mutation is covered by the deterministic hold reproduction, and random native
-FTS5 rebuild trials exercise the separate atomic replacement path.
+The deterministic `projection-started` regression mutates a real native FTS5
+store, sends SIGKILL before acknowledgment, restarts, recovers and runs a serve
+pass. Recovery uses the port's opt-in `mutation-fence/v1` guarantee to prove
+prior execution cannot publish later. It then revalidates source permission,
+receipt and file state before idempotent reconciliation. See the
+[canon recovery contract](canon-write-recovery.md). Ports without a mutation
+fence still refuse unknown-execution replay; a local caller lease alone does
+not establish that guarantee.
 
 ## CI
 
 `scripts/chaos/harness.test.ts` is discovered by the existing Bun test gate.
 It runs one short seeded trial per operation, checks actual signal delivery,
-tests argument bounds and seed repeatability, and reproduces the retrieval
-hold. Eleven fixed cuts check preservation of acknowledged writes and artifacts; journaling
+tests argument bounds and seed repeatability, and verifies fenced retrieval
+recovery. Eleven fixed cuts check preservation of acknowledged writes and artifacts; journaling
 and purge cuts exercise their committed recovery state. Negative oracle tests
-check changed independent bytes, changed committed claims, missing derived rows,
-and a damaged published restore. The
-skipped acceptance is an explicit unresolved recovery requirement,
-not a passing crash-recovery claim. Focused verification is:
+check changed independent bytes and committed claims, missing doctrine,
+insecure control files, both actual canon staging filename forms, illegal
+active-target mutations, missing derived rows, and a damaged published restore.
+Focused verification is:
 
 ```sh
 bun test scripts/chaos/harness.test.ts --timeout 120000

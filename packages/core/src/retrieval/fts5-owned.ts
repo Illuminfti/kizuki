@@ -2,6 +2,7 @@ import { lstatSync, opendirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { PortContext } from "../contracts/ports";
 import { PortError } from "../contracts/ports";
+import { RETRIEVAL_CONTRACT_MINOR } from "../contracts/retrieval";
 import { tryAdvisoryFileLock } from "../util/advisory-file-lock";
 import { isRfc3339 } from "../util/time";
 
@@ -32,7 +33,7 @@ export function validateFtsGeneration(ctx: Pick<PortContext, "vault_path" | "dat
     } else if (name === "engine.json" || name === "engine.json.tmp") {
       if (!stat.isFile() || stat.nlink !== 1 || stat.size > 16_384) refuse();
       const v = JSON.parse(readFileSync(path, "utf8"));
-      if (!v || Object.keys(v).sort().join() !== "contract,contract_minor,created_at,port,rebuilt_at,space" || v.port !== ID || v.contract !== "kizuki.retrieval/v1" || v.contract_minor !== 0 || v.space !== null || !isRfc3339(v.created_at) || v.rebuilt_at !== null && !isRfc3339(v.rebuilt_at)) refuse();
+      if (!v || Object.keys(v).sort().join() !== "contract,contract_minor,created_at,port,rebuilt_at,space" || v.port !== ID || v.contract !== "kizuki.retrieval/v1" || !Number.isSafeInteger(v.contract_minor) || v.contract_minor < 0 || v.contract_minor > RETRIEVAL_CONTRACT_MINOR || v.space !== null || !isRfc3339(v.created_at) || v.rebuilt_at !== null && !isRfc3339(v.rebuilt_at)) refuse();
     } else refuse();
   }
 }

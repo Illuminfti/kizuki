@@ -2,9 +2,9 @@ import type { Database } from "bun:sqlite";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  accept, applyCanonWrite, backupVault, createBudgetTracker, createFts5RetrievalPort, exportVault, FTS5_RETRIEVAL_ID,
-  getCanonReceiptRecord, getClaim, initVault, insertClaim, listCanonPagesReport, registerConnection,
-  rebuildRetrieval, resolveTarget, setSourceGrant, ulid,
+  accept, applyCanonWrite, backupVault, bindLocalSourcePort, createBudgetTracker, createFts5RetrievalPort, exportVault, FTS5_RETRIEVAL_ID,
+  getCanonReceiptRecord, getClaim, hardenLedgerFile, initVault, insertClaim, listCanonPagesReport, registerConnection,
+  rebuildRetrieval, resolveTarget, retryCanonProjectionObligations, setSourceGrant, ulid,
 } from "../../packages/core/src";
 import type { CaptureEventInput, Claim, ProducerPort } from "../../packages/core/src";
 import type { ClaimV2Assertion } from "../../packages/core/src/contracts/claim-v2";
@@ -40,10 +40,14 @@ export function ledger(vault: string): Database {
 }
 
 export function retrieval(vault: string) {
-  return createFts5RetrievalPort({
+  return bindLocalSourcePort(createFts5RetrievalPort({
     vault_path: vault, data_dir: join(vault, ".kizuki", "retrieval", FTS5_RETRIEVAL_ID), config: {},
     clock: () => new Date().toISOString(), logger: () => {}, secrets: async () => { throw new Error("fixture_has_no_secrets"); },
-  });
+  }), { store_id: `local:${FTS5_RETRIEVAL_ID}` });
+}
+
+export function usesRetrieval(operation: Operation): boolean {
+  return ["canon", "correction", "undo", "purge", "retrieval-rebuild"].includes(operation.replace(/^typed-/, ""));
 }
 
 export function event(record: number, sentinel = false): CaptureEventInput {
@@ -56,8 +60,8 @@ export function event(record: number, sentinel = false): CaptureEventInput {
   };
 }
 
-export function capture(db: Database, record: number, sentinel = false): string {
-  const result = accept(db, event(record, sentinel));
+export function capture(db: Database, record: number, sentinel = false, source?: string): string {
+  const result = accept(db, event(record, sentinel), source === undefined ? {} : { source: { source_key: source, expected_revision: 1 } });
   if (result.status !== "stored") throw new Error("fixture_capture_refused");
   indexEvent(db, result.event);
   return result.event.event_id;
@@ -117,30 +121,37 @@ export function producer(): ProducerPort {
   };
 }
 
+function fixtureSource(db: Database, connector: string): string {
+  const source = ulid();
+  registerConnection(db, connector, source);
+  setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: `synthetic-grant-${connector}`, policy: {
+    purposes: ["capture", "derive", "recall", "correction", "export"],
+    allowed_fields: ["text", "subjects", "metadata", "attachments"],
+    retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private",
+  } });
+  return source;
+}
+
 export async function prepare(root: string, operation: Operation): Promise<Fixture> {
   const vault = join(root, "vault");
   initVault(vault);
   const db = ledger(vault);
+  hardenLedgerFile(join(vault, ".kizuki", "kizuki.db"));
+  const port = usesRetrieval(operation) ? retrieval(vault) : undefined;
   try {
-    const io = { db, vault_path: vault };
-    const sentinelId = capture(db, 0, true);
+    const io = { db, vault_path: vault, ...(port === undefined ? {} : { retrieval: port, retrieval_store: port.descriptor.id }) };
+    const typed = operation.startsWith("typed-");
+    const source = typed ? fixtureSource(db, "chaos.target") : null;
+    const sentinelSource = typed ? fixtureSource(db, "chaos.sentinel") : undefined;
+    const sentinelId = capture(db, 0, true, sentinelSource);
     const sentinel = await claim(db, sentinelId, 0, true);
     const receipt = applyCanonWrite(io, sentinel, resolveTarget(io, sentinel), { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 32 }) });
+    await retryCanonProjectionObligations(io);
     const fixture: Fixture = {
       operation, eventIds: [], claimIds: [], receiptIds: [],
       sentinelPath: receipt.page_path, sentinelBytes: readFileSync(join(vault, receipt.page_path), "utf8"),
       baseline: { events: [], claims: [], receipts: [], files: [], typed: [] },
     };
-    const typed = operation.startsWith("typed-");
-    const source = typed ? ulid() : null;
-    if (source !== null) {
-      registerConnection(db, "chaos.target", source);
-      setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "synthetic-grant", policy: {
-        purposes: ["capture", "derive", "recall", "correction", "export"],
-        allowed_fields: ["text", "subjects", "metadata", "attachments"],
-        retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private",
-      } });
-    }
     if (operation !== "capture") {
       for (let record = 0; record < RECORDS; record++) {
         const admitted = source === null ? null : await typedClaim(db, source, record);
@@ -151,6 +162,7 @@ export async function prepare(root: string, operation: Operation): Promise<Fixtu
         fixture.claimIds.push(stored.claim_id);
         if (operation === "canon" || operation === "typed-canon") continue;
         const written = applyCanonWrite(io, stored, typed ? worldCanonTarget(db, stored.claim_id) : resolveTarget(io, stored), { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 32 }) });
+        await retryCanonProjectionObligations(io);
         fixture.receiptIds.push(written.receipt_id);
       }
     }
@@ -167,16 +179,13 @@ export async function prepare(root: string, operation: Operation): Promise<Fixtu
     }
     if (operation === "restore") exportVault(db, vault, join(root, "artifact"));
     if (operation === "restore-snapshot") await backupVault(db, vault, join(root, "artifact"));
-    if (operation === "retrieval-rebuild") {
-      const port = retrieval(vault);
-      try {
-        await rebuildRetrieval(db, vault, port);
-        fixture.retrievalProjection = await retrievalProjection(port);
-      } finally { await port.close(); }
+    if (port !== undefined) {
+      await rebuildRetrieval(db, vault, port);
+      if (operation === "retrieval-rebuild") fixture.retrievalProjection = await retrievalProjection(port);
     }
     writeFileSync(join(root, "fixture.json"), JSON.stringify(fixture), { mode: 0o600 });
     return fixture;
-  } finally { db.close(); }
+  } finally { await port?.close(); db.close(); }
 }
 
 export function readFixture(root: string): Fixture {
