@@ -49,3 +49,14 @@ test("unknown and recorded transformation lineage never satisfy a two-root thres
     expect(card.definitions.flatMap((r) => r.assessments.map((a) => a.independence)).sort()).toEqual(["dependent", "independent", "unknown"]);
   } finally { f.dispose(); }
 });
+
+test("malformed captured lineage kinds remain unknown", async () => {
+  const f = await cardFixture();
+  try {
+    await f.write("concept.definition", { kind: "literal", value: "An account with malformed lineage" }, {
+      metadata: { lineage: { kind: { toString: null, valueOf: null } } },
+    });
+    const definition = f.card().definitions.find((relation) => relation.object.kind === "literal" && relation.object.value === "An account with malformed lineage");
+    expect(definition?.assessments.map((assessment) => assessment.independence)).toEqual(["unknown"]);
+  } finally { f.dispose(); }
+});
