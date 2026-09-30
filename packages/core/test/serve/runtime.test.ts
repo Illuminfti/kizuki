@@ -131,6 +131,26 @@ test("sync preflight refuses legacy extraction before acquiring any runtime", as
   expect(f.db.query("SELECT * FROM extract_batches").all()).toHaveLength(1);
 });
 
+test("daemon backs off a legacy sync preflight refusal and yields between retries", async () => {
+  const f = fixture();
+  f.db.query("INSERT INTO extract_batches(previous_cursor,cursor,drafts,model_ref,created_at) VALUES ('', ?, '[]', 'fixture:model', '2026-09-01')")
+    .run("2026-09-01T00:00:00Z\t01K2Z7ZQZK0R4E0RZ5C8QJ7X01");
+  f.db.query("UPDATE schedules SET enabled=0 WHERE rail <> 'sync'").run();
+  let iterations = 0, acquired = 0, sleeps = 0;
+  let clock = Date.parse("2026-10-01T00:00:00.000Z");
+  await runServeDaemon(f.db, f.vault, { http: false, now: () => new Date(clock).toISOString(),
+    shouldContinue: () => iterations++ < 4,
+    sleep: async () => { sleeps++; clock += 60_000; },
+    acquireRuntime: async () => { acquired++; return { hooks: {}, close: async () => {} }; },
+  });
+  expect(sleeps).toBeGreaterThan(0);
+  expect(listRunReceipts(f.db)).toHaveLength(2);
+  expect(listRunReceipts(f.db).every(receipt => receipt.status === "failed")).toBe(true);
+  expect(acquired).toBe(0);
+  expect(f.db.query("SELECT * FROM extract_batches").all()).toHaveLength(1);
+  expect(readServePid(f.vault)).toBeNull();
+});
+
 for (const once of [false, true]) test(`daemon acquires and closes every rail without replacing its lease, once=${once}`, async () => {
   const f = fixture(); let acquired = 0, closed = 0;
   f.db.query("UPDATE schedules SET enabled=0 WHERE rail <> 'sync'").run();

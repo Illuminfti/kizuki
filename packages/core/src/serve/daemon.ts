@@ -212,9 +212,13 @@ export async function runServeDaemon(
       return { receipts, http };
     }
 
+    // Refusals have no slot transition: retain ownership but bound retries and
+    // let later rails run. This is runtime state, rebuilt on daemon restart.
+    const retryAfter = new Map<RailId, number>();
     while (!stopRequested() && (options.shouldContinue?.() ?? true)) {
       heartbeatLease(db, process);
-      const due = dueRails(db, process.now());
+      const at = process.now();
+      const due = dueRails(db, at).filter(rail => (retryAfter.get(rail) ?? -Infinity) <= Date.parse(at));
       const rail = due[0];
       if (rail !== undefined) {
         const receipt = await runRail(db, vaultPath, rail, {
@@ -226,6 +230,9 @@ export async function runServeDaemon(
         });
         // A coalesced idle run advances the schedule and persists no receipt.
         if (getRunReceipt(db, receipt.run_id) !== null) receipts += 1;
+        if (receipt.status === "failed" && receipt.schedule_transition === undefined) {
+          retryAfter.set(rail, Date.parse(process.now()) + 60_000);
+        } else retryAfter.delete(rail);
         continue;
       }
       await sleep(1_000);

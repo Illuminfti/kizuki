@@ -1,4 +1,5 @@
 import { DEFAULT_RAILS, isRailId } from "./rail-registry";
+import { assertRailPeriod } from "./rail-definition";
 import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
 import {
@@ -146,6 +147,7 @@ export function seedSchedules(db: Database): void {
  * slot in to one new period from now; it never pushes a due slot back.
  */
 export function applyRailPeriod(db: Database, rail: RailId, periodSeconds: number, now: string): void {
+  assertRailPeriod(periodSeconds);
   db.transaction(() => {
     const row = db.query<{ period_s: number; next_run_at: string | null }, [string]>(
       "SELECT period_s,next_run_at FROM schedules WHERE rail=?",

@@ -55,4 +55,3 @@ export interface RailRuntimeV2 {
   readonly hooks: RailHooksV2;
   close(): Promise<void>;
 }
-

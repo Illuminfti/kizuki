@@ -22,6 +22,7 @@ import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-sco
 import { pidAlive, readBootId } from "./leases";
 import { loadServeConfig } from "./config";
 import { isRailId, railDefinition } from "./rail-registry";
+import { assertRailPeriod } from "./rail-definition";
 import {
   DOCTOR_JOURNAL_TAIL_BYTES,
   InjectedCrash,
@@ -408,7 +409,7 @@ export function stageCaptureRepairReceipt(db: Database, receipt: RunReceipt): vo
     .run(receipt.run_id, receipt.rail, receipt.started_at, receipt.finished_at, receipt.status, receipt.stopped, JSON.stringify(receipt));
 }
 
-function insertReceiptRow(db: Database, receipt: RunReceipt, vaultPath: string): void {
+function insertReceiptRow(db: Database, receipt: RunReceipt): void {
   db.transaction(() => {
     const raw = db.query<{ report: string }, [string]>("SELECT report FROM run_receipts WHERE run_id = ?").get(receipt.run_id);
     const existing = getRunReceipt(db, receipt.run_id);
@@ -420,7 +421,7 @@ function insertReceiptRow(db: Database, receipt: RunReceipt, vaultPath: string):
       db.query("DELETE FROM run_receipts WHERE run_id = ?").run(receipt.run_id);
     } else if (existing !== null && canonicalReceiptContent(existing) !== canonicalReceiptContent(receipt)) throw new Error("conflicting run receipt");
     if (existing !== null && existing.stopped !== CAPTURE_REPAIR_RECEIPT_PENDING) return;
-    applyScheduleTransition(db, vaultPath, receipt);
+    applyScheduleTransition(db, receipt);
     db.query(
       `INSERT INTO run_receipts
          (run_id, rail, started_at, finished_at, status, stopped, report)
@@ -506,7 +507,7 @@ export function coalesceNoopReceipt(db: Database, vaultPath: string, receipt: Ru
   try { last = row === null ? null : parseRunReceipt(JSON.parse(row.report)); } catch { last = null; }
   if (last === null || !isNoopReceipt(last) ||
       Date.parse(receipt.finished_at) - Date.parse(last.finished_at) >= NOOP_RECEIPT_HEARTBEAT_S * 1000) return false;
-  db.transaction(() => applyScheduleTransition(db, vaultPath, withScheduleTransition(db, vaultPath, receipt))).immediate();
+  db.transaction(() => applyScheduleTransition(db, withScheduleTransition(db, vaultPath, receipt))).immediate();
   return true;
 }
 
@@ -536,7 +537,7 @@ export function persistRunReceipt(
   if (options.crashAfter === "after-jsonl") {
     throw new InjectedCrash("after-jsonl");
   }
-  insertReceiptRow(db, receipt, vaultPath);
+  insertReceiptRow(db, receipt);
   if (options.crashAfter === "after-db") {
     throw new InjectedCrash("after-db");
   }
@@ -544,6 +545,7 @@ export function persistRunReceipt(
 
 /** Advance the intended slot, never the late completion baseline. */
 export function nextScheduleSlot(at: string, periodSeconds: number, briefHour: number | null): string {
+  assertRailPeriod(periodSeconds);
   const next = new Date(at);
   if (briefHour === null) return new Date(next.getTime() + periodSeconds * 1000).toISOString();
   next.setUTCHours(briefHour, 0, 0, 0);
@@ -551,14 +553,15 @@ export function nextScheduleSlot(at: string, periodSeconds: number, briefHour: n
   return next.toISOString();
 }
 
-function applyScheduleTransition(db: Database, vaultPath: string, receipt: RunReceipt): void {
+function applyScheduleTransition(db: Database, receipt: RunReceipt): void {
   const transition = receipt.schedule_transition;
   if (transition === undefined) return; // Legacy records have no recoverable slot intent.
-  if (!isRailId(receipt.rail) || parseTransition(transition) === undefined) throw new Error("invalid receipt schedule transition");
+  if (parseTransition(transition) === undefined) throw new Error("invalid receipt schedule transition");
   const row = db.query<{ period_s: number; next_run_at: string | null; last_run_at: string | null }, [string]>("SELECT period_s,next_run_at,last_run_at FROM schedules WHERE rail=?").get(receipt.rail);
-  const briefHour = slotHour(vaultPath, receipt.rail);
+  // The persisted policy survives removal or replacement of the definition.
+  const briefHour = transition.brief_hour;
   const scheduled = receipt.execution?.trigger === "scheduled";
-  if (row === null || row.period_s !== transition.period_s || briefHour !== transition.brief_hour ||
+  if (row === null || row.period_s !== transition.period_s ||
       (scheduled && transition.previous_due_at !== null && transition.previous_due_at !== receipt.execution!.due_at) ||
       transition.next_run_at !== nextScheduleSlot(scheduled ? receipt.execution!.due_at! : receipt.finished_at, transition.period_s, briefHour)) throw new Error("conflicting receipt schedule policy");
   if (row.next_run_at === transition.previous_due_at) {
@@ -577,7 +580,7 @@ export function recoverRunJournal(db: Database, vaultPath: string, activeRunIds:
   const recovered: string[] = [];
   for (const receipt of readRunReceiptsLog(vaultPath)) {
     const existing = getRunReceipt(db, receipt.run_id);
-    insertReceiptRow(db, receipt, vaultPath);
+    insertReceiptRow(db, receipt);
     if (existing === null || existing.stopped === CAPTURE_REPAIR_RECEIPT_PENDING) recovered.push(receipt.run_id);
   }
   // A repair may stop before JSONL publication. Its committed progress row is
