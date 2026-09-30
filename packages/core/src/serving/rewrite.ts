@@ -128,7 +128,10 @@ export function rewriteCanon(
     ).map(page => page.relPath));
     visibleBound = bound.filter(path => visibleBefore.has(path));
     const held = pendingCanonRewrite(ctx, claim);
-    if (held !== undefined) return { ...NOTHING, unreached: visibleBound, failed: true, recovery_pending: held.filter(item => visibleBefore.has(item.page_path)) };
+    // Recovery holds content reads, but the owner can still audit the receipt
+    // for this authorized correction. Agents need page access for its metadata.
+    if (held !== undefined) return { ...NOTHING, unreached: visibleBound, failed: true,
+      recovery_pending: ctx.principal.kind === "owner" ? held : held.filter(item => visibleBefore.has(item.page_path)) };
     const decision = resolveTarget(io, claim);
     // A correction rewrites what exists. It never mints a page for a reading
     // nothing ever materialized: that claim is the writer's own work.
@@ -154,7 +157,7 @@ export function rewriteCanon(
       pageDecision(afterIndex, ctx.principal.grant, afterPage).allow;
     const pending = correctionRecoveryPending(io.db, claim.claim_id, receipt.page_path);
     return {
-      ...(pending.length === 0 ? {} : { recovery_pending: canShow ? pending : [] }),
+      ...(pending.length === 0 ? {} : { recovery_pending: ctx.principal.kind === "owner" || canShow ? pending : [] }),
       receipt_id: receipt.receipt_id,
       rewritten: canShow ? [
         {
@@ -174,7 +177,8 @@ export function rewriteCanon(
     // only the matching durable recovery record may identify that uncertainty.
     const pending = correctionRecoveryPending(io.db, claim.claim_id, targetPath);
     return { ...NOTHING, unreached: visibleBound, failed: true,
-      ...(pending.length > 0 || error instanceof CanonRecoveryError ? { recovery_pending: pending.filter(item => visibleBound.includes(item.page_path)) } : {}),
+      ...(pending.length > 0 || error instanceof CanonRecoveryError ? { recovery_pending:
+        ctx.principal.kind === "owner" ? pending : pending.filter(item => visibleBound.includes(item.page_path)) } : {}),
     };
   }
 }
