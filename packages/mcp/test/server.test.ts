@@ -255,10 +255,11 @@ describe("the stdio MCP server over a real client", () => {
 
   test("search quotes a bounded excerpt of a long record unless full_text is passed", async () => {
     const running = live();
+    const text = `longexcerptmarker ${"the word and the note ".repeat(100)}`;
     accept(running.db, {
       ...validEvent(),
       source_record_id: "rec-long-excerpt",
-      text: `longexcerptmarker ${"word ".repeat(400)}`,
+      text,
       sensitivity_hint: "public",
     });
     rebuildDerived(running.db, running.vaultPath);
@@ -267,6 +268,7 @@ describe("the stdio MCP server over a real client", () => {
     const bounded = envelopeOf(await call(client, "search", { query: "longexcerptmarker", scope: "ledger" }));
     const [chunk] = bounded["quoted"] as { text: string; truncated?: true }[];
     expect(Array.from(chunk?.text ?? "")).toHaveLength(600);
+    expect(chunk?.text).toBe(text.slice(0, 600));
     expect(chunk?.truncated).toBe(true);
 
     const whole = envelopeOf(
@@ -274,6 +276,7 @@ describe("the stdio MCP server over a real client", () => {
     );
     const [full] = whole["quoted"] as { text: string; truncated?: true }[];
     expect(full?.text.length).toBeGreaterThan(2000);
+    expect(full?.text).toBe(text);
     expect(full?.truncated).toBeUndefined();
 
     const refused = await call(client, "search", { query: "longexcerptmarker", full_text: "yes" });
