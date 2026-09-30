@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,23 +7,26 @@ import { AS_OF } from "./persona";
 import { runEvaluation } from "./run";
 import type { EvaluationReport } from "./run";
 
-test("fresh full-persona evaluations preserve every score across three isolated workers", async () => {
+describe("full-persona repeatability", () => {
   const callerEntropy = [crypto.getRandomValues, crypto.randomUUID, nodeCrypto.randomBytes, nodeCrypto.randomUUID];
-  const first = await runEvaluation({ size: "full" });
-  expect(first.persona).toBe("orchard-v1:full");
-  expect(first.rows).toHaveLength(first.questions.length * 8);
-  expect(first.summaries.every(row => row.leak_count === 0 && row.failures === 0)).toBe(true);
+  let first: EvaluationReport;
   const semanticRows = (report: EvaluationReport) => report.rows.map(({ tokens_used, ...row }) => row);
-  for (let repeat = 0; repeat < 2; repeat += 1) {
+  beforeAll(async () => {
+    first = await runEvaluation({ size: "full" });
+    expect(first.persona).toBe("orchard-v1:full");
+    expect(first.rows).toHaveLength(first.questions.length * 8);
+    expect(first.summaries.every(row => row.leak_count === 0 && row.failures === 0)).toBe(true);
+  }, 120_000);
+  test.each([2, 3])("fresh full-persona worker %i preserves every score and observation", async () => {
     const report = await runEvaluation({ size: "full" });
     expect(report.build).toEqual(first.build);
     expect(semanticRows(report)).toEqual(semanticRows(first));
     expect(report.rows).toEqual(first.rows);
     expect(report.summaries).toEqual(first.summaries);
     expect(report.observations).toEqual(first.observations);
-  }
-  expect([crypto.getRandomValues, crypto.randomUUID, nodeCrypto.randomBytes, nodeCrypto.randomUUID]).toEqual(callerEntropy);
-}, 120_000);
+    expect([crypto.getRandomValues, crypto.randomUUID, nodeCrypto.randomBytes, nodeCrypto.randomUUID]).toEqual(callerEntropy);
+  }, 120_000);
+});
 
 async function runFixture(mode: string, root: string, hostTime?: string) {
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "regression-fixture.ts"), mode, root, ...(hostTime === undefined ? [] : [hostTime])], {
