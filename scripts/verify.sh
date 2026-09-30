@@ -171,6 +171,7 @@ assert_required_helpers() {
     "$verify_script_dir/verify-network.ts" \
     "$verify_script_dir/verify-secrets.ts" \
     "$verify_script_dir/verify-rfc-tests.ts" \
+    "$verify_script_dir/verify-packet-seams.ts" \
     "$verify_script_dir/verify-dependencies.ts" \
     "$verify_script_dir/verify-workflows.ts" \
     "$verify_script_dir/verify-maestro.ts" \

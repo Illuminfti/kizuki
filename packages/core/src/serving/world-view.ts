@@ -24,9 +24,8 @@ import { isPlainObject } from "../util/validate";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
 import { clampWorldData } from "./world-clamp";
-import { ServeError } from "./types";
+import { ENVELOPE_V2_SCHEMA, ServeError } from "./types";
 import type { EnvelopeV2, ServeContext } from "./types";
-import { sealEnvelope } from "./v2/envelope";
 
 export { WorldViewError } from "../world/ops/types";
 export { isWorldWireToken } from "../world/ops/parse";
@@ -175,10 +174,8 @@ export function serveWorldView(
   args: Record<string, unknown>,
   registry: WorldOpRegistry = activeWorldOps(),
 ): WorldViewEnvelope {
-  // The gate is not wrapped in a transaction: a refusal rolls back everything
-  // inside one, and the audit row and rate reservation of a denied call must
-  // outlive the refusal. The projection opens its own transaction, so a failed
-  // projection still issues no references.
+  // Reservation precedes the gate's protected read and publication boundary,
+  // so a refused projection still leaves its audit row and rate reservation.
   const envelope = gate(
     ctx,
     "world_view",
@@ -200,6 +197,7 @@ export function serveWorldView(
         throw error;
       }
     },
+    ENVELOPE_V2_SCHEMA,
   );
-  return sealEnvelope(ctx, "world_view", envelope.at, [] as const, [] as const, clampWorldData(envelope.data!));
+  return { ...envelope, data: clampWorldData(envelope.data!) } as WorldViewEnvelope;
 }
