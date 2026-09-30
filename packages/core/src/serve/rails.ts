@@ -490,7 +490,10 @@ async function runRailImpl(
       budget = createDurableWriteBudget(db, now, config);
       if (options.acquireRuntime !== undefined) {
         try { runtime = await options.acquireRuntime({ signal: options.signal ?? new AbortController().signal }); }
-        catch { throw new Error("rail runtime acquisition failed"); }
+        catch (error) {
+          if (isLedgerBusy(error) || error instanceof LedgerLeaseHeldError) throw error;
+          throw new Error("rail runtime acquisition failed");
+        }
       }
       hooks = withResolvedModel(runtime?.hooks ?? options.hooks);
       if (rail === "retrieval-sweep" && inspectCanonRecovery(db).projection_pending > 0) {

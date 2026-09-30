@@ -29,9 +29,10 @@ setDefaultTimeout(120_000);
 
 const { cleanup, runCli, runCliAsync, tempVault } = createHelpers();
 const children: ReturnType<typeof Bun.spawn>[] = [];
-afterEach(() => {
-  for (const child of children.splice(0))
-    if (child.exitCode === null) child.kill("SIGKILL");
+afterEach(async () => {
+  const running = children.splice(0);
+  for (const child of running) if (child.exitCode === null) child.kill("SIGKILL");
+  await Promise.all(running.map(child => child.exited));
   cleanup();
 });
 
@@ -420,27 +421,23 @@ test("SIGTERM during connector draining commits only the batch in flight and a r
   const batches: number[] = [];
   let finishBatch!: () => void;
   const currentBatch = new Promise<void>(resolve => { finishBatch = resolve; });
-  const server = Bun.serve({
-    hostname: "127.0.0.1", port: 0,
-    async fetch(request) {
-      const url = new URL(request.url);
-      if (url.pathname === "/v1/info") {
-        return Response.json({ app: { name: "Beeper", version: "fixture" }, server: { status: "running" } });
-      }
-      if (url.pathname !== "/v1/messages/search") return new Response("not found", { status: 404 });
-      const index = draining ? Number(url.searchParams.get("cursor") ?? "0") + 1 : 0;
-      if (draining) batches.push(index);
-      if (index === 1) await currentBatch;
-      return Response.json({
-        items: [{ id: `fixture-${index}`, accountID: "fixture-account", chatID: "fixture-chat",
-          senderID: "fixture-sender", sortKey: String(index), timestamp: `2026-09-04T10:00:0${index}Z`, text: "A synthetic library update." }],
-        hasMore: draining && index < 3, oldestCursor: String(index), newestCursor: String(index),
-      });
-    },
+  const endpoint = startFakeEndpoint(async request => {
+    if (request.path === "/v1/info") {
+      return Response.json({ app: { name: "Beeper", version: "fixture" }, server: { status: "running" } });
+    }
+    if (request.path !== "/v1/messages/search") return new Response("not found", { status: 404 });
+    const index = draining ? Number(new URLSearchParams(request.search).get("cursor") ?? "0") + 1 : 0;
+    if (draining) batches.push(index);
+    if (index === 1) await currentBatch;
+    return Response.json({
+      items: [{ id: `fixture-${index}`, accountID: "fixture-account", chatID: "fixture-chat",
+        senderID: "fixture-sender", sortKey: String(index), timestamp: `2026-09-04T10:00:0${index}Z`, text: "A synthetic library update." }],
+      hasMore: draining && index < 3, oldestCursor: String(index), newestCursor: String(index),
+    });
   });
   try {
     const connected = await runCliAsync(setup.env, "connect", "beeper", "--token-ref", "env:BEEPER_TOKEN",
-      "--endpoint", `http://127.0.0.1:${server.port}`);
+      "--endpoint", endpoint.origin);
     expect(connected.exitCode, connected.stderr).toBe(0);
     const source = readLedger(setup, db => listConnections(db).find(item => item.connector_id === "kizuki.beeper")!);
     readLedger(setup, db => setSourceGrant(db, {
@@ -484,5 +481,5 @@ test("SIGTERM during connector draining commits only the batch in flight and a r
     const stop = await runCliAsync(setup.env, "serve", "stop", "--vault", setup.vault);
     expect(stop.exitCode, stop.stderr).toBe(0);
     expect(await restarted.exited).toBe(0);
-  } finally { finishBatch(); await server.stop(true); }
+  } finally { finishBatch(); endpoint.stop(); }
 });

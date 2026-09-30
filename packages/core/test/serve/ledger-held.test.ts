@@ -5,6 +5,7 @@ import { isLedgerBusy } from "../../src/ledger/busy";
 import { openLedger } from "../../src/ledger/db";
 import {
   INGEST_LEASE,
+  LedgerLeaseHeldError,
   asLeaseHeld,
   ledgerLeaseHolder,
   railLeaseHeldNote,
@@ -30,6 +31,22 @@ setDefaultTimeout(60_000);
 const cleanup: (() => void)[] = [];
 afterEach(() => {
   for (const dispose of cleanup.splice(0).reverse()) dispose();
+});
+
+test.each([
+  new LedgerLeaseHeldError("synthetic writer contention"),
+  Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" }),
+])("runtime binding contention skips the pass and leaves its schedule due: %s", async failure => {
+  const { vault, db } = openVault();
+  recordIngest(db, process.ppid);
+  const due = listSchedules(db).find(row => row.rail === "sync")!.next_run_at;
+  const receipt = await runRail(db, vault, "sync", {
+    acquireRuntime: async () => { throw failure; },
+  });
+  expect(receipt).toMatchObject({ status: "stopped", stopped: LEDGER_LEASE_HELD_STOP });
+  expect(receipt.errors[0]).toContain(`a running kizuki ingest (pid ${process.ppid})`);
+  expect(receipt.schedule_transition).toBeUndefined();
+  expect(listSchedules(db).find(row => row.rail === "sync")!.next_run_at).toBe(due);
 });
 
 const HOLDER = join(import.meta.dir, "../ledger-busy-child.ts");
@@ -195,16 +212,16 @@ function skippedReceipt(index: number): RunReceipt {
   };
 }
 
-test("doctor names the holder once a rail keeps meeting a held ledger, and not before", () => {
+test.each(["sync", "doctor-sweep"] as const)("doctor names the holder once %s keeps meeting a held ledger, and not before", rail => {
   const { db } = openVault();
   const context = { db, model_configured: false, embedding_configured: false };
   const now = "2026-09-29T00:10:00Z";
-  const four = [0, 1, 2, 3].map(skippedReceipt);
-  expect(railDoctor("sync", four, 900, now, true, 0, context).status).toBe(
+  const four = [0, 1, 2, 3].map(index => ({ ...skippedReceipt(index), rail }));
+  expect(railDoctor(rail, four, 900, now, true, 0, context).status).toBe(
     "ok",
   );
-  const five = [0, 1, 2, 3, 4].map(skippedReceipt);
-  const down = railDoctor("sync", five, 900, now, true, 0, context);
+  const five = [0, 1, 2, 3, 4].map(index => ({ ...skippedReceipt(index), rail }));
+  const down = railDoctor(rail, five, 900, now, true, 0, context);
   expect(down.status).toBe("down");
   expect(down.reason).toContain("a running kizuki ingest (pid 4242)");
   expect(down.reason).not.toContain("stopped ledger:lease_held");

@@ -355,7 +355,7 @@ export function railDoctor(
     const why = runErrors(last)[0];
     reason = cap(`last run failed${why === undefined ? "" : `: ${why}`}`);
   } else if (
-    rail !== "doctor-sweep" &&
+    (rail !== "doctor-sweep" || last?.stopped === LEDGER_LEASE_HELD_STOP) &&
     !stale &&
     badRuns.length >= DEGRADED_STREAK
   ) {
