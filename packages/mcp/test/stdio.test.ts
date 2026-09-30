@@ -159,7 +159,7 @@ describe("the stdio process entry", () => {
       expect(JSON.stringify(search)).not.toContain("private kettle protocol");
       const packet = messages.find(message => message.id === 3)?.result;
       expect(packet?.isError).not.toBe(true);
-      expect(packet?.structuredContent?.data?.retrieval_degraded).toContain("retrieval-unavailable");
+      expect(packet?.structuredContent?.data?.result?.data?.retrievalDegraded).toContain("retrieval-unavailable");
       expect(JSON.stringify(packet)).not.toContain("private kettle protocol");
       expect(result.stderr).toContain("retrieval-unavailable; using the lexical floor");
       expect(result.stderr).not.toContain(running.vaultPath);

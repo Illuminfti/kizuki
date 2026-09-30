@@ -10,12 +10,13 @@ import {
   readAgentCredentialToken,
   readServeEndpoint,
   readServeProcessMarker,
-  serveContextPacket,
+  dispatchServeTool,
 } from "@kizuki/core";
 import type { Principal } from "@kizuki/core";
+import { ENVELOPE_V2_SCHEMA, PACKET_V2_SCHEMA } from "@kizuki/core/world";
 import type { CliIo } from "../commands/index";
 import { readConfig, configPath } from "../config";
-import { resolveVault, withReadVault } from "../context";
+import { resolveVault, withVault } from "../context";
 import { cliArgs } from "../runtime";
 import { tokenResolver } from "../secrets";
 
@@ -23,7 +24,7 @@ export const HARNESSES = ["claude-code", "codex", "generic"] as const;
 export type Harness = (typeof HARNESSES)[number];
 
 /** Why a hook printed nothing. Names a class of failure, never a path, token or captured text. */
-const SKIPS = ["no_vault", "denied", "timeout", "empty", "unavailable"] as const;
+const SKIPS = ["no_vault", "denied", "timeout", "empty", "unavailable", "unsupported_contract"] as const;
 export type SkipReason = (typeof SKIPS)[number];
 
 export type HookResult = { output: string } | { skip: SkipReason };
@@ -64,10 +65,10 @@ export function projectQuery(input: string): string | undefined {
 }
 
 interface PacketLike {
-  packet_md?: unknown;
+  packetMd?: unknown;
   sections?: Record<string, unknown>;
   session?: Record<string, { served?: unknown }>;
-  retrieval_degraded?: unknown;
+  retrievalDegraded?: unknown;
 }
 
 /**
@@ -76,21 +77,23 @@ interface PacketLike {
  */
 export function usableContext(data: unknown): string | null {
   if (data === null || typeof data !== "object") return null;
-  const packet = data as PacketLike;
-  if (typeof packet.packet_md !== "string" || packet.packet_md.length === 0) return null;
-  if (Array.isArray(packet.retrieval_degraded) && packet.retrieval_degraded.includes("context-unavailable")) return null;
+  const shaped = data as { schema?: unknown; result?: { status?: unknown; data?: PacketLike } };
+  if (shaped.schema !== PACKET_V2_SCHEMA || shaped.result?.status !== "current") return null;
+  const packet = shaped.result.data;
+  if (packet === undefined || typeof packet.packetMd !== "string" || !packet.packetMd.startsWith("KIZUKI CONTEXT v2\n")) return null;
+  if (Array.isArray(packet.retrievalDegraded) && packet.retrievalDegraded.includes("context-unavailable")) return null;
   const served = [
     ...Object.values(packet.sections ?? {}),
     ...Object.values(packet.session ?? {}).map((section) => section?.served),
   ].some((count) => typeof count === "number" && count > 0);
-  return served ? packet.packet_md : null;
+  return served ? packet.packetMd : null;
 }
 
 function sleep(ms: number): Promise<"timeout"> {
   return new Promise((resolve) => setTimeout(() => resolve("timeout"), Math.max(0, ms)));
 }
 
-type Wire = { kind: "packet"; context: string } | { kind: "empty" } | { kind: "refused" } | { kind: "timeout" } | { kind: "unreachable" };
+type Wire = { kind: "packet"; context: string } | { kind: "empty" | "refused" | "timeout" | "unreachable" | "unsupported_contract" };
 
 async function callDaemon(url: string, bearer: string, body: object, ms: number): Promise<Wire> {
   let response: Response;
@@ -98,7 +101,7 @@ async function callDaemon(url: string, bearer: string, body: object, ms: number)
     response = await fetch(`${url}/v1/context_packet`, {
       method: "POST",
       headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ response_contract: ENVELOPE_V2_SCHEMA, args: body }),
       signal: AbortSignal.timeout(Math.max(1, ms)),
     });
   } catch (error) {
@@ -106,13 +109,13 @@ async function callDaemon(url: string, bearer: string, body: object, ms: number)
       ? { kind: "timeout" }
       : { kind: "unreachable" };
   }
-  if (!response.ok) return { kind: "refused" };
   try {
     const text = await Promise.race([response.text(), sleep(ms)]);
     if (text === "timeout") return { kind: "timeout" };
     if (text.length > MAX_RESPONSE_CHARS) return { kind: "refused" };
-    const parsed = JSON.parse(text) as { ok?: unknown; value?: { data?: unknown } };
-    if (parsed.ok !== true) return { kind: "refused" };
+    const parsed = JSON.parse(text) as { ok?: unknown; error?: { code?: unknown }; value?: { schema?: unknown; data?: unknown } };
+    if (!response.ok || parsed.ok !== true) return { kind: parsed.error?.code === "unsupported_contract" ? "unsupported_contract" : "refused" };
+    if (parsed.value?.schema !== ENVELOPE_V2_SCHEMA) return { kind: "unsupported_contract" };
     const context = usableContext(parsed.value?.data);
     return context === null ? { kind: "empty" } : { kind: "packet", context };
   } catch {
@@ -139,22 +142,21 @@ function principalFor(io: CliIo, db: Database, tokenRef: string | undefined): Pr
   return token === undefined ? null : authenticate(db, token);
 }
 
-async function readInProcess(io: CliIo, options: SessionStartOptions, request: object): Promise<HookResult> {
-  const context = await withReadVault(io, async (ctx) => {
+async function readInProcess(io: CliIo, options: SessionStartOptions, request: Record<string, unknown>): Promise<HookResult> {
+  const context = await withVault(io, async (ctx) => {
     const principal = principalFor(io, ctx.db, options.tokenRef);
     if (principal === null) return "denied" as const;
-    const envelope = await serveContextPacket(
+    const envelope = await dispatchServeTool(
       {
         db: ctx.db,
         vaultPath: ctx.vaultPath,
         principal,
         ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
       },
-      request,
+      "context_packet", request, { response_contract: ENVELOPE_V2_SCHEMA },
     );
-    ctx.assertCurrent();
     return usableContext(envelope.data);
-  }, { audit: true, retrieval: "none" });
+  }, { retrieval: "none" });
   if (context === "denied") return { skip: "denied" };
   return context === null ? { skip: "empty" } : { output: formatHookOutput(options.harness, context) };
 }
@@ -223,6 +225,7 @@ export async function runSessionStart(io: CliIo, options: SessionStartOptions): 
       if (wire.kind === "empty") return { skip: "empty" };
       if (wire.kind === "timeout") return { skip: "timeout" };
       if (wire.kind === "refused") return { skip: "denied" };
+      if (wire.kind === "unsupported_contract") return { skip: "unsupported_contract" };
     }
     if (remaining() <= 0) return { skip: "timeout" };
     return await readInChild(io, options, vault, input, remaining());
