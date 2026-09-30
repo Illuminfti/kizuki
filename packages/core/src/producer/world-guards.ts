@@ -26,7 +26,7 @@ const INSTRUCTION_SHAPES: readonly RegExp[] = [
   // A role marker opens a turn: sentence or line start, then text after the colon.
   // "Operating system: Linux" is a label, not a turn, and never matches.
   /(?:^|[\n.!?"'>])[ \t]*(?:system|assistant|developer)[ \t]*:[ \t]*\S[^\n]{0,80}/gi,
-  /<<<\s*kz[^>]*>>>|<\|(?:im_start|im_end|system)\|>/gi,
+  /<<<\s*kz[^>]{0,256}>>>|<\|(?:im_start|im_end|system)\|>/gi,
   /\byou (?:must|should|shall|will) (?:now )?(?:ignore|obey|grant|delete|reveal|disclose|forward|execute|run)\b/gi,
   /\b(?:grant|give)s? (?:yourself |me |them |everyone |every agent |all agents )?(?:admin|root|full|unrestricted)\b/gi,
   /\b(?:reveal|print|repeat|disclose) (?:your |the )?(?:system prompt|instructions|credentials|secrets?)\b/gi,

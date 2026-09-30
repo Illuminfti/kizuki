@@ -126,6 +126,14 @@ describe("instruction-shaped literals", () => {
     expect(instructionShapedSpans("Ada reviews the orchard library budget.")).toEqual([]);
   });
 
+  test("unfinished instruction delimiters cannot trigger an unbounded rescan", () => {
+    const text = "<<<kz ".repeat(100_000);
+    const started = performance.now();
+    expect(instructionShapedSpans(text)).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(750);
+    expect(instructionShapedSpans("<<<kz instruction>>> <|system|>")).toHaveLength(2);
+  });
+
   test("a literal or body that repeats an instruction from its evidence is refused", () => {
     const f = fixture(INJECTED);
     const prepared = prepareWorldDrafts(f.response(
