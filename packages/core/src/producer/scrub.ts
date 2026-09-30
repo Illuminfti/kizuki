@@ -42,11 +42,11 @@ const PEM_END = /-----END ([A-Z0-9 \t\r\n]{1,60})-----/y;
 const JWT = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g;
 const API_TOKEN = /(?:kzk_[0-9A-HJKMNP-TV-Z]{52}|kzs_[A-Za-z0-9_-]{43}|sk-[A-Za-z0-9_-]{20,}|[sr]k_live_[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{16,}|AIza[A-Za-z0-9_-]{30,}|(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9]))/g;
 const WRAPPED_TOKEN = /(kzk_|kzs_|sk-|[sr]k_live_|gh[pousr]_|github_pat_|glpat-|npm_|xox[abposr]-|xapp-|AIza|AKIA|ASIA)([A-Za-z0-9_-]{0,256})[ \t]{0,16}\r?\n[ \t]{0,16}([A-Za-z0-9_-]{1,512})/g;
-const BEARER = /(\bBearer[ \t]+)([^\s"'<>,;]{16,})/gi;
-const AUTH_BEARER = /(\bAuthorization["']?\s{0,1024}[:=]\s{0,1024}["']?Bearer\s+)([^\s"'<>,;]{6,})/gi;
-const AUTHORIZATION = /(\bAuthorization["']?\s{0,1024}[:=]\s{0,1024}["']?(?:Basic|Token)\s+)([^\s"'<>,;]{4,})/gi;
-const AUTH_RAW = /(\bAuthorization["']?\s*[:=]\s*["']?)(?!(?:Bearer|Basic|Token)\b)([^\s"'<>,;]{4,})/gi;
-const URL_CREDENTIALS = /[A-Za-z][A-Za-z0-9+.-]{0,63}:\/\/([^\s\/:@]+(?::[^\s\/@]*)?)@/gd;
+const BEARER = /(\bBearer\s+)([^\s"'<>,;]{16,})/gi;
+const AUTH_BEARER = /(\bAuthorization["']?\s{0,1024}[:=]\s{0,1024}["']?Bearer\s+)([^\s"'<>,;]+)/gi;
+const AUTHORIZATION = /(\bAuthorization["']?\s{0,1024}[:=]\s{0,1024}["']?(?:Basic|Token)\s+)([^\s"'<>,;]+)/gi;
+const AUTH_RAW = /(\bAuthorization["']?\s*[:=]\s*["']?)(?!(?:Bearer|Basic|Token)\b)([^\s"'<>,;]+)/gi;
+const URL_CREDENTIALS = /[A-Za-z][A-Za-z0-9+.-]{0,63}:\/\/([^\s\/:@]+(?::[^\s\/@]*)?|:[^\s\/@]+)@/gd;
 /**
  * A secret keyword anywhere in a name, then `=` or `:`, then the value: a quoted value
  * through its closing quote or the end of the line, an unquoted one through the
@@ -167,9 +167,13 @@ function spans(text: string): Span[] {
   for (const match of matches(text, WRAPPED_TOKEN)) {
     // A following assignment is a sibling field, not the key's continuation.
     if (/^[ \t]*[:=]/.test(text.slice(match.index + match[0].length))) continue;
+    // A complete first line is already protected; its following prose is not
+    // a continuation. An incomplete prefix needs the joined view below.
+    const first = match[1]! + match[2]!;
+    if ([...matches(first, API_TOKEN)].length > 0) continue;
     // Validate the joined shape with the same pattern, rather than a second token catalogue.
-    const joined = match[1]! + match[2]! + match[3]!;
-    if ([...matches(joined, API_TOKEN)].some((token) => token[0].length === joined.length)) {
+    const joined = first + match[3]!;
+    if ([...matches(joined, API_TOKEN)].length > 0) {
       found.push({ kind: "api_token", start: match.index, end: match.index + match[0].length });
     }
   }
@@ -310,11 +314,16 @@ export function scrubText(
       found.push({ kind: "api_token", start, end: start + secret.length });
     }
   }
-  const original = view === undefined ? found : found.map((span) => ({
-    ...span, start: view.starts[span.start]!, end: view.ends[span.end - 1]!,
-    contextStart: view.starts[span.contextStart ?? span.start]!,
-    contextEnd: view.ends[(span.contextEnd ?? span.end) - 1]!,
-  }));
+  // Decoding may introduce URL delimiters inside encoded userinfo. Preserve
+  // matches in both representations, then merge their overlapping spans once.
+  const original: Span[] = view === undefined ? found : [
+    ...(credentialShapes ? spans(text) : []),
+    ...found.map((span) => ({
+      ...span, start: view.starts[span.start]!, end: view.ends[span.end - 1]!,
+      contextStart: view.starts[span.contextStart ?? span.start]!,
+      contextEnd: view.ends[(span.contextEnd ?? span.end) - 1]!,
+    })),
+  ];
   // Assembly may create a new credential across fields. Only a detector fully
   // contained in one sanitized field is inert, including its name/header.
   const introduced = original.filter((span) => !sanitizedRanges.some((range) =>
