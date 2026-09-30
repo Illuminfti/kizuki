@@ -139,15 +139,18 @@ export async function generateVault(root: string, size: PersonaSize) {
       if (step === 31) throw new Error("fixture extraction did not settle");
     }
     const ctx = { db, vaultPath, principal: OWNER };
-    const event = readSince(db, null, 1000).events.find(item => item.source_record_id === "identity");
-    if (event === undefined) throw new Error("fixture identity missing");
-    const proposer = addAgent(db, "fixture-proposer", { ceiling: "personal", subjects: ["persona:ada"],
+    const evidence = readSince(db, null, 1000).events;
+    const event = evidence.find(item => item.source_record_id === "identity");
+    const privateContext = evidence.find(item => item.source_record_id === "ceiling-decoy");
+    if (event === undefined || privateContext === undefined) throw new Error("fixture proposal evidence missing");
+    // Private provenance keeps the proposed fact within the owner-only oracle.
+    const proposer = addAgent(db, "fixture-proposer", { ceiling: "private", subjects: ["persona:ada", "persona:orchard"],
       types: null, tools: ["propose"], rate_limit_per_minute: 1000, relay_owner_corrections: false });
     const proposalPrincipal = authenticate(db, proposer.token);
     if (proposalPrincipal === null) throw new Error("fixture proposer authentication failed");
     const relationship = scenario.facts.find(fact => fact.id === "proposed-relationship")!;
     const proposed = await servePropose({ ...ctx, principal: proposalPrincipal }, { kind: "claim", body: `${relationship.value}.`,
-      subject: "persona:ada", subjects: ["persona:ada"], predicate: "relation.knows", object: relationship.value, provenance: [event.event_id] });
+      subject: "persona:ada", subjects: ["persona:ada"], predicate: "relation.knows", object: relationship.value, provenance: [event.event_id, privateContext.event_id] });
     if (proposed.data?.outcome !== "stored") throw new Error("fixture proposal failed");
     const cards = discoveredCards(ctx, "situation", "Orchard");
     const blocker = cards.flatMap(envelope => "result" in envelope.data && envelope.data.result.status !== "unavailable" &&
