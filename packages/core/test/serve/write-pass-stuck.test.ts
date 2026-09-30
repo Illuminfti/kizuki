@@ -98,7 +98,9 @@ test("a page that starts to write is cleared, and doctor lists what is set aside
   });
   let receipt;
   for (let index = 0; index < 3; index += 1) { receipt = await pass(); clock += 60_000; }
-  expect(getRunReceipt(f.db, receipt!.run_id)!.errors.join("\n")).toContain(`page ${created.handle} at ${created.path}`);
+  expect(getRunReceipt(f.db, receipt!.run_id)!.canon_quarantined).toEqual([{
+    handle: created.handle, path: created.path, attempts: 3, until: "2026-03-02T00:02:00.000Z",
+  }]);
   const report = inspectServeDoctor(f.db, f.vault, { now: now() });
   expect(report.quarantined.detail).toBe("quarantined typed pages=1");
   expect(report.quarantined.pages[0]).toMatchObject({ handle: created.handle, path: created.path, attempts: 3 });

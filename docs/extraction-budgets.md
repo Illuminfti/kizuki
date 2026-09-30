@@ -155,8 +155,9 @@ one full reconciliation. Ordinary derived refresh and rebuild still reconcile
 files added, removed or rewritten outside the writer; a canon write does not
 scan unrelated files for edits. Serving checks current evidence on each read.
 
-A typed page group that fails a pass is named in the receipt with its handle
-and page path, for example `page <handle> at auto/world/<handle>.md`. After
+A typed page group that fails three passes is named in the receipt's typed
+`canon_quarantined` entries with its handle, generated page path, failure
+count and retry time. Error strings remain fully redacted. After
 three failed passes in a row the page is set aside for 24 hours: later passes
 skip it, so groups behind it are written, and the receipt says
 `set aside until <time>`. When the day is over the page is tried once more; a

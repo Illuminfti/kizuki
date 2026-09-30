@@ -34,6 +34,7 @@ import {
   type RunExecution,
   type RunScheduleTransition,
   type RunStatus,
+  type CanonQuarantineNotice,
 } from "./types";
 
 const RUN_STATUSES = new Set(["ok", "degraded", "stopped", "failed"]);
@@ -48,13 +49,17 @@ export function redactReceiptText(text: string): string {
     .replace(/\b[A-Za-z0-9_-]{20,}\b/g, "[redacted]");
 }
 
-/** Keep only the writer's closed, synthetic page locator; the error stays redacted. */
-function redactRunError(text: string): string {
-  const failure = /^(.*)( \(page ([0-9a-f]{32}) at auto\/world\/([0-9a-f]{32})\.md\))$/.exec(text);
-  if (failure !== null && failure[3] === failure[4]) return redactReceiptText(failure[1]!) + failure[2]!;
-  const quarantine = /^typed page ([0-9a-f]{32}) at auto\/world\/([0-9a-f]{32})\.md set aside until (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) after ([1-9]\d*) failed passes$/.exec(text);
-  if (quarantine !== null && quarantine[1] === quarantine[2] && Number.isFinite(Date.parse(quarantine[3]!))) return text;
-  return redactReceiptText(text);
+function quarantineNotices(value: unknown): { canon_quarantined?: CanonQuarantineNotice[] } {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 10_000) return {};
+  const notices: CanonQuarantineNotice[] = [];
+  for (const item of value) {
+    if (!isPlainObject(item) || Object.keys(item).sort().join() !== "attempts,handle,path,until" ||
+        typeof item.handle !== "string" || !/^[0-9a-f]{32}$/.test(item.handle) || item.path !== `auto/world/${item.handle}.md` ||
+        typeof item.attempts !== "number" || !Number.isSafeInteger(item.attempts) || item.attempts < 3 ||
+        typeof item.until !== "string" || !Number.isFinite(Date.parse(item.until)) || new Date(item.until).toISOString() !== item.until) return {};
+    notices.push({ handle: item.handle, path: item.path as string, attempts: item.attempts, until: item.until });
+  }
+  return { canon_quarantined: notices };
 }
 
 /** A display marker cannot recover the original model reference identity. */
@@ -203,8 +208,9 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     errors: Array.isArray(value["errors"])
       ? value["errors"]
           .filter((item): item is string => typeof item === "string")
-          .map(redactRunError)
+          .map(redactReceiptText)
       : [],
+    ...quarantineNotices(value["canon_quarantined"]),
   };
 }
 
@@ -457,7 +463,7 @@ function redactReceipt(receipt: RunReceipt): RunReceipt {
     ? sha256Hex(reference) : readModelReferenceDigest(rawDigest);
   return {
     ...receipt,
-    errors: receipt.errors.map(redactRunError),
+    errors: receipt.errors.map(redactReceiptText),
     model: {
       ...model,
       ...(diagnostic === undefined ? {} : { diagnostic }),

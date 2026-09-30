@@ -25,7 +25,7 @@ import type { DroppedDraftV2, ProduceResultV2, ProducerV2Port } from "../contrac
 import { formatProducerDiagnostic, readProducerDiagnostic } from "../producer/diagnostics";
 import { invokeProducer, invokeProducerV2, type ValidatedProduceResult } from "../producer/result";
 import type { WorldDraftInsert } from "../producer/world-drafts";
-import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig, type RunModelReport, type RunOversizedReport } from "./types";
+import { DEFAULT_EXTRACTION_CONFIG, type CanonQuarantineNotice, type ExtractionConfig, type RunModelReport, type RunOversizedReport } from "./types";
 import {
   prepareClaimInsert,
   retryRetrievalOps,
@@ -85,6 +85,7 @@ export interface WritePassResult {
   /** Records extraction passed over for good without claims; each has its reason in `errors`. */
   readonly records_skipped: number;
   readonly canon_writes: number;
+  readonly canon_quarantined: readonly CanonQuarantineNotice[];
   readonly claims_rejected: Readonly<Record<string, number>>;
   readonly model: Omit<RunModelReport, "model_ref">;
   /** Segments filed and records skipped with a retry receipt, for records too large for one request. */
@@ -95,13 +96,13 @@ export interface WritePassResult {
 
 /** A pass's totals, kept across its short writer holds. */
 type PassTally = {
-  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "model" | "oversized" | "errors">]: WritePassResult[K];
-} & { readonly oversized: { segments: number; skipped: number }; readonly errors: string[] };
+  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "model" | "oversized" | "errors" | "canon_quarantined">]: WritePassResult[K];
+} & { readonly oversized: { segments: number; skipped: number }; readonly errors: string[]; readonly canon_quarantined: CanonQuarantineNotice[] };
 
 function emptyTally(): PassTally {
   return {
     revived: 0, claims_extracted: 0, claims_written: 0, claims_written_extracted: 0, claims_deduped: 0,
-    claims_superseded: 0, records_skipped: 0, canon_writes: 0, oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
+    claims_superseded: 0, records_skipped: 0, canon_writes: 0, canon_quarantined: [], oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
   };
 }
 
@@ -445,7 +446,10 @@ function writeNextPage(
       // A recovery hold is the writer's state, not this page's fault.
       if (!(error instanceof CanonRecoveryError)) {
         const held = recordStuckPage(db, { handle, path, reason }, now);
-        if (held !== null) tally.errors.push(`typed page ${handle} at ${path} set aside until ${held.until} after ${held.attempts} failed passes`);
+        if (held !== null) {
+          tally.canon_quarantined.push({ handle, path, attempts: held.attempts, until: held.until });
+          tally.errors.push(`typed page ${handle} at ${path} set aside until ${held.until} after ${held.attempts} failed passes`);
+        }
       }
       return "failed";
     }
