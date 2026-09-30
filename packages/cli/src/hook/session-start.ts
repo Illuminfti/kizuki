@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { request as httpRequest } from "node:http";
+import { createRedactor } from "@kizuki/core/internal";
 import { basename, join } from "node:path";
 import type { Database } from "bun:sqlite";
 import {
@@ -23,7 +25,7 @@ export const HARNESSES = ["claude-code", "codex", "generic"] as const;
 export type Harness = (typeof HARNESSES)[number];
 
 /** Why a hook printed nothing. Names a class of failure, never a path, token or captured text. */
-const SKIPS = ["no_vault", "denied", "timeout", "empty", "unavailable"] as const;
+const SKIPS = ["no_vault", "denied", "timeout", "empty", "unavailable", "oversized"] as const;
 export type SkipReason = (typeof SKIPS)[number];
 
 export type HookResult = { output: string } | { skip: SkipReason };
@@ -33,20 +35,33 @@ export interface SessionStartOptions {
   budget: number;
   timeoutMs: number;
   tokenRef: string | undefined;
+  /** Explicitly permit owner authority; output is still scrubbed for a harness. */
+  owner?: boolean;
   /** Read the vault in this process and never call the daemon. */
   direct: boolean;
 }
 
 const MAX_STDIN_BYTES = 64 * 1024;
-const MAX_RESPONSE_CHARS = 512 * 1024;
+const MAX_RESPONSE_BYTES = 512 * 1024;
+/** Includes the final stdout newline and any harness JSON framing. */
+export const MAX_HOOK_OUTPUT_BYTES = 64 * 1024;
 const MAX_QUERY_CHARS = 200;
 const MAX_STDIN_WAIT_MS = 250;
 
 /** The claude-code and codex hooks share one documented SessionStart output shape. */
 export function formatHookOutput(harness: Harness, context: string): string {
+  // A harness always gets agent-grade text, even when authorization was owner-level.
+  const safe = createRedactor({ kind: "agent" }).text(context);
   return harness === "generic"
-    ? context
-    : JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: context } });
+    ? safe
+    : JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: safe } });
+}
+
+function outputFor(harness: Harness, context: string): HookResult {
+  const output = formatHookOutput(harness, context);
+  return Buffer.byteLength(output, "utf8") + 1 > MAX_HOOK_OUTPUT_BYTES
+    ? { skip: "oversized" }
+    : { output };
 }
 
 /** The project's own name from the hook's working directory. The path itself never leaves this function. */
@@ -92,32 +107,46 @@ function sleep(ms: number): Promise<"timeout"> {
 
 type Wire = { kind: "packet"; context: string } | { kind: "empty" } | { kind: "refused" } | { kind: "timeout" } | { kind: "unreachable" };
 
+/** Direct loopback HTTP; Bun also needs NO_PROXY because its HTTP implementation uses fetch. */
 async function callDaemon(url: string, bearer: string, body: object, ms: number): Promise<Wire> {
-  let response: Response;
-  try {
-    response = await fetch(`${url}/v1/context_packet`, {
+  if (ms <= 0) return { kind: "timeout" };
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (wire: Wire): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      request.destroy();
+      resolve(wire);
+    };
+    const request = httpRequest(`${url}/v1/context_packet`, {
       method: "POST",
       headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(Math.max(1, ms)),
+    }, (response) => {
+      if (response.statusCode !== 200) { finish({ kind: "refused" }); return; }
+      const chunks: Buffer[] = [];
+      let size = 0;
+      response.on("data", (chunk: Buffer) => {
+        if (settled) return;
+        size += chunk.length;
+        if (size > MAX_RESPONSE_BYTES) { finish({ kind: "refused" }); return; }
+        chunks.push(chunk);
+      });
+      response.on("error", () => finish({ kind: "refused" }));
+      response.on("end", () => {
+        if (settled) return;
+        try {
+          const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { ok?: unknown; value?: { data?: unknown } };
+          if (parsed.ok !== true) { finish({ kind: "refused" }); return; }
+          const context = usableContext(parsed.value?.data);
+          finish(context === null ? { kind: "empty" } : { kind: "packet", context });
+        } catch { finish({ kind: "refused" }); }
+      });
     });
-  } catch (error) {
-    return (error as Error).name === "TimeoutError" || (error as Error).name === "AbortError"
-      ? { kind: "timeout" }
-      : { kind: "unreachable" };
-  }
-  if (!response.ok) return { kind: "refused" };
-  try {
-    const text = await Promise.race([response.text(), sleep(ms)]);
-    if (text === "timeout") return { kind: "timeout" };
-    if (text.length > MAX_RESPONSE_CHARS) return { kind: "refused" };
-    const parsed = JSON.parse(text) as { ok?: unknown; value?: { data?: unknown } };
-    if (parsed.ok !== true) return { kind: "refused" };
-    const context = usableContext(parsed.value?.data);
-    return context === null ? { kind: "empty" } : { kind: "packet", context };
-  } catch {
-    return { kind: "refused" };
-  }
+    const timer = setTimeout(() => finish({ kind: "timeout" }), Math.max(1, ms));
+    request.on("error", () => finish({ kind: "unreachable" }));
+    request.end(JSON.stringify(body));
+  });
 }
 
 /** The bearer the daemon expects for this caller, or null when none can be resolved. */
@@ -156,18 +185,32 @@ async function readInProcess(io: CliIo, options: SessionStartOptions, request: o
     return usableContext(envelope.data);
   }, { audit: true, retrieval: "none" });
   if (context === "denied") return { skip: "denied" };
-  return context === null ? { skip: "empty" } : { output: formatHookOutput(options.harness, context) };
+  return context === null ? { skip: "empty" } : outputFor(options.harness, context);
 }
 
 /** Another copy of this CLI reads the vault, so a stalled read can be killed at the deadline. */
 async function readInChild(io: CliIo, options: SessionStartOptions, vault: string, input: string, ms: number): Promise<HookResult> {
+  const env: Record<string, string> = {};
+  for (const key of ["HOME", "XDG_CONFIG_HOME", "KIZUKI_CONFIG", "TMPDIR", "TEMP", "TMP"]) {
+    const value = io.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  const parsed = options.tokenRef === undefined ? null : parseSecretRef(options.tokenRef);
+  let tokenRef = options.tokenRef;
+  if (parsed?.scheme === "env") {
+    const token = io.env[parsed.value];
+    if (token === undefined) return { skip: "denied" };
+    env.KIZUKI_HOOK_TOKEN = token;
+    tokenRef = "env:KIZUKI_HOOK_TOKEN";
+  }
   const child = Bun.spawn(
     cliArgs([
       "hook", "session-start", "--direct", "--verbose", "--vault", vault,
       "--harness", options.harness, "--budget", String(options.budget), "--timeout-ms", String(Math.max(100, Math.floor(ms))),
-      ...(options.tokenRef === undefined ? [] : ["--token-ref", options.tokenRef]),
+      ...(options.owner ? ["--owner"] : []),
+      ...(tokenRef === undefined ? [] : ["--token-ref", tokenRef]),
     ]),
-    { env: { ...io.env } as Record<string, string>, stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+    { env, stdin: "pipe", stdout: "pipe", stderr: "pipe" },
   );
   child.stdin.write(input);
   void child.stdin.end();
@@ -175,11 +218,13 @@ async function readInChild(io: CliIo, options: SessionStartOptions, vault: strin
   const outcome = await Promise.race([done, sleep(ms)]);
   if (outcome === "timeout") {
     child.kill("SIGKILL");
+    await done;
     return { skip: "timeout" };
   }
   const [stdout, stderr, code] = outcome;
   if (code !== 0) return { skip: "unavailable" };
-  if (stdout.trim().length > 0 && stdout.length <= MAX_RESPONSE_CHARS) return { output: stdout.replace(/\n$/, "") };
+  if (Buffer.byteLength(stdout) > MAX_HOOK_OUTPUT_BYTES) return { skip: "oversized" };
+  if (stdout.trim().length > 0) return { output: stdout.replace(/\n$/, "") };
   // The child names its own reason on stderr; anything else it says is dropped.
   const reason = /^hook: nothing injected \((\w+)\)$/m.exec(stderr)?.[1];
   return { skip: SKIPS.includes(reason as SkipReason) ? (reason as SkipReason) : "unavailable" };
@@ -190,9 +235,16 @@ async function readInChild(io: CliIo, options: SessionStartOptions, vault: strin
  * falls back to a direct read, and never throws: every failure is a skip.
  */
 export async function runSessionStart(io: CliIo, options: SessionStartOptions): Promise<HookResult> {
+  // Both cases matter: Bun gives the lower-case variable precedence. Preserve existing bypasses.
+  for (const name of ["NO_PROXY", "no_proxy"]) {
+    const hosts = new Set((process.env[name] ?? "").split(/[,\s]+/).filter(Boolean));
+    for (const host of ["127.0.0.1", "localhost", "::1"]) hosts.add(host);
+    process.env[name] = [...hosts].join(",");
+  }
   const started = Date.now();
   const remaining = (): number => options.timeoutMs - (Date.now() - started);
   try {
+    if ((options.tokenRef === undefined && options.owner !== true) || (options.tokenRef !== undefined && options.owner === true)) return { skip: "denied" };
     // A harness that leaves stdin open must not spend the whole deadline: the query is a nicety, the packet is the point.
     let raw: string | "timeout" = "";
     if (io.readStdin !== undefined) {
@@ -219,7 +271,7 @@ export async function runSessionStart(io: CliIo, options: SessionStartOptions): 
     const bearer = endpoint === null ? null : await bearerFor(io, vault, options.tokenRef);
     if (endpoint !== null && bearer !== null) {
       const wire = await callDaemon(endpoint.url, bearer, request, remaining());
-      if (wire.kind === "packet") return { output: formatHookOutput(options.harness, wire.context) };
+      if (wire.kind === "packet") return outputFor(options.harness, wire.context);
       if (wire.kind === "empty") return { skip: "empty" };
       if (wire.kind === "timeout") return { skip: "timeout" };
       if (wire.kind === "refused") return { skip: "denied" };

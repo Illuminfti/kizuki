@@ -17,7 +17,7 @@ Every path below is a placeholder. Replace `/absolute/path/to/vault` and
 | Session hook      | `kizuki hook session-start` | A bounded context block injected once, at session start.                           |
 
 The hook is a pull. It asks Kizuki for a `context_packet` with `purpose=session`,
-prints it in the shape the harness documents, and exits. It writes nothing, opens
+prints it in the shape the harness documents, and exits. It writes no canon, opens
 no network connection beyond the local loopback daemon, and stays silent when
 anything goes wrong.
 
@@ -104,10 +104,11 @@ Add this to `~/.claude/settings.json`, or to a project's `.claude/settings.json`
 }
 ```
 
-Keep `--token-ref` in the command. Without it the hook reads as the owner, at the
-owner's sensitivity ceiling, and injects owner-level claims into whatever model
-the harness talks to. An agent credential limits the block to what that agent's
-grant allows. The same applies to every hook recipe below.
+Keep `--token-ref` in the command. Without it the hook prints nothing. `--owner`
+explicitly selects owner authority and the owner sensitivity ceiling; use it only when you intend that
+access. Every hook output, including owner output, passes through the shared
+agent-grade secret scrubber. An agent credential limits the block to its grant.
+The same applies to every hook recipe below.
 
 Claude Code sends the session's JSON on standard input and adds the printed
 `additionalContext` to the conversation. Keep the harness `timeout` (seconds) a
@@ -224,20 +225,51 @@ search query. The path itself is never sent or printed.
 1. It reads the harness's JSON from standard input, at most 64 KiB.
 2. If `kizuki serve` is running, it calls that daemon's loopback endpoint with the
    agent's own credential, and only when the endpoint file belongs to the daemon
-   process of the current boot. Without `--token-ref` it acts as the owner at the
-   owner's ceiling and uses the daemon's standing token.
+   process of the current boot. The HTTP connection goes directly to loopback,
+   bypassing all proxy settings. Only explicit `--owner` uses the standing token.
+   Without either `--token-ref` or `--owner`, no context is read or injected.
 3. If no daemon answers, it reads the vault directly in a child process that it
-   can stop at the deadline.
-4. It prints the harness's output shape and exits 0.
+   can stop and reap at the deadline. The child receives only `HOME`,
+   `XDG_CONFIG_HOME`, `KIZUKI_CONFIG`, temporary-directory variables and, for an
+   environment credential, that one token under a fixed child variable. Proxy,
+   preload and unrelated secret variables are excluded.
+4. It scrubs credentials and terminal controls with the shared scrubber and
+   terminal sanitizer, prints the harness's output shape and exits 0. Output is
+   capped at 64 KiB in UTF-8 bytes, including JSON framing and the final newline.
+   Oversized output is omitted entirely (`oversized` with `--verbose`), so JSON
+   and packet labels are never cut midway. The daemon response is bounded to
+   512 KiB before decoding.
 
 It exits 0 and prints nothing on a timeout, a denied or revoked credential, a
 missing or uninitialized vault, an empty result, or any other error. Add
 `--verbose` to see one line on standard error naming the class of failure. That
 line never contains a path, a token or captured text. A misconfigured command
-(an unknown `--harness`, a bad `--token-ref`, an unknown option) is silent too,
+(an unknown `--harness`, a bad `--token-ref`, an unknown option or a missing,
+empty or repeated `--vault`) is silent too,
 so a typo cannot fail every session; `--verbose` prints `nothing injected
 (usage)`. Out-of-range `--budget` and `--timeout-ms` values are pulled to the
 nearest bound.
+
+For a source install, the harness must use this launcher instead of plain
+`bun main.ts` or the source entry's shebang:
+
+```sh
+bun --no-env-file \
+  --config=/absolute/path/to/kizuki/packages/cli/hook.bunfig.toml \
+  /absolute/path/to/kizuki/packages/cli/src/main.ts \
+  hook session-start --harness generic \
+  --vault /absolute/path/to/vault \
+  --token-ref file:/absolute/path/to/credentials/my-harness.credential
+```
+
+The absolute config comes from your trusted installation and overrides project
+preloads; `--no-env-file` prevents loading the project's `.env`. Bun loads these
+before TypeScript starts, so the source command cannot repair an unsafe initial
+invocation. The fallback child uses the same safe flags automatically. The
+compiled `kizuki` command needs no Bun launcher flags. See Bun's
+[configuration](https://bun.sh/docs/runtime/bunfig) and
+[environment loading](https://bun.sh/docs/runtime/environment-variables) docs
+(checked 2026-09-30).
 
 `--direct` skips the daemon and reads in the current process. Its deadline covers
 waiting only, not a read already in progress, so prefer the default.
@@ -263,7 +295,8 @@ Every served call is recorded in the agent audit under the credential's name.
 ```sh
 echo '{"cwd":"/path/to/project"}' \
   | kizuki hook session-start --harness generic --verbose \
-      --vault /absolute/path/to/vault
+      --vault /absolute/path/to/vault \
+      --token-ref file:/absolute/path/to/credentials/my-harness.credential
 ```
 
 A block that starts with `KIZUKI CONTEXT v1` means the pull works. Silence with a

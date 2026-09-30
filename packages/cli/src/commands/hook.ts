@@ -6,7 +6,7 @@ import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 export const HOOK_SCHEMA = {
   options: ["--harness", "--budget", "--timeout-ms", "--token-ref"],
-  flags: ["--direct", "--verbose"],
+  flags: ["--owner", "--direct", "--verbose"],
   defaults: { "--budget": "450", "--timeout-ms": "2500" },
   bounds: {
     "--harness": "claude-code|codex|generic",
@@ -17,7 +17,7 @@ export const HOOK_SCHEMA = {
 } as const satisfies CommandHelpSchema;
 
 const USAGE =
-  "hook session-start --harness claude-code|codex|generic [--budget N] [--timeout-ms MS] [--token-ref env:VAR|file:/absolute/path] [--direct] [--verbose]";
+  "hook session-start --harness claude-code|codex|generic [--budget N] [--timeout-ms MS] [--token-ref env:VAR|file:/absolute/path | --owner] [--direct] [--verbose]";
 
 /** A number outside its range is pulled to the nearest bound and an unreadable one falls back: a settings typo must not fail every session. */
 function bounded(raw: string | undefined, fallback: number, min: number, max: number): number {
@@ -48,7 +48,7 @@ export const hookCommand: Command = {
         parsed.positionals.length !== 0 ||
         harness === undefined ||
         !(HARNESSES as readonly string[]).includes(harness) ||
-        (tokenRef !== undefined && !validTokenRef(tokenRef))
+        (tokenRef !== undefined && (!validTokenRef(tokenRef) || parsed.flags.has("--owner")))
       )
         throw new UsageError(USAGE);
       options = {
@@ -56,6 +56,7 @@ export const hookCommand: Command = {
         budget: bounded(parsed.options.get("--budget"), 450, 50, 2_000),
         timeoutMs: bounded(parsed.options.get("--timeout-ms"), 2_500, 100, 60_000),
         tokenRef,
+        owner: parsed.flags.has("--owner"),
         direct: parsed.flags.has("--direct"),
       };
     } catch (error) {
