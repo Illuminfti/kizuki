@@ -24,11 +24,11 @@ import { requestServeStop } from "../../src/serve/stop-control";
 import type { SupervisorHost } from "../../src/serve/supervisor";
 import {
   DEFAULT_EXTRACTION_CONFIG,
-  DEFAULT_RAILS,
   DEFAULT_SERVE_CONFIG,
   emptyRunTotals,
   type ExtractionConfig,
 } from "../../src/serve/types";
+import { DEFAULT_RAILS } from "../../src/serve/rail-registry";
 import { runWritePass } from "../../src/serve/write-pass";
 import { withVaultMutationSync } from "../../src/vault/mutation-scope";
 import {

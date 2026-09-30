@@ -21,7 +21,8 @@ import { readServeIntent } from "./intent";
 import { serviceFile } from "./service-files";
 import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readEmbeddingReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
 import { sha256Hex } from "../util/hash";
-import { listRails, railSchedules } from "./rail-registry";
+import { listRails } from "./rail-registry";
+import { listSchedules } from "./schema";
 import { countOversizedRecords, RETRY_SKIPPED_COMMAND } from "./extract-oversized";
 import type { SupervisorHost } from "./supervisor";
 import { queryServeService } from "./supervisor";
@@ -503,7 +504,7 @@ export function inspectServeDoctor(
   const since = new Date(Date.parse(now) - RUN_RECEIPT_RETENTION_DAYS * 86_400_000).toISOString();
   const hostChecks = options.host_checks !== false;
   const expectLive = hostChecks && expectRailLiveness(intent, supervisor);
-  const schedules = new Map(railSchedules(db).map((row) => [row.rail, row]));
+  const schedules = new Map(listSchedules(db).map((row) => [row.rail, row]));
   const config = loadServeConfig(vaultPath);
   const embedding = loadEmbeddingSelection(vaultPath);
   const modelRef = options.model_ref ?? null;

@@ -19,8 +19,6 @@ import {
 /** Far enough ahead that every timestamp is before it: "now" for an as-of query. */
 const NOW = "9999-12-31T23:59:59.999Z";
 const REASON_CAP = 160;
-/** Most runs the empty-streak walk reads back; the streak needs half of it. */
-const EMPTY_WALK = 2 * EMPTY_STREAK;
 
 /** What a rail can do, judged from ledger state and the model the vault is configured with. */
 export interface WorkContext {
@@ -291,7 +289,7 @@ export function railDoctor(
     // walking a whole window of receipts.
     for (
       let index = receipts.length - 1;
-      index >= 0 && empty < EMPTY_WALK;
+      index >= 0 && empty < 2 * EMPTY_STREAK;
       index -= 1
     ) {
       const receipt = receipts[index];
@@ -356,7 +354,7 @@ export function railDoctor(
   } else if (empty >= EMPTY_STREAK && expectLiveness) {
     status = "down";
     reason = cap(
-      `empty streak ${empty}${empty >= EMPTY_WALK ? "+" : ""} with work pending${workNow === null || workNow.detail === "" ? "" : ` (${workNow.detail})`}`,
+      `empty streak ${empty}${empty >= 2 * EMPTY_STREAK ? "+" : ""} with work pending${workNow === null || workNow.detail === "" ? "" : ` (${workNow.detail})`}`,
     );
   } else if (last === null && lastActiveAt === null) {
     status = "idle";

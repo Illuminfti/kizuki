@@ -21,8 +21,8 @@ import {
 import { getRunReceipt, recoverRunJournal } from "./receipts";
 import { dueRails, runRail, type RailHooks, type RailHooksV2, type RailRuntime, type RailRuntimeV2 } from "./rails";
 import type { RetrievalPort } from "../contracts/retrieval";
-import { isRailId, listRails, railSchedules, seedRailSchedules } from "./rail-registry";
-import { applyRailPeriod, initServe } from "./schema";
+import { isRailId, listRails } from "./rail-registry";
+import { applyRailPeriod, initServe, listSchedules } from "./schema";
 import { SERVE_PID_PATH, ServeDaemonError, type CrashPoint, type RailId } from "./types";
 import { clearServeStopRequest, serveStopRequested } from "./stop-control";
 
@@ -134,7 +134,6 @@ export async function runServeDaemon(
     throw new ServeDaemonError("runtime_options_conflict", "rail hooks and acquireRuntime are mutually exclusive");
   }
   initServe(db);
-  seedRailSchedules(db);
   const recovered = recoverRunJournal(db, vaultPath);
   const process = options.process ?? thisProcess(options.now);
   const instanceId = crypto.randomUUID();
@@ -197,7 +196,7 @@ export async function runServeDaemon(
         (dueRails(db, process.now()).length > 0
           ? dueRails(db, process.now())
           : undefined);
-      const enabled = new Set(railSchedules(db).filter((row) => row.enabled).map((row) => row.rail));
+      const enabled = new Set(listSchedules(db).filter((row) => row.enabled).map((row) => row.rail));
       const listed = rails ?? listRails().map((rail) => rail.id).filter((id) => enabled.has(id));
       for (const rail of listed) {
         if (stopRequested()) break;
@@ -223,7 +222,7 @@ export async function runServeDaemon(
           now: process.now,
           stopRequested,
           execution: { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
-            due_at: railSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() },
+            due_at: listSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() },
         });
         // A coalesced idle run advances the schedule and persists no receipt.
         if (getRunReceipt(db, receipt.run_id) !== null) receipts += 1;
