@@ -16,8 +16,9 @@ afterAll(() => {
 });
 
 describe("dispatchServeTool", () => {
-  test("every registered tool is reachable through the one switch", async () => {
+  test("every scoped tool reaches dispatch or its fixed v2 refusal", async () => {
     const ctx = fixture.agent("reader-private");
+    const contract = { response_contract: "kizuki.envelope/v2" };
     const publicEvent = fixture.events["public"];
     if (publicEvent === undefined) throw new Error("missing fixture event");
     const filed = await dispatchServeTool(ctx, "propose", {
@@ -27,7 +28,7 @@ describe("dispatchServeTool", () => {
       predicate: "employment.role",
       object: "engineer",
       provenance: [publicEvent],
-    });
+    }, contract);
     const claimId = (filed.data as { claim_id?: string } | undefined)?.claim_id;
     if (claimId === undefined) throw new Error("propose did not return a claim_id");
     const args: Record<Tool, Record<string, unknown>> = {
@@ -59,10 +60,15 @@ describe("dispatchServeTool", () => {
       },
     };
     for (const tool of TOOLS) {
-      const envelope = await dispatchServeTool(ctx, tool, args[tool]);
+      if (tool === "system_health") {
+        await expect(dispatchServeTool(ctx, tool, args[tool], contract))
+          .rejects.toMatchObject({ code: "unsupported_contract", message: "requested contract unavailable" });
+        expect((await dispatchServeTool(fixture.owner(), tool, args[tool])).schema).toBe("kizuki.envelope/v1");
+        continue;
+      }
+      const envelope = await dispatchServeTool(ctx, tool, args[tool], contract);
       expect(envelope.tool).toBe(tool);
-      // world_view answers in its closed v2 envelope; every other tool keeps v1.
-      expect(envelope.schema).toBe(tool === "world_view" ? "kizuki.envelope/v2" : "kizuki.envelope/v1");
+      expect(envelope.schema).toBe("kizuki.envelope/v2");
     }
   });
 
