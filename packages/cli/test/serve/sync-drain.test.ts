@@ -1,5 +1,5 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConnectionStateStore, runRail, setSourceGrant } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
@@ -167,52 +167,57 @@ const MEMORY_GROWTH_BOUND_MB = 64;
 /**
  * A tree shaped like a multi-gigabyte transcript store at test scale: many large
  * files whose bytes are mostly tool output the connector never keeps, and whose
- * conversation turns are longer than an event may be. Each file fills a batch.
+ * conversation turns are longer than an event may be. The scan-byte cap slices
+ * each file, including batches that store nothing but must advance their cursor.
  */
 function transcriptStore(root: string, files: number): { bytes: number } {
   mkdirSync(join(root, "proj"), { recursive: true });
-  const toolOutput = "y".repeat(100 * 1024);
+  const toolOutput = "y".repeat(3 * MEGABYTE);
   const longTurn = "Synthetic reasoning about the exporter and the importer plan. ".repeat(700);
+  const toolLine = JSON.stringify({
+    type: "user", uuid: "tool-result", sessionId: "synthetic-session", timestamp: "2026-01-15T10:00:00.000Z",
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: toolOutput }] },
+  }) + "\n";
   let bytes = 0;
   for (let file = 0; file < files; file++) {
-    const lines: string[] = [];
-    for (let line = 0; line < 64; line++) {
-      lines.push(turn(file, line, `${longTurn}${file}.${line}`));
-      lines.push(
-        JSON.stringify({
-          type: "user", uuid: `t-${file}-${line}`, sessionId: `s-${file}`, timestamp: "2026-01-15T10:00:00.000Z",
-          message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: toolOutput }] },
-        }),
-      );
-    }
-    const body = `${lines.join("\n")}\n`;
-    writeFileSync(join(root, "proj", `s-${file}.jsonl`), body);
-    bytes += body.length;
+    const path = join(root, "proj", `s-${file}.jsonl`);
+    const first = turn(file, 0, `${longTurn}${file}`) + "\n";
+    writeFileSync(path, first);
+    for (let line = 0; line < 36; line++) appendFileSync(path, toolLine);
+    bytes += first.length + 36 * toolLine.length;
   }
   return { bytes };
 }
 
-test("twenty bounded sync passes over a large transcript store keep daemon memory flat", async () => {
+test("the real serve loop keeps RSS bounded across twenty session batches", async () => {
   const sessions = h.tempDir("kizuki-sessions-drain-");
   const { bytes } = transcriptStore(sessions, 20);
-  expect(bytes).toBeGreaterThan(150 * MEGABYTE);
-  const { setup, db, runtime, stored } = enrolled(sessions, "[serve]\nconnector_drain_batches = 1\n");
+  expect(bytes).toBeGreaterThan(2_048 * MEGABYTE);
+  const { setup, db } = enrolled(sessions, "[serve]\nconnector_drain_batches = 1\nsync_period_s = 60\n");
+  db.close();
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, "sync-drain-memory-child.ts"), setup.vault], {
+    env: { ...process.env, ...setup.env }, stdout: "pipe", stderr: "pipe",
+  });
   try {
-    const samples: number[] = [];
-    for (let more: boolean | undefined = true; more === true; ) {
-      const receipt = await runRail(db, setup.vault, "sync", { acquireRuntime: runtime });
-      expect(receipt.errors).toEqual([]);
-      more = receipt.has_more;
-      Bun.gc(true);
-      samples.push(process.memoryUsage().rss / MEGABYTE);
-    }
-    // At least twenty batches ran, and their text reached the ledger.
-    expect(samples.length).toBeGreaterThanOrEqual(20);
-    expect(stored()).toBeGreaterThan(1_000);
+    const [stdout, stderr, exit] = await Promise.all([
+      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+    ]);
+    expect(exit, stderr).toBe(0);
+    const { samples, passes, stored, sweeps } = JSON.parse(stdout) as {
+      samples: number[]; passes: { has_more: boolean; events_stored: number; errors: string[] }[];
+      stored: number; sweeps: number;
+    };
+    expect(samples).toHaveLength(20);
+    expect(passes).toHaveLength(20);
+    expect(passes.every(receipt => receipt.has_more && receipt.errors.length === 0)).toBe(true);
+    expect(stored).toBe(passes.reduce((sum, receipt) => sum + receipt.events_stored, 0));
+    expect(stored).toBeGreaterThan(5);
+    expect(sweeps).toBeGreaterThan(1);
     const warm = Math.max(...samples.slice(2, 5));
     const growth = Math.max(...samples.slice(5)) - warm;
     expect(growth, `rss in MB after each pass: ${samples.map(Math.round).join(" ")}`).toBeLessThan(MEMORY_GROWTH_BOUND_MB);
   } finally {
-    db.close();
+    if (child.exitCode === null) child.kill();
+    await child.exited;
   }
-}, 900_000);
+}, 120_000);
