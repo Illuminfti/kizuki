@@ -169,3 +169,23 @@ test("a Codex file without a session record falls back to its own name for the s
   expect(events[0]?.source_record_id).toBe("rollout-orphan/L1");
   expect(events[0]?.subjects.map((subject) => subject.subject_id)).toEqual(["session-role:user"]);
 });
+
+for (const flavor of ["claude-code", "codex"] as const) {
+  test(`${flavor} drops embedded scaffolding and keeps the owner's words`, async () => {
+    const root = await tempRoot();
+    const text = [
+      "Keep the importer deterministic.",
+      "<system-reminder>synthetic injected reminder</system-reminder>",
+      "<task-notification>synthetic task output</task-notification>",
+      "<command-name>/example</command-name><command-message>synthetic wrapper</command-message>",
+      "<local-command-stdout>synthetic command output</local-command-stdout>",
+      "<hook-output>synthetic hook output</hook-output>",
+      "Preserve the retry receipt.",
+    ].join("\n");
+    await writeJsonl(root, "proj/turns.jsonl", flavor === "claude-code"
+      ? [claudeTurn("u-1", text)] : [codexMeta(), codexTurn("user", text)]);
+    expect(texts((await drain(connectorFor(flavor, { path: root }))).events).map((text) => text.replace(/\n+/g, "\n"))).toEqual([
+      "Keep the importer deterministic.\nPreserve the retry receipt.",
+    ]);
+  });
+}

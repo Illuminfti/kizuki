@@ -16,7 +16,6 @@ import { stringArray } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
 import {
   canonChunk,
-  collapseWhitespace,
   eligible,
   excerptOf,
   loadCanon,
@@ -124,12 +123,13 @@ function confidenceLabel(value: number): string {
 export function claimLine(claim: Claim, redactor?: Redactor): string {
   // The object is redacted before it is quoted, so a value in quotes still
   // reads as a value to the scrubber, and escaped so no line break survives.
+  const say = (value: string) => inline(redactor === undefined ? value : redactor.text(value));
   const object = redactor === undefined ? claim.object ?? "" : redactor.text(claim.object ?? "");
   return (
     `- [claim:${inline(claim.claim_id)}] c=${confidenceLabel(claim.confidence)}` +
     ` s=${claim.sensitivity} taint=${claim.taint} auth=${claim.authority} status=${claim.status}` +
     ` polarity=${claim.polarity} valid_from=${inline(claim.valid_from)} valid_to=${inline(claim.valid_to ?? "null")}` +
-    ` :: ${inline(claim.subject ?? "-")} ${inline(claim.predicate ?? "-")} "${inline(object)}"\n`
+    ` :: ${say(claim.subject ?? "-")} ${say(claim.predicate ?? "-")} "${inline(object)}"\n`
   );
 }
 
@@ -318,9 +318,10 @@ export async function collectPieces(
       packed.add(target.id);
       added += 1;
       const { excerpt, truncated } = excerptOf(
-        collapseWhitespace(target.body),
+        target.body,
         RELATED_EXCERPT,
         ctx,
+        "inline",
       );
       const chunk = canonChunk(liveIndex, target, decision, excerpt, truncated);
       pieces.push({

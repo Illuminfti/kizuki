@@ -127,8 +127,8 @@ test("timeline previews and expansions are redacted before they are cut", async 
     event_id: fixture.secretEvent,
     span: 2000,
   });
-  // The integrity digest is the raw capture's, identical for both readers.
-  expect(data.integrity).toBe((owner.data as { integrity: string }).integrity);
+  // Agent integrity binds the served projection; owner integrity binds the capture.
+  expect(data.integrity).not.toBe((owner.data as { integrity: string }).integrity);
   let served = "";
   for (let offset = 0; offset < data.total; offset += 40) {
     const window = await serve("reader-public", "timeline", {
@@ -253,7 +253,7 @@ test("ids, hashes and etags are not touched, and the packet hash is that of the 
   expect(first.canon.map((chunk) => chunk.sources)).toEqual(owner.canon.map((chunk) => chunk.sources));
   const raw = await serve("owner", "timeline", { event_id: fixture.secretEvent });
   const served = await serve("reader-public", "timeline", { event_id: fixture.secretEvent });
-  expect((served.data as { integrity: string }).integrity).toBe((raw.data as { integrity: string }).integrity);
+  expect((served.data as { integrity: string }).integrity).not.toBe((raw.data as { integrity: string }).integrity);
 });
 
 test("a page or capture that imitates a stamp line is quoted, and hidden characters are gone for everyone", async () => {

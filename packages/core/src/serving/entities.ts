@@ -4,7 +4,6 @@ import type { CanonPage } from "../vault/pages";
 import { enumOf, limit, text } from "./arguments";
 import {
   canonChunk,
-  collapseWhitespace,
   eligible,
   excerptOf,
   loadCanon,
@@ -99,9 +98,10 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope<E
         // order is still counted; only the served rows stop at the limit.
         if (canon.length === rows) continue;
         const { excerpt, truncated } = excerptOf(
-          collapseWhitespace(page.body),
+          page.body,
           EXCERPT_CHARS,
           ctx,
+          "inline",
         );
         const chunk = canonChunk(index, page, decision, excerpt, truncated);
         for (const item of attachSubjectLabels(projection, chunk, subjects)) audit.set(item.id, item);

@@ -1,22 +1,17 @@
 import type { Principal } from "../agents";
-import { scrubText, tallyRedactions } from "../producer/scrub";
+import { neutralizeControlTags, sanitizeCapturedText, scrubText, stripInvisibleText, tallyRedactions } from "../producer/scrub";
 import type { RedactionCounts } from "../producer/scrub";
 
 export type { RedactionCounts } from "../producer/scrub";
 
-/**
- * Unicode tag characters (U+E0000 to U+E007F) render as nothing yet a model
- * reads them, and the bidirectional controls reorder what a reviewer sees.
- * Served text never carries either.
- */
-const INVISIBLE = /[\u{E0000}-\u{E007F}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu;
 /** Every character a renderer may treat as a line break. */
 const LINE_BREAK = /\r\n|[\n\r\u000B\u000C\u0085\u2028\u2029]/;
 
 /**
  * One call's serving-output redaction. An agent principal's text loses hidden
- * characters and then credential shapes; the owner's text loses hidden
- * characters only. Hidden characters go first so they cannot split a secret
+ * characters and then credential shapes; owners keep credentials except exact
+ * live serving secrets. Every principal receives inert angle brackets.
+ * Hidden characters go first so they cannot split a secret
  * across the scrubber's patterns.
  */
 export interface Redactor {
@@ -26,27 +21,27 @@ export interface Redactor {
 }
 
 export function stripInvisible(value: string): string {
-  return value.replace(INVISIBLE, "");
+  return stripInvisibleText(value);
 }
 
-export function createRedactor(principal: Pick<Principal, "kind">): Redactor {
+export function createRedactor(principal: Pick<Principal, "kind">, exactSecrets: readonly string[] = []): Redactor {
   const counts: RedactionCounts = {};
   const scrub = principal.kind !== "owner";
   return {
     counts,
     text(value) {
-      const visible = stripInvisible(value);
-      if (!scrub) return visible;
-      const scrubbed = scrubText(visible);
+      const visible = sanitizeCapturedText(value);
+      if (!scrub && exactSecrets.length === 0) return neutralizeControlTags(visible);
+      const scrubbed = scrubText(visible, exactSecrets, scrub);
       tallyRedactions(counts, scrubbed.redactions);
-      return scrubbed.text;
+      return neutralizeControlTags(scrubbed.text);
     },
   };
 }
 
 /** The call's redactor when the gate set one, and a private one for a context built outside it. */
-export function redactorOf(ctx: { principal: Pick<Principal, "kind">; redactor?: Redactor }): Redactor {
-  return ctx.redactor ?? createRedactor(ctx.principal);
+export function redactorOf(ctx: { principal: Pick<Principal, "kind">; redactor?: Redactor; servingSecrets?: readonly string[] }): Redactor {
+  return ctx.redactor ?? createRedactor(ctx.principal, ctx.servingSecrets);
 }
 
 /** A copy of `value` in which every string, at any depth, has passed through `redactor`. */

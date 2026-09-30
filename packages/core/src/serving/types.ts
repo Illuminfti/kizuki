@@ -23,6 +23,8 @@ export interface ServeContext {
   retrievalUnavailable?: true | "configured-engine-unavailable";
   /** Set by the gate for each call; text is served through it (see `redact.ts`). */
   redactor?: Redactor;
+  /** Daemon-owned credentials, never serialized or persisted. */
+  servingSecrets?: readonly string[];
 }
 
 export interface CanonChunk {

@@ -11,6 +11,7 @@ import type { SearchHit } from "../search/query";
 import { placeholders } from "../util/sql";
 import { asSensitivity } from "./canon";
 import { redactorOf } from "./redact";
+import { boundScrubText } from "../producer/scrub";
 import type { QuotedChunk } from "./types";
 
 /** Bound on one `IN (...)` list, matching the graph layer's frontier chunk. */
@@ -122,14 +123,15 @@ export function quotedChunk(
   sensitivity: Sensitivity,
   ctx: ServeContext,
 ): QuotedChunk {
+  const redactor = redactorOf(ctx);
   return {
     event_id: source.event_id,
-    connector_id: source.connector_id,
-    kind: source.kind,
+    connector_id: redactor.text(source.connector_id),
+    kind: redactor.text(source.kind),
     occurred_at: source.occurred_at,
     sensitivity,
-    subjects: source.subjects,
-    text: redactorOf(ctx).text(source.text),
+    subjects: source.subjects.map((subject) => redactor.text(subject)),
+    text: redactor.text(boundScrubText(source.text, 4096).text),
     tainted: true,
   };
 }

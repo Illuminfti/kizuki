@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { accept } from "../../src/ledger/ledger";
 import { startServeHttp } from "../../src/serve/http";
 import { SECRET_FRAGMENTS } from "../helpers/synthetic-secrets";
 import { redactFixture } from "../serving/redact-fixture";
@@ -57,4 +59,22 @@ test("loopback HTTP system_health for an agent omits vault-wide state", async ()
   expect(JSON.stringify(agent)).not.toContain("hidden-connector");
   const owner = (await post(OWNER_TOKEN, "system_health", {})).value["data"] as Record<string, unknown>;
   expect(JSON.stringify(owner)).toContain("hidden-connector");
+});
+
+test("the daemon scrubs its exact live token, including an older unprefixed token", async () => {
+  const event = accept(fixture.db, {
+    schema: "kizuki.event/v1", connector_id: "fixture", source_record_id: "live-token",
+    kind: "message", occurred_at: "2026-02-28T10:30:00Z", observed_at: "2026-03-01T00:00:00Z",
+    text: `Synthetic handoff ${OWNER_TOKEN}`, subjects: [], sensitivity_hint: "public",
+    deleted: false, attachments: [], metadata: {},
+  });
+  if (event.status !== "stored") throw new Error("fixture not stored");
+  const served = await post(fixture.tokens["reader-public"]!, "timeline", { event_id: event.event.event_id });
+  expect(served.text).not.toContain(OWNER_TOKEN);
+});
+
+test("new serve tokens have a recognizable credential prefix", async () => {
+  const minted = startServeHttp({ db: fixture.db, vaultPath: fixture.vaultPath });
+  try { expect(readFileSync(minted.tokenPath, "utf8").trim()).toMatch(/^kzs_[A-Za-z0-9_-]{43}$/); }
+  finally { await minted.stop(); }
 });

@@ -1,3 +1,4 @@
+import { boundScrubText } from "../producer/scrub";
 import { resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
@@ -243,7 +244,7 @@ export function canonChunk(
     purpose: index.sourceContext.sourcePurpose ?? "recall",
   })) throw new ServeError("held", "canon evidence unavailable");
   return {
-    page_id: page.id,
+    page_id: redactorOf(index.sourceContext).text(page.id),
     path: redactorOf(index.sourceContext).text(page.relPath),
     title: redactorOf(index.sourceContext).text(stringField(page, "title") ?? ""),
     type: stringField(page, "type") ?? "",
@@ -270,9 +271,11 @@ export function excerptOf(
   body: string,
   maxChars: number,
   ctx: ServeContext,
+  style: "lines" | "inline" = "lines",
 ): { excerpt: string; truncated: boolean } {
-  const served = redactorOf(ctx).text(body);
+  const redacted = redactorOf(ctx).text(boundScrubText(body, maxChars * 2 + 4096).text);
+  const served = style === "inline" ? collapseWhitespace(redacted) : redacted;
   const points = Array.from(served);
-  if (points.length <= maxChars) return { excerpt: served, truncated: false };
+  if (points.length <= maxChars) return { excerpt: served, truncated: body.length > maxChars * 2 + 4096 };
   return { excerpt: points.slice(0, maxChars).join(""), truncated: true };
 }

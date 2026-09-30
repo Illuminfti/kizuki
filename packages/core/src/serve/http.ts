@@ -45,7 +45,7 @@ export interface ServeHttpHandle {
 }
 
 function mintToken(): string {
-  return randomBytes(32).toString("base64url");
+  return `kzs_${randomBytes(32).toString("base64url")}`;
 }
 
 function writeToken(vaultPath: string, token: string): string {
@@ -168,7 +168,7 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
       }
       try {
         const envelope = await dispatchServeTool(
-          { db: options.db, vaultPath: options.vaultPath, principal,
+          { db: options.db, vaultPath: options.vaultPath, principal, servingSecrets: [token],
             ...(options.retrieval === undefined ? {} : { retrieval: options.retrieval }),
           },
           tool as Tool,

@@ -271,7 +271,7 @@ function enter(
     ]);
     throw new ServeError("tool_not_granted", "tool not granted");
   }
-  return { live: { ...live, sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall", redactor: createRedactor(live.principal) }, audit_id: reserved.audit_id };
+  return { live: { ...live, sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall", redactor: createRedactor(live.principal, live.servingSecrets) }, audit_id: reserved.audit_id };
 }
 
 /** Contention reads as a retry, never as a broken engine or a denied grant. */
@@ -335,7 +335,7 @@ function envelopeOf<T>(
 
   // The one serving-output seam: sources redact before they truncate or pack,
   // and this pass covers every string that reaches the caller, whatever built it.
-  const redactor = live.redactor ?? createRedactor(live.principal);
+  const redactor = live.redactor ?? createRedactor(live.principal, live.servingSecrets);
   const { canon, quoted, data } = redactValue(redactor, { canon: served.canon, quoted: served.quoted, data: served.data });
   return {
     schema: ENVELOPE_SCHEMA,

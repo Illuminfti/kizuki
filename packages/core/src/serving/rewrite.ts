@@ -12,6 +12,7 @@ import { correctionRecoveryPending } from "../correction/recovery";
 import { CanonRecoveryError, readCanonWriteIntent } from "../canon/write-intent";
 import type { CanonRecoveryPending } from "../correction/types";
 import type { ServeContext } from "./types";
+import { servedReceiptHash } from "./integrity";
 
 /**
  * RFC 0002 §6.3 step 5 bounds the blast radius of one correction. The writer
@@ -147,8 +148,8 @@ export function rewriteCanon(
         {
           page_path: receipt.page_path,
           page_action: receipt.page_action,
-          before_hash: receipt.before_hash,
-          after_hash: receipt.after_hash,
+          before_hash: receipt.before_hash === null ? null : servedReceiptHash(ctx.principal, receipt.before_hash),
+          after_hash: servedReceiptHash(ctx.principal, receipt.after_hash),
           receipt_id: receipt.receipt_id,
           diff: unified(receipt.page_path, before, after),
         },

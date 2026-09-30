@@ -1,3 +1,4 @@
+import { redactorOf } from "./redact";
 import { MAX_AUDIT_ITEMS } from "../agents/types";
 import type { AuditDenial, AuditItem } from "../agents";
 import {
@@ -332,7 +333,7 @@ export async function serveContextPacket(
       // is verbatim.
       const header =
         `${PACKET_MARKER}\n` +
-        `principal=${principalName(ctx.principal)} purpose=${purpose}` +
+        `principal=${redactorOf(ctx).text(principalName(ctx.principal))} purpose=${purpose}` +
         ` budget=${budget} epoch=${epoch} at=${at}\n` +
         `${PACKET_RULES}\n`;
       const headerTokens = tokens(header);

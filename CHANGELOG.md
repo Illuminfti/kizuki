@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Unify session-capture and serving credential scrubbing, including Kizuki
+  tokens, wrapped and encoded credentials, JSON/YAML fields and common API keys.
+  Neutralize harness tags for every principal and remove transcript scaffolding
+  while keeping owner words. Bound serving scans, prevent envelope recounts,
+  and bind agent evidence integrity to the scrubbed projection.
+
 ### Fixed
 
 - Purge is physically total. After it, the purged text is gone from claim and

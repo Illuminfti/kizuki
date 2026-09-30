@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   REDACTION_KINDS,
+  boundScrubText,
   fromScrubbedOffset,
   scrubText,
   toScrubbedOffset,
@@ -150,4 +151,66 @@ test("offsets map both ways and never split a redaction", () => {
   expect(fromScrubbedOffset(scrubbed.redactions, inMarker, "end")).toBe(3 + SK.length);
   expect(fromScrubbedOffset(scrubbed.redactions, 3 + marker.length, "start")).toBe(3 + SK.length);
   expect(fromScrubbedOffset(scrubbed.redactions, scrubbed.text.length, "end")).toBe(text.length);
+});
+
+test("encoded and invisible credential forms preserve original anchor offsets", () => {
+  const value = "a".repeat(24);
+  for (const secret of [`sk-${value.slice(0, 10)}${String.fromCodePoint(0x200b)}${value.slice(10)}`, encodeURIComponent(`sk-${value}`).replace("sk-", "sk%2D")]) {
+    const source = `before ${secret} after`;
+    const scrubbed = scrubText(source);
+    expect(scrubbed.text).toBe("before [redacted:api_token] after");
+    const span = scrubbed.redactions[0]!;
+    expect(source.slice(span.start, span.end)).toBe(secret);
+    expect(fromScrubbedOffset(scrubbed.redactions, scrubbed.text.length, "end")).toBe(source.length);
+  }
+  const encodedInvisible = `sk-${"a".repeat(10)}${encodeURIComponent(String.fromCodePoint(0x200b))}${"a".repeat(14)}`;
+  expect(scrubText(encodedInvisible).text).toBe("[redacted:api_token]");
+});
+
+test("a second scrub is idempotent, but a forged marker cannot hide a credential suffix", () => {
+  const once = scrubText(`password=${"a".repeat(12)}`);
+  expect(scrubText(once.text).redactions).toEqual([]);
+  expect(scrubText("password=[redacted:secret_assignment]extra123").text).toBe("password=[redacted:secret_assignment]");
+  for (const source of [`Authorization: Bearer ${rep("q", 20)}`, `Authorization: Basic ${rep("q", 20)}`, "postgres://svc:syntheticPass123@example.test/app"]) {
+    const first = scrubText(source);
+    expect(scrubText(first.text).redactions).toEqual([]);
+  }
+});
+
+test("PEM scanning stops at non-key packet text and handles re-flowed headers", () => {
+  const header = pemEdge("BEGIN", "PRIVATE\nKEY");
+  const source = `${header}\n${"Z".repeat(32)}\nnext packet line: visible`;
+  expect(scrubText(source).text).toBe("[redacted:pem]next packet line: visible");
+  expect(scrubText(`${pemEdge("BEGIN", "X")} field end\nnext packet line`).text)
+    .toBe("[redacted:pem] field end\nnext packet line");
+});
+
+test("named JSON and YAML credentials include short values and quoted dollar values", () => {
+  for (const source of ["password: abc", '"password": "$example"', "auth_token=1234", "api key: abc", `password=${"\n".repeat(1100)}syntheticValue123`]) {
+    const scrubbed = scrubText(source);
+    expect(scrubbed.redactions).toHaveLength(1);
+    expect(scrubbed.text).toContain("[redacted:secret_assignment]");
+  }
+});
+
+test("a scan cutoff cannot expose the first half of a wrapped credential", () => {
+  const first = `sk-${"a".repeat(10)}`;
+  const prefix = `ordinary note\n${first}\n`;
+  const bounded = boundScrubText(prefix + "B".repeat(24) + " tail", prefix.length + 5);
+  expect(scrubText(bounded.text).text).not.toContain(first);
+});
+
+test("complete PEM keys include legacy metadata lines", () => {
+  const source = [pemEdge("BEGIN", "RSA PRIVATE KEY"), "Proc-Type: 4,ENCRYPTED", "DEK-Info: SYNTHETIC,ABCDEF", "", "Z".repeat(64), pemEdge("END", "RSA PRIVATE KEY")].join("\n");
+  expect(scrubText(`before ${source} after`).text).toBe("before [redacted:pem] after");
+});
+
+test("authorization without a scheme keeps the session connector's protection", () => {
+  const value = "synthetic" + "Credential123";
+  expect(scrubText(`Authorization: ${value}`).text).not.toContain(value);
+});
+
+test("surrounding prose cannot hide a recognizable credential prefix", () => {
+  const credential = `kzk_${rep("A", 52)}`;
+  expect(scrubText(`note${credential}tail`).text).not.toContain(credential);
 });

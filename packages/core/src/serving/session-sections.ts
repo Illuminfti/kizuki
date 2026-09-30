@@ -392,7 +392,7 @@ export function collectSessionPieces(
         piece(
           "uncertain",
           "## uncertain (contradictions and open questions)",
-          `- conflict key=${inline(conflict.claim_key.slice(0, 12))} live=${members.length} :: ${inline(first?.subject ?? "-")} ${inline(first?.predicate ?? "-")} ${values.join(" vs ")}\n`,
+          `- conflict key=${inline(conflict.claim_key.slice(0, 12))} live=${members.length} :: ${inline(redactor.text(first?.subject ?? "-"))} ${inline(redactor.text(first?.predicate ?? "-"))} ${values.join(" vs ")}\n`,
           members.map((member) => member.claim_id),
           reader,
         ),
@@ -403,7 +403,7 @@ export function collectSessionPieces(
         piece(
           "uncertain",
           "## uncertain (contradictions and open questions)",
-          `- gap key=${inline(gap.claim_key.slice(0, 12))} ${inline(gap.predicate ?? "-")} unknown between ${inline(gap.after)} and ${inline(gap.before)}\n`,
+          `- gap key=${inline(gap.claim_key.slice(0, 12))} ${inline(redactor.text(gap.predicate ?? "-"))} unknown between ${inline(gap.after)} and ${inline(gap.before)}\n`,
           [],
           reader,
         ),

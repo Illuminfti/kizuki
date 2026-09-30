@@ -300,17 +300,25 @@ of obvious secrets. Each match is replaced by `[redacted:<kind>]`, where kind is
 
 | Kind | What it matches |
 | --- | --- |
-| `pem` | A `-----BEGIN ...-----` block through its `END` line, or to the end of the text when unterminated. |
+| `pem` | A PEM block, including re-flowed headers. An unfinished block consumes only key-body lines, so a malformed field cannot swallow a packet. |
 | `jwt` | Three dot-separated base64url segments starting `eyJ`. |
 | `api_token` | `sk-`, `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`, `github_pat_`, `xox[abposr]-`, `AKIA` and `ASIA` shapes above a minimum length. |
 | `bearer` | The value of an `Authorization: Bearer` header. |
-| `secret_assignment` | The value (four or more characters) of a `NAME=value` assignment whose name contains `secret`, `token`, `password`, `passwd` or `api_key`. The name stays. |
+| `secret_assignment` | A nonempty value in a shell, JSON or YAML field whose name contains `secret`, `token`, `password`, `passwd`, `api_key`, `private_key` or `credential`. The name stays. |
 | `seed_phrase` | A run of 12 or more lowercase words of three to eight letters, separated by spaces, commas or single line breaks, that has a 12-word stretch with fewer than two common English function words. The whole run is redacted, so a phrase inside a sentence, one of 24 words, or one with a lead-in word such as `seed` or `phrase` is caught. A capital letter, digit, other punctuation, a blank line or a word of nine or more letters ends a run. |
+
+The shared Core scrubber also recognizes Kizuki tokens, Stripe live, Google,
+GitLab, npm and Slack app tokens, wrapped and percent-encoded credentials,
+JSON/YAML secret fields, Basic/Token authorization (`authorization`) and URL
+credentials for any scheme (`url_credentials`). Invisible format characters
+and variation selectors are removed (`control` when counted separately).
+These patterns also protect agent serving and coding-session capture.
 
 The scrubber is a heuristic backstop with no dependency, not a guarantee. It
 does not know your secrets: an unrecognized shape, a numbered or capitalized
-phrase, a password in prose or a short value passes through. A `token=` value
-of fewer than eight digits is treated as a counter and kept. A prose run that
+phrase or a password in prose passes through. Known token counters such as
+`max_tokens` and `token_count` keep numeric values of fewer than eight digits.
+A prose run that
 resembles a mnemonic, or a long list of plain lowercase words, is redacted. The ledger is never changed; only the copy
 sent to the model is. The model's anchors into scrubbed text are moved back onto
 the original record. The per-kind counts appear as `model.redacted` in each run
