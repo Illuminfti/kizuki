@@ -960,10 +960,10 @@ export function describeSourceConsentDenial(denial: SourceConsentDenial): string
   return `source ${key} does not permit ${purpose}; add "${purpose}" to its policy purposes and run kizuki connect grant --source ${key} --policy POLICY.json --expected-revision ${revision} --operation-id OPERATION`;
 }
 
-/** Active grants whose policy lacks `correction` while live claims rest on their events. */
+/** Active grants missing correction or writer derivation consent for live claims. */
 export function listSourcesRefusingCorrection(
   db: Database,
-): { source_key: string; revision: number }[] {
+): { source_key: string; revision: number; purpose?: "derive" }[] {
   if (sourcePolicyEpoch(db) === 0 || !tableExists(db, "source_event_bindings") || !tableExists(db, "claims")) return [];
   const keys = db
     .query<{ source_key: string }, []>(
@@ -974,11 +974,12 @@ export function listSourcesRefusingCorrection(
         ORDER BY b.source_key`,
     )
     .all();
-  const out: { source_key: string; revision: number }[] = [];
+  const out: { source_key: string; revision: number; purpose?: "derive" }[] = [];
   for (const { source_key } of keys) {
     const grant = inspectSourceGrant(db, source_key);
-    if (grant !== null && grant.status === "active" && !grant.policy.purposes.includes("correction")) {
-      out.push({ source_key, revision: grant.revision });
+    if (grant !== null && grant.status === "active") {
+      if (!grant.policy.purposes.includes("correction")) out.push({ source_key, revision: grant.revision });
+      else if (!grant.policy.purposes.includes("derive")) out.push({ source_key, revision: grant.revision, purpose: "derive" });
     }
   }
   return out;

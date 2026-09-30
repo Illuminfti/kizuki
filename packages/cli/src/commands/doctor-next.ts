@@ -8,7 +8,7 @@ interface NextInput {
   /** False when consent or the typed correction writer would refuse `tell`. */
   readonly live_claims: readonly { readonly claim_id: string; readonly correctable: boolean }[];
   readonly filed_claims: readonly unknown[];
-  readonly corrections_refused: readonly { readonly source_key: string; readonly revision: number }[];
+  readonly corrections_refused: readonly { readonly source_key: string; readonly revision: number; readonly purpose?: "derive" }[];
 }
 
 /**
@@ -23,7 +23,7 @@ export function nextStep(report: NextInput): string | null {
   if (tellable !== undefined) return `next: kizuki tell "<statement>" --claim ${tellable.claim_id}`;
   const refusal = report.corrections_refused[0];
   if (refusal !== undefined) {
-    return `next: kizuki connect grant --source ${refusal.source_key} --policy POLICY.json --expected-revision ${refusal.revision} --operation-id OPERATION (add "correction" to purposes; tell is refused until then)`;
+    return `next: kizuki connect grant --source ${refusal.source_key} --policy POLICY.json --expected-revision ${refusal.revision} --operation-id OPERATION (add "${refusal.purpose ?? "correction"}" to purposes; tell is refused until then)`;
   }
   if (report.live_claims.length > 0) {
     return "next: kizuki audit (these live claims cannot be corrected with tell; inspect their receipts and use undo to reverse a canon write)";

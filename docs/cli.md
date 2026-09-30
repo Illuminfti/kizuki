@@ -194,9 +194,11 @@ MCP `correct` need `correction` on every source that produced the claim they
 change. When a grant lacks it, the refusal names the source and the purpose and
 prints the exact `kizuki connect grant` command, and `kizuki doctor` prints
 `corrections: refused (grant lacks correction)` for that source and stops
-suggesting `tell` until the grant is edited. Populated fields
-outside `allowed_fields` refuse capture. `extract` does not make an untrusted
-model local. There is currently no native local model capability in the CLI.
+suggesting `tell` until the grant is edited.
+Canon rewrites also need `derive` on the claim and retained page sources;
+doctor reports `corrections: refused (grant lacks derive)` when it is missing.
+Populated fields outside `allowed_fields` refuse capture. `extract` does not make
+an untrusted model local. There is currently no native local model capability in the CLI.
 Managed `local_only` sources refuse extraction through the generic
 OpenAI-compatible HTTP adapter, including loopback endpoints; granting
 `extract` does not override that boundary. Owner recall remains available
@@ -415,7 +417,8 @@ chat and email records closed out as `skipped` with reason
 `message_capture_fanout` apart from the real unwritten claims, and names
 `kizuki serve run doctor-sweep` while `pending` notes still wait to be closed,
 live claim ids (for `tell --claim`, each with a JSON `correctable` flag), one
-`corrections: refused (grant lacks correction)` line per source whose grant
+`corrections: refused (grant lacks correction)` or
+`corrections: refused (grant lacks derive)` line per source whose grant
 cannot be corrected through (JSON `corrections_refused`), leftover skipped rows, connections,
 checkpoints (with the first error of each source's last run as `last_error`),
 derived-index freshness, writer ROLE stamps, machine vs human
@@ -540,13 +543,15 @@ A claim an importer produced has no subject and no predicate, so there is no
 claim key to supersede a group by. `--claim` on such a claim supersedes exactly
 that claim, records the supersession, and rewrites the page that already holds
 it; it never creates a second page for the same target. A claim no page holds
-yet is retired without a page write, and the loop writes the correction where
-the old claim would have gone. `kizuki undo` restores the retired claim.
+yet is retired without a page write; the loop can materialize the correction
+later. `kizuki undo` restores the retired claim.
 
 `tell` needs the `correction` purpose on the grant of every source that
-produced the claim; see [Source consent](#source-consent). The canon writer is
-exclusive and a sync pass holds it for the whole pass, so a busy writer is
-waited out instead of refused: `--wait SECONDS` (default 30, `0` to refuse at
+produced the claim; see [Source consent](#source-consent). The canon writer
+also requires `derive` consent on the claim and retained page sources. A
+missing grant purpose refuses native correction before recording effects.
+The writer is exclusive and a sync pass holds it for the whole pass, so a busy
+writer is waited out instead of refused: `--wait SECONDS` (default 30, `0` to refuse at
 once) bounds the wait, and stderr names the process that holds the writer.
 
 ## context

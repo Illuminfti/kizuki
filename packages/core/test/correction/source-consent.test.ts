@@ -1,9 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
-import { accept, correct, getClaim, registerConnection, revokeSourceGrant, setSourceGrant, ulid } from "../../src/index";
+import { accept, correct, CorrectError, getClaim, registerConnection, revokeSourceGrant, setSourceGrant, ulid } from "../../src/index";
 import { sourceRecordId } from "../../src/correction/parse";
 import { canonFixture, storeClaim, write } from "../canon/helpers";
 import type { CanonFixture } from "../canon/helpers";
 import { validEvent } from "../fixtures";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const fixtures: CanonFixture[] = [];
 afterEach(() => { for (const fixture of fixtures.splice(0)) fixture.dispose(); });
@@ -44,4 +46,27 @@ test("a captured owner-label collision cannot become native correction authority
   await expect(correct(f.io, { statement, target })).rejects.toThrow("conflicts with existing evidence");
   expect(getClaim(f.db, f.claim.claim_id)?.status).toBe("live");
   expect(f.db.query("SELECT count(*) AS n FROM native_owner_evidence").get()).toEqual({ n: 0 });
+});
+
+test("withdrawn derive consent refuses native correction before any effects", async () => {
+  const f = await seeded();
+  const before = readFileSync(join(f.vault, "people/grace.md"), "utf8");
+  setSourceGrant(f.db, { source_key: f.source, expected_revision: 1, operation_id: "withdraw-derive",
+    policy: { purposes: ["capture", "correction", "recall", "session"],
+      allowed_fields: ["text", "subjects", "attachments", "metadata"],
+      retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" } });
+  const state = () => ["events", "claims", "claim_supersessions", "canon_receipts", "native_owner_evidence"]
+    .map(table => f.db.query(`SELECT count(*) AS n FROM ${table}`).get());
+  const prior = state();
+  for (const dry_run of [false, true]) {
+    const error = await correct(f.io, { statement: "Grace works at Northwind.", target: { claim_id: f.claim.claim_id }, dry_run }).catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(CorrectError);
+    if (!(error instanceof CorrectError)) throw error;
+    expect(error.code).toBe("source_access_denied");
+    expect(error.message).toContain(`source ${f.source} does not permit derive`);
+    expect(error.message).toContain(`kizuki connect grant --source ${f.source} --policy POLICY.json --expected-revision 2 --operation-id OPERATION`);
+    expect(state()).toEqual(prior);
+    expect(getClaim(f.db, f.claim.claim_id)?.status).toBe("live");
+    expect(readFileSync(join(f.vault, "people/grace.md"), "utf8")).toBe(before);
+  }
 });

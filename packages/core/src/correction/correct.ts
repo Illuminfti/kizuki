@@ -3,8 +3,8 @@ import { semanticKey } from "../claims/claim-v2-keys";
 import { unsupportedCorrectionReason, UNSUPPORTED_ASSERTION_REASONS, type UnsupportedAssertionReason } from "../world/correction-support";
 import type { Database } from "bun:sqlite";
 import { assertStoredPageRelPath } from "../canon/paths";
-import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
-import { readOwnedCanonPage } from "../canon/io";
+import { readPage, requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
+import { requireCanonSourceConsent } from "../canon/consent";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { toolAllowed } from "../agents/authorization";
 import { compareRfc3339 } from "../agents/time";
@@ -19,7 +19,8 @@ import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { CLAIM_MEANING_SCHEMA, type ClaimMeaning } from "../contracts/claim-v2";
 import type { Claim, FrontmatterValue, Producer } from "../contracts/proposal";
 import { recordNativeCorrection } from "./evidence";
-import { SourceGrantError, describeSourceConsentDenial, requireSourceEvents } from "../ledger/source-grants";
+import { SourceGrantError, describeSourceConsentDenial, requireSourceEvents, type SourceConsentDenial } from "../ledger/source-grants";
+import { eventIdFromReference } from "../retrieval/ids";
 import type { CaptureEventInput, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
 import { isRfc3339 } from "../util/time";
@@ -44,9 +45,20 @@ const TARGET_REQUIRED_HINT =
   'kizuki tell "…" --claim <id>  (see kizuki doctor).';
 
 /** Refuses a correction the source grants do not permit, naming the missing consent and its fix. */
-function requireCorrectionConsent(io: CorrectIo, provenance: readonly string[]): void {
+function requireCorrectionConsent(io: CorrectIo, group: Claim[], seed: Claim): void {
+  const provenance = [...new Set(group.flatMap(claim => claim.provenance))];
   try {
     requireSourceEvents(io.db, provenance, { owner: !(io.producer ?? "owner").startsWith("agent:"), purpose: "correction" });
+    requireCanonSourceConsent(io.db, provenance);
+    // Revision preparation can retain other claims' evidence on these pages.
+    // Check it before recording an event or retiring any claim.
+    for (const page of affectedPages(io, group, seed).slice(0, CORRECTION_MAX_PAGES)) {
+      const existing = readVaultPage(io, page.rel_path);
+      const sources = existing?.data["sources"];
+      if (Array.isArray(sources)) {
+        requireCanonSourceConsent(io.db, sources.filter((id): id is string => typeof id === "string").map(eventIdFromReference));
+      }
+    }
   } catch (error) {
     if (error instanceof SourceGrantError && error.code === "source_access_denied") {
       throw new CorrectError(
@@ -56,6 +68,21 @@ function requireCorrectionConsent(io: CorrectIo, provenance: readonly string[]):
       );
     }
     throw error;
+  }
+}
+
+/** Doctor uses the correction writer's preflight rather than predicting consent itself. */
+export function inspectCorrectionConsent(io: CorrectIo, claim: Claim):
+  | { allowed: true }
+  | { allowed: false; denial?: SourceConsentDenial } {
+  const group = loadExactGroup(io, { claim_id: claim.claim_id }, undefined);
+  try {
+    requireCorrectionConsent(io, group, claim);
+    return { allowed: true };
+  } catch (error) {
+    if (!(error instanceof CorrectError) || error.code !== "source_access_denied") throw error;
+    const denial = error.cause instanceof SourceGrantError ? error.cause.denial : undefined;
+    return { allowed: false, ...(denial === undefined ? {} : { denial }) };
   }
 }
 
@@ -97,7 +124,7 @@ function activePagePath(relPath: string): string | null {
 
 function readVaultPage(io: CanonIo, relPath: string): VaultPageBytes | null {
   if (activePagePath(relPath) === null) return null;
-  const page = readOwnedCanonPage(io, relPath);
+  const page = readPage(io, relPath);
   if (page === null) return null;
   return {
     content: page.content,
@@ -345,7 +372,7 @@ function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectRe
   if (prior.status === "skipped") {
     throw new CorrectError("below_authority", "correction was below the live claim's authority");
   }
-  requireCorrectionConsent(io, prior.provenance);
+  requireCorrectionConsent(io, [prior], prior);
   const replay = reconstruct(io, eventId, prior);
   const recovery = inspectCanonRecovery(io.db);
   if (
@@ -511,7 +538,11 @@ async function insertCorrection(
     { db: io.db, now: () => at, ...(io.retrieval === undefined ? {} : { retrieval: io.retrieval }) },
     {
       kind: live.kind === "entity" ? "entity" : "claim",
-      target: live.target,
+      // A correction's request identity is distinct from ordinary importer
+      // claims, even when the owner repeats an existing claim's exact text.
+      target: typedSemantic === undefined && live.claim_key === null
+        ? `correction:${live.claim_id}:${eventId}`
+        : live.target,
       subject: live.subject,
       predicate: live.predicate,
       ...(parsed === null ? {} : { object: parsed.object, polarity: parsed.polarity }),
@@ -678,6 +709,13 @@ export async function correct(io: CorrectIo, input: CorrectInput): Promise<Corre
     if (error instanceof VaultMutationError && error.code === "writer_busy") {
       throw new CorrectError("writer_busy", "canon writer is busy; retry the correction");
     }
+    // A grant can narrow after preflight, including at publication admission.
+    // Keep that writer refusal just as actionable as a preflight refusal.
+    if (error instanceof SourceGrantError && error.code === "source_access_denied") {
+      throw new CorrectError("source_access_denied",
+        error.denial === undefined ? "source authorization does not permit this correction" : describeSourceConsentDenial(error.denial),
+        { cause: error });
+    }
     throw error;
   }
 }
@@ -722,8 +760,8 @@ async function correctOwned(scope: VaultMutationScope, io: CorrectIo, input: Cor
     throw new CorrectError("claim_unknown", "no live claims matched the target and scope");
   }
   const provenance = [...new Set(group.flatMap(claim => claim.provenance))];
-  requireCorrectionConsent(io, provenance);
   const seed = seedClaim(group, input.target as CorrectTarget);
+  requireCorrectionConsent(io, group, seed);
   const at = nowOf(io);
   assertRelayAuthority(io, group, at);
   const plan = planCorrection(io, input, seed, at);

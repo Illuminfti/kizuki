@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { openLedger } from "@kizuki/core/testing";
+import { accept, insertClaim } from "@kizuki/core";
 import { OLD, seedUnkeyed } from "./fixtures/unkeyed-claim";
 import { createHelpers } from "./helpers";
 
@@ -30,6 +31,50 @@ function rows<T>(vault: string, sql: string): T[] {
 }
 
 describe("kizuki tell --claim on an unkeyed claim", () => {
+  test("ordinary matching text cannot become the correction winner, and undo restores the target", async () => {
+    const setup = tempVault();
+    const { claimId, pagePath } = await seedUnkeyed(setup.vault);
+    const before = readFileSync(join(setup.vault, pagePath), "utf8");
+    const statement = "The compiler ships weekly.";
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    let ordinaryId: string;
+    try {
+      const accepted = accept(db, {
+        schema: "kizuki.event/v1", connector_id: "fixture", source_record_id: "weekly",
+        kind: "message", occurred_at: "2026-02-28T10:30:00Z", observed_at: "2026-03-01T00:00:00Z",
+        text: statement, subjects: [], sensitivity_hint: "personal", deleted: false, attachments: [], metadata: {},
+      });
+      if (accepted.status !== "stored") throw new Error(accepted.status);
+      const filed = await insertClaim({ db }, {
+        kind: "entity", target: "entities/compiler", body: statement, provenance: [accepted.event.event_id],
+        subjects: [], producer: "deterministic", confidence: 0.8,
+        frontmatter: { type: "topic", title: "Compiler" },
+      });
+      if (filed.outcome !== "stored") throw new Error(filed.outcome);
+      ordinaryId = filed.claim.claim_id;
+    } finally { db.close(); }
+    const told = runCli(setup.env, "tell", statement, "--claim", claimId, "--json");
+    expect(told.exitCode, told.stderr).toBe(0);
+    const result = JSON.parse(told.stdout).data;
+    expect(result.superseded.map((claim: { claim_id: string }) => claim.claim_id)).toEqual([claimId]);
+    expect(result.claim_ids[0]).not.toBe(ordinaryId);
+    const claims = rows<{ claim_id: string; status: string; authority: string }>(setup.vault, "SELECT claim_id,status,authority FROM claims");
+    expect(claims.find(claim => claim.claim_id === result.claim_ids[0])?.authority).toBe("owner_correction");
+    expect(claims.find(claim => claim.claim_id === ordinaryId)?.status).toBe("live");
+    expect(result.rewritten.map((page: { page_path: string }) => page.page_path)).toEqual([pagePath]);
+    expect(readFileSync(join(setup.vault, pagePath), "utf8")).not.toContain(OLD);
+    expect(compilerPages(setup.vault)).toEqual([pagePath]);
+    const nightly = JSON.parse(runCli(setup.env, "query", "nightly", "--json").stdout).data.hits;
+    expect(nightly.filter((hit: { scope: string }) => hit.scope === "canon")).toEqual([]);
+    const replay = runCli(setup.env, "tell", statement, "--claim", claimId, "--json");
+    expect(replay.exitCode, replay.stderr).toBe(0);
+    expect(JSON.parse(replay.stdout).data.claim_ids).toEqual(result.claim_ids);
+    expect(rows(setup.vault, "SELECT * FROM claim_supersessions")).toHaveLength(1);
+    expect(runCli(setup.env, "undo", result.receipt_id).exitCode).toBe(0);
+    expect(readFileSync(join(setup.vault, pagePath), "utf8")).toBe(before);
+    expect(rows<{ status: string }>(setup.vault, `SELECT status FROM claims WHERE claim_id='${claimId}'`)[0]?.status).toBe("live");
+  });
+
   test("retires exactly that claim and rewrites the page that holds it", async () => {
     const setup = tempVault();
     const { claimId, pagePath } = await seedUnkeyed(setup.vault);

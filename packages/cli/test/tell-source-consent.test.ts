@@ -31,6 +31,25 @@ function importedWithoutCorrection() {
 }
 
 describe("correction consent", () => {
+  test("doctor and tell honor withdrawn derive consent on a managed claim", () => {
+    const f = importedWithoutCorrection();
+    writeFileSync(f.file, JSON.stringify({ ...base, purposes: [...base.purposes, "correction", "audit"] }));
+    expect(h.runCli(f.env, "connect", "grant", "--source", f.key, "--policy", f.file, "--expected-revision", "1", "--operation-id", "allow-correction").exitCode).toBe(0);
+    expect(h.runCli(f.env, "tell", "That reading is wrong.", "--claim", f.claimId).exitCode).toBe(0);
+    const liveId = JSON.parse(h.runCli(f.env, "doctor", "--json").stdout).data.live_claims[0].claim_id;
+    writeFileSync(f.file, JSON.stringify({ ...base, purposes: ["capture", "recall", "session", "correction", "audit"] }));
+    expect(h.runCli(f.env, "connect", "grant", "--source", f.key, "--policy", f.file, "--expected-revision", "2", "--operation-id", "withdraw-derive").exitCode).toBe(0);
+    const doctor = h.runCli(f.env, "doctor");
+    expect(doctor.stdout).toContain(`source=${f.key} corrections: refused (grant lacks derive)`);
+    expect(doctor.stdout.split("\n").find(line => line.startsWith("next:"))).not.toContain("kizuki tell");
+    const report = JSON.parse(h.runCli(f.env, "doctor", "--json").stdout).data;
+    expect(report.live_claims.every((claim: { correctable: boolean }) => !claim.correctable)).toBe(true);
+    const told = h.runCli(f.env, "tell", "The reading has changed again.", "--claim", liveId);
+    expect(told.exitCode).toBe(1);
+    expect(told.stderr).toContain(`source ${f.key} does not permit derive`);
+    expect(told.stderr).toContain(`kizuki connect grant --source ${f.key} --policy POLICY.json --expected-revision 3 --operation-id OPERATION`);
+  });
+
   test("a refused tell names the missing purpose and the exact grant command", () => {
     const f = importedWithoutCorrection();
     const told = h.runCli(f.env, "tell", "That reading is wrong.", "--claim", f.claimId);

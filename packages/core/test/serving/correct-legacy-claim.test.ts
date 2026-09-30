@@ -54,6 +54,45 @@ async function canonTexts(live: Fixture, query: string): Promise<string[]> {
 }
 
 describe("serveCorrect retracts a claim that has no predicate", () => {
+  test("a permitted correction withholds mixed-sensitivity page snapshots and metadata", async () => {
+    fixture = await serveFixture();
+    const live = fixture;
+    const { claimId, pagePath } = await writtenUnkeyed(live);
+    const privateText = "The compiler has a confidential release canary.";
+    expect(getClaim(live.db, claimId)?.sensitivity).toBe("public");
+    const filed = await insertClaim({ db: live.db }, {
+      kind: "claim", target: "facts:compiler", body: privateText,
+      frontmatter: { type: "fact", title: "Compiler cadence" },
+      subjects: ["topic:compiler"], provenance: [live.events["private"]!],
+      producer: "deterministic", confidence: 1,
+    });
+    if (filed.outcome !== "stored") throw new Error(filed.outcome);
+    const io = { db: live.db, vault_path: live.vaultPath };
+    applyCanonWrite(io, filed.claim, resolveTarget(io, filed.claim), {
+      writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }),
+    });
+    expect(readFileSync(join(live.vaultPath, pagePath), "utf8")).toContain(privateText);
+    const search = await serveSearch(live.agent("reader-public"), { query: "canary" });
+    expect(JSON.stringify(search)).not.toContain(privateText);
+    const envelope = await serveCorrect(live.agent("reader-public"), {
+      statement: "The compiler ships weekly.", target: { claim_id: claimId },
+    });
+    expect(getClaim(live.db, claimId)?.status).toBe("superseded");
+    expect(envelope.data?.receipt_id).toBeString();
+    const receipt = getCanonReceipt(live.db, envelope.data!.receipt_id!);
+    expect(receipt?.page_path).toBe(pagePath);
+    const after = readFileSync(join(live.vaultPath, pagePath), "utf8");
+    expect(after).toContain("The compiler ships weekly.");
+    expect(after).toContain(privateText);
+    expect(after).not.toContain(OLD);
+    expect(envelope.data?.rewritten).toEqual([]);
+    expect(JSON.stringify(envelope)).not.toContain(privateText);
+    expect(JSON.stringify(envelope)).not.toContain(live.events["private"]!);
+    expect(JSON.stringify(envelope)).not.toContain(pagePath);
+    expect(JSON.stringify(envelope)).not.toContain(receipt!.before_hash!);
+    expect(JSON.stringify(envelope)).not.toContain(receipt!.after_hash);
+  });
+
   for (const [name, principal] of [
     ["owner", "owner"],
     ["a relaying agent", "reader-private"],

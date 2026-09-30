@@ -28,9 +28,9 @@ import {
 import type { CaptureFanoutCounts, ClaimStatus, LiveClaimProducers } from "@kizuki/core";
 import {
   listSourcesRefusingCorrection,
+  inspectCorrectionConsent,
   readClaimV2Semantic,
   readSqliteRuntime,
-  sourceEventsAllowed,
   unsupportedCorrectionReason,
 } from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
@@ -114,8 +114,8 @@ interface DoctorReport {
   };
   live_claims: DoctorLiveClaim[];
   filed_claims: DoctorClaim[];
-  /** Active source grants that lack the correction purpose while live claims rest on them. */
-  corrections_refused: { source_key: string; revision: number }[];
+  /** Active source grants that lack a correction writer purpose. */
+  corrections_refused: { source_key: string; revision: number; purpose?: "derive" }[];
   connections: DoctorConnection[];
   receipts: number;
   orphans: string[];
@@ -483,7 +483,7 @@ async function collect(
       return {
         ...toDoctorClaim(claim),
         correctable: (semantic === null || unsupportedCorrectionReason(semantic) === null) &&
-          sourceEventsAllowed(ctx.db, claim.provenance, { owner: true, purpose: "correction" }),
+          inspectCorrectionConsent({ db: ctx.db, vault_path: vaultPath }, claim).allowed,
       };
     },
   );
@@ -600,7 +600,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     io.out(item.problem === null ? line : `${line} ${item.problem}`);
   }
   for (const refusal of report.corrections_refused) {
-    io.out(`source=${refusal.source_key} corrections: refused (grant lacks correction)`);
+    io.out(`source=${refusal.source_key} corrections: refused (grant lacks ${refusal.purpose ?? "correction"})`);
   }
   io.out(`receipts=${report.receipts} orphans=${report.orphans.length}`);
   io.out(hashDriftCoverageLine(report.hash_drift));
