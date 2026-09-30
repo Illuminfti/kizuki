@@ -103,6 +103,18 @@ describe("the registry", () => {
     expect(RAIL_IDS).not.toContain("fixture-rail");
   });
 
+  test("an old remover cannot remove a later registration of the same definition", () => {
+    const rail = definition();
+    const oldRemove = registerRail(rail);
+    oldRemove();
+    const remove = registerRail(rail);
+    try {
+      oldRemove();
+      expect(isRailId(rail.id)).toBe(true);
+      expect(RAIL_IDS).toContain(rail.id);
+    } finally { remove(); }
+  });
+
   test("schedule seeding and the due list follow the registry", () => {
     const { db } = vault();
     expect(listSchedules(db).map((row) => row.rail)).not.toContain("fixture-rail");
