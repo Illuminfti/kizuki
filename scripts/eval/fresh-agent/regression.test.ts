@@ -51,12 +51,12 @@ async function runFixture(mode: string, root: string, hostTime?: string) {
   }
 }
 
-test("fresh evaluations preserve semantic scores and native timestamps under shifted host dates", async () => {
-  const root = mkdtempSync(join(tmpdir(), "fresh-agent-clock-"));
-  try {
-    const reports: EvaluationReport[] = [];
-    for (const [index, hostTime] of [AS_OF, "2026-12-01T12:00:00.000Z"].entries()) {
-      const { code, data } = await runFixture("host", join(root, `run-${index}`), hostTime);
+describe("host-date isolation", () => {
+  let first: EvaluationReport;
+  test.each([AS_OF, "2026-12-01T12:00:00.000Z"])("fresh evaluations preserve scores and timestamps under host date %s", async hostTime => {
+    const root = mkdtempSync(join(tmpdir(), "fresh-agent-clock-"));
+    try {
+      const { code, data } = await runFixture("host", join(root, "result"), hostTime);
       expect(code).toBe(0);
       expect(data.caller_time).toBe(hostTime);
       expect(data.corrections.length).toBeGreaterThan(0);
@@ -70,14 +70,17 @@ test("fresh evaluations preserve semantic scores and native timestamps under shi
         else if (surface === "context_packet" || surface === "search") expect(JSON.parse(observation.output).at).toBe(AS_OF);
         else for (const envelope of JSON.parse(observation.output)) expect(envelope.at).toBe(AS_OF);
       }
-      reports.push(report);
-    }
-    expect(reports[1]!.rows).toEqual(reports[0]!.rows);
-    expect(reports[1]!.observations).toEqual(reports[0]!.observations);
-    const around = reports[0]!.rows.find(row => row.principal === "owner" && row.surface === "session_hook" && row.question_id === "around")!;
-    expect(around).toMatchObject({ recalled: 3, expected: 3 });
-  } finally { rmSync(root, { recursive: true, force: true }); }
-}, 120_000);
+      if (hostTime === AS_OF) first = report;
+      else {
+        expect(first).toBeDefined();
+        expect(report.rows).toEqual(first.rows);
+        expect(report.observations).toEqual(first.observations);
+      }
+      const around = report.rows.find(row => row.principal === "owner" && row.surface === "session_hook" && row.question_id === "around")!;
+      expect(around).toMatchObject({ recalled: 3, expected: 3 });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }, 120_000);
+});
 
 test("unavailable packets fail observation, summary and the command exit gate; usable fallbacks remain measured", async () => {
   const root = mkdtempSync(join(tmpdir(), "fresh-agent-unavailable-"));
