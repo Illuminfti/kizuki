@@ -83,7 +83,8 @@ world history are separate capabilities and are not claimed here.
 The ten-tool noninterference matrix currently exposes unresolved reader-policy
 dependencies: timeline's denial-only audit scan varies its work with hidden
 events, session claim selection reads hidden candidates, and raw correction
-targets distinguish inaccessible live claims from absent claims. The envelope
+targets distinguish inaccessible live claims from absent claims, and proposal
+provenance errors vary with a hidden source's consent. The envelope
 and packet changes close the serialized epoch channel; complete work-counter
 and error noninterference requires those shared-reader repairs. This change
 stays draft while that matrix fails.

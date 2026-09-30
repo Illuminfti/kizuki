@@ -18,7 +18,7 @@ function cases(scene: NoninterferenceScene): ReadCase[] {
     graph_neighbors: { id: "absent:page" },
     system_health: {},
     world_view: { operation: "concept", concept: scene.refs.concept, valid: { kind: "all" }, knownAt: { kind: "current" } },
-    propose: { kind: "claim", body: "A note", provenance: [scene.hidden.eventId], subjects: ["topic:hidden"], subject: "topic:hidden", predicate: "concept.definition", object: "A note" },
+    propose: { kind: "claim", body: "A note", provenance: [scene.hidden.eventId] },
     correct: { statement: "Use the revised definition.", target: { claim_id: scene.hidden.claims[2] }, dry_run: true },
   };
   return TOOLS.map((tool) => ({
