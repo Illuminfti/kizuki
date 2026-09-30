@@ -1,5 +1,6 @@
 import { sourcePolicyEpoch, sourceEventsAllowed, isEpochZeroProducerPort, isLocalSourcePort, sourcePortBindingDigest } from "../ledger/source-grants";
 import { createHash } from "node:crypto";
+import { hasContextPacketMarker } from "../canon/origin";
 import { parseExtractResponse } from "../producer/schema";
 import { invokeProducer, invokeProducerV2 } from "../producer/result";
 import { tableExists } from "../ledger/schema";
@@ -305,7 +306,7 @@ function sourceIdentityMatches(db: Database, input: DeferredInput): boolean {
   return sourceKey(db, input.event_id) === input.source_key;
 }
 function historicalEligible(event: CaptureEvent): boolean {
-  return !event.deleted && !event.text.includes("KIZUKI CONTEXT v1");
+  return !event.deleted && !hasContextPacketMarker(event.text);
 }
 
 function extractEligible(db: Database, event: CaptureEvent): boolean {
