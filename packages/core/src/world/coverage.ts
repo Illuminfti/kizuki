@@ -8,6 +8,7 @@ import { readExtractCursor } from "../serve/extract";
 import type { ServeContext } from "../serving/types";
 import { authorizedEventSql } from "./policy-sql";
 import { instantNanoSql, instantSecondSql } from "../query/sql";
+import { rfc3339Instant } from "../agents/time";
 
 export type SourceCoverageGap = Extract<
   ViewGap,
@@ -135,17 +136,11 @@ function checkpointState(db: Database, connector: string, source: string): { che
   catch { return { checkpoint: null, unreadable: true }; }
 }
 
-/** Lexical instant order, followed by the original accepted spelling. */
-function occurrenceBoundSql(column: string): string {
-  const seconds = instantSecondSql(column);
-  // UTC evidence needs no calendar conversion. Numeric offsets use the same
-  // normalization as grant windows, including offsets beyond SQLite's limit.
-  // The latest supported offset can carry year 9999 into year 10000, outside
-  // strftime's range; its positive epoch key sorts after all four-digit years.
-  const wall = `replace(substr(${column}, 1, 17) || CASE WHEN substr(${column}, 18, 2) = '60' THEN '59' ELSE substr(${column}, 18, 2) END, 't', 'T')`;
-  return `(CASE WHEN lower(substr(${column}, -1)) = 'z' THEN ${wall}
-    ELSE coalesce(strftime('%Y-%m-%dT%H:%M:%S', ${seconds}, 'unixepoch'), '~' || printf('%012d', ${seconds})) END
-    || '.' || printf('%09d', ${instantNanoSql(column)}) || char(9) || ${column})`;
+/** Combine SQL-selected bounds using the same instant order as grant windows. */
+function occurrenceBounds(candidates: readonly (string | null)[]): { first: string | null; last: string | null } {
+  const ordered = candidates.filter((at): at is string => at !== null).map(at => ({ at, ...rfc3339Instant(at, "occurrence") }));
+  ordered.sort((a, b) => a.epochSecond - b.epochSecond || a.nanos - b.nanos || (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  return { first: ordered[0]?.at ?? null, last: ordered.at(-1)?.at ?? null };
 }
 
 function coverageReports(db: Database, sources: readonly string[] | null, filter: { clauses: string[]; bindings: (string | number)[] } | null, inventoryVisible = filter === null): SourceCoverageReport[] {
@@ -159,14 +154,24 @@ function coverageReports(db: Database, sources: readonly string[] | null, filter
     const clauses = filter?.clauses ?? [LIVE_PREDICATE];
     const bindings = filter?.bindings ?? [];
     const where = `b.source_key=? AND ${clauses.join(" AND ")}`;
-    // Aggregate both bounds in one pass, preserving the accepted timestamp.
-    const totals = db.query<{ ingested: number; first: string | null; last: string | null }, (string | number)[]>(
+    // Fixed-format UTC timestamps sort lexically within each precision. Select
+    // their endpoints before parsing; only nonstandard spellings need per-row
+    // instant normalization. The six candidates retain their original spelling.
+    const at = "events.occurred_at";
+    const otherBound = `printf('%012d:%09d:%s', ${instantSecondSql("at")} + 62167219200, ${instantNanoSql("at")}, at)`;
+    const groups = db.query<{ format: number; ingested: number; first: string; last: string }, (string | number)[]>(
       `WITH eligible AS MATERIALIZED (
-         SELECT ${occurrenceBoundSql("events.occurred_at")} AS bound
+         SELECT ${at} AS at, CASE WHEN substr(${at},11,1)='T' AND substr(${at},18,2)!='60' THEN
+           CASE WHEN length(${at})=24 AND substr(${at},20,1)='.' AND substr(${at},24,1)='Z' THEN 1
+                WHEN length(${at})=20 AND substr(${at},20,1)='Z' THEN 2 ELSE 0 END ELSE 0 END AS format
          FROM source_event_bindings b JOIN events ON events.event_id=b.event_id WHERE ${where}
-       ) SELECT count(*) AS ingested, min(bound) AS first, max(bound) AS last FROM eligible`
-    ).get(source, ...bindings)!;
-    const original = (bound: string | null) => bound === null ? null : bound.slice(bound.indexOf("\t") + 1);
+       ) SELECT format, count(*) AS ingested,
+         min(CASE WHEN format=0 THEN ${otherBound} ELSE at END) AS first,
+         max(CASE WHEN format=0 THEN ${otherBound} ELSE at END) AS last FROM eligible GROUP BY format`
+    ).all(source, ...bindings);
+    const ingested = groups.reduce((count, group) => count + group.ingested, 0);
+    const occurrence = occurrenceBounds(groups.flatMap(group => group.format === 0
+      ? [group.first.slice(23), group.last.slice(23)] : [group.first, group.last]));
     const errors = checkpoint?.last_result.errors.length ?? 0;
     const complete = checkpoint?.backfill_complete === true;
     const state = unreadable ? "unreadable" : errors > 0 ? "failed" : complete ? "complete" : checkpoint === null ? "never_run" : "in_progress";
@@ -182,9 +187,9 @@ function coverageReports(db: Database, sources: readonly string[] | null, filter
     for (const content of scan?.content_exclusions ?? []) add("content_excluded", content, "Capture this content through a supported separate source if needed.");
     if (scan?.truncated) add("scan_truncated", "Scan stopped at a connector bound; remaining inventory is unknown.", "Split the source into smaller independent roots.");
     if (errors > 0 || (scan?.failed ?? 0) > 0) add("failed_pass", "The latest capture pass has failures.", "Resolve the error class and retry this source.");
-    reports.push({ connector_id: connector, source_key: source, scanned: scan?.scanned ?? null, ingested: totals.ingested,
+    reports.push({ connector_id: connector, source_key: source, scanned: scan?.scanned ?? null, ingested,
       excluded: scan?.excluded ?? [], pending: scan?.pending ?? null, failed: scan == null ? (errors > 0 ? errors : null) : Math.max(scan.failed, errors),
-      truncated: scan?.truncated ?? null, first_occurred_at: original(totals.first), last_occurred_at: original(totals.last),
+      truncated: scan?.truncated ?? null, first_occurred_at: occurrence.first, last_occurred_at: occurrence.last,
       backfill_complete: complete, backfill_state: state, last_successful_pass_at: pass?.last_successful_pass_at ?? null,
       last_error_class: unreadable ? "unreadable_state" : pass?.last_error_class ?? (errors > 0 ? "failed" : null), blind_spots });
   }

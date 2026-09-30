@@ -77,6 +77,8 @@ test("coverage bounds agree with grant instant ordering at timestamp boundaries"
     ["2026-04-01t00:00:00.000000001z", "2026-04-01T00:00:00.000000002+00:00"],
     ["2026-04-01T00:59:60Z", "2026-04-01T00:59:59.999999998Z"],
     ["2026-01-01T00:00:00Z", "2026-01-01T23:59:00+23:59"],
+    ["2026-04-01T00:00:00.001Z", "2026-04-01T00:00:00Z"],
+    ["2026-04-01T00:00:00.000Z", "2026-04-01T00:00:00Z"],
   ];
   for (const inputs of groups) {
     const db = openLedger(":memory:");
