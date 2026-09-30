@@ -31,13 +31,14 @@ afterAll(() => fixture.dispose());
 const DESCRIBE = { operation: "describe" };
 
 describe("the operation registry", () => {
-  test("registers the four shipped operations and describe, in a stable order", () => {
+  test("registers the shipped operations and describe, in a stable order", () => {
     expect(WORLD_OPS.map((op) => op.name)).toEqual([
       "find_concepts",
       "find_situations",
       "concept",
       "situation",
       "describe",
+      "evidence",
     ]);
   });
 
