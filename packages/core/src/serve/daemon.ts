@@ -301,7 +301,7 @@ export async function runServeDaemon(
   }
 }
 
-/** A stop that finds the ledger held tries twice to give the lease back, then lets it expire. */
+/** Ordinary cleanup retries release; requested shutdown uses one nonblocking attempt. */
 const RELEASE_ATTEMPTS = 2;
 
 /** One structured line when the ledger is held by another writer, and one when the daemon can write again. */

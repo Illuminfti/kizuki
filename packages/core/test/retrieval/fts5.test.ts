@@ -382,6 +382,25 @@ test("FTS atomic rebuild preserves old documents on source failure and accepts u
   expect(engineJson(ctx.data_dir).rebuilt_at).toBe("2026-09-02T12:00:00.000Z");
 });
 
+test("a cancelled FTS rebuild retains the active generation and permits retry", async () => {
+  const { port } = openPort();
+  const original = SYNTHETIC_DOCS[0]!;
+  const replacement = { ...original, doc_id: "page:replacement" };
+  await port.upsert([original]);
+  const stop = new AbortController();
+  async function* source() {
+    yield replacement;
+    stop.abort();
+  }
+  await expect(port.rebuildFromDocuments!(source(), { signal: stop.signal })).rejects.toMatchObject({ name: "AbortError" });
+  expect((await port.verifyAbsent([original.doc_id])).found).toEqual([original.doc_id]);
+  expect((await port.verifyAbsent([replacement.doc_id])).found).toEqual([]);
+  await expect(port.rebuildFromDocuments!([replacement], { signal: stop.signal })).rejects.toMatchObject({ name: "AbortError" });
+  await port.rebuildFromDocuments!([replacement]);
+  expect((await port.verifyAbsent([original.doc_id])).found).toEqual([]);
+  expect((await port.verifyAbsent([replacement.doc_id])).found).toEqual([replacement.doc_id]);
+});
+
 test("FTS rebuild snapshots documents before a producer reuses its object", async () => {
   const { port, ctx } = openPort();
   const original = SYNTHETIC_DOCS[0]!;
