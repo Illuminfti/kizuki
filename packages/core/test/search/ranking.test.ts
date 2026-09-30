@@ -47,6 +47,13 @@ describe("exact-title boost", () => {
     indexRow(db, "other", "notes/other.md", "Launch date", "Launch date is April.", "topic");
     expect(search(db, query, OPTIONS)[0]?.doc_id).toBe(exact);
   });
+
+  test("an exact Unicode title is preserved and surrounding title spaces are ignored", () => {
+    const db = searchDb();
+    const exact = indexRow(db, "exact", "notes/elan.md", " Élan ", "Élan launch notes. ".repeat(80), "topic");
+    indexRow(db, "other", "notes/other.md", "Élan note", "Élan launch.", "topic");
+    expect(search(db, "Élan", OPTIONS)[0]?.doc_id).toBe(exact);
+  });
 });
 
 describe("machine-exhaust ranking", () => {

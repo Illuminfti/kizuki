@@ -30,7 +30,7 @@ page still returns that page, at a `coverage` the caller can inspect.
 
 ## Ranking
 
-- A canon page titled exactly the query (case and surrounding space ignored)
+- A canon page titled exactly the query (ASCII case and surrounding space ignored)
   ranks first.
 - At close relevance, pages the loop wrote rank below pages the owner wrote:
   anything under `auto/`, the daily brief, and `rollup` pages. A machine page
