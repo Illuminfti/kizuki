@@ -1,12 +1,12 @@
 # World projection pipeline and card kit
 
-Status: implemented on the ocean integration branch. Evidence date: 2026-09-29.
+Status: implemented on this branch; pending integration. Evidence date: 2026-09-30.
 
 `projectWorldCard` and `discoverWorld` keep their signatures and now wrap a pipeline in `packages/core/src/world/pipeline`. A new kind, enricher, collector or grouper is a new file or one registered line, not an edit to `world/projection.ts`. For concept and situation the served bytes are unchanged; golden traces pin that (see Tests).
 
 ## The stages
 
-A card read runs group, collect, enrich and assemble. A discovery page runs collect and assemble.
+A card read runs group, collect, enrich and assemble. A discovery page collects eligible classifications, groups their authorized members, filters their combined labels and assembles the page.
 
 | Stage    | File                   | What it does                                                                                                                                                                        | List and slot markers                                                            |
 | -------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
@@ -32,7 +32,9 @@ An enricher fills in what the base projection leaves `unknown`. It receives the 
 1. Write the enricher in a new file.
 2. Add one line under your marker in `pipeline/enrichers.ts`.
 
-A collector returns candidate claim ids for a cluster. Add one line under `ident` in `COLLECTORS`. A grouper takes a cluster and returns a wider one with a resolution; add one line under `ident` in `GROUPERS`. Both are bounded by the same checks as any read, because collected ids are verified and a cluster that loses its anchor is refused.
+A collector returns candidate claim ids for a cluster. Add one line under `ident` in `COLLECTORS`. A grouper takes a cluster and returns a wider one with a resolution; add one line under `ident` in `GROUPERS`. Collected ids are verified and a cluster that loses its anchor is refused.
+
+Discovery uses the same groupers. Proposed members must have an eligible asserted classification of the requested kind before their labels or handles influence the page. Claim type and asserted-time grant limits apply in SQL before candidate limits and work counters, as do support-event grants. Discovery counts eligible classifications before label filtering, so an unrelated label query does not make a populated kind look dark. A group has at most 128 authorized members; exceeding that bound returns the existing budget fallback. The smallest authorized handle represents a group consistently across pages, and a search can match any member's label. Groupers must derive membership from authorized evidence: returning hidden membership hints is not a substitute for passing the noninterference driver.
 
 A kind needs its vocabulary module (see [the vocabulary registry note](f4.md)), a card file built on the card kit, and an assembler:
 
@@ -60,6 +62,7 @@ A registered kind with no assembler has no card to serve.
 bun test packages/core/test/world/pipeline-golden.test.ts
 bun test packages/core/test/world/pipeline.test.ts packages/core/test/world/pipeline-noninterference.test.ts
 bun test packages/core/test/world/pipeline-kinds.test.ts packages/core/test/world/discovery-population.test.ts
+bun test packages/core/test/world/discovery-grouping.test.ts
 bun test packages/core/test/contracts/world-card-kit.test.ts packages/core/test/contracts/concept-card.test.ts packages/core/test/contracts/situation-card.test.ts
 bun test packages/core/test/serving/world-projection.test.ts packages/core/test/serving/world-coverage.test.ts packages/core/test/serving/world-occurrence-correction.test.ts
 ```
@@ -68,9 +71,10 @@ The golden files in `packages/core/test/world/golden` are the traces of a client
 
 `withWorldPipeline` and `collectReadFrames` are test seams, exported only through `@kizuki/core/testing`. They swap process-wide lists, do not nest and no production code calls them.
 
+The F1B entries for the foundation and first-Concept packets in [packet-seams.json](packet-seams.json) map these existing public operations to seam files and executable acceptance tests. `bun scripts/verify-packet-seams.ts` checks the table, files and Core/CLI/MCP registration parity; the existing operation tests exercise the shared HTTP and App dispatch. These entries describe F1B's implemented scope, not completion of the entire packets.
+
 ## Limits
 
 - Collectors and groupers have the smallest shape that lets identity work plug in. Identity convergence may reshape them.
-- Discovery has no grouper hook yet: grouping a cluster into one match depends on what identity decides, and belongs to that workstream.
 - `rowsExamined` counts collect-stage rows only. Statement counts through the database connection remain the harness's other work counter.
-- The packet-seam table `docs/world/packet-seams.json` does not exist on this branch, so no row is added here.
+- The packet verifier is a standalone scaffold; integration into the continuous world verification gate remains separate.

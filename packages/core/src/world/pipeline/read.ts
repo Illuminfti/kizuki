@@ -101,6 +101,6 @@ export function readWorldMatches<KindId extends string>(
   scanBudget: number,
 ): WorldMatches<`kizuki.${KindId}-matches/v1`> {
   const kind = kindSpec(kindId);
-  const scan = scanMatches(frame, kind, label, after, scanBudget);
+  const scan = scanMatches(frame, kind, label, after, scanBudget, active.groupers);
   return assembleMatches(frame, `kizuki.${kindId}-matches/v1`, kind, scan, after === null);
 }

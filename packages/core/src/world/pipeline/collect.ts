@@ -6,10 +6,10 @@ import {
 } from "../../contracts/claim-v2";
 import type { WorldKindSpec } from "../../contracts/world-kinds";
 import { activeWorldRegistry } from "../../contracts/world-vocabulary";
-import { authorizedSupportSql, validMeaningSql } from "../policy-sql";
+import { authorizedClaimSql, authorizedSupportSql, validMeaningSql } from "../policy-sql";
 import { eligibleWorldClaim, type Eligible } from "./eligible";
-import { claimVisibleSql, type ReadFrame } from "./frame";
-import type { Cluster } from "./group";
+import { claimVisibleSql, WorldProjectionBudgetError, type ReadFrame } from "./frame";
+import { group, type Cluster, type Grouper } from "./group";
 
 const MAX_RELATIONS = 128;
 const DISCOVERY_SCAN = 256;
@@ -70,12 +70,13 @@ export type Collector = (frame: ReadFrame, cluster: Cluster) => readonly string[
 /** Live claims that name an endpoint of the cluster as subject or as object, classification and labels first. */
 const claimsAboutMembers: Collector = (frame, cluster) => {
   const permitted = authorizedSupportSql(frame.ctx),
+    claim = authorizedClaimSql(frame.ctx),
     time = validMeaningSql(frame.valid);
   const candidates = frame.ctx.db.query<
     { claim_id: string },
     (string | number)[]
   >(`SELECT c.claim_id FROM claim_v2_semantics c JOIN claims base USING(claim_id)
-    WHERE discriminator='assertion' AND ${claimVisibleSql(frame, "base")} AND ${time.sql} AND
+    WHERE discriminator='assertion' AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql} AND
     ((subject_kind=? AND subject_id=? AND coalesce(json_extract(payload,'$.subject.namespace'),'')=?) OR (json_extract(payload,'$.object.ref.kind')=? AND json_extract(payload,'$.object.ref.id')=? AND coalesce(json_extract(payload,'$.object.ref.namespace'),'')=?))
     AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
     ORDER BY CASE WHEN c.predicate='world.kind' THEN 0 WHEN c.predicate IN (SELECT value FROM json_each(?)) THEN 1 ELSE 2 END,c.claim_id LIMIT ?`);
@@ -87,6 +88,7 @@ const claimsAboutMembers: Collector = (frame, cluster) => {
     if (anchor === null) return [];
     return candidates
       .all(
+        ...claim.bindings,
         ...time.bindings,
         anchor.kind,
         anchor.id,
@@ -180,6 +182,7 @@ export function scanMatches(
   label: string,
   after: string | null,
   scanBudget: number,
+  groupers: readonly Grouper[] = [],
 ): MatchScan {
   const { ctx, valid } = frame;
   const found: { handle: string; labels: string[] }[] = [];
@@ -188,37 +191,64 @@ export function scanMatches(
   let next = false;
   let budgetSpent = false;
   let scanned = 0;
+  let visibleHandles = 0;
   let last: string | null = null;
   let position = after ?? "";
   const permitted = authorizedSupportSql(ctx),
+    claim = authorizedClaimSql(ctx),
     time = validMeaningSql(valid);
-  const labelPolicy = authorizedSupportSql(ctx, "ls"),
-    labelTime = validMeaningSql(valid, "lc");
-  const filtering = wanted.length > 0;
+  const joins = `FROM semantic_bindings b JOIN claim_v2_semantics c
+    ON c.subject_kind=b.raw_kind AND c.subject_id=b.raw_id AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=b.raw_namespace
+    JOIN claims base ON base.claim_id=c.claim_id`;
+  const classification = `c.discriminator='assertion' AND c.predicate='world.kind'
+    AND c.polarity='positive' AND json_extract(c.payload,'$.perspective.mode')='asserted'
+    AND json_extract(c.payload,'$.object.kind')='vocabulary' AND json_extract(c.payload,'$.object.ref.id')=?
+    AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
+    AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})`;
+  const policyBindings = [kind.vocabularyId, ...claim.bindings, ...time.bindings, ...permitted.bindings];
   const scan = ctx.db.query<
-    { handle_id: string; labels: string },
+    { handle_id: string },
     (string | number)[]
-  >(`SELECT b.handle_id, ${filtering ? "json_group_array(json_extract(lc.payload,'$.object.value'))" : "'[]'"} AS labels
-    FROM semantic_bindings b JOIN claim_v2_semantics c
-    ON c.subject_kind=b.raw_kind AND c.subject_id=b.raw_id AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=b.raw_namespace JOIN claims base ON base.claim_id=c.claim_id
-    ${filtering ? `    LEFT JOIN claim_v2_semantics lc ON lc.subject_kind=b.raw_kind AND lc.subject_id=b.raw_id AND coalesce(json_extract(lc.payload,'$.subject.namespace'),'')=b.raw_namespace
-      AND lc.predicate=? AND lc.polarity='positive' AND ${labelTime.sql}
-      AND EXISTS(SELECT 1 FROM claims lb WHERE lb.claim_id=lc.claim_id AND ${claimVisibleSql(frame, "lb")})
-      AND EXISTS(SELECT 1 FROM claim_v2_support ls WHERE ls.claim_id=lc.claim_id AND ${labelPolicy.sql})` : ""}
-    WHERE b.handle_id>? AND c.predicate='world.kind' AND ${claimVisibleSql(frame, "base")} AND c.polarity='positive' AND json_extract(c.payload,'$.object.ref.id')=? AND ${time.sql}
-    AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
+  >(`SELECT b.handle_id ${joins} WHERE b.handle_id>? AND ${classification}
     GROUP BY b.handle_id ORDER BY b.handle_id LIMIT ?`);
+
+  const candidates = ctx.db.query<{ claim_id: string }, (string | number)[]>(
+    `SELECT c.claim_id ${joins}
+      WHERE b.handle_id=? AND c.discriminator='assertion' AND c.predicate IN ('world.kind',?)
+      AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
+      AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
+      ORDER BY CASE c.predicate WHEN 'world.kind' THEN 0 ELSE 1 END,c.claim_id LIMIT ?`,
+  );
+  const cache = new Map<string, { labels: string[]; overflow: boolean } | null>();
+  const matchOf = (handle: string) => {
+    if (cache.has(handle)) return cache.get(handle)!;
+    const rows = candidates.all(handle, kind.labelPredicate, ...claim.bindings, ...time.bindings, ...permitted.bindings, MAX_RELATIONS + 1);
+    frame.stats.rowsExamined += rows.length;
+    const labels: string[] = [];
+    let classified = false;
+    for (const row of rows.slice(0, MAX_RELATIONS)) {
+      const item = verifyClaim(frame, row.claim_id);
+      if (item === null) continue;
+      const semantic = item.semantic;
+      if (semantic.polarity !== "positive" || semantic.perspective.mode !== "asserted") continue;
+      if (semantic.predicate === "world.kind" && semantic.object.kind === "vocabulary" && semantic.object.ref.id === kind.vocabularyId)
+        classified = true;
+      if (semantic.predicate === kind.labelPredicate && semantic.object.kind === "literal")
+        labels.push(semantic.object.value);
+    }
+    const match = classified ? { labels, overflow: rows.length > MAX_RELATIONS } : null;
+    cache.set(handle, match);
+    return match;
+  };
+
+  // A grouper may propose handles, never authorize them. Apply the same claim
+  // and support policy before limiting members or reading any of their labels.
+  const grouped = ctx.db.query<{ handle_id: string }, (string | number)[]>(
+    `SELECT b.handle_id ${joins} WHERE b.handle_id IN (SELECT value FROM json_each(?)) AND ${classification}
+      GROUP BY b.handle_id ORDER BY b.handle_id LIMIT ?`,
+  );
   scanning: for (;;) {
-    const rows = scan.all(
-      ...(filtering
-        ? [kind.labelPredicate, ...labelTime.bindings, ...labelPolicy.bindings]
-        : []),
-      position,
-      kind.vocabularyId,
-      ...time.bindings,
-      ...permitted.bindings,
-      DISCOVERY_SCAN,
-    );
+    const rows = scan.all(position, ...policyBindings, DISCOVERY_SCAN);
     for (const row of rows) {
       if (scanned === scanBudget) {
         budgetSpent = true;
@@ -227,59 +257,28 @@ export function scanMatches(
       scanned += 1;
       frame.stats.rowsExamined += 1;
       position = row.handle_id;
-      if (
-        filtering &&
-        !(JSON.parse(row.labels) as unknown[]).some((text) =>
-          labelMatches(text, wanted),
-        )
-      )
-        continue;
-      const raw = bindingOf(ctx.db, row.handle_id);
-      if (raw === null) continue;
-      const labels: string[] = [];
-      let classified = false;
-      const candidates = ctx.db
-        .query<{ claim_id: string }, (string | number)[]>(
-          `SELECT c.claim_id FROM claim_v2_semantics c JOIN claims base USING(claim_id)
-      WHERE c.subject_kind=? AND c.subject_id=? AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=? AND c.predicate IN ('world.kind',?) AND ${claimVisibleSql(frame, "base")} AND ${time.sql}
-      AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
-      ORDER BY CASE c.predicate WHEN 'world.kind' THEN 0 ELSE 1 END,c.claim_id LIMIT ?`,
-        )
-        .all(
-          raw.raw_kind,
-          raw.raw_id,
-          raw.raw_namespace,
-          kind.labelPredicate,
-          ...time.bindings,
-          ...permitted.bindings,
-          MAX_RELATIONS + 1,
-        );
-      frame.stats.rowsExamined += candidates.length;
-      for (const candidate of candidates.slice(0, MAX_RELATIONS)) {
-        const item = verifyClaim(frame, candidate.claim_id);
-        if (item === null) continue;
-        const semantic = item.semantic;
-        if (
-          semantic.polarity !== "positive" ||
-          semantic.perspective.mode !== "asserted"
-        )
-          continue;
-        if (
-          semantic.predicate === "world.kind" &&
-          semantic.object.kind === "vocabulary" &&
-          semantic.object.ref.id === kind.vocabularyId
-        )
-          classified = true;
-        if (
-          semantic.predicate === kind.labelPredicate &&
-          semantic.object.kind === "literal"
-        )
-          labels.push(semantic.object.value);
+      const own = matchOf(row.handle_id);
+      if (own === null) continue;
+      visibleHandles += 1;
+      let labels = own.labels;
+      let overflow = own.overflow;
+      if (groupers.length > 0) {
+        const proposed = group(frame, row.handle_id, groupers);
+        const members = grouped.all(JSON.stringify(proposed.members), ...policyBindings, MAX_RELATIONS + 1);
+        frame.stats.rowsExamined += members.length;
+        if (members.length > MAX_RELATIONS) throw new WorldProjectionBudgetError();
+        const eligible = members.flatMap((member) => {
+          const match = matchOf(member.handle_id);
+          return match === null ? [] : [{ handle: member.handle_id, ...match }];
+        });
+        // The smallest authorized member represents the cluster on every page.
+        // Its wire token is still local to the reader's namespace.
+        if (eligible[0]?.handle !== row.handle_id) continue;
+        labels = eligible.flatMap((member) => member.labels);
+        overflow ||= eligible.some((member) => member.overflow);
       }
       if (
-        !classified ||
-        (wanted.length > 0 &&
-          !labels.some((text) => labelMatches(text, wanted)))
+        wanted.length > 0 && !labels.some((text) => labelMatches(text, wanted))
       )
         continue;
       if (found.length === MAX_WORLD_MATCHES) {
@@ -288,7 +287,7 @@ export function scanMatches(
       }
       found.push({ handle: row.handle_id, labels });
       last = row.handle_id;
-      traversal ||= candidates.length > MAX_RELATIONS;
+      traversal ||= overflow;
     }
     if (rows.length < DISCOVERY_SCAN) break;
   }
@@ -296,6 +295,6 @@ export function scanMatches(
     found,
     resumeAfter: budgetSpent ? position : next ? last : null,
     cut: traversal || next || budgetSpent,
-    visibleHandles: scanned,
+    visibleHandles,
   };
 }
