@@ -14,9 +14,8 @@ export function projectionBytes(operation: string, data: unknown): Uint8Array {
 }
 
 /**
- * Every issued reference a body names, once each. They are the exact set of
- * things the body depends on, so a token that holds the body is erased when any
- * of them is: `world_view_token_deps` is a foreign key to these same rows.
+ * Every issued reference a body names, once each. Evidence omitted from the
+ * body is collected by the projection and linked alongside these references.
  */
 export function wireRefs(data: unknown): string[] {
   const found = new Set<string>();

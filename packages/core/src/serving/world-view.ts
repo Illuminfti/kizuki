@@ -1,4 +1,4 @@
-import { resolvePrincipal, toolAllowed } from "../agents";
+import { resolvePrincipal, toolAllowed, type Principal } from "../agents";
 import { tableExists } from "../ledger/schema";
 import { WorldProjectionBudgetError } from "../world/projection";
 import type { discoverWorld } from "../world/projection";
@@ -27,11 +27,14 @@ import {
 } from "../world/references";
 import { openView, settleView } from "../world/views/session";
 import type { ViewSession } from "../world/views/session";
+import { worldDependencies, worldDependenciesAuthorized, type WorldDependencies } from "../world/dependencies";
+import { wireDigest } from "../world/views/store";
 import type { ShareData } from "../world/views/resume";
 import { isPlainObject } from "../util/validate";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
 import type { RedactionCounts } from "./redact";
+import { createRedactor, redactValue } from "./redact";
 import { clampWorldData } from "./world-clamp";
 import { ServeError } from "./types";
 import type { ServeContext } from "./types";
@@ -157,8 +160,12 @@ function unavailable(
  * response bound is never partly served. A read that may issue a view carries
  * its session, and a complete answer takes the state that session decides.
  */
-function present(op: WorldOp, outcome: WorldOpOutcome, view: ViewSession | null, db: ServeContext["db"]): WorldReadResult {
-  if (outcome.status === "not_found") return { status: "not_found" };
+function present(op: WorldOp, outcome: WorldOpOutcome, view: ViewSession | null, ctx: ServeContext, dependencies: WorldDependencies): WorldReadResult {
+  if (outcome.status === "not_found") {
+    if (view?.prior === undefined || view.prior === null) return { status: "not_found" };
+    ctx.db.query("DELETE FROM world_view_tokens WHERE token_hash=?").run(wireDigest(view.prior.token));
+    return answer(op.name, { status: "new_view_required" });
+  }
   if (outcome.status === "unavailable")
     return unavailable(op.name, outcome.reason);
   if (outcome.status === "new_view_required")
@@ -172,10 +179,12 @@ function present(op: WorldOp, outcome: WorldOpOutcome, view: ViewSession | null,
   // The registry is open and `WorldData` names the shipped bodies; the check above ties `data` to a declared schema.
   const data = outcome.data as WorldData;
   if (gaps !== null) return answer(op.name, { status: "incomplete", data, reasons: gaps });
-  return answer(
-    op.name,
-    view === null ? { status: "current", view: { status: "not_issued" }, data } : settleView(db, view, op.name, data),
-  );
+  if (view === null) return answer(op.name, { status: "current", view: { status: "not_issued" }, data });
+  // Compare and retain the final served projection. The gate redacts the raw
+  // body once for output and counts, including after a bounded reprojection.
+  const projection = ctx.redactor === undefined ? data : clampWorldData(redactValue(createRedactor(ctx.principal), data));
+  const result = settleView(ctx.db, view, op.name, projection, dependencies);
+  return answer(op.name, "data" in result ? { ...result, data } : result);
 }
 
 /**
@@ -189,6 +198,10 @@ export function readWorldView(
   input: unknown,
   registry: WorldOpRegistry = activeWorldOps(),
 ): WorldReadResult {
+  return read(ctx, input, registry, worldDependencies());
+}
+
+function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, dependencies: WorldDependencies): WorldReadResult {
   const principal = resolvePrincipal(ctx.db, ctx.principal);
   if (principal === null)
     throw new ServeError("unknown_agent", "unknown agent");
@@ -206,7 +219,7 @@ export function readWorldView(
         knownAt = Object.hasOwn(input, "knownAt") ? parseWorldKnownAt(input.knownAt) : CURRENT;
       if (valid === null || knownAt === null) throw new WorldViewError();
       if (knownAt.kind !== "current") return unavailable(op.name, "history");
-      return present(op, op.run(registry), null, ctx.db);
+      return present(op, op.run(registry), null, ctx, dependencies);
     }
     const query = op.parse(input),
       valid = parseWorldValid(input.valid),
@@ -230,7 +243,7 @@ export function readWorldView(
         // The baseline is judged before any projection work, so an unusable one costs the same for every cause.
         const view = op.views === true ? openView(ctx.db, ns, input, prior) : null;
         if (view?.stale === true) return answer(op.name, { status: "new_view_required" });
-        return present(op, op.run({ ctx: live, ns, registry }, query, { valid, knownAt }), view, ctx.db);
+        return present(op, op.run({ ctx: live, ns, registry, dependencies }, query, { valid, knownAt }), view, live, dependencies);
       })
       .immediate();
   } catch (error) {
@@ -260,28 +273,45 @@ export function serveWorldView(
   // outlive the refusal. The projection opens its own transaction, so a failed
   // projection still issues no references.
   let wirePrincipal: WireRef<"principal"> | undefined;
+  let readPrincipal: Principal | undefined;
+  let dependencies = worldDependencies();
+  const project = (live: ServeContext): Served<WorldReadResult> => {
+    dependencies = worldDependencies();
+    try {
+      return ctx.db.transaction(() => {
+        const data = read(live, args, registry, dependencies);
+        const principal = resolvePrincipal(ctx.db, live.principal);
+        if (principal === null) throw new ServeError("unknown_agent", "unknown agent");
+        readPrincipal = principal;
+        const ns = worldNamespace(ctx.db, principal);
+        wirePrincipal = issueWorldRef(ctx.db, ns, "principal", ns.principalId);
+        return { canon: [], quoted: [], withheld: [], data };
+      }).immediate();
+    } catch (error) {
+      if (error instanceof WorldViewError)
+        throw new ServeError("invalid_arguments", "invalid arguments: world_view");
+      throw error;
+    }
+  };
   const envelope = gate(
     ctx,
     "world_view",
     auditArguments(args),
-    ({ ctx: live }): Served<WorldReadResult> => {
-      try {
-        return ctx.db.transaction(() => {
-          const data = readWorldView(live, args, registry);
-          const principal = resolvePrincipal(ctx.db, live.principal);
-          if (principal === null) throw new ServeError("unknown_agent", "unknown agent");
-          const ns = worldNamespace(ctx.db, principal);
-          wirePrincipal = issueWorldRef(ctx.db, ns, "principal", ns.principalId);
-          return { canon: [], quoted: [], withheld: [], data };
-        }).immediate();
-      } catch (error) {
-        if (error instanceof WorldViewError)
-          throw new ServeError(
-            "invalid_arguments",
-            "invalid arguments: world_view",
-          );
-        throw error;
+    ({ ctx: live }) => project(live),
+    ({ ctx: live }, served) => {
+      // Revalidate only this projection's authorized evidence on every call,
+      // so unrelated hidden policy changes alter neither the answer nor work.
+      const current = resolvePrincipal(live.db, live.principal);
+      if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+      if (!toolAllowed(current.grant, "world_view")) throw new ServeError("tool_not_granted", "tool not granted");
+      const changed = readPrincipal?.kind === "agent" && current.kind === "agent" && readPrincipal.grant_epoch !== current.grant_epoch;
+      const fresh = { ...live, principal: current, sourcePurpose: "recall" as const };
+      if (!changed && worldDependenciesAuthorized(fresh, dependencies)) return served;
+      const data = served.data;
+      if (data !== undefined && "result" in data && "view" in data.result && "kind" in data.result.view) {
+        live.db.query("DELETE FROM world_view_tokens WHERE token_hash=?").run(wireDigest(data.result.view.token));
       }
+      return project(fresh);
     },
   );
   if (wirePrincipal === undefined) throw new ServeError("error", "serving failed");

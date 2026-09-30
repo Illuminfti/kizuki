@@ -4,8 +4,8 @@ import { NOT_FOUND, coveredOutcome } from "./outcome";
 import { parseWorldRef } from "./parse";
 import type { ClaimsOp, WorldObjectRef } from "./types";
 
-const readObject: NonNullable<ClaimsOp["readObject"]> = ({ ctx, ns }, handle, { valid }) => {
-  const card = projectWorldCard(ctx, ns, handle, "concept", valid);
+const readObject: NonNullable<ClaimsOp["readObject"]> = ({ ctx, ns, dependencies }, handle, { valid }) => {
+  const card = projectWorldCard(ctx, ns, handle, "concept", valid, dependencies);
   return card === null ? NOT_FOUND : coveredOutcome(card);
 };
 

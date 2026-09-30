@@ -30,7 +30,7 @@ and issue no token.
 
 Every conditional read recomputes the complete authorized projection. Sorted
 canonical JSON and a SHA-256 fingerprint cover the operation and the whole
-body. Comparison also requires byte equality. Equal complete bytes return
+body, after serving redaction and string bounds. Comparison also requires byte equality. Equal complete bytes return
 `unchanged`, the same token and lifetime, and no data. A changed complete body
 returns `current` with a new token. Newly partial coverage returns `incomplete`,
 never `unchanged`.
@@ -49,6 +49,13 @@ oldest-issued rows with ascending digest as the tie-break. Cache failures
 roll back issuance and degrade to `not_issued` without losing the fresh body.
 Hidden sources, claims and identity changes cannot alter another principal's
 baseline comparison, reservation or eviction order.
+
+The audited serving gate revalidates the projection's authorized support and
+current principal grant in the final output transaction. An unrelated source
+revocation leaves the answer and read work unchanged. Withdrawn dependencies
+discard the pending view and reproject once under current authority. A
+conditional target denied by current source consent returns
+`new_view_required`; a fresh read of that target remains `not_found`.
 
 ## Share and resume
 
@@ -71,6 +78,10 @@ read scope at issuance, `coverage` is added to the card's gaps and result
 reasons. It reveals no counts, labels or issuer identity. A wider or equal
 grant adds no clipping gap. Unknown, expired, restored, unreadable-target and
 revoked-issuer handles all return `new_view_required`.
+
+Handle resolution always performs bounded lookup and authorization checks
+before projecting a target. Unreadable and erased targets take the same path,
+including the same returned-row and statement work counters.
 
 A handle stores its digest, semantic target, object operation, valid window,
 normalized issuer scope and scope digest, and an internal recorded-time marker.
@@ -106,6 +117,11 @@ startup invalidates view tokens; portable handles retain their own expiry.
 Foreign keys and dependency-erasure triggers physically remove affected token
 payloads, digests and dependency rows on purge. A removed semantic target also
 removes its handles. Revoking an issuer removes its partition and both caches.
+
+Dependency rows cover the full authorized claim, support and event closure
+collected during projection, including discovery label evidence omitted from
+the rendered body. Purging label evidence erases its retained projection even
+when independently supported claims keep the semantic object alive.
 
 Executable tests cover Core lifecycle and noninterference, enrollment including
 the App path, migration, resource limits, rollback, restart, purge, restore,
