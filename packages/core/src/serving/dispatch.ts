@@ -8,8 +8,9 @@ import type { GraphArgs } from "./graph";
 import { serveHealth } from "./health";
 import { serveGetPage } from "./page";
 import type { GetPageArgs } from "./page";
-import { serveContextPacket } from "./packet";
+import { serveContextPacket, serveContextPacketV2 } from "./packet";
 import type { ContextPacketArgs } from "./packet";
+import type { ContextPacketArgsV2 } from "./v2/context-packet";
 import { servePropose } from "./propose";
 import type { ProposeArgs } from "./propose";
 import { serveSearch } from "./search";
@@ -78,6 +79,10 @@ export async function dispatchServeTool(
   const contract = chooseContract(tool, options.response_contract, args);
   if (contract === null) return refuseCall(ctx, tool, args, unsupportedContract());
   if (tool === "world_view") return serveWorldView(ctx, args);
-  if (contract === ENVELOPE_V2_SCHEMA) return projectEnvelope(ctx, await serveV1(ctx, tool, args));
+  if (contract === ENVELOPE_V2_SCHEMA) {
+    return tool === "context_packet"
+      ? serveContextPacketV2(ctx, args as unknown as ContextPacketArgsV2)
+      : projectEnvelope(ctx, await serveV1(ctx, tool, args));
+  }
   return serveV1(ctx, tool, args);
 }

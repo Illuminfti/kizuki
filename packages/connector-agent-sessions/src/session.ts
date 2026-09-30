@@ -4,8 +4,12 @@ import type { CaptureEventInput } from "@kizuki/core";
 import type { SessionFlavor, SessionsConnectorId } from "./config";
 import { MAX_TEXT_BYTES, boundScan, redact, sanitize, truncateUtf8, wellFormed } from "./scrub";
 
-/** Marker of a context packet Kizuki itself served into a session. */
-const SELF_CONTEXT_MARKER = "KIZUKI CONTEXT v1";
+/** Markers of a context packet Kizuki itself served into a session, one per packet contract. */
+const SELF_CONTEXT_MARKERS = ["KIZUKI CONTEXT v1", "KIZUKI CONTEXT v2"] as const;
+
+function carriesSelfContext(text: string): boolean {
+  return SELF_CONTEXT_MARKERS.some((marker) => text.includes(marker));
+}
 const OWN_TOOL_PREFIX = "mcp__kizuki__";
 /** Text a harness injects around the person's words; never theirs. */
 const HARNESS_TEXT = [
@@ -207,7 +211,7 @@ export class SessionReader {
     }
     const text = texts.join("\n\n");
     if (text.trim() === "") return { skip: "no_text" };
-    if (text.includes(SELF_CONTEXT_MARKER)) return { skip: "self_context" };
+    if (carriesSelfContext(text)) return { skip: "self_context" };
     const cwd = str(raw.cwd);
     if (
       cwd !== null &&
@@ -250,7 +254,7 @@ export class SessionReader {
     const bounded = boundScan(turn.text);
     const sanitized = sanitize(bounded.text);
     // A marker split by invisible characters only shows after sanitizing.
-    if (sanitized.text.includes(SELF_CONTEXT_MARKER)) return { skip: "self_context" };
+    if (carriesSelfContext(sanitized.text)) return { skip: "self_context" };
     const scrubbed = redact(sanitized.text);
     if (scrubbed.text.trim() === "") return { skip: "no_text" };
     const cut = truncateUtf8(scrubbed.text, MAX_TEXT_BYTES);
