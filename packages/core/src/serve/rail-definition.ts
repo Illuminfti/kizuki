@@ -79,15 +79,24 @@ export type RailDefinition = RailBehavior & {
 
 const ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const MAX_ID_LENGTH = 48;
+/** Bound fixed periods to signed 32-bit seconds, well within Date's range. */
+const MAX_PERIOD_S = 2_147_483_647;
+
+export function assertRailPeriod(seconds: number, field = "period_s"): void {
+  if (!Number.isSafeInteger(seconds) || seconds <= 0 || seconds > MAX_PERIOD_S) {
+    throw new TypeError(`${field} must be an integer between 1 and ${MAX_PERIOD_S}`);
+  }
+}
 
 /** Validate a rail once, where it is written, so no later reader has to. */
 export function defineRail(definition: RailDefinition): RailDefinition {
   const { id, period_s, jitter_s } = definition;
   if (!ID.test(id) || id.length > MAX_ID_LENGTH) throw new TypeError(`invalid rail id: ${JSON.stringify(id)}`);
-  if (!Number.isSafeInteger(period_s) || period_s <= 0) throw new TypeError(`rail ${id}: period_s must be a positive integer`);
+  assertRailPeriod(period_s);
   if (!Number.isSafeInteger(jitter_s) || jitter_s < 0 || jitter_s >= period_s) throw new TypeError(`rail ${id}: jitter_s must be an integer below the period`);
   const { idle_period_s } = definition;
-  if (idle_period_s !== undefined && (!Number.isSafeInteger(idle_period_s) || idle_period_s <= period_s)) {
+  if (idle_period_s !== undefined) assertRailPeriod(idle_period_s, "idle_period_s");
+  if (idle_period_s !== undefined && idle_period_s <= period_s) {
     throw new TypeError(`rail ${id}: idle_period_s must be an integer above the period`);
   }
   return Object.freeze({ ...definition });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { openLedger } from "../../src/ledger/db";
@@ -84,9 +84,11 @@ describe("the registry", () => {
 
   test("defineRail refuses ids and schedules the loop could not use", () => {
     for (const id of ["", "Sync", "-a", "a-", "a--b", "a b", "a".repeat(49)]) expect(() => definition({ id })).toThrow("invalid rail id");
-    for (const period_s of [0, -60, 1.5, Number.NaN]) expect(() => definition({ period_s })).toThrow("period_s");
+    for (const period_s of [0, -60, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER]) expect(() => definition({ period_s })).toThrow("period_s");
     for (const jitter_s of [-1, 300, 1.5]) expect(() => definition({ jitter_s })).toThrow("jitter_s");
     expect(() => definition({ idle_period_s: 300 })).toThrow("idle_period_s");
+    expect(() => definition({ idle_period_s: Number.MAX_SAFE_INTEGER })).toThrow("idle_period_s");
+    expect(definition({ period_s: 2_147_483_647 }).period_s).toBe(2_147_483_647);
     expect(Object.isFrozen(definition())).toBe(true);
   });
 
@@ -142,6 +144,65 @@ describe("the registry", () => {
 });
 
 describe("running a registered rail", () => {
+  test("vault aliases and separate handles cannot borrow an active rail's lease", async () => {
+    const { path, db } = vault();
+    const alias = join(dirname(path), "alias");
+    symlinkSync(path, alias, "dir");
+    const other = openLedger(join(alias, ".kizuki", "kizuki.db"));
+    disposers.push(() => other.close());
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    let calls = 0;
+    register({ run: async () => { calls++; if (calls === 1) await waiting; return { status: "ok", events_synced: 1 }; } });
+    seedSchedules(db);
+    const before = listSchedules(db);
+    const active = runRail(db, path, "fixture-rail");
+    try {
+      for (const target of [path, alias]) {
+        const denied = await runRail(other, target, "fixture-rail");
+        expect(denied.status).toBe("failed");
+        expect(denied.schedule_transition).toBeUndefined();
+        expect(calls).toBe(1);
+        expect(listSchedules(db)).toEqual(before);
+        expect(readLease(db, WRITER_LEASE)?.holder_pid).toBe(process.pid);
+      }
+    } finally { release(); await active; }
+    expect((await active).status).toBe("ok");
+    expect(readLease(db, WRITER_LEASE)).toBeNull();
+  });
+
+  test("invalid configured and persisted periods refuse work before the callback", async () => {
+    const { path, db } = vault();
+    let calls = 0;
+    register({ configured_period_s: () => Number.MAX_SAFE_INTEGER, run: () => { calls++; return {}; } });
+    const failed = await runRail(db, path, "fixture-rail");
+    expect(failed.status).toBe("failed");
+    expect(failed.schedule_transition).toBeUndefined();
+    expect(calls).toBe(0);
+    await expect(runServeDaemon(db, path, { once: true, http: false, rails: ["fixture-rail"] })).rejects.toThrow("period_s");
+    register({ id: "fixture-period", run: () => { calls++; return {}; } });
+    seedSchedules(db);
+    db.query("UPDATE schedules SET period_s=? WHERE rail='fixture-period'").run(Number.MAX_SAFE_INTEGER);
+    expect((await runRail(db, path, "fixture-period")).status).toBe("failed");
+    expect(calls).toBe(0);
+    expect(readLease(db, WRITER_LEASE)).toBeNull();
+  });
+
+  test("an extension preflight refusal backs off without starving another rail", async () => {
+    let attempts = 0, calls = 0, sleeps = 0, iterations = 0;
+    register({ id: "fixture-denied", preflight: () => { attempts++; throw new Error("fixture preflight refused"); } });
+    register({ id: "fixture-later", run: () => { calls++; return { events_synced: 1 }; } });
+    const { path, db } = vault();
+    db.query("UPDATE schedules SET enabled=0 WHERE rail NOT IN ('fixture-denied','fixture-later')").run();
+    await runServeDaemon(db, path, { http: false, now: () => "2026-10-01T00:00:00.000Z",
+      shouldContinue: () => iterations++ < 4, sleep: async () => { sleeps++; } });
+    expect(attempts).toBe(1);
+    expect(calls).toBe(1);
+    expect(sleeps).toBeGreaterThan(0);
+    expect(listRunReceipts(db).filter(row => row.rail === "fixture-denied")).toHaveLength(1);
+    expect(listSchedules(db).find(row => row.rail === "fixture-denied")?.next_run_at).toBeNull();
+  });
+
   test("writes a run receipt on success and on a thrown error", async () => {
     const { path, db } = vault();
     register();
@@ -305,6 +366,23 @@ describe("doctor and a registered rail", () => {
 });
 
 describe("a kill mid-run leaves a consistent receipt", () => {
+  for (const replaced of [false, true]) test(`startup recovers an orphan after registration changes, replaced=${replaced}`, async () => {
+    const remove = registerRail(definition({ slot_hour: () => 7 }));
+    disposers.push(remove);
+    const { path, db } = vault();
+    await expect(runRail(db, path, "fixture-rail", { now: () => minute(0), crashAfter: "after-jsonl" })).rejects.toBeInstanceOf(InjectedCrash);
+    const journal = readRunReceiptsLog(path)[0]!;
+    remove();
+    if (replaced) register({ slot_hour: () => 9 });
+    const result = await runServeDaemon(db, path, { once: true, http: false, rails: ["retrieval-sweep"], now: () => minute(1) });
+    expect(result.receipts).toBe(2);
+    expect(listRunReceipts(db).find(row => row.run_id === journal.run_id)).toEqual(journal);
+    expect(db.query<{ next_run_at: string }, []>("SELECT next_run_at FROM schedules WHERE rail='fixture-rail'").get()?.next_run_at)
+      .toBe(journal.schedule_transition!.next_run_at);
+    expect(recoverRunJournal(db, path)).toEqual([]);
+    if (!replaced) await expect(runRail(db, path, "fixture-rail")).rejects.toThrow("no rail is registered");
+  });
+
   const schedule = (db: ReturnType<typeof vault>["db"]) => listSchedules(db).find((row) => row.rail === "fixture-rail")!;
 
   test("an interruption before the receipt lands leaves nothing to reconcile", async () => {

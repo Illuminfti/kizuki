@@ -3,7 +3,7 @@ import { recoverCanonWrites } from "../canon/recovery";
 import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { retryCanonProjectionObligations } from "../canon/projection-obligations";
 import { acquireLease, leaseState, pidAlive, readBootId, releaseLease, thisProcess, type LeaseProcess } from "./leases";
-import { resolve } from "node:path";
+import { statSync } from "node:fs";
 import type { Database } from "bun:sqlite";
 import { skipCaptureFanoutClaims } from "../claims/capture-fanout";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
@@ -17,7 +17,7 @@ import { composeBrief, repairBriefPages, type BriefRepair } from "./brief";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { inspectServeDoctor } from "./doctor";
 import { createFileNotifier } from "./notifier-file";
-import { CAPTURE_REPAIR_RECEIPT_PENDING, stageCaptureRepairReceipt, coalesceNoopReceipt, recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
+import { CAPTURE_REPAIR_RECEIPT_PENDING, stageCaptureRepairReceipt, coalesceNoopReceipt, recoverRunJournal, getRunReceipt, nextScheduleSlot, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
 import { applyRailPeriod, initServe, listSchedules } from "./schema";
 import { railDefinition } from "./rail-registry";
 import type { RailRunContext } from "./rail-definition";
@@ -335,8 +335,17 @@ export function runJournalPrune(context: RailRunContext): Partial<RunReceipt> {
 }
 
 const activeRuns = new Set<string>();
-/** One callback at a time per vault, including manual calls in this process. */
-const activeVaultRuns = new Set<string>();
+/** One callback per filesystem vault and ledger, across aliases and handles. */
+const activeRunTargets = new Set<string>();
+
+function filesystemIdentity(path: string): string {
+  try {
+    const { dev, ino } = statSync(path, { bigint: true });
+    return `${dev}:${ino}`;
+  } catch {
+    throw new ServeDaemonError("rail_target_unavailable", "rail filesystem identity is unavailable");
+  }
+}
 
 /**
  * Run one rail and resolve to its receipt. A scheduled run that did nothing is
@@ -380,7 +389,7 @@ async function runRailImpl(
   if (definition === undefined) throw new ServeDaemonError("unknown_rail", `no rail is registered as ${JSON.stringify(rail)}`);
   const runId = ulid();
   activeRuns.add(runId);
-  const vaultKey = resolve(vaultPath);
+  let targetKeys: string[] = [];
   let activeVault = false;
   let lease: { process: LeaseProcess; release: boolean } | undefined;
   try {
@@ -399,14 +408,21 @@ async function runRailImpl(
       if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
         throw new Error("rail hooks and acquireRuntime are mutually exclusive");
       }
+      targetKeys = [`vault:${filesystemIdentity(vaultPath)}`];
+      if (db.filename && db.filename !== ":memory:") targetKeys.push(`ledger:${filesystemIdentity(db.filename)}`);
+      if (targetKeys.some(key => activeRunTargets.has(key))) {
+        throw new ServeDaemonError("lease_busy", "a rail is already running for this vault");
+      }
       // A failed preflight may append this run's audit receipt only. In particular,
       // do not import older receipt/usage journals before validating a sync decision.
       definition.preflight?.(db);
       initServe(db);
-      if (activeVaultRuns.has(vaultKey)) {
-        throw new ServeDaemonError("lease_busy", "a rail is already running for this vault");
-      }
-      activeVaultRuns.add(vaultKey);
+      // Refuse unrepresentable configured or persisted periods before any work.
+      const baseline = options.execution?.trigger === "scheduled" ? options.execution.due_at! : started;
+      const schedule = listSchedules(db).find(row => row.rail === rail);
+      nextScheduleSlot(baseline, schedule?.period_s ?? definition.period_s, null);
+      if (definition.configured_period_s !== undefined) nextScheduleSlot(baseline, definition.configured_period_s(vaultPath), null);
+      for (const key of targetKeys) activeRunTargets.add(key);
       activeVault = true;
       const holder = thisProcess(now);
       const borrowed = leaseState(db, holder) === "held";
@@ -512,7 +528,7 @@ async function runRailImpl(
     return published;
   } finally {
     activeRuns.delete(runId);
-    if (activeVault) activeVaultRuns.delete(vaultKey);
+    if (activeVault) for (const key of targetKeys) activeRunTargets.delete(key);
     if (lease?.release === true) releaseLease(db, lease.process);
   }
 }
