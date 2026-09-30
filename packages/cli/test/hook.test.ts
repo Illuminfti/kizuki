@@ -84,7 +84,7 @@ function seededVault() {
   mkdirSync(notes);
   writeFileSync(
     join(notes, "atlas.md"),
-    "# Project Atlas\nMira leads Project Atlas.\n",
+    "# Project Atlas notes\nMira leads Project Atlas notes.\n",
   );
   const imported = runCli(
     setup.env,
@@ -213,6 +213,7 @@ describe("hook session-start output", () => {
     const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
     // Random ULIDs change token counts enough to push an imported note over 220.
     // Keep this boundary fixture stable; the other output tests exercise import.
+    // No project hint: this ledger-only fixture measures packing, not indexing.
     try {
       const at = new Date().toISOString();
       const stored = accept(db, {
@@ -235,7 +236,7 @@ describe("hook session-start output", () => {
     }
     const run = await hook(
       setup.env,
-      INPUT,
+      "{}",
       "--harness",
       "generic",
       "--budget",
@@ -254,7 +255,7 @@ describe("hook session-start output", () => {
       expect(run.stdout).not.toContain(private_);
 
     const small = await hook(
-      setup.env, INPUT, "--harness", "generic", "--budget", "80",
+      setup.env, "{}", "--harness", "generic", "--budget", "80",
       "--vault", setup.vault, "--verbose",
     );
     expect(small.exitCode).toBe(0);
