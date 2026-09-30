@@ -32,7 +32,7 @@ import { isPlainObject } from "../util/validate";
 import { isOwnerMappedConnector } from "../sensitivity/policy";
 import { SensitivityError } from "../sensitivity/errors";
 import { getConnectorSensitivity, setGrantSensitivityDefault } from "../sensitivity/store";
-import { backfillCredentialClasses, classDenialSql, restampSourceClasses, stampRuleClasses } from "./event-classes";
+import { backfillCredentialClasses, classDenialSql, classesOfEvents, restampSourceClasses, stampRuleClasses } from "./event-classes";
 import type { ClassRule } from "./event-classes";
 import { getConnection } from "./connections";
 import { tableExists } from "./schema";
@@ -831,6 +831,7 @@ export function inheritSourcePortBindings<T extends object>(source: object, targ
 }
 export interface SourceReadScope {
   owner: boolean;
+  deny_classes?: readonly EventClass[];
   purpose?: SourcePurpose;
   port?: object;
   model?: boolean;
@@ -842,6 +843,10 @@ export function sourceEventsAllowed(
   ids: readonly string[],
   scope: SourceReadScope,
 ): boolean {
+  const denied = scope.deny_classes ?? [];
+  if (denied.length > 0 && classesOfEvents(db, ids).some(
+    (name) => denied.includes(name),
+  )) return false;
   if (sourcePolicyEpoch(db) === 0) return true;
   const local = isLocalSourcePort(scope.port);
   const model = scope.port === undefined ? undefined : modelPorts.get(scope.port);

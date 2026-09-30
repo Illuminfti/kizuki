@@ -373,6 +373,33 @@ describe("correct honours class denial on a ledger with no source grants", () =>
     expect(owner.data?.superseded.map((entry) => entry.claim_id)).toEqual([claimId]);
   });
 
+  test("a visible target cannot retire a credential-derived rival with the same key", async () => {
+    const subject = "person:tern";
+    const hidden = await insertClaim({ db: fixture.db }, claimInput(secret, {
+      subject, subjects: [subject], body: "Tern works at the depot.",
+      object: "depot", events: [eventFacts(secret)],
+    }));
+    if (hidden.outcome !== "stored") throw new Error("fixture hidden claim");
+    const admitted = await insertClaim({ db: fixture.db }, claimInput(plain, {
+      subject, subjects: [subject], body: "Tern works at the workshop.",
+      object: "workshop", events: [eventFacts(plain)],
+    }));
+    const visible = admitted.outcome === "contested" ? admitted.incoming :
+      admitted.outcome === "stored" ? admitted.claim : null;
+    if (visible === null) throw new Error("fixture visible claim");
+    expect(getClaim(fixture.db, hidden.claim.claim_id)?.status).toBe("live");
+    expect(visible.claim_key).toBe(hidden.claim.claim_key);
+    const ctx = fixture.agent("cred-default");
+    const args = { statement: "Tern works at the studio.", target: { claim_id: visible.claim_id } };
+    const dry = await serveCorrect(ctx, { ...args, dry_run: true });
+    expect(dry.data?.superseded.map((entry) => entry.claim_id)).toEqual([visible.claim_id]);
+    const result = await serveCorrect(ctx, args);
+    expect(result.data?.superseded.map((entry) => entry.claim_id)).toEqual([visible.claim_id]);
+    expect(JSON.stringify(result)).not.toContain(hidden.claim.claim_id);
+    expect(getClaim(fixture.db, hidden.claim.claim_id)?.status).toBe("live");
+    expect(getClaim(fixture.db, visible.claim_id)?.status).toBe("superseded");
+  });
+
   test("an opted-in agent and the owner can retire credential-derived claims", async () => {
     for (const [name, subject] of [["cred-open", "person:ibis"], ["owner", "person:egret"]] as const) {
       const stored = await insertClaim({ db: fixture.db }, claimInput(secret, {

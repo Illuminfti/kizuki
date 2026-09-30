@@ -3,6 +3,7 @@ import { extendOwnedCanonIo, snapshotCanonIo, withCanonMutationAsync } from "../
 import { VaultMutationError } from "../vault/mutation-scope";
 import {
   sourcePolicyEpoch,
+  sourceEventsAllowed,
   requireSourceEvents,
 } from "../ledger/source-grants";
 import { claimReader } from "./claims";
@@ -37,7 +38,7 @@ import { parseIntent } from "./correct-args";
 import type { CorrectionIntent, CorrectObject, CorrectRefresh, CorrectionChange } from "./correct-args";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { getCanonReceipt } from "../canon/receipts";
-import { resolvePrincipal } from "../agents";
+import { denyClassesOf, resolvePrincipal } from "../agents";
 import type { VaultMutationScope } from "../vault/mutation-scope";
 import type { CorrectIo } from "../correction/types";
 
@@ -401,7 +402,15 @@ function assertSufficientAuthority(
   replacement: string | undefined,
   at: string,
 ): void {
-  const rivals = listClaims(ctx.db, { claim_key: claimKey, status: "live" });
+  const rivals = listClaims(ctx.db, {
+    claim_key: claimKey,
+    status: "live",
+    filter: (claim) => sourceEventsAllowed(ctx.db, claim.provenance, {
+      owner: ctx.principal.kind === "owner",
+      purpose: "correction",
+      deny_classes: denyClassesOf(ctx.principal.grant),
+    }),
+  });
   const live = rivals.length > 0 ? rivals : group;
   const incoming: ConflictClaim = {
     claim_id: "",

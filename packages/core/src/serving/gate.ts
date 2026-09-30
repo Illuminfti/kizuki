@@ -4,6 +4,7 @@ import { canonReadGeneration } from "../canon/write-intent";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
 import {
   resolvePrincipal,
+  denyClassesOf,
   toolAllowed,
 } from "../agents";
 import { reserveServingAudit as reserveAudit, updateServingAudit as updateAudit } from "./audit-capability";
@@ -170,6 +171,7 @@ function boundedArguments(
 export function claimsIo(ctx: ServeContext): ClaimsIo {
   return {
     db: ctx.db,
+    deny_classes: denyClassesOf(ctx.principal.grant),
     ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
   };
 }
