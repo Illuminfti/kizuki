@@ -37,11 +37,14 @@ The loopback tool endpoint accepts this closed wrapper on its existing routes:
 {"response_contract":"kizuki.envelope/v2","args":{"budget_tokens":1000}}
 ```
 
-Send that body to `/v1/context_packet` with the caller's bearer. The transport
-route version does not select the content version. Nested selectors are
-refused, including a selector inside `args`. Direct HTTP calls with missing
-or v1 selectors still retain compatibility in this stage. Refusing them for
-scoped principals is a separate draft change pending the compatibility decision.
+Send that body to `/v1/context_packet` with the caller's bearer. Token clients
+that omit the selector also receive v2; the adapter supplies it. Owner requests
+keep the legacy default. The transport route version does not select the
+content version. Nested selectors are refused, including a selector inside
+`args`. Explicit v1 HTTP requests and
+direct Core calls with missing or v1 selectors still retain compatibility in
+this stage. Refusing those scoped requests is a separate draft change pending
+the compatibility decision.
 
 The owner CLI supports explicit selection:
 
@@ -87,3 +90,9 @@ source on a previously unmanaged ledger. Loopback and real stdio tests check
 the serialized contract, and redaction tests prove that secret-shaped text is
 still replaced inside the seven-field envelope. These tests reuse the shared
 reader policy rather than introducing another authorization implementation.
+
+The work-counter acceptance gate remains open: the current matrix detects
+hidden-state-dependent SQL work in timeline audit collection, denied proposal
+provenance and correction targets, and session identity candidate selection.
+Response bytes and refusal messages remain stable in that matrix. These
+shared reader repairs must be coordinated before this change is ready to merge.

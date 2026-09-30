@@ -151,16 +151,40 @@ test("a hidden source revoke leaves the scoped v2 packet byte-equal, epoch-free 
   }
 });
 
-test("the same revoke moves the epoch a v1 caller can read, which is the leak the v2 contract closes", async () => {
+test("an explicit legacy selector retains the epoch until the scoped compatibility decision", async () => {
   const r = await rig();
   try {
-    const before = await r.agent("context_packet", PACKET);
+    const legacy = { response_contract: V1, args: PACKET };
+    const before = await r.agent("context_packet", legacy);
     expect(before.body.value.schema).toBe(V1);
     r.revokeHiddenSource();
-    const after = await r.agent("context_packet", PACKET);
+    const after = await r.agent("context_packet", legacy);
     expect(after.body.value.data.claims_epoch).toBeGreaterThan(
       before.body.value.data.claims_epoch,
     );
+  } finally {
+    await r.dispose();
+  }
+});
+
+test("loopback supplies v2 for token clients that omit the selector", async () => {
+  const r = await rig();
+  try {
+    for (const body of [PACKET, { args: PACKET }]) {
+      const reply = await r.agent("context_packet", body);
+      expect(reply.status).toBe(200);
+      expect(reply.body.value.schema).toBe(V2);
+      expect(reply.body.value.data.schema).toBe("kizuki.context-packet/v2");
+      expect(Object.keys(reply.body.value).sort()).toEqual(ENVELOPE_V2_KEYS);
+      expect(forbiddenPaths(reply.body)).toEqual([]);
+    }
+    const world = await r.agent("world_view", { operation: "describe" });
+    expect(world.status).toBe(200);
+    expect(world.body.value.schema).toBe(V2);
+    const health = await r.agent("system_health", {});
+    expect(health.body.error).toEqual({
+      code: "unsupported_contract", message: "requested contract unavailable", retryable: false,
+    });
   } finally {
     await r.dispose();
   }
