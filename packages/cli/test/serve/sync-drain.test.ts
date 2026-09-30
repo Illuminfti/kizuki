@@ -82,7 +82,7 @@ function enrolled(sessions: string, serveToml: string) {
     });
   const stored = () =>
     db.query<{ n: number }, []>("SELECT count(*) AS n FROM events").get()!.n;
-  return { setup, db, runtime, stored };
+  return { setup, db, runtime, stored, sourceKey };
 }
 
 test("a first backfill drains across sync passes, one bounded slice at a time", async () => {
@@ -196,9 +196,9 @@ test("the real serve loop keeps RSS bounded across twenty session batches", asyn
   const sessions = h.tempDir("kizuki-sessions-drain-");
   const { bytes } = transcriptStore(sessions, 20);
   expect(bytes).toBeGreaterThan(2_048 * MEGABYTE);
-  const { setup, db } = enrolled(sessions, "[serve]\nconnector_drain_batches = 1\nsync_period_s = 60\n");
+  const { setup, db, sourceKey } = enrolled(sessions, "[serve]\nconnector_drain_batches = 10\nsync_period_s = 60\n");
   db.close();
-  const child = Bun.spawn([process.execPath, join(import.meta.dir, "sync-drain-memory-child.ts"), setup.vault], {
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, "sync-drain-memory-child.ts"), setup.vault, sourceKey], {
     env: { ...process.env, ...setup.env }, stdout: "pipe", stderr: "pipe",
   });
   try {
@@ -206,22 +206,24 @@ test("the real serve loop keeps RSS bounded across twenty session batches", asyn
       new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
     ]);
     expect(exit, stderr).toBe(0);
-    const { baseline, samples, passes, stored, sweeps } = JSON.parse(stdout) as {
-      baseline: number; samples: number[]; passes: { has_more: boolean; events_stored: number; errors: string[] }[];
+    const { baseline, samples, batches, passes, stored, sweeps } = JSON.parse(stdout) as {
+      baseline: number; samples: number[]; batches: number[]; passes: { has_more: boolean; events_stored: number; errors: string[] }[];
       stored: number; sweeps: number;
     };
     expect(samples).toHaveLength(20);
-    expect(passes).toHaveLength(20);
+    expect(batches).toHaveLength(20);
+    expect(batches.every(count => count >= 50)).toBe(true);
+    expect(passes).toHaveLength(2);
     expect(passes.every(receipt => receipt.has_more && receipt.errors.length === 0)).toBe(true);
     expect(stored).toBe(passes.reduce((sum, receipt) => sum + receipt.events_stored, 0));
-    expect(passes.every(receipt => receipt.events_stored >= 50)).toBe(true);
+    expect(stored).toBe(batches.reduce((sum, count) => sum + count, 0));
     expect(stored).toBeGreaterThanOrEqual(1_000);
     expect(sweeps).toBeGreaterThan(1);
     expect(Math.max(...samples) - baseline, `baseline ${baseline} MB; rss samples ${samples.map(Math.round).join(" ")}`)
       .toBeLessThan(TOTAL_MEMORY_GROWTH_BOUND_MB);
     const warm = Math.max(...samples.slice(2, 5));
     const growth = Math.max(...samples.slice(5)) - warm;
-    expect(growth, `rss in MB after each pass: ${samples.map(Math.round).join(" ")}`).toBeLessThan(MEMORY_GROWTH_BOUND_MB);
+    expect(growth, `rss in MB after each batch: ${samples.map(Math.round).join(" ")}`).toBeLessThan(MEMORY_GROWTH_BOUND_MB);
   } finally {
     if (child.exitCode === null) child.kill();
     await child.exited;
