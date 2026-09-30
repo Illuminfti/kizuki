@@ -11,12 +11,15 @@ export function claimKey(subject: string, predicate: string): string {
 
 /**
  * The conflict key of a source page: every revision of one record from one
- * connector shares it, so the claims store can tell a newer revision from an
+ * enrolled source shares it, so the claims store can tell a newer revision from an
  * unrelated page. Derived from `page:<connector>:<source record>`; the
- * connector half is the subject so a record id can never bleed into it.
+ * connector and enrollment form the subject so a record id cannot bleed into it.
  */
-export function pageClaimKey(connectorId: string, sourceRecordId: string): string {
-  return claimKey(`page:${connectorId}`, sourceRecordId);
+export function pageClaimKey(connectorId: string, sourceRecordId: string, sourceKey?: string): string {
+  return claimKey(
+    sourceKey === undefined ? `page:${connectorId}` : JSON.stringify(["page", connectorId, sourceKey]),
+    sourceRecordId,
+  );
 }
 
 export function hashBody(body: string): string {

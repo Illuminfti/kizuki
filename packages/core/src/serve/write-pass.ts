@@ -33,6 +33,7 @@ import {
   listUnwrittenLiveClaims,
   reviveUncontestedSkipped,
   skipUnwrittenClaim,
+  supersedePageRevisions,
 } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
 import {
@@ -405,6 +406,11 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
     }
   }
 
+  db.transaction(() => {
+    for (const claim of listUnwrittenLiveClaims(db, WRITE_PASS_SCAN).reverse()) {
+      supersedePageRevisions(db, claim.claim_id, claim.created_at);
+    }
+  })();
   const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN);
   for (const claim of pending) {
     if (tally.canon_writes >= WRITE_PASS_LIMIT) break;

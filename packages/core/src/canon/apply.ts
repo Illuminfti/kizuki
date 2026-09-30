@@ -381,7 +381,13 @@ function prepareRevision(
 
 function supersededRefs(io: CanonIo, decision: TargetDecision): CanonReceipt["superseded"] {
   if (decision.action !== "supersede") return [];
-  return decision.superseded.map((claimId) => {
+  return decision.superseded.filter(claimId => {
+    const loser = getClaim(io.db, claimId);
+    // Unwritten source revisions are retired history, not the restored page.
+    return loser?.receipt_id !== null || loser?.producer !== "deterministic" ||
+      typeof loser.frontmatter["x-connector"] !== "string" ||
+      typeof loser.frontmatter["x-source-record-id"] !== "string";
+  }).map((claimId) => {
     const loser = getClaim(io.db, claimId);
     const key = loser?.claim_key ?? (loser?.superseded_by === null || loser?.superseded_by === undefined
       ? null : getClaim(io.db, loser.superseded_by)?.claim_key);

@@ -12,6 +12,10 @@ import { join } from "node:path";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { listCanonReceipts } from "../../src/canon/receipts";
 import { undoReceipt } from "../../src/canon/undo";
+import { correct } from "../../src/correction/correct";
+import { recoverCanonWrites } from "../../src/canon/recovery";
+import { OWNER, serveCorrect, registerConnection, setSourceGrant } from "../../src/index";
+import { ulid } from "../../src/util/ulid";
 import { getClaim, listClaims } from "../../src/claims/store";
 import {
   PAGE_CANDIDATE_KEY,
@@ -226,6 +230,11 @@ test("revisions filed before a pass runs still leave only the newest body", asyn
     const page = readPage(f);
     expect(occurrences(page.body, "# Atlas")).toBe(1);
     expect(page.body).toContain("third body");
+    const edit = listCanonReceipts(f.db, { page_path: PAGE }).find(r => r.page_action === "edit")!;
+    await undoReceipt({ db: f.db, vault_path: f.vault }, edit.receipt_id);
+    expect(readPage(f).body).toContain("first body");
+    expect((await f.pass()).claims_written).toBe(0);
+    expect(readPage(f).body).toContain("first body");
   } finally {
     f.db.close();
   }
@@ -409,14 +418,16 @@ test("a create over a page the writer cannot bind ends as a receipted skip, once
     );
     expect(skipped).toHaveLength(1);
 
+    revise(f, { text: "# Atlas\n\nfirst body", delivery: "repeat-after-skip" });
     const second = await f.pass();
+    expect(second.claims_skipped).toEqual({ page_exists: 1 });
     expect(second.errors).toEqual([]);
-    expect(second.claims_skipped).toEqual({});
+    expect((await f.pass()).claims_skipped).toEqual({});
     expect(
       listClaims(f.db, { status: "skipped", limit: 10 }).filter(
         (c) => c.target === TARGET,
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   } finally {
     f.db.close();
   }
@@ -468,22 +479,30 @@ test("a keyed revision does not assign keys to legacy claims and its undo restor
   } finally { f.db.close(); }
 });
 
-test("source revisions never supersede a higher-authority keyed correction", async () => {
-  const f = fixture();
-  try {
-    revise(f, { text: "# Atlas\n\ncorrected" });
-    expect((await f.pass()).errors).toEqual([]);
-    const original = listClaims(f.db, { status: "live", limit: 20 }).find(c => c.target === TARGET)!;
-    // Stored fixture represents a terminal correction on the page's key.
-    f.db.query("UPDATE claims SET authority = 'owner_correction' WHERE claim_id = ?").run(original.claim_id);
-    const before = readFileSync(join(f.vault, PAGE), "utf8");
-    revise(f, { text: "# Atlas\n\nsource revision" });
-    expect((await f.pass()).errors).toEqual([]);
-    expect(getClaim(f.db, original.claim_id)?.status).toBe("live");
-    expect(readFileSync(join(f.vault, PAGE), "utf8")).toBe(before);
-  } finally { f.db.close(); }
-});
-
+for (const seam of ["native", "serving"] as const) {
+  test(`${seam} page correction preserves conflict identity and blocks later source revisions`, async () => {
+    const f = fixture();
+    try {
+      revise(f, { text: "# Atlas\n\noriginal" });
+      expect((await f.pass()).errors).toEqual([]);
+      const original = listClaims(f.db, { status: "live", limit: 20 }).find(c => c.target === TARGET)!;
+      const result = seam === "native"
+        ? await correct({ db: f.db, vault_path: f.vault }, { statement: "Corrected page body", target: { claim_id: original.claim_id } })
+        : (await serveCorrect({ db: f.db, vaultPath: f.vault, principal: OWNER }, { statement: "Corrected page body", target: { claim_id: original.claim_id } })).data!;
+      expect(result.superseded.map(c => c.claim_id)).toContain(original.claim_id);
+      expect(getClaim(f.db, original.claim_id)?.status).toBe("superseded");
+      const corrected = listClaims(f.db, { status: "live", limit: 20 }).find(c => c.authority === "owner_correction")!;
+      expect(corrected.claim_key).toBe(original.claim_key);
+      expect(readPage(f).body).toContain("Corrected page body");
+      expect(readPage(f).body).not.toContain("original");
+      const before = readFileSync(join(f.vault, PAGE), "utf8");
+      revise(f, { text: "# Atlas\n\nsource revision" });
+      expect((await f.pass()).errors).toEqual([]);
+      expect(getClaim(f.db, corrected.claim_id)?.status).toBe("live");
+      expect(readFileSync(join(f.vault, PAGE), "utf8")).toBe(before);
+    } finally { f.db.close(); }
+  });
+}
 
 test("failure journaling supersession rolls back the revision's claims and proposal", async () => {
   const f = fixture();
@@ -526,5 +545,92 @@ test("a new revision retires legacy pending claims before the writer revives the
     expect(occurrences(readPage(f).body, "# Atlas")).toBe(1);
     expect(readPage(f).body).toContain("newest body");
     expect(readPage(f).body).not.toContain("legacy");
+  } finally { f.db.close(); }
+});
+
+
+test("a later revision cannot invalidate recovery of published bytes", async () => {
+  const f = fixture();
+  try {
+    revise(f, { text: "# Atlas\n\nrevision one" });
+    expect((await f.pass()).errors).toEqual([]);
+    revise(f, { text: "# Atlas\n\nrevision two" });
+    f.db.exec(`CREATE TRIGGER fail_receipt BEFORE INSERT ON canon_receipts
+      BEGIN SELECT RAISE(ABORT, 'synthetic receipt failure'); END`);
+    expect((await f.pass()).errors.length).toBeGreaterThan(0);
+    expect(readPage(f).body).toContain("revision two");
+    revise(f, { text: "# Atlas\n\nrevision two", delivery: "repeat-during-recovery" });
+    revise(f, { text: "# Atlas\n\nrevision three" });
+    f.db.exec("DROP TRIGGER fail_receipt");
+    recoverCanonWrites({ db: f.db, vault_path: f.vault });
+    expect((await f.pass()).errors).toEqual([]);
+    expect(readPage(f).body).toContain("revision three");
+    expect(occurrences(readPage(f).body, "# Atlas")).toBe(1);
+    expect(listCanonReceipts(f.db, { page_path: PAGE })).toHaveLength(3);
+  } finally { f.db.close(); }
+});
+
+test("an edit awaiting a write keeps the materialized page discoverable by deletion", async () => {
+  const f = fixture();
+  try {
+    revise(f, { text: "# Atlas\n\nrevision one" });
+    expect((await f.pass()).errors).toEqual([]);
+    revise(f, { text: "# Atlas\n\nrevision two" });
+    const deleted = runBatch(f.db, { events: [{ ...eventFor({ text: "" }), deleted: true }], cursor: null, has_more: false }, GRANTED, undefined, { vault_path: f.vault });
+    expect(deleted.errors).toEqual([]);
+    expect(deleted.retractions_filed).toBe(1);
+    expect((await f.pass()).errors).toEqual([]);
+    expect(readPage(f).data["status"]).toBe("archived");
+  } finally { f.db.close(); }
+});
+
+test("capture-only sources cannot supersede another enrollment or their own legacy evidence", () => {
+  const f = fixture();
+  try {
+    const a = ulid(), b = ulid();
+    const connector = eventFor({ text: "" }).connector_id;
+    for (const source of [a, b]) registerConnection(f.db, connector, source);
+    const policy = { purposes: ["capture", "derive", "recall", "correction"],
+      allowed_fields: ["text", "subjects", "attachments", "metadata"],
+      retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" };
+    const ga = setSourceGrant(f.db, { source_key: a, expected_revision: 0, operation_id: "grant-a", policy });
+    const gb = setSourceGrant(f.db, { source_key: b, expected_revision: 0, operation_id: "grant-b", policy: { ...policy, purposes: ["capture"] } });
+    const batch = (source_key: string, expected_revision: number, text: string) => runBatch(f.db,
+      { events: [eventFor({ text })], cursor: null, has_more: false }, GRANTED, { source_key, expected_revision });
+    expect(batch(a, ga.revision, "Authorized body").errors).toEqual([]);
+    const authorized = listClaims(f.db, { status: "live", limit: 20 }).find(c => c.target === TARGET)!;
+    expect(batch(b, gb.revision, "Capture only body").errors).toEqual([]);
+    expect(getClaim(f.db, authorized.claim_id)?.status).toBe("live");
+    const other = listClaims(f.db, { status: "live", limit: 20 }).find(c => c.target === TARGET && c.claim_id !== authorized.claim_id)!;
+    expect(other.claim_key).not.toBe(authorized.claim_key);
+    // Simulate a legacy keyless claim under the capture-only enrollment.
+    f.db.query("UPDATE claims SET claim_key = NULL WHERE claim_id = ?").run(other.claim_id);
+    expect(batch(b, gb.revision, "Capture only edit").errors).toEqual([]);
+    expect(getClaim(f.db, other.claim_id)?.status).toBe("live");
+    expect(getClaim(f.db, authorized.claim_id)?.status).toBe("live");
+    f.db.query("UPDATE claims SET claim_key = NULL WHERE claim_id = ?").run(authorized.claim_id);
+    const deriving = setSourceGrant(f.db, { source_key: b, expected_revision: gb.revision,
+      operation_id: "grant-b-derive", policy });
+    expect(batch(b, deriving.revision, "Authorized B edit").errors).toEqual([]);
+    expect(getClaim(f.db, other.claim_id)).toMatchObject({ status: "superseded", claim_key: null });
+    expect(getClaim(f.db, authorized.claim_id)).toMatchObject({ status: "live", claim_key: null });
+  } finally { f.db.close(); }
+});
+
+
+test("a page correction with unchanged wording still takes owner authority", async () => {
+  const f = fixture();
+  try {
+    revise(f, { text: "Current page body" });
+    expect((await f.pass()).errors).toEqual([]);
+    const original = listClaims(f.db, { status: "live", limit: 20 }).find(c => c.target === TARGET)!;
+    const correction = await correct({ db: f.db, vault_path: f.vault }, {
+      statement: original.body, target: { claim_id: original.claim_id },
+    });
+    expect(correction.superseded.map(c => c.claim_id)).toContain(original.claim_id);
+    expect(getClaim(f.db, correction.claim_ids[0]!)?.authority).toBe("owner_correction");
+    revise(f, { text: "Changed source body" });
+    expect((await f.pass()).claims_written).toBe(0);
+    expect(readPage(f).body).toContain("Current page body");
   } finally { f.db.close(); }
 });

@@ -12,7 +12,7 @@ import {
   resolveConflict,
   type ConflictClaim,
 } from "../claims/conflict";
-import { insertClaim, getClaim, listClaims } from "../claims/store";
+import { insertClaim, getClaim, listClaims, isSourcePageClaim } from "../claims/store";
 import type { RawSubjectRef } from "../contracts/claim-v2";
 import type { AuthorityTier, Claim } from "../contracts/proposal";
 import { recordNativeCorrection } from "../correction/evidence";
@@ -597,6 +597,40 @@ export async function serveCorrect(
           "source authorization does not permit this correction",
         );
       readable(grant, resolved.claims);
+
+      if (resolved.claims.length === 1 && isSourcePageClaim(ctx.db, resolved.claims[0]!)) {
+        if (replacement !== undefined)
+          throw refuse("object", "source page correction uses statement as its body");
+        if (ctx.principal.kind !== "owner" && !grant.relay_owner_corrections)
+          throw new ServeError("held", "correction relay is not granted");
+        const owned = extendOwnedCanonIo(scope, canon, {
+          producer: ctx.principal.kind === "owner" ? "owner" as const : `agent:${ctx.principal.agent.name}` as const,
+          relay_owner_corrections: true,
+          grant,
+        });
+        const result = await correctWithinMutation(scope, owned, {
+          statement,
+          target: { claim_id: resolved.claims[0]!.claim_id },
+          ...(args.dry_run === true ? { dry_run: true } : {}),
+        }).catch((error: unknown) => { throw servableRefusal(error); });
+        return {
+          canon: [], quoted: [],
+          withheld: result.recovery_pending === undefined ? [] : [{ id: "tool:correct", reason: "error" as const }],
+          data: {
+            receipt_id: result.receipt_id, event_id: result.event_id,
+            claim_id: result.claim_ids[0] ?? null,
+            superseded: result.superseded.map(({ claim_id, claim_key }) => ({ claim_id, claim_key })),
+            rewritten: result.rewritten.flatMap(rewrite => {
+              if (rewrite.receipt_id === null) return [];
+              const receipt = getCanonReceipt(ctx.db, rewrite.receipt_id);
+              return receipt === null ? [] : [{ page_path: rewrite.page_path, page_action: receipt.page_action,
+                before_hash: rewrite.before_hash, after_hash: rewrite.after_hash, receipt_id: rewrite.receipt_id, diff: rewrite.diff }];
+            }),
+            ambiguous: result.ambiguous, answer: result.answer,
+            ...(result.recovery_pending === undefined ? {} : { recovery_pending: result.recovery_pending }),
+          },
+        };
+      }
 
       const groups = groupByKey(resolved.claims);
       if (groups.size > 1) {

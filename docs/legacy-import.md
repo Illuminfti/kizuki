@@ -378,8 +378,9 @@ so a defaulted page never looks like a decision the previous system made.
   re-read. Re-import from scratch (a fresh source, or a changed mapping) to
   pick it up. The wiki importer does notice an edited page, because it
   compares content hashes on every run. Each imported page carries a claim key
-  built from the logical `page:<connector>:<source_record_id>` identity using
-  the claim contract's SHA-256 encoding, so an edit supersedes
+  built from the logical `page:<connector>:<source_record_id>` identity, scoped
+  by its enrolled source and encoded with the claim contract's SHA-256 hash.
+  Derive consent is checked before an edit supersedes
   the earlier claim for that page: the canon page shows the newest body once,
   its frontmatter takes the newest fields, and `sources` retains prior canon
   provenance plus the newly written revision's event. Undoing the write of an edit restores the previous

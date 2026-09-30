@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
-import { contentSignature } from "../claims/hash";
+import { contentSignature, pageClaimKey } from "../claims/hash";
 import { initClaims } from "../claims/init";
 import { getClaim, supersedePageRevisions } from "../claims/store";
 import { openLedger } from "../ledger/db";
@@ -587,7 +587,17 @@ export function fileProposal(
   resolveProvenance(db, provenance);
   const subjects = [...(input.subjects ?? [])];
   const labels = resolveLabels(db, input, provenance);
-  const claimKey = input.claim_key ?? null;
+  let claimKey = input.claim_key ?? null;
+  const connector = input.frontmatter["x-connector"];
+  const record = input.frontmatter["x-source-record-id"];
+  if (typeof connector === "string" && typeof record === "string" &&
+      claimKey === pageClaimKey(connector, record)) {
+    const bindings = provenance.map(id => db.query<{ source_key: string }, [string]>(
+      "SELECT source_key FROM source_event_bindings WHERE event_id = ?",
+    ).get(id)?.source_key ?? null);
+    if (new Set(bindings).size !== 1) throw new StagingError("page provenance must belong to one source");
+    claimKey = pageClaimKey(connector, record, bindings[0] ?? undefined);
+  }
   const contentHash = signatureOf({
     kind: input.kind,
     target,
@@ -607,6 +617,12 @@ export function fileProposal(
       const current = rowToProposal(db, existing);
       const storedKey = getClaim(db, current.proposal_id)?.claim_key ?? null;
       if (signatureOf(current, storedKey) === contentHash) {
+        // An identical page delivery is still captured in the ledger, but
+        // cannot amend a claim guarded by an unfinished receipted write.
+        if (claimKey !== null && tableExists(db, "canon_write_intents") &&
+            db.query("SELECT 1 FROM canon_write_intents LIMIT 1").get() !== null) {
+          return { outcome: "duplicate", proposal: current };
+        }
         if (sourceDeletion) requireSourceTombstoneProposal(db, current, context);
         const merged = uniqueStrings([...current.provenance, ...provenance]);
         const grew = merged.length !== current.provenance.length;

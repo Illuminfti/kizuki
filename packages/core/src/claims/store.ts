@@ -90,6 +90,8 @@ export interface InsertClaimInput {
   valid_to?: string | null;
   claim_id?: string;
   intent?: "propose" | "correct";
+  /** An exact source-page correction inherits only its authorized stored target's key. */
+  page_correction_target?: string;
   /** RFC 0002 §6.4: caps the tier a relayed correction is filed at. */
   relay_ceiling?: AuthorityTier;
   events?: EventFacts[];
@@ -995,12 +997,14 @@ export function supersessionsForReceipt(
  * retraction stamp keeps `reviveUncontestedSkipped` from lifting it again.
  */
 export function skipUnwrittenClaim(db: Database, claimId: string, at: string): boolean {
-  return db
-    .query<never, [string, string]>(
+  return db.transaction(() => {
+    const skipped = db.query<never, [string, string]>(
       `UPDATE claims SET status = 'skipped', retracted_at = ?
         WHERE claim_id = ? AND status = 'live' AND receipt_id IS NULL`,
-    )
-    .run(at, claimId).changes === 1;
+    ).run(at, claimId).changes === 1;
+    if (skipped) db.query("UPDATE proposals SET status = 'withdrawn' WHERE proposal_id = ? AND status = 'pending'").run(claimId);
+    return skipped;
+  })();
 }
 
 /** Undo of a write: the claim this receipt materialized is no longer live. */
@@ -1055,9 +1059,19 @@ export function supersedeLiveGroup(
   db: Database,
   winner: Claim,
   at: string,
+  pageTarget?: Claim,
 ): { claim_id: string; claim_key: string; rule: "R5" }[] {
   if (winner.claim_key === null) return [];
-  const live = liveByKey(db, winner.claim_key).filter(
+  const candidates = liveByKey(db, winner.claim_key);
+  if (pageTarget !== undefined && isSourcePageClaim(db, pageTarget)) {
+    const connector = pageTarget.frontmatter["x-connector"] as string;
+    const record = pageTarget.frontmatter["x-source-record-id"] as string;
+    // Pre-enrollment-key rows retain their stored identity. A correction
+    // journals their retirement while inheriting the enrollment-scoped key.
+    candidates.push(...liveByKey(db, pageClaimKey(connector, record)).filter(claim =>
+      pageSource(db, claim) === pageSource(db, pageTarget)));
+  }
+  const live = [...new Map(candidates.map(claim => [claim.claim_id, claim])).values()].filter(
     (claim) => claim.claim_id !== winner.claim_id,
   );
   const out: { claim_id: string; claim_key: string; rule: "R5" }[] = [];
@@ -1076,45 +1090,72 @@ export function supersedeLiveGroup(
   return out;
 }
 
+/** Trusted enrollment identity comes from ledger bindings, never captured frontmatter. */
+function pageSource(db: Database, claim: Claim): string | null | undefined {
+  const sources = claim.provenance.filter(id => db.query(
+    "SELECT 1 FROM native_owner_evidence WHERE event_id = ? AND origin = 'correction'",
+  ).get(id) === null).map(id => db.query<{ source_key: string }, [string]>(
+    "SELECT source_key FROM source_event_bindings WHERE event_id = ?",
+  ).get(id)?.source_key ?? null);
+  return sources.length > 0 && new Set(sources).size === 1 ? sources[0] : undefined;
+}
+
+export function isSourcePageClaim(db: Database, claim: Claim): boolean {
+  const connector = claim.frontmatter["x-connector"];
+  const record = claim.frontmatter["x-source-record-id"];
+  if (claim.claim_key === null || typeof connector !== "string" || typeof record !== "string" ||
+      !((claim.producer === "deterministic" && claim.authority === "connector_evidence") ||
+        claim.authority === "owner_correction")) return false;
+  const source = pageSource(db, claim);
+  return source !== undefined &&
+    (claim.claim_key === pageClaimKey(connector, record, source ?? undefined) ||
+     claim.claim_key === pageClaimKey(connector, record));
+}
+
 /** Source page revisions replace one another; legacy keys remain null. Runs inside filing's transaction. */
 export function supersedePageRevisions(db: Database, winnerId: string, at: string): void {
   if (!db.inTransaction) throw new Error("page supersession requires the claim transaction");
   const winner = getClaim(db, winnerId);
-  const connector = winner?.frontmatter["x-connector"];
-  const record = winner?.frontmatter["x-source-record-id"];
-  if (winner === null || winner.producer !== "deterministic" || winner.authority !== "connector_evidence" ||
-      typeof connector !== "string" || typeof record !== "string" ||
-      winner.claim_key !== pageClaimKey(connector, record)) return;
-
-  const older = db
-    .query<ClaimRow, [string, string, string, string]>(
-      `SELECT * FROM claims
-        WHERE (status = 'live' OR
-               (status = 'skipped' AND claim_key IS NULL AND retracted_at IS NULL AND superseded_by IS NULL))
-          AND claim_id <> ? AND kind IN ('entity', 'claim')
-          AND (claim_key = ?
-               OR (claim_key IS NULL AND producer = 'deterministic' AND authority = 'connector_evidence'
-                   AND json_extract(frontmatter, '$."x-connector"') = ?
-                   AND json_extract(frontmatter, '$."x-source-record-id"') = ?))`,
-    )
-    .all(winner.claim_id, winner.claim_key, connector, record)
-    .map(rowToClaim);
-  // A revision is evidence, never authority to overturn an owner's correction.
+  if (winner === null || winner.status !== "live" || winner.authority !== "connector_evidence" || !isSourcePageClaim(db, winner)) return;
+  // New evidence may be filed while bytes await their receipt. Its lifecycle
+  // stays deferred until the writer completes the guarded intent.
+  if (tableExists(db, "canon_write_intents") && db.query("SELECT 1 FROM canon_write_intents LIMIT 1").get() !== null) return;
+  if (!sourceEventsAllowed(db, winner.provenance, { owner: true, purpose: "derive" })) return;
+  const connector = winner.frontmatter["x-connector"] as string;
+  const record = winner.frontmatter["x-source-record-id"] as string;
+  const source = pageSource(db, winner);
+  const older = db.query<ClaimRow, [string, string, string, string, string, string]>(
+    `SELECT * FROM claims
+      WHERE (status = 'live' OR
+             (status = 'skipped' AND claim_key IS NULL AND retracted_at IS NULL AND superseded_by IS NULL))
+        AND claim_id <> ? AND kind IN ('entity', 'claim')
+        AND (authority <> 'connector_evidence' OR rowid < (SELECT rowid FROM claims WHERE claim_id = ?))
+        AND (claim_key IN (?, ?) OR (claim_key IS NULL AND producer = 'deterministic' AND authority = 'connector_evidence'
+             AND json_extract(frontmatter, '$."x-connector"') = ?
+             AND json_extract(frontmatter, '$."x-source-record-id"') = ?))`,
+  ).all(winner.claim_id, winner.claim_id, winner.claim_key!, pageClaimKey(connector, record), connector, record).map(rowToClaim)
+    .filter(loser => pageSource(db, loser) === source);
   if (older.some(loser => AUTHORITY_TIERS[loser.authority] > AUTHORITY_TIERS[winner.authority])) {
     skipUnwrittenClaim(db, winner.claim_id, at);
-    db.query("UPDATE proposals SET status = 'withdrawn' WHERE proposal_id = ?").run(winner.claim_id);
     return;
   }
   for (const loser of older) {
-    persistClaim(db, {
-      ...loser,
-      status: "superseded",
-      superseded_by: winner.claim_id,
-      retracted_at: at,
-      valid_to: minTimestamp(loser.valid_to, winner.valid_from),
-    });
-    // Release the compatibility signature so returning to old content files a new revision.
-    db.query("UPDATE proposals SET status = 'withdrawn' WHERE proposal_id = ?").run(loser.claim_id);
+    // Carry the materialized predecessor across any number of queued edits.
+    // Intermediate revisions stay superseded and are not revived by undo.
+    if (loser.receipt_id === null) {
+      for (const predecessor of db.query<{ loser: string; prior_valid_to: string | null }, [string]>(
+        "SELECT loser, prior_valid_to FROM claim_supersessions WHERE winner = ?",
+      ).all(loser.claim_id)) {
+        const prior = getClaim(db, predecessor.loser);
+        if (prior === null || prior.status !== "superseded" || prior.superseded_by !== loser.claim_id) continue;
+        persistClaim(db, { ...prior, superseded_by: winner.claim_id });
+        writeSupersession(db, winner.claim_id, prior.claim_id, "R3", predecessor.prior_valid_to, at);
+      }
+    }
+    persistClaim(db, { ...loser, status: "superseded", superseded_by: winner.claim_id,
+      retracted_at: at, valid_to: minTimestamp(loser.valid_to, winner.valid_from) });
+    // Written proposals remain discoverable by source deletion.
+    db.query("UPDATE proposals SET status = 'withdrawn' WHERE proposal_id = ? AND status = 'pending'").run(loser.claim_id);
     writeSupersession(db, winner.claim_id, loser.claim_id, "R3", loser.valid_to, at);
   }
 }
@@ -1356,8 +1397,17 @@ function applyClaimInsert(
   const predicate = input.predicate ?? null;
   const object = input.object ?? null;
   const polarity = input.polarity ?? "positive";
-  const key =
-    subject !== null && predicate !== null ? claimKey(subject, predicate) : null;
+  let key = subject !== null && predicate !== null ? claimKey(subject, predicate) : null;
+  if (input.page_correction_target !== undefined) {
+    const target = getClaim(io.db, input.page_correction_target);
+    if (input.intent !== "correct" || target === null || target.status !== "live" || !isSourcePageClaim(io.db, target) ||
+        !target.provenance.every(id => input.provenance.includes(id))) {
+      throw new ClaimError("schema_invalid", "source page correction target changed");
+    }
+    requireSourceEvents(io.db, target.provenance, sourceScope);
+    key = pageClaimKey(target.frontmatter["x-connector"] as string,
+      target.frontmatter["x-source-record-id"] as string, pageSource(io.db, target) ?? undefined);
+  }
   const events = loadEventFacts(io.db, input.provenance);
   const ownerAttested = events.some(event => event.taint === "owner" && event.text === authorityBody);
   const authorityProducer = producer === "owner" && !ownerAttested ? "deterministic" : producer;
@@ -1465,7 +1515,9 @@ function applyClaimInsert(
       io.vault_path === undefined ? undefined : { vault_path: io.vault_path });
     return { outcome: "duplicate", claim: exact, dedup: mode };
   }
-  if (exact !== null && externalEvidence(io.db, exact.provenance) && (sourceEventsAllowed(io.db, exact.provenance, sourceScope) ||
+  if (exact !== null && (input.page_correction_target === undefined ||
+      (exact.claim_key === key && exact.authority === "owner_correction")) &&
+      externalEvidence(io.db, exact.provenance) && (sourceEventsAllowed(io.db, exact.provenance, sourceScope) ||
       (historicalInputAllowed() && exact.model_ref === (input.model_ref ?? null) &&
        JSON.stringify(exact.provenance) === JSON.stringify(input.provenance)))) {
     // A stricter label is not new evidence and must not renew confirmation.
