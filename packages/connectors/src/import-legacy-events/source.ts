@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { constants, closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { KizukiError } from "../errors";
 import { errorMessage } from "../util";
 import { IDENTIFIER, LEGACY_EVENTS_CONNECTOR_ID, ROWID_ALIAS } from "./mapping";
@@ -165,11 +165,20 @@ function decodeLine(line: Uint8Array, position: bigint): LegacyRow {
 export function openJsonlSource(path: string): LegacyRowSource {
   let handle: number;
   try {
-    handle = openSync(path, "r");
+    handle = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (error) {
-    throw misconfigured(`cannot open ${path}: ${errorMessage(error)}`, error);
+    throw misconfigured("cannot open regular JSONL source", error);
   }
-  const total = statSync(path).size;
+  let total: number;
+  try {
+    const info = fstatSync(handle);
+    if (!info.isFile() || !Number.isSafeInteger(info.size)) throw misconfigured("JSONL source must be a regular file");
+    total = info.size;
+  } catch (error) {
+    closeSync(handle);
+    if (error instanceof KizukiError) throw error;
+    throw misconfigured("cannot inspect JSONL source", error);
+  }
 
   return {
     kind: "jsonl",

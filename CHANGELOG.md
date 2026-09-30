@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- Standing HTTP refuses oversized bodies, malformed UTF-8, excessive JSON
+  nesting and non-object argument containers before tool dispatch. Its body
+  reader shares the app endpoint's byte and time limits. Legacy JSONL import
+  refuses symlinks and non-regular files through the open descriptor.
+- A seeded hostile-input fuzz campaign covers parser, file-reader, MCP and
+  HTTP boundaries with isolated workers, resource watchdogs and a replayable
+  synthetic corpus; see `scripts/fuzz/README.md` for CI and long local modes
+  and the open packet-rendering regression.
+
 - Purge is physically total. After it, the purged text is gone from claim and
   proposal payloads (ids, provenance and receipts stay), from archive copies
   and stage images, from the search index and retrieval store, and from freed
