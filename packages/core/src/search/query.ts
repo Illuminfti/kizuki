@@ -313,7 +313,7 @@ function searchPlan(
   // A standalone floor projection can be queried without a ledger. Serving
   // still requires live ledger evidence; when it is present, choose the
   // reader's current source version before counting or limiting matches.
-  if (tableExists(db, "events")) {
+  if (opts.scope !== "canon" && tableExists(db, "events")) {
     const current = currentVersionSql(db, {
       ceiling,
       ...(types === undefined ? {} : { types }),
