@@ -1,8 +1,9 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { accept, listAudit } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
-import { createHelpers } from "./helpers";
+import { createHelpers, fixtureConsent } from "./helpers";
 
 setDefaultTimeout(120_000);
 const { cleanup, tempVault, runCli } = createHelpers();
@@ -74,4 +75,25 @@ test("an unknown query contract is refused and audited even when the index is st
     expect(row?.served).toEqual([]);
     expect(row?.denied).toEqual([{ id: "tool:search", reason: "unsupported_contract" }]);
   } finally { db.close(); }
+});
+
+test("v2 queries preserve bounded excerpts and explicit full-text reads", () => {
+  const setup = tempVault();
+  writeFileSync(join(setup.notes, "long.md"), `zqxenvexcerpt ${"filler word ".repeat(500)}\n`);
+  const imported = runCli(setup.env, "import", "markdown-folder", "--source", setup.notes, ...fixtureConsent(setup.root));
+  expect(imported.exitCode, imported.stderr).toBe(0);
+  const args = ["query", "zqxenvexcerpt", "--scope", "ledger", "--response-contract", V2];
+  const bounded = runCli(setup.env, ...args, "--json");
+  expect(bounded.exitCode, bounded.stderr).toBe(0);
+  const [chunk] = JSON.parse(bounded.stdout).result.quoted;
+  expect(Array.from(chunk.text)).toHaveLength(600);
+  expect(chunk.truncated).toBe(true);
+  const text = runCli(setup.env, ...args);
+  expect(text.exitCode, text.stderr).toBe(0);
+  expect(text.stdout.trimEnd()).toEndWith("…");
+  const whole = runCli(setup.env, ...args, "--full-text", "--json");
+  expect(whole.exitCode, whole.stderr).toBe(0);
+  const [full] = JSON.parse(whole.stdout).result.quoted;
+  expect(full.text.length).toBeGreaterThan(5000);
+  expect(full.truncated).toBeUndefined();
 });
