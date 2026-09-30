@@ -1,6 +1,7 @@
 import type { ViewGap } from "../../contracts/concept-card";
 import type { ServeContext } from "../../serving/types";
 import type { WorldNamespace } from "../references";
+import type { WorldEvidenceSource } from "./evidence-types";
 
 /** Raised by any operation's parse or run; the gate audits it as invalid_arguments. */
 export class WorldViewError extends Error {
@@ -122,6 +123,7 @@ export type WorldOpOutcome =
       readonly data: WorldOpData;
       /** Null when the answer is complete; otherwise why it is not. */
       readonly gaps: readonly ViewGap[] | null;
+      readonly quoted?: readonly WorldEvidenceSource[];
     }
   | {
       readonly status: "unavailable";

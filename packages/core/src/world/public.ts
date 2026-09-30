@@ -43,3 +43,4 @@ export type {
   WorldReadResult,
   WorldViewEnvelope,
 } from "../serving/world-view";
+export type { WorldEvidenceData, WorldQuotedEvidence } from "./ops/evidence-types";

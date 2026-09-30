@@ -282,7 +282,7 @@ function span(value: unknown): value is EvidenceSpan {
   );
 }
 
-function evidenceRef(value: unknown): value is EvidenceRef {
+export function evidenceRef(value: unknown): value is EvidenceRef {
   return (
     isPlainObject(value) &&
     exact(value, ["admission", "eventVersion", "span"]) &&
