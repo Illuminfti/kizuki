@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
+import { isTruncatedReceipt } from "./doctor-extraction";
 import { parseRunReceipt } from "./receipts";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
 import type { RunReceipt } from "./types";
@@ -164,8 +165,8 @@ export function readDoctorRailHistory(db: Database, rail: string, since: string,
 }
 
 /** Only model attempts can end or extend the truncation streak. */
-export function readDoctorTruncationHistory(db: Database, since: string, limit: number): RunReceipt[] {
-  if (!tableExists(db, "run_receipts")) return [];
+export function readDoctorTruncationCount(db: Database, since: string, limit: number): number {
+  if (!tableExists(db, "run_receipts")) return 0;
   const rows = db.query<{ report: string }, [string, number]>(`WITH selected AS MATERIALIZED (
     SELECT report, run_id, finished_at FROM run_receipts WHERE rail='sync' AND finished_at >= ?
      ORDER BY finished_at DESC, run_id DESC LIMIT ?
@@ -177,9 +178,13 @@ export function readDoctorTruncationHistory(db: Database, since: string, limit: 
       AND json_extract(report,'$.run_id')=run_id AND json_extract(report,'$.finished_at')=finished_at
       AND json_extract(report,'$.rail')='sync'
       AND (${counter("model.calls")} > 0 OR json_type(report,'$.model.diagnostic')='object') ELSE 0 END
-    ORDER BY finished_at, run_id`);
-  return rows.all(since, limit).flatMap(row => {
+    ORDER BY finished_at DESC, run_id DESC`);
+  let count = 0;
+  for (const row of rows.iterate(since, limit)) {
     const receipt = parseRunReceipt(JSON.parse(row.report));
-    return receipt === null ? [] : [receipt];
-  });
+    if (receipt === null) continue;
+    if (isTruncatedReceipt(receipt)) count++;
+    else if (receipt.model.calls > 0 || receipt.model.diagnostic !== undefined) break;
+  }
+  return count;
 }

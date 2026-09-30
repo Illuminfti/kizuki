@@ -298,15 +298,33 @@ export function readModelRunHistory(db: Database, since: string, limit = 10_000)
   ).all(since, limit + 1);
   return {
     truncated: rows.length > limit,
-    receipts: rows.slice(0, limit).reverse().map(row => {
-      try {
-        const receipt = parseRunReceipt(JSON.parse(row.report));
-        // Keep an unknown position rather than letting malformed selected
-        // history make an earlier success appear to be the latest attempt.
-        return receipt?.rail === "sync" && receipt.run_id === row.run_id && receipt.finished_at === row.finished_at ? receipt : null;
-      } catch { return null; }
-    }),
+    receipts: rows.slice(0, limit).reverse().map(normalizeModelHistoryRow),
   };
+}
+
+function normalizeModelHistoryRow(row: { report: string; run_id: string; finished_at: string }): RunReceipt | null {
+  try {
+    const receipt = parseRunReceipt(JSON.parse(row.report));
+    // Preserve unknown positions rather than falsely resolving a newer attempt.
+    return receipt?.rail === "sync" && receipt.run_id === row.run_id && receipt.finished_at === row.finished_at ? receipt : null;
+  } catch { return null; }
+}
+
+/** Newest first. The return value records the extra raw row beyond the window. */
+export function visitModelRunHistory(
+  db: Database, since: string, limit: number,
+  visit: (receipt: RunReceipt | null) => void,
+): boolean {
+  if (!tableExists(db, "run_receipts")) return false;
+  const rows = db.query<{ report: string; run_id: string; finished_at: string }, [string, number]>(MODEL_RUN_HISTORY_SQL);
+  let count = 0;
+  for (const row of rows.iterate(since, limit + 1)) {
+    if (count === limit) return true;
+    visit(normalizeModelHistoryRow(row));
+    count++;
+    if (count % 128 === 0) Bun.gc(false);
+  }
+  return false;
 }
 
 /** Newest embed-backfill runs `readEmbeddingReceipts` looks through: a day at the default period. */

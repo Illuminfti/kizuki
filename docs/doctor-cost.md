@@ -11,8 +11,10 @@ Rail counts, last successful runs and degraded streak lengths are SQL
 aggregates over the existing bounded receipt windows. Calibration and daily
 write counters are SQL aggregates too. Doctor retains a small recent window
 for each rail's historical pending-work checks. Model attribution and failure
-diagnostics still use the bounded sync history when a model is configured;
-this is not an unbounded scan of every receipt.
+diagnostics stream the bounded sync history when a model is configured, keeping
+only the last outcomes and counters. Truncation checks stream only model attempts
+and stop at the first request that ends the streak. No report array for the
+selected sync window is retained.
 
 The run receipt JSONL file is a publication recovery journal. SQLite retains
 run audit history for the configured retention period. `journal-prune` first
@@ -36,7 +38,9 @@ bun packages/core/test/serve/doctor-cost-fixture.ts seed "$TMPDIR/doctor-cost" 1
 ```
 
 Scale `1` seeds 14,000 run receipts and 7,300 pages with neutral synthetic
-prose and ledger-linked provenance. Scale `10` multiplies both populations.
+prose and ledger-linked provenance. Scale `10` multiplies both populations. An optional fourth argument `on`
+configures a synthetic model reference with an absent environment credential,
+exercising model-history reads without making model requests.
 The existing 10,000-page and 64 MiB walk ceilings still apply: a larger vault
 reports truncated coverage rather than claiming to have checked every page.
 Measurements depend on the runtime entrypoint and machine load; this document
