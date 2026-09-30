@@ -863,7 +863,7 @@ describe("runToCompletion", () => {
       const replay = new ScriptedConnector([terminal, page(99, 1)]);
       expect(await runToCompletion(db, replay, "fixture", SOURCE, "backfill")).toMatchObject({ stored: 0, duplicates: 1, errors: [], cursor: "page-1" });
       expect(replay.cursors).toEqual(["page-1"]);
-      expect(Object.keys(first).sort()).toEqual(["stored", "duplicates", "errors", "proposals_created", "withdrawn", "retractions_filed", "cursor"].sort());
+      expect(Object.keys(first).sort()).toEqual(["stored", "duplicates", "errors", "proposals_created", "withdrawn", "retractions_filed", "cursor", "coverage"].sort());
     } finally { db.close(); }
   });
 

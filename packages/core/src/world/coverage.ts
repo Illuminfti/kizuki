@@ -146,17 +146,17 @@ function coverageReports(db: Database, sources: readonly string[] | null, filter
     const clauses = filter?.clauses ?? [LIVE_PREDICATE];
     const bindings = filter?.bindings ?? [];
     const where = `b.source_key=? AND ${clauses.join(" AND ")}`;
-    // Shift supported epoch seconds into positive, fixed-width keys. Reuse
+    // Shift epoch seconds to year zero for positive, fixed-width keys. Reuse
     // grant-window ordering, including nanoseconds, leap seconds and offsets.
+    // Keep the original timestamp behind the 23-character ordering prefix;
+    // aggregate both bounds in one pass instead of sorting twice.
     const totals = db.query<{ ingested: number; first: string | null; last: string | null }, (string | number)[]>(
       `WITH eligible AS MATERIALIZED (
-         SELECT events.occurred_at,
-           printf('%012d:%09d', ${instantSecondSql("events.occurred_at")} + 62167219200,
-             ${instantNanoSql("events.occurred_at")}) AS instant
+         SELECT printf('%012d:%09d:%s', ${instantSecondSql("events.occurred_at")} + 62167219200,
+             ${instantNanoSql("events.occurred_at")}, events.occurred_at) AS bound
          FROM source_event_bindings b JOIN events ON events.event_id=b.event_id WHERE ${where}
-       ) SELECT (SELECT count(*) FROM eligible) AS ingested,
-         (SELECT occurred_at FROM eligible ORDER BY instant, occurred_at LIMIT 1) AS first,
-         (SELECT occurred_at FROM eligible ORDER BY instant DESC, occurred_at LIMIT 1) AS last`
+       ) SELECT count(*) AS ingested, substr(min(bound),24) AS first,
+         substr(max(bound),24) AS last FROM eligible`
     ).get(source, ...bindings)!;
     const errors = checkpoint?.last_result.errors.length ?? 0;
     const complete = checkpoint?.backfill_complete === true;
