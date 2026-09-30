@@ -61,7 +61,8 @@ no MCP tool, write path, grant default or migration. Admission, exact event
 version and exact admitted UTF-16 span are revalidated on every call. A hidden,
 revoked, purged, other-principal, altered-version or absent target returns the
 same `not_found` result with empty canon and quoted channels. Malformed inputs
-receive the ordinary audited validation refusal.
+that reach Core receive its ordinary audited validation refusal. CLI usage
+errors and MCP SDK grammar rejections occur before that serving call.
 
 The envelope `data` contains only the evidence ref and result state; `canon`
 is empty. Captured text appears only in `quoted`, with `tainted: true`, the
