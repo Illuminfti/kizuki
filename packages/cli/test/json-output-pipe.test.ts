@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers, fixtureConsent } from "./helpers";
 
@@ -42,7 +42,11 @@ function unrelatedVault() {
   );
   expect(imported.exitCode).toBe(0);
   const dbPath = join(setup.vault, ".kizuki", "kizuki.db");
-  return { vault: setup.vault, dbPath, dbBytes: readFileSync(dbPath) };
+  // An access audit could land in WAL without changing the main database yet.
+  const snapshot = () => [dbPath, `${dbPath}-wal`, `${dbPath}-shm`].map(
+    path => existsSync(path) ? readFileSync(path) : null,
+  );
+  return { vault: setup.vault, snapshot, before: snapshot() };
 }
 
 function childEnv(overrides: Record<string, string | undefined>): Record<string, string> {
@@ -63,7 +67,7 @@ describe("machine output on a pipe", () => {
     const target = join(tempDir(), "redirected.json");
     const redirected = Bun.spawnSync([process.execPath, MAIN, ...args], { env, stdout: Bun.file(target), stderr: "pipe" });
     expect(redirected.exitCode).toBe(0);
-    expect(readFileSync(ambient.dbPath).equals(ambient.dbBytes)).toBe(true);
+    expect(ambient.snapshot()).toEqual(ambient.before);
     const fileBytes = readFileSync(target);
     expect(fileBytes.length).toBeGreaterThan(200_000);
 
@@ -75,7 +79,7 @@ describe("machine output on a pipe", () => {
     );
     const pipedBytes = Buffer.from(await new Response(piped.stdout).arrayBuffer());
     expect(await piped.exited).toBe(0);
-    expect(readFileSync(ambient.dbPath).equals(ambient.dbBytes)).toBe(true);
+    expect(ambient.snapshot()).toEqual(ambient.before);
 
     expect(pipedBytes.length).toBe(fileBytes.length);
     const parsed = JSON.parse(pipedBytes.toString("utf8")) as { data: { hits: unknown[] } };
@@ -90,6 +94,6 @@ describe("machine output on a pipe", () => {
       { env: childEnv({ ...setup.env, KIZUKI_VAULT: ambient.vault }), stdout: "pipe", stderr: "pipe" },
     );
     expect(result.stderr.toString()).not.toContain("EPIPE");
-    expect(readFileSync(ambient.dbPath).equals(ambient.dbBytes)).toBe(true);
+    expect(ambient.snapshot()).toEqual(ambient.before);
   });
 });
