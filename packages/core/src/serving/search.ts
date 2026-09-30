@@ -127,9 +127,9 @@ function absorbClassification(into: Classification, from: Classification): void 
   if (room > 0) into.withheld.push(...from.withheld.slice(0, room));
 }
 
-function boundedQuote(chunk: QuotedChunk, fullText: boolean): QuotedChunk {
+function boundedQuote(chunk: QuotedChunk, fullText: boolean, ctx: ServeContext): QuotedChunk {
   if (fullText) return chunk;
-  const { excerpt, truncated } = excerptOf(chunk.text, LEDGER_EXCERPT);
+  const { excerpt, truncated } = excerptOf(chunk.text, LEDGER_EXCERPT, ctx);
   return truncated ? { ...chunk, text: excerpt, truncated: true } : chunk;
 }
 
@@ -268,7 +268,7 @@ export async function serveSearch(
       }
       offset += ranked.candidates.length;
     }
-    const canon = classified.canon.slice(0, rows), quoted = classified.quoted.slice(0, Math.max(0, rows - classified.canon.length)).map(chunk => boundedQuote(chunk, fullText));
+    const canon = classified.canon.slice(0, rows), quoted = classified.quoted.slice(0, Math.max(0, rows - classified.canon.length)).map(chunk => boundedQuote(chunk, fullText, index.sourceContext));
     const canonicalSubjects = new Map(canon.map(chunk => [chunk.page_id, canonSubjects(index, index.byId.get(chunk.page_id)!)]));
     const projection = projectSubjectLabels(index, narrowed, at, [...canonicalSubjects.values()].flat().concat(quoted.flatMap(chunk => chunk.subjects)), canon.length + quoted.length);
     const audit = new Map<string, AuditItem>();
