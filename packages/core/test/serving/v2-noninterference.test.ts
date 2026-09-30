@@ -29,7 +29,14 @@ function cases(scene: NoninterferenceScene): ReadCase[] {
   };
   return TOOLS.map((tool) => ({
     name: tool,
-    run: (ctx) => dispatchServeTool(ctx, tool, inputs[tool], { response_contract: "kizuki.envelope/v2" }),
+    async run(ctx) {
+      const envelope = await dispatchServeTool(ctx, tool, inputs[tool], { response_contract: "kizuki.envelope/v2" });
+      if (tool !== "context_packet") return envelope;
+      // The harness normalizes random reference tokens. A packet's content
+      // digest must also compare literally, so retain it under a distinct key.
+      const packet = envelope.data as { result: { view?: { token: string } } };
+      return { envelope, baseline: packet.result.view?.token };
+    },
   }));
 }
 

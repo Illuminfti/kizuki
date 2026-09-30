@@ -367,6 +367,9 @@ function envelopeOf<T>(
   // and this pass covers every string that reaches the caller, whatever built it.
   const redactor = live.redactor ?? createRedactor(live.principal);
   const { canon, quoted, data } = redactValue(redactor, { canon: served.canon, quoted: served.quoted, data: served.data });
+  // Read once: conditional extra queries would expose the first hidden source
+  // through work counters even when the v2 projector omits policy metadata.
+  const policyEpoch = sourcePolicyEpoch(live.db);
   return {
     schema: ENVELOPE_SCHEMA,
     tool,
@@ -376,7 +379,7 @@ function envelopeOf<T>(
     quoted,
     denied: live.principal.kind === "owner" ? collapse(served.withheld) : [],
     ...(live.principal.kind === "owner" && served.withheld.length > 0 ? { has_withheld: true as const } : {}),
-    ...(sourcePolicyEpoch(live.db) === 0 ? {} : { source_policy: { mode: "enforced" as const, epoch: sourcePolicyEpoch(live.db), legacy_unbound: "owner_only" as const } }),
+    ...(policyEpoch === 0 ? {} : { source_policy: { mode: "enforced" as const, epoch: policyEpoch, legacy_unbound: "owner_only" as const } }),
     ...(Object.keys(redactor.counts).length === 0 ? {} : { redacted: { ...redactor.counts } }),
     ...(data === undefined ? {} : { data }),
   };

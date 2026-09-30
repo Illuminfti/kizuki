@@ -80,11 +80,10 @@ No ledger migration is needed. Existing owner compatibility tests remain the
 v1 contract guard. Typed chunk references, stored view-token lifecycle and
 world history are separate capabilities and are not claimed here.
 
-The ten-tool noninterference matrix currently exposes unresolved reader-policy
-dependencies: timeline's denial-only audit scan varies its work with hidden
-events, session claim selection reads hidden candidates, and raw correction
-targets distinguish inaccessible live claims from absent claims, and proposal
-provenance errors vary with a hidden source's consent. The envelope
-and packet changes close the serialized epoch channel; complete work-counter
-and error noninterference requires those shared-reader repairs. This change
-stays draft while that matrix fails.
+The ten-tool noninterference matrix checks response bytes, refusal errors and
+SQL work counters across hidden source revocation, correction, supersession,
+identity changes and purge. A separate regression covers the first hidden
+source on a previously unmanaged ledger. Loopback and real stdio tests check
+the serialized contract, and redaction tests prove that secret-shaped text is
+still replaced inside the seven-field envelope. These tests reuse the shared
+reader policy rather than introducing another authorization implementation.
