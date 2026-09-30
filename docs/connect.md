@@ -454,8 +454,9 @@ count of anything redacted.
   characters and invisible tag characters are removed before capture
   (`text_sanitized` in metadata). A turn that is empty after that is skipped.
 - Embedded system reminders, task notifications, command wrappers and hook
-  output blocks are dropped, while surrounding owner words survive, in both
-  Claude Code and Codex transcripts. An unfinished scaffold block drops its
+  output blocks (including injected Kizuki context) are dropped, while
+  surrounding owner words survive, in both Claude Code and Codex transcripts.
+  An unfinished scaffold block drops its
   remainder. Ordinary XML content remains evidence.
 - Secret-shaped strings are replaced by `[redacted:KIND]` before capture,
   because the ledger is append-only: private keys, API and access tokens, JWTs,

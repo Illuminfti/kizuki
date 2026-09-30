@@ -137,7 +137,8 @@ agent it replaces these shapes with `[redacted:<kind>]`: PEM blocks (`pem`), JWT
 Stripe live, Google, GitLab, npm and Slack app tokens (`api_token`), Bearer values
 (`bearer`), Basic and Token authorization values (`authorization`), credentials
 in URLs of any scheme (`url_credentials`), secret-named assignments in shell,
-JSON or YAML (`secret_assignment`), and mnemonic-like lowercase word runs
+JSON or YAML, including indented block scalars (`secret_assignment`), and
+mnemonic-like lowercase word runs
 (`seed_phrase`). The same Core patterns protect coding-session capture.
 Wrapped tokens, re-flowed PEM headers, blank lines after an assignment and
 percent-encoded credential forms are recognized. Existing redaction markers

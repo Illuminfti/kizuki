@@ -113,7 +113,8 @@ export function expandTimelineDetail(
   }
 
   const bounded = boundScrubText(source.text, 128 * 1024);
-  const served = redactorOf(ctx).text(bounded.text);
+  const redactor = redactorOf(ctx);
+  const served = redactor.text(bounded.text);
   const integrity = sha256(ctx.principal.kind === "owner" ? source.text : served);
   if (pinned !== undefined && !sameDigest(pinned, integrity)) {
     return { canon: [], quoted: [], withheld: [] };
@@ -122,7 +123,7 @@ export function expandTimelineDetail(
   // Offsets and totals describe the bounded served projection.
   const points = Array.from(served);
   const start = Math.min(offset, points.length);
-  const slice = points.slice(start, start + span).join("");
+  const slice = redactor.text(served, { offset: start, span });
   const returned = Array.from(slice).length;
   return {
     canon: [],

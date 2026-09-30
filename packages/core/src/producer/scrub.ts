@@ -34,12 +34,12 @@ const PEM_METADATA_LINE = /(?:Proc-Type|DEK-Info):[^\r\n]*(?:\r?\n|$)|[ \t]*\r?\
 const PEM_END = /-----END ([A-Z0-9 \t\r\n]{1,60})-----/y;
 const JWT = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g;
 const API_TOKEN = /(?:kzk_[0-9A-HJKMNP-TV-Z]{52}|kzs_[A-Za-z0-9_-]{43}|sk-[A-Za-z0-9_-]{20,}|[sr]k_live_[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{16,}|AIza[A-Za-z0-9_-]{30,}|(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9]))/g;
-const WRAPPED_TOKEN = /(kzk_|kzs_|sk-|[sr]k_live_|gh[pousr]_|github_pat_|glpat-|npm_|xox[abposr]-|xapp-|AIza|AKIA|ASIA)([A-Za-z0-9_-]{6,256})[ \t]{0,16}\r?\n[ \t]{0,16}([A-Za-z0-9_-]{6,512})/g;
+const WRAPPED_TOKEN = /(kzk_|kzs_|sk-|[sr]k_live_|gh[pousr]_|github_pat_|glpat-|npm_|xox[abposr]-|xapp-|AIza|AKIA|ASIA)([A-Za-z0-9_-]{0,256})[ \t]{0,16}\r?\n[ \t]{0,16}([A-Za-z0-9_-]{1,512})/g;
 const BEARER = /(\bBearer[ \t]+)([^\s"'<>,;]{16,})/gi;
 const AUTH_BEARER = /(\bAuthorization["']?\s{0,1024}[:=]\s{0,1024}["']?Bearer\s+)([^\s"'<>,;]{6,})/gi;
 const AUTHORIZATION = /(\bAuthorization["']?\s{0,1024}[:=]\s{0,1024}["']?(?:Basic|Token)\s+)([^\s"'<>,;]{4,})/gi;
 const AUTH_RAW = /(\bAuthorization["']?\s*[:=]\s*["']?)(?!(?:Bearer|Basic|Token)\b)([^\s"'<>,;]{4,})/gi;
-const URL_CREDENTIALS = /[A-Za-z][A-Za-z0-9+.-]{0,63}:\/\/([^\s\/:@]+:[^\s\/@]+)@/gd;
+const URL_CREDENTIALS = /[A-Za-z][A-Za-z0-9+.-]{0,63}:\/\/([^\s\/:@]+(?::[^\s\/@]*)?)@/gd;
 /**
  * A secret keyword anywhere in a name, then `=` or `:`, then the value: a quoted value
  * through its closing quote or the end of the line, an unquoted one through the
@@ -94,6 +94,31 @@ function seedSpans(run: string, offset: number): Span[] {
     index = last + 1;
   }
   return found;
+}
+
+/** A YAML block scalar ends at the first nonblank line below its body indent. */
+function yamlBlockEnd(text: string, field: number, valueEnd: number, indicator: string): number {
+  const newline = /^[ \t]*\r?\n/.exec(text.slice(valueEnd));
+  if (newline === null) return valueEnd;
+  const lineStart = text.lastIndexOf("\n", field - 1) + 1;
+  const fieldIndent = /^[ \t]*/.exec(text.slice(lineStart, field))![0].length;
+  let cursor = valueEnd + newline[0].length;
+  const explicitIndent = /[1-9]/.exec(indicator);
+  let bodyIndent = explicitIndent === null ? undefined : fieldIndent + Number(explicitIndent[0]);
+  let end = valueEnd;
+  while (cursor < text.length) {
+    const next = text.indexOf("\n", cursor);
+    const lineEnd = next < 0 ? text.length : next;
+    const line = text.slice(cursor, lineEnd).replace(/\r$/, "");
+    if (line.trim() !== "") {
+      const indent = /^[ \t]*/.exec(line)![0].length;
+      bodyIndent ??= indent;
+      if (bodyIndent <= fieldIndent || indent < bodyIndent) break;
+    }
+    end = cursor + line.length;
+    cursor = lineEnd + 1;
+  }
+  return end;
 }
 
 function spans(text: string): Span[] {
@@ -154,7 +179,11 @@ function spans(text: string): Span[] {
     const [start, end] = match.indices![1]!;
     found.push({ kind: "url_credentials", start, end });
   }
+  let blockEnd = 0;
   for (const match of /[:=]/.test(text) ? matches(text, ASSIGNMENT) : []) {
+    // A block's payload is already covered; nested key-looking lines must not
+    // repeatedly scan the same suffix.
+    if (match.index < blockEnd) continue;
     const which = [2, 3, 4].find(index => match[index] !== undefined)!;
     const [start, end] = match.indices![which]!;
     const value = match[which]!;
@@ -163,7 +192,10 @@ function spans(text: string): Span[] {
     const name = (prefix + match[0].slice(0, match[0].search(/["'\s=:]/))).toLowerCase();
     if (name === "token" && which === 4 && /:\s*\S+$/.test(match[0]) && /^(?:string|number|boolean|undefined|null)[,;.)\]}]*$/.test(value)) continue;
     if (/^(?:max_tokens|tokens|token_count|input_tokens|output_tokens)$/.test(name) && value.length < 8 && /^\d+[,;.)\]}]*$/.test(value)) continue;
-    found.push({ kind: "secret_assignment", start, end });
+    if (which === 4 && /^[|>](?:[1-9][+-]?|[+-][1-9]?)?$/.test(value) && match[0].includes(":")) {
+      blockEnd = yamlBlockEnd(text, match.index, end, value);
+      found.push({ kind: "secret_assignment", start, end: blockEnd });
+    } else found.push({ kind: "secret_assignment", start, end });
   }
   for (const match of matches(text, WORD_RUN)) found.push(...seedSpans(match[0], match.index));
   return found;

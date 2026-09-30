@@ -17,7 +17,8 @@ const LINE_BREAK = /\r\n|[\n\r\u000B\u000C\u0085\u2028\u2029]/;
 export interface Redactor {
   /** Replaced spans so far, per kind. Values never enter this. */
   readonly counts: RedactionCounts;
-  text(value: string): string;
+  /** A window is cut only after sanitation, in served code-point coordinates. */
+  text(value: string, window?: { offset: number; span: number; inline?: boolean }): string;
 }
 
 export function stripInvisible(value: string): string {
@@ -27,14 +28,27 @@ export function stripInvisible(value: string): string {
 export function createRedactor(principal: Pick<Principal, "kind">, exactSecrets: readonly string[] = []): Redactor {
   const counts: RedactionCounts = {};
   const scrub = principal.kind !== "owner";
+  // Remember only outputs, never raw secret-bearing inputs. A sliced marker
+  // is safe too, even though it no longer looks like a complete marker.
+  // This set belongs to one serving call and cannot bless another call's input.
+  const served = new Set<string>();
   return {
     counts,
-    text(value) {
-      const visible = sanitizeCapturedText(value);
-      if (!scrub && exactSecrets.length === 0) return neutralizeControlTags(visible);
-      const scrubbed = scrubText(visible, exactSecrets, scrub);
-      tallyRedactions(counts, scrubbed.redactions);
-      return neutralizeControlTags(scrubbed.text);
+    text(value, window) {
+      let output = value;
+      if (!served.has(value)) {
+        const visible = sanitizeCapturedText(value);
+        const scrubbed = scrubText(visible, exactSecrets, scrub);
+        tallyRedactions(counts, scrubbed.redactions);
+        output = neutralizeControlTags(scrubbed.text);
+        served.add(output);
+      }
+      if (window !== undefined) {
+        if (window.inline) output = output.replace(/\s+/g, " ").trim();
+        output = Array.from(output).slice(window.offset, window.offset + window.span).join("");
+        served.add(output);
+      }
+      return output;
     },
   };
 }

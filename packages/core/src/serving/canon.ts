@@ -258,10 +258,6 @@ export function canonChunk(
   };
 }
 
-export function collapseWhitespace(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
 /**
  * Code-point safe, so a surrogate pair at the boundary is never split. The
  * body is redacted before it is cut, so a secret straddling the cut is gone
@@ -273,9 +269,11 @@ export function excerptOf(
   ctx: ServeContext,
   style: "lines" | "inline" = "lines",
 ): { excerpt: string; truncated: boolean } {
-  const redacted = redactorOf(ctx).text(boundScrubText(body, maxChars * 2 + 4096).text);
-  const served = style === "inline" ? collapseWhitespace(redacted) : redacted;
-  const points = Array.from(served);
-  if (points.length <= maxChars) return { excerpt: served, truncated: body.length > maxChars * 2 + 4096 };
-  return { excerpt: points.slice(0, maxChars).join(""), truncated: true };
+  const bounded = boundScrubText(body, maxChars * 2 + 4096);
+  const redactor = redactorOf(ctx);
+  const served = redactor.text(bounded.text, { offset: 0, span: maxChars + 1, inline: style === "inline" });
+  return {
+    excerpt: redactor.text(served, { offset: 0, span: maxChars }),
+    truncated: bounded.truncated || Array.from(served).length > maxChars,
+  };
 }

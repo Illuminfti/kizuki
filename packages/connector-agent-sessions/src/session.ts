@@ -202,7 +202,6 @@ export class SessionReader {
     }
     const text = texts.join("\n\n");
     if (text.trim() === "") return { skip: "no_text" };
-    if (text.includes(SELF_CONTEXT_MARKER)) return { skip: "self_context" };
     const cwd = str(raw.cwd);
     if (
       cwd !== null &&
@@ -244,9 +243,11 @@ export class SessionReader {
   #event(turn: Turn, line: number): LineOutcome {
     const bounded = boundScan(turn.text);
     const sanitized = sanitize(bounded.text);
-    // A marker split by invisible characters only shows after sanitizing.
-    if (sanitized.text.includes(SELF_CONTEXT_MARKER)) return { skip: "self_context" };
-    const scrubbed = redact(dropScaffolding(sanitized.text));
+    const spoken = dropScaffolding(sanitized.text);
+    // Filter feedback after removing harness blocks, preserving the person's
+    // words around a hook-injected packet. Hidden characters are already gone.
+    if (spoken.includes(SELF_CONTEXT_MARKER)) return { skip: "self_context" };
+    const scrubbed = redact(spoken);
     if (scrubbed.text.trim() === "") return { skip: "no_text" };
     const cut = truncateUtf8(scrubbed.text, MAX_TEXT_BYTES);
     const redactions = Object.values(scrubbed.redactions).reduce(
