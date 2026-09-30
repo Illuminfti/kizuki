@@ -320,11 +320,22 @@ function reconstruct(
   };
 }
 
-function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectResult | null {
-  const eventId = recordedOwnerEvent(io.db, sourceRecordId(input.statement, input.target, input.world));
+/** The shared native recording identity also lets scoped clients acknowledge retries. */
+export function getRecordedCorrection(
+  db: Database,
+  input: Pick<CorrectInput, "statement" | "target" | "world">,
+): { event_id: string; claim: Claim } | null {
+  const eventId = recordedOwnerEvent(db, sourceRecordId(input.statement, input.target, input.world));
   if (eventId === null) return null;
-  const prior = recordedCorrection(io.db, eventId);
+  const prior = recordedCorrection(db, eventId);
   if (prior === null) return null;
+  return { event_id: eventId, claim: prior };
+}
+
+function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectResult | null {
+  const recorded = getRecordedCorrection(io.db, input);
+  if (recorded === null) return null;
+  const { event_id: eventId, claim: prior } = recorded;
   if (prior.status === "skipped") {
     throw new CorrectError("below_authority", "correction was below the live claim's authority");
   }

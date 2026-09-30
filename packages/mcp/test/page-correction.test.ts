@@ -18,7 +18,7 @@ afterEach(async () => {
   fixture = null;
 });
 
-test("MCP correct retires a source page and later source edits respect the correction", async () => {
+test.each(["claim_id", "claim_key"] as const)("MCP correct by %s retires a source page and retries idempotently", async (by) => {
   const f = mcpFixture();
   fixture = f;
   const target = "entities/atlas";
@@ -36,15 +36,22 @@ test("MCP correct retires a source page and later source edits respect the corre
     writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }),
   });
   const client = await connectClient(f.owner(), open);
-  const result = await call(client, "correct", { statement: "Corrected page body", target: { claim_id: original.claim_id } });
+  const request = { statement: "Corrected page body", target: by === "claim_id"
+    ? { claim_id: original.claim_id } : { claim_key: original.claim_key! } };
+  const result = await call(client, "correct", request);
   expect(result.isError ?? false).toBe(false);
-  const data = envelopeOf(result)["data"] as { claim_id: string; superseded: { claim_id: string }[] };
+  const data = envelopeOf(result)["data"] as { event_id: string; claim_id: string; superseded: { claim_id: string }[] };
   expect(data.superseded.map(c => c.claim_id)).toContain(original.claim_id);
   expect(getClaim(f.db, data.claim_id)?.claim_key).toBe(original.claim_key);
   const path = join(f.vaultPath, written.page_path);
   const bytes = readFileSync(path, "utf8");
   expect(bytes).toContain("Corrected page body");
   expect(bytes).not.toContain("Original page body");
+  const repeated = await call(client, "correct", request);
+  expect(repeated.isError ?? false).toBe(false);
+  expect((envelopeOf(repeated)["data"] as { claim_id: string }).claim_id).toBe(data.claim_id);
+  expect((envelopeOf(repeated)["data"] as { event_id: string }).event_id).toBe(data.event_id);
+  expect(readFileSync(path, "utf8")).toBe(bytes);
   expect(revision("Later source body").errors).toEqual([]);
   expect(getClaim(f.db, data.claim_id)?.status).toBe("live");
   expect(listClaims(f.db, { status: "live", limit: 20 }).filter(c => c.claim_key === original.claim_key)).toHaveLength(1);
