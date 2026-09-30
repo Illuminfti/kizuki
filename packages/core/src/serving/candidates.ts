@@ -235,6 +235,7 @@ export async function collectPieces(
   const index = loadCanon(ctx);
   const pieces: Piece[] = [];
   const packed = new Set<string>();
+  let queryMatched = request.query === undefined;
 
   if (request.include.includes("canon")) {
     const fromPort: CanonPage[] = nominated.ids.flatMap((id) => {
@@ -271,6 +272,7 @@ export async function collectPieces(
     // Keywords may use an engine's fuzzy match. Question candidates still
     // need the floor's content coverage; port text is never evidence.
     if (request.query === undefined || !isQuestionQuery(request.query)) candidates.push(...fromPort);
+    const queryPages = new Set(candidates.map(page => page.id));
     if (request.subjects !== undefined) {
       const wanted = request.subjects;
       for (const page of index.pages) {
@@ -292,6 +294,7 @@ export async function collectPieces(
       if (packed.has(page.id) || !eligible(page)) continue;
       const decision = pageDecision(index, grant, page);
       if (!decision.allow) continue;
+      if (queryPages.has(page.id)) queryMatched = true;
       packed.add(page.id);
       const { excerpt, truncated } = excerptOf(page.body, CANON_EXCERPT, ctx);
       const chunk = canonChunk(index, page, decision, excerpt, truncated);
@@ -375,6 +378,7 @@ export async function collectPieces(
         ...(wanted === undefined ? {} : { subjects: wanted }),
         ...(kinds === undefined ? {} : { kinds }),
       });
+      if (found.quoted.length > 0) queryMatched = true;
       for (const chunk of found.quoted) {
         packedEvents.add(chunk.event_id);
         matched.push(chunk);
@@ -472,7 +476,7 @@ export async function collectPieces(
   if (
     request.query !== undefined &&
     (request.include.includes("canon") || request.include.includes("timeline")) &&
-    !pieces.some((piece) => piece.section === "canon" || piece.section === "timeline")
+    !queryMatched
   ) {
     nominated.degraded.push(NO_MATCH_LABEL);
   }

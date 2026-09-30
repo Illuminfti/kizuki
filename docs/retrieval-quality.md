@@ -47,6 +47,8 @@ page still returns that page, at a `coverage` the caller can inspect.
 - A packet with a query picks its canon pages and, within its window, its
   captures by that query. Named subjects add their other recent captures after
   the matches. Without a query the packet is the window's recent captures.
+  Background profiles and captures do not conceal an unanswered query: the
+  packet still reports `query-no-match` when none of its query-selected evidence matches.
 
 ## Bounded work
 

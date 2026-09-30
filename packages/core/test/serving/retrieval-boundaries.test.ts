@@ -136,3 +136,15 @@ test("a recency packet also folds captures into their canon page", async () => {
     expect(packet.quoted.map(chunk => chunk.event_id)).not.toContain(f.events["public"]!);
   } finally { f.dispose(); }
 }, 120_000);
+
+test("named-subject background context does not disguise an unanswerable question", async () => {
+  const f = await serveFixture();
+  try {
+    const packet = await serveContextPacket(f.owner(), {
+      query: "What is the airspeed velocity of an unladen swallow?",
+      subjects: ["person:ada"], include: ["canon", "timeline"], ...WINDOW,
+    });
+    expect(packet.canon.length).toBeGreaterThan(0);
+    expect(packet.data?.retrieval_degraded).toContain("query-no-match");
+  } finally { f.dispose(); }
+}, 120_000);
