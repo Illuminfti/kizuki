@@ -12,8 +12,8 @@ function writerBusy(error: unknown): boolean {
 /**
  * Runs an owner verb, trying again while another canon write holds the writer.
  * A busy writer refuses before the verb does anything, so a retry repeats no
- * effect. The sync pass lets the writer go between pages, so the wait is one
- * page at most, not a whole pass.
+ * effect. The sync pass lets the writer go between pages, allowing a waiting
+ * owner verb to acquire it before the pass finishes.
  */
 export async function whileWriterBusy<T>(work: () => Promise<T>, waitMs = WRITER_WAIT_MS): Promise<T> {
   const deadline = performance.now() + waitMs;

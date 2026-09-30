@@ -92,6 +92,29 @@ describe("run receipts", () => {
     expect(log).toContain("[path]");
     db.close();
   });
+
+  test("generated typed page locators survive receipts while secrets and malformed locators do not", () => {
+    const { path, db } = vault();
+    try {
+      const handle = "a".repeat(32), other = "b".repeat(32);
+      const locator = `page ${handle} at auto/world/${handle}.md`;
+      const marker = "synthetic-secret-value-1234567890";
+      const receipt = { ...emptyRunTotals(), run_id: "fixture-page-failure", rail: "sync",
+        started_at: "2026-03-01T00:00:00.000Z", finished_at: "2026-03-01T00:00:01.000Z",
+        status: "degraded" as const, stopped: null, errors: [
+          `secret=${marker} (${locator})`,
+          `typed ${locator} set aside until 2026-03-02T00:00:00.000Z after 3 failed passes`,
+          `failure (page ${handle} at auto/world/${other}.md)`,
+        ] };
+      persistRunReceipt(db, path, receipt);
+      const stored = getRunReceipt(db, receipt.run_id)!;
+      expect(stored.errors[0]).toBe(`secret=[redacted] (${locator})`);
+      expect(stored.errors[1]).toBe(receipt.errors[1]!);
+      expect(stored.errors[2]).not.toContain(handle);
+      expect(stored.errors[2]).not.toContain(other);
+      expect(readFileSync(join(path, ".kizuki", "run-receipts.jsonl"), "utf8")).not.toContain(marker);
+    } finally { db.close(); }
+  });
 });
 
 test("malformed existing receipt cannot consume the recovered schedule transition", () => {

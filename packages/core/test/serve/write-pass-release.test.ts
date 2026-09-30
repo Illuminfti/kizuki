@@ -91,7 +91,7 @@ test("a run budget below 32 stops the pass at its limit", async () => {
 });
 
 test("serve.toml's canon_writes_per_run raises the pages a sync rail writes per pass past 32, and lowers them below", async () => {
-  const { path, db, options } = pending(34);
+  const { path, db, options } = pending(43);
   const hooks = { model_ref: "fixture/model", producer, claims: { db } };
   writeFileSync(join(path, ".kizuki", "serve.toml"), "[budget]\ncanon_writes_per_run = 3\n");
   const small = await runRail(db, path, "sync", { hooks });
@@ -99,7 +99,7 @@ test("serve.toml's canon_writes_per_run raises the pages a sync rail writes per 
   expect(small.stopped).toBe("budget:canon_writes_per_run");
   writeFileSync(join(path, ".kizuki", "serve.toml"), "[budget]\ncanon_writes_per_run = 40\n");
   const large = await runRail(db, path, "sync", { hooks });
-  expect(large.canon_writes).toBe(31);
+  expect(large.canon_writes).toBe(40);
   const rest = await runWritePass(db, path, options());
   expect(rest.canon_writes).toBe(0);
   db.close();

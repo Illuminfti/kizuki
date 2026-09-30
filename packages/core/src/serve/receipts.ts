@@ -48,6 +48,15 @@ export function redactReceiptText(text: string): string {
     .replace(/\b[A-Za-z0-9_-]{20,}\b/g, "[redacted]");
 }
 
+/** Keep only the writer's closed, synthetic page locator; the error stays redacted. */
+function redactRunError(text: string): string {
+  const failure = /^(.*)( \(page ([0-9a-f]{32}) at auto\/world\/([0-9a-f]{32})\.md\))$/.exec(text);
+  if (failure !== null && failure[3] === failure[4]) return redactReceiptText(failure[1]!) + failure[2]!;
+  const quarantine = /^typed page ([0-9a-f]{32}) at auto\/world\/([0-9a-f]{32})\.md set aside until (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) after ([1-9]\d*) failed passes$/.exec(text);
+  if (quarantine !== null && quarantine[1] === quarantine[2] && Number.isFinite(Date.parse(quarantine[3]!))) return text;
+  return redactReceiptText(text);
+}
+
 /** A display marker cannot recover the original model reference identity. */
 export function isRedactedModelReference(reference: string): boolean {
   return reference.includes("[redacted]") || reference.includes("[path]");
@@ -194,7 +203,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     errors: Array.isArray(value["errors"])
       ? value["errors"]
           .filter((item): item is string => typeof item === "string")
-          .map(redactReceiptText)
+          .map(redactRunError)
       : [],
   };
 }
@@ -448,7 +457,7 @@ function redactReceipt(receipt: RunReceipt): RunReceipt {
     ? sha256Hex(reference) : readModelReferenceDigest(rawDigest);
   return {
     ...receipt,
-    errors: receipt.errors.map(redactReceiptText),
+    errors: receipt.errors.map(redactRunError),
     model: {
       ...model,
       ...(diagnostic === undefined ? {} : { diagnostic }),

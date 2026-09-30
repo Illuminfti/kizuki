@@ -1,5 +1,6 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
-import * as apply from "../../src/canon/apply";
+import { afterEach, expect, test } from "bun:test";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { worldCanonPath, worldClaimHandle } from "../../src/canon/world-materialization";
 import { getClaim } from "../../src/claims/store";
@@ -8,6 +9,9 @@ import { inspectServeDoctor } from "../../src/serve/doctor";
 import { runWritePass } from "../../src/serve/write-pass";
 import { QUARANTINE_MS, listQuarantinedPages } from "../../src/serve/write-quarantine";
 import { worldFixture } from "../serving/world-fixture";
+import { runRail } from "../../src/serve/rails";
+import { getRunReceipt } from "../../src/serve/receipts";
+import { serializePage } from "../../src/vault/frontmatter";
 import { canonFixture } from "../canon/helpers";
 import type { CanonFixture } from "../canon/helpers";
 
@@ -28,13 +32,13 @@ async function group(f: CanonFixture, index: number) {
   return { world, handle, path: worldCanonPath(handle) };
 }
 
-/** The typed writer refusing these pages, as it does one whose predecessor the owner edited. */
-function refuse(paths: ReadonlySet<string>) {
-  const write = apply.applyCanonWriteOwned;
-  return spyOn(apply, "applyCanonWriteOwned").mockImplementation((scope, io, claims, decision, options) => {
-    if ("rel_path" in decision && paths.has(decision.rel_path)) throw new Error("typed canon predecessor is not recorded");
-    return write(scope, io, claims, decision, options);
-  });
+/** An unrecorded predecessor is preserved by the real writer and refuses this group. */
+function unrecordedPredecessor(vault: string, path: string) {
+  const file = join(vault, path);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, serializePage({ data: {
+    id: `topic:${path.slice("auto/world/".length, -3)}`, type: "topic", status: "active", sensitivity: "private", taint: "quoted", sources: [],
+  }, body: "Synthetic unrecorded predecessor." }));
 }
 
 test("stuck typed pages do not starve a healthy one, and are set aside after three failed passes", async () => {
@@ -43,7 +47,7 @@ test("stuck typed pages do not starve a healthy one, and are set aside after thr
   const stuck = [];
   for (let index = 0; index < 33; index += 1) stuck.push(await group(f, index));
   const healthy = await group(f, 33);
-  const refusal = refuse(new Set(stuck.map(page => page.path)));
+  for (const page of stuck) unrecordedPredecessor(f.vault, page.path);
   let clock = Date.parse("2026-03-01T00:00:00.000Z");
   const pass = () => runWritePass(f.db, f.vault, {
     budget: createBudgetTracker({ canon_writes_per_run: 40 }),
@@ -80,25 +84,26 @@ test("stuck typed pages do not starve a healthy one, and are set aside after thr
   const retry = await pass();
   expect(retry.errors.filter(error => error.includes("set aside until"))).toHaveLength(33);
   expect(listQuarantinedPages(f.db, new Date(clock).toISOString()).every(page => page.attempts === 4)).toBe(true);
-  refusal.mockRestore();
 }, 180_000);
 
 test("a page that starts to write is cleared, and doctor lists what is set aside", async () => {
   const f = canonFixture();
   fixtures.push(f);
   const created = await group(f, 0);
-  const refusal = refuse(new Set([created.path]));
+  unrecordedPredecessor(f.vault, created.path);
   let clock = Date.parse("2026-03-01T00:00:00.000Z");
   const now = () => new Date(clock).toISOString();
-  const pass = () => runWritePass(f.db, f.vault, {
-    budget: createBudgetTracker({ canon_writes_per_run: 8 }), model_ref: "fixture/model", claims: { db: f.db }, producer, now,
+  const pass = () => runRail(f.db, f.vault, "sync", {
+    hooks: { model_ref: "fixture/model", claims: { db: f.db }, producer }, now,
   });
-  for (let index = 0; index < 3; index += 1) { await pass(); clock += 60_000; }
+  let receipt;
+  for (let index = 0; index < 3; index += 1) { receipt = await pass(); clock += 60_000; }
+  expect(getRunReceipt(f.db, receipt!.run_id)!.errors.join("\n")).toContain(`page ${created.handle} at ${created.path}`);
   const report = inspectServeDoctor(f.db, f.vault, { now: now() });
   expect(report.quarantined.detail).toBe("quarantined typed pages=1");
   expect(report.quarantined.pages[0]).toMatchObject({ handle: created.handle, path: created.path, attempts: 3 });
   // The owner fixes what stuck it; after the day the page is tried, written, and forgotten.
-  refusal.mockRestore();
+  unlinkSync(join(f.vault, created.path));
   clock += QUARANTINE_MS;
   const written = await pass();
   expect(written.errors).toEqual([]);
