@@ -19,7 +19,6 @@ import {
   OWNER,
   initAgents,
   initVault,
-  rebuildDerived,
   isPlainObject,
   MAX_CURSOR_BYTES,
   MAX_PROPOSAL_BODY_CHARS,
@@ -30,7 +29,7 @@ import {
   serveTimeline,
 } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
-import { openLedger, timeline } from "@kizuki/core/testing";
+import { openLedger, rebuildDerived, timeline } from "@kizuki/core/testing";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
 import {
