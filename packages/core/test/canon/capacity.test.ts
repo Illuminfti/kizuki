@@ -321,6 +321,29 @@ describe("the writer at the ceiling", () => {
     expect(readFileSync(join(vault, original.page_path))).toEqual(before);
   });
 
+  test("a small edit cannot exhaust the remaining inventory bytes", async () => {
+    const { vault, db, io } = fixture(100);
+    const source = putEvent(db);
+    const original = write(io, await storeClaim(db, source));
+    fill(vault, 99, "active");
+    writeFileSync(join(vault, ".kizuki", "serve.toml"), "[canon]\nmax_live_pages = 100\nmax_scan_bytes = 65536\n");
+    const paddingPath = join(vault, "bulk", "active-0.md");
+    const usage = listCanonPagesReport(vault).scanned_bytes;
+    writeFileSync(paddingPath, Buffer.concat([readFileSync(paddingPath), Buffer.alloc(64_536 - usage, 0x78)]));
+    expect(listCanonPagesReport(vault).scanned_bytes).toBe(64_536);
+    const before = readFileSync(join(vault, original.page_path));
+    const edit = await storeClaim(db, source, {
+      kind: "edit", predicate: "employment.role", object: "revised", body: "A synthetic note. ".repeat(100),
+    });
+    expect(() => write(io, edit)).toThrow(expect.objectContaining({ code: "canon_scan_incomplete" }));
+    expect(readFileSync(join(vault, original.page_path))).toEqual(before);
+    expect(db.query("SELECT receipt_id FROM claims WHERE claim_id=?").get(edit.claim_id)).toEqual({ receipt_id: null });
+    expect(listCanonPagesReport(vault).truncated).toBe(false);
+    await expect(serveSearch({ db, vaultPath: vault, principal: OWNER }, { query: "Grace" })).resolves.toBeDefined();
+    expect(previewPurge(db, vault, { event_id: source }, "fixture cleanup").event_count).toBe(1);
+    expect(() => rebuildDerived(db, vault)).not.toThrow();
+  });
+
   test("typed edits precede more held handles than a bounded typed pass can select, including restart", async () => {
     const { vault, db: initialDb } = fixture(100);
     let db = initialDb;
