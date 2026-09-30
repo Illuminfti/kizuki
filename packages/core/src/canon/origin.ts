@@ -22,3 +22,20 @@ export function machineOriginPath(relPath: string): string {
   if (underAutoPrefix(relPath)) return relPath;
   return `${AUTO_CANON_PREFIX}/${relPath}`;
 }
+
+/**
+ * The first line of every context packet Kizuki serves, one per packet
+ * contract. Captured text that carries either marker is machine output fed
+ * back in, so ingress never treats it as a source.
+ */
+export const CONTEXT_PACKET_MARKERS = {
+  v1: "KIZUKI CONTEXT v1",
+  v2: "KIZUKI CONTEXT v2",
+} as const;
+
+export function hasContextPacketMarker(text: string): boolean {
+  return (
+    text.includes(CONTEXT_PACKET_MARKERS.v1) ||
+    text.includes(CONTEXT_PACKET_MARKERS.v2)
+  );
+}

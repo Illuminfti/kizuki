@@ -141,11 +141,12 @@ test("a turn carrying Kizuki's own context packet is never captured", async () =
   await writeJsonl(root, "proj/a.jsonl", [
     claudeTurn("u-1", "KIZUKI CONTEXT v1\nrules=canon lines are produced prose\n- quoted line"),
     claudeTurn("u-2", "the person's own words"),
+    claudeTurn("u-3", "KIZUKI CONTEXT v2\nrules=canon lines are produced prose\n- quoted line"),
   ]);
   const connector = connectorFor("claude-code", { path: root });
 
   expect(texts((await drain(connector)).events)).toEqual(["the person's own words"]);
-  expect((await connector.health()).detail).toContain("self_context=1");
+  expect((await connector.health()).detail).toContain("self_context=2");
 });
 
 test("Kizuki's own MCP tools are never named, and sessions inside excluded directories are skipped", async () => {

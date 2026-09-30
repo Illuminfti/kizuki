@@ -35,8 +35,7 @@ export function chooseContract(
       : requested;
   if (contract !== ENVELOPE_SCHEMA && contract !== ENVELOPE_V2_SCHEMA)
     return null;
-  if ((tool === "system_health" || tool === "context_packet") && contract === ENVELOPE_V2_SCHEMA)
-    return null;
+  if (tool === "system_health" && contract === ENVELOPE_V2_SCHEMA) return null;
   if (tool === "world_view" && contract === ENVELOPE_SCHEMA) return null;
   return contract;
 }
