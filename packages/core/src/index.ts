@@ -137,11 +137,13 @@ export type {
   AuthMode,
   Connector,
   Cursor,
+  CursorStoreDelta,
   HealthReportInit,
   HealthState,
   Manifest,
   ManifestCapabilities,
   PurgePlan,
+  RunContext,
   SecretResolver,
   SignInIo,
   SignInDisplay,
@@ -153,6 +155,7 @@ export {
   CONNECTOR_OPERATION_DEADLINE_MS,
   CONNECTOR_SIGN_IN_DEADLINE_MS,
   MAX_CURSOR_BYTES,
+  MAX_CURSOR_STORE_BYTES,
   MAX_SYNC_BATCH_BYTES,
   MAX_SYNC_BATCH_EVENTS,
 } from "./contracts/connector";
@@ -767,6 +770,7 @@ export type {
   ConnectionRunStatus,
   Inspected,
 } from "./ledger/connections";
+export { cursorStoreDeltaError, cursorStoreOverflow, readCursorStore } from "./ledger/cursor-store";
 export { scopedSecretResolver } from "./ledger/secret-scope";
 export { assertConnectorBrowserUrl, guardedSignInIo } from "./ledger/sign-in-guard";
 export { DeadlineError, withDeadline } from "./util/deadline";
@@ -1154,6 +1158,8 @@ export type { RebuildBudget } from "./retrieval/rebuild";
 export { planFullReembed, embeddingThroughputFromReceipts, formatReembedRefusal } from "./retrieval/reembed";
 export type { ReembedPlan } from "./retrieval/reembed";
 export { claimRetrievalDoc } from "./claims/store";
+export { countCaptureFanout, isCaptureFanoutSkip } from "./claims/capture-fanout";
+export type { CaptureFanoutCounts } from "./claims/capture-fanout";
 
 export { ESTATE_IMPORT_LIMITS } from "./contracts/estate-import";
 export type { EstateIssueCode, EstateImportIssue, EstateImportMapping, EstateImportReport, EstateSlice, EstateRecord, EstateAuthorization } from "./contracts/estate-import";

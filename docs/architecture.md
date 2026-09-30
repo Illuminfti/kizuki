@@ -162,6 +162,31 @@ Existing two-argument connectors keep their behavior. Implementations that
 require this context refuse context-less calls; hosts never infer the mode from
 the presence of a secret reference.
 
+**Cursor bound and the host-held cursor store.** A checkpoint cursor is opaque
+to the host and capped at `MAX_CURSOR_BYTES` (8 KiB); a larger cursor is
+refused and the batch never checkpoints. A source whose resume state grows
+with the account (one entry per dialog or per folder) declares
+`capabilities.cursor_store: "host"`. The host then lends the connector the
+committed side map (`RunContext.cursor_store`, a read-only string map) on
+`backfill` and `sync`, and the connector returns changes as
+`SyncBatch.cursor_store`, a delta where a string sets a key and `null` deletes
+one. The host writes that delta in the same transaction as the checkpoint and
+run receipt, and only when the run's checkpoint advances, so a failed,
+unavailable or refused run leaves the map where the last commit put it. The
+map is per connection, shared by `backfill` and `sync`, and capped at 1 MiB
+(`MAX_CURSOR_STORE_BYTES`) and 10,000 entries; a delta that would pass either
+is refused before any event of the batch is stored. A connector that did not
+declare the capability is called exactly as before and a delta from it is
+refused. The wire cursor should still change whenever the map does (Telegram
+and IMAP carry a digest of it), because the runner treats an unchanged cursor
+as no progress. The map is operational resume state kept in the ledger table
+`connector_cursor_store` (ledger version 35). It is not derived from the
+ledger and cannot be rebuilt from it, it is not exported, and it is safe to
+lose: the connector walks again and the ledger dedupes what it already holds.
+The one map is shared by `backfill` and `sync`, so the host does not check a
+cursor's digest against it. A restored connection re-enrols with a new
+source key as before.
+
 ## Storage
 
 Status: designed
@@ -225,7 +250,8 @@ degraded, and the extraction backlog. The brief and doctor-sweep rails also
 rewrite a daemon-written brief that fails the page schema (or holds only the
 run id a failed brief run left behind) and record the count as `pages_repaired`
 on the run receipt; a page that cannot be repaired degrades the run and names
-its day. The run receipt is the record for this repair: daemon brief pages are
+its day. The doctor sweep also closes out capture notes that earlier revisions
+filed for chat and email records, and records that count as `captures_skipped`. The run receipt is the record for this repair: daemon brief pages are
 not canon and carry no canon receipt. A brief that names a private page
 is itself stamped private. A scheduled run that did something writes a receipt,
 and an idle one writes at most one an hour per rail while its schedule still

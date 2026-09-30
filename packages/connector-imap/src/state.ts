@@ -17,6 +17,11 @@ export interface ImapState {
   password: string;
   folders: string[];
   max_message_bytes: number;
+  /**
+   * Optional date floor, `YYYY-MM-DD`: mail received before it (by
+   * INTERNALDATE, midnight UTC) is not read. Absent means the whole mailbox.
+   */
+  since?: string;
 }
 
 const FIELDS = [
@@ -27,6 +32,7 @@ const FIELDS = [
   "password",
   "folders",
   "max_message_bytes",
+  "since",
 ] as const;
 
 /** Field names only: a rejection reason must never carry a credential. */
@@ -59,6 +65,14 @@ export function validatePort(port: unknown): number {
     refuse("port", "must be an integer in 1..65535");
   }
   return port as number;
+}
+
+export function validateSince(since: string): string {
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(since) ? new Date(`${since}T00:00:00.000Z`) : null;
+  if (parsed === null || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== since) {
+    refuse("since", "must be a calendar date, YYYY-MM-DD");
+  }
+  return since;
 }
 
 function validateFolders(raw: unknown): string[] {
@@ -127,6 +141,9 @@ export function parseImapState(text: string): ImapState {
     password: requireString(parsed, "password"),
     folders: validateFolders(parsed["folders"]),
     max_message_bytes: maxMessageBytes as number,
+    ...(parsed["since"] === undefined
+      ? {}
+      : { since: validateSince(typeof parsed["since"] === "string" ? parsed["since"] : "") }),
   };
 }
 
@@ -140,6 +157,7 @@ export function serializeImapState(state: ImapState): Uint8Array {
       password: state.password,
       folders: state.folders,
       max_message_bytes: state.max_message_bytes,
+      ...(state.since === undefined ? {} : { since: state.since }),
     }),
   );
 }

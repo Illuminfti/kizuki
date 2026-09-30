@@ -55,7 +55,7 @@ export function event(overrides: Partial<CaptureEvent> = {}): CaptureEvent {
     event_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
     connector_id: "fixture",
     source_record_id: "rec-1",
-    kind: "message",
+    kind: "file",
     occurred_at: "2026-02-28T10:30:00Z",
     observed_at: "2026-03-01T00:00:00Z",
     text: "the kettle is on",

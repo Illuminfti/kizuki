@@ -132,8 +132,9 @@ usage: kizuki connect [--list|status] [--json]
 
 Browse sources, inspect saved sync status, or enroll a source. Local Beeper
 enrollment checks its authenticated Desktop API before saving a secret
-reference. IMAP enrollment uses a local interactive prompt and stores its
-opaque connector state in the owner-only connection-state store. File sources
+reference. IMAP enrollment uses a local interactive prompt, ending with an
+optional date floor, and stores its opaque connector state in the owner-only
+connection-state store. File sources
 remain supported. `connect telegram` uses native phone/code sign-in and
 optional two-step verification in an interactive terminal. Project app
 credentials are required; missing credentials refuse before any prompt or
@@ -394,7 +395,12 @@ Vault path, event count, claim counts (filed/live/written/unwritten) with a
 `live_by_producer` split on the same line that separates `model_extracted`
 claims from `deterministic_floor` (claims the deterministic floor staged
 without a model: imported page mirrors, verbatim capture notes and entity
-stubs; JSON: `claims.by_producer`), live
+stubs; JSON: `claims.by_producer`), a separate `capture fan-out skipped=N
+pending=M` line (JSON: `claims.capture_fanout`) that counts capture notes of
+chat and email records closed out as `skipped` with reason
+`message_capture_fanout` apart from the real unwritten claims, and names
+`kizuki serve run doctor-sweep` while `pending` notes still wait to be closed,
+live
 claim ids (for `tell --claim`), leftover skipped rows, connections,
 checkpoints (with the first error of each source's last run as `last_error`),
 derived-index freshness, writer ROLE stamps, machine vs human
@@ -443,8 +449,17 @@ cause: the failed run's error, the error most of the degraded or stopped runs
 share, or the work that is waiting. The `doctor-sweep` rail records what
 `serve status` would fail on, except what only the supervisor can know, as its
 receipt's errors and marks itself `degraded`, so it never reads `ok` beside a
-failed report. Its own degraded runs are not a fault of the rail. Doctor reads
-the newest 2,000 sync receipts and the newest 200 of every other rail.
+failed report. Its own degraded runs are not a fault of the rail. The same
+rail also closes out capture notes that earlier revisions filed for chat and
+email records (one per message, all on one `captures/<connector>/<day>` page):
+each unwritten one becomes a `skipped` claim with `x-skip-reason:
+message_capture_fanout`, is never deleted, creates no canon page, and is counted
+as `captures_skipped` on the run receipt. Notes a receipt already wrote are left
+alone. A busy writer or pending canon-write intent defers the repair until
+recovery completes. Each batch commits its receipt progress with the skipped
+claims; restart finishes receipt publication. These notes are excluded from
+unwritten canon work even before the sweep, and a second run changes nothing.
+Doctor reads the newest 2,000 sync receipts and the newest 200 of every other rail.
 
 The model line reports the model the way the daemon's receipts do. From a shell
 that lacks the daemon's secret, doctor cannot bind the model, so it prints what
@@ -1228,8 +1243,11 @@ Telegram enrollment captures no history. Use `backfill telegram --source KEY`
 after the source is authorized. The first backfill has no date floor: it reads
 every listed dialog back to its beginning in batches of at most 500 events,
 across at most 5,000 dialogs, and reports degraded health when the listing
-bound truncates the view. Each later pass re-reads only the last 200 messages
-of a dialog for edits. The connection's opaque protected session holds
+bound truncates the view. A batch stops between dialogs after about 40 seconds
+so a slow account takes more batches rather than passing the 60 second limit on
+one call, and the per-dialog progress is held in the ledger beside the
+checkpoint so it does not have to fit the 8 KiB cursor bound. Each later pass
+re-reads only the last 200 messages of a dialog for edits. The connection's opaque protected session holds
 provider cooldowns, and the native CLI persists those before returning a wait;
 reopening the source checks the cooldown before opening transport. Transport
 cleanup never logs out the Telegram session. Source-consent revocation and

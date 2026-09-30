@@ -1,0 +1,74 @@
+import { expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runEvaluation, renderMarkdown } from "./run";
+import { scoreObservation } from "./score";
+import { persona } from "./persona";
+import { packetTokens } from "../../../packages/core/src/serving/packet-tokenizer";
+
+test("runner refuses a flag used as an output path before touching the destination", async () => {
+  const root = mkdtempSync(join(tmpdir(), "fresh-agent-arguments-"));
+  try {
+    const sentinel = join(root, "--size");
+    writeFileSync(sentinel, "preserve this file");
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, "run.ts"), "--out", "--size", "small", "ignored"], {
+      cwd: root, stdin: "ignore", stdout: "pipe", stderr: "pipe",
+    });
+    const [code, output, error] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    expect(code).toBe(2);
+    expect(output).toBe("");
+    expect(error).toContain("Usage:");
+    expect(readFileSync(sentinel, "utf8")).toBe("preserve this file");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 120_000);
+
+test("small synthetic persona is measured through four surfaces for two principals", async () => {
+  const root = mkdtempSync(join(tmpdir(), "fresh-agent-proof-"));
+  try {
+    const out = join(root, "result");
+    const report = await runEvaluation({ size: "small", out });
+    expect(JSON.parse(readFileSync(join(out, "report.json"), "utf8"))).toEqual(report);
+    expect(JSON.parse(readFileSync(join(out, "questions.json"), "utf8"))).toEqual(report.questions);
+    expect(readFileSync(join(out, "report.md"), "utf8")).toBe(renderMarkdown(report));
+    await expect(runEvaluation({ size: "small", out })).rejects.toThrow();
+    expect(report.schema).toBe("kizuki.fresh-agent-eval/v1");
+    expect(report.summaries).toHaveLength(8);
+    expect(report.questions.length).toBeGreaterThanOrEqual(13);
+    expect(report.rows).toHaveLength(report.questions.length * 8);
+    expect(report.build.imports.every(receipt => receipt.repeat_stored === 0)).toBe(true);
+    expect(report.build.extraction.reduce((total, pass) => total + pass.claims, 0)).toBeGreaterThan(0);
+    expect(report.build).toMatchObject({ propose: "stored", correct: "committed" });
+    expect(report.facts).toEqual(persona("small").facts);
+    expect(report.questions).toEqual(persona("small").questions);
+    expect(report.facts.find(fact => fact.id === "proposed-relationship")).toMatchObject({
+      value: "Ada collaborates with Grace", access: "owner_only", state: "current",
+    });
+    expect(report.questions.find(question => question.id === "around")!.gold_fact_ids).toContain("proposed-relationship");
+    expect(renderMarkdown(report)).toContain("| scoped_agent | world_view |");
+    for (const summary of report.summaries) {
+      expect(summary.leak_count).toBe(0);
+      expect(summary.tokens_used).toBeGreaterThan(0);
+      expect(summary.failures).toBe(0);
+      expect(summary.recalled).toBeGreaterThan(0);
+    }
+    for (const id of ["scope-decoy", "ceiling-decoy", "proposed-relationship"]) {
+      expect(report.rows.some(row => row.principal === "owner" && row.recalled_fact_ids.includes(id))).toBe(true);
+    }
+    expect(report.rows.some(row => row.principal === "owner" && row.recalled_fact_ids.includes("corrected-blocker"))).toBe(true);
+    for (const [index, sample] of report.observations.entries()) {
+      const question = report.questions.find(item => item.id === sample.question_id)!;
+      expect(scoreObservation(report.facts, question, sample.principal, sample.surface, sample.observation)).toEqual(report.rows[index]!);
+      if (sample.surface === "session_hook") {
+        expect(report.rows[index]!.tokens_used).toBeLessThanOrEqual(report.packet_budget);
+      }
+      if (sample.surface === "context_packet") {
+        expect(packetTokens(JSON.parse(sample.observation.output).data.packet_md)).toBeLessThanOrEqual(report.packet_budget);
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 120_000);

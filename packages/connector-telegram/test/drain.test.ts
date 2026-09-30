@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { setSourceGrant, getCheckpoint, registerConnection, runBackfill, runSync, runToCompletion } from "@kizuki/core";
+import { setSourceGrant, getCheckpoint, readCursorStore, registerConnection, runBackfill, runSync, runToCompletion } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { BATCH_LIMIT, parseCursor } from "../src/cursor";
 import { fixtureAccount } from "../src/fixture";
 import type { TelegramMessage } from "../src/api";
 import { TELEGRAM_CONNECTOR_ID } from "../src/map";
 import { connected } from "./helpers";
+import { decodeDialogs } from "../src/cursor";
 
 const FEBRUARY = Date.parse("2026-02-01T00:00:00.000Z");
 const SOURCE = "01JJ0000000000000000000000";
@@ -24,6 +25,11 @@ function ledger() {
     },
   });
   return db;
+}
+
+/** The per-dialog map the ledger committed with the last checkpoint. */
+function committedDialogs(db: ReturnType<typeof ledger>) {
+  return decodeDialogs(readCursorStore(db, TELEGRAM_CONNECTOR_ID, SOURCE));
 }
 
 function counts(calls: { method: string }[], method: string): number {
@@ -497,7 +503,7 @@ test("first sync after a partial backfill continues from last_id across restart"
   );
   expect(first.stored).toBe(BATCH_LIMIT);
   expect(parseCursor(first.cursor as string).phase).toBe("backfill");
-  expect(parseCursor(first.cursor as string).dialogs["1"]?.last_id).toBe(
+  expect(committedDialogs(db)["1"]?.last_id).toBe(
     BATCH_LIMIT,
   );
   expect(getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.sync_cursor).toBeNull();
@@ -522,7 +528,7 @@ test("first sync after a partial backfill continues from last_id across restart"
   );
   const syncCursor = getCheckpoint(db, TELEGRAM_CONNECTOR_ID, SOURCE)?.sync_cursor;
   if (typeof syncCursor !== "string") throw new Error("expected a committed sync cursor");
-  expect(parseCursor(syncCursor).dialogs["1"]?.last_id).toBe(1000);
+  expect(committedDialogs(db)["1"]?.last_id).toBe(1000);
   db.close();
 }, 60_000);
 
@@ -559,9 +565,7 @@ test("a wait that reached only skipped records keeps its place", async () => {
   expect(throttled.errors).toEqual([]);
   // The record it skipped is behind the checkpoint, so the wait costs the run
   // nothing but the time it asks for.
-  expect(
-    parseCursor(throttled.cursor as string).dialogs["1"]?.last_id,
-  ).toBe(1);
+  expect(committedDialogs(db)["1"]?.last_id).toBe(1);
   expect((await built.connector.health()).state).toBe("rate_limited");
 
   built.clock.now += 600_000;
@@ -640,7 +644,7 @@ test("a throttled run keeps the ground the walk already covered", async () => {
     }
     const checkpoint = result.cursor;
     expect(checkpoint).not.toBeNull();
-    marks.push(parseCursor(checkpoint as string).dialogs["1"]?.last_id ?? 0);
+    marks.push(committedDialogs(db)["1"]?.last_id ?? 0);
     built.clock.now += 600_000;
   }
 

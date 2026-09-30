@@ -28,3 +28,11 @@ export function notConnected(): TelegramConnectorError {
     "kizuki.telegram: connect() has not been called",
   );
 }
+
+/** The host lends the per-dialog map; a walk without it would start the account over. */
+export function noCursorStore(): TelegramConnectorError {
+  return new TelegramConnectorError(
+    "missing_cursor_store",
+    "kizuki.telegram: the host did not lend its cursor store",
+  );
+}

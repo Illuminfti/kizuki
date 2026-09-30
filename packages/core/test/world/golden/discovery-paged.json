@@ -1,0 +1,68 @@
+{
+  "first": {
+    "status": "incomplete",
+    "count": 32,
+    "sortedByLabel": true,
+    "cursor": "<token 0>",
+    "coverage": {
+      "status": "partial",
+      "gaps": [
+        "traversal_limit"
+      ],
+      "validWindow": {
+        "kind": "all"
+      },
+      "history": "unavailable"
+    }
+  },
+  "second": {
+    "status": "current",
+    "count": 2,
+    "sortedByLabel": true,
+    "cursor": null,
+    "coverage": {
+      "status": "complete_for_query",
+      "gaps": [],
+      "validWindow": {
+        "kind": "all"
+      },
+      "history": "unavailable"
+    }
+  },
+  "union": [
+    "Concept 00",
+    "Concept 01",
+    "Concept 02",
+    "Concept 03",
+    "Concept 04",
+    "Concept 05",
+    "Concept 06",
+    "Concept 07",
+    "Concept 08",
+    "Concept 09",
+    "Concept 10",
+    "Concept 11",
+    "Concept 12",
+    "Concept 13",
+    "Concept 14",
+    "Concept 15",
+    "Concept 16",
+    "Concept 17",
+    "Concept 18",
+    "Concept 19",
+    "Concept 20",
+    "Concept 21",
+    "Concept 22",
+    "Concept 23",
+    "Concept 24",
+    "Concept 25",
+    "Concept 26",
+    "Concept 27",
+    "Concept 28",
+    "Concept 29",
+    "Concept 30",
+    "Concept 31",
+    "Concept 32",
+    "Concept 33"
+  ]
+}
