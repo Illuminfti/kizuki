@@ -237,6 +237,9 @@
   `| jq` or a hook truncated and unparseable. Every command's stdout and stderr
   now go out with a synchronous write that waits for a slow reader; a reader
   that closes early ends the output quietly.
+- `correct` now applies a grant's class denial on every ledger, including one
+  with no source grants: a claim whose evidence carries a withheld class is
+  absent to that agent, dry run or not.
 - The daily brief is stamped private when it names a page that ever received a
   private receipt (a repair never lowers it), says when rail failure groups
   were omitted, and the brief repair also rewrites the run-id

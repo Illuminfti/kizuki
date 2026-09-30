@@ -76,6 +76,14 @@ revision, so a stamp never changes what an event is:
 | `credential` | capture, when the text or a metadata value matches the secret-pattern set the model-egress scrubber uses (PEM blocks, JWTs, provider tokens, `Authorization: Bearer` values, `NAME=value` assignments whose name contains `secret`, `token`, `password` or `api_key`, and mnemonic-like word runs) |
 | `machine_exhaust` | your source policy's `class_rules`, by path glob |
 
+The credential test is deliberately broad and fails closed, so it has false
+positives: a run of a dozen or more short lowercase words, or config text such
+as `max_tokens=100000`, is stamped `credential` and withheld from default
+agents, with only a `class_denied` reason. The stamp reads the event text and
+metadata at capture; it does not scan the body of a claim or page, which
+carries only the classes of the events it cites. A secret typed into a proposed
+claim that cites clean events is therefore not stamped.
+
 A claim or page carries the classes of the events it cites, so one credential
 event withholds every page and claim built on it. `deny_classes` lists the
 classes a grant may not read; `search`, `timeline`, `get_page`, the graph,

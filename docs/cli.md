@@ -199,8 +199,10 @@ existing grant reads back exactly as it was written.
   importer labelled `personal` is stored `personal`; a page labelled `private`,
   a page with no label, and a page the importer could not read stay `private`.
   Without it, or on any other connector, every record stays at the connector's
-  own default, so nothing changes until you regrant. A regrant that leaves the
-  key out takes the labels away again. Set `sensitivity_floor` to `personal` in
+  own default, so nothing changes until you regrant. Withdrawing the key is not
+  retroactive: it only returns records captured afterwards to the connector
+  default, and events and claims already stored as `personal` stay `personal`.
+  To re-tighten stored material, raise `sensitivity_floor` to `private`. Set `sensitivity_floor` to `personal` in
   the same policy, because the grant floor still raises every record to itself.
   Claims take their tier from the sources of their own provenance events, so
   one private source no longer raises the claims of another source of the
@@ -210,7 +212,9 @@ existing grant reads back exactly as it was written.
   most 32 rules). A rule marks every event of this source whose `source_record_id`
   or recorded `relpath` matches the glob (`*` stays inside a segment, `**` spans
   segments). Marks are recomputed for the source's stored events when a regrant
-  changes the rules. See [Withheld classes](agent-enrollment.md#withheld-classes).
+  changes the rules; that rescan runs inside the regrant, so on a source with
+  a very large event count expect the regrant to take a while and other writers
+  to wait. See [Withheld classes](agent-enrollment.md#withheld-classes).
 
 Purposes are `capture`, `recall`, `session`, `correction`, `audit`, `derive`,
 `extract`, and `export`; choose only the uses you authorize. Populated fields

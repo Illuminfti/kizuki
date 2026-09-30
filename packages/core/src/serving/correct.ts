@@ -596,7 +596,7 @@ export async function serveCorrect(
           "held",
           "source authorization does not permit this correction",
         );
-      readable(grant, resolved.claims);
+      readable(ctx.db, grant, resolved.claims);
 
       const groups = groupByKey(resolved.claims);
       if (groups.size > 1) {

@@ -1,13 +1,17 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { OWNER_AGENT_GRANT, addAgent, authenticate, setGrant } from "../../src/agents";
-import type { Grant } from "../../src/agents";
+import type { EventClass, Grant } from "../../src/agents";
 import { validateAgentGrant } from "../../src/agents/identity";
-import { insertClaim } from "../../src/claims/store";
+import { getClaim, insertClaim } from "../../src/claims/store";
 import { rebuildDerived } from "../../src/derived";
 import { registerConnection } from "../../src/ledger/connections";
 import { accept } from "../../src/ledger/ledger";
-import { setSourceGrant } from "../../src/ledger/source-grants";
+import { setSourceGrant, sourcePolicyEpoch } from "../../src/ledger/source-grants";
+import { searchAuditCandidates } from "../../src/search/query";
+import { timeline } from "../../src/query/timeline";
 import { claimReader } from "../../src/serving/claims";
+import { serveCorrect } from "../../src/serving/correct";
+import { ServeError } from "../../src/serving/types";
 import { serveContextPacket } from "../../src/serving/packet";
 import { serveGetPage } from "../../src/serving/page";
 import { serveSearch } from "../../src/serving/search";
@@ -232,6 +236,156 @@ describe("credential-classed evidence", () => {
     expect(events).not.toContain(secret);
     // Other classes were never denied to it.
     expect(envelope.quoted.length).toBeGreaterThan(1);
+  });
+});
+
+describe("class denial at the query layer", () => {
+  const window = {
+    since: "2026-02-28T15:00:00Z",
+    until: "2026-02-28T16:00:00Z",
+  };
+
+  test("timeline rows are filtered in SQL, so a LIMIT counts only readable rows", () => {
+    // The credential event is the earliest, so it would fill a LIMIT of one.
+    const denied = timeline(fixture.db, {
+      ceiling: "private",
+      ...window,
+      limit: 1,
+      source: { owner: false, deny_classes: ["credential"] },
+    });
+    expect(denied.map((entry) => entry.event_id)).toEqual([plain]);
+    const open = timeline(fixture.db, {
+      ceiling: "private",
+      ...window,
+      limit: 1,
+      source: { owner: false, deny_classes: [] },
+    });
+    expect(open.map((entry) => entry.event_id)).toEqual([secret]);
+  });
+
+  test("search rows are filtered in SQL, so a LIMIT counts only readable rows", () => {
+    const ids = (deny: EventClass[], limit = 50) =>
+      searchAuditCandidates(fixture.db, "kettle", {
+        scope: "ledger",
+        limit,
+        source: { owner: false, deny_classes: deny },
+      }).candidates.map((hit) => hit.doc_id);
+    const held = ids(["credential"]);
+    expect(held.some((id) => id.includes(secret))).toBe(false);
+    expect(held.some((id) => id.includes(plain))).toBe(true);
+    expect(ids([]).some((id) => id.includes(secret))).toBe(true);
+    const one = ids(["credential"], 1);
+    expect(one).toHaveLength(1);
+    expect(one[0]).toContain(plain);
+  });
+});
+
+describe("correct honours class denial on a ledger with no source grants", () => {
+  let claimId: string;
+  let claimKey: string;
+
+  beforeAll(async () => {
+    const stored = await insertClaim(
+      { db: fixture.db },
+      claimInput(secret, {
+        subject: "person:heron",
+        subjects: ["person:heron"],
+        predicate: "employment.works_at",
+        object: "the drawer",
+        body: "Heron keeps the vault password in the drawer.",
+        events: [eventFacts(secret)],
+      }),
+    );
+    if (stored.outcome !== "stored")
+      throw new Error(`fixture claim: ${stored.outcome}`);
+    claimId = stored.claim.claim_id;
+    claimKey = stored.claim.claim_key as string;
+  });
+
+  async function outcome(
+    name: string,
+    target: Record<string, string>,
+    dry_run: boolean,
+  ) {
+    try {
+      const envelope = await serveCorrect(fixture.agent(name), {
+        statement: "Heron works at the workshop.",
+        target,
+        dry_run,
+      });
+      return { ok: true as const, superseded: envelope.data?.superseded ?? [] };
+    } catch (error) {
+      if (error instanceof ServeError)
+        return { ok: false as const, code: error.code, message: error.message };
+      throw error;
+    }
+  }
+
+  test("the ledger really has no source policy", () => {
+    expect(sourcePolicyEpoch(fixture.db)).toBe(0);
+  });
+
+  test("a default-deny agent gets the unknown-target refusal for every target form, dry run or not", async () => {
+    const unknownTargets = {
+      subject: "person:nobody",
+      claim_id: ulid(),
+      claim_key: "0".repeat(64),
+    };
+    const before = fixture.db.query("SELECT COUNT(*) AS count FROM events").get();
+    const cases: [Record<string, string>, boolean][] = [
+      [{ subject: "person:heron" }, true],
+      [{ subject: "person:heron" }, false],
+      [{ claim_id: claimId }, true],
+      [{ claim_id: claimId }, false],
+      [{ claim_key: claimKey }, true],
+      [{ claim_key: claimKey }, false],
+    ];
+    for (const [target, dry] of cases) {
+      const result = await outcome("cred-default", target, dry);
+      expect(result.ok).toBe(false);
+      if (result.ok) continue;
+      const field = Object.keys(target)[0] as keyof typeof unknownTargets;
+      const unknown = await outcome("cred-default", { [field]: unknownTargets[field] }, dry);
+      expect(result).toEqual(unknown);
+      expect(result.message).not.toContain(claimId);
+      expect(result.message).not.toContain(claimKey);
+    }
+    expect(fixture.db.query("SELECT COUNT(*) AS count FROM events").get()).toEqual(before);
+    // Nothing was retired by the refused real calls.
+    expect(
+      fixture.db
+        .query<{ status: string }, [string]>("SELECT status FROM claims WHERE claim_id = ?")
+        .get(claimId)?.status,
+    ).toBe("live");
+  });
+
+  test("an agent that opted out of the denial and the owner still see and can correct it", async () => {
+    const result = await outcome("cred-open", { claim_id: claimId }, true);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.superseded.map((entry) => entry.claim_id)).toEqual([claimId]);
+    const owner = await serveCorrect(fixture.owner(), {
+      statement: "Heron works at the workshop.",
+      target: { subject: "person:heron" },
+      dry_run: true,
+    });
+    expect(owner.data?.superseded.map((entry) => entry.claim_id)).toEqual([claimId]);
+  });
+
+  test("an opted-in agent and the owner can retire credential-derived claims", async () => {
+    for (const [name, subject] of [["cred-open", "person:ibis"], ["owner", "person:egret"]] as const) {
+      const stored = await insertClaim({ db: fixture.db }, claimInput(secret, {
+        subject, subjects: [subject], body: `${subject} works at the depot.`,
+        object: "depot", events: [eventFacts(secret)],
+      }));
+      if (stored.outcome !== "stored") throw new Error("fixture claim");
+      const ctx = name === "owner" ? fixture.owner() : fixture.agent(name);
+      const result = await serveCorrect(ctx, {
+        statement: `${subject} works at the workshop.`,
+        target: { claim_id: stored.claim.claim_id },
+      });
+      expect(result.data?.superseded.map((entry) => entry.claim_id)).toEqual([stored.claim.claim_id]);
+      expect(getClaim(fixture.db, stored.claim.claim_id)?.status).toBe("superseded");
+    }
   });
 });
 

@@ -1,3 +1,5 @@
+import type { Database } from "bun:sqlite";
+import { classesOfEvents } from "../ledger/event-classes";
 import { authorize } from "../agents";
 import type { AuditDenial, DenyReason, Grant, Servable } from "../agents";
 import { getClaim, listClaims } from "../claims/store";
@@ -71,7 +73,7 @@ function visibleTo(ctx: ServeContext, hidden: AuditDenial[] = []): (claim: Claim
       hidden.push({ id: claim.claim_id, reason: "held" });
       return false;
     }
-    const decision = authorize(grant, claimServable(claim));
+    const decision = authorize(grant, claimServable(ctx.db, claim));
     if (!decision.allow) hidden.push({ id: claim.claim_id, reason: decision.reason });
     return decision.allow;
   };
@@ -155,7 +157,7 @@ export function resolve(
  * far" is one question with one answer: the same gate the read tools use, so
  * a grant's window and type scope bind here exactly as they do there.
  */
-function claimServable(claim: Claim): Servable {
+function claimServable(db: Database, claim: Claim): Servable {
   const type = claim.frontmatter["type"];
   return {
     id: claim.claim_id,
@@ -166,6 +168,8 @@ function claimServable(claim: Claim): Servable {
         ? [...claim.subjects]
         : [claim.subject, ...claim.subjects],
     occurred_at: claim.valid_from,
+    // A claim carries the classes of the events it cites, on every ledger.
+    classes: classesOfEvents(db, claim.provenance),
   };
 }
 
@@ -186,9 +190,9 @@ const OUT_OF_SCOPE: Record<DenyReason, string> = {
   error: "the target is outside the grant",
 };
 
-export function readable(grant: Grant, claims: Claim[]): void {
+export function readable(db: Database, grant: Grant, claims: Claim[]): void {
   for (const claim of claims) {
-    const decision = authorize(grant, claimServable(claim));
+    const decision = authorize(grant, claimServable(db, claim));
     if (decision.allow) continue;
     throw new ServeError(decision.reason, OUT_OF_SCOPE[decision.reason]);
   }

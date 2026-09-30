@@ -370,7 +370,10 @@ the source with a policy that adds `"sensitivity_default": "personal"` and sets
 `"sensitivity_floor": "personal"` (the full policy is in
 [source consent](cli.md#source-consent)).
 
-The next sync stores a page labelled `personal` as `personal`. A page labelled
+The next sync stores a page labelled `personal` as `personal`. The regrant is not
+retroactive: a page the importer already stored is not re-read while it is
+unchanged, so it stays `private` until you purge or tombstone it and import it
+again, and only records stored after the regrant take the labelled tier. A page labelled
 `private`, a page with no label, and a page whose frontmatter or label could not
 be read stay `private`, so the fail-closed rule holds. The floor for these
 importers is `personal`, so `public` is never reachable. To exclude machine

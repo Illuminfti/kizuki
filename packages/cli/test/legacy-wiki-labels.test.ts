@@ -38,14 +38,14 @@ function enroll() {
   return { ...setup, wiki };
 }
 
-function grant(vault: string, policy: Record<string, unknown>) {
+function grant(vault: string, policy: Record<string, unknown>, revision = 0) {
   const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
   try {
     const key = listConnections(db)[0]!.source_key;
     setSourceGrant(db, {
       source_key: key,
-      expected_revision: 0,
-      operation_id: "wiki-grant",
+      expected_revision: revision,
+      operation_id: `wiki-grant-${revision}`,
       policy: {
         purposes: ["capture", "recall"],
         allowed_fields: ["text", "subjects", "attachments", "metadata"],
@@ -117,4 +117,16 @@ test("with sensitivity_default the mapped labels decide the tier and everything 
     "06-execution/run.md": "machine_exhaust",
     "secret.md": "credential",
   });
+});
+
+test("a regrant is not retroactive: stored pages stay private and only pages stored afterwards take their label", () => {
+  const setup = enroll();
+  grant(setup.vault, { sensitivity_floor: "private" });
+  sync(setup);
+  grant(setup.vault, { sensitivity_floor: "personal", sensitivity_default: "personal" }, 1);
+  writeFileSync(join(setup.wiki, "later.md"), page("personal", "The cobalt clock is in the study."));
+  sync(setup);
+  const { tiers } = stored(setup.vault);
+  expect(tiers["open.md"]).toBe("private");
+  expect(tiers["later.md"]).toBe("personal");
 });
