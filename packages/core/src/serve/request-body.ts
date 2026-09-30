@@ -22,7 +22,7 @@ export async function readRequestText(request: Request): Promise<string> {
     for (;;) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new HttpBodyError(408);
-      let next: ReadableStreamReadResult<Uint8Array>;
+      let next: Awaited<ReturnType<typeof reader.read>>;
       try {
         next = await withDeadline(reader.read(), remaining, "HTTP body deadline");
       } catch (error) {

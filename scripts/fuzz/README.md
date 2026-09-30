@@ -111,3 +111,11 @@ opens with no-follow/non-blocking flags, checks the open descriptor for a
 regular file, and measures that descriptor instead of re-statting the path.
 Directory and FIFO refusals and resume past an oversized row are covered by
 `packages/connectors/test/legacy-jsonl-hostile.test.ts`.
+
+Google Calendar's all-day date projection threw `RangeError` on an invalid
+month or day. The public mapper now checks validity before ISO formatting;
+the corpus retains the malformed provider record, and the regression covers
+start, end, recurrence origin and a valid leap day. The [provider event
+resource](https://developers.google.com/workspace/calendar/api/v3/reference/events)
+documents these date fields (checked 2026-09-30). This is an offline parser
+check; it does not qualify a live account or change authentication.

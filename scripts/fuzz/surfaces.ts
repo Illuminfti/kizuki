@@ -32,9 +32,9 @@ export async function surfaceDriver(target: typeof SURFACES[number], scratch: st
           if (!(denied as { isError?: boolean }).isError) throw new Error("inert-grant-admitted");
           await ownerMcp.call(tool, args);
         } else if (http !== null) {
-          const denied = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: `Bearer ${enrollment.token}` }, body: input.bytes });
+          const denied = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: `Bearer ${enrollment.token}` }, body: new Uint8Array(input.bytes) });
           if (denied.status === 200) throw new Error("inert-grant-admitted");
-          const response = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: "Bearer synthetic-fuzz-token" }, body: input.bytes });
+          const response = await fetch(`${http.url}/v1/${tool}`, { method: "POST", headers: { authorization: "Bearer synthetic-fuzz-token" }, body: new Uint8Array(input.bytes) });
           if (response.status >= 500) throw new Error("http-crash");
           const result = await response.text();
           if (result.length > 1024 * 1024) throw new Error("output-unbounded");

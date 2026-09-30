@@ -13,7 +13,7 @@ async function withHttp(run: (post: (body: string | Uint8Array) => Promise<Respo
   const server = startServeHttp({ db, vaultPath, token: "synthetic-http-token" });
   try {
     await run((body) => fetch(`${server.url}/v1/system_health`, {
-      method: "POST", headers: { authorization: "Bearer synthetic-http-token" }, body,
+      method: "POST", headers: { authorization: "Bearer synthetic-http-token" }, body: typeof body === "string" ? body : new Uint8Array(body),
     }));
   } finally {
     await server.stop();

@@ -8,6 +8,8 @@
   nesting and non-object argument containers before tool dispatch. Its body
   reader shares the app endpoint's byte and time limits. Legacy JSONL import
   refuses symlinks and non-regular files through the open descriptor.
+- Google Calendar refuses invalid all-day dates with a typed connector error
+  instead of throwing `RangeError`; valid leap-day dates remain accepted.
 - A seeded hostile-input fuzz campaign covers parser, file-reader, MCP and
   HTTP boundaries with isolated workers, resource watchdogs and a replayable
   synthetic corpus; see `scripts/fuzz/README.md` for CI and long local modes

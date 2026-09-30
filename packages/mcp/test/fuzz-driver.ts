@@ -17,11 +17,13 @@ export async function mcpFuzzDriver(ctx: ServeContext) {
       try {
         return await client.callTool({ name, arguments: args as Record<string, unknown> });
       } catch (error) {
-        // Non-object arguments are rejected as JSON-RPC InvalidParams, rather
-        // than a tool result. Do not suppress output validation or other faults.
+        // The pinned SDK reports request-schema rejection as InternalError;
+        // versions using InvalidParams are also refusals. This exception is
+        // limited to non-object containers, which cannot reach a tool handler.
         const invalidContainer = args === null || typeof args !== "object" || Array.isArray(args);
+        const code = (error as { code?: unknown } | null)?.code;
         if (invalidContainer && error instanceof Error && error.name === "McpError" &&
-          (error as Error & { code?: unknown }).code === -32602) return { isError: true, protocolRefusal: true };
+          (code === -32602 || code === -32603)) return { isError: true, protocolRefusal: true };
         throw error;
       }
     },

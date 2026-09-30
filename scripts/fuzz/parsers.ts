@@ -82,7 +82,7 @@ export function parseCase(target: Parser, input: FuzzCase, wrapped: boolean): un
       return { event: result, admitted: validateEventInput(result).ok };
     }
     case "x-ytd": return parseYtd(wrapped ? `window.YTD.tweets.part0 = ${JSON.stringify([{ tweet: { id_str: "1", full_text: text } }])};` : text, "tweets", 0);
-    case "x-api": return parsePage(wrapped ? { data: [{ id: "1", author_id: "1", text, created_at: NOW }], meta: { result_count: 1 } } : json(text), "1", { fields: ["text"], history_start: NOW, wire_profile: "tweet-v2" }, NOW);
+    case "x-api": return parsePage(wrapped ? { data: [{ id: "1", author_id: "1", text, created_at: NOW }], meta: { result_count: 1 } } : json(text), "1", { fields: [], history_start: NOW, wire_profile: "tweet-v2" }, NOW);
     case "gmail": {
       const result = gmailEvent("synthetic", wrapped ? { id: "1", threadId: "2", historyId: "1", internalDate: "1768478400000", payload: { mimeType: "text/plain", body: { data: Buffer.from(text).toString("base64url") } } } : json(text), NOW, ["text"]);
       checkEvents([result]); return result;
