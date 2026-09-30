@@ -29,7 +29,8 @@ import {
   serveTimeline,
 } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
-import { openLedger, rebuildDerived, timeline } from "@kizuki/core/testing";
+import { rebuildDerived } from "@kizuki/core/internal";
+import { openLedger, timeline } from "@kizuki/core/testing";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
 import {
