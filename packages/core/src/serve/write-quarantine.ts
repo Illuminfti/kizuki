@@ -37,8 +37,8 @@ function parse(handle: string, raw: string): StuckPage | null {
     const value: unknown = JSON.parse(raw);
     if (!isPlainObject(value)) return null;
     const { attempts, path, reason, last_at } = value;
-    if (typeof attempts !== "number" || !Number.isSafeInteger(attempts) || attempts < 1 ||
-        typeof path !== "string" || typeof reason !== "string" || typeof last_at !== "string" ||
+    if (!/^[0-9a-f]{32}$/.test(handle) || typeof attempts !== "number" || !Number.isSafeInteger(attempts) || attempts < 1 ||
+        typeof path !== "string" || path !== `auto/world/${handle}.md` || typeof reason !== "string" || typeof last_at !== "string" ||
         !Number.isFinite(Date.parse(last_at))) return null;
     return { handle, path, attempts, reason, last_at };
   } catch {
@@ -49,6 +49,7 @@ function parse(handle: string, raw: string): StuckPage | null {
 function quarantine(page: StuckPage, now: string): QuarantinedPage | null {
   if (page.attempts < QUARANTINE_FAILURES) return null;
   const until = Date.parse(page.last_at) + QUARANTINE_MS;
+  if (!Number.isFinite(new Date(until).getTime())) return null;
   return until > Date.parse(now) ? { ...page, until: new Date(until).toISOString() } : null;
 }
 

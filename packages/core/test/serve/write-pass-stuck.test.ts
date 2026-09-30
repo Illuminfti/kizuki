@@ -14,9 +14,33 @@ import { getRunReceipt } from "../../src/serve/receipts";
 import { serializePage } from "../../src/vault/frontmatter";
 import { canonFixture } from "../canon/helpers";
 import type { CanonFixture } from "../canon/helpers";
+import { writeRailCursor } from "../../src/ledger/checkpoints";
 
 const fixtures: CanonFixture[] = [];
 afterEach(() => { for (const fixture of fixtures.splice(0)) fixture.dispose(); });
+
+test("malformed quarantine locators cannot hold a healthy page or enter doctor output", async () => {
+  const f = canonFixture();
+  fixtures.push(f);
+  const created = await group(f, 0);
+  const now = () => "2026-03-01T00:03:00.000Z";
+  writeRailCursor(f.db, "kizuki.canon.writer", `stuck:${created.handle}`, JSON.stringify({
+    path: `${created.path}\nSynthetic injected line.`, attempts: 3, reason: "fixture failure", last_at: now(),
+  }));
+  writeRailCursor(f.db, "kizuki.canon.writer", "stuck:invalid-handle", JSON.stringify({
+    path: created.path, attempts: 3, reason: "fixture failure", last_at: now(),
+  }));
+  const overflow = "b".repeat(32);
+  writeRailCursor(f.db, "kizuki.canon.writer", `stuck:${overflow}`, JSON.stringify({
+    path: worldCanonPath(overflow), attempts: 3, reason: "fixture failure", last_at: "+275760-09-13T00:00:00.000Z",
+  }));
+  expect(inspectServeDoctor(f.db, f.vault, { now: now() }).quarantined.pages).toEqual([]);
+  const written = await runWritePass(f.db, f.vault, {
+    budget: createBudgetTracker({ canon_writes_per_run: 40 }), model_ref: "fixture/model", claims: { db: f.db }, producer, now,
+  });
+  expect(written.canon_writes).toBe(1);
+  expect(written.errors).toEqual([]);
+});
 
 const producer: ProducerPort = {
   descriptor: { id: "kizuki.producer.fixture", kind: "producer", contract: "kizuki.producer/v1", contract_minor: 1, supports: ["model"], requires_lease: false, optional_package: null },
