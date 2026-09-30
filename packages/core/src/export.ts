@@ -89,7 +89,7 @@ import { ensureVaultId, readVaultId, vaultIdPath } from "./serve/vault-id";
 import { doctorVault } from "./vault/doctor";
 import { hardenLedgerFile, initVault } from "./vault/init";
 import { parseFrontmatter } from "./vault/frontmatter";
-import { loadCanonLimits, validateCanonLimits } from "./vault/canon-limits";
+import { loadCanonLimits, validateCanonLimits, type CanonLimits } from "./vault/canon-limits";
 import { MAX_CANON_DEPTH, MAX_CANON_PAGE_BYTES } from "./vault/pages";
 import { validatePage } from "./vault/schema";
 
@@ -1845,7 +1845,8 @@ function exportVaultOwned(
       const inventoryBytes = Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
       if (preview !== undefined && !preview.bytes.equals(inventoryBytes)) throw new Error("export inventory file changed before capture");
       const files: Record<string, ExportManifestEntry> = {};
-      writePrivateFile(join(staging, CANON_LIMITS_BACKUP), Buffer.from(`${JSON.stringify(loadCanonLimits(vaultPath))}\n`));
+      const canonLimits = loadCanonLimits(vaultPath);
+      writePrivateFile(join(staging, CANON_LIMITS_BACKUP), Buffer.from(`${JSON.stringify(canonLimits)}\n`));
       trackFile(files, CANON_LIMITS_BACKUP, 1, hashFile(join(staging, CANON_LIMITS_BACKUP)));
       if (preview === undefined) writePrivateFile(join(staging, EXPORT_INVENTORY), inventoryBytes);
       trackFile(files, EXPORT_INVENTORY, 1, hashFile(join(staging, EXPORT_INVENTORY)));
@@ -1898,7 +1899,7 @@ function exportVaultOwned(
         files,
         options.signal,
       );
-      assertTypedCanonReceipts(db, join(staging, "vault"));
+      assertTypedCanonReceipts(db, join(staging, "vault"), canonLimits);
       writeStream(staging, "canon/receipts.jsonl", pageReceipts(db), files, options.signal);
       if (schema.ledger >= 20) {
         writeStream(staging, SOURCE_SURVIVOR_LINEAGE_BACKUP, sourceSurvivorLineageExportRows(db), files, options.signal);
@@ -2542,7 +2543,7 @@ function insertConnectionRow(db: Database, raw: Record<string, unknown>): void {
 }
 
 /** Retained historical undo bases remain exact; source erasure cannot be restored as retained history. */
-function assertTypedCanonReceipts(db: Database, vaultPath: string): void {
+function assertTypedCanonReceipts(db: Database, vaultPath: string, limits: CanonLimits = loadCanonLimits(vaultPath)): void {
   if (db.query("SELECT 1 FROM canon_receipts WHERE record_codec='kizuki.canon-receipt/v2' LIMIT 1").get() === null) return;
   if (db.query("SELECT 1 FROM canon_receipts WHERE receipt_state='erased' LIMIT 1").get() !== null &&
       findMismatchedEventPurgeProof(db, PAGE) !== null) {
@@ -2565,7 +2566,6 @@ function assertTypedCanonReceipts(db: Database, vaultPath: string): void {
   `).get()!;
   if (topology.total !== topology.reached) throw new Error("backup typed canon receipt lineage invalid");
   const files = openCanonFiles(vaultPath);
-  const limits = loadCanonLimits(vaultPath);
   const pages = new Set<string>();
   try {
     for (const row of db.query<CanonReceiptRow, []>("SELECT * FROM canon_receipts WHERE record_codec='kizuki.canon-receipt/v2'").iterate()) {
