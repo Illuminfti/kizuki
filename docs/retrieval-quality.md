@@ -59,10 +59,10 @@ corpus-wide statistics that hidden evidence could change. Vault-wide index healt
 is reported only to the owner.
 
 The owner separately receives a denial sample: search examines at most 500
-candidate identities for that audit and reports `scan-bound` when the sample
-is capped. This can omit further denied identities; it does not cap the
-authorized selection at the same ranked position. Agents receive neither the
-denial sample nor its bound diagnostic.
+candidate identities for that audit and reports `scan-bound` when a sample
+containing withheld hits is capped. This can omit further denied identities;
+it does not cap the authorized selection at the same ranked position. Agents
+receive neither the denial sample nor its bound diagnostic.
 
 ## Measuring it
 

@@ -300,7 +300,9 @@ export async function serveSearch(
         const room = SEARCH_WITHHELD_CAP - classified.withheld.length;
         if (room > 0) classified.withheld.push(...denied.slice(0, room));
         if (sample.candidates.length < MAX_RETRIEVAL_LIMIT) break;
-        if (skipped + sample.candidates.length >= WITHHELD_SCAN_BOUND) degraded.add("scan-bound");
+        if (skipped + sample.candidates.length >= WITHHELD_SCAN_BOUND && classified.withheld.length > 0) {
+          degraded.add("scan-bound");
+        }
       }
     }
     const canon = classified.canon.slice(0, rows);

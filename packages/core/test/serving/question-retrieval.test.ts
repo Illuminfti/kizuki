@@ -189,6 +189,22 @@ describe("the packet is chosen by its query", () => {
 });
 
 describe("bounded scan of withheld candidates", () => {
+  test("hundreds of admitted captures do not report a withheld scan bound", async () => {
+    const live = await serveFixture();
+    try {
+      live.db.transaction(() => {
+        for (let index = 0; index < 501; index += 1) {
+          storeEvent(live.db, `admitted-${index}`, "2026-02-01T00:00:00Z", "common widget report", "person:ada", "public");
+        }
+      }).immediate();
+      rebuildDerived(live.db, live.vaultPath);
+      const envelope = await serveSearch(live.owner(), { query: "common widget", scope: "ledger", limit: 10 });
+      expect(envelope.quoted).toHaveLength(10);
+      expect(envelope.denied).toEqual([]);
+      expect(envelope.data?.degraded).not.toContain("scan-bound");
+    } finally { live.dispose(); }
+  });
+
   test("a common word over hundreds of withheld captures still returns the ones it may serve, quickly", async () => {
     const live = await serveFixture();
     try {
