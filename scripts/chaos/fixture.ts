@@ -51,10 +51,10 @@ export async function claim(db: Database, id: string, record: number, sentinel =
   const result = await insertClaim({ db }, {
     kind: "claim", target: sentinel ? "facts/sentinel" : `facts/researcher-${record}`,
     subject: evidence.subjects[0]!.subject_id, predicate: "employment.works_at", object: "Acme",
-    body: evidence.text!, frontmatter: { type: "claim", title: sentinel ? "Lighthouse" : `Researcher ${record}` },
+    body: evidence.text, frontmatter: { type: "fact", title: sentinel ? "Lighthouse" : `Researcher ${record}` },
     provenance: [id], subjects: [evidence.subjects[0]!.subject_id], producer: "model", model_ref: MODEL,
     confidence: 0.5, sensitivity: "private", taint: "clean",
-    events: [{ event_id: id, connector_id: evidence.connector_id, taint: "untrusted", text: evidence.text! }],
+    events: [{ event_id: id, connector_id: evidence.connector_id, taint: "untrusted", text: evidence.text }],
   });
   if (result.outcome !== "stored") throw new Error("fixture_claim_refused");
   return result.claim;

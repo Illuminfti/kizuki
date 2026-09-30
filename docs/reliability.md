@@ -8,7 +8,9 @@ endpoint. The model fixture returns typed synthetic decisions in process.
 
 ## Running it
 
-The small mode runs two trials per operation; the local mode runs one thousand.
+The small mode runs two trials per operation with delays from zero to four
+milliseconds; the local mode runs one thousand with delays up to 100 milliseconds.
+`--max-delay-ms` accepts windows up to 1000 milliseconds for slower operations.
 Use the repository's pinned Bun version. On a shared machine, prefix these
 commands with the machine's `ktest` semaphore.
 

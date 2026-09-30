@@ -8,7 +8,8 @@ if (args.includes("--help")) {
   process.stdout.write("bun scripts/chaos/run.ts [--ci|--local] [--seed N] [--trials N] [--operation NAME] [--max-delay-ms N] [--artifacts DIR]\n");
   process.exit(0);
 }
-const options: CampaignOptions = { seed: 17, trials: args.includes("--local") ? 1000 : 2, artifacts: join(tmpdir(), "kizuki-chaos-failures") };
+const local = args.includes("--local");
+const options: CampaignOptions = { seed: 17, trials: local ? 1000 : 2, maxDelayMs: local ? 100 : 4, artifacts: join(tmpdir(), "kizuki-chaos-failures") };
 try {
   if (args.includes("--ci") && args.includes("--local")) throw new Error("choose_one_mode");
   for (let index = 0; index < args.length; index++) {
@@ -27,7 +28,7 @@ try {
       default: throw new Error("unknown_option");
     }
   }
-  options.onTrial = trial => process.stderr.write(`${trial.operation} trial=${trial.trial} delay_ms=${trial.delay_ms} ${trial.killed ? "SIGKILL" : "completed"} ${trial.failure ?? "ok"}\n`);
+  options.onTrial = trial => process.stderr.write(`${trial.operation} trial=${trial.trial} delay_ms=${trial.delay_ms} ${trial.killed ? "SIGKILL" : trial.completed_before_kill ? "completed" : "not-started"} ${trial.failure ?? "ok"}\n`);
   const report = await runCampaign(options);
   process.stdout.write(JSON.stringify(report, null, 2) + "\n");
   process.exitCode = report.ok ? 0 : 1;

@@ -42,7 +42,7 @@ async function operate(): Promise<void> {
     case "canon": {
       const port = cut === "projection-started" ? createFts5RetrievalPort({
         vault_path: vault, data_dir: join(vault, ".kizuki", "chaos-retrieval"), config: {},
-        clock: () => new Date().toISOString(), logger: () => {}, secrets: async () => undefined,
+        clock: () => new Date().toISOString(), logger: () => {}, secrets: async () => { throw new Error("fixture_has_no_secrets"); },
       }) : undefined;
       try {
         if (port) {
@@ -91,7 +91,7 @@ try {
   } else {
     const port = cut === "projection-started" ? createFts5RetrievalPort({
       vault_path: vault, data_dir: join(vault, ".kizuki", "chaos-retrieval"), config: {},
-      clock: () => new Date().toISOString(), logger: () => {}, secrets: async () => undefined,
+      clock: () => new Date().toISOString(), logger: () => {}, secrets: async () => { throw new Error("fixture_has_no_secrets"); },
     }) : undefined;
     try {
       const io = { db, vault_path: vault, ...(port === undefined ? {} : { retrieval: port }) };
@@ -145,5 +145,5 @@ try {
   process.exitCode = 1;
 } finally {
   db.close();
-  if (process.connected) process.disconnect();
+  if (process.connected) process.disconnect?.();
 }
