@@ -4,7 +4,7 @@ import { z } from "zod";
 import { compactToolSchema } from "../src/compact-schema";
 
 test("compact listings preserve accepted and refused values", () => {
-  const schema = z.toJSONSchema(z.strictObject({
+  const schema: Record<string, unknown> = z.toJSONSchema(z.strictObject({
     tag: z.literal("captured"),
     tainted: z.literal(true),
     sensitivity: z.enum(["public", "personal", "private"]),
@@ -48,7 +48,7 @@ test("listing compaction preserves literal defaults and examples", () => {
 test("object constraints still exclude null and arrays after compaction", () => {
   const provider = new AjvJsonSchemaValidator();
   for (const metadata of [{ type: "object", const: null }, { type: "object", enum: [{}, [], null] }]) {
-    const schema = z.toJSONSchema(z.unknown().meta(metadata), { target: "draft-7" });
+    const schema: Record<string, unknown> = z.toJSONSchema(z.unknown().meta(metadata), { target: "draft-7" });
     const before = provider.getValidator(schema);
     const after = provider.getValidator(compactToolSchema(schema));
     for (const value of [null, [], {}]) expect(after(value).valid).toBe(before(value).valid);
