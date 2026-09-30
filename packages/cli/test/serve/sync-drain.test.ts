@@ -207,8 +207,10 @@ test("the real serve loop keeps RSS bounded across twenty session batches", asyn
     ]);
     expect(exit, stderr).toBe(0);
     const { baseline, samples, batches, passes, stored, sweeps } = JSON.parse(stdout) as {
-      baseline: number; samples: number[]; batches: number[]; passes: { has_more: boolean; events_stored: number; errors: string[] }[];
-      stored: number; sweeps: number;
+      baseline: number; samples: number[]; batches: number[]; passes: {
+        has_more: boolean; events_stored: number; errors: string[]; started_at: string; finished_at: string;
+      }[];
+      stored: number; sweeps: string[];
     };
     expect(samples).toHaveLength(20);
     expect(batches).toHaveLength(20);
@@ -218,7 +220,9 @@ test("the real serve loop keeps RSS bounded across twenty session batches", asyn
     expect(stored).toBe(passes.reduce((sum, receipt) => sum + receipt.events_stored, 0));
     expect(stored).toBe(batches.reduce((sum, count) => sum + count, 0));
     expect(stored).toBeGreaterThanOrEqual(1_000);
-    expect(sweeps).toBeGreaterThan(1);
+    // Two sync passes have one interval between them. An idle sweep receipt
+    // may be coalesced, so prove its schedule by its position, not its count.
+    expect(sweeps.some(at => at >= passes[0]!.finished_at && at <= passes[1]!.started_at)).toBe(true);
     expect(Math.max(...samples) - baseline, `baseline ${baseline} MB; rss samples ${samples.map(Math.round).join(" ")}`)
       .toBeLessThan(TOTAL_MEMORY_GROWTH_BOUND_MB);
     const warm = Math.max(...samples.slice(2, 5));

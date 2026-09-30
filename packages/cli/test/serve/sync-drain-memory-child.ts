@@ -60,8 +60,9 @@ try {
   console.log(JSON.stringify({ baseline, samples, batches,
     passes: listRunReceipts(db, { rail: "sync", limit: 30 }).map(receipt => ({
       has_more: receipt.has_more === true, events_stored: receipt.events_stored, errors: receipt.errors,
+      started_at: receipt.started_at, finished_at: receipt.finished_at,
     })),
     stored: db.query<{ n: number }, []>("SELECT count(*) AS n FROM events").get()!.n,
-    sweeps: listRunReceipts(db, { rail: "retrieval-sweep", limit: 30 }).length,
+    sweeps: listRunReceipts(db, { rail: "retrieval-sweep", limit: 30 }).map(receipt => receipt.started_at),
   }));
 } finally { clearInterval(sampling); db.close(); }
