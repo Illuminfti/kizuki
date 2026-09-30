@@ -3,12 +3,14 @@ import type {
   Connector,
   Manifest,
   PurgePlan,
+  RunContext,
   SyncBatch,
 } from "../src/contracts/connector";
 import type { CaptureEventInput } from "../src/contracts/event";
 import { registerConnection } from "../src/ledger/connections";
 import { openLedger } from "../src/ledger/db";
 import { setSourceGrant } from "../src/ledger/source-grants";
+import { readCursorStore } from "../src/ledger/cursor-store";
 import { runToCompletion } from "../src/ingest/run";
 import { initStaging } from "../src/staging/proposals";
 import { validEvent } from "./fixtures";
@@ -107,6 +109,35 @@ class PagedConnector implements Connector {
 }
 
 describe("runToCompletion in bounded slices", () => {
+  test("a resumed slice receives the host cursor map committed by the previous slice", async () => {
+    class StoredConnector extends PagedConnector {
+      readonly seen: (string | undefined)[] = [];
+      override manifest(): Manifest {
+        const manifest = super.manifest();
+        return { ...manifest, capabilities: { ...manifest.capabilities, cursor_store: "host" } };
+      }
+      override async sync(cursor: string | null, context?: RunContext): Promise<SyncBatch> {
+        this.seen.push(context?.cursor_store.get("read"));
+        const batch = await super.sync(cursor);
+        return { ...batch, cursor_store: { read: batch.cursor! } };
+      }
+    }
+    const db = database();
+    try {
+      const first = new StoredConnector(3);
+      expect(await runToCompletion(db, first, "fixture", SOURCE, "sync", {
+        slice: { max_batches: 1 },
+      })).toMatchObject({ cursor: "page-1", stored: 1, has_more: true });
+      const resumed = new StoredConnector(3);
+      expect(await runToCompletion(db, resumed, "fixture", SOURCE, "sync", {
+        slice: { max_batches: 1 },
+      })).toMatchObject({ cursor: "page-2", stored: 1, has_more: true });
+      expect(first.seen).toEqual([undefined]);
+      expect(resumed.seen).toEqual(["page-1"]);
+      expect(readCursorStore(db, "fixture", SOURCE).get("read")).toBe("page-2");
+    } finally { db.close(); }
+  });
+
   test("a slice at the safety ceiling yields instead of reporting a failed drain", async () => {
     const db = database();
     try {
