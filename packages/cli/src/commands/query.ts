@@ -1,5 +1,6 @@
 import type { SearchHit } from "@kizuki/core";
 import { OWNER, retrievalDocId, serveSearch } from "@kizuki/core";
+import { ENVELOPE_V2_SCHEMA } from "@kizuki/core/world";
 import { UsageError, parseArguments, requirePositional } from "../args";
 import { withReadVault, withVault } from "../context";
 import { indexFreshness } from "../derived";
@@ -60,8 +61,12 @@ export const queryCommand: Command = {
     // The scoped envelope issues its principal reference, which is a ledger write.
     if (contract !== undefined) {
       return withVault(io, async (ctx) => {
-        const freshness = indexFreshness(ctx.db, ctx.vaultPath);
-        if (!freshness.fresh && !allowDegraded) {
+        // An unsupported selector goes straight to Core's audited refusal,
+        // even when the derived index is behind the ledger.
+        const freshness = contract === ENVELOPE_V2_SCHEMA
+          ? indexFreshness(ctx.db, ctx.vaultPath)
+          : undefined;
+        if (freshness !== undefined && !freshness.fresh && !allowDegraded) {
           io.err(
             `error: search index is stale (${freshness.degraded.join(", ")}); run a sync/import or pass --degraded`,
           );
@@ -77,7 +82,7 @@ export const queryCommand: Command = {
           contract,
         );
         const served = (envelope.data as { degraded?: string[] } | null)?.degraded ?? [];
-        const degraded = [...new Set([...freshness.degraded, ...served])];
+        const degraded = [...new Set([...(freshness?.degraded ?? []), ...served])];
         if (degraded.length > 0) io.err(`degraded=${degraded.join(",")}`);
         if (parsed.flags.has("--json")) {
           io.out(cliResultV2("query", envelope));
