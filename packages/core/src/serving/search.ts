@@ -73,6 +73,7 @@ function classify(
   grant: Grant,
   hits: Pick<SearchHit, "doc_id" | "scope">[],
   seen: Set<string>,
+  fullText: boolean,
 ): Classification {
   const result: Classification = { canon: [], quoted: [], withheld: [] };
   const pageSeen = new Set<string>();
@@ -104,7 +105,7 @@ function classify(
       continue;
     }
     seen.add(hit.doc_id);
-    result.quoted.push(quotedChunk(quoted, decision.sensitivity, index.sourceContext));
+    result.quoted.push(quotedChunk(quoted, decision.sensitivity, index.sourceContext, fullText ? quoted.text.length : 4096));
   }
 
   return result;
@@ -225,6 +226,7 @@ export async function serveSearch(
           scope: doc_id.startsWith("page:") ? "canon" : "ledger",
         } as const)),
         seen,
+        fullText,
       ),
     );
     // Preserve nomination deduplication, including denied nominations. Ranked
@@ -258,7 +260,7 @@ export async function serveSearch(
       previousPage = pageKey;
       absorbClassification(
         classified,
-        classify(ctx.db, index, narrowed, ranked.candidates, seen),
+        classify(ctx.db, index, narrowed, ranked.candidates, seen, fullText),
       );
       if (
         authorizedCount(classified) >= MAX_RETRIEVAL_LIMIT ||

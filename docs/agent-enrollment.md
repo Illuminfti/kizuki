@@ -152,7 +152,9 @@ credential, including an older unprefixed token. Session-start hook delivery
 scrubs credentials even when the hook reads as owner.
 
 Serving scans bounded prefixes before cutting previews and excerpts. Timeline
-expansion projects at most 131,072 source UTF-16 code units; its `total` and offsets
+and search previews cap their scan before redaction; explicit search `full_text`
+reads scrub the full requested capture rather than silently clipping it.
+Timeline expansion projects at most 131,072 source UTF-16 code units; its `total` and offsets
 refer to that scrubbed projection, and `truncated` remains true when source
 text lies beyond it. For agents, expansion and task `integrity` bind the served
 projection rather than the secret-bearing capture. Owner pins retain the raw

@@ -18,3 +18,11 @@ test("nested assignment-looking lines in a YAML secret block count once", () => 
   expect(scrubbed.text).toBe("client_secret: [redacted:secret_assignment]\npublic_note: keep this");
   expect(scrubbed.redactions).toHaveLength(1);
 });
+
+test("a wrapped token detector leaves the next assignment's name and anchors intact", () => {
+  const key = `sk-${"A".repeat(24)}`;
+  const scrubbed = scrubText(`key ${key}\nDB_PASSWORD=${"synthetic" + "Credential123"}`);
+  expect(scrubbed.text).toBe("key [redacted:api_token]\nDB_PASSWORD=[redacted:secret_assignment]");
+  const first = scrubbed.redactions[0]!;
+  expect(first.end - first.start).toBe(key.length);
+});

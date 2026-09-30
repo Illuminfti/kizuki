@@ -122,8 +122,10 @@ export function quotedChunk(
   source: QuotedSource,
   sensitivity: Sensitivity,
   ctx: ServeContext,
+  maxChars = 4096,
 ): QuotedChunk {
   const redactor = redactorOf(ctx);
+  const bounded = boundScrubText(source.text, maxChars);
   return {
     event_id: source.event_id,
     connector_id: redactor.text(source.connector_id),
@@ -131,7 +133,8 @@ export function quotedChunk(
     occurred_at: source.occurred_at,
     sensitivity,
     subjects: source.subjects.map((subject) => redactor.text(subject)),
-    text: redactor.text(boundScrubText(source.text, 4096).text),
+    text: redactor.text(bounded.text),
+    ...(bounded.truncated ? { truncated: true as const } : {}),
     tainted: true,
   };
 }

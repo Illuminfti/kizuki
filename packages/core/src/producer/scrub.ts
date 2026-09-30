@@ -165,6 +165,8 @@ function spans(text: string): Span[] {
   for (const match of matches(text, JWT)) found.push({ kind: "jwt", start: match.index, end: match.index + match[0].length });
   for (const match of matches(text, API_TOKEN)) found.push({ kind: "api_token", start: match.index, end: match.index + match[0].length });
   for (const match of matches(text, WRAPPED_TOKEN)) {
+    // A following assignment is a sibling field, not the key's continuation.
+    if (/^[ \t]*[:=]/.test(text.slice(match.index + match[0].length))) continue;
     // Validate the joined shape with the same pattern, rather than a second token catalogue.
     const joined = match[1]! + match[2]! + match[3]!;
     if ([...matches(joined, API_TOKEN)].some((token) => token[0].length === joined.length)) {
