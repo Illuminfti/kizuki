@@ -168,6 +168,7 @@ function portableFrontmatter(live: Claim): Record<string, FrontmatterValue> {
 
 interface ScopedCorrectIo extends CorrectIo {
   readonly readScope?: {
+    readonly context: ServeContext;
     readonly claims: ClaimVisibility;
     readonly page: (path: string) => boolean;
   };
@@ -187,6 +188,7 @@ function scopeCorrection(scope: VaultMutationScope, io: CorrectIo): ScopedCorrec
   return extendOwnedCanonIo(scope, io, { grant: ctx.principal.grant,
     relay_owner_corrections: ctx.principal.grant.relay_owner_corrections,
     readScope: {
+      context: ctx,
       claims: reader.visibility,
       page(path: string) {
         const index = loadCanon({ ...ctx, sourcePurpose: "recall" });
@@ -894,6 +896,7 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
       receipt = applyCanonWriteOwned(scope, canon, stored, writeDecision, {
         writer: "correction",
         budget,
+        ...(io.readScope === undefined ? {} : { readScope: io.readScope }),
       });
     } catch (error) {
       const pending = correctionRecoveryPending(io.db, stored.claim_id, page.rel_path);

@@ -21,6 +21,9 @@ unreadable mixed page, the claim correction is recorded while that page stays
 unchanged; the response does not name the page or add it to an unreached list.
 Readable pages continue through the existing receipted writer. This adds no
 client page writer or owner approval step.
+Typed correction rematerialization uses the same read scope before its candidate
+cap. Unpublished hidden claims stay absent from the page and retain their receipt
+state.
 
 For agents, search nominations must also match the redacted title and excerpt
 or captured text that the response serves. The check uses the existing FTS query

@@ -8,6 +8,7 @@ import type { Database } from "bun:sqlite";
 import { OWNER } from "../agents";
 import { SENSITIVITY_ORDER, isSensitivity } from "../agents/types";
 import { getClaim } from "../claims/store";
+import type { ClaimVisibility } from "../claims/visibility";
 import { semanticKey } from "../claims/claim-v2-keys";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { rawSubjectNamespace, type ClaimV2Assertion } from "../contracts/claim-v2";
@@ -55,15 +56,20 @@ export interface WorldMaterialization {
  readonly handle:string; readonly claims:readonly Claim[];readonly basis:readonly WorldClaimBasis[];
  readonly title:string;readonly pageType:PageType;
 }
+export interface WorldMaterializationScope {
+ readonly context: ServeContext;
+ readonly claims: ClaimVisibility;
+}
 /** Select one complete admitted rendering per assertion; never pool partial or denied support. */
-export function selectWorldMaterialization(db:Database,handle:string):WorldMaterialization|null {
- const ctx=context(db),permitted=authorizedSupportSql(ctx),budget:ReadBudget={bytes:0};
- const candidates=db.query<{claim_id:string},(string|number)[]>(`SELECT DISTINCT c.claim_id FROM claims c JOIN claim_v2_support s USING(claim_id) JOIN semantic_allocations a USING(support_key) JOIN semantic_bindings b USING(handle_id) JOIN claim_v2_semantics m ON m.claim_id=c.claim_id AND m.subject_kind=b.raw_kind AND m.subject_id=b.raw_id AND (b.raw_kind='occurrence' OR (json_extract(m.payload,'$.subject.namespace.connector_id')=json_extract(b.raw_namespace,'$.connector_id') AND json_extract(m.payload,'$.subject.namespace.source_key')=json_extract(b.raw_namespace,'$.source_key'))) WHERE c.is_world_typed=1 AND c.status='live' AND a.handle_id=? AND ${permitted.sql} ORDER BY c.claim_id LIMIT ?`).all(handle,...permitted.bindings,MAX_PAGE_CLAIMS+1);
+export function selectWorldMaterialization(db:Database,handle:string,readScope?:WorldMaterializationScope):WorldMaterialization|null {
+ if(readScope!==undefined&&readScope.context.db!==db)throw new CanonWriteError("decision_stale","typed canon read scope names another ledger");
+ const ctx=readScope?.context??context(db),visibility=readScope?.claims,permitted=authorizedSupportSql(ctx),budget:ReadBudget={bytes:0};
+ const candidates=db.query<{claim_id:string},(string|number)[]>(`SELECT DISTINCT claims.claim_id FROM claims JOIN claim_v2_support s USING(claim_id) JOIN semantic_allocations a USING(support_key) JOIN semantic_bindings b USING(handle_id) JOIN claim_v2_semantics m ON m.claim_id=claims.claim_id AND m.subject_kind=b.raw_kind AND m.subject_id=b.raw_id AND (b.raw_kind='occurrence' OR (json_extract(m.payload,'$.subject.namespace.connector_id')=json_extract(b.raw_namespace,'$.connector_id') AND json_extract(m.payload,'$.subject.namespace.source_key')=json_extract(b.raw_namespace,'$.source_key'))) WHERE claims.is_world_typed=1 AND claims.status='live' AND a.handle_id=? AND ${permitted.sql} ${visibility===undefined?"":`AND (${visibility.sql})`} ORDER BY claims.claim_id LIMIT ?`).all(handle,...permitted.bindings,...(visibility?.bindings??[]),MAX_PAGE_CLAIMS+1);
  const claims:Claim[]=[],basis:WorldClaimBasis[]=[];let title="Knowledge record",pageType:PageType=DEFAULT_PAGE_TYPE;
  for(const candidate of candidates) {
   if(worldClaimHandle(db,candidate.claim_id)!==handle)continue;
   const eligible=eligibleWorldClaim(ctx,candidate.claim_id,{kind:"all"},budget),support=eligible?.supports[0],claim=getClaim(db,candidate.claim_id);
-  if(eligible===null||support===undefined||claim===null)continue;
+  if(eligible===null||support===undefined||claim===null||!(visibility?.canRead(claim)??true))continue;
   if(claims.length===MAX_PAGE_CLAIMS)throw new CanonWriteError("batch_too_large","world page exceeds its bounded materialization");
   const semantic=eligible.semantic;
   pageType=pageTypeOf(semantic,pageType);title=titleOf(semantic,title);

@@ -10,7 +10,7 @@
  * event that anchors it, which is what source admission requires.
  */
 import type { Database } from "bun:sqlite";
-import { OWNER } from "../../src/agents";
+import { OWNER, type Sensitivity } from "../../src/agents";
 import { applyCanonWrite } from "../../src/canon/apply";
 import { worldCanonTarget } from "../../src/canon/world-materialization";
 import { getClaim, insertClaim } from "../../src/claims/store";
@@ -52,6 +52,7 @@ export interface AssertionSpec {
   readonly speaker?: string;
   readonly addressee?: string;
   readonly context?: readonly string[];
+  readonly sensitivity?: Sensitivity;
 }
 
 export interface WorldRef {
@@ -142,7 +143,7 @@ export function correctionKit(db: Database, vaultPath: string, options: Correcti
         source_record_id: ulid(),
         kind: "note",
         text: TEXT,
-        sensitivity_hint: "public",
+        sensitivity_hint: spec.sensitivity ?? "public",
         subjects: ids.map((subject_id) => ({
           subject_id,
           role: "about" as const,
@@ -195,7 +196,7 @@ export function correctionKit(db: Database, vaultPath: string, options: Correcti
         provenance: [accepted.event.event_id],
         producer: "deterministic",
         confidence: 0.8,
-        sensitivity: "public",
+        sensitivity: spec.sensitivity ?? "public",
         subjects: [spec.subject],
         semantic,
         world_admission: {
