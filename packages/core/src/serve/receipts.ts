@@ -709,10 +709,12 @@ function fileSize(path: string): number {
  */
 export function orphanJournalReceipts(db: Database, vaultPath: string): string[] {
   const orphans: string[] = [];
+  let scanned = 0;
   for (const receipt of iterateRunReceiptsLog(vaultPath, DOCTOR_JOURNAL_TAIL_BYTES)) {
     if (getRunReceipt(db, receipt.run_id) === null) {
       orphans.push(receipt.run_id);
     }
+    if (++scanned % 128 === 0) Bun.gc(false);
   }
   return orphans;
 }
