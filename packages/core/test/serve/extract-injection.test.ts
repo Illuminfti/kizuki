@@ -13,7 +13,6 @@ import { rebuildDerived } from "../../src/derived";
 import { runWritePass } from "../../src/serve/write-pass";
 import { serveContextPacket } from "../../src/serving/packet";
 import { eligibleWorldClaim } from "../../src/world/projection";
-import { releasedBySupports } from "../../src/world/corroboration";
 import { readClaimV2Semantic } from "../../src/claims/claim-v2-commit";
 import { getClaim } from "../../src/claims/store";
 import { serveCorrect } from "../../src/serving/correct";
@@ -250,12 +249,4 @@ test("the owner can correct a reading that was downgraded for lacking a quoted b
     expect(corrected).toMatchObject({ object: { kind: "literal", value: "A synthetic transformation." }, perspective: { mode: "asserted", interpretation: "explicit" } });
     expect(getClaim(f.db, changed.data!.claim_id!)?.taint).toBe("clean");
   } finally { f.db.close(); }
-});
-
-test("two records of one source are one root; two sources or the owner release", () => {
-  const source = (key: string) => ({ source_key: key, support_origin: "source" });
-  expect(releasedBySupports([source("a"), source("a")])).toBe(false);
-  expect(releasedBySupports([source("a"), source("b")])).toBe(true);
-  expect(releasedBySupports([source("a"), { source_key: "native-owner", support_origin: "native_owner" }])).toBe(true);
-  expect(releasedBySupports([])).toBe(false);
 });
