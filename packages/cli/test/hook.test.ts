@@ -9,9 +9,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { readBootId, runServeDaemon } from "@kizuki/core";
+import { accept, readBootId, runServeDaemon } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import type { Grant } from "@kizuki/core";
+import { Tiktoken } from "js-tiktoken/lite";
+import ranks from "js-tiktoken/ranks/cl100k_base";
 import { createHelpers, fixtureConsent } from "./helpers";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
@@ -208,7 +210,30 @@ describe("hook session-start output", () => {
   });
 
   test("the block stays within the token budget and never carries a path", async () => {
-    const setup = seededVault();
+    const setup = tempVault();
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    // Random ULIDs change token counts enough to push an imported note over 220.
+    // Keep this boundary fixture stable; the other output tests exercise import.
+    try {
+      const at = new Date().toISOString();
+      const stored = accept(db, {
+        schema: "kizuki.event/v1",
+        connector_id: "fixture",
+        source_record_id: "atlas-note",
+        kind: "note",
+        occurred_at: at,
+        observed_at: at,
+        text: "Mira leads Project Atlas.",
+        subjects: [],
+        sensitivity_hint: "public",
+        deleted: false,
+        attachments: [],
+        metadata: {},
+      }, { generateId: () => "01K6D8HBNY9F7Z4S2M6P8QR3VX" });
+      expect(stored.status).toBe("stored");
+    } finally {
+      db.close();
+    }
     const run = await hook(
       setup.env,
       INPUT,
@@ -220,10 +245,23 @@ describe("hook session-start output", () => {
       setup.vault,
     );
     expect(run.exitCode).toBe(0);
+    expect(run.stderr).toBe("");
     expect(run.stdout).toContain("budget=220");
+    expect(run.stdout).toContain("tainted src=fixture");
+    expect(run.stdout).toContain("Mira leads Project Atlas.");
+    const encoding = new Tiktoken(ranks);
+    expect(encoding.encode(run.stdout, [], []).length).toBeLessThanOrEqual(220);
     expect(Buffer.byteLength(run.stdout)).toBeLessThan(220 * 8);
     for (const private_ of [setup.root, setup.vault, "/work/projects"])
       expect(run.stdout).not.toContain(private_);
+
+    const small = await hook(
+      setup.env, INPUT, "--harness", "generic", "--budget", "80",
+      "--vault", setup.vault, "--verbose",
+    );
+    expect(small.exitCode).toBe(0);
+    expect(small.stdout).toBe("");
+    expect(small.stderr).toBe("hook: nothing injected (empty)\n");
   });
 
   test("a vault with nothing to say prints nothing", async () => {
