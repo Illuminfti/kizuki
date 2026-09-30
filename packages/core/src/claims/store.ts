@@ -1147,7 +1147,8 @@ export function supersedePageRevisions(db: Database, winnerId: string, at: strin
         "SELECT loser, prior_valid_to FROM claim_supersessions WHERE winner = ?",
       ).all(loser.claim_id)) {
         const prior = getClaim(db, predecessor.loser);
-        if (prior === null || prior.status !== "superseded" || prior.superseded_by !== loser.claim_id) continue;
+        if (prior === null || prior.receipt_id === null || prior.status !== "superseded" ||
+            prior.superseded_by !== loser.claim_id) continue;
         persistClaim(db, { ...prior, superseded_by: winner.claim_id });
         writeSupersession(db, winner.claim_id, prior.claim_id, "R3", predecessor.prior_valid_to, at);
       }
