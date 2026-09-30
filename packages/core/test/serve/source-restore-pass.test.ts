@@ -141,3 +141,22 @@ test("a record still deleted at its source keeps its page archived through every
     db.close();
   }
 });
+
+test("a returned source record stays archived until a model is configured", async () => {
+  const { db, path, ingest, pass, pages } = fixture();
+  try {
+    ingest([live()]);
+    await pass();
+    ingest([deleted("synthetic deletion one")]);
+    await pass();
+    ingest([live(2)]);
+    const result = await runWritePass(db, path, {
+      budget: createBudgetTracker({ canon_writes_per_run: 16 }),
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.canon_writes).toBe(0);
+    expect(pages().map((page) => page.status)).toEqual(["archived"]);
+    expect((await pass()).errors).toEqual([]);
+    expect(pages().map((page) => page.status)).toEqual(["active"]);
+  } finally { db.close(); }
+});

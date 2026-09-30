@@ -47,10 +47,7 @@ import {
 export const MARKDOWN_FOLDER_CONNECTOR_ID = "kizuki.markdown-folder" as const;
 export const MARKDOWN_CURSOR_SCHEMA = "kizuki.markdown-folder.cursor/v1" as const;
 
-/**
- * Every batch walks the folder once, so a batch that emits more spares walks:
- * the default is the largest batch Core accepts.
- */
+/** The default is the largest capture page Core accepts. */
 export const DEFAULT_PAGE_SIZE = MAX_SYNC_BATCH_EVENTS;
 export const MAX_PAGE_SIZE = 10_000;
 export const MAX_DEPTH = 16;
@@ -210,6 +207,8 @@ export class MarkdownFolderConnector implements Connector {
   private readonly recordHistory: MarkdownFolderDeps["recordHistory"];
   private readonly confirmedWithdrawals: number;
   private known: KnownFiles = new Map();
+  /** A bounded scan reused only by the next page of this drain, never a later sync. */
+  private continuation: { cursor: Cursor; root: RootIdentity; scan: ScanResult } | null = null;
 
   constructor(config: MarkdownFolderConfig, deps: MarkdownFolderDeps = {}) {
     this.path = requirePathConfig(config, MARKDOWN_FOLDER_CONNECTOR_ID);
@@ -270,13 +269,27 @@ export class MarkdownFolderConnector implements Connector {
     const previous =
       cursor === null ? undefined : parseCursor(cursor, root, this, this.committedFiles !== undefined);
     const previousFiles = await this.snapshotIdentities(previous);
-    const scan = await scanMarkdownFiles(root, this.exclude, this.known);
-    this.known = knownFiles(scan.files);
+    const pending = this.continuation;
+    this.continuation = null;
+    const continuing = pending !== null && pending.cursor === cursor &&
+      pending.root.realpath === root.realpath && pending.root.dev === root.dev && pending.root.ino === root.ino;
+    const scan = continuing ? pending.scan : await scanMarkdownFiles(root, this.exclude, this.known);
+    if (!continuing) this.known = knownFiles(scan.files);
     const observedAt = new Date().toISOString();
     const current = new Map(
       scan.files.map((file) => [file.relpath, file] as const),
     );
     const scanErrors = [...scan.errors];
+    const finish = (batch: SyncBatch): SyncBatch => {
+      if (!filesDone && batch.has_more === true && batch.cursor !== null && scanErrors.length === 0 && !scan.truncated) {
+        // Retain identities only. Each later emitted page reopens its files
+        // through the existing descriptor-bound reader. A root replacement
+        // discards this continuation; another sync always walks anew.
+        if (!continuing) for (const file of scan.files) file.content = null;
+        this.continuation = { cursor: batch.cursor, root, scan };
+      }
+      return batch;
+    };
     const hostBacked = this.committedFiles !== undefined;
     const emitPageSize = Math.min(this.pageSize, MAX_SYNC_BATCH_EVENTS);
 
@@ -322,7 +335,7 @@ export class MarkdownFolderConnector implements Connector {
       : withdrawn.map((relpath) => tombstone(relpath, observedAt));
 
     // Each sweep diffs against the durable identities updated by prior pages.
-    // The remaining diff can change between scans, including below `after`.
+    // An interrupted drain walks anew and includes changes below `after`.
     // Keep phase/after as compatible cursor hints, never as exclusion bounds.
     // Events are built for the page only: a batch costs its page, not the tree.
     const epochs = new EpochReader(this.recordHistory);
@@ -334,6 +347,10 @@ export class MarkdownFolderConnector implements Connector {
     for (; index < changed.length && filePage.length < emitPageSize; index += 1) {
       const file = await this.loadFile(root, changed[index]!, scanErrors);
       if (file === null) continue;
+      if (file.sha256 !== changed[index]!.sha256 || file.size !== changed[index]!.size) {
+        scanErrors.push({ location: file.relpath, code: "unstable", reason: "file changed during the capture drain" });
+        continue;
+      }
       const event = fileEvent(
         file,
         observedAt,
@@ -416,7 +433,7 @@ export class MarkdownFolderConnector implements Connector {
       const last = filePage[filePage.length - 1];
       const next = mint(false, "files", last?.source_record_id ?? null);
       if (next === undefined) return overflow();
-      return { events: filePage, cursor: next, has_more: true };
+      return finish({ events: filePage, cursor: next, has_more: true });
     }
 
     if (filePage.length > 0) {
@@ -427,11 +444,11 @@ export class MarkdownFolderConnector implements Connector {
         null,
       );
       if (next === undefined) return overflow();
-      return {
+      return finish({
         events: filePage,
         cursor: next,
         has_more: !noTombstones || pendingRefusal,
-      };
+      });
     }
 
     if (held) {
@@ -482,11 +499,11 @@ export class MarkdownFolderConnector implements Connector {
       exhausted ? null : (lastTombstone?.source_record_id ?? null),
     );
     if (next === undefined) return overflow();
-    return {
+    return finish({
       events: tombstonePage,
       cursor: next,
       has_more: !exhausted || pendingRefusal,
-    };
+    });
   }
 
   /** The file with its bytes, reading again when the scan reused a cached hash. */

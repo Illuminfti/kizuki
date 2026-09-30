@@ -71,10 +71,12 @@ Each sync brings the ledger to where the folder is:
   release it once with
   `kizuki sync markdown-folder --source KEY --confirm-withdrawals N`.
 - A batch emits up to `page_size` files (default 1,000, the largest batch Core
-  accepts) and walks the folder once. A resume token taken at another
+  accepts). A resume token taken at another
   `page_size` still resumes; a changed `exclude` list does not.
-- Within one sync a batch does not read files an earlier batch already hashed
-  while their size, modification time, change time and inode are unchanged and
-  the file was quiet for two seconds before it was read; only the emitted page
-  of files is read for its text. A backfill of thousands of files costs
-  work proportional to the files, plus one metadata walk per batch.
+- A successful capture drain walks the tree once and keeps its bounded file
+  identities for the next page. Later pages reopen only the files they emit
+  through the descriptor-bound reader. A file whose bytes changed is retried
+  from a fresh scan; an interrupted drain, replaced root or later sync also
+  walks anew. New files added during a drain are discovered by the next sync.
+  A fresh scan may reuse a hash only while size, modification time, change time
+  and inode agree and the file was quiet for two seconds before it was read.

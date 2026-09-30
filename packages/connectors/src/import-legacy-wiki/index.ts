@@ -1,3 +1,4 @@
+import { realpath, stat } from "node:fs/promises";
 import {
   HealthReport,
   MAX_CURSOR_BYTES,
@@ -406,6 +407,14 @@ export class LegacyWikiConnector implements Connector {
   readonly #confirmedWithdrawals: number;
   #report: LegacyWikiReport | null = null;
   #degraded = 0;
+  /** Planning is one snapshot per drain, never repeated for every capture page. */
+  #continuation: {
+    cursor: Cursor;
+    root: { realpath: string; dev: number; ino: number };
+    scan: ScanResult;
+    hashes: Map<string, string>;
+    planned: CaptureEventInput[];
+  } | null = null;
 
   constructor(config: LegacyWikiConfig, deps: LegacyWikiDeps = {}) {
     this.path = requirePathConfig(config, LEGACY_WIKI_CONNECTOR_ID);
@@ -499,8 +508,21 @@ export class LegacyWikiConnector implements Connector {
     const identities = await this.#identities(previous);
     const mappingChanged =
       previous !== null && previous.mapping_hash !== this.mappingHash;
-    const scan = await scanLegacyWiki(this.path, this.mapping.ignore);
-    const hashes = new Map(
+    const pending = this.#continuation;
+    this.#continuation = null;
+    let root: { realpath: string; dev: number; ino: number };
+    try {
+      const resolved = await realpath(this.path);
+      const info = await stat(resolved);
+      if (!info.isDirectory()) throw new Error("not a directory");
+      root = { realpath: resolved, dev: info.dev, ino: info.ino };
+    } catch (error) {
+      throw new KizukiError("misconfigured", `${LEGACY_WIKI_CONNECTOR_ID}: cannot access configured root`, { cause: error });
+    }
+    const continuing = pending !== null && pending.cursor === cursor &&
+      pending.root.realpath === root.realpath && pending.root.dev === root.dev && pending.root.ino === root.ino;
+    const scan = continuing ? pending.scan : await scanLegacyWiki(this.path, this.mapping.ignore);
+    const hashes = continuing ? pending.hashes : new Map(
       scan.files.map((file) => [file.relpath, contentHash(file.content)]),
     );
 
@@ -526,7 +548,7 @@ export class LegacyWikiConnector implements Connector {
       const target = identities[origin]?.target;
       if (target !== undefined) pinned[added] = target;
     }
-    const planned = this.#plan(
+    const planned = continuing ? pending.planned : this.#plan(
       scan,
       mappingChanged ? ["mapping_changed"] : [],
       pinned,
@@ -627,11 +649,14 @@ export class LegacyWikiConnector implements Connector {
     const nextAfter = exhausted
       ? null
       : (last?.source_record_id ?? after);
-    return {
-      events,
-      cursor: encodeCursor(this.mappingHash, nextFiles, nextAfter, exhausted),
-      has_more: !exhausted,
-    };
+    const next = encodeCursor(this.mappingHash, nextFiles, nextAfter, exhausted);
+    if (!filesDone && !scan.truncated && scan.skipped.length === 0) {
+      // The plan owns the bounded emitted text. Raw files are no longer
+      // needed for snapshot reconciliation, so do not retain a second copy.
+      if (!continuing) for (const file of scan.files) file.content = "";
+      this.#continuation = { cursor: next, root, scan, hashes, planned };
+    }
+    return { events, cursor: next, has_more: !exhausted };
   }
 
   /**

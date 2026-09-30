@@ -69,8 +69,7 @@ A sync brings the ledger to where the wiki is, in both directions:
   exactly the same bytes is a rename when that pairing is unique (one vanished
   name and one new name for those bytes; empty files never pair). The new page
   is emitted once with `moved_from` naming the old path and the old page's
-  target, so it stays the same page: no new page identity and no archived
-  copy. The old path gets no tombstone; the ledger treats it as moved from
+  target, so it keeps the same target. The old path gets no tombstone; the ledger treats it as moved from
   then on. Two identical files that both move are not guessed at, and are
   withdrawn and re-added as before.
 - **A mass withdrawal is held, not applied.** When one pass would withdraw
@@ -84,6 +83,9 @@ A sync brings the ledger to where the wiki is, in both directions:
   `kizuki sync import-legacy-wiki --source KEY --confirm-withdrawals N`, where
   N is the reported count; a pass that would withdraw more than N stays held.
   The release covers that run only.
+- **A capture drain plans once.** Successful backfill pages reuse one bounded
+  tree scan and plan on the same connector instance. A changed root or restarted
+  drain scans again; edits made during a drain are captured by the next sync.
 
 ## Wiki mapping
 

@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as filesystem from "node:fs/promises";
 import {
   cpSync,
   mkdirSync,
@@ -636,9 +637,11 @@ describe("wiki renames keep the page they rename", () => {
 
 describe("ingest cost", () => {
   async function drainCpu(
+    kind: (typeof KINDS)[number],
     files: number,
   ): Promise<{ cpuMs: number; stored: number }> {
-    const h = harness(KINDS[0]);
+    const h = harness(kind);
+    const listing = spyOn(filesystem, "readdir");
     try {
       for (let index = 0; index < files; index += 1) h.put(index);
       const before = process.cpuUsage();
@@ -651,9 +654,12 @@ describe("ingest cost", () => {
       );
       const used = process.cpuUsage(before);
       expect(result.errors).toEqual([]);
+      // A flat tree is enumerated once for this entire drain, regardless of
+      // how many capture pages Core consumes. CPU alone can hide rescans.
+      expect(listing).toHaveBeenCalledTimes(1);
+      listing.mockRestore();
       const cpuMs = (used.user + used.system) / 1000;
-      // A pass with nothing to do stays cheap too.
-      const idle = process.cpuUsage();
+      // A pass with nothing to do emits nothing.
       expect(
         await runToCompletion(
           h.db,
@@ -663,21 +669,20 @@ describe("ingest cost", () => {
           "sync",
         ),
       ).toMatchObject({ stored: 0 });
-      void idle;
       return { cpuMs, stored: result.stored };
     } finally {
+      listing.mockRestore();
       h.dispose();
     }
   }
 
-  test("a 5,000-file backfill does not rescan the whole tree per batch", async () => {
-    const small = await drainCpu(1000);
-    const large = await drainCpu(5000);
+  for (const kind of KINDS) test(`${kind.label} 5,000-file backfill does not rescan the whole tree per batch`, async () => {
+    const small = await drainCpu(kind, 1000);
+    const large = await drainCpu(kind, 5000);
     expect(large.stored).toBe(5000);
-    // Rescanning and hashing every file per 128-event batch took about 250 CPU
-    // seconds for this size; a linear drain is a small fraction of that.
+    // Bound both absolute CPU and growth independently of shared-machine load.
     expect(large.cpuMs).toBeLessThan(60_000);
     // Five times the files must cost near five times the CPU, not twenty-five.
     expect(large.cpuMs / small.cpuMs).toBeLessThan(9);
-  }, 900_000);
+  }, 120_000);
 });

@@ -80,12 +80,16 @@ export function pairMoves(
   const goneByHash = new Map<string, string[]>();
   for (const item of gone) {
     if (item.hash === "") continue;
-    goneByHash.set(item.hash, [...(goneByHash.get(item.hash) ?? []), item.relpath]);
+    const names = goneByHash.get(item.hash) ?? [];
+    names.push(item.relpath);
+    goneByHash.set(item.hash, names);
   }
   const addedByHash = new Map<string, string[]>();
   for (const item of added) {
     if (item.size === 0 || item.hash === "") continue;
-    addedByHash.set(item.hash, [...(addedByHash.get(item.hash) ?? []), item.relpath]);
+    const names = addedByHash.get(item.hash) ?? [];
+    names.push(item.relpath);
+    addedByHash.set(item.hash, names);
   }
   const moves = new Map<string, string>();
   for (const [hash, names] of addedByHash) {
