@@ -48,8 +48,11 @@ export const evidenceOp: ClaimsOp<ConceptEvidenceRef> = {
     const expanded = expandTimelineDetail(ctx, { event_id: target.event_id, integrity: target.text_hash, offset, span: Math.min(length, EXPAND_SPAN_MAX) });
     const quote = expanded.quoted[0];
     if (!quote || !expanded.data) return NOT_FOUND;
+    // Timeline truncation refers to the whole capture; evidence truncation
+    // refers to this anchor. The gate's generic source flag is true-only.
+    const { truncated: _captureTruncated, ...slice } = expanded.data;
     return { status: "data", data: { schema: "kizuki.world-evidence/v1", evidence }, gaps: null,
-      quoted: [{ ...quote, ...expanded.data, evidence, truncated: expanded.data.returned < length }],
+      quoted: [{ ...quote, ...slice, evidence, ...(expanded.data.returned < length ? { truncated: true as const } : {}) }],
     };
   },
 };

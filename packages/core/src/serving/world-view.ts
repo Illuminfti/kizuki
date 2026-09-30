@@ -257,7 +257,7 @@ export function serveWorldView(
           const source = chunk as WorldEvidenceSource;
           return { evidence: source.evidence, text: source.text, tainted: true,
             integrity: source.integrity, slice_integrity: source.slice_integrity,
-            offset: source.offset, returned: source.returned, total: source.total, truncated: source.truncated };
+            offset: source.offset, returned: source.returned, total: source.total, truncated: source.truncated === true };
         }),
         ...(envelope.redacted === undefined ? {} : { redacted: envelope.redacted }),
         data: clampWorldData(envelope.data!),
