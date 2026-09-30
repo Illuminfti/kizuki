@@ -25,7 +25,8 @@ export function compactToolSchema(schema: Record<string, unknown>): Record<strin
     }
     if (!root && node["$schema"] === draft) delete node["$schema"];
     const choices = Object.hasOwn(node, "const") ? [node["const"]] : node["enum"];
-    if (typeof node["type"] === "string" && Array.isArray(choices) && choices.length > 0 && choices.every((item) => typeof item === node["type"])) delete node["type"];
+    const type = node["type"];
+    if ((type === "string" || type === "number" || type === "boolean") && Array.isArray(choices) && choices.length > 0 && choices.every((item) => typeof item === type)) delete node["type"];
     for (const key of ["items", "additionalProperties"]) {
       if (object(node[key]) && Object.keys(node[key]).length === 0) delete node[key];
     }

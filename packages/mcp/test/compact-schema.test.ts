@@ -44,3 +44,15 @@ test("listing compaction preserves literal defaults and examples", () => {
   const schema = { type: "object", properties: { value: { default: example, examples: [example] } } };
   expect(compactToolSchema(schema)).toEqual(schema);
 });
+
+test("object constraints still exclude null and arrays after compaction", () => {
+  const provider = new AjvJsonSchemaValidator();
+  for (const metadata of [{ type: "object", const: null }, { type: "object", enum: [{}, [], null] }]) {
+    const schema = z.toJSONSchema(z.unknown().meta(metadata), { target: "draft-7" });
+    const before = provider.getValidator(schema);
+    const after = provider.getValidator(compactToolSchema(schema));
+    for (const value of [null, [], {}]) expect(after(value).valid).toBe(before(value).valid);
+    expect(after(null).valid).toBe(false);
+    expect(after([]).valid).toBe(false);
+  }
+});
