@@ -180,6 +180,18 @@ test("direct external file and env credentials still bind once through the actua
   expect(seen).toEqual(["Bearer synthetic-external-model-key", "Bearer synthetic-external-model-key"]);
 });
 
+test("saving the same normalized destination preserves its retention and provider privacy controls", async () => {
+  const root = fixture('[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "https://MODELS.example.test:443/v1/"\nmodel = "declared"\nretention = "zero_retention"\n[ports.llm.provider]\ndata_collection = "deny"\nzdr = true\nallow_fallbacks = false\n');
+  const before = await readModelSettings(root);
+  expect(before.selection).toMatchObject({ base_url: "https://models.example.test/v1", model: "declared" });
+  await saveModelSettings(root, {
+    expected_revision: before.revision, selection: selection("https://models.example.test/v1", "declared"), credential: { action: "keep" },
+  });
+  expect(Bun.TOML.parse(readFileSync(join(root, ".kizuki/serve.toml"), "utf8"))).toMatchObject({ ports: { llm: {
+    retention: "zero_retention", provider: { data_collection: "deny", zdr: true, allow_fallbacks: false },
+  } } });
+});
+
 test("changing the model clears its retention declaration and preserves provider privacy controls", async () => {
   const raw = '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "http://127.0.0.1:1/v1"\nmodel = "declared"\nretention = "zero_retention"\ntimeout_ms = 2300\n[ports.llm.provider]\ndata_collection = "deny"\nzdr = true\nallow_fallbacks = false\n';
   const root = fixture(raw), before = await readModelSettings(root);

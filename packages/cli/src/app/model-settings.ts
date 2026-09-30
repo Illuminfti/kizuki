@@ -83,7 +83,8 @@ export async function saveModelSettings(vaultPath: string, input: AppModelSaveIn
   else if (selection.kind === "openai_compatible" && Object.keys(selection).sort().join() === "base_url,kind,model") {
     const checked = configured({ id: OPENAI, base_url: selection.base_url, model: selection.model });
     const prior = isPlainObject(previous.llm) && previous.llm.id === OPENAI ? previous.llm : {};
-    const sameDestination = prior.base_url === checked.config!.base_url && prior.model === checked.config!.model;
+    const priorConfig = configured(previous.llm).config;
+    const sameDestination = priorConfig?.base_url === checked.config!.base_url && priorConfig?.model === checked.config!.model;
     // A new destination starts undeclared; the owner's provider privacy controls still apply.
     const { retention: _retention, ...rest } = prior;
     llm = { ...(sameDestination ? prior : rest), id: OPENAI, base_url: checked.config!.base_url, model: checked.config!.model };
