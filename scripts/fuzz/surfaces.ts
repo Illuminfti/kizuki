@@ -31,6 +31,9 @@ export async function surfaceDriver(target: typeof SURFACES[number], scratch: st
       const args = argumentsFor(input);
       for (const tool of TOOLS) {
         for (const wrapped of [false, true]) {
+          // Every HTTP route shares one body reader. Raw-byte admission needs
+          // one route per case; wrapped fields still exercise all ten tools.
+          if (target === "http" && !wrapped && tool !== "system_health") continue;
           const mutated = wrapped ? wrappedArguments(tool, input.text) : args;
           if (mcp !== null && ownerMcp !== null) {
             const denied = await mcp.call(tool, mutated);

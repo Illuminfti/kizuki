@@ -31,6 +31,10 @@ The first failing target stops the campaign. There is no automatic shrinking;
 reduce the failing synthetic case into a public-seam regression before fixing
 it, then retain it in the corpus.
 
+Standing HTTP sends each raw byte case through the shared body reader once,
+then mutates fields through all ten tool routes. MCP sends raw argument
+containers and wrapped fields through each tool's distinct SDK schema.
+
 The supervisor runs one child at a time, samples Linux `VmHWM` every 25 ms,
 checks the worker's final maximum-RSS accounting, bounds protocol lines to
 4 KiB, kills a child that exceeds its time, memory, or output budget, and
