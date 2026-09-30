@@ -44,7 +44,7 @@ async function hook(env: Record<string, string | undefined>, args: string[], cwd
     ...(args.includes("--harness") ? [] : ["--harness", "generic"]),
     ...(args.includes("--timeout-ms") ? [] : ["--timeout-ms", "60000"]), ...args];
   const child = Bun.spawn(launcher ? cliArgs(argv) : [process.execPath, main, ...argv], {
-    env: { ...process.env, ...env }, cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe",
+    env: { ...process.env, ...env }, ...(cwd === undefined ? {} : { cwd }), stdin: "ignore", stdout: "pipe", stderr: "pipe",
   });
   const [stdout, stderr, code] = await Promise.all([
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
@@ -97,8 +97,12 @@ test("explicit owner output is scrubbed on both direct and daemon reads", async 
   } finally { server.stop(); }
 });
 
-test.each([["--vault"], ["--vault", "/nonexistent/a", "--vault", "/nonexistent/b"], ["--vault="]])(
-  "vault argument errors are silent and successful: %j", async (...args) => {
+test.each([
+  { args: ["--vault"] },
+  { args: ["--vault", "/nonexistent/a", "--vault", "/nonexistent/b"] },
+  { args: ["--vault="] },
+])(
+  "vault argument errors are silent and successful: %j", async ({ args }) => {
     const env = isolatedEnv();
     expect(await hook(env, args)).toEqual({ code: 0, stdout: "", stderr: "" });
     expect(await hook(env, [...args, "--verbose"])).toEqual({ code: 0, stdout: "", stderr: "hook: nothing injected (usage)\n" });
@@ -156,7 +160,8 @@ test("fallback passes only allowed environment and the selected credential", asy
     return original(...args);
   }) as typeof Bun.spawn);
   try {
-    const result = await runSessionStart({ env, vaultOverride: f.vault, out() {}, err() {} }, {
+    const result = await runSessionStart({ env, vaultOverride: f.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false,
+      out() {}, err() {}, prompt: async () => "" }, {
       harness: "generic", budget: 450, timeoutMs: 60_000, tokenRef: "env:HOOK_SELECTED_TOKEN", direct: false,
     });
     expect("output" in result).toBe(true);
