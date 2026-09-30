@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs
 import { join } from "node:path";
 import {
   applyCanonWrite, backupVault, correct, createBudgetTracker, createFts5RetrievalPort,
-  exportVault, recoverCanonWrites, resolveTarget, restoreSnapshot, restoreVault,
+  exportVault, FTS5_RETRIEVAL_ID, recoverCanonWrites, resolveTarget, restoreSnapshot, restoreVault,
   retryCanonProjectionObligations, runPurge, runServeDaemon, undoReceipt,
   rebuildRetrieval,
 } from "../../packages/core/src";
@@ -42,7 +42,7 @@ async function operate(): Promise<void> {
       break;
     case "canon": {
       const port = cut === "projection-started" ? createFts5RetrievalPort({
-        vault_path: vault, data_dir: join(vault, ".kizuki", "chaos-retrieval"), config: {},
+        vault_path: vault, data_dir: join(vault, ".kizuki", "retrieval", FTS5_RETRIEVAL_ID), config: {},
         clock: () => new Date().toISOString(), logger: () => {}, secrets: async () => { throw new Error("fixture_has_no_secrets"); },
       }) : undefined;
       try {
@@ -91,7 +91,7 @@ try {
     process.send?.({ event: "completed" });
   } else {
     const port = cut === "projection-started" ? createFts5RetrievalPort({
-      vault_path: vault, data_dir: join(vault, ".kizuki", "chaos-retrieval"), config: {},
+      vault_path: vault, data_dir: join(vault, ".kizuki", "retrieval", FTS5_RETRIEVAL_ID), config: {},
       clock: () => new Date().toISOString(), logger: () => {}, secrets: async () => { throw new Error("fixture_has_no_secrets"); },
     }) : undefined;
     try {
