@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { rmSync } from "node:fs";
-import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
-import { withCanonMutationSync } from "../../src/canon/io";
+import { OWNER, OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
+import { snapshotCanonIo, withCanonMutationSync } from "../../src/canon/io";
 import { rewriteCanon } from "../../src/serving/rewrite";
 import { undoReceipt } from "../../src/canon/undo";
 import { recoverCanonWrites } from "../../src/canon/recovery";
@@ -16,7 +16,8 @@ import { serveCorrect } from "../../src/serving/correct";
 import { serveGetPage } from "../../src/serving/page";
 import { serveSearch } from "../../src/serving/search";
 import { claimInput, eventFacts } from "../claims/helpers";
-import { write } from "../canon/helpers";
+import { putEvent, write } from "../canon/helpers";
+import { tempVault } from "../helpers/vault";
 import { recordedPage, serveFixture, storeEvent, type Fixture } from "./helpers";
 
 const fixtures: Fixture[] = [];
@@ -93,19 +94,34 @@ describe("produced canon classes", () => {
     rebuildDerived(f.db, f.vaultPath);
     await protectedRead();
     expect(f.db.query("SELECT credential FROM canon_page_classes WHERE page_id=?").get(data.id)).toEqual({ credential: 1 });
-    const backup = `${f.vaultPath}-backup`, restored = `${f.vaultPath}-restored`;
+
+  });
+  test("restore rebuilds the produced-content class from clean source evidence", async () => {
+    // The general serving fixture intentionally contains a purge hold, which
+    // correctly forbids exporting it. A backup fixture starts without holds.
+    const vault = tempVault("kizuki-class-restore-");
+    const original = openLedger(join(vault.path, ".kizuki", "kizuki.db"));
+    const backup = `${vault.path}-backup`, restored = `${vault.path}-restored`;
     copies.push(backup, restored);
-    await exportVault(f.db, f.vaultPath, backup);
-    restoreVault(backup, restored);
-    const db = openLedger(join(restored, ".kizuki", "kizuki.db"));
     try {
-      const enrolled = addAgent(db, "restored-reader", { ...OWNER_AGENT_GRANT });
-      const principal = authenticate(db, enrolled.token);
-      if (principal === null) throw new Error("fixture restored principal");
-      const ctx = { db, vaultPath: restored, principal };
-      expect(serveGetPage(ctx, { path }).canon).toEqual([]);
-      expect(serveGetPage({ ...f.owner(), db, vaultPath: restored }, { path }).canon).toHaveLength(1);
-    } finally { db.close(); }
+      const source = putEvent(original);
+      const path = "facts/restored-secret.md";
+      await recordedPage(original, vault.path, path, {
+        id: "fact:restored-secret", type: "fact", title: "Restored note",
+        status: "active", sensitivity: "personal", taint: "clean", sources: [source],
+      }, CREDENTIAL_PROSE);
+      await exportVault(original, vault.path, backup);
+      restoreVault(backup, restored);
+      const db = openLedger(join(restored, ".kizuki", "kizuki.db"));
+      try {
+        const enrolled = addAgent(db, "restored-reader", { ...OWNER_AGENT_GRANT });
+        const principal = authenticate(db, enrolled.token);
+        if (principal === null) throw new Error("fixture restored principal");
+        expect(serveGetPage({ db, vaultPath: restored, principal }, { path }).canon).toEqual([]);
+        expect(serveGetPage({ db, vaultPath: restored, principal: OWNER }, { path }).canon).toHaveLength(1);
+        expect(db.query("SELECT credential FROM canon_page_classes WHERE page_id=?").get("fact:restored-secret")).toEqual({ credential: 1 });
+      } finally { db.close(); }
+    } finally { original.close(); vault.dispose(); }
   });
 });
 
@@ -128,7 +144,7 @@ describe("correction page snapshots", () => {
     }));
     const claim = incoming.outcome === "contested" ? incoming.incoming : incoming.outcome === "stored" ? incoming.claim : null;
     if (claim === null || filed.claim.claim_key === null) throw new Error("fixture replacement");
-    const corrected = withCanonMutationSync({ db: f.db, vault_path: f.vaultPath }, (scope, io) =>
+    const corrected = withCanonMutationSync(snapshotCanonIo({ db: f.db, vault_path: f.vaultPath }), (scope, io) =>
       rewriteCanon(scope, io, ctx, claim, [filed.claim.claim_key!]));
     expect(corrected.failed).toBe(false);
     expect(corrected.rewritten).toEqual([]);
