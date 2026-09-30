@@ -260,7 +260,7 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "Report system health",
       description: scoped
-        ? "Unavailable under the scoped v2 contract; returns unsupported_contract."
+        ? `Unavailable under the scoped v2 contract; returns unsupported_contract. ${TAINT_RULE}`
         : TOOL_DESCRIPTIONS.system_health,
       inputSchema: HEALTH_INPUT,
       outputSchema: outputOf("system_health"),

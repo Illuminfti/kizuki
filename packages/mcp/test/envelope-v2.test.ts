@@ -49,7 +49,7 @@ test("a newly enrolled stdio client uses v2 on every tool, and hidden revocation
       expect(forbidden(result)).toEqual([]);
       expect(forbidden(JSON.parse(result.content[0]!.text))).toEqual([]);
       if (tool === "propose") {
-        expect(JSON.parse(result.content[0]!.text)).toMatchObject({ message: "provenance outside the grant" });
+        expect(JSON.parse(result.content[0]!.text)).toMatchObject({ message: "invalid arguments: provenance: must name live events this principal can read" });
       }
       if (tool === "system_health") {
         expect(JSON.parse(result.content[0]!.text)).toMatchObject({ error: "unsupported_contract", message: "requested contract unavailable" });
