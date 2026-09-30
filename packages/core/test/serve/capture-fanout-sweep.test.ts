@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProducerPort } from "../../src/contracts/producer";
 import { countCaptureFanout } from "../../src/claims/capture-fanout";
+import { hashBody } from "../../src/claims/hash";
 import { getClaim } from "../../src/claims/store";
 import { recoverCanonWrites } from "../../src/canon/recovery";
 import { inspectCanonRecovery } from "../../src/canon/write-intent";
@@ -32,30 +33,38 @@ async function vaultWithNotes(count: number) {
   initVault(vault);
   const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
   const ids: string[] = [];
-  for (let index = 0; index < count; index += 1) {
-    const eventId = putEvent(db, {
-      source_record_id: `session-1/${index}`,
-      text: `turn ${index}`,
-    });
-    const note = await storeClaim(db, eventId, {
-      kind: "claim",
-      target: "captures/session-connector/2026-09-01",
-      subject: null,
-      predicate: null,
-      object: null,
-      body: `Captured from \`session-connector\` (message) at 2026-09-01T09:00:00Z.\n\n> turn ${index}`,
-      frontmatter: {
-        type: "source",
-        title: "Capture from session-connector at 2026-09-01T09:00:00Z",
-        "x-connector": "session-connector",
-        "x-capture-kind": "message",
-      },
-      subjects: [],
-      confidence: 1,
-      taint: "quoted",
-      sensitivity: "private",
-    });
-    ids.push(note.claim_id);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (let index = 0; index < count; index += 1) {
+      const eventId = putEvent(db, {
+        source_record_id: `session-1/${index}`,
+        text: `turn ${index}`,
+      });
+      const note = await storeClaim(db, eventId, {
+        kind: "claim",
+        target: "captures/session-connector/2026-09-01",
+        subject: null,
+        predicate: null,
+        object: null,
+        body: `Captured from \`session-connector\` (message) at 2026-09-01T09:00:00Z.\n\n> turn ${index}`,
+        frontmatter: {
+          type: "source",
+          title: "Capture from session-connector at 2026-09-01T09:00:00Z",
+          "x-connector": "session-connector",
+          "x-capture-kind": "message",
+        },
+        subjects: [],
+        confidence: 1,
+        taint: "quoted",
+        sensitivity: "private",
+      });
+      ids.push(note.claim_id);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    db.close();
+    throw error;
   }
   return { vault, db, ids };
 }
@@ -182,15 +191,19 @@ describe("the doctor sweep closes out capture notes filed for conversational eve
     try {
       // Seed stored legacy rows beyond one sweep's limit without running a
       // modern producer (which intentionally cannot file these notes).
-      f.db.query(`WITH RECURSIVE turns(n) AS (
-        VALUES(1) UNION ALL SELECT n + 1 FROM turns WHERE n < 10000
-      ) INSERT INTO claims (
+      const note = getClaim(f.db, f.ids[0]!)!;
+      const seed = f.db.query(`INSERT INTO claims (
         claim_id, kind, target, body, frontmatter, provenance, subjects,
         producer, confidence, status, created_at, body_hash, sensitivity, taint
-      ) SELECT printf('legacy-fanout-%05d', n), kind, target, body,
+      ) SELECT ?, kind, target, ?,
         frontmatter, provenance, subjects, producer, confidence, status,
-        created_at, body_hash, sensitivity, taint
-        FROM turns CROSS JOIN claims WHERE claim_id = ?`).run(f.ids[0]!);
+        created_at, ?, sensitivity, taint FROM claims WHERE claim_id = ?`);
+      f.db.transaction(() => {
+        for (let index = 1; index <= 10000; index += 1) {
+          const body = `${note.body}\n\n> historical turn ${index}`;
+          seed.run(`legacy-fanout-${index}`, body, hashBody(body), note.claim_id);
+        }
+      }).immediate();
       expect(countCaptureFanout(f.db)).toEqual({ pending: 10001, skipped: 0 });
       const sync = await runRail(f.db, f.vault, "sync", {
         hooks: { model_ref: "fixture-model", producer, claims: { db: f.db } },
