@@ -12,6 +12,7 @@ import { openLedger } from "@kizuki/core/testing";
 import { TelegramConnector, encodeState, scriptedDeps } from "@kizuki/connector-telegram";
 import { FakeImapServer, fixtureMailbox, fixtureState, memoryDialer } from "@kizuki/connector-imap/testing";
 import {
+  ConnectorRegistry,
   IMAP_CONNECTOR_ID,
   TELEGRAM_CONNECTOR_ID,
   createImapConnector,
@@ -39,6 +40,23 @@ function ledger(connectorId: string) {
     },
   });
   return db;
+}
+
+/** Use the registered production overlay, with an explicitly scripted factory. */
+function fromRegistry(inner: Connector): Connector {
+  const manifest = defaultConnectorRegistry.seal(inner).manifest();
+  const descriptor = defaultConnectorRegistry.list().find(
+    (port) => port.id === manifest.connector_id.replace(/^kizuki\./, "kizuki.connector."),
+  );
+  if (descriptor === undefined) throw new Error("missing connector descriptor");
+  const registry = new ConnectorRegistry();
+  registry.register(manifest.connector_id, descriptor, () => inner, {
+    contract_minor: manifest.contract_minor!,
+    implementation: manifest.implementation!,
+    allowed_egress: manifest.allowed_egress!,
+    cursor_schema: manifest.cursor_schema ?? null,
+  });
+  return registry.get(manifest.connector_id);
 }
 
 test("sealing forwards the lent run context to backfill and sync", async () => {
@@ -69,7 +87,7 @@ test("sealing forwards the lent run context to backfill and sync", async () => {
   expect(seen).toEqual([context, context]);
 });
 
-test("a sealed IMAP connector backfills and syncs through the real runner with the host-held map", async () => {
+test("a registry-built IMAP connector backfills and syncs through the real runner with the host-held map", async () => {
   const state = fixtureState();
   const server = new FakeImapServer(fixtureMailbox(), { username: state.username, password: state.password });
   const inner = createImapConnector(
@@ -77,12 +95,12 @@ test("a sealed IMAP connector backfills and syncs through the real runner with t
     { dial: memoryDialer(server) },
   );
   await inner.connect(async () => JSON.stringify(state));
-  const sealed = defaultConnectorRegistry.seal(inner);
+  const sealed = fromRegistry(inner);
   const db = ledger(IMAP_CONNECTOR_ID);
 
   const backfilled = await runToCompletion(db, sealed, IMAP_CONNECTOR_ID, SOURCE, "backfill");
   expect(backfilled.errors).toEqual([]);
-  expect(backfilled.stored).toBeGreaterThan(0);
+  expect(backfilled.stored).toBe(14);
   expect(getCheckpoint(db, IMAP_CONNECTOR_ID, SOURCE)?.backfill_complete).toBe(true);
   expect(readCursorStore(db, IMAP_CONNECTOR_ID, SOURCE).size).toBeGreaterThan(0);
 
@@ -92,7 +110,7 @@ test("a sealed IMAP connector backfills and syncs through the real runner with t
   db.close();
 });
 
-test("a sealed Telegram connector backfills and syncs through the real runner with the host-held map", async () => {
+test("a registry-built Telegram connector backfills and syncs through the real runner with the host-held map", async () => {
   const inner = new TelegramConnector({ state_ref: "file:connections/01JJ0000000000000000000000.state" }, scriptedDeps());
   await inner.connect(async () =>
     new TextDecoder().decode(
@@ -103,7 +121,7 @@ test("a sealed Telegram connector backfills and syncs through the real runner wi
       }),
     ),
   );
-  const sealed = defaultConnectorRegistry.seal(inner);
+  const sealed = fromRegistry(inner);
   const db = ledger(TELEGRAM_CONNECTOR_ID);
 
   const backfilled = await runToCompletion(db, sealed, TELEGRAM_CONNECTOR_ID, SOURCE, "backfill");
@@ -113,6 +131,7 @@ test("a sealed Telegram connector backfills and syncs through the real runner wi
 
   const synced = await runToCompletion(db, sealed, TELEGRAM_CONNECTOR_ID, SOURCE, "sync");
   expect(synced.errors).toEqual([]);
+  expect(synced.stored).toBe(0);
   await inner.close();
   db.close();
 });

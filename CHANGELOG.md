@@ -64,7 +64,7 @@
   has to fit 8 KiB. The map is lent to `backfill` and `sync` as
   `RunContext.cursor_store` and updated through `SyncBatch.cursor_store`; a
   run that does not commit its cursor leaves the map alone. This is ledger
-  version 34 (`connector_cursor_store`); existing vaults migrate on open.
+  version 35 (`connector_cursor_store`); existing vaults migrate on open.
 - IMAP sign-in ends with an optional date floor (`Only mail since
   (YYYY-MM-DD) [all]:`, stored as `since`). Mail received before it, by
   INTERNALDATE at midnight UTC, is not fetched or remembered.
