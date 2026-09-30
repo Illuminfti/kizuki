@@ -12,8 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { accept, readBootId, runServeDaemon } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import type { Grant } from "@kizuki/core";
-import { Tiktoken } from "js-tiktoken/lite";
-import ranks from "js-tiktoken/ranks/cl100k_base";
+import { packetTokens } from "../../core/src/serving/packet-tokenizer";
 import { createHelpers, fixtureConsent } from "./helpers";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
@@ -249,8 +248,7 @@ describe("hook session-start output", () => {
     expect(run.stdout).toContain("budget=220");
     expect(run.stdout).toContain("tainted src=fixture");
     expect(run.stdout).toContain("Mira leads Project Atlas.");
-    const encoding = new Tiktoken(ranks);
-    expect(encoding.encode(run.stdout, [], []).length).toBeLessThanOrEqual(220);
+    expect(packetTokens(run.stdout)).toBeLessThanOrEqual(220);
     expect(Buffer.byteLength(run.stdout)).toBeLessThan(220 * 8);
     for (const private_ of [setup.root, setup.vault, "/work/projects"])
       expect(run.stdout).not.toContain(private_);
