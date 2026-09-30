@@ -63,7 +63,11 @@ function fixture(kind: "wiki" | "folder", count = 1) {
     "SELECT page_id, rel_path FROM page_index WHERE rel_path LIKE 'auto/%' ORDER BY rel_path",
   ).all().map((row) => ({ ...row, page: parseFrontmatter(readFileSync(join(vault, row.rel_path), "utf8")) }));
   const text = () => {
-    const page = pages().find((row) => kind === "wiki" || row.page.data["type"] === "source")!.page;
+    // A capture can be composed onto its existing subject page, whose type
+    // stays unchanged. Find its quoted source text rather than a page type.
+    const found = pages().find((row) => kind === "wiki" || row.page.body.includes("> state "));
+    expect(found).toBeDefined();
+    const page = found!.page;
     return kind === "wiki" ? page.body.trim() : (page.body.match(/^> .+$/gm) ?? []).map((line) => line.slice(2)).join("\n");
   };
   return { db, source, put, sync, write, pages, name, text };
@@ -102,7 +106,7 @@ test(`a ${kind} restore leaves the same canon page active and the next sync emit
     h.put(0);
     expect((await h.sync()).stored).toBe(1);
     expect((await h.write()).errors).toEqual([]);
-    expect(h.pages()).toHaveLength(kind === "wiki" ? 1 : 2);
+    expect(h.pages()).toHaveLength(1);
     expect(h.pages()[0]!.page_id).toBe(id);
     expect(h.pages()[0]!.page.data["status"]).toBe("active");
     expect(h.text()).toBe("state A 0");
