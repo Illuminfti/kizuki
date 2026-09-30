@@ -13,6 +13,8 @@ import {
 } from "./candidates";
 import type { Piece } from "./candidates";
 import { claimReader } from "./claims";
+import { authorizedClaimSql } from "./claim-policy-sql";
+import { instantBoundPair, instantPairSql } from "../query/sql";
 import { oneLine, redactorOf } from "./redact";
 import type { Redactor } from "./redact";
 import { SESSION_SECTIONS } from "./sections";
@@ -141,6 +143,7 @@ function piece(
     heading,
     block,
     audit: ids.flatMap((id) => reader.auditClaim(id)),
+    claims: reader.publication(ids),
   };
 }
 
@@ -186,14 +189,23 @@ function readable(
   where: string,
   bindings: (string | number)[],
   keep: (claim: Claim) => boolean,
+  subjects?: readonly string[],
 ): Readable {
   const found: Claim[] = [];
   let scanned = 0;
+  const policy = authorizedClaimSql(ctx);
+  const valid = `AND ${instantPairSql("claims.valid_from")} <= (?,?) AND
+    (claims.valid_to IS NULL OR ${instantPairSql("claims.valid_to")} > (?,?))`;
+  const atPair = instantBoundPair(at, "at");
+  const requested = subjects === undefined || subjects.length === 0 ? "" :
+    `AND (claims.subject IN (SELECT value FROM json_each(?)) OR (claims.subject IS NULL AND
+      EXISTS(SELECT 1 FROM json_each(claims.subjects) s WHERE s.value IN (SELECT value FROM json_each(?)))))`;
+  const requestedBindings = requested === "" ? [] : [JSON.stringify(subjects), JSON.stringify(subjects)];
   for (const row of ctx.db
     .query<{ claim_id: string }, (string | number)[]>(
-      `SELECT claim_id FROM claims WHERE status='live' AND ${where} ORDER BY asserted_at DESC, claim_id LIMIT ${CANDIDATES}`,
+      `SELECT claim_id FROM claims WHERE status='live' AND ${where} AND ${policy.sql} ${valid} ${requested} ORDER BY asserted_at DESC, claim_id LIMIT ${CANDIDATES}`,
     )
-    .iterate(...bindings)) {
+    .iterate(...bindings, ...policy.bindings, ...atPair, ...atPair, ...requestedBindings)) {
     scanned += 1;
     const claim = getClaim(ctx.db, row.claim_id);
     if (
@@ -276,6 +288,7 @@ export function collectSessionPieces(
       `authority IN (${marks(OWNER_TIERS)}) AND polarity='positive' AND subject IS NOT NULL AND predicate IN (${marks(OWNER_PREDICATES)})`,
       [...OWNER_TIERS, ...OWNER_PREDICATES],
       inSubjects,
+      request.subjects,
     );
     if (truncated) reasons.owner = "unavailable";
     for (const claim of facts) shown.add(claim.claim_id);
@@ -310,6 +323,7 @@ export function collectSessionPieces(
         inSubjects(claim) &&
         !shown.has(claim.claim_id) &&
         compareRfc3339(claim.asserted_at, "asserted_at", request.at, "at") <= 0,
+      request.subjects,
     );
     for (const claim of changes) {
       shown.add(claim.claim_id);
@@ -343,6 +357,7 @@ export function collectSessionPieces(
       `polarity='positive' AND predicate IN (${marks(COMMITMENT_PREDICATES)})`,
       [...COMMITMENT_PREDICATES],
       inSubjects,
+      request.subjects,
     );
     for (const claim of claims)
       lines.push(

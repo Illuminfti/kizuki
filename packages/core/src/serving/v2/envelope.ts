@@ -4,7 +4,7 @@ import { isLedgerBusy } from "../../ledger/busy";
 import { issueWorldRef, worldNamespace } from "../../world/references";
 import { ledgerBusyServeError } from "../gate";
 import { ENVELOPE_V2_SCHEMA, ServeError } from "../types";
-import type { CanonChunk, Envelope, EnvelopeV2, QuotedChunk, ServeContext } from "../types";
+import type { CanonChunk, EnvelopeV2, QuotedChunk, ServeContext } from "../types";
 
 /**
  * Builds the scoped envelope field by field. Nothing is stripped from a v1
@@ -38,9 +38,4 @@ export function sealEnvelope<
     if (error instanceof ServeError || !isLedgerBusy(error)) throw error;
     throw ledgerBusyServeError(error);
   }
-}
-
-/** The v2 form of a v1 answer: same chunks and data, none of the global counters. */
-export function projectEnvelope<T>(ctx: ServeContext, served: Envelope<T>): EnvelopeV2<T | null> {
-  return sealEnvelope(ctx, served.tool, served.at, served.canon, served.quoted, served.data ?? null);
 }

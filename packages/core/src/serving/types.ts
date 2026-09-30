@@ -9,6 +9,10 @@ import type { WireRef } from "../world/references";
 export const ENVELOPE_SCHEMA = "kizuki.envelope/v1" as const;
 export const ENVELOPE_V2_SCHEMA = "kizuki.envelope/v2" as const;
 
+export type ResponseContract = typeof ENVELOPE_SCHEMA | typeof ENVELOPE_V2_SCHEMA;
+export type ResponseEnvelope<T, C extends ResponseContract> = C extends typeof ENVELOPE_V2_SCHEMA
+  ? EnvelopeV2<T | null> : Envelope<T>;
+
 export interface ServeContext {
   /**
    * Authoritative ledger and agent schemas are already initialized. Missing

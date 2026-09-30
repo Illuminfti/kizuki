@@ -10,7 +10,9 @@ import { auditArguments, claimsIo, gateAsync } from "./gate";
 import type { Served } from "./gate";
 import { eventDecision, readServableEvents } from "./ledger";
 import { ServeError } from "./types";
-import type { Envelope, ServeContext } from "./types";
+import { authorizedEventSql } from "../world/policy-sql";
+import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA } from "./types";
 
 /** `purge_review` is filed by purge itself, never by a producer. */
 const PROPOSE_KINDS = [
@@ -239,7 +241,11 @@ function predicateOf(
  * unreadable are refused identically.
  */
 function validateProvenance(ctx: ServeContext, provenance: string[]): void {
-  const facts = readServableEvents(ctx.db, provenance);
+  const policy = authorizedEventSql(ctx);
+  const selected = ctx.db.query<{ event_id: string }, (string | number)[]>(
+    `SELECT event_id FROM events WHERE event_id IN (SELECT value FROM json_each(?)) AND ${policy.clauses.join(" AND ")}`,
+  ).all(JSON.stringify(provenance), ...policy.bindings).map((row) => row.event_id);
+  const facts = readServableEvents(ctx.db, selected);
   const denials: AuditDenial[] = [];
   let refused = false;
   for (const id of provenance) {
@@ -261,10 +267,11 @@ function validateProvenance(ctx: ServeContext, provenance: string[]): void {
   }
 }
 
-export async function servePropose(
+export async function servePropose<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
   args: ProposeArgs,
-): Promise<Envelope<ProposeData>> {
+  contract: C = ENVELOPE_SCHEMA as C,
+): Promise<ResponseEnvelope<ProposeData, C>> {
   return gateAsync(
     ctx,
     "propose",
@@ -368,5 +375,6 @@ export async function servePropose(
       audit_ids: { claim_ids: [claim.claim_id] },
     };
   },
+  contract,
   );
 }

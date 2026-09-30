@@ -152,6 +152,30 @@ export function envelopeV2For(tool: Tool) {
   });
 }
 
+/** Both implemented contracts, discriminated by schema, for explicit negotiation. */
+export function negotiatedEnvelopeFor(tool: Tool) {
+  const v1 = envelopeFor(tool), v2 = envelopeV2For(tool);
+  // The pinned SDK emits draft-7. Generate the union together so its shared
+  // definitions and references resolve from the advertised schema's root.
+  const advertised = z.toJSONSchema(z.union([v1, v2]), { target: "draft-7" });
+  return v1.extend({
+    schema: z.enum([ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA]),
+    principal: z.union([z.string(), worldRef("principal")]),
+    denied: z.array(DENIED).optional(),
+    data: z.record(z.string(), z.unknown()).nullable().optional(),
+  }).superRefine((value, ctx) => {
+    const schema = value.schema === ENVELOPE_SCHEMA ? v1 : v2;
+    if (!schema.safeParse(value).success) ctx.addIssue({ code: "custom", message: "invalid negotiated envelope" });
+  }).meta({ anyOf: advertised.anyOf, definitions: advertised.definitions });
+}
+
+/** Core judges the separate selector before the SDK parses the tool fields. */
+export function selectableInput<T extends z.ZodObject>(input: T) {
+  return input.extend({ response_contract: z.unknown().optional().describe(
+    "Select kizuki.envelope/v1 or kizuki.envelope/v2 separately from tool input. Token sessions default to v2; unsupported selectors receive an audited Core refusal.",
+  ) });
+}
+
 export const SEARCH_INPUT = z.strictObject({
   query: z.string().min(1).max(512),
   scope: z.enum(["canon", "ledger", "all"]).optional(),

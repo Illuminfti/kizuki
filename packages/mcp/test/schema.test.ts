@@ -203,7 +203,7 @@ describe("the advertised output schema describes what the server sends", () => {
     expect(text).toEqual(structured);
   });
 
-  test("legacy tools retain source_policy while world advertises its closed v2 envelope", async () => {
+  test("negotiated tools advertise both contracts while world retains its closed v2 envelope", async () => {
     const client = await connectClient(live().owner(), open);
     const tools = (await client.listTools()).tools;
     expect(tools.map((tool) => tool.name)).toEqual([...TOOLS]);
@@ -211,6 +211,7 @@ describe("the advertised output schema describes what the server sends", () => {
       const advertised = tool.outputSchema as {
         required?: string[];
         properties?: { source_policy?: { required?: string[] } };
+        anyOf?: { required?: string[]; properties?: { schema?: { const?: string } } }[];
       };
       if(tool.name==="world_view") {
         expect(advertised.required?.slice().sort()).toEqual(["at","canon","data","principal","quoted","schema","tool"]);
@@ -218,7 +219,7 @@ describe("the advertised output schema describes what the server sends", () => {
         continue;
       }
       expect(advertised.required?.slice().sort()).toEqual(
-        ["at", "canon", "denied", "principal", "quoted", "schema", "tool"],
+        ["at", "canon", "principal", "quoted", "schema", "tool"],
       );
       expect(Object.keys(advertised.properties ?? {}).sort()).toEqual([
         "at",
@@ -233,6 +234,9 @@ describe("the advertised output schema describes what the server sends", () => {
         "source_policy",
         "tool",
       ]);
+      expect(advertised.anyOf?.map(arm => arm.properties?.schema?.const)).toEqual(["kizuki.envelope/v1", "kizuki.envelope/v2"]);
+      expect(advertised.anyOf?.[0]?.required).toContain("denied");
+      expect(advertised.anyOf?.[1]?.required).toContain("data");
       expect(advertised.properties?.source_policy?.required?.slice().sort()).toEqual(
         ["epoch", "legacy_unbound", "mode"],
       );

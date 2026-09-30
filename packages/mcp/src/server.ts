@@ -1,13 +1,13 @@
-import { ServeError, dispatchServeTool, resolvePrincipal, toolAllowed } from "@kizuki/core";
-import { ENVELOPE_V2_SCHEMA, activeWorldOps, findWorldOp, worldOpInputKeys } from "@kizuki/core/world";
+import { ServeError, TOOLS, dispatchServeTool, resolvePrincipal, toolAllowed } from "@kizuki/core";
+import { ENVELOPE_V2_SCHEMA, activeWorldOps, findWorldOp, worldOpInputKeys, negotiateServeContract } from "@kizuki/core/world";
 import type { WorldViewEnvelope, Envelope, ServeContext, Tool } from "@kizuki/core";
 import type { EnvelopeV2 } from "@kizuki/core/world";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   CORRECT_INPUT,
   ENTITIES_INPUT,
-  envelopeFor,
-  envelopeV2For,
+  negotiatedEnvelopeFor,
+  selectableInput,
   GET_PAGE_INPUT,
   GRAPH_INPUT,
   HEALTH_INPUT,
@@ -172,12 +172,16 @@ export interface ServerOptions {
 
 export function createServer(ctx: ServeContext, options: ServerOptions = {}): McpServer {
   const world = options.worldOps === undefined ? WORLD : buildWorldSurface(options.worldOps);
-  // A token principal is a scoped client. The adapter, not the calling model,
-  // names the scoped contract, so every call is served under it and the
-  // advertised output is the one shape it can return. The owner is unchanged.
+  // Default token calls to v2; explicit selectors are judged by Core. The
+  // advertised discriminated output covers both implemented contracts.
   const scoped = ctx.principal.kind === "agent";
-  const contract = scoped ? { response_contract: ENVELOPE_V2_SCHEMA } : {};
-  const outputOf = (tool: Tool) => (scoped ? envelopeV2For(tool) : envelopeFor(tool));
+  const outputOf = negotiatedEnvelopeFor;
+  const dispatch = (tool: Tool, input: Record<string, unknown>) => {
+    const { response_contract, ...args } = input;
+    return dispatchServeTool(ctx, tool, args, {
+      response_contract: response_contract === undefined && scoped ? ENVELOPE_V2_SCHEMA : response_contract,
+    });
+  };
   const server = new McpServer(
     { name: "kizuki", version: SERVER_VERSION },
     { instructions: INSTRUCTIONS },
@@ -188,11 +192,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "Search notes and records",
       description: TOOL_DESCRIPTIONS.search,
-      inputSchema: SEARCH_INPUT,
+      inputSchema: selectableInput(SEARCH_INPUT),
       outputSchema: outputOf("search"),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "search", args, contract)),
+    (args) => respond(() => dispatch("search", args)),
   );
 
   server.registerTool(
@@ -200,11 +204,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "Read one note",
       description: TOOL_DESCRIPTIONS.get_page,
-      inputSchema: GET_PAGE_INPUT,
+      inputSchema: selectableInput(GET_PAGE_INPUT),
       outputSchema: outputOf("get_page"),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "get_page", args, contract)),
+    (args) => respond(() => dispatch("get_page", args)),
   );
 
   server.registerTool(
@@ -212,11 +216,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "List entity notes",
       description: TOOL_DESCRIPTIONS.query_entities,
-      inputSchema: ENTITIES_INPUT,
+      inputSchema: selectableInput(ENTITIES_INPUT),
       outputSchema: outputOf("query_entities"),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "query_entities", args, contract)),
+    (args) => respond(() => dispatch("query_entities", args)),
   );
 
   server.registerTool(
@@ -224,11 +228,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "List captured records",
       description: TOOL_DESCRIPTIONS.timeline,
-      inputSchema: TIMELINE_INPUT,
+      inputSchema: selectableInput(TIMELINE_INPUT),
       outputSchema: outputOf("timeline"),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "timeline", args, contract)),
+    (args) => respond(() => dispatch("timeline", args)),
   );
 
   server.registerTool(
@@ -236,11 +240,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "Build a bounded brief",
       description: scoped ? SCOPED_PACKET_DESCRIPTION : TOOL_DESCRIPTIONS.context_packet,
-      inputSchema: scoped ? PACKET_INPUT_V2 : PACKET_INPUT,
+      inputSchema: selectableInput(PACKET_INPUT.extend({ priorView: PACKET_INPUT_V2.shape.priorView })),
       outputSchema: outputOf("context_packet"),
       annotations: READ_ONLY,
     },
-    (args: Record<string, unknown>) => respond(() => dispatchServeTool(ctx, "context_packet", args, contract)),
+    (args: Record<string, unknown>) => respond(() => dispatch("context_packet", args)),
   );
 
   server.registerTool(
@@ -248,11 +252,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "List links around a node",
       description: TOOL_DESCRIPTIONS.graph_neighbors,
-      inputSchema: GRAPH_INPUT,
+      inputSchema: selectableInput(GRAPH_INPUT),
       outputSchema: outputOf("graph_neighbors"),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "graph_neighbors", args, contract)),
+    (args) => respond(() => dispatch("graph_neighbors", args)),
   );
 
   server.registerTool(
@@ -262,11 +266,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
       description: scoped
         ? `Unavailable under the scoped v2 contract; returns unsupported_contract. ${TAINT_RULE}`
         : TOOL_DESCRIPTIONS.system_health,
-      inputSchema: HEALTH_INPUT,
+      inputSchema: selectableInput(HEALTH_INPUT),
       outputSchema: outputOf("system_health"),
       annotations: READ_ONLY,
     },
-    () => respond(() => dispatchServeTool(ctx, "system_health", {}, contract)),
+    (args) => respond(() => dispatch("system_health", args)),
   );
 
   server.registerTool(
@@ -274,13 +278,13 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "Read a Concept or Situation",
       description: `${world.description} ${TAINT_RULE}`,
-      inputSchema: world.input,
+      inputSchema: selectableInput(world.input),
       outputSchema: world.listed,
       annotations: READ_ONLY,
     },
     (args) =>
       respond(async () =>
-        checked(await dispatchServeTool(ctx, "world_view", engineArguments(args, world.defaults), contract), world.answer),
+        checked(await dispatch("world_view", engineArguments(args, world.defaults)), world.answer),
       ),
   );
 
@@ -289,11 +293,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "File a claim for the writer",
       description: TOOL_DESCRIPTIONS.propose,
-      inputSchema: PROPOSE_INPUT,
+      inputSchema: selectableInput(PROPOSE_INPUT),
       outputSchema: outputOf("propose"),
       annotations: WRITE,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "propose", args, contract)),
+    (args) => respond(() => dispatch("propose", args)),
   );
 
   server.registerTool(
@@ -301,13 +305,33 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "Relay an owner correction",
       description: TOOL_DESCRIPTIONS.correct,
-      inputSchema: CORRECT_INPUT,
+      inputSchema: selectableInput(CORRECT_INPUT),
       outputSchema: outputOf("correct"),
       annotations: WRITE,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "correct", args, contract)),
+    (args) => respond(() => dispatch("correct", args)),
   );
 
   listOnlyGrantedTools(server, ctx);
+  negotiateBeforeParsing(server, ctx);
   return server;
+}
+
+/** Like tools/list, this uses the pinned SDK's handler seam. Refusals are Core audit events. */
+function negotiateBeforeParsing(server: McpServer, ctx: ServeContext): void {
+  type Request = { params: { name: string; arguments?: Record<string, unknown> } };
+  type Handler = (request: Request, extra: unknown) => Promise<unknown>;
+  const handlers = (server.server as unknown as { _requestHandlers?: Map<string, Handler> })._requestHandlers;
+  const call = handlers?.get("tools/call");
+  if (handlers === undefined || call === undefined) throw new Error("the MCP SDK no longer exposes its tools/call handler");
+  handlers.set("tools/call", async (request, extra) => {
+    const tool = request.params.name;
+    if (!(TOOLS as readonly string[]).includes(tool)) return call(request, extra);
+    const { response_contract, ...args } = request.params.arguments ?? {};
+    try {
+      negotiateServeContract(ctx, tool as Tool, args,
+        response_contract === undefined && ctx.principal.kind === "agent" ? ENVELOPE_V2_SCHEMA : response_contract);
+    } catch (error) { return refused(error); }
+    return call(request, extra);
+  });
 }

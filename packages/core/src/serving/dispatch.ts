@@ -23,7 +23,7 @@ import { chooseContract, unsupportedContract } from "./contract";
 import { refuseCall } from "./gate";
 import { ENVELOPE_V2_SCHEMA, ServeError } from "./types";
 import type { Envelope, EnvelopeV2, ServeContext } from "./types";
-import { projectEnvelope } from "./v2/envelope";
+import type { ResponseContract } from "./types";
 
 export interface DispatchOptions {
   /**
@@ -35,30 +35,31 @@ export interface DispatchOptions {
   readonly response_contract?: unknown;
 }
 
-async function serveV1(
+function serveSelected(
   ctx: ServeContext,
   tool: Exclude<Tool, "world_view">,
   args: Record<string, unknown>,
-): Promise<Envelope<unknown>> {
+  contract: ResponseContract,
+): Envelope<unknown> | EnvelopeV2 | Promise<Envelope<unknown> | EnvelopeV2> {
   switch (tool) {
     case "search":
-      return serveSearch(ctx, args as unknown as SearchArgs);
+      return serveSearch(ctx, args as unknown as SearchArgs, contract);
     case "get_page":
-      return serveGetPage(ctx, args as unknown as GetPageArgs);
+      return serveGetPage(ctx, args as unknown as GetPageArgs, contract);
     case "query_entities":
-      return serveEntities(ctx, args as unknown as EntitiesArgs);
+      return serveEntities(ctx, args as unknown as EntitiesArgs, contract);
     case "timeline":
-      return serveTimeline(ctx, args as unknown as TimelineArgs);
+      return serveTimeline(ctx, args as unknown as TimelineArgs, contract);
     case "context_packet":
       return serveContextPacket(ctx, args as unknown as ContextPacketArgs);
     case "graph_neighbors":
-      return await serveGraph(ctx, args as unknown as GraphArgs);
+      return serveGraph(ctx, args as unknown as GraphArgs, contract);
     case "system_health":
-      return serveHealth(ctx);
+      return serveHealth(ctx, contract);
     case "propose":
-      return await servePropose(ctx, args as unknown as ProposeArgs);
+      return servePropose(ctx, args as unknown as ProposeArgs, contract);
     case "correct":
-      return await serveCorrect(ctx, args as unknown as CorrectArgs);
+      return serveCorrect(ctx, args as unknown as CorrectArgs, contract);
     default: {
       const _exhaustive: never = tool;
       throw new ServeError("error", "serving failed");
@@ -79,10 +80,7 @@ export async function dispatchServeTool(
   const contract = chooseContract(tool, options.response_contract, args);
   if (contract === null) return refuseCall(ctx, tool, args, unsupportedContract());
   if (tool === "world_view") return serveWorldView(ctx, args);
-  if (contract === ENVELOPE_V2_SCHEMA) {
-    return tool === "context_packet"
-      ? serveContextPacketV2(ctx, args as unknown as ContextPacketArgsV2)
-      : projectEnvelope(ctx, await serveV1(ctx, tool, args));
-  }
-  return serveV1(ctx, tool, args);
+  if (tool === "context_packet" && contract === ENVELOPE_V2_SCHEMA)
+    return serveContextPacketV2(ctx, args as unknown as ContextPacketArgsV2);
+  return serveSelected(ctx, tool, args, contract);
 }

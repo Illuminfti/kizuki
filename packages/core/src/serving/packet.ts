@@ -34,7 +34,6 @@ import {
   rejectLegacyKeys,
 } from "./v2/context-packet";
 import type { ContextPacketArgsV2, ContextPacketDataV2, PacketContentV2 } from "./v2/context-packet";
-import { sealEnvelope } from "./v2/envelope";
 import { PACKET_TOKENIZER_ID, packetTokens as tokens } from "./packet-tokenizer";
 import { SESSION_STATE_NOTE, collectSessionPieces } from "./session-sections";
 import type { SessionEmptyReason, SessionReport } from "./session-sections";
@@ -272,12 +271,11 @@ export function serveContextPacket(
  * The scoped brief: the same gathering under the closed envelope, with no
  * epoch, no digest to compare and a `ViewResult` in place of a status.
  */
-export async function serveContextPacketV2(
+export function serveContextPacketV2(
   ctx: ServeContext,
   args: ContextPacketArgsV2,
 ): Promise<EnvelopeV2<ContextPacketDataV2>> {
-  const served = await servePacket(ctx, args, ENVELOPE_V2_SCHEMA);
-  return sealEnvelope(ctx, served.tool, served.at, served.canon, served.quoted, served.data!);
+  return servePacket(ctx, args, ENVELOPE_V2_SCHEMA);
 }
 
 function servePacket(
@@ -289,12 +287,12 @@ function servePacket(
   ctx: ServeContext,
   args: ContextPacketArgsV2,
   contract: typeof ENVELOPE_V2_SCHEMA,
-): Promise<Envelope<ContextPacketDataV2>>;
+): Promise<EnvelopeV2<ContextPacketDataV2>>;
 async function servePacket(
   ctx: ServeContext,
   args: ContextPacketArgs & { priorView?: unknown },
   contract: typeof ENVELOPE_SCHEMA | typeof ENVELOPE_V2_SCHEMA,
-): Promise<Envelope<ContextPacketData | ContextPacketDataV2>> {
+): Promise<Envelope<ContextPacketData | ContextPacketDataV2> | EnvelopeV2<ContextPacketData | ContextPacketDataV2 | null>> {
   const v2 = contract === ENVELOPE_V2_SCHEMA;
   return gateAsync(
     ctx,
@@ -407,6 +405,7 @@ async function servePacket(
         const gathered = {
           canon: [],
           quoted: attached?.quoted ?? [],
+          authorization: { pages: [], events: (attached?.quoted ?? []).map((chunk) => ({ id: chunk.event_id, sensitivity: chunk.sensitivity })), purpose },
           withheld: [
             { id: "tool:context_packet", reason: "error" as const },
             ...(attached?.withheld ?? []),
@@ -493,6 +492,8 @@ async function servePacket(
       const canon: CanonChunk[] = [];
       const quoted: QuotedChunk[] = [];
       const audit = new Map<string, AuditItem>();
+      const claimPublications = new Map<string, import("./claims").ClaimPublication>();
+      const pagePublications = new Map<string, { hash: string; sensitivity: import("../agents").Sensitivity }>();
       const sections = { ...emptySections };
       const served = { owner: 0, now: 0, commitments: 0, uncertain: 0 };
       const skipped = new Set<SessionSection>();
@@ -566,6 +567,8 @@ async function servePacket(
           sections[chosen.section as keyof typeof sections] += 1;
         }
         for (const item of freshAudit) audit.set(item.id, item);
+        for (const item of chosen.claims ?? []) claimPublications.set(item.id, item);
+        if (chosen.canon !== undefined && chosen.canonHash !== undefined) pagePublications.set(chosen.canon.page_id, { hash: chosen.canonHash, sensitivity: chosen.canon.sensitivity });
         if (chosen.canon !== undefined) canon.push(chosen.canon);
         if (chosen.quoted !== undefined) quoted.push(chosen.quoted);
       }
@@ -614,6 +617,12 @@ async function servePacket(
           quoted: same ? [] : quoted,
           withheld,
           audit_served: same ? [] : [...audit.values()],
+          authorization: {
+            purpose,
+            pages: [...pagePublications].map(([id, stamp]) => ({ id, ...stamp })),
+            events: quoted.map((chunk) => ({ id: chunk.event_id, sensitivity: chunk.sensitivity })),
+            claims: [...claimPublications.values()],
+          },
           data: {
             schema: PACKET_V2_SCHEMA,
             result:
@@ -665,5 +674,6 @@ async function servePacket(
         },
       };
     },
+    contract,
   );
 }

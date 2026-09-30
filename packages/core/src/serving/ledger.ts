@@ -107,6 +107,8 @@ export function eventDecision(
 ):
   | { allow: true; sensitivity: Sensitivity }
   | { allow: false; reason: DenyReason } {
+  const scope = authorize(grant, eventServable(facts));
+  if (!scope.allow) return scope;
   if (ctx !== undefined && !sourceEventsAllowed(ctx.db, [facts.event_id], { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
   const original = asSensitivity(facts.sensitivity);
   const label = original === null || ctx === undefined ? original : sourceSensitivity(ctx.db, [facts.event_id], original);

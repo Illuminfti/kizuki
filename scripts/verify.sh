@@ -295,6 +295,8 @@ main() {
   gate install
   bun "$verify_script_dir/verify-rfc-tests.ts"
   gate rfc-tests
+  bun "$verify_script_dir/verify-packet-seams.ts"
+  gate packet-seams
   bun run typecheck
   gate typecheck
   bun run test

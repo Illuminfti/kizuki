@@ -26,8 +26,12 @@ packet markers as machine output.
 
 ## Adapters
 
-Token-authenticated stdio MCP sessions select v2 internally and advertise v2
-output schemas. Owner sessions retain their existing v1 behavior, except
+Token-authenticated stdio MCP sessions default to v2. An explicit
+`response_contract` sits alongside the tool arguments and is negotiated in
+Core before the selected tool is parsed. Unknown and conflicting selectors
+leave an audit row and receive the fixed refusal. The advertised output
+discriminates the two implemented envelope schemas. Owner sessions retain
+their existing v1 default, except
 `world_view`, which already uses v2. The MCP tool surface remains ten tools;
 `propose` and `correct` are its only write tools.
 
@@ -69,6 +73,13 @@ a legacy packet after a v2 refusal. No model is required for these reads.
 
 ## Executable seams
 
+[packet-seams.json](packet-seams.json) registers ENV's implemented portions
+of the continuity and freshness packets. Run
+`bun scripts/verify-packet-seams.ts`; the repository gate runs the same
+verifier. Missing seam files, missing tests and incomplete registrations for
+new read operations fail verification. ENV does not claim World Diff or
+stored view history.
+
 | Seam | Regression tests |
 | --- | --- |
 | Core dispatch and packet round trip | `packages/core/test/serving/context-packet-v2.test.ts` |
@@ -91,8 +102,13 @@ the serialized contract, and redaction tests prove that secret-shaped text is
 still replaced inside the seven-field envelope. These tests reuse the shared
 reader policy rather than introducing another authorization implementation.
 
-The work-counter acceptance gate remains open: the current matrix detects
-hidden-state-dependent SQL work in timeline audit collection, denied proposal
-provenance and correction targets, and session identity candidate selection.
-Response bytes and refusal messages remain stable in that matrix. These
-shared reader repairs must be coordinated before this change is ready to merge.
+Scoped reads filter candidates before materialization and before session
+candidate limits. Privileged timeline denial enumeration stays on the owner
+path. V2 authorization and sealing share a protected publication boundary;
+asynchronous reads revalidate the caller's authority and published evidence.
+An unrelated global epoch change alone does not produce a scoped refusal.
+Interleaving and saturation regressions exercise these boundaries alongside
+the unchanged ten-tool work-counter matrix.
+
+Open item: ENV-4 remains a separate draft change pending D-ENV. This stage
+preserves direct Core and explicit v1 compatibility.

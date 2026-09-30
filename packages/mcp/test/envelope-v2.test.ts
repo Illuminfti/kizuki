@@ -72,3 +72,24 @@ test("a newly enrolled stdio client uses v2 on every tool, and hidden revocation
     expect(envelopeOf(owner).schema).toBe("kizuki.envelope/v1");
   } finally { await clients.close(); }
 });
+
+test("stdio negotiates explicit contracts and audits selector refusals before tool parsing", async () => {
+  const clients = await twoClients({ agent: { tools: [...TOOLS] } });
+  try {
+    const owner = await clients.owner.call("context_packet", { response_contract: "kizuki.envelope/v2", budget_tokens: 1000 });
+    expect(envelopeOf(owner).schema).toBe("kizuki.envelope/v2");
+    expect(envelopeOf(owner).data).toMatchObject({ schema: "kizuki.context-packet/v2" });
+    const scoped = await clients.agent.call("search", { response_contract: "kizuki.envelope/v2", query: "Bayesian" });
+    expect(envelopeOf(scoped).schema).toBe("kizuki.envelope/v2");
+    for (const args of [
+      { response_contract: "unknown" },
+      { response_contract: "kizuki.envelope/v2", args: { response_contract: "kizuki.envelope/v1" } },
+    ]) {
+      const count = clients.audit().agent.length;
+      const result = await clients.agent.call("search", args);
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0]!.text)).toMatchObject({ error: "unsupported_contract", message: "requested contract unavailable" });
+      expect(clients.audit().agent).toHaveLength(count + 1);
+    }
+  } finally { await clients.close(); }
+});

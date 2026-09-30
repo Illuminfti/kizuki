@@ -9,14 +9,15 @@ import {
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
 import { ServeError } from "./types";
-import type { Envelope, ServeContext } from "./types";
+import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA } from "./types";
 
 const MAX_ID_CHARS = 256;
 const MAX_BODY_CHARS = 65_536;
 
 export type GetPageArgs = { id: string } | { path: string };
 
-export function serveGetPage(ctx: ServeContext, args: GetPageArgs): Envelope {
+export function serveGetPage<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(ctx: ServeContext, args: GetPageArgs, contract: C = ENVELOPE_SCHEMA as C): ResponseEnvelope<undefined, C> {
   return gate(ctx, "get_page", auditArguments(args), ({ ctx }): Served<undefined> => {
     const bag: Record<string, unknown> = { ...args };
     const wantsId = bag["id"] !== undefined;
@@ -61,5 +62,5 @@ export function serveGetPage(ctx: ServeContext, args: GetPageArgs): Envelope {
       quoted: [],
       withheld: [],
     };
-  });
+  }, contract);
 }

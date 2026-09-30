@@ -25,7 +25,8 @@ import type { CanonRecoveryPending } from "../correction/types";
 import { claimVisibleTo, groupByKey, readable, resolve } from "./target";
 import type { CorrectTarget } from "./target";
 import { ServeError } from "./types";
-import type { Envelope, ServeContext } from "./types";
+import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA } from "./types";
 import { resolveWorldClaim, worldNamespace } from "../world/references";
 import { readableWorldNode } from "../world/endpoint-access";
 import { isWorldWireToken, readWorldView, WorldViewError } from "./world-view";
@@ -464,10 +465,11 @@ function snapshot<T>(field: string, value: T): T {
  * bound to them in the same pass, answering with what it retired and what it
  * wrote (RFC 0002 §6.3).
  */
-export async function serveCorrect(
+export async function serveCorrect<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
   args: CorrectArgs,
-): Promise<Envelope<CorrectData>> {
+  contract: C = ENVELOPE_SCHEMA as C,
+): Promise<ResponseEnvelope<CorrectData, C>> {
   const { statement, target, object, dry_run, mode, perspective_mode, refresh_world } = args;
   const worldClaim =
     target !== undefined &&
@@ -769,5 +771,6 @@ export async function serveCorrect(
         throw error;
       }
     },
+    contract,
   );
 }
