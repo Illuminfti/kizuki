@@ -172,15 +172,21 @@ const TOTAL_MEMORY_GROWTH_BOUND_MB = 128;
  */
 function transcriptStore(root: string, files: number): { bytes: number } {
   mkdirSync(join(root, "proj"), { recursive: true });
-  const longTurn = "Synthetic reasoning about the exporter and the importer plan. ".repeat(700);
+  // Keep large captured payloads without making this memory probe a tokenizer
+  // benchmark. The identifier is synthetic; the importer clips every turn.
+  const longTurn = "Synthetic export decision: retain this artifact identifier: " +
+    "synthetic".repeat(4_800) + ". Keep the exporter and importer stable.";
   let bytes = 0;
   for (let file = 0; file < files; file++) {
     const path = join(root, "proj", `s-${file}.jsonl`);
     writeFileSync(path, "");
-    for (let line = 0; line < 2_600; line++) {
-      const record = turn(file, line, `${file}.${line}: ${longTurn}`) + "\n";
-      appendFileSync(path, record);
-      bytes += Buffer.byteLength(record);
+    for (let start = 0; start < 2_600; start += 100) {
+      const chunk = Array.from({ length: 100 }, (_, offset) => {
+        const line = start + offset;
+        return turn(file, line, `${file}.${line}: ${longTurn}`);
+      }).join("\n") + "\n";
+      appendFileSync(path, chunk);
+      bytes += Buffer.byteLength(chunk);
     }
   }
   return { bytes };
