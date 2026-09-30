@@ -73,6 +73,8 @@ export type {
   UpsertIdentityLinkInput,
 } from "./identity";
 export { listValidityGaps } from "./gaps";
+export { countCaptureFanout, isCaptureFanoutSkip } from "./capture-fanout";
+export type { CaptureFanoutCounts } from "./capture-fanout";
 export type { ValidityGap } from "./gaps";
 export {
   countClaims,

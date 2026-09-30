@@ -458,21 +458,27 @@ describe("the run through a real ledger", () => {
       );
       expect(first.stored).toBe(9);
       expect(first.proposals_created).toBeGreaterThan(0);
+      // A note row is a document and gets a capture note; a message row is
+      // conversational evidence and gets none.
       const cited = listClaims(db, { status: "live" }).filter((claim) =>
-        claim.body.includes("It is on."),
+        claim.body.includes("Tea."),
       );
       expect(cited.length).toBeGreaterThan(0);
+      expect(
+        listClaims(db, { status: "live" }).filter((claim) =>
+          claim.body.includes("It is on."),
+        ),
+      ).toEqual([]);
 
       appendFileSync(
         jsonlPath,
         `${JSON.stringify({
-          id: "r1",
-          type: "msg",
-          ts: 1_767_225_600,
-          subject: "The kettle",
-          body: "It is on.",
+          id: "r3",
+          type: "note",
+          ts: 1_767_225_720,
+          subject: "Shopping",
+          body: "Tea.",
           sender: "Ada",
-          recipients: "Grace",
           is_deleted: 1,
         })}\n`,
       );
@@ -486,7 +492,7 @@ describe("the run through a real ledger", () => {
       expect(second.withdrawn).toBeGreaterThan(0);
       expect(
         listClaims(db, { status: "live" }).filter((claim) =>
-          claim.body.includes("It is on."),
+          claim.body.includes("Tea."),
         ),
       ).toEqual([]);
     } finally {

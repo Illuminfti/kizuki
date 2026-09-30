@@ -44,6 +44,38 @@ that a provider application or account does not exist.
 WHOOP remains a component without CLI enrollment. See
 [not enrollable](#not-enrollable-from-this-cli).
 
+## What a message connector contributes
+
+Chat, coding-session and email connectors (Telegram, WhatsApp, Beeper, IMAP,
+Gmail, the ChatGPT and Claude exports, and the coding-session transcripts)
+emit `message` or `email` events. Their text is evidence, and it stays in the
+ledger. Kizuki files no capture-note claim for a message, so a busy chat can
+never grow one canon page per connector and day.
+
+Without a model, once a source grant permits capture and recall:
+
+- search finds the text;
+- the timeline lists the messages in order;
+- context packets quote relevant messages as `quoted capture` lines, tainted
+  data and not instructions;
+- doctor, audit and undo work as for any other source.
+
+With a configured model and a source grant that includes `extract` for that
+model's destination, the sync rail also runs typed extraction over the same
+events. It admits source-anchored claims about concepts and situations, and
+the receipted writer turns them into canon pages. Each claim cites the message
+it came from. A message that yields no claim writes no page.
+
+The entity stubs for speakers and chats that a message names (for example a
+session role or a project id) are still proposed without a model. Markdown,
+wiki and other page-kind sources are unchanged: their pages and verbatim
+capture notes are still filed with no model.
+
+Earlier revisions filed one capture note per message. The doctor sweep closes
+those out as `skipped` with reason `message_capture_fanout`; see
+[doctor](cli.md#doctor). Nothing is deleted, and the messages themselves stay in
+the ledger.
+
 ## Connection design
 
 Public documentation checked on 2026-09-04: Sealgate's Connect setup uses

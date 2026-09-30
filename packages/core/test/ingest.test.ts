@@ -26,7 +26,7 @@ import {
   runToCompletion,
 } from "../src/ingest/run";
 import { listProposals, initStaging } from "../src/staging/proposals";
-import { validEvent } from "./fixtures";
+import { documentEvent } from "./fixtures";
 import { getClaim } from "../src/claims/store";
 import { write } from "./canon/helpers";
 import { tempVault } from "./helpers/vault";
@@ -51,7 +51,7 @@ class FixtureConnector implements Connector {
       schema: "kizuki.connector/v1",
       connector_id: this.declared.connector_id ?? "fixture",
       version: "1.0.0",
-      kinds: this.declared.kinds ?? ["message"],
+      kinds: this.declared.kinds ?? ["file"],
       capabilities: {
         backfill: true,
         sync: true,
@@ -117,12 +117,12 @@ test.each(["backfill", "sync", "completion"] as const)(
     const db = database();
     const vault = tempVault("kizuki-tombstone-ingest-");
     try {
-      const capture = new FixtureConnector({ events: [validEvent()], cursor: null });
+      const capture = new FixtureConnector({ events: [documentEvent()], cursor: null });
       expect((await runBackfill(db, capture, "fixture", SOURCE)).errors).toEqual([]);
       const proposal = listProposals(db, { kind: "claim" })[0]!;
       const io = { db, vault_path: vault.path };
       const original = write(io, getClaim(db, proposal.proposal_id)!);
-      const batch = { events: [{ ...validEvent(), deleted: true, text: "Source deleted" }], cursor: null };
+      const batch = { events: [{ ...documentEvent(), deleted: true, text: "Source deleted" }], cursor: null };
       const connector = new FixtureConnector(batch, batch);
       const result = mode === "backfill" ? await runBackfill(db, connector, "fixture", SOURCE, io) :
         mode === "sync" ? await runSync(db, connector, "fixture", SOURCE, io) :
@@ -140,12 +140,12 @@ test("a refused retraction rolls back tombstone admission and retries before adv
   const db = database();
   const vault = tempVault("kizuki-tombstone-retry-");
   try {
-    const captured = await runBackfill(db, new FixtureConnector({ events: [validEvent()], cursor: "before-delete" }), "fixture", SOURCE);
+    const captured = await runBackfill(db, new FixtureConnector({ events: [documentEvent()], cursor: "before-delete" }), "fixture", SOURCE);
     expect(captured.errors).toEqual([]);
     const proposal = listProposals(db, { kind: "claim" })[0]!;
     const io = { db, vault_path: vault.path };
     write(io, getClaim(db, proposal.proposal_id)!);
-    const batch = { events: [{ ...validEvent(), deleted: true, text: "Source deleted" }], cursor: null };
+    const batch = { events: [{ ...documentEvent(), deleted: true, text: "Source deleted" }], cursor: null };
     const connector = new FixtureConnector(batch, batch);
     const refused = await runToCompletion(db, connector, "fixture", SOURCE, "sync");
     expect(refused).toMatchObject({ stored: 0, duplicates: 0, retractions_filed: 0,
@@ -174,14 +174,14 @@ for (const promoted of [false, true]) {
     const vault = tempVault("kizuki-capture-tombstone-");
     try {
       const io = { db, vault_path: vault.path };
-      expect((await runBackfill(db, new FixtureConnector({ events: [validEvent()], cursor: "before-delete" }), "fixture", SOURCE)).errors).toEqual([]);
+      expect((await runBackfill(db, new FixtureConnector({ events: [documentEvent()], cursor: "before-delete" }), "fixture", SOURCE)).errors).toEqual([]);
       if (promoted) {
         const claim = listProposals(db, { kind: "claim" })[0]!;
         write(io, getClaim(db, claim.proposal_id)!);
       }
       const before = ["claims", "proposals", "canon_receipts"].map(table => db.query(`SELECT * FROM ${table}`).all());
       replaceSourcePurposes(db, ["capture"], 1);
-      const batch = { events: [{ ...validEvent(), deleted: true, text: "Source deleted" }], cursor: null };
+      const batch = { events: [{ ...documentEvent(), deleted: true, text: "Source deleted" }], cursor: null };
       const connector = new FixtureConnector(batch, batch);
       const result = await runSync(db, connector, "fixture", SOURCE, io);
       if (promoted) {
@@ -209,10 +209,10 @@ for (const promoted of [false, true]) {
 test("removing capture permission refuses deletion before connector access", async () => {
   const db = database();
   try {
-    expect((await runBackfill(db, new FixtureConnector({ events: [validEvent()], cursor: "before-delete" }), "fixture", SOURCE)).errors).toEqual([]);
+    expect((await runBackfill(db, new FixtureConnector({ events: [documentEvent()], cursor: "before-delete" }), "fixture", SOURCE)).errors).toEqual([]);
     const before = ["events", "claims", "proposals"].map(table => db.query(`SELECT * FROM ${table}`).all());
     replaceSourcePurposes(db, ["recall"], 1);
-    const batch = { events: [{ ...validEvent(), deleted: true, text: "Source deleted" }], cursor: null };
+    const batch = { events: [{ ...documentEvent(), deleted: true, text: "Source deleted" }], cursor: null };
     const connector = new FixtureConnector(batch, batch);
     const result = await runSync(db, connector, "fixture", SOURCE);
     expect(result.errors).toHaveLength(1);
@@ -226,7 +226,7 @@ test("removing capture permission refuses deletion before connector access", asy
 /** An event asking the floor to stage its text as a typed page, not a quote. */
 function candidate(over: Partial<CaptureEventInput> = {}): CaptureEventInput {
   return {
-    ...validEvent(),
+    ...documentEvent(),
     subjects: [],
     text: "UNQUOTED BODY",
     metadata: {
@@ -258,7 +258,7 @@ const OPT_IN = { sync_from_backfill_before_first_success: true } as const;
 describe("runBatch", () => {
   test("accepts events and files deterministic proposals", () => {
     const db = database();
-    const result = runBatch(db, { events: [validEvent()], cursor: "page-2" }, NOTHING);
+    const result = runBatch(db, { events: [documentEvent()], cursor: "page-2" }, NOTHING);
     expect(result).toEqual({
       stored: 1,
       duplicates: 0,
@@ -279,7 +279,7 @@ describe("runBatch", () => {
       const db = openLedger(dbPath);
       initStaging(db);
       const events = Array.from({ length: 15 }, (_, i) => ({
-        ...validEvent(),
+        ...documentEvent(),
         source_record_id: `rec-${i}`,
         text: `wal-batch-marker ${i}`,
       }));
@@ -297,12 +297,12 @@ describe("runBatch", () => {
 
   test("a corrupt stored duplicate aborts the batch and does not store later events", () => {
     const db = database();
-    runBatch(db, { events: [validEvent()], cursor: "one" }, NOTHING);
+    runBatch(db, { events: [documentEvent()], cursor: "one" }, NOTHING);
     db.exec("DROP TRIGGER events_identity_update; UPDATE events SET origin='self'");
     const result = runBatch(
       db,
       {
-        events: [validEvent(), { ...validEvent(), source_record_id: "rec-2" }],
+        events: [documentEvent(), { ...documentEvent(), source_record_id: "rec-2" }],
         cursor: "two",
       },
       NOTHING,
@@ -318,11 +318,11 @@ describe("runBatch", () => {
 
   test("collects invalid-event errors and continues the batch", () => {
     const db = database();
-    const invalid = { ...validEvent(), occurred_at: "not-a-time" };
+    const invalid = { ...documentEvent(), occurred_at: "not-a-time" };
     const result = runBatch(
       db,
       {
-        events: [invalid, { ...validEvent(), source_record_id: "valid" }],
+        events: [invalid, { ...documentEvent(), source_record_id: "valid" }],
         cursor: null,
       },
       NOTHING,
@@ -335,10 +335,10 @@ describe("runBatch", () => {
 
   test("a tombstone withdraws proposals from prior source versions", () => {
     const db = database();
-    runBatch(db, { events: [validEvent()], cursor: "one" }, NOTHING);
+    runBatch(db, { events: [documentEvent()], cursor: "one" }, NOTHING);
     const result = runBatch(
       db,
-      { events: [{ ...validEvent(), deleted: true, text: "" }], cursor: null },
+      { events: [{ ...documentEvent(), deleted: true, text: "" }], cursor: null },
       NOTHING,
     );
     expect(result.withdrawn).toBe(2);
@@ -349,7 +349,7 @@ describe("runBatch", () => {
 
   test("rolls back a tombstone when its cascade fails so retry can finish", () => {
     const db = database();
-    runBatch(db, { events: [validEvent()], cursor: "one" }, NOTHING);
+    runBatch(db, { events: [documentEvent()], cursor: "one" }, NOTHING);
     db.exec(`
       CREATE TRIGGER fail_withdraw
       BEFORE UPDATE OF status ON proposals
@@ -361,7 +361,7 @@ describe("runBatch", () => {
 
     const failed = runBatch(
       db,
-      { events: [{ ...validEvent(), deleted: true, text: "" }], cursor: "two" },
+      { events: [{ ...documentEvent(), deleted: true, text: "" }], cursor: "two" },
       NOTHING,
     );
     expect(failed.stored).toBe(0);
@@ -375,7 +375,7 @@ describe("runBatch", () => {
     db.exec("DROP TRIGGER fail_withdraw");
     const retried = runBatch(
       db,
-      { events: [{ ...validEvent(), deleted: true, text: "" }], cursor: "two" },
+      { events: [{ ...documentEvent(), deleted: true, text: "" }], cursor: "two" },
       NOTHING,
     );
     expect(retried.stored).toBe(1);
@@ -386,7 +386,7 @@ describe("runBatch", () => {
 
   test("a cascade failure does not skip later events in the batch", () => {
     const db = database();
-    runBatch(db, { events: [validEvent()], cursor: "one" }, NOTHING);
+    runBatch(db, { events: [documentEvent()], cursor: "one" }, NOTHING);
     db.exec(`
       CREATE TRIGGER fail_withdraw
       BEFORE UPDATE OF status ON proposals
@@ -399,8 +399,8 @@ describe("runBatch", () => {
       db,
       {
         events: [
-          { ...validEvent(), deleted: true, text: "" },
-          { ...validEvent(), source_record_id: "rec-2" },
+          { ...documentEvent(), deleted: true, text: "" },
+          { ...documentEvent(), source_record_id: "rec-2" },
         ],
         cursor: "two",
       },
@@ -419,8 +419,8 @@ describe("runBatch", () => {
 describe("connector runs", () => {
   test("round-trips a fixture backfill and saves its checkpoint", async () => {
     const db = database();
-    const connector = new FixtureConnector({ events: [validEvent()], cursor: "next" });
-    expect(await connector.fixture()).toEqual([validEvent()]);
+    const connector = new FixtureConnector({ events: [documentEvent()], cursor: "next" });
+    expect(await connector.fixture()).toEqual([documentEvent()]);
     const result = await runBackfill(db, connector, "fixture", SOURCE);
     expect(result.stored).toBe(1);
     expect(getCheckpoint(db, "fixture", SOURCE)?.last_result).toEqual(
@@ -432,7 +432,7 @@ describe("connector runs", () => {
 
   test("a second backfill is all duplicates and creates no proposals", async () => {
     const db = database();
-    const connector = new FixtureConnector({ events: [validEvent()], cursor: null });
+    const connector = new FixtureConnector({ events: [documentEvent()], cursor: null });
     await runBackfill(db, connector, "fixture", SOURCE);
     const second = await runBackfill(db, connector, "fixture", SOURCE);
     expect(second.stored).toBe(0);
@@ -454,9 +454,9 @@ describe("connector runs", () => {
   test("sync resumes from the stored cursor and replaces the checkpoint", async () => {
     const db = database();
     const connector = new FixtureConnector(
-      { events: [validEvent()], cursor: "resume-here" },
+      { events: [documentEvent()], cursor: "resume-here" },
       {
-        events: [{ ...validEvent(), source_record_id: "rec-2" }],
+        events: [{ ...documentEvent(), source_record_id: "rec-2" }],
         cursor: "after-sync",
       },
     );
@@ -477,9 +477,9 @@ describe("connector runs", () => {
   test("a drained backfill stays complete after sync overwrites the mode", async () => {
     const db = database();
     const connector = new FixtureConnector(
-      { events: [validEvent()], cursor: "drained", has_more: false },
+      { events: [documentEvent()], cursor: "drained", has_more: false },
       {
-        events: [{ ...validEvent(), source_record_id: "rec-2" }],
+        events: [{ ...documentEvent(), source_record_id: "rec-2" }],
         cursor: "after-sync",
       },
     );
@@ -501,9 +501,9 @@ describe("connector runs", () => {
   test("sync cannot mark an incomplete backfill complete", async () => {
     const db = database();
     const connector = new FixtureConnector(
-      { events: [validEvent()], cursor: "more", has_more: true },
+      { events: [documentEvent()], cursor: "more", has_more: true },
       {
-        events: [{ ...validEvent(), source_record_id: "rec-2" }],
+        events: [{ ...documentEvent(), source_record_id: "rec-2" }],
         cursor: "after-sync",
       },
     );
@@ -523,9 +523,9 @@ describe("connector runs", () => {
   test("sync retains its checkpoint until a failed tombstone cascade retries", async () => {
     const db = database();
     const connector = new FixtureConnector(
-      { events: [validEvent()], cursor: "before-tombstone" },
+      { events: [documentEvent()], cursor: "before-tombstone" },
       {
-        events: [{ ...validEvent(), deleted: true, text: "" }],
+        events: [{ ...documentEvent(), deleted: true, text: "" }],
         cursor: "after-tombstone",
       },
     );
@@ -687,7 +687,7 @@ describe("connector runs", () => {
     let db = database(join(directory, "ledger.sqlite"));
     try {
       const first = new FixtureConnector(
-        { events: [validEvent()], cursor: "B1", has_more: false },
+        { events: [documentEvent()], cursor: "B1", has_more: false },
         { events: [], cursor: null },
         OPT_IN,
       );
@@ -735,7 +735,7 @@ describe("connector runs", () => {
           this.syncCursors.push(cursor);
           return Promise.reject(new Error("provider down"));
         }
-      })({ events: [validEvent()], cursor: "B1", has_more: false }, undefined, OPT_IN);
+      })({ events: [documentEvent()], cursor: "B1", has_more: false }, undefined, OPT_IN);
       await runBackfill(db, failing, "fixture", SOURCE);
       expect(getCheckpoint(db, "fixture", SOURCE)?.backfill_complete).toBe(true);
       const failed = await runSync(db, failing, "fixture", SOURCE);
@@ -773,7 +773,7 @@ describe("connector runs", () => {
     const db = database();
     try {
       const connector = new FixtureConnector(
-        { events: [validEvent()], cursor: "B1", has_more: false },
+        { events: [documentEvent()], cursor: "B1", has_more: false },
         {
           events: [],
           cursor: "attempted",
@@ -843,7 +843,7 @@ function page(index: number, count: number): SyncBatch {
   const events: CaptureEventInput[] = [];
   for (let position = 0; position < count; position += 1) {
     events.push({
-      ...validEvent(),
+      ...documentEvent(),
       source_record_id: `page-${index}-rec-${position}`,
     });
   }
@@ -883,7 +883,7 @@ describe("runToCompletion", () => {
     try {
       const continued = new ScriptedConnector([
         { events: [], cursor: "empty-page", has_more: true },
-        { events: [validEvent()], cursor: "stored-page", has_more: false },
+        { events: [documentEvent()], cursor: "stored-page", has_more: false },
       ]);
       expect(await runToCompletion(db, continued, "fixture", SOURCE, "backfill")).toMatchObject({ stored: 1, errors: [], cursor: "stored-page" });
       expect(continued.cursors).toEqual([null, "empty-page"]);
@@ -895,7 +895,7 @@ describe("runToCompletion", () => {
 
   test("terminal failed and unavailable batches never commit their attempted cursor", async () => {
     for (const terminal of [
-      { events: [{ ...validEvent(), occurred_at: "not-a-time" }], cursor: "failed", has_more: false },
+      { events: [{ ...documentEvent(), occurred_at: "not-a-time" }], cursor: "failed", has_more: false },
       { events: [], cursor: "failed", status: "unavailable", detail: "fixture unavailable", has_more: false },
     ]) {
       const db = database();
@@ -1018,7 +1018,7 @@ describe("runToCompletion", () => {
   test("stops on the first failing batch and keeps the earlier checkpoint", async () => {
     const db = database();
     const broken: SyncBatch = {
-      events: [{ ...validEvent(), occurred_at: "not-a-time" }],
+      events: [{ ...documentEvent(), occurred_at: "not-a-time" }],
       cursor: "page-2",
     };
     const connector = new ScriptedConnector([page(1, 1), broken, page(3, 1)]);
@@ -1139,7 +1139,7 @@ describe("runToCompletion", () => {
     const db = database();
     const connector = new ScriptedConnector([
       page(1, 1),
-      { events: [{ ...validEvent(), source_record_id: "last" }], cursor: null },
+      { events: [{ ...documentEvent(), source_record_id: "last" }], cursor: null },
     ]);
     const result = await runToCompletion(db, connector, "fixture", SOURCE, "backfill");
     expect(result.stored).toBe(2);
@@ -1180,7 +1180,7 @@ describe("a batch that does not match the enrolled connection", () => {
   test("a manifest naming another connector runs nothing", async () => {
     const db = database();
     const connector = new FixtureConnector(
-      { events: [validEvent()], cursor: "next" },
+      { events: [documentEvent()], cursor: "next" },
       undefined,
       { connector_id: "elsewhere", page_candidates: true },
     );
@@ -1220,8 +1220,8 @@ describe("a batch that does not match the enrolled connection", () => {
       { events: [], cursor: null },
       {
         events: [
-          validEvent(),
-          { ...validEvent(), source_record_id: "b", kind: "page" },
+          documentEvent(),
+          { ...documentEvent(), source_record_id: "b", kind: "page" },
         ],
         cursor: "next",
       },
@@ -1299,7 +1299,7 @@ describe("hostile live event records", () => {
     [
       "text accessor",
       (hits) => {
-        const event = { ...validEvent(), text: CANARY };
+        const event = { ...documentEvent(), text: CANARY };
         Object.defineProperty(event, "text", {
           configurable: true,
           enumerable: true,
@@ -1314,7 +1314,7 @@ describe("hostile live event records", () => {
     [
       "enumerable toJSON",
       (hits) => {
-        const event = { ...validEvent(), text: CANARY };
+        const event = { ...documentEvent(), text: CANARY };
         Object.defineProperty(event, "toJSON", {
           configurable: true,
           enumerable: true,
@@ -1350,7 +1350,7 @@ describe("hostile live event records", () => {
       try {
         const result = runBatch(
           batched,
-          { events: [event, { ...validEvent(), source_record_id: "rec-2" }], cursor: "stolen" },
+          { events: [event, { ...documentEvent(), source_record_id: "rec-2" }], cursor: "stolen" },
           NOTHING,
         );
         expect(result.stored).toBe(0);
@@ -1387,7 +1387,7 @@ describe("hostile live event records", () => {
         expect(
           (await runBackfill(
             syncDb,
-            new FixtureConnector({ events: [validEvent()], cursor: "kept" }),
+            new FixtureConnector({ events: [documentEvent()], cursor: "kept" }),
             "fixture",
             SOURCE,
           )).stored,
@@ -1413,7 +1413,7 @@ describe("hostile live event records", () => {
 
   test("events-array toJSON and cursor accessors are refused without execution", async () => {
     const hits = { n: 0 };
-    const events = [validEvent()];
+    const events = [documentEvent()];
     Object.defineProperty(events, "toJSON", {
       enumerable: true,
       value() {
@@ -1421,7 +1421,7 @@ describe("hostile live event records", () => {
         throw new Error(CANARY);
       },
     });
-    const cursorBatch = { events: [validEvent()], cursor: "stolen" } as SyncBatch;
+    const cursorBatch = { events: [documentEvent()], cursor: "stolen" } as SyncBatch;
     Object.defineProperty(cursorBatch, "cursor", {
       enumerable: true,
       get() {
@@ -1462,7 +1462,7 @@ describe("hostile live event records", () => {
     const hits = { n: 0 };
     const hostile = shapes[0]![1](hits);
     expect(runBatch(db, { events: [hostile], cursor: "nope" }, NOTHING).stored).toBe(0);
-    const plain = validEvent();
+    const plain = documentEvent();
     const before = JSON.stringify(plain);
     const result = runBatch(db, { events: [plain], cursor: "ok" }, NOTHING);
     expect(result).toMatchObject({ stored: 1, errors: [], cursor: "ok" });

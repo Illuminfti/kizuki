@@ -395,7 +395,12 @@ Vault path, event count, claim counts (filed/live/written/unwritten) with a
 `live_by_producer` split on the same line that separates `model_extracted`
 claims from `deterministic_floor` (claims the deterministic floor staged
 without a model: imported page mirrors, verbatim capture notes and entity
-stubs; JSON: `claims.by_producer`), live
+stubs; JSON: `claims.by_producer`), a separate `capture fan-out skipped=N
+pending=M` line (JSON: `claims.capture_fanout`) that counts capture notes of
+chat and email records closed out as `skipped` with reason
+`message_capture_fanout` apart from the real unwritten claims, and names
+`kizuki serve run doctor-sweep` while `pending` notes still wait to be closed,
+live
 claim ids (for `tell --claim`), leftover skipped rows, connections,
 checkpoints (with the first error of each source's last run as `last_error`),
 derived-index freshness, writer ROLE stamps, machine vs human
@@ -444,8 +449,17 @@ cause: the failed run's error, the error most of the degraded or stopped runs
 share, or the work that is waiting. The `doctor-sweep` rail records what
 `serve status` would fail on, except what only the supervisor can know, as its
 receipt's errors and marks itself `degraded`, so it never reads `ok` beside a
-failed report. Its own degraded runs are not a fault of the rail. Doctor reads
-the newest 2,000 sync receipts and the newest 200 of every other rail.
+failed report. Its own degraded runs are not a fault of the rail. The same
+rail also closes out capture notes that earlier revisions filed for chat and
+email records (one per message, all on one `captures/<connector>/<day>` page):
+each unwritten one becomes a `skipped` claim with `x-skip-reason:
+message_capture_fanout`, is never deleted, creates no canon page, and is counted
+as `captures_skipped` on the run receipt. Notes a receipt already wrote are left
+alone. A busy writer or pending canon-write intent defers the repair until
+recovery completes. Each batch commits its receipt progress with the skipped
+claims; restart finishes receipt publication. These notes are excluded from
+unwritten canon work even before the sweep, and a second run changes nothing.
+Doctor reads the newest 2,000 sync receipts and the newest 200 of every other rail.
 
 The model line reports the model the way the daemon's receipts do. From a shell
 that lacks the daemon's secret, doctor cannot bind the model, so it prints what

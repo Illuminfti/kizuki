@@ -1,3 +1,4 @@
+import { UNWRITTEN_CAPTURE_NOTE_WHERE } from "./capture-fanout";
 import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { historicalSourceWriteAllowed, inspectSourceGrant, sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, type SourceReadScope } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
@@ -832,7 +833,7 @@ function unwrittenLiveWhere(db: Database): string {
   const typed = tableExists(db, "claim_v2_semantics")
     ? "AND NOT EXISTS (SELECT 1 FROM claim_v2_semantics v2 WHERE v2.claim_id=claims.claim_id)"
     : "";
-  return `status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review' ${typed}`;
+  return `status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review' AND NOT COALESCE((${UNWRITTEN_CAPTURE_NOTE_WHERE}), 0) ${typed}`;
 }
 
 /** Live claims bound to a canon receipt. */
@@ -858,13 +859,10 @@ export function listUnwrittenLiveClaims(
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
   const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 32;
-  const typed = tableExists(db, "claim_v2_semantics")
-    ? "AND NOT EXISTS (SELECT 1 FROM claim_v2_semantics v2 WHERE v2.claim_id=claims.claim_id)"
-    : "";
   return db
     .query<ClaimRow, [number]>(
       `SELECT * FROM claims
-        WHERE status = 'live' AND receipt_id IS NULL AND kind <> 'purge_review' ${typed}
+        WHERE ${unwrittenLiveWhere(db)}
         ORDER BY created_at, claim_id
         LIMIT ?`,
     )
