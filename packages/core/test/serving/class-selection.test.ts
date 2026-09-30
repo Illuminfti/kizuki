@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, expect, setSystemTime, test } from "bun:test";
+import { unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { addAgent, OWNER_AGENT_GRANT } from "../../src/agents";
 import { rebuildDerived } from "../../src/derived";
 import { rebuildGraph } from "../../src/graph/graph";
@@ -69,6 +71,12 @@ test("class-denied topology cannot consume the depth-two edge cap or change trun
   for (const [i, args] of requests.entries()) {
     const response = await serveGraph(fixture.agent("class-reader"), args);
     expect(response.data).toEqual(withHidden[i]);
+  }
+  // A registered page missing from the live snapshot is not an unresolved
+  // prose target. Its stale indexed identity must stay withheld as well.
+  unlinkSync(join(fixture.vaultPath, "facts/aaa-denied-ring.md"));
+  for (const [i, args] of requests.entries()) {
+    expect((await serveGraph(fixture.agent("class-reader"), args)).data).toEqual(withHidden[i]);
   }
 }, 120_000);
 

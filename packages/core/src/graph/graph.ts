@@ -603,8 +603,14 @@ function incidentEdges(
       // the selected edges lets hidden topology spend the readable cap.
       extra.push("src IN (SELECT value FROM json_each(?))");
       bindings.push(JSON.stringify(serving.readablePageIds));
-      extra.push("(kind != 'wikilink' OR dst NOT IN (SELECT value FROM json_each(?)))");
-      bindings.push(JSON.stringify(serving.excludedPageIds));
+      extra.push(`(kind != 'wikilink' OR (
+        dst NOT IN (SELECT value FROM json_each(?)) AND (
+          dst IN (SELECT value FROM json_each(?)) OR NOT EXISTS (
+            SELECT 1 FROM page_index WHERE page_id = graph_edges.dst
+          )
+        )
+      ))`);
+      bindings.push(JSON.stringify(serving.excludedPageIds), JSON.stringify(serving.readablePageIds));
       const source = sourceServingSql(db, serving.source,
         ceiling === undefined ? null : SENSITIVITY_ORDER[ceiling]);
       if (source !== null) {
