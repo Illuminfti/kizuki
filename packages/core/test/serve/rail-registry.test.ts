@@ -148,26 +148,41 @@ describe("running a registered rail", () => {
     const { path, db } = vault();
     const alias = join(dirname(path), "alias");
     symlinkSync(path, alias, "dir");
+    const sharedLedger = join(dirname(path), "shared-ledger");
+    mkdirSync(sharedLedger);
+    symlinkSync(join(path, ".kizuki"), join(sharedLedger, ".kizuki"), "dir");
     const other = openLedger(join(alias, ".kizuki", "kizuki.db"));
     disposers.push(() => other.close());
+    const shared = openLedger(join(sharedLedger, ".kizuki", "kizuki.db"));
+    disposers.push(() => shared.close());
     let release!: () => void;
     const waiting = new Promise<void>(resolve => { release = resolve; });
     let calls = 0;
     register({ run: async () => { calls++; if (calls === 1) await waiting; return { status: "ok", events_synced: 1 }; } });
+    register({ id: "fixture-second", run: () => { calls++; return { events_synced: 1 }; } });
     seedSchedules(db);
     const before = listSchedules(db);
     const active = runRail(db, path, "fixture-rail");
+    const held = readLease(db, WRITER_LEASE);
     try {
-      for (const target of [path, alias]) {
-        const denied = await runRail(other, target, "fixture-rail");
+      expect(held?.holder_pid).toBe(process.pid);
+      for (const [handle, target, rail] of [
+        [other, path, "fixture-rail"],
+        [other, alias, "fixture-second"],
+        [shared, sharedLedger, "fixture-second"],
+      ] as const) {
+        const denied = await runRail(handle, target, rail);
         expect(denied.status).toBe("failed");
         expect(denied.schedule_transition).toBeUndefined();
         expect(calls).toBe(1);
         expect(listSchedules(db)).toEqual(before);
-        expect(readLease(db, WRITER_LEASE)?.holder_pid).toBe(process.pid);
+        expect(readLease(db, WRITER_LEASE)).toEqual(held);
       }
     } finally { release(); await active; }
     expect((await active).status).toBe("ok");
+    expect(readLease(db, WRITER_LEASE)).toBeNull();
+    expect((await runRail(shared, sharedLedger, "fixture-second")).status).toBe("ok");
+    expect(calls).toBe(2);
     expect(readLease(db, WRITER_LEASE)).toBeNull();
   });
 
