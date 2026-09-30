@@ -5,8 +5,9 @@ import type { AnyRailHooks } from "./rails";
 import type { RunExecution, RunReceipt, ServeConfig } from "./types";
 
 /**
- * What the loop hands a rail for one run. The loop already holds the writer
- * lease and has recovered any interrupted canon write before `run` starts.
+ * What the loop hands a rail for one run. Execution holds the writer
+ * lease and attempts interrupted canon recovery before `run` starts. A held
+ * recovery still blocks new canon writes.
  * `budget` is the shared durable budget: a rail that spends canon writes
  * stops with `budget:*` when it is exhausted.
  */

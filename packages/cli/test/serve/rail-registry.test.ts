@@ -113,6 +113,27 @@ describe("a rail registered only in a test", () => {
     } finally { releaseLease(db, holder); db.close(); }
   });
 
+  test("manual rails cannot overlap in the same vault and a later retry succeeds", async () => {
+    const vault = session();
+    let signalEntered!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>(resolve => { signalEntered = resolve; });
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    disposers.push(registerRail(defineRail({
+      id: "fixture-wait", summary: "Fixture waiting rail.", period_s: 300, jitter_s: 0, expects_output: false,
+      run: async () => { signalEntered(); await waiting; return { status: "ok", events_synced: 1 }; },
+    })));
+    fixtureRail("fixture-tick");
+    const first = vault.run("run", "fixture-wait", "--json");
+    try {
+      await Promise.race([entered, first.then(() => { throw new Error("waiting rail did not start"); })]);
+      expect((await vault.run("run", "fixture-tick", "--json")).code).toBe(1);
+      expect(calls).toBe(0);
+    } finally { release(); await first; }
+    expect((await vault.run("run", "fixture-tick", "--json")).code).toBe(0);
+    expect(calls).toBe(1);
+  });
+
   test("is refused by serve run until it is registered", async () => {
     const vault = session();
     await expect(vault.run("run", "fixture-tick")).rejects.toThrow("serve run <rail>");
