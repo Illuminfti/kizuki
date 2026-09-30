@@ -69,13 +69,13 @@ export async function runModelEvaluation(options: ModelRunOptions) {
   if (!loopback && options.allow_remote !== true) throw new Error("a non-loopback endpoint needs --allow-remote and is limited to the synthetic corpus");
   const corpus = loadCorpus(options.corpus_path ?? join(import.meta.dir, "fixtures/extraction-quality-v1.json"));
   const requestHashes: string[] = [], responseHashes: string[] = [];
-  let promptHash: string | null = null;
+  let promptHash = "";
   const transport: ChatTransport = async (request) => {
     // The prompt that identifies a run is the system message as sent: instructions and the registry.
     const first = (request.body as { messages?: { role?: unknown; content?: unknown }[] }).messages?.[0];
     if (first?.role !== "system" || typeof first.content !== "string") throw new Error("evaluation request has no system prompt");
     const hash = sha256(first.content);
-    if (promptHash !== null && promptHash !== hash) throw new Error("evaluation system prompt changed between cases");
+    if (promptHash !== "" && promptHash !== hash) throw new Error("evaluation system prompt changed between cases");
     promptHash = hash;
     requestHashes.push(sha256(canonicalJson(request.body)));
     const result = await fetchTransport(request);
@@ -113,7 +113,7 @@ export async function runModelEvaluation(options: ModelRunOptions) {
       calls: requestHashes.length, request_sha256: requestHashes, response_sha256: responseHashes },
   });
   const report = scoreExtraction(corpus, set);
-  return { ...report, prompt_sha256: promptHash, run_nonce: randomBytes(4).toString("hex"), per_case_wall: details };
+  return { ...report, prompt_sha256: promptHash === "" ? null : promptHash, run_nonce: randomBytes(4).toString("hex"), per_case_wall: details };
 }
 
 if (import.meta.main) {

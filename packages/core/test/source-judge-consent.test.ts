@@ -85,7 +85,7 @@ describe("a configured System One judge is model egress", () => {
     const { db, grant, source } = ledgerWithEvent();
     const row = () => db.query("SELECT policy_digest AS d, policy AS p FROM source_grants").get() as { d: string; p: string };
     const digest = () => row().d;
-    const legacy = { ...model, external_retention: "provider_managed" };
+    const legacy = { ...model, external_retention: "provider_managed" as const };
     const before = digest();
     expect(row().p).not.toContain("judge");
     // This is the pre-extension serialization, independent of the current normalizer.
