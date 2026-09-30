@@ -78,6 +78,7 @@
       "packages/core/test/world/card-fields.test.ts",
       "packages/core/test/world/card-lineage.test.ts",
       "packages/core/test/world/card-oracles.test.ts",
+      "packages/core/test/world/card-coverage-privacy.test.ts",
       "packages/core/test/world/evidence.test.ts",
       "packages/cli/test/world-card.test.ts",
       "packages/cli/test/world-card-parity.test.ts"

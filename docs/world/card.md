@@ -9,7 +9,8 @@ remain visible as conflicting relations. Unknown validity conservatively
 qualifies a conflict. `none_observed` means that this bounded read found none
 and source coverage has no gaps; incomplete source coverage or traversal remains
 `unknown`. Hidden conflicting claims do not affect a reader's answer or work
-counters.
+counters. Coverage loads checkpoint rows only for currently visible sources,
+so a hidden source's import state cannot change those counters either.
 
 `world/lineage.ts` is the shared support-root calculation. Exact version hashes,
 captured text, grounded occurrence text and source identities group dependent
@@ -83,5 +84,6 @@ the browser interface.
 
 Tests: [card fields](../../packages/core/test/world/card-fields.test.ts),
 [lineage](../../packages/core/test/world/card-lineage.test.ts),
+[coverage privacy](../../packages/core/test/world/card-coverage-privacy.test.ts),
 [evidence and noninterference](../../packages/core/test/world/evidence.test.ts),
 [adapter parity](../../packages/cli/test/world-card-parity.test.ts).
