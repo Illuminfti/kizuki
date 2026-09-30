@@ -128,6 +128,8 @@ citation locality. Each surface/principal pair must recall at least one gold
 fact. The owner must retrieve the scope and ceiling decoys, proving those
 denial probes contain real readable facts; the corrected blocker and proposed
 relationship must also be retrievable under their expected access.
+An end-to-end command check rejects a flag in place of the destination before
+any vault work and preserves an existing file at that name.
 
 This is a retrieval baseline for a hand-authored synthetic persona and scripted
 extraction, not an extraction-quality or real-agent reasoning benchmark. Exact

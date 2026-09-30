@@ -1,11 +1,29 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runEvaluation, renderMarkdown } from "./run";
 import { scoreObservation } from "./score";
 import { persona } from "./persona";
 import { packetTokens } from "../../../packages/core/src/serving/packet-tokenizer";
+
+test("runner refuses a flag used as an output path before touching the destination", async () => {
+  const root = mkdtempSync(join(tmpdir(), "fresh-agent-arguments-"));
+  try {
+    const sentinel = join(root, "--size");
+    writeFileSync(sentinel, "preserve this file");
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, "run.ts"), "--out", "--size", "small", "ignored"], {
+      cwd: root, stdin: "ignore", stdout: "pipe", stderr: "pipe",
+    });
+    const [code, output, error] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    expect(code).toBe(2);
+    expect(output).toBe("");
+    expect(error).toContain("Usage:");
+    expect(readFileSync(sentinel, "utf8")).toBe("preserve this file");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 120_000);
 
 test("small synthetic persona is measured through four surfaces for two principals", async () => {
   const root = mkdtempSync(join(tmpdir(), "fresh-agent-proof-"));

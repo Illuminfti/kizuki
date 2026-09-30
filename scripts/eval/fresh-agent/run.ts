@@ -119,7 +119,10 @@ if (import.meta.main) {
   const outIndex = args.indexOf("--out"), sizeIndex = args.indexOf("--size");
   const out = outIndex < 0 ? undefined : args[outIndex + 1];
   const size = sizeIndex < 0 ? "full" : args[sizeIndex + 1];
-  if (out === undefined || (size !== "small" && size !== "full") || args.length !== 2 + (sizeIndex < 0 ? 0 : 2)) {
+  const validFlags = args.every((arg, index) => index % 2 === 0
+    ? arg === "--out" || arg === "--size"
+    : !arg.startsWith("--"));
+  if (!validFlags || out === undefined || out.length === 0 || (size !== "small" && size !== "full") || args.length !== 2 + (sizeIndex < 0 ? 0 : 2)) {
     console.error("Usage: bun scripts/eval/fresh-agent/run.ts --out NEW_DIRECTORY [--size small|full]");
     process.exitCode = 2;
   } else {
