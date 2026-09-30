@@ -729,7 +729,7 @@ a value above 32 raises the pass's former fixed ceiling;
 the pass takes the writer for one page at a time and reads a stop request
 between pages, and a typed page that fails three passes in a row is set aside
 for a day (see [canon writes per pass](extraction-budgets.md#canon-writes-per-pass)). `serve status` and
-`doctor` print the effective values and the records skipped in the doctor
+`doctor` print the effective extraction and schedule values and the records skipped in the doctor
 window on a `throughput` line; `--json` reports them as `throughput` in the
 serve doctor report. A model that still answers HTTP 429 after the port's
 bounded retries stops the pass as `model:rate_limited`, and the next pass

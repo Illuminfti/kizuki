@@ -48,7 +48,7 @@ canon_writes_per_run = 32  # 0..10000; canon pages one sync pass may write
 ```
 
 A value outside its range, a fraction or a string keeps that key's default.
-`kizuki doctor` and `kizuki serve status` print the effective values on one
+`kizuki doctor` and `kizuki serve status` print the effective extraction and schedule values on one
 `throughput` line, and `doctor --json` and `serve status --json` report them as
 `serve.throughput`.
 
