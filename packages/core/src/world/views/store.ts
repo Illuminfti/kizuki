@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
+import type { ServeContext } from "../../serving/types";
+import { authorizedSupportSql } from "../policy-sql";
 import type { WorldNamespace } from "../references";
 
 /** RFC 0004: a fixed 15 minutes from issuance, never extended by a read. */
@@ -26,25 +28,33 @@ export interface StoredView {
 
 /**
  * The baseline a token names, only if it is this principal's, bound to this
- * exact query, and unexpired. Every other case is the same null.
+ * exact query, unexpired, and still backed by authorized support. Every other
+ * case is the same null, without returning a denied projection from SQLite.
  */
 export function lookupView(
-  db: Database,
+  ctx: ServeContext,
   partition: number,
   namespaceId: string,
   queryDigest: string,
   token: string,
   now: string,
 ): StoredView | null {
+  const { db } = ctx, permitted = authorizedSupportSql(ctx);
   const row = db
     .query<
       { fingerprint: string; projection: Uint8Array; expires_at: string },
-      [string, number, string, string, string]
+      (string | number)[]
     >(
-      `SELECT fingerprint,projection,expires_at FROM world_view_tokens
-       WHERE token_hash=? AND partition_id=? AND namespace_id=? AND query_digest=? AND expires_at>?`,
+      `SELECT v.fingerprint,v.projection,v.expires_at FROM world_view_tokens v
+       WHERE v.token_hash=? AND v.partition_id=? AND v.namespace_id=? AND v.query_digest=? AND v.expires_at>?
+         AND NOT EXISTS (
+           SELECT 1 FROM world_view_token_deps d
+           JOIN world_wire_admission_targets a USING(namespace_id,wire_ref)
+           LEFT JOIN claim_v2_support s ON s.support_key=a.support_key
+           WHERE d.token_hash=v.token_hash AND COALESCE((${permitted.sql}),0)=0
+         )`,
     )
-    .get(wireDigest(token), partition, namespaceId, queryDigest, now);
+    .get(wireDigest(token), partition, namespaceId, queryDigest, now, ...permitted.bindings);
   return row === null ? null : { fingerprint: row.fingerprint, projection: row.projection, validUntil: row.expires_at };
 }
 

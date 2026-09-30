@@ -241,7 +241,7 @@ function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, depe
         const live = { ...ctx, principal: current };
         const ns = worldNamespace(ctx.db, current);
         // The baseline is judged before any projection work, so an unusable one costs the same for every cause.
-        const view = op.views === true ? openView(ctx.db, ns, input, prior) : null;
+        const view = op.views === true ? openView(live, ns, input, prior) : null;
         if (view?.stale === true) return answer(op.name, { status: "new_view_required" });
         return present(op, op.run({ ctx: live, ns, registry, dependencies }, query, { valid, knownAt }), view, live, dependencies);
       })
