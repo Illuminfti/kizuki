@@ -179,6 +179,34 @@ describe("running a registered rail", () => {
     expect(readLease(db, WRITER_LEASE)).toBeNull();
   });
 
+  test("a denied overlapping run leaves the active scheduled slot unchanged", async () => {
+    const { path, db } = vault();
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    const artifactPath = join(path, "notes", "fixture-artifact.md");
+    register({ artifact: () => artifactPath, run: async () => { await waiting; return { status: "ok", events_synced: 1 }; } });
+    seedSchedules(db);
+    const due = "2026-10-01T00:00:00.000Z";
+    db.query("UPDATE schedules SET next_run_at=? WHERE rail='fixture-rail'").run(due);
+    const before = listSchedules(db).find(row => row.rail === "fixture-rail");
+    const active = runRail(db, path, "fixture-rail", {
+      now: () => due,
+      execution: { instance_id: "fixture-instance", pid: process.pid, boot_id: "fixture-boot", trigger: "scheduled", due_at: due },
+    }).then(receipt => ({ receipt, error: undefined }), error => ({ receipt: undefined, error }));
+    try {
+      const denied = await runRail(db, path, "fixture-rail", { now: () => due });
+      expect(denied.status).toBe("failed");
+      expect(denied.schedule_transition).toBeUndefined();
+      expect(listSchedules(db).find(row => row.rail === "fixture-rail")).toEqual(before);
+      expect(existsSync(artifactPath)).toBe(false);
+    } finally { release(); await active; }
+    const result = await active;
+    expect(result.error).toBeUndefined();
+    expect(result.receipt?.status).toBe("ok");
+    expect(listSchedules(db).find(row => row.rail === "fixture-rail")?.next_run_at)
+      .toBe("2026-10-01T00:05:00.000Z");
+  });
+
   test("work is bounded by the shared budget: an exhausted budget stops the run", async () => {
     const { path, db } = vault();
     writeFileSync(join(path, ".kizuki", "serve.toml"), "[budget]\ncanon_writes_per_run = 1\n");

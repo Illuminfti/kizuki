@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { BudgetTracker } from "../canon/budget";
 import type { WorkContext } from "./doctor-rails";
-import type { AnyRailHooks } from "./rails";
+import type { AnyRailHooks } from "./rail-hooks";
 import type { RunExecution, RunReceipt, ServeConfig } from "./types";
 
 /**
