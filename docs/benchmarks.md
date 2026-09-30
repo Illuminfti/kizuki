@@ -175,17 +175,23 @@ warmup, zero repetitions/window and an empty duration array.
 
 ## Baselines and targets
 
-The full S and M runs on implementation commit
-`99356205a07449635792a155b14814090753abd1` used seed 1, Bun 1.3.14,
-linux/x64 and 12 logical CPUs. Both began with load averages
-14.29, 24.63, 32.16. Benchmark and product code matched that revision;
-documentation-only edits were present. The host was shared and busy; these
-numbers are a recorded reference, not an isolated hardware comparison or a
-reproduction of another deployment's timings. S produced 8 pages, 996
+The full S and M profiles were measured on 2026-09-30 from clean implementation
+commit `16cb4747265db60d03250aef8cd859897dd1ef38`, using seed 1, Bun 1.3.14,
+linux/x64 and 12 logical CPUs. S began with load averages 54.4, 44.29, 45.5;
+M began with 45.05, 48.61, 47.88. The baseline refresh changes documentation only
+relative to that measurement revision; benchmark and product code match it.
+Both reports passed the runtime validator, and their emitted schemas and
+Markdown summaries matched the implementation. The host was shared and busy;
+these numbers are a recorded reference, not an isolated hardware comparison or
+a reproduction of another deployment's timings. S produced 8 pages, 996
 unwritten claims and 984 unextracted events. M produced 158 pages, 19,921
 unwritten claims and 19,880 unextracted events. L and XL have not been executed
 on this branch. The extraction controller has a reduced-pass regression that
 proves resumption across the bounded passes required by XL.
+
+Each profile retained three idle CPU observations after startup warmup. Their
+observed windows were 60.732, 60.186, 60.146 seconds for S and
+60.141, 60.201, 60.145 seconds for M, all exceeding the requested 60 seconds.
 
 Values below are measured medians. Reports retain all samples and p95/p99.
 A throughput target multiplies its median by 10; a latency or CPU target
@@ -196,36 +202,36 @@ not achieved speedups or release gates.
 
 | Metric | Unit | S p50 | M p50 | S 10x target | M 10x target |
 | --- | --- | ---: | ---: | ---: | ---: |
-| `ingest.events_per_s` | events/s | 36.278 | 17.387 | 362.779 | 173.865 |
-| `canon.writes_per_s` | writes/s | 2.168 | 0.687 | 21.676 | 6.868 |
-| `canon.cpu_ms_per_write` | ms | 208.190 | 952.519 | 20.819 | 95.252 |
-| `daemon.drain_wall_ms` | ms | 27845.113 | 1150617.981 | 2784.511 | 115061.798 |
-| `daemon.drain_peak_rss_bytes` | MiB | 163.535 | 243.781 | — | — |
-| `mcp.search.wall_ms` | ms | 144.520 | 1351.046 | 14.452 | 135.105 |
-| `cold_mcp.search.wall_ms` | ms | 608.843 | 2379.243 | 60.884 | 237.924 |
-| `mcp.context_session.wall_ms` | ms | 69.130 | 421.995 | 6.913 | 42.199 |
-| `cold_mcp.context_session.wall_ms` | ms | 963.901 | 1555.692 | 96.390 | 155.569 |
-| `mcp.context_query.wall_ms` | ms | 154.629 | 812.257 | 15.463 | 81.226 |
-| `cold_mcp.context_query.wall_ms` | ms | 1180.693 | 2105.943 | 118.069 | 210.594 |
-| `mcp.get_page.wall_ms` | ms | 52.866 | 222.462 | 5.287 | 22.246 |
-| `cold_mcp.get_page.wall_ms` | ms | 624.119 | 889.993 | 62.412 | 88.999 |
-| `mcp.timeline.wall_ms` | ms | 59.560 | 489.438 | 5.956 | 48.944 |
-| `cold_mcp.timeline.wall_ms` | ms | 718.723 | 1074.275 | 71.872 | 107.427 |
-| `mcp.world_discovery.wall_ms` | ms | 48.138 | 153.450 | 4.814 | 15.345 |
-| `cold_mcp.world_discovery.wall_ms` | ms | 672.369 | 931.846 | 67.237 | 93.185 |
-| `mcp.graph_neighbors.wall_ms` | ms | 16.963 | 28.689 | 1.696 | 2.869 |
-| `cold_mcp.graph_neighbors.wall_ms` | ms | 730.751 | 759.078 | 73.075 | 75.908 |
-| `cold_cli.search.wall_ms` | ms | 863.959 | 2538.316 | 86.396 | 253.832 |
-| `cold_cli.context_session.wall_ms` | ms | 1155.658 | 1600.756 | 115.566 | 160.076 |
-| `cold_cli.context_query.wall_ms` | ms | 1264.258 | 2003.120 | 126.426 | 200.312 |
-| `cold_cli.world_discovery.wall_ms` | ms | 685.409 | 973.095 | 68.541 | 97.309 |
-| `doctor.wall_ms` | ms | 986.225 | 1210.062 | 98.622 | 121.006 |
-| `doctor.peak_rss_bytes` | MiB | 136.152 | 162.848 | — | — |
-| `export.wall_ms` | ms | 2575.671 | 144480.554 | 257.567 | 14448.055 |
-| `restore.wall_ms` | ms | 3204.092 | 27784.689 | 320.409 | 2778.469 |
-| `purge.wall_ms` | ms | 1136.890 | 6476.567 | 113.689 | 647.657 |
-| `rebuild.wall_ms` | ms | 289.522 | 3203.803 | 28.952 | 320.380 |
-| `serve.idle_cpu_percent` | CPU % | 0.969 | 0.814 | 0.097 | 0.081 |
+| `ingest.events_per_s` | events/s | 35.692 | 23.826 | 356.920 | 238.260 |
+| `canon.writes_per_s` | writes/s | 2.000 | 0.830 | 19.997 | 8.297 |
+| `canon.cpu_ms_per_write` | ms | 170.255 | 868.856 | 17.026 | 86.886 |
+| `daemon.drain_wall_ms` | ms | 28282.082 | 839634.088 | 2828.208 | 83963.409 |
+| `daemon.drain_peak_rss_bytes` | MiB | 163.539 | 239.008 | — | — |
+| `mcp.search.wall_ms` | ms | 182.221 | 990.223 | 18.222 | 99.022 |
+| `cold_mcp.search.wall_ms` | ms | 868.865 | 1301.937 | 86.887 | 130.194 |
+| `mcp.context_session.wall_ms` | ms | 82.312 | 321.861 | 8.231 | 32.186 |
+| `cold_mcp.context_session.wall_ms` | ms | 1156.977 | 823.155 | 115.698 | 82.315 |
+| `mcp.context_query.wall_ms` | ms | 152.696 | 435.277 | 15.270 | 43.528 |
+| `cold_mcp.context_query.wall_ms` | ms | 1279.583 | 1026.307 | 127.958 | 102.631 |
+| `mcp.get_page.wall_ms` | ms | 35.731 | 35.370 | 3.573 | 3.537 |
+| `cold_mcp.get_page.wall_ms` | ms | 710.592 | 358.254 | 71.059 | 35.825 |
+| `mcp.timeline.wall_ms` | ms | 65.821 | 274.502 | 6.582 | 27.450 |
+| `cold_mcp.timeline.wall_ms` | ms | 768.283 | 556.291 | 76.828 | 55.629 |
+| `mcp.world_discovery.wall_ms` | ms | 41.917 | 83.890 | 4.192 | 8.389 |
+| `cold_mcp.world_discovery.wall_ms` | ms | 730.755 | 404.445 | 73.076 | 40.444 |
+| `mcp.graph_neighbors.wall_ms` | ms | 21.405 | 18.374 | 2.141 | 1.837 |
+| `cold_mcp.graph_neighbors.wall_ms` | ms | 681.953 | 355.208 | 68.195 | 35.521 |
+| `cold_cli.search.wall_ms` | ms | 918.697 | 1260.057 | 91.870 | 126.006 |
+| `cold_cli.context_session.wall_ms` | ms | 1289.344 | 865.851 | 128.934 | 86.585 |
+| `cold_cli.context_query.wall_ms` | ms | 1302.096 | 1124.169 | 130.210 | 112.417 |
+| `cold_cli.world_discovery.wall_ms` | ms | 724.018 | 656.682 | 72.402 | 65.668 |
+| `doctor.wall_ms` | ms | 968.886 | 1096.763 | 96.889 | 109.676 |
+| `doctor.peak_rss_bytes` | MiB | 137.062 | 162.324 | — | — |
+| `export.wall_ms` | ms | 2779.390 | 117296.101 | 277.939 | 11729.610 |
+| `restore.wall_ms` | ms | 2865.568 | 18385.026 | 286.557 | 1838.503 |
+| `purge.wall_ms` | ms | 1269.766 | 5922.647 | 126.977 | 592.265 |
+| `rebuild.wall_ms` | ms | 270.201 | 2789.140 | 27.020 | 278.914 |
+| `serve.idle_cpu_percent` | CPU % | 0.778 | 1.455 | 0.078 | 0.145 |
 
 Logical input SHA-256:
 
