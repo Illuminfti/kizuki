@@ -3,13 +3,14 @@ import { embedPendingWork, retrievalPendingWork, syncPendingWork } from "./docto
 import { requireAtomicExtractReplay } from "./extract";
 import { briefPath } from "./notifier-file";
 import { defineRail, type RailDefinition } from "./rail-definition";
+import { DEFAULT_SYNC_PERIOD_S, EMBED_BACKFILL_IDLE_PERIOD_S } from "./types";
 
 
 // Execution loads only at run time: ledger initialization reads definitions without loading the daemon.
 /** One definition per shipped rail, in the existing doctor and one-shot order. */
 export const BUILTIN_RAILS: readonly RailDefinition[] = [
   defineRail({
-    id: "sync", period_s: 900, jitter_s: 90,
+    id: "sync", period_s: DEFAULT_SYNC_PERIOD_S, jitter_s: 90,
     summary: "Pulls new records from connected sources, extracts claims with the bound model and files them as canon writes.",
     expects_output: true,
     doctor: syncPendingWork,
@@ -37,7 +38,7 @@ export const BUILTIN_RAILS: readonly RailDefinition[] = [
     summary: "Reports the embedding backlog and adopts the period the embedding configuration asks for.",
     expects_output: true,
     doctor: embedPendingWork,
-    idle_period_s: 3600,
+    idle_period_s: EMBED_BACKFILL_IDLE_PERIOD_S,
     configured_period_s: embedBackfillPeriod,
     run: async (context) => (await import("./rails")).runEmbedBackfill(context),
   }),

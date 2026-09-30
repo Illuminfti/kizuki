@@ -31,7 +31,7 @@ test("installed health evidence retains every registered extension rail", () => 
   try {
     const result = installedRailsHealth({ exit_code: 0, stdout: JSON.stringify(healthyStatus()), stderr: "" }, healthyDiagnostics(), healthAt, Date.parse(healthAt));
     expect(result.passed).toBe(true);
-    expect(result.evidence.rails?.map(row => row.rail)).toEqual(RAIL_IDS);
+    expect(result.evidence.rails?.map(row => row.rail)).toEqual([...RAIL_IDS]);
   } finally { remove.reverse().forEach(dispose => dispose()); }
 });
 
