@@ -245,7 +245,7 @@ export const serveCommand: Command = {
       process.on("SIGINT", requestStop);
     }
     try { return (await (daemon ? untilLedgerFree(start, {
-      log: line => io.err(line), signal: stop.signal, shouldRetry: () => !started,
+      log: line => io.err(line), signal: stop.signal, shouldRetry: () => !started && !completed,
     }) : start())) ?? 0;
     } catch (error) {
       // The daemon already closed its runtime, marker and lease. A busy final
