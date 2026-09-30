@@ -17,7 +17,7 @@ export async function mcpFuzzDriver(ctx: ServeContext) {
       try {
         const result = await client.callTool({ name, arguments: args as Record<string, unknown> });
         if (JSON.stringify(result).length > 1024 * 1024) throw new Error("output-unbounded");
-        const first = result.content[0];
+        const first = Array.isArray(result.content) ? result.content[0] : undefined;
         if (result.isError && first?.type === "text" && typeof first.text === "string") {
           let failure: unknown;
           try { failure = JSON.parse(first.text); } catch { /* SDK schema refusals are plain text. */ }
