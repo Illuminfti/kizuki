@@ -929,7 +929,7 @@ test('World shares through the object operation and resumes without carrying the
     expect(f.requests[0]!.payload).toMatchObject({operation:'resume',handle:'R'.repeat(42)+'A'});
     expect(f.requests[0]!.payload).not.toHaveProperty('priorView');
     f.reply('world_view', {schema:'kizuki.world-view/v1',operation:'resume',result:{status:'incomplete',reasons:['coverage'],data:{schema:'kizuki.concept-card/v1',concept:{ref:{kind:'object',token:'B'.repeat(42)+'A'},labels:[{text:'Resumed concept'}]},definitions:[],relations:[],coverage:{status:'partial',gaps:['coverage']}}}}); await resumed;
-    expect(f.main.textContent).toContain('Resumed concept'); expect(f.evaluate('state.worldRef.token')).toBe('B'.repeat(42)+'A');
+    expect(f.main.textContent).toContain('Resumed concept'); expect(f.evaluate<string>('state.worldRef.token')).toBe('B'.repeat(42)+'A');
     f.evaluate('invalidatePrivateView()'); expect(f.main.textContent).not.toContain('Resumed concept'); expect(f.storageWrites).toHaveLength(0);
 });
 test('World renders shared-reader statements with honest confidence and unavailable state', () => {
