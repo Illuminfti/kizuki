@@ -39,6 +39,17 @@
   `capture fan-out` line (JSON `claims.capture_fanout`), apart from unwritten
   claims, names `kizuki serve run doctor-sweep` while any are pending, and no
   longer lists them among leftover skipped rows.
+- An edited page from the wiki importer now replaces its canon page instead of
+  being appended to it. Page candidates carry a claim key per source record, so
+  a newer revision supersedes the older claim: the page keeps the newest body
+  once and takes the newest frontmatter fields, and a frontmatter-only edit no
+  longer repeats the body. A claim imported before pages carried a key is
+  superseded by the first edit that follows, and undoing that write brings the
+  previous revision back. A revision that fits no longer inherits the
+  `x-body-truncated` marker of a longer earlier one.
+- A create that lands on a file the writer cannot bind to a page (no readable
+  page id) ends as a skip with reason `page_exists`, counted in
+  `claims_skipped` on the run receipt, instead of failing every pass.
 
 ### Operator safety
 

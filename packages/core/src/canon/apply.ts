@@ -372,6 +372,10 @@ function prepareRevision(
     delete data["x-contested"];
   }
   if (decision.action === "conflict") data["x-ambiguous"] = true;
+  // The cut marker describes the body just replaced; a revision that fits does not inherit it.
+  if (decision.action === "supersede" && !("x-body-truncated" in extra)) {
+    delete data["x-body-truncated"];
+  }
   return { page: { data, body }, action, taint, sensitivity };
 }
 
@@ -379,10 +383,12 @@ function supersededRefs(io: CanonIo, decision: TargetDecision): CanonReceipt["su
   if (decision.action !== "supersede") return [];
   return decision.superseded.map((claimId) => {
     const loser = getClaim(io.db, claimId);
-    if (loser === null || loser.claim_key === null) {
+    const key = loser?.claim_key ?? (loser?.superseded_by === null || loser?.superseded_by === undefined
+      ? null : getClaim(io.db, loser.superseded_by)?.claim_key);
+    if (loser === null || key == null) {
       throw new CanonWriteError("decision_stale", `superseded claim ${claimId} has no conflict key`);
     }
-    return { claim_id: claimId, claim_key: loser.claim_key };
+    return { claim_id: claimId, claim_key: key };
   });
 }
 

@@ -1,4 +1,5 @@
 import { UNWRITTEN_CAPTURE_NOTE_WHERE } from "./capture-fanout";
+import { pageClaimKey } from "./hash";
 import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { historicalSourceWriteAllowed, inspectSourceGrant, sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, type SourceReadScope } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
@@ -989,6 +990,19 @@ export function supersessionsForReceipt(
     .all(receiptId);
 }
 
+/**
+ * Ends a live, unwritten claim the writer will never be able to apply. The
+ * retraction stamp keeps `reviveUncontestedSkipped` from lifting it again.
+ */
+export function skipUnwrittenClaim(db: Database, claimId: string, at: string): boolean {
+  return db
+    .query<never, [string, string]>(
+      `UPDATE claims SET status = 'skipped', retracted_at = ?
+        WHERE claim_id = ? AND status = 'live' AND receipt_id IS NULL`,
+    )
+    .run(at, claimId).changes === 1;
+}
+
 /** Undo of a write: the claim this receipt materialized is no longer live. */
 export function markClaimReverted(db: Database, claimId: string, at: string): void {
   const claim = getClaim(db, claimId);
@@ -1060,6 +1074,47 @@ export function supersedeLiveGroup(
     out.push({ claim_id: loser.claim_id, claim_key: loser.claim_key ?? winner.claim_key, rule: "R5" });
   }
   return out;
+}
+
+/** Source page revisions replace one another; legacy keys remain null. Runs inside filing's transaction. */
+export function supersedePageRevisions(db: Database, winnerId: string, at: string): void {
+  if (!db.inTransaction) throw new Error("page supersession requires the claim transaction");
+  const winner = getClaim(db, winnerId);
+  const connector = winner?.frontmatter["x-connector"];
+  const record = winner?.frontmatter["x-source-record-id"];
+  if (winner === null || winner.producer !== "deterministic" || winner.authority !== "connector_evidence" ||
+      typeof connector !== "string" || typeof record !== "string" ||
+      winner.claim_key !== pageClaimKey(connector, record)) return;
+
+  const older = db
+    .query<ClaimRow, [string, string, string, string]>(
+      `SELECT * FROM claims
+        WHERE status = 'live' AND claim_id <> ? AND kind IN ('entity', 'claim')
+          AND (claim_key = ?
+               OR (claim_key IS NULL AND producer = 'deterministic' AND authority = 'connector_evidence'
+                   AND json_extract(frontmatter, '$."x-connector"') = ?
+                   AND json_extract(frontmatter, '$."x-source-record-id"') = ?))`,
+    )
+    .all(winner.claim_id, winner.claim_key, connector, record)
+    .map(rowToClaim);
+  // A revision is evidence, never authority to overturn an owner's correction.
+  if (older.some(loser => AUTHORITY_TIERS[loser.authority] > AUTHORITY_TIERS[winner.authority])) {
+    skipUnwrittenClaim(db, winner.claim_id, at);
+    db.query("UPDATE proposals SET status = 'withdrawn' WHERE proposal_id = ?").run(winner.claim_id);
+    return;
+  }
+  for (const loser of older) {
+    persistClaim(db, {
+      ...loser,
+      status: "superseded",
+      superseded_by: winner.claim_id,
+      retracted_at: at,
+      valid_to: minTimestamp(loser.valid_to, winner.valid_from),
+    });
+    // Release the compatibility signature so returning to old content files a new revision.
+    db.query("UPDATE proposals SET status = 'withdrawn' WHERE proposal_id = ?").run(loser.claim_id);
+    writeSupersession(db, winner.claim_id, loser.claim_id, "R3", loser.valid_to, at);
+  }
 }
 
 /** Typed targeted correction shares the existing supersession journal and retrieval outbox transaction. */

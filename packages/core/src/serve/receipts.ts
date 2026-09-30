@@ -141,6 +141,15 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
           ),
         )
       : {},
+    ...(isPlainObject(value["claims_skipped"]) && Object.keys(value["claims_skipped"]).length > 0
+      ? {
+          claims_skipped: Object.fromEntries(
+            Object.entries(value["claims_skipped"]).filter(
+              (entry): entry is [string, number] => typeof entry[1] === "number",
+            ),
+          ),
+        }
+      : {}),
     ...(typeof value["records_skipped"] === "number" && Number.isFinite(value["records_skipped"])
       ? { records_skipped: value["records_skipped"] }
       : {}),
@@ -481,7 +490,7 @@ export function isNoopReceipt(receipt: RunReceipt): boolean {
   ];
   return receipt.status === "ok" && receipt.stopped === null && receipt.errors.length === 0 &&
     receipt.oversized === undefined && receipt.retrieval.degraded.length === 0 &&
-    Object.keys(receipt.claims_rejected).length === 0 && counters.every((count) => count === 0);
+    Object.keys(receipt.claims_rejected).length === 0 && Object.keys(receipt.claims_skipped ?? {}).length === 0 && counters.every((count) => count === 0);
 }
 
 /**

@@ -19,6 +19,7 @@ import { applyCanonWriteOwned } from "../canon/apply";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { machineOriginPath } from "../canon/origin";
+import { nowOf, readPage } from "../canon/store";
 import type { Claim } from "../contracts/proposal";
 import type { ClaimDraft, ProduceResult, ProducerDiagnostic, ProducerPort } from "../contracts/producer";
 import type { DroppedDraftV2, ProduceResultV2, ProducerV2Port } from "../contracts/producer-v2";
@@ -31,6 +32,7 @@ import {
   retryRetrievalOps,
   listUnwrittenLiveClaims,
   reviveUncontestedSkipped,
+  skipUnwrittenClaim,
 } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
 import {
@@ -75,6 +77,8 @@ export interface WritePassResult {
   readonly claims_written_extracted: number;
   readonly claims_deduped: number;
   readonly claims_superseded: number;
+  /** Claims the writer ended without a page write, by reason. Each is a stable snake_case reason; the run receipt keeps it. */
+  readonly claims_skipped: Readonly<Record<string, number>>;
   /** Records extraction passed over for good without claims; each has its reason in `errors`. */
   readonly records_skipped: number;
   readonly canon_writes: number;
@@ -88,13 +92,13 @@ export interface WritePassResult {
 
 /** A pass's totals, kept across its short writer holds. */
 type PassTally = {
-  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "model" | "oversized" | "errors">]: WritePassResult[K];
-} & { readonly oversized: { segments: number; skipped: number }; readonly errors: string[] };
+  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "claims_skipped" | "model" | "oversized" | "errors">]: WritePassResult[K];
+} & { readonly oversized: { segments: number; skipped: number }; readonly claims_skipped: Record<string, number>; readonly errors: string[] };
 
 function emptyTally(): PassTally {
   return {
     revived: 0, claims_extracted: 0, claims_written: 0, claims_written_extracted: 0, claims_deduped: 0,
-    claims_superseded: 0, records_skipped: 0, canon_writes: 0, oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
+    claims_superseded: 0, claims_skipped: {}, records_skipped: 0, canon_writes: 0, oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
   };
 }
 
@@ -354,7 +358,7 @@ export async function runWritePass(
   });
   const tally = emptyTally();
   const metrics = emptyMetrics();
-  const result = (): WritePassResult => ({ ...tally, oversized: { ...tally.oversized }, ...metricResult(metrics) });
+  const result = (): WritePassResult => ({ ...tally, claims_skipped: { ...tally.claims_skipped }, oversized: { ...tally.oversized }, ...metricResult(metrics) });
 
   const opened = await holdWriter(io, (_scope, owned) => { tally.revived = reviveUncontestedSkipped(owned.db); });
   if (!opened.held) { tally.stopped = opened.stopped; return result(); }
@@ -409,6 +413,14 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
       else requireExternalEvents(db, claim.provenance);
       const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
+      // A file the arbiter could not bind to a page (no readable id) sits where a create
+      // would land. Retrying cannot change that, so the claim ends here with its reason.
+      if (decision.action === "create" && readPage(io, decision.rel_path) !== null) {
+        if (skipUnwrittenClaim(db, claim.claim_id, nowOf(io))) {
+          tally.claims_skipped["page_exists"] = (tally.claims_skipped["page_exists"] ?? 0) + 1;
+        }
+        continue;
+      }
       const before = occupyingWriteIds(db);
       try {
         applyCanonWriteOwned(scope, io, claim, decision, {
