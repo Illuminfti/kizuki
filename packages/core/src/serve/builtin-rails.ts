@@ -4,8 +4,6 @@ import { requireAtomicExtractReplay } from "./extract";
 import { briefPath } from "./notifier-file";
 import { defineRail, type RailDefinition } from "./rail-definition";
 import { DEFAULT_SYNC_PERIOD_S, EMBED_BACKFILL_IDLE_PERIOD_S } from "./types";
-
-
 // Execution loads only at run time: ledger initialization reads definitions without loading the daemon.
 /** One definition per shipped rail, in the existing doctor and one-shot order. */
 export const BUILTIN_RAILS: readonly RailDefinition[] = [
