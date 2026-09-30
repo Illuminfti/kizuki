@@ -154,7 +154,9 @@ export function envelopeV2For(tool: Tool) {
 
 /** Both implemented contracts, discriminated by schema, for explicit negotiation. */
 export function negotiatedEnvelopeFor(tool: Tool) {
-  const v1 = envelopeFor(tool), v2 = envelopeV2For(tool);
+  const v1 = envelopeFor(tool);
+  if (tool === "system_health") return v1;
+  const v2 = envelopeV2For(tool);
   // The pinned SDK emits draft-7. Generate the union together so its shared
   // definitions and references resolve from the advertised schema's root.
   const advertised = z.toJSONSchema(z.union([v1, v2]), { target: "draft-7" });
