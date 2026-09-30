@@ -2,6 +2,8 @@ import type { AuditDenial } from "../agents";
 import { toolAllowed } from "../agents";
 import { compareRfc3339 } from "../agents/time";
 import { getClaim } from "../claims/store";
+import { claimReadSql } from "../claims/read-scope";
+import { instantSecondSql, instantNanoSql } from "../query/sql";
 import type { Claim } from "../contracts/proposal";
 import { readSituations } from "../world/situations";
 import type { SituationItem, SituationState } from "../world/situations";
@@ -189,22 +191,18 @@ function readable(
 ): Readable {
   const found: Claim[] = [];
   let scanned = 0;
+  const permitted = claimReadSql(ctx.db, reader.scope);
   for (const row of ctx.db
     .query<{ claim_id: string }, (string | number)[]>(
-      `SELECT claim_id FROM claims WHERE status='live' AND ${where} ORDER BY asserted_at DESC, claim_id LIMIT ${CANDIDATES}`,
+      `SELECT claim_id FROM claims WHERE status='live' AND (${where}) AND ${permitted.sql}
+        ORDER BY ${instantSecondSql("claims.asserted_at")} DESC, ${instantNanoSql("claims.asserted_at")} DESC, claim_id DESC`,
     )
-    .iterate(...bindings)) {
-    scanned += 1;
+    .iterate(...bindings, ...permitted.bindings)) {
     const claim = getClaim(ctx.db, row.claim_id);
-    if (
-      claim === null ||
-      !current(claim, at) ||
-      !keep(claim) ||
-      !reader.canRead(claim)
-    )
-      continue;
-    found.push(claim);
-    if (found.length === SECTION_ITEMS) break;
+    if (claim === null || !reader.canRead(claim)) continue;
+    scanned += 1;
+    if (current(claim, at) && keep(claim)) found.push(claim);
+    if (found.length === SECTION_ITEMS || scanned === CANDIDATES) break;
   }
   return { claims: found, truncated: found.length === 0 && scanned === CANDIDATES };
 }
@@ -377,6 +375,7 @@ export function collectSessionPieces(
       ctx.db,
       wanted,
       reader.canRead,
+      reader.scope,
     )) {
       // Members are re-read whole so each carries the taint and sensitivity stamps of its own text.
       const members = conflict.claims.flatMap((member) => {
@@ -398,13 +397,13 @@ export function collectSessionPieces(
         ),
       );
     }
-    for (const gap of loadSubjectGaps(ctx.db, wanted, reader.canRead)) {
+    for (const gap of loadSubjectGaps(ctx.db, wanted, reader.canRead, reader.scope)) {
       lines.push(
         piece(
           "uncertain",
           "## uncertain (contradictions and open questions)",
           `- gap key=${inline(gap.claim_key.slice(0, 12))} ${inline(gap.predicate ?? "-")} unknown between ${inline(gap.after)} and ${inline(gap.before)}\n`,
-          [],
+          reader.auditGroup(gap.claim_key).map(item => item.id),
           reader,
         ),
       );

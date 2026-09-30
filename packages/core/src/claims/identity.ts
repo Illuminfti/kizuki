@@ -3,7 +3,7 @@ import type { Claim } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
 import { claimsConflict, type ConflictClaim } from "./conflict";
 import { ClaimError } from "./errors";
-import { listClaims } from "./store";
+import { readClaimGroups, type ClaimGroupOptions } from "./read-groups";
 import { EVENT_LIMITS, SUBJECT_ROLES } from "../contracts/event";
 import { isPlainObject } from "../util/validate";
 import { isVisibleIdentifier } from "../util/opaque-identifier";
@@ -292,28 +292,15 @@ function toConflict(claim: Claim): ConflictClaim | null {
  */
 export function listLiveConflicts(
   db: Database,
-  opts: { subject?: string; limit?: number; canRead?: (claim: Claim) => boolean } = {},
+  opts: ClaimGroupOptions & { limit?: number } = {},
 ): LiveConflict[] {
   if (!tableExists(db, "claims")) return [];
   const bound = Number.isSafeInteger(opts.limit) && (opts.limit ?? 0) > 0
     ? (opts.limit as number)
     : 32;
-  const live = listClaims(db, {
-    status: "live",
-    keyed: true,
-    ...(opts.subject === undefined ? {} : { subject: opts.subject }),
-    limit: 400,
-  }).filter((claim) => opts.canRead?.(claim) ?? true);
-  const byKey = new Map<string, typeof live>();
-  for (const claim of live) {
-    if (claim.claim_key === null) continue;
-    const group = byKey.get(claim.claim_key) ?? [];
-    group.push(claim);
-    byKey.set(claim.claim_key, group);
-  }
   const conflicts: LiveConflict[] = [];
-  for (const [claim_key, group] of byKey) {
-    if (group.length < 2) continue;
+  for (const group of readClaimGroups(db, opts, "conflicts")) {
+    const claim_key = group[0]!.claim_key!;
     let disagreed = false;
     for (let i = 0; i < group.length && !disagreed; i += 1) {
       const leftClaim = group[i];

@@ -4,6 +4,7 @@ import { MAX_AUDIT_ITEMS } from "../agents/types";
 import { compareRfc3339 } from "../agents/time";
 import { claimKey } from "../claims/hash";
 import { getClaim } from "../claims/store";
+import { claimReadSql } from "../claims/read-scope";
 import { compareText } from "../util/order";
 import { stringArray, type CanonPage } from "../vault/pages";
 import { pageDecision, type CanonIndex } from "./canon";
@@ -52,25 +53,31 @@ function readSubjectLabels(index: CanonIndex, grant: Grant, at: string, subjects
   if (exact.length > MAX_SUBJECTS) { degrade("subject-labels-overflow"); return result; }
   const ctx = index.sourceContext;
   const reader = claimReader(ctx.db, grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
+  const permitted = claimReadSql(ctx.db, reader.scope);
   let count = 0;
   for (const subject of exact) {
-    // Raw quota includes denied rows: they may suppress optional enrichment,
-    // but only generic overflow escapes; their values never decide a match.
-    const rows = ctx.db.query<{ claim_id: string }, [string, number]>(`
+    const rows = ctx.db.query<{ claim_id: string }, (string | number)[]>(`
       SELECT claim_id FROM claims WHERE subject=? AND status='live'
         AND predicate IN ('identity.display_name','identity.handle_on')
-      ORDER BY claim_id LIMIT ?
-    `).all(subject, MAX_PER_SUBJECT + 1);
-    count += rows.length;
+        AND ${permitted.sql}
+      ORDER BY claim_id
+    `).iterate(subject, ...permitted.bindings);
+    const readable = [];
+    for (const row of rows) {
+      const claim = getClaim(ctx.db, row.claim_id);
+      if (claim === null || !reader.canRead(claim)) continue;
+      readable.push(claim);
+      if (readable.length > MAX_PER_SUBJECT) break;
+    }
+    count += readable.length;
     if (count > MAX_CLAIMS) {
       result.labels.clear(); result.audit.clear(); degrade("subject-labels-overflow"); return result;
     }
-    if (rows.length > MAX_PER_SUBJECT) { degrade("subject-labels-overflow"); continue; }
+    if (readable.length > MAX_PER_SUBJECT) { degrade("subject-labels-overflow"); continue; }
     const names = new Set<string>(), handles = new Set<string>();
     const evidence: SubjectLabel["evidence"] = [];
     let unusable = false, disputed = false;
-    for (const row of rows) {
-      const claim = getClaim(ctx.db, row.claim_id);
+    for (const claim of readable) {
       if (!claim || claim.subject !== subject || claim.status !== "live" ||
           claim.receipt_id === null || (claim.predicate !== "identity.display_name" && claim.predicate !== "identity.handle_on") || claim.claim_key !== claimKey(subject, claim.predicate) ||
           !reader.canRead(claim)) continue;

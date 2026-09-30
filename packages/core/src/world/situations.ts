@@ -1,8 +1,9 @@
 import type { Claim } from "../contracts/proposal";
 import { getClaim } from "../claims/store";
+import { claimReadSql } from "../claims/read-scope";
 import { tableExists } from "../ledger/schema";
 import type { ServeContext } from "../serving/types";
-import { authorizedSupportSql } from "./policy-sql";
+import { authorizedClaimSql, authorizedSupportSql } from "./policy-sql";
 import { eligibleWorldClaim } from "./projection";
 import type { ReadBudget } from "./projection";
 
@@ -15,9 +16,8 @@ const SITUATION_PREDICATES = [
 ] as const;
 type SituationPredicate = (typeof SITUATION_PREDICATES)[number];
 
-/** Candidate rows read per situation and situations considered. Both bound the work. */
+/** Readable statement rows per situation; unreadable rows spend no slots. */
 const CLAIMS_PER_SITUATION = 24;
-const SITUATION_SCAN = 16;
 
 export interface SituationItem {
   /** The stored claim, already cleared by the caller's reader. */
@@ -69,6 +69,14 @@ export function readSituations(
   )
     return [];
   const permitted = authorizedSupportSql(ctx);
+  const typed = authorizedClaimSql(ctx);
+  const readable = claimReadSql(ctx.db, {
+    grant: ctx.principal.grant,
+    source: {
+      owner: ctx.principal.kind === "owner",
+      purpose: ctx.sourcePurpose ?? "session",
+    },
+  }, "base");
   const subjects = ctx.db
     .query<SubjectRow, (string | number)[]>(
       `SELECT b.raw_kind, b.raw_namespace, b.raw_id
@@ -79,11 +87,12 @@ export function readSituations(
         WHERE c.predicate='world.kind' AND base.status='live' AND c.polarity='positive'
           AND json_extract(c.payload,'$.object.ref.id')='world/situation'
           AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
+          AND ${readable.sql}
+          AND ${typed.sql}
         GROUP BY b.handle_id
-        ORDER BY max(base.asserted_at) DESC, b.handle_id
-        LIMIT ?`,
+        ORDER BY max(base.asserted_at) DESC, b.handle_id`,
     )
-    .all(...permitted.bindings, SITUATION_SCAN);
+    .iterate(...permitted.bindings, ...readable.bindings, ...typed.bindings);
 
   const budget: ReadBudget = { bytes: 0 };
   const out: SituationState[] = [];
@@ -107,6 +116,14 @@ function readOne(
   budget: ReadBudget,
 ): SituationState | null {
   const permitted = authorizedSupportSql(ctx);
+  const typed = authorizedClaimSql(ctx);
+  const readable = claimReadSql(ctx.db, {
+    grant: ctx.principal.grant,
+    source: {
+      owner: ctx.principal.kind === "owner",
+      purpose: ctx.sourcePurpose ?? "session",
+    },
+  }, "base");
   const rows = ctx.db
     .query<{ claim_id: string }, (string | number)[]>(
       `SELECT c.claim_id FROM claim_v2_semantics c JOIN claims base USING(claim_id)
@@ -114,28 +131,33 @@ function readOne(
           AND c.predicate IN ('world.kind', ${SITUATION_PREDICATES.map(() => "?").join(",")})
           AND base.status='live'
           AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
-        ORDER BY base.asserted_at DESC, c.claim_id
-        LIMIT ?`,
+          AND ${readable.sql}
+          AND ${typed.sql}
+        ORDER BY (c.predicate='world.kind') DESC, base.asserted_at DESC, c.claim_id`,
     )
-    .all(
+    .iterate(
       row.raw_kind,
       row.raw_id,
       row.raw_namespace,
       ...SITUATION_PREDICATES,
       ...permitted.bindings,
-      CLAIMS_PER_SITUATION,
+      ...readable.bindings,
+      ...typed.bindings,
     );
 
   let classified = false;
   const items: SituationItem[] = [];
+  let scanned = 0;
   for (const { claim_id } of rows) {
     const eligible = eligibleWorldClaim(ctx, claim_id, { kind: "all" }, budget);
     if (eligible === null) continue;
     const semantic = eligible.semantic;
-    // A situation whose validity has ended is history, not "now".
+    // A not-yet-started or ended situation statement is not "now".
     if (
-      semantic.valid_to !== null &&
-      Date.parse(semantic.valid_to) <= Date.parse(options.at)
+      (semantic.valid_from !== null &&
+        Date.parse(semantic.valid_from) > Date.parse(options.at)) ||
+      (semantic.valid_to !== null &&
+        Date.parse(semantic.valid_to) <= Date.parse(options.at))
     )
       continue;
     if (semantic.predicate === "world.kind") {
@@ -157,6 +179,7 @@ function readOne(
       mode: semantic.perspective.mode,
       polarity: semantic.polarity,
     });
+    if (++scanned === CLAIMS_PER_SITUATION) break;
   }
   if (!classified) return null;
 
