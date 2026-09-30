@@ -8,6 +8,28 @@ import { LEGACY_EVENTS_CONNECTOR_ID } from "../../packages/connectors/src/index"
 import { MODEL, SOURCE_KEY, connector, createVault, scriptedProducer } from "./corpus";
 import { nativePeakRssBytes } from "./process";
 
+const EXTRACTION = {
+  max_calls_per_pass: 256, records_per_request: 8, max_input_tokens: 32_000, max_output_tokens: 8_192,
+  max_pass_seconds: 600, max_calls_per_day: 100_000, max_output_tokens_per_day: 1_000_000_000,
+};
+
+export async function extractTopics(
+  db: ReturnType<typeof openLedger>, vault: string,
+  scripted: ReturnType<typeof scriptedProducer>, topics: number,
+  extraction = EXTRACTION,
+): Promise<void> {
+  const { producer } = scripted;
+  const now = () => new Date().toISOString();
+  for (;;) {
+    const pass = await runWritePass(db, vault, { budget: createBudgetTracker({ canon_writes_per_run: 0 }), producer, claims: { db }, extraction, now, stopRequested: () => scripted.topics.size === topics });
+    if (pass.errors.length > 0) throw new Error("synthetic extraction refused");
+    if (scripted.topics.size === topics && pass.stopped === "serve:stop_requested") break;
+    if (pass.stopped !== null) throw new Error("synthetic extraction stopped");
+    if (scripted.topics.size === topics) break;
+    if (pass.model.calls === 0) throw new Error("synthetic extraction did not cover every topic");
+  }
+}
+
 async function build(vault: string, source: string, events: number) {
   createVault(vault);
   const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
@@ -16,25 +38,14 @@ async function build(vault: string, source: string, events: number) {
   const topics = Math.ceil(events / 256);
   try {
     const imported = await drain(db, vault, source, events);
-    const extraction = {
-      max_calls_per_pass: 256, records_per_request: 8, max_input_tokens: 32_000, max_output_tokens: 8_192,
-      max_pass_seconds: 600, max_calls_per_day: 100_000, max_output_tokens_per_day: 1_000_000_000,
-    };
     const now = () => new Date().toISOString();
-    for (;;) {
-      const pass = await runWritePass(db, vault, { budget: createBudgetTracker({ canon_writes_per_run: 0 }), producer, claims: { db }, extraction, now, stopRequested: () => scripted.topics.size === topics });
-      if (pass.errors.length > 0) throw new Error("synthetic extraction refused");
-      if (scripted.topics.size === topics && pass.stopped === "serve:stop_requested") break;
-      if (pass.stopped !== null) throw new Error("synthetic extraction stopped");
-      if (scripted.topics.size === topics) break;
-      if (pass.model.calls === 0) throw new Error("synthetic extraction did not cover every topic");
-    }
+    await extractTopics(db, vault, scripted, topics);
     let writes = 0;
     const target = 2 * topics;
     const writeStart = performance.now(), cpuStart = process.cpuUsage();
     while (writes < target) {
       const pass = await runWritePass(db, vault, {
-        budget: createBudgetTracker({ canon_writes_per_run: Math.min(32, target - writes) }), producer, model_ref: MODEL, claims: { db }, extraction: { ...extraction, max_calls_per_pass: 1 }, now,
+        budget: createBudgetTracker({ canon_writes_per_run: Math.min(32, target - writes) }), producer, model_ref: MODEL, claims: { db }, extraction: { ...EXTRACTION, max_calls_per_pass: 1 }, now,
       });
       if (pass.errors.length > 0 || (pass.stopped !== null && pass.stopped !== "budget:canon_writes_per_run") || pass.canon_writes === 0) throw new Error(`synthetic canon materialization refused: ${pass.stopped ?? pass.errors.join(",")}`);
       writes += pass.canon_writes;
