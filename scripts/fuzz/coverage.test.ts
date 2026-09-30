@@ -29,7 +29,7 @@ test.each(["receipt", "render-output"])("%s wrapped mutation reaches private evi
   expect(JSON.stringify(event.metadata)).toContain(text);
 });
 
-test.each(EXPORT_TARGETS)("%s fixture reaches file admission and event projection", async target => {
+for (const target of EXPORT_TARGETS) test(`${target} fixture reaches file admission and event projection`, async () => {
   const scratch = mkdtempSync(join(tmpdir(), "kizuki-fuzz-export-"));
   try {
     await exportCase(target, { id: "object", text: "{}", bytes: Buffer.from("{}") }, scratch);
