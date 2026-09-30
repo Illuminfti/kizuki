@@ -395,22 +395,27 @@ export function refreshGraphHealth(db: Database, pages: readonly CanonPage[], sk
         "SELECT count(*) AS count FROM graph_edges",
       )
       .get()?.count ?? 0;
-  stampDerived(
+  const previous = readDerivedMeta(db, "graph");
+  const stamp = stampGraph(
     db,
-    stampGraph(
-      db,
-      {
-        generation: ulid(),
-        pages: live,
-        skipped: [],
-        rebuilt_at: new Date().toISOString(),
-        canon_hash: canonPagesHash(live),
-      },
-      live.length,
-      edges,
-      excluded.withheldCount,
-    ),
+    {
+      generation: previous?.generation ?? ulid(),
+      pages: live,
+      skipped: [],
+      rebuilt_at: new Date().toISOString(),
+      canon_hash: canonPagesHash(live),
+    },
+    live.length,
+    edges,
+    excluded.withheldCount,
   );
+  // An idle pass must not turn a search-only rebuild into a graph generation.
+  if (previous !== null && previous.status === stamp.status
+    && previous.doc_count === stamp.doc_count && previous.source_count === stamp.source_count
+    && previous.skipped_count === stamp.skipped_count && previous.ledger_watermark === stamp.ledger_watermark
+    && previous.canon_hash === stamp.canon_hash && previous.port_id === stamp.port_id
+    && previous.contract === stamp.contract && previous.space === stamp.space) return;
+  stampDerived(db, stamp);
 }
 
 /**

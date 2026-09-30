@@ -6,6 +6,7 @@ passes. `rebuilt_at` retains its compatibility name but is the time that pass
 refreshed the stamp. Search's `ledger_watermark` records a contiguous indexed
 ledger prefix; indexing a later event alone does not certify an earlier gap.
 Doctor includes the watermark alongside the layer's current counts and status.
+An idle pass preserves the graph stamp when its input and health are unchanged.
 
 The daemon's sourceless deterministic daily briefs in `dashboards/` are
 administrative summaries of rail and canon state, not event-backed evidence.
