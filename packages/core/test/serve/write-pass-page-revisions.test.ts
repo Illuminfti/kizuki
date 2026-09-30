@@ -222,6 +222,8 @@ test("revisions filed before a pass runs still leave only the newest body", asyn
   try {
     revise(f, { text: "# Atlas\n\nfirst body" });
     expect((await f.pass()).errors).toEqual([]);
+    const before = readFileSync(join(f.vault, PAGE), "utf8");
+    const materialized = listClaims(f.db, { status: "live", limit: 20 }).find(c => c.target === TARGET)!;
     revise(f, { text: "# Atlas\n\nsecond body" });
     const intermediate = listClaims(f.db, { status: "live", limit: 20 }).find(c => c.target === TARGET)!;
     revise(f, { text: "# Atlas\n\nthird body" });
@@ -235,9 +237,10 @@ test("revisions filed before a pass runs still leave only the newest body", asyn
     expect(edit.superseded.map(ref => ref.claim_id)).toContain(intermediate.claim_id);
     await undoReceipt({ db: f.db, vault_path: f.vault }, edit.receipt_id);
     expect(getClaim(f.db, intermediate.claim_id)?.status).toBe("superseded");
-    expect(readPage(f).body).toContain("first body");
-    expect((await f.pass()).claims_written).toBe(0);
-    expect(readPage(f).body).toContain("first body");
+    expect(getClaim(f.db, materialized.claim_id)?.status).toBe("live");
+    expect(readFileSync(join(f.vault, PAGE), "utf8")).toBe(before);
+    expect(await f.pass()).toMatchObject({ errors: [], claims_written: 0 });
+    expect(readFileSync(join(f.vault, PAGE), "utf8")).toBe(before);
   } finally {
     f.db.close();
   }
@@ -589,7 +592,7 @@ test("an edit awaiting a write keeps the materialized page discoverable by delet
   } finally { f.db.close(); }
 });
 
-test("capture-only sources cannot supersede another enrollment or their own legacy evidence", () => {
+test("capture-only sources cannot supersede another enrollment or their own legacy evidence", async () => {
   const f = fixture();
   try {
     const a = ulid(), b = ulid();
@@ -613,6 +616,10 @@ test("capture-only sources cannot supersede another enrollment or their own lega
     expect(batch(b, gb.revision, "Capture only edit").errors).toEqual([]);
     expect(getClaim(f.db, other.claim_id)?.status).toBe("live");
     expect(getClaim(f.db, authorized.claim_id)?.status).toBe("live");
+    expect((await f.pass()).claims_written).toBe(1);
+    expect(getClaim(f.db, authorized.claim_id)?.receipt_id).not.toBeNull();
+    expect(readPage(f).body).toContain("Authorized body");
+    expect(readPage(f).body).not.toContain("Capture only");
     f.db.query("UPDATE claims SET claim_key = NULL WHERE claim_id = ?").run(authorized.claim_id);
     const deriving = setSourceGrant(f.db, { source_key: b, expected_revision: gb.revision,
       operation_id: "grant-b-derive", policy });
@@ -637,5 +644,44 @@ test("a page correction with unchanged wording still takes owner authority", asy
     revise(f, { text: "Changed source body" });
     expect((await f.pass()).claims_written).toBe(0);
     expect(readPage(f).body).toContain("Current page body");
+  } finally { f.db.close(); }
+});
+
+test("successive page corrections replace prose even when their parsed objects match", async () => {
+  const f = fixture();
+  try {
+    revise(f, { text: "# Atlas\n\nSource page body" });
+    expect((await f.pass()).errors).toEqual([]);
+    const original = listClaims(f.db, { status: "live", limit: 20 }).find(c => c.target === TARGET)!;
+    const firstBody = "Atlas is stable now, not draft.";
+    const first = await correct({ db: f.db, vault_path: f.vault }, {
+      statement: firstBody, target: { claim_id: original.claim_id },
+    });
+    const before = readFileSync(join(f.vault, PAGE), "utf8");
+    const secondBody = "Atlas is stable now, not obsolete.";
+    const second = await correct({ db: f.db, vault_path: f.vault }, {
+      statement: secondBody, target: { claim_id: first.claim_ids[0]! },
+    });
+    expect(second.claim_ids[0]).not.toBe(first.claim_ids[0]);
+    expect(second.superseded.map(c => c.claim_id)).toContain(first.claim_ids[0]!);
+    expect(readPage(f).body).toContain(secondBody);
+    expect(readPage(f).body).not.toContain(firstBody);
+    expect(second.receipt_id).not.toBeNull();
+    const secondBytes = readFileSync(join(f.vault, PAGE), "utf8");
+    const restored = await correct({ db: f.db, vault_path: f.vault }, {
+      statement: firstBody, target: { claim_id: second.claim_ids[0]! },
+    });
+    expect(restored.claim_ids[0]).not.toBe(first.claim_ids[0]);
+    expect(getClaim(f.db, restored.claim_ids[0]!)?.status).toBe("live");
+    expect(readPage(f).body).toContain(firstBody);
+    expect(readPage(f).body).not.toContain(secondBody);
+    expect(restored.receipt_id).not.toBeNull();
+    await undoReceipt({ db: f.db, vault_path: f.vault }, restored.receipt_id!);
+    expect(readFileSync(join(f.vault, PAGE), "utf8")).toBe(secondBytes);
+    await undoReceipt({ db: f.db, vault_path: f.vault }, second.receipt_id!);
+    expect(readFileSync(join(f.vault, PAGE), "utf8")).toBe(before);
+    revise(f, { text: "# Atlas\n\nLater source body" });
+    expect((await f.pass()).claims_written).toBe(0);
+    expect(readFileSync(join(f.vault, PAGE), "utf8")).toBe(before);
   } finally { f.db.close(); }
 });

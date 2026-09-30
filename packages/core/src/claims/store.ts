@@ -1075,6 +1075,9 @@ export function supersedeLiveGroup(
   const live = [...new Map(candidates.map(claim => [claim.claim_id, claim])).values()].filter(
     (claim) => claim.claim_id !== winner.claim_id,
   );
+  if (pageTarget !== undefined && live.some(claim => AUTHORITY_TIERS[claim.authority] > AUTHORITY_TIERS[winner.authority])) {
+    throw new ClaimError("schema_invalid", "source page correction is below stored authority");
+  }
   const out: { claim_id: string; claim_key: string; rule: "R5" }[] = [];
   for (const loser of live) {
     const prior = loser.valid_to;
@@ -1106,7 +1109,10 @@ export function isSourcePageClaim(db: Database, claim: Claim): boolean {
   const record = claim.frontmatter["x-source-record-id"];
   if (claim.claim_key === null || typeof connector !== "string" || typeof record !== "string" ||
       !((claim.producer === "deterministic" && claim.authority === "connector_evidence") ||
-        claim.authority === "owner_correction")) return false;
+        claim.authority === "owner_correction" ||
+        (claim.authority === "owner_authored" && claim.provenance.some(id => db.query(
+          "SELECT 1 FROM native_owner_evidence WHERE event_id = ? AND origin = 'correction'",
+        ).get(id) !== null)))) return false;
   const source = pageSource(db, claim);
   return source !== undefined &&
     (claim.claim_key === pageClaimKey(connector, record, source ?? undefined) ||
@@ -1521,7 +1527,7 @@ function applyClaimInsert(
     return { outcome: "duplicate", claim: exact, dedup: mode };
   }
   if (exact !== null && (input.page_correction_target === undefined ||
-      (exact.claim_key === key && exact.authority === "owner_correction")) &&
+      (exact.status === "live" && exact.claim_key === key && exact.authority === "owner_correction")) &&
       externalEvidence(io.db, exact.provenance) && (sourceEventsAllowed(io.db, exact.provenance, sourceScope) ||
       (historicalInputAllowed() && exact.model_ref === (input.model_ref ?? null) &&
        JSON.stringify(exact.provenance) === JSON.stringify(input.provenance)))) {
@@ -1542,6 +1548,8 @@ function applyClaimInsert(
     ...semanticNomineeIds.map(id => getClaim(io.db, id)).filter((candidate): candidate is Claim => candidate !== null && candidate.status === "live"),
   ];
   const structural = structuralCandidates.find((live) =>
+    // A source-page correction replaces complete prose, not just its parsed object.
+    input.page_correction_target === undefined &&
     sourceEventsAllowed(io.db, live.provenance, sourceScope) && externalEvidence(io.db, live.provenance) && structuralMatch(claim, live),
   );
   // Same key + polarity + object is corroboration, including a second

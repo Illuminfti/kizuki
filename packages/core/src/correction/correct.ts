@@ -423,8 +423,8 @@ function correctionMeaning(io: CorrectIo, live: Claim): ClaimMeaning | null {
 function planCorrection(io: CorrectIo, input: CorrectInput, live: Claim, at: string): WorldPlan | null {
   const prior = correctionMeaning(io, live);
   if (prior === null) {
-    if (isSourcePageClaim(io.db, live) && io.relay_owner_corrections === false)
-      throw new CorrectError("below_authority", "this grant cannot relay a source page correction");
+    if (isSourcePageClaim(io.db, live) && io.relay_owner_corrections === false && live.authority === "owner_correction")
+      throw new CorrectError("below_authority", "this grant cannot overturn an owner correction");
     if (input.world !== undefined) throw new CorrectError("correction_refused", "modes apply to typed world claims");
     return null;
   }
@@ -479,7 +479,8 @@ async function insertCorrection(
   const parsed = plan === null ? objectFromStatement(input.statement, live) : null;
   const producer: Producer = io.producer ?? "owner";
   const relay = io.relay_owner_corrections !== false;
-  const intent = relay ? ("correct" as const) : ("propose" as const);
+  const pageCorrection = isSourcePageClaim(io.db, live);
+  const intent = relay || pageCorrection ? ("correct" as const) : ("propose" as const);
   const typedSemantic = plan?.build(eventId);
   const prepared = await prepareClaimInsert(
     { db: io.db, now: () => at, ...(io.retrieval === undefined ? {} : { retrieval: io.retrieval }) },
@@ -488,7 +489,8 @@ async function insertCorrection(
       target: live.target,
       subject: live.subject,
       predicate: live.predicate,
-      ...(isSourcePageClaim(io.db, live) ? { page_correction_target: live.claim_id } : {}),
+      ...(pageCorrection ? { page_correction_target: live.claim_id,
+        ...(!relay ? { relay_ceiling: "owner_authored" as const } : {}) } : {}),
       ...(parsed === null ? {} : { object: parsed.object, polarity: parsed.polarity }),
       body: input.statement,
       frontmatter: portableFrontmatter(live),

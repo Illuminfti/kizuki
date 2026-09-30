@@ -606,11 +606,9 @@ export async function serveCorrect(
       if (resolved.claims.length === 1 && isSourcePageClaim(ctx.db, resolved.claims[0]!)) {
         if (replacement !== undefined)
           throw refuse("object", "source page correction uses statement as its body");
-        if (ctx.principal.kind !== "owner" && !grant.relay_owner_corrections)
-          throw new ServeError("held", "correction relay is not granted");
         const owned = extendOwnedCanonIo(scope, canon, {
           producer: ctx.principal.kind === "owner" ? "owner" as const : `agent:${ctx.principal.agent.name}` as const,
-          relay_owner_corrections: true,
+          relay_owner_corrections: ctx.principal.kind === "owner" || grant.relay_owner_corrections,
           grant,
         });
         const result = await correctWithinMutation(scope, owned, {
