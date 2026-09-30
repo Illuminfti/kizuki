@@ -151,14 +151,14 @@ test("a hidden source revoke leaves the scoped v2 packet byte-equal, epoch-free 
   }
 });
 
-test("an explicit legacy selector retains the epoch until the scoped compatibility decision", async () => {
+test("an explicit owner legacy selector retains the epoch while scoped v2 hides it", async () => {
   const r = await rig();
   try {
     const legacy = { response_contract: V1, args: PACKET };
-    const before = await r.agent("context_packet", legacy);
+    const before = await r.owner("context_packet", legacy);
     expect(before.body.value.schema).toBe(V1);
     r.revokeHiddenSource();
-    const after = await r.agent("context_packet", legacy);
+    const after = await r.owner("context_packet", legacy);
     expect(after.body.value.data.claims_epoch).toBeGreaterThan(
       before.body.value.data.claims_epoch,
     );

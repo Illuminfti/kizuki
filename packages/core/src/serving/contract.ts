@@ -25,8 +25,10 @@ export function chooseContract(
   tool: Tool,
   requested: unknown,
   args: object,
+  scoped: boolean,
 ): ResponseContract | null {
   if (Object.hasOwn(args, RESPONSE_CONTRACT_KEY)) return null;
+  if (scoped && requested !== ENVELOPE_V2_SCHEMA) return null;
   const contract =
     requested === undefined
       ? tool === "world_view"

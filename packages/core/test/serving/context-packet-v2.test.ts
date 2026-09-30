@@ -4,7 +4,7 @@
  * recognized as machine output when it comes back in as a capture.
  */
 import { expect, setDefaultTimeout, test } from "bun:test";
-import { listAudit } from "../../src/agents";
+import { OWNER, listAudit } from "../../src/agents";
 import { hasContextPacketMarker } from "../../src/canon/origin";
 import { accept } from "../../src/ledger/ledger";
 import { dispatchServeTool } from "../../src/serving/dispatch";
@@ -217,7 +217,7 @@ test("a view that is not a view token is an argument error", async () => {
       ).rejects.toMatchObject({ code: "invalid_arguments" });
     }
     // The v1 packet has no such key and never reads it.
-    const v1 = await dispatchServeTool(scene.reader, "context_packet", {
+    const v1 = await dispatchServeTool({ ...scene.reader, principal: OWNER }, "context_packet", {
       ...PACKET,
       priorView: "ignored",
     });
