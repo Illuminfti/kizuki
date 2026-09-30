@@ -41,6 +41,7 @@ import { assertPageRelPath, assertReceiptPaths, assertStoredPageRelPath } from "
 import { cloneExactJson } from "../util/validate";
 import type { TargetDecision } from "./arbiter";
 import { chargeCanonWrite, type BudgetTracker } from "./budget";
+import { requireRoomForNewPage } from "./capacity";
 import { CanonWriteError } from "./errors";
 import { getCanonReceipt, type CanonReceipt, type PageAction, type RetrievalOpRef } from "./receipts";
 import { initCanon } from "./schema";
@@ -480,6 +481,10 @@ export function applyCanonWriteOwned(
       : existing === null
       ? prepareCreate(claims, pageId, provenance, decision.action === "conflict")
       : prepareRevision(io, claims, primary, existing, decision, provenance);
+  // Reactivating an archived page consumes a live slot just as creation does.
+  if ((existing === null || existing.page.data["status"] === "archived") && prepared.page.data["status"] !== "archived") {
+    requireRoomForNewPage(io.vault_path);
+  }
   const invalid = validatePage(prepared.page.data);
   if (invalid.length > 0) {
     throw new CanonWriteError("frontmatter_invalid", invalid[0] ?? "invalid page");

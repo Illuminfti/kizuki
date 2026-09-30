@@ -16,6 +16,7 @@ import {
 } from "../canon";
 import type { CanonIo } from "../canon";
 import { applyCanonWriteOwned } from "../canon/apply";
+import { CanonWriteError } from "../canon/errors";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { machineOriginPath } from "../canon/origin";
@@ -385,10 +386,19 @@ export async function runWritePass(
 
 function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracker, tally: PassTally): void {
   const { db } = io;
+  // Once the ceiling holds one new page it holds them all; edits still go through, and each held claim stays live.
+  let ceilingHeld = false;
+  const holdNewPages = (error: unknown): boolean => {
+    if (!(error instanceof CanonWriteError) || error.code !== "canon_ceiling") return false;
+    if (!ceilingHeld) tally.errors.push(redactReceiptError(error));
+    ceilingHeld = true;
+    return true;
+  };
   for (const typedClaims of pendingWorldCanonClaims(db, WRITE_PASS_LIMIT)) {
     if (tally.canon_writes >= WRITE_PASS_LIMIT) break;
     const primary=typedClaims[0]!;
     const decision=worldCanonTarget(db,primary.claim_id);
+    if(ceilingHeld&&decision.action==="create")continue;
     const before=occupyingWriteIds(db);
     try {
       const receipt=applyCanonWriteOwned(scope,io,typedClaims,decision,{writer:"loop",budget});
@@ -397,6 +407,7 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
     } catch(error) {
       if(!(error instanceof BudgetExhausted))tally.canon_writes+=newOccupyingWrites(before,occupyingWriteIds(db));
       if(error instanceof BudgetExhausted){tally.stopped=error.stopped;break;}
+      if(holdNewPages(error))continue;
       tally.errors.push(redactReceiptError(error));
     }
   }
@@ -408,7 +419,7 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
       if (requiresSourceTombstoneBinding(db, claim)) requireSourceTombstoneProposal(db, claim, io);
       else requireExternalEvents(db, claim.provenance);
       const decision = segregateLoopDecision(resolveTarget(io, claim));
-      if (decision.action === "skip") continue;
+      if (decision.action === "skip" || (ceilingHeld && decision.action === "create")) continue;
       const before = occupyingWriteIds(db);
       try {
         applyCanonWriteOwned(scope, io, claim, decision, {
@@ -428,7 +439,7 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
         throw error;
       }
     } catch (error) {
-      if (error instanceof SelfOriginError) continue;
+      if (error instanceof SelfOriginError || holdNewPages(error)) continue;
       if (error instanceof BudgetExhausted) {
         tally.stopped = error.stopped;
         break;

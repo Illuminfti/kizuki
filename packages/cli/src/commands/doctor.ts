@@ -549,6 +549,13 @@ function printHuman(io: CliIo, report: DoctorReport): void {
       }
     }
   }
+  const capacity = report.serve.canon;
+  if (capacity !== null) {
+    io.out(
+      `canon pages live=${capacity.live} archived=${capacity.archived} ceiling=${capacity.ceiling} state=${capacity.state}` +
+        (capacity.next === null ? "" : ` next: ${capacity.next}`),
+    );
+  }
   const writers = report.serve.stores.writers;
   io.out(
     `writers loop=${writers.loop} correction=${writers.correction} import=${writers.import} revert=${writers.revert}`,

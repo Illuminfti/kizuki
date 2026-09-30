@@ -13,6 +13,7 @@ import { inspectConnectionStateRecovery } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
 import { tableExists } from "../ledger/schema";
 import { inspectPurgeHealth } from "../ledger/purge";
+import { canonCapacity, loadCanonLimits } from "../vault/canon-limits";
 import { listCanonPagesReport, type CanonPageReport } from "../vault/pages";
 import { loadConfiguredModelRef, loadEmbeddingSelection, loadServeConfig, type EmbeddingSelection } from "./config";
 import { ageSeconds, railDoctor, syncPassWait } from "./doctor-rails";
@@ -547,6 +548,7 @@ export function inspectServeDoctor(
     options.page_walk === false
       ? { pages: [], skipped: [], truncated: false }
       : listCanonPagesReport(vaultPath);
+  const canon = options.page_walk === false ? null : canonCapacity(pages.pages, pages.truncated, loadCanonLimits(vaultPath));
   const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
   const cal = calibration(db, syncReceipts, now);
   const extraction = extractionDoctor(db, syncReceipts, model.canon_writing !== "off");
@@ -574,6 +576,9 @@ export function inspectServeDoctor(
     if (supervisor.state !== "active" && supervisor.unit !== null && options.supervisor?.lastExit !== undefined) {
       try { supervisorExit = options.supervisor.lastExit(ensureVaultId(vaultPath)); } catch { supervisorExit = null; }
     }
+  }
+  if (canon !== null && canon.state !== "ok") {
+    fail(`canon ${canon.state}: ${canon.live} live pages of ${canon.ceiling}, ${canon.archived} archived; ${canon.state === "scan_limited" ? "counts are incomplete; scan resource budget reached" : canon.state === "full" ? "new pages are held, reads continue" : "approaching the ceiling"}; next: ${canon.next}`);
   }
   for (const rail of rails) {
     if (rail.status === "down" && rail.reason !== null) {
@@ -624,6 +629,7 @@ export function inspectServeDoctor(
     throughput,
     oversized,
     stores,
+    canon,
     calibration: cal,
     ok: failures.length === 0,
     failures,

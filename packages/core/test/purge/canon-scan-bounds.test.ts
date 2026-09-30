@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
 import { PurgeError, previewPurge, purgeEvents } from "../../src/ledger/purge";
-import { MAX_CANON_PAGES, listCanonPagesReport } from "../../src/vault/pages";
+import { loadCanonLimits } from "../../src/vault/canon-limits";
+import { listCanonPagesReport } from "../../src/vault/pages";
 import { validEvent } from "../fixtures";
 import { tempVault, writeCanon } from "../helpers/vault";
 
@@ -17,6 +18,8 @@ afterEach(() => {
 function vault() {
   const db = openLedger(":memory:");
   const disk = tempVault("kizuki-purge-scan-bounds-");
+  // An explicit resource budget keeps the fail-closed scan test small.
+  writeFileSync(join(disk.path, ".kizuki", "serve.toml"), "[canon]\nmax_live_pages = 100\nmax_scan_files = 200\n", { mode: 0o600 });
   fixtures.push({
     dispose: () => {
       db.close();
@@ -26,7 +29,7 @@ function vault() {
   return { db, vaultPath: disk.path };
 }
 
-/** Push the canon walk past MAX_CANON_PAGES so it reports a truncated scan. */
+/** Push the canon walk past its file bound so it reports a truncated scan. */
 function overflowCanon(vaultPath: string, count: number): void {
   // "zz-filler" sorts after "people", so the real page is scanned first.
   const dir = join(vaultPath, "zz-filler");
@@ -42,7 +45,7 @@ function overflowCanon(vaultPath: string, count: number): void {
 describe("purge against a canon scan that hit its page bound", () => {
   test("the walk reports truncation with a marker that is not a file", () => {
     const { vaultPath } = vault();
-    overflowCanon(vaultPath, MAX_CANON_PAGES + 1);
+    overflowCanon(vaultPath, loadCanonLimits(vaultPath).walk_files + 1);
     const report = listCanonPagesReport(vaultPath);
     expect(report.truncated).toBe(true);
     expect(report.skipped.some((row) => row.relPath === "." && row.code === "too_many")).toBe(
@@ -69,7 +72,7 @@ describe("purge against a canon scan that hit its page bound", () => {
       },
       "Grace runs partnerships at Acme.\n",
     );
-    overflowCanon(vaultPath, MAX_CANON_PAGES);
+    overflowCanon(vaultPath, loadCanonLimits(vaultPath).walk_files);
 
     expect(() => previewPurge(db, vaultPath, { event_id: stored.event.event_id }, "cleanup"))
       .toThrow(PurgeError);
@@ -84,7 +87,7 @@ describe("purge against a canon scan that hit its page bound", () => {
     const { db, vaultPath } = vault();
     const stored = accept(db, { ...validEvent(), source_record_id: "acme.md" });
     if (stored.status !== "stored") throw new Error("expected stored event");
-    overflowCanon(vaultPath, MAX_CANON_PAGES + 1);
+    overflowCanon(vaultPath, loadCanonLimits(vaultPath).walk_files + 1);
 
     try {
       purgeEvents(db, vaultPath, { event_id: stored.event.event_id }, "cleanup");

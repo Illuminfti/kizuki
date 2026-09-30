@@ -18,6 +18,7 @@ Related:
 - [retrieval-engine-acceptance.md](retrieval-engine-acceptance.md): 49 proposed acceptance obligations, not executed tests
 - [upgrade.md](upgrade.md): upgrade an installed package in place, with a file-level backup and rollback
 - [integrations.md](integrations.md): connect Claude Code, Codex or any MCP client, with a session-start hook
+- [canon-capacity.md](canon-capacity.md): the canon page ceiling, its states and what stops
 - [legacy-import.md](legacy-import.md) — estate importers
 - [beacon-import.md](beacon-import.md) — source-consented local agent-run snapshots
 - [event-identity-origin.md](event-identity-origin.md) — event revisions, machine origin and backup compatibility

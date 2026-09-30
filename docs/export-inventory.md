@@ -99,8 +99,11 @@ sync complete but a later transaction or ownership cleanup fails, the error
 reports `publication: "published"` and `durability: "synced"`.
 
 Classification is bounded by 100,000 inspected directory entries and receipt
-rows, 10,000 canon pages, eight path segments, 1 MiB per inspected candidate file,
-and 64 MiB of inspected candidate bytes. Exceeding a bound refuses the export;
+rows, the vault's independent `[canon] max_scan_files` budget (40,000 canon
+files by default, live and archived together; see
+[canon capacity](canon-capacity.md)), eight path segments, 1 MiB per inspected
+candidate file, and the walk's byte bound (at least 64 MiB) of inspected
+candidate bytes. Exceeding a bound refuses the export;
 it does not publish a silently truncated canon set. Duplicate canon identities,
 invalid pages carrying an identity, unreadable candidates, and selected bytes
 that change before copying completes also refuse publication.

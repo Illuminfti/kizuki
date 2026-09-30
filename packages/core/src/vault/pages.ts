@@ -3,11 +3,13 @@ import { join, relative, sep } from "node:path";
 import { hashBytes } from "./write";
 import { parseFrontmatter } from "./frontmatter";
 import { validatePage } from "./schema";
+import { canonLimitsFor, DEFAULT_LIVE_PAGE_CEILING, loadCanonLimits, type CanonLimits } from "./canon-limits";
 
 export const MAX_CANON_PAGE_BYTES = 1_048_576;
-export const MAX_CANON_PAGES = 10_000;
 export const MAX_CANON_DEPTH = 8;
-export const MAX_CANON_WALK_BYTES = 64 * 1_048_576;
+/** Default resource budgets; each vault can configure its own scan limits. */
+export const MAX_CANON_PAGES = canonLimitsFor(DEFAULT_LIVE_PAGE_CEILING).walk_files;
+export const MAX_CANON_WALK_BYTES = canonLimitsFor(DEFAULT_LIVE_PAGE_CEILING).walk_bytes;
 
 export const SCAN_FAILURE_CODES = [
   "parse",
@@ -112,6 +114,7 @@ interface WalkState {
   seen: Map<string, string>;
   files: number;
   bytes: number;
+  limits: CanonLimits;
   truncated: boolean;
   cache: CanonPageCache | null;
   /** Files remembered by this walk; replaces the cache when the walk ends. */
@@ -140,10 +143,10 @@ function withholdDuplicate(
 
 function considerFile(state: WalkState, path: string, relPath: string): void {
   if (state.truncated) return;
-  if (state.files >= MAX_CANON_PAGES) {
+  if (state.files >= state.limits.walk_files) {
     state.truncated = true;
     state.skipped.push(
-      skip(".", "too_many", `vault exceeds ${MAX_CANON_PAGES} markdown files`),
+      skip(".", "too_many", `vault exceeds ${state.limits.walk_files} markdown files; raise max_scan_files under [canon] in .kizuki/serve.toml`),
     );
     return;
   }
@@ -172,10 +175,10 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     );
     return;
   }
-  if (state.bytes + size > MAX_CANON_WALK_BYTES) {
+  if (state.bytes + size > state.limits.walk_bytes) {
     state.truncated = true;
     state.skipped.push(
-      skip(relPath, "too_many", `vault exceeds ${MAX_CANON_WALK_BYTES} scanned bytes`),
+      skip(relPath, "too_many", `vault exceeds ${state.limits.walk_bytes} scanned bytes; raise max_scan_bytes under [canon] in .kizuki/serve.toml`),
     );
     return;
   }
@@ -302,6 +305,7 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
 export function listCanonPagesReport(
   vaultPath: string,
   cache?: CanonPageCache,
+  options: { readonly include_archived?: boolean } = {},
 ): CanonPageReport {
   const state: WalkState = {
     pages: [],
@@ -309,6 +313,7 @@ export function listCanonPagesReport(
     seen: new Map(),
     files: 0,
     bytes: 0,
+    limits: loadCanonLimits(vaultPath),
     truncated: false,
     cache: cache ?? null,
     remembered: new Map(),
@@ -316,7 +321,7 @@ export function listCanonPagesReport(
   walk(state, vaultPath, vaultPath, 0);
   if (cache !== undefined) cache.files = state.remembered;
   state.skipped.sort((left, right) => compareName(left.relPath, right.relPath));
-  return { pages: state.pages, skipped: state.skipped, truncated: state.truncated };
+  return { pages: options.include_archived === false ? state.pages.filter((page) => page.data["status"] !== "archived") : state.pages, skipped: state.skipped, truncated: state.truncated };
 }
 
 export function listCanonPages(vaultPath: string): CanonPage[] {

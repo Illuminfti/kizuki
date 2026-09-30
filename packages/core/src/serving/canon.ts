@@ -143,7 +143,7 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
   const generation = canonReadGeneration(ctx.db);
   assertCanonReadAdmission(ctx);
   const memo = vaultMemo(ctx.vaultPath);
-  const report = listCanonPagesReport(ctx.vaultPath, memo.pages);
+  const report = listCanonPagesReport(ctx.vaultPath, memo.pages, { include_archived: false });
   const fatal = fatalCanonSkips(report.skipped);
   if (fatal.length > 0) {
     throw new CanonUnreadableError(fatal);

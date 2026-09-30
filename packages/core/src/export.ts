@@ -89,7 +89,8 @@ import { ensureVaultId, readVaultId, vaultIdPath } from "./serve/vault-id";
 import { doctorVault } from "./vault/doctor";
 import { hardenLedgerFile, initVault } from "./vault/init";
 import { parseFrontmatter } from "./vault/frontmatter";
-import { MAX_CANON_DEPTH, MAX_CANON_PAGE_BYTES, MAX_CANON_PAGES, MAX_CANON_WALK_BYTES } from "./vault/pages";
+import { loadCanonLimits } from "./vault/canon-limits";
+import { MAX_CANON_DEPTH, MAX_CANON_PAGE_BYTES } from "./vault/pages";
 import { validatePage } from "./vault/schema";
 
 export const BACKUP_SCHEMA = "kizuki.backup/v3" as const;
@@ -748,6 +749,7 @@ function vaultInventory(db: Database, root: string): VaultInventory {
       "A complete manifest verifies this artifact's listed bytes; it does not assert complete runtime recovery.",
     ],
   };
+  const limits = loadCanonLimits(root);
   let visited = 0;
   let inspectedBytes = 0;
   let canonCount = 0;
@@ -800,7 +802,7 @@ function vaultInventory(db: Database, root: string): VaultInventory {
       const info = requireSingleLinkRegularFile(fd);
       if (info.size > MAX_CANON_PAGE_BYTES) throw new Error("export inventory file exceeds its bound");
       inspectedBytes += info.size;
-      if (inspectedBytes > MAX_CANON_WALK_BYTES) throw new Error("export inventory byte budget exceeded");
+      if (inspectedBytes > limits.walk_bytes) throw new Error("export inventory byte budget exceeded; raise max_scan_bytes under [canon] in .kizuki/serve.toml");
       const bytes = Buffer.alloc(info.size);
       let offset = 0;
       while (offset < bytes.length) {
@@ -857,7 +859,7 @@ function vaultInventory(db: Database, root: string): VaultInventory {
         const id = String(parsed.data["id"]);
         if (ids.has(id)) throw new Error("export canon inventory is incomplete: duplicate page identity");
         ids.add(id);
-        if (++canonCount > MAX_CANON_PAGES) throw new Error("export canon inventory exceeds its page bound");
+        if (++canonCount > limits.walk_files) throw new Error("export canon inventory exceeds its page bound; raise max_scan_files under [canon] in .kizuki/serve.toml");
       }
     }
     inventory.files.push({ path: rel, kind: doctrine ? "doctrine" : archive ? "archive" : "canon", sha256, size: bytes.length });
@@ -2557,6 +2559,7 @@ function assertTypedCanonReceipts(db: Database, vaultPath: string): void {
   `).get()!;
   if (topology.total !== topology.reached) throw new Error("backup typed canon receipt lineage invalid");
   const files = openCanonFiles(vaultPath);
+  const limits = loadCanonLimits(vaultPath);
   const pages = new Set<string>();
   try {
     for (const row of db.query<CanonReceiptRow, []>("SELECT * FROM canon_receipts WHERE record_codec='kizuki.canon-receipt/v2'").iterate()) {
@@ -2576,7 +2579,7 @@ function assertTypedCanonReceipts(db: Database, vaultPath: string): void {
       try { assertWorldCanonPage(db, receipt, before?.bytes ?? null, "before"); }
       finally { before?.close(); }
       pages.add(receipt.page_path);
-      if (pages.size > MAX_CANON_PAGES) throw new Error("backup typed canon page inventory exceeds its bound");
+      if (pages.size > limits.walk_files) throw new Error("backup typed canon page inventory exceeds its bound; raise max_scan_files under [canon] in .kizuki/serve.toml");
     }
     for (const path of pages) {
       const current = worldReceiptChain(db, path).at(-1);

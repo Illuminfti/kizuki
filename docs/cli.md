@@ -498,6 +498,16 @@ backfill run sets, beside `last_run_clean`. The closing `next:` line follows fro
 the structured top failure of a failed report and never suggests `kizuki tell`;
 for a down rail it points at `kizuki serve status`, which only reads.
 
+A `canon pages` line reports live pages, archived pages, the configured
+ceiling and a state of `ok`, `near` (80 percent) or `full` (JSON:
+`serve.canon`; `scan_limited` names an incomplete resource-bounded scan).
+Archived pages are counted apart and do not count against the
+ceiling. At `near` and `full` doctor fails and names the next step: raise
+`[canon] max_live_pages` in `serve.toml`. At `full` the writer holds new pages
+under the named state `canon_ceiling` while queries, context, rebuild, export,
+purge and edits of existing pages keep working. See
+[canon capacity](canon-capacity.md).
+
 Doctor names the fix when it can. A `serve.toml` that is not mode 600 stops the
 model configuration from being read; the report then names the file's mode and
 the `chmod 600` command instead of only saying the inspection is unavailable.
@@ -787,7 +797,8 @@ of a purge that has not run (held pages, pending store operations, an unsealed
 erasure); on a finished purge it only proves. It prints one proof per store and
 `pending`/`done`/`failed` operation state. While any inert
 legacy identity row remains, identity absence is unprovable rather than
-successful. If the canon scan stops at its page-count or byte bound, the
+successful. If the canon scan stops at its file-count or byte bound (see
+[canon capacity](canon-capacity.md)), the
 affected pages cannot be enumerated, so preview and deletion both refuse with
 `canon_scan_truncated` instead of purging against a partial scan. A completed
 deletion and a completed `--verify` both refresh the derived index cursor so
@@ -1024,7 +1035,9 @@ rebuilds vectors in that space. The public CLI refuses when that binding is
 unavailable instead of discarding vector state. Other layers are not implemented and exit 2. `--prune-old` cannot
 be combined with `--layer`, `--port`, `--confirm`, or a budget option.
 
-Rebuild has no fixed corpus ceiling. It runs under an explicit resource budget:
+Rebuild has no fixed corpus ceiling. Reading canon is bounded by the vault's
+independent `[canon] max_scan_files` and `max_scan_bytes` resource budgets
+(see [canon capacity](canon-capacity.md)), and it runs under an explicit resource budget:
 `--max-records N` (documents a configured retrieval port may be handed at once,
 default 1000000), `--max-entries N` (vault directory entries the preflight may
 inspect, default 200000), and `--max-source-bytes N` (canon file bytes, and
