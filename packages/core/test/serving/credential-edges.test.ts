@@ -80,6 +80,18 @@ test("quoted and re-flowed PEM text is scrubbed without swallowing following sta
   } finally { f.dispose(); }
 });
 
+test("variable credentials keep long continuation parts private", async () => {
+  const f = await serveFixture();
+  try {
+    const prefix = ["xa", "pp-1-A0123456789-1234567890123-"].join("");
+    const text = `${prefix}\n${"S".repeat(32)}`;
+    const id = storeEvent(f.db, "wrapped-variable-prefix", "2026-02-28T10:30:00Z", text, "person:ada", "public");
+    const answer = serveTimeline(f.agent("reader-public"), { event_id: id });
+    expect(answer.quoted[0]?.text).toBe("[redacted:api_token]");
+    expect(answer.redacted).toEqual({ api_token: 1 });
+  } finally { f.dispose(); }
+});
+
 test("YAML block scalar credentials are removed without consuming the next field", async () => {
   const f = await serveFixture();
   try {
