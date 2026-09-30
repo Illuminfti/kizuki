@@ -1,0 +1,24 @@
+[Unit]
+Description=Scoped Kizuki MCP for ChatGPT through Secure MCP Tunnel
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/kizuki/chatgpt-tunnel.env
+ExecStart=/opt/kizuki/deploy/chatgpt/run-tunnel.sh run
+RuntimeDirectory=kizuki-chatgpt
+RuntimeDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=75 78
+KillMode=control-group
+TimeoutStopSec=30
+NoNewPrivileges=true
+LimitCORE=0
+
+[Install]
+WantedBy=default.target
