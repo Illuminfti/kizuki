@@ -1,8 +1,10 @@
 import { AUTHORITY_TIERS, ENVELOPE_SCHEMA, PAGE_TAINTS, TOOLS } from "@kizuki/core";
+import { ENVELOPE_V2_SCHEMA, PACKET_V2_SCHEMA } from "@kizuki/core/world";
 import type { Tool } from "@kizuki/core";
 import { z } from "zod";
 import { REDACTED } from "./redaction";
 import { MCP_WORLD_OPS } from "./world/ops";
+import { WIRE_TOKEN, worldGaps, worldRef } from "./world/ops/shared";
 import { buildWorldSurface } from "./world/surface";
 
 /**
@@ -99,6 +101,56 @@ export function envelopeFor(tool: Tool) {
   });
 }
 
+/**
+ * The scoped envelope a token principal is served: exactly these seven fields.
+ * It has no `denied`, no `source_policy` and no epoch, so a field the engine
+ * adds to v1 cannot reach a scoped client by way of this shape.
+ */
+export const ENVELOPE_V2_SHAPE = z.strictObject({
+  schema: z.literal(ENVELOPE_V2_SCHEMA),
+  tool: z.enum(TOOLS),
+  principal: worldRef("principal"),
+  at: z.string(),
+  canon: z.array(CANON_CHUNK),
+  quoted: z.array(QUOTED_CHUNK),
+  data: z.record(z.string(), z.unknown()).nullable(),
+});
+
+const VIEW_TOKEN = z.strictObject({ kind: z.literal("view"), token: WIRE_TOKEN });
+
+const PACKET_CONTENT_V2 = z.strictObject({
+  packetMd: z.string(),
+  tokens: z.int().min(0),
+  budgetTokens: z.int().min(50).max(2000),
+  tokenizer: z.string(),
+  purpose: z.enum(["session", "recall", "correction", "audit"]),
+  sections: z.strictObject({ canon: z.int(), graph: z.int(), timeline: z.int(), claims: z.int() }),
+  truncated: z.boolean(),
+  retrievalDegraded: z.array(z.string()),
+  session: z.record(z.string(), z.unknown()).optional(),
+  lifecycle: z.record(z.string(), z.unknown()).optional(),
+  task: z.record(z.string(), z.unknown()).optional(),
+});
+
+const PACKET_DATA_V2 = z.strictObject({
+  schema: z.literal(PACKET_V2_SCHEMA),
+  result: z.discriminatedUnion("status", [
+    z.strictObject({ status: z.literal("current"), view: VIEW_TOKEN, data: PACKET_CONTENT_V2, validUntil: z.string() }),
+    z.strictObject({ status: z.literal("unchanged"), view: VIEW_TOKEN, validUntil: z.string() }),
+    z.strictObject({ status: z.literal("incomplete"), data: PACKET_CONTENT_V2, reasons: z.array(worldGaps).max(5) }),
+  ]),
+});
+
+/** The scoped counterpart of `envelopeFor`: the same chunk narrowing, the closed envelope around it. */
+export function envelopeV2For(tool: Tool) {
+  return ENVELOPE_V2_SHAPE.extend({
+    tool: z.literal(tool),
+    ...(CARRIES_CANON.includes(tool) ? {} : { canon: NO_CHUNKS }),
+    ...(CARRIES_QUOTED.includes(tool) ? {} : { quoted: NO_CHUNKS }),
+    ...(tool === "context_packet" ? { data: PACKET_DATA_V2 } : {}),
+  });
+}
+
 export const SEARCH_INPUT = z.strictObject({
   query: z.string().min(1).max(512),
   scope: z.enum(["canon", "ledger", "all"]).optional(),
@@ -170,6 +222,17 @@ export const PACKET_INPUT = z.strictObject({
   task_event_id: ID.optional(),
   task_integrity: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 });
+
+/**
+ * The v2 brief takes no epoch, no digest and no delta handshake: its baseline
+ * is the view of the brief the caller holds.
+ */
+export const PACKET_INPUT_V2 = PACKET_INPUT.omit({
+  capabilities: true,
+  retain_prefix: true,
+  prior_hash: true,
+  epoch: true,
+}).extend({ priorView: VIEW_TOKEN.optional() });
 
 const MAX_FRONTMATTER_STRING = 4096;
 const MAX_FRONTMATTER_ITEMS = 32;

@@ -214,7 +214,7 @@ describe("the advertised output schema describes what the server sends", () => {
       };
       if(tool.name==="world_view") {
         expect(advertised.required?.slice().sort()).toEqual(["at","canon","data","principal","quoted","schema","tool"]);
-        expect(Object.keys(advertised.properties??{}).sort()).toEqual(["at","canon","data","principal","quoted","redacted","schema","tool"]);
+        expect(Object.keys(advertised.properties??{}).sort()).toEqual(["at","canon","data","principal","quoted","schema","tool"]);
         continue;
       }
       expect(advertised.required?.slice().sort()).toEqual(

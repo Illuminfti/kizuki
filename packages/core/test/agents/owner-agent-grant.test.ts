@@ -84,9 +84,10 @@ describe("the owner-agent preset relays an owner correction", () => {
     const envelope = await dispatchServeTool(ctx, "correct", {
       statement: "Ada moved to Lisbon.",
       target: { claim_id: claimId },
-    });
+    }, { response_contract: "kizuki.envelope/v2" });
     expect(envelope.tool).toBe("correct");
-    expect(envelope.principal).toBe("owner-harness");
+    expect(envelope.principal).toMatchObject({ kind: "principal" });
+    expect(envelope.schema).toBe("kizuki.envelope/v2");
   });
 
   test("an arbitrary agent's default grant still refuses correct", async () => {
@@ -95,7 +96,7 @@ describe("the owner-agent preset relays an owner correction", () => {
     expect(DEFAULT_GRANT.tools).toEqual([]);
     expect(toolAllowed(ctx.principal.grant, "correct")).toBe(false);
     const error = await refusal(() =>
-      dispatchServeTool(ctx, "correct", { statement: "Ada moved to Lisbon." }),
+      dispatchServeTool(ctx, "correct", { statement: "Ada moved to Lisbon." }, { response_contract: "kizuki.envelope/v2" }),
     );
     expect(error.code).toBe("tool_not_granted");
   });
@@ -111,7 +112,7 @@ describe("the owner-agent preset relays an owner correction", () => {
     const first = await dispatchServeTool(ctx, "correct", {
       statement: "Ada works at Rowan Freight.",
       target: { claim_id: claimId },
-    });
+    }, { response_contract: "kizuki.envelope/v2" });
     expect(first.tool).toBe("correct");
 
     setGrant(live.db, "narrowed-harness", {
@@ -123,7 +124,7 @@ describe("the owner-agent preset relays an owner correction", () => {
       dispatchServeTool(ctx, "correct", {
         statement: "Ada works somewhere else again.",
         target: { claim_id: claimId },
-      }),
+      }, { response_contract: "kizuki.envelope/v2" }),
     );
     expect(error.code).toBe("tool_not_granted");
   });

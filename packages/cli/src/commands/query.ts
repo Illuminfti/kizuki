@@ -1,9 +1,11 @@
 import type { SearchHit } from "@kizuki/core";
 import { OWNER, retrievalDocId, serveSearch } from "@kizuki/core";
+import { ENVELOPE_V2_SCHEMA } from "@kizuki/core/world";
 import { UsageError, parseArguments, requirePositional } from "../args";
-import { withReadVault } from "../context";
+import { withReadVault, withVault } from "../context";
 import { indexFreshness } from "../derived";
 import { clean, jsonEnvelope } from "../output";
+import { RESPONSE_CONTRACT_BOUND, RESPONSE_CONTRACT_OPTION, cliResultV2, contractFailure, responseContract, serveV2 } from "../response-contract";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 const SCOPES = ["canon", "ledger", "all"] as const;
@@ -27,15 +29,15 @@ function formatHit(hit: SearchHit): string {
 }
 
 export const QUERY_SCHEMA = {
-  options: ["--scope", "--limit"],
+  options: ["--scope", "--limit", RESPONSE_CONTRACT_OPTION],
   flags: ["--json", "--degraded"],
   defaults: { "--scope": "all", "--limit": "20" },
-  bounds: { "--scope": "canon|ledger|all", "--limit": "1..50" },
+  bounds: { "--scope": "canon|ledger|all", "--limit": "1..50", [RESPONSE_CONTRACT_OPTION]: RESPONSE_CONTRACT_BOUND },
 } as const satisfies CommandHelpSchema;
 
 export const queryCommand: Command = {
   name: "query",
-  usage: "query <text> [--scope canon|ledger|all] [--limit 1..50] [--json] [--degraded]",
+  usage: `query <text> [--scope canon|ledger|all] [--limit 1..50] [${RESPONSE_CONTRACT_OPTION} ${RESPONSE_CONTRACT_BOUND}] [--json] [--degraded]`,
   summary: "search current authorized evidence through configured retrieval and the lexical floor",
   schema: QUERY_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -53,6 +55,44 @@ export const queryCommand: Command = {
     const rawLimit = parsed.options.get("--limit");
     const limit = rawLimit === undefined ? Number(QUERY_SCHEMA.defaults["--limit"]) : parseLimit(rawLimit);
     const allowDegraded = parsed.flags.has("--degraded");
+    const contract = responseContract(parsed.options);
+
+    // The scoped envelope issues its principal reference, which is a ledger write.
+    if (contract !== undefined) {
+      return withVault(io, async (ctx) => {
+        // An unsupported selector goes straight to Core's audited refusal,
+        // even when the derived index is behind the ledger.
+        const freshness = contract === ENVELOPE_V2_SCHEMA
+          ? indexFreshness(ctx.db, ctx.vaultPath)
+          : undefined;
+        if (freshness !== undefined && !freshness.fresh && !allowDegraded) {
+          io.err(
+            `error: search index is stale (${freshness.degraded.join(", ")}); run a sync/import or pass --degraded`,
+          );
+          return 1;
+        }
+        const envelope = await serveV2(
+          {
+            db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER,
+            ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
+          },
+          "search",
+          { query: text, scope: rawScope, limit },
+          contract,
+        );
+        const served = (envelope.data as { degraded?: string[] } | null)?.degraded ?? [];
+        const degraded = [...new Set([...(freshness?.degraded ?? []), ...served])];
+        if (degraded.length > 0) io.err(`degraded=${degraded.join(",")}`);
+        if (parsed.flags.has("--json")) {
+          io.out(cliResultV2("query", envelope));
+          return 0;
+        }
+        if (envelope.canon.length === 0 && envelope.quoted.length === 0) io.err("0 hits");
+        for (const chunk of envelope.canon) io.out(`page ${chunk.sensitivity} ${clean(chunk.title)} ${clean(chunk.excerpt)}`);
+        for (const chunk of envelope.quoted) io.out(`event ${chunk.connector_id} ${chunk.occurred_at} ${clean(chunk.text)}`);
+        return 0;
+      }, { retrieval: "optional" }).catch((error: unknown) => contractFailure(io, "query", parsed.flags.has("--json"), error));
+    }
 
     return withReadVault(io, async (ctx) => {
       const freshness = indexFreshness(ctx.db, ctx.vaultPath);

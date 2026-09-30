@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { hasContextPacketMarker } from "../canon/origin";
 import type { CaptureEvent } from "../contracts/event";
 import { sha256Hex } from "../util/hash";
 import { isUlid } from "../util/ulid";
@@ -44,7 +45,7 @@ function classify(db: Database, event: Pick<CaptureEvent, "text" | "text_hash">)
   const matching = statement.get(event.text_hash, event.text_hash, event.text_hash, event.text_hash);
   if (matching !== null && (!hash(matching.after_hash) ||
       (matching.before_hash !== null && !hash(matching.before_hash)))) throw new EventOriginError();
-  return event.text.includes("KIZUKI CONTEXT v1") ||
+  return hasContextPacketMarker(event.text) ||
     (event.text_hash !== ABSENT_BYTE_HASH && matching !== null) ? "self" : "external";
 }
 
