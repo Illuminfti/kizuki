@@ -42,6 +42,7 @@ import {
   mineLiveDrafts,
   producedClaimInput,
   readDurableExtractBatch,
+  replayedPrefilterCounts,
   requeuePassedOverRecords,
   requireAtomicExtractReplay,
   type DurableExtractBatch,
@@ -590,7 +591,7 @@ async function runExtraction(
     if (outcome.next === "stop") return;
     // A step that only passed over records with nothing to extract made no
     // request; it must not use up the steps that bound the model's work.
-    if (metrics.calls > requested || outcome.prefiltered === undefined) taken++;
+    if (metrics.calls > requested || outcome.prefilter_only !== true) taken++;
   }
 }
 
@@ -618,6 +619,8 @@ interface StepOutcome {
   readonly oversized_skipped: number;
   /** Records passed over before any request because they carry no extractable content, by reason. */
   readonly prefiltered?: Readonly<Record<string, number>>;
+  /** Only a fresh, empty prefilter decision is exempt from the extraction step cap. */
+  readonly prefilter_only?: true;
   readonly stopped: string | null;
   readonly errors: readonly string[];
 }
@@ -643,9 +646,10 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
     if (pending === null) return null;
     // Replay files an existing decision; it is not another extraction.
     const filed = await fileProducedDrafts(claims, pending, producer);
-    return filed === null
-      ? settled("stop", { errors: ["extract cursor changed before durable batch commit"] })
-      : settled("continue", { deduped: filed.deduped, superseded: filed.superseded });
+    if (filed === null) return settled("stop", { errors: ["extract cursor changed before durable batch commit"] });
+    const prefiltered = replayedPrefilterCounts(db, pending);
+    return settled("continue", { deduped: filed.deduped, superseded: filed.superseded,
+      ...(prefiltered === undefined ? {} : { prefiltered }) });
   });
   if (!replay.held) return settled("stop", { stopped: replay.stopped });
   if (replay.value !== null) return replay.value;
@@ -763,7 +767,12 @@ function advanceHeld(pass: ExtractionPass, mined: MineResult, errors: readonly s
   const prefiltered = mined.prefiltered === undefined ? {} : { prefiltered: mined.prefiltered };
   if (mined.skipped !== undefined) return settled("continue", { oversized_skipped: 1, errors, ...prefiltered });
   if (mined.mined.status === "skipped") return settled("continue", { skipped: 1, errors: [...errors, `record skipped: ${mined.mined.reason}`], ...prefiltered });
-  return settled("continue", { segments: mined.segment === undefined ? 0 : 1, errors, ...prefiltered });
+  const noModelWork = mined.mined.status === "empty" ||
+    (mined.mined.status === "deferred" && mined.mined.count === 0);
+  const prefilterOnly = noModelWork && mined.prefiltered !== undefined &&
+    (mined.mode === "deferred" || (mined.model_inputs?.length ?? 0) === 0);
+  return settled("continue", { segments: mined.segment === undefined ? 0 : 1, errors, ...prefiltered,
+    ...(prefilterOnly ? { prefilter_only: true } : {}) });
 }
 
 /**

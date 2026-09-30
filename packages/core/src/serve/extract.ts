@@ -1011,13 +1011,29 @@ export async function mineLiveDrafts(
  * by the next one. A record part-way through its segments holds the cursor.
  */
 function withPrefiltered(mined: MineResult, prefiltered: ReadonlyMap<string, PrefilterReason>): MineResult {
-  if (prefiltered.size === 0 || mined.cursor === null || mined.segment !== undefined) return mined;
+  if (prefiltered.size === 0 || mined.cursor === null ||
+      (mined.segment !== undefined && mined.segment.end < mined.segment.chars)) return mined;
   const counts: Partial<Record<PrefilterReason, number>> = {};
   for (const id of mined.input_ids ?? []) {
     const reason = prefiltered.get(id);
     if (reason !== undefined) counts[reason] = (counts[reason] ?? 0) + 1;
   }
   return Object.keys(counts).length === 0 ? mined : { ...mined, prefiltered: counts };
+}
+
+/** Reconstruct skip counts from a journal's input partition after its frontier commit. */
+export function replayedPrefilterCounts(db: Database, batch: DurableExtractBatch): Readonly<Partial<Record<PrefilterReason, number>>> | undefined {
+  if (batch.filing_version === null || batch.mode !== "frontier" || readExtractCursor(db) === batch.previous_cursor) return undefined;
+  const requested = new Set([...batch.model_inputs, ...batch.deferred_inputs].map(input => input.event_id));
+  const counts: Partial<Record<PrefilterReason, number>> = {};
+  for (const id of batch.input_ids) {
+    if (requested.has(id)) continue;
+    const event = readEvent(db, id);
+    if (event === null || !extractEligible(db, event)) continue;
+    const reason = prefilterReason(event);
+    if (reason !== null) counts[reason] = (counts[reason] ?? 0) + 1;
+  }
+  return Object.keys(counts).length === 0 ? undefined : counts;
 }
 
 async function mineBatch(

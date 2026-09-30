@@ -164,6 +164,9 @@ run receipt counts them by reason in `records_prefiltered`, and only for
 records its committed cursor passed: a step that reads more records than one
 request takes counts the rest when a later step passes them. The ledger keeps
 every record, so search, timeline, context and a source purge are unaffected.
+Trivial records beside a segmented record are counted when its final segment
+commits the cursor. A journaled decision replayed after restart reconstructs
+the counts from its durable input partition without another model request.
 Older deferred records are checked too, under their current extraction grant,
 and removed from that queue in the same durable step. This is a minimum-content
 rule, not a semantic classifier: a short fact below the threshold is also

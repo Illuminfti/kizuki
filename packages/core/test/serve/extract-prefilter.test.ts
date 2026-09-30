@@ -4,7 +4,7 @@ import {
   MIN_RECORD_CONTENT_CHARS,
   prefilterReason,
 } from "../../src/serve/extract-prefilter";
-import { readExtractCursor, requeuePassedOverRecords } from "../../src/serve/extract";
+import { journalExtractBatch, mineLiveDrafts, readExtractCursor, requeuePassedOverRecords } from "../../src/serve/extract";
 import { runRail } from "../../src/serve/rails";
 import { listRunReceipts } from "../../src/serve/receipts";
 import {
@@ -138,6 +138,50 @@ test("explicit service records are skipped even when their notice contains words
   expect(prefilterReason({ kind: "service", text: "A participant joined this conversation." })).toBe("service");
   expect(prefilterReason({ kind: "service_message", text: "The conversation title was changed." })).toBe("service");
   expect(prefilterReason({ kind: "message", text: "A participant joined this conversation." })).toBeNull();
+});
+
+test("short records around a segmented record are counted once when the cursor passes them", async () => {
+  const texts = ["ok", "Segment material describes a synthetic import. ".repeat(1_300), "thanks!"];
+  const vault = throughputVault(3, index => texts[index]!);
+  const db = openLedger(vault.ledger);
+  disposers.push(vault.dispose, () => db.close());
+  const { producer } = fixtureProducer(() => db);
+  let count = 0;
+  for (let pass = 0; pass < 8; pass++) {
+    const receipt = await runRail(db, vault.vault, "sync", {
+      hooks: { producer, claims: { db }, model_ref: MODEL },
+    });
+    expect(receipt.errors).toEqual([]);
+    if (pass === 0) expect(receipt.records_prefiltered).toBeUndefined();
+    count += receipt.records_prefiltered?.["too_short"] ?? 0;
+  }
+  expect(count).toBe(2);
+  expect(readExtractCursor(db)?.endsWith(`\t${vault.eventIds.at(-1)!}`)).toBe(true);
+});
+
+test("a journaled decision counts its trivial records on replay after restart", async () => {
+  const vault = throughputVault(5, index => index === 0 || index === 2 ? "ok" : recordText(index));
+  let db = openLedger(vault.ledger);
+  disposers.push(vault.dispose, () => db.close());
+  const { producer, calls } = fixtureProducer(() => db);
+  const mined = await mineLiveDrafts(db, producer);
+  journalExtractBatch(db, mined, MODEL, producer);
+  db.close();
+  db = openLedger(vault.ledger);
+  const receipt = await runRail(db, vault.vault, "sync", {
+    hooks: { producer, claims: { db }, model_ref: MODEL },
+  });
+  expect(receipt.errors).toEqual([]);
+  expect(receipt.records_prefiltered).toEqual({ too_short: 2 });
+  expect(calls).toHaveLength(1);
+  // Filing a meaningful journal still spends the one extraction step: the
+  // remaining record waits for the next pass even though this replay counted skips.
+  expect(readExtractCursor(db)?.endsWith(`\t${vault.eventIds[3]!}`)).toBe(true);
+  await runRail(db, vault.vault, "sync", {
+    hooks: { producer, claims: { db }, model_ref: MODEL },
+  });
+  expect(calls).toHaveLength(2);
+  expect(readExtractCursor(db)?.endsWith(`\t${vault.eventIds.at(-1)!}`)).toBe(true);
 });
 
 test("short messages between real ones never reach the model and never hold the cursor back", async () => {
