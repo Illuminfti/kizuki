@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
 import { correct } from "../../src/correction/correct";
+import type { RetrievalPort } from "../../src/contracts/retrieval";
 import { getClaim, insertClaim } from "../../src/claims/store";
 import { accept } from "../../src/ledger/ledger";
 import { setSourceGrant } from "../../src/ledger/source-grants";
@@ -185,7 +186,7 @@ test("a provider's hidden overflow does not set graph truncation", async () => {
   const f = await serveFixture();
   const descriptor = { ...DIRECT_RETRIEVAL_DESCRIPTOR, supports: ["lexical", "graph"] as const };
   const temporary = temporaryPortContext(descriptor);
-  const retrieval = new ReferenceRetrievalPort(temporary.ctx, descriptor);
+  const retrieval: RetrievalPort = new ReferenceRetrievalPort(temporary.ctx, descriptor);
   retrieval.neighbors = async entity => ({
     entity: entity.entity_id, truncated: true,
     edges: [{ from: "fact:linked", to: "person:grace", type: "wikilink", weight: 1, provenance: [] }],
