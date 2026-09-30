@@ -39,7 +39,7 @@ export interface RelaxedQuery {
 }
 
 function words(raw: string): string[] {
-  return raw.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  return raw.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{M}\p{N}]*/gu) ?? [];
 }
 
 /** True for a bare question or instruction of three or more words. */
@@ -62,7 +62,7 @@ function termExpression(word: string): string {
     return '("decid"* OR "decision"*)';
   }
   let stem = word;
-  if (/^\p{L}+$/u.test(word)) {
+  if (/^[\p{L}\p{M}]+$/u.test(word)) {
     for (const suffix of INFLECTIONS) {
       if (word.endsWith(suffix) && word.length - suffix.length >= 4) {
         stem = word.slice(0, -suffix.length);

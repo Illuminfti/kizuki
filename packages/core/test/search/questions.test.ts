@@ -47,6 +47,15 @@ describe("toRelaxedFtsQuery", () => {
 });
 
 describe("relaxed question search", () => {
+  test("Unicode case folding does not split a content word", () => {
+    const { db } = corpus();
+    const event = storedEvent(db, "city", { text: "The offsite team lives in İstanbul.", sensitivity_hint: "personal" });
+    indexEvent(db, event);
+    const result = searchResult(db, "Who lives in İstanbul?", OPTIONS);
+    expect(result.hits.map(hit => hit.doc_id)).toEqual([`event:${event.event_id}`]);
+    expect(result.degraded).toEqual(["query-relaxed"]);
+  });
+
   test("a short decision question matches a note phrased as a decision", () => {
     const { db, ids } = corpus();
     const result = searchResult(db, "What did we decide about the launch?", OPTIONS);

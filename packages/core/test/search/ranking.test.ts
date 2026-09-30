@@ -21,6 +21,13 @@ function indexRow(db: Database, id: string, path: string, title: string, body: s
 const OPTIONS = { ceiling: "private", scope: "canon" } as const;
 
 describe("exact-title boost", () => {
+  test("an exact title keeps its internal spacing", () => {
+    const db = searchDb();
+    const exact = indexRow(db, "exact", "orgs/kestrel.md", "Kestrel  Labs", "Kestrel Labs platform. ".repeat(80), "org");
+    indexRow(db, "other", "notes/other.md", "Kestrel Labs note", "Kestrel Labs platform.", "topic");
+    expect(search(db, "Kestrel  Labs", OPTIONS)[0]?.doc_id).toBe(exact);
+  });
+
   test("searching a name returns the page called that before longer pages that mention it", () => {
     const db = searchDb();
     const filler = "Kestrel Labs builds storage tooling. ".repeat(40);

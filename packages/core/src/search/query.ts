@@ -117,10 +117,6 @@ function coverageCte(relaxed: RelaxedQuery): { sql: string; bindings: string[] }
   };
 }
 
-function titleKey(query: string): string {
-  return query.trim().replace(/\s+/g, " ");
-}
-
 function tokens(raw: string): string[] {
   const result: string[] = [];
   let current = "";
@@ -347,7 +343,7 @@ function searchPlan(
 
   // An exact title keeps its boost even when a question takes the relaxed path.
   const order = ["CASE WHEN trim(search_docs.title) = ? COLLATE NOCASE THEN 0 ELSE 1 END"];
-  const orderBindings = [titleKey(query)];
+  const orderBindings = [query.trim()];
   if (relaxed !== null) order.push("covered.terms DESC");
   order.push(ADJUSTED_RANK_SQL, "scope", "doc_id");
 
