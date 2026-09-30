@@ -173,7 +173,9 @@ export async function conceptScenario(): Promise<ConceptScenario> {
       controls: input.controls.map((control) => control.id),
       ctx,
       async visibleRecords(who) {
-        const served = await dispatchServeTool(ctx(who), "timeline", { limit: 50 });
+        const served = await dispatchServeTool(ctx(who), "timeline", { limit: 50 }, {
+          response_contract: "kizuki.envelope/v2",
+        });
         const quoted = served.quoted as { event_id: string }[];
         return quoted.map((entry) => byEvent.get(entry.event_id)).filter((ref): ref is string => ref !== undefined).sort();
       },

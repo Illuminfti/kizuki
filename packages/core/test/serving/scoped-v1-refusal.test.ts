@@ -22,7 +22,7 @@ test("every scoped missing or v1 selector is refused and audited before any cand
     }
     const candidates = [...queries.mock.calls, ...prepared.mock.calls].filter(([sql]) => /\bFROM\s+(?:events|claims|page_index|world_observations)\b/i.test(sql));
     expect(candidates).toEqual([]);
-    const rows = listAudit(scene.db, "legacy-selector-reader", { limit: 40 });
+    const rows = listAudit(scene.db, "legacy-selector-reader", { kind: "access", limit: 40 });
     expect(rows).toHaveLength(20);
     for (const row of rows) {
       expect(row.served).toEqual([]);
