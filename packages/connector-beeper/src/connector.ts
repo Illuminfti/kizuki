@@ -1,4 +1,4 @@
-import { HealthReport, KizukiError, freezeManifest, isPlainObject } from "@kizuki/core";
+import { HealthReport, KizukiError, freezeManifest, isPlainObject, validateEventInput } from "@kizuki/core";
 import type { AttachmentRef, CaptureEventInput, Connector, Cursor, Manifest, SecretResolver, SyncBatch } from "@kizuki/core";
 import { BEEPER_CURSOR_SCHEMA, encodeBeeperCursor, parseBeeperCursor } from "./cursor";
 import type { BeeperCursor } from "./cursor";
@@ -93,6 +93,7 @@ export class BeeperConnector implements Connector {
     }
     const observed = this.#deps.now().toISOString();
     const events = page.items.map((item) => mapMessage(item, observed));
+    if (events.some(event => !validateEventInput(event).ok)) throw malformedMessage();
     this.#lastSuccessAt = observed;
     return { events, ...(walkingBack ? this.#backward(prior, page) : this.#forward(prior, page)) };
   }
