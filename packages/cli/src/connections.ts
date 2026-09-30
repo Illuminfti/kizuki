@@ -37,7 +37,7 @@ export interface HostConnectionState {
   schema: typeof HOST_STATE_SCHEMA;
   connector_id: string;
   config:
-    | { path: string; base_url?: never; token_secret_ref?: never }
+    | { path: string; exclude_cwd?: readonly string[]; include_headless?: boolean; base_url?: never; token_secret_ref?: never }
     | { base_url: string; token_secret_ref: string; path?: never }
     | { secret_ref: string; path?: never; base_url?: never; token_secret_ref?: never }
     | { state_ref: string; path?: never; base_url?: never; token_secret_ref?: never; secret_ref?: never };
@@ -261,7 +261,9 @@ export function encodeHostState(state: HostConnectionState): Uint8Array {
       schema: state.schema,
       connector_id: state.connector_id,
       config: state.config.path !== undefined
-        ? { path: state.config.path }
+        ? { path: state.config.path,
+            ...(SESSION_CONNECTOR_IDS.includes(state.connector_id) && state.config.exclude_cwd !== undefined ? { exclude_cwd: state.config.exclude_cwd } : {}),
+            ...(SESSION_CONNECTOR_IDS.includes(state.connector_id) && state.config.include_headless !== undefined ? { include_headless: state.config.include_headless } : {}) }
         : state.config.base_url !== undefined
           ? { base_url: state.config.base_url, token_secret_ref: state.config.token_secret_ref }
           : "state_ref" in state.config ? { state_ref: state.config.state_ref } : { secret_ref: state.config.secret_ref },
@@ -321,17 +323,26 @@ export function decodeHostState(
     if (configKeys.length !== 1 || typeof ref !== "string" || !/^file:connections\/[0-9A-HJKMNPQRSTVWXYZ]{26}\.state$/.test(ref)) throw new ConnectionError("IMAP connection state requires a core-minted state reference");
     return { schema: HOST_STATE_SCHEMA, connector_id: connectorId, config: { secret_ref: ref } };
   }
-  if (configKeys.length !== 1 || configKeys[0] !== "path") {
+  const session = SESSION_CONNECTOR_IDS.includes(connectorId);
+  if (session ? configKeys.some((key) => !["path", "exclude_cwd", "include_headless"].includes(key)) : configKeys.length !== 1 || configKeys[0] !== "path") {
     throw new ConnectionError("connection state config has unexpected keys");
   }
   const path = config["path"];
   if (typeof path !== "string" || path.length === 0 || !isAbsolute(path)) {
     throw new ConnectionError("connection state path must be absolute");
   }
+  const excluded = config["exclude_cwd"];
+  const headless = config["include_headless"];
+  if (session && excluded !== undefined && (!Array.isArray(excluded) || excluded.length > 64 || !excluded.every((dir) => typeof dir === "string" && isAbsolute(dir)))) {
+    throw new ConnectionError("session connection excludes must be at most 64 absolute directories");
+  }
+  if (session && headless !== undefined && typeof headless !== "boolean") {
+    throw new ConnectionError("session connection include_headless must be a boolean");
+  }
   return {
     schema: HOST_STATE_SCHEMA,
     connector_id: connectorId,
-    config: { path },
+    config: { path, ...(excluded === undefined ? {} : { exclude_cwd: excluded as string[] }), ...(headless === undefined ? {} : { include_headless: headless as boolean }) },
   };
 }
 
@@ -371,6 +382,9 @@ export function portableLocalAdapter(): import("@kizuki/core").PortableLocalAdap
     decode(id: string, bytes: Uint8Array) {
       const state = decodeHostState(bytes, id);
       if (state.config.path === undefined) throw new ConnectionError("portable connection requires a local path");
+      if ((state.config.exclude_cwd?.length ?? 0) > 0 || state.config.include_headless === false) {
+        throw new ConnectionError("portable path-only state cannot preserve session capture filters");
+      }
       return Object.freeze({ path: state.config.path });
     },
     encode(id: string, config: { readonly path: string }) {
@@ -638,7 +652,7 @@ function withVaultExclusion(id: string, config: HostConnectionState["config"], d
   if (!SESSION_CONNECTOR_IDS.includes(id)) return config;
   const file = db.filename;
   if (typeof file !== "string" || basename(file) !== "kizuki.db" || basename(dirname(file)) !== ".kizuki") return config;
-  return { ...config, exclude_cwd: [dirname(dirname(resolve(file)))] };
+  return { ...config, exclude_cwd: [...(config.path === undefined ? [] : config.exclude_cwd ?? []), dirname(dirname(resolve(file)))] };
 }
 
 export async function loadConnector(

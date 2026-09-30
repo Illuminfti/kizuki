@@ -215,3 +215,18 @@ test("portable export cannot silently drop session capture filters", () => {
   expect(exported.exitCode).not.toBe(0);
   expect(exported.stderr).not.toContain("/work/automation");
 });
+
+test("the maximum CLI exclusion list leaves room for the implicit vault guard", () => {
+  const setup = h.tempVault();
+  const sessions = h.tempDir("kizuki-exclusion-bound-");
+  writeFileSync(join(sessions, "a.jsonl"), JSON.stringify({ type: "user", uuid: "one", sessionId: "one", cwd: "/work/allowed", entrypoint: "cli", timestamp: "2026-01-15T10:00:00.000Z", message: { role: "user", content: "allowed" } }) + "\n");
+  const exclusions = Array.from({ length: 63 }, (_, i) => ["--exclude-cwd", `/work/excluded-${i}`]).flat();
+  const connected = h.runCli(setup.env, "connect", "claude-code-sessions", "--source", sessions, ...exclusions);
+  expect(connected.exitCode, connected.stderr).toBe(0);
+  const key = connected.stdout.match(/source=([0-9A-HJKMNP-TV-Z]{26})/)?.[1] ?? "";
+  expect(h.runCli(setup.env, "connect", "grant", "--source", key, ...sessionGrant(setup.root, "grant-bound")).exitCode).toBe(0);
+  const capture = h.runCli(setup.env, "backfill", "claude-code-sessions", "--source", key);
+  expect(capture.exitCode, capture.stderr).toBe(0);
+  expect(capture.stdout).toContain("events_stored=1");
+  expect(h.runCli(setup.env, "connect", "claude-code-sessions", "--source", sessions, ...exclusions, "--exclude-cwd", "/work/extra").exitCode).toBe(2);
+});

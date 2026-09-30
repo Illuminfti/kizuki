@@ -433,6 +433,50 @@ model destination; see [source consent](cli.md#source-consent). Without it,
 sessions are searchable and servable but produce no concepts or situations.
 The daemon's sync rail refreshes an enrolled source on its period.
 
+### Scope future session capture
+
+```bash
+kizuki connect claude-code-sessions --source /absolute/path/to/projects \
+  --exclude-cwd /work/automation --exclude-cwd /work/another-project \
+  --include-headless false
+kizuki connect codex-sessions --source /absolute/path/to/sessions \
+  --exclude-cwd /work/automation --include-headless false
+```
+
+`--exclude-cwd` is repeatable: up to 63 absolute directories, with one internal
+slot reserved for the vault exclusion. Exact directories and their descendants
+are skipped. Repeat `connect` with the same transcript directory to replace the
+saved exclusion list or change `--include-headless true|false`. Omitted options
+preserve saved values. This amends the existing connection: its source key,
+consent, checkpoints and captured evidence remain. Filters affect future capture;
+they do not silently delete already-captured sessions.
+
+`include_headless` defaults to `true`. Setting it to `false` skips recorded Codex
+`source: "exec"` or `originator: "codex_exec"` rollouts and Claude Code
+`entrypoint` values `print`, `sdk`, `sdk-cli`, `sdk-ts` or `sdk-py`. Classification
+survives incremental restarts, including metadata on an attachment line. Missing
+or unrecognized markers retain capture, so use cwd exclusions for older
+transcripts or clients whose metadata does not distinguish automation.
+
+Primary sources checked 2026-09-30: [Codex session source serialization](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs),
+[Claude Code non-interactive mode](https://code.claude.com/docs/en/headless), and
+[print-mode metadata report](https://github.com/anthropics/claude-code/issues/59105).
+Transcript metadata is not a stable public API; synthetic tests cover the formats
+above, not every provider version.
+
+To physically erase captured evidence, first preview the scope and then confirm:
+
+```bash
+kizuki purge --connector kizuki.claude-code-sessions --subject project:HASH --source KEY --dry-run
+kizuki purge --connector kizuki.claude-code-sessions --subject project:HASH --source KEY --confirm
+```
+
+Use a captured project subject id for `project:HASH`; Codex uses
+`kizuki.codex-sessions`. For an individual event, use `purge --event ID`. Purge
+never removes the source transcript; captured records remain suppressed if the
+source offers them again. Current path-only portable exports refuse a session
+connection with active filters rather than restore it with wider capture scope.
+
 ### What is captured
 
 Each user prompt and each assistant message with text becomes one `message`
@@ -464,18 +508,28 @@ count of anything redacted.
   skipped, Kizuki's own MCP tools are never named, and sessions whose working
   directory is inside the vault are skipped. The host adds the vault at run
   time and does not store its path in the connection. The library option
-  `exclude_cwd` lists further directories to skip.
+  `exclude_cwd` lists further directories to skip, including those saved with
+  `connect --exclude-cwd`.
 - Metadata `source_file` is the transcript file name only, so the encoded
   working directory in a Claude Code folder name is not recorded.
 
 ### How a pass works
 
-The cursor holds one watermark and a position, not a per-file map, so it stays
-inside the cursor bound however many files exist. A pass reads only files
-modified since the watermark, less a two-minute overlap, in modification-time
-order, and a large pass resumes mid-file from the last line it consumed. A
-file that changed is read again from its first line and the ledger
-deduplicates what it already has. `backfill` and `sync` are the same walk.
+The wire cursor holds a watermark, a position and a digest of the host-held
+resume map, and stays within 8 KiB. A pass considers files modified since the
+watermark, less a two-minute overlap, in modification-time order. Complete-line
+byte offsets are committed with the host checkpoint, so a growing transcript
+reads only its appended bytes plus bounded identity checks. Codex also reads its
+first metadata line, bounded at 4 MiB. File identity, a 4 KiB prefix hash and a
+4 KiB hash before the saved offset detect replacement or changed checked bytes;
+truncation and same-size mtime changes also restart from the beginning. Recovery
+rereads deduplicate in the ledger. `backfill` and `sync` are the same walk.
+
+Offsets retain only the rescan window and are evicted oldest-first to fit the
+existing 1 MiB/10,000-entry host bound, preserving a paused file. Evicted or lost
+offsets safely reread; library callers without a host map keep legacy rescans.
+These checks assume normal append behavior: an append combined with an interior
+rewrite outside the checked regions can evade detection.
 
 ### Limits
 

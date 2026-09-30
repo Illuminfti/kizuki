@@ -49,7 +49,7 @@ test("a 20 MiB growing transcript reads only appended bytes and bounded identity
     }
     return opened;
   };
-  const create = () => createClaudeCodeSessionsConnector({ path: root }, { openFile } as never);
+  const create = () => createClaudeCodeSessionsConnector({ path: root }, { openFile });
   const h = host();
   expect(texts(await h.pass(create()))).toEqual(["first"]);
   readBytes = 0;
@@ -111,7 +111,7 @@ for (const entrypoint of ["print", "sdk", "sdk-cli", "sdk-ts", "sdk-py"]) {
     const root = await tempRoot();
     await writeJsonl(root, "a.jsonl", [claudeTurn("headless", "automated", { entrypoint }), claudeTurn("owner", "interactive")]);
     expect(texts(await host().pass(createClaudeCodeSessionsConnector({ path: root })))).toEqual(["automated", "interactive"]);
-    expect(texts(await host().pass(createClaudeCodeSessionsConnector({ path: root, include_headless: false } as never)))).toEqual(["interactive"]);
+    expect(texts(await host().pass(createClaudeCodeSessionsConnector({ path: root, include_headless: false })))).toEqual(["interactive"]);
   });
 }
 for (const metadata of [{ source: "exec" }, { originator: "codex_exec" }]) {
@@ -119,7 +119,7 @@ for (const metadata of [{ source: "exec" }, { originator: "codex_exec" }]) {
     const root = await tempRoot();
     await writeJsonl(root, "a.jsonl", [codexMeta(metadata), codexTurn("user", "automated")]);
     expect(texts(await host().pass(createCodexSessionsConnector({ path: root })))).toEqual(["automated"]);
-    expect(await host().pass(createCodexSessionsConnector({ path: root, include_headless: false } as never))).toEqual([]);
+    expect(await host().pass(createCodexSessionsConnector({ path: root, include_headless: false }))).toEqual([]);
   });
 }
 
@@ -174,15 +174,29 @@ test("an uncommitted batch does not move offsets; retry replays the same evidenc
 test("Claude Code SDK metadata on an attachment applies to subsequent turns", async () => {
   const root = await tempRoot();
   await writeJsonl(root, "a.jsonl", [{ type: "attachment", entrypoint: "sdk-cli" }, claudeTurn("automated", "automated", { entrypoint: undefined })]);
-  expect(await host().pass(createClaudeCodeSessionsConnector({ path: root, include_headless: false } as never))).toEqual([]);
+  expect(await host().pass(createClaudeCodeSessionsConnector({ path: root, include_headless: false }))).toEqual([]);
 });
 
 test("SDK classification from a later metadata line survives an incremental restart", async () => {
   const root = await tempRoot();
   const file = await writeJsonl(root, "a.jsonl", [{ type: "progress" }, { type: "attachment", entrypoint: "sdk-cli" }, claudeTurn("automated", "automated", { entrypoint: undefined })]);
   const h = host();
-  const create = () => createClaudeCodeSessionsConnector({ path: root, include_headless: false } as never);
+  const create = () => createClaudeCodeSessionsConnector({ path: root, include_headless: false });
   expect(await h.pass(create())).toEqual([]);
   await appendFile(file, JSON.stringify(claudeTurn("later", "later", { entrypoint: undefined })) + "\n");
   expect(await h.pass(create())).toEqual([]);
+});
+
+test("malformed host offsets fail closed without moving the committed state", async () => {
+  const root = await tempRoot();
+  await writeJsonl(root, "a.jsonl", [claudeTurn("one", "one")]);
+  const connector = createClaudeCodeSessionsConnector({ path: root });
+  const first = await connector.sync(null, { cursor_store: new Map() });
+  const store = new Map(Object.entries(first.cursor_store ?? {}).filter((entry): entry is [string, string] => entry[1] !== null));
+  expect(store.size).toBe(1);
+  const key = store.keys().next().value!;
+  for (const value of ["[]", "not-json", "{}", JSON.stringify(["x"])] ) {
+    await expect(connector.sync(first.cursor, { cursor_store: new Map([[key, value]]) })).rejects.toMatchObject({ code: "corrupted" });
+  }
+  expect((await connector.sync(first.cursor, { cursor_store: store })).events).toEqual([]);
 });
