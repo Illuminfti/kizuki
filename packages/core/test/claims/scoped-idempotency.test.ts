@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OWNER_AGENT_GRANT } from "../../src/agents";
 import { getClaim, insertClaim, listClaims, pendingRetrievalOps, prepareClaimInsert, retryRetrievalOps } from "../../src/claims/store";
-import { openLedger, LEDGER_SCHEMA_VERSION } from "../../src/ledger/db";
+import { ensureLedgerSchema, openLedger, LEDGER_SCHEMA_VERSION } from "../../src/ledger/db";
 import { seedConnectorSensitivity } from "../../src/sensitivity/store";
 import { claimReader } from "../../src/serving/claims";
 import { claimInput, FixtureVectorPort, putEvent } from "./helpers";
@@ -44,6 +44,10 @@ test("fresh and previous-schema databases support scoped exact twins without los
     db = openLedger(path);
     expect(listClaims(db)).toHaveLength(2);
     expect(getClaim(db, hidden.claim.claim_id)).toEqual(original);
+    db.exec("DROP INDEX claims_signature_idempotency");
+    expect(() => ensureLedgerSchema(db, { includeStaging: true })).not.toThrow();
+    expect(indexSql(db)).not.toContain("UNIQUE");
+    expect(listClaims(db)).toHaveLength(2);
   } finally { db.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 

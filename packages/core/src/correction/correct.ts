@@ -1,4 +1,4 @@
-import { OWNER, getAgent } from "../agents";
+import { getAgent } from "../agents";
 import { principalForAgentId } from "../agents/identity";
 import type { ClaimVisibility } from "../claims/visibility";
 import { claimReader } from "../serving/claims";
@@ -25,7 +25,7 @@ import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { CLAIM_MEANING_SCHEMA, type ClaimMeaning } from "../contracts/claim-v2";
 import type { Claim, FrontmatterValue, Producer } from "../contracts/proposal";
 import { recordNativeCorrection } from "./evidence";
-import { requireSourceEvents } from "../ledger/source-grants";
+import { requireSourceEvents, sourcePolicyEpoch } from "../ledger/source-grants";
 import type { CaptureEventInput, SubjectRef } from "../contracts/event";
 import { tableExists } from "../ledger/schema";
 import { isRfc3339 } from "../util/time";
@@ -176,25 +176,31 @@ interface ScopedCorrectIo extends CorrectIo {
 function scopeCorrection(scope: VaultMutationScope, io: CorrectIo): ScopedCorrectIo {
   if (io.grant === undefined) return io;
   const producer = io.producer ?? "owner";
-  let ctx: ServeContext;
-  if (producer.startsWith("agent:")) {
-    const agent = getAgent(io.db, producer.slice("agent:".length));
-    const resolved = agent === null ? null : principalForAgentId(io.db, agent.agent_id);
-    if (resolved === null) throw new CorrectError("tool_not_granted", "correction principal is unavailable");
-    ctx = { db: io.db, vaultPath: io.vault_path, principal: resolved };
-  } else {
-    ctx = { db: io.db, vaultPath: io.vault_path, principal: { ...OWNER, grant: io.grant } };
-  }
+  if (!producer.startsWith("agent:")) return io;
+  const agent = getAgent(io.db, producer.slice("agent:".length));
+  const resolved = agent === null ? null : principalForAgentId(io.db, agent.agent_id);
+  if (resolved === null) throw new CorrectError("tool_not_granted", "correction principal is unavailable");
+  const ctx: ServeContext = { db: io.db, vaultPath: io.vault_path, principal: resolved };
   const reader = claimReader(io.db, ctx.principal.grant,
-    { owner: ctx.principal.kind === "owner", purpose: "recall" });
+    { owner: false, purpose: "recall" });
+  const pages = new Map<string, { hash: string; generation: number; epoch: number; allow: boolean }>();
   return extendOwnedCanonIo(scope, io, { grant: ctx.principal.grant,
-    ...(ctx.principal.kind === "owner" ? {} : { relay_owner_corrections: ctx.principal.grant.relay_owner_corrections }),
+    relay_owner_corrections: ctx.principal.grant.relay_owner_corrections,
     readScope: {
       claims: reader.visibility,
       page(path: string) {
         const index = loadCanon({ ...ctx, sourcePurpose: "recall" });
         const page = index.byPath.get(path);
-        return page !== undefined && pageDecision(index, ctx.principal.grant, page).allow;
+        if (page === undefined) return false;
+        const epoch = sourcePolicyEpoch(io.db);
+        const prior = pages.get(path);
+        // Retiring this operation's claims invalidates a typed page's current
+        // basis. Retain its pre-write authorization only while the bytes and
+        // live source policy stay unchanged; the writer checks the same bytes.
+        if (prior?.hash === page.contentHash && prior.generation === index.generation && prior.epoch === epoch) return prior.allow;
+        const allow = pageDecision(index, ctx.principal.grant, page).allow;
+        pages.set(path, { hash: page.contentHash, generation: index.generation, epoch, allow });
+        return allow;
       },
     },
   });
@@ -361,7 +367,7 @@ function reconstruct(
   }
   return {
     ...(pending.length === 0 ? {} : { recovery_pending: pending }),
-    receipt_id: rewritten[0]?.receipt_id ?? null,
+    receipt_id: io.readScope === undefined ? winner.receipt_id : rewritten[0]?.receipt_id ?? null,
     event_id: eventId,
     claim_ids: [winner.claim_id],
     superseded,
@@ -742,6 +748,8 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
   const seed = seedClaim(group, input.target as CorrectTarget);
   const at = nowOf(io);
   const plan = planCorrection(io, input, seed, at);
+  // Authorize existing bytes before this operation retires their typed basis.
+  if (io.readScope !== undefined) affectedPages(io, group, seed);
   const accepted = acceptOwnerEvent(io, input, seed, at, plan);
 
   if (input.dry_run === true) {
@@ -828,7 +836,7 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
       continue;
     }
     const existing = readVaultPage(io, page.rel_path);
-    if (existing === null) continue;
+    if (existing === null || !pageReadable(io, page.rel_path)) continue;
     const before = existing.content;
     let claim = winner;
     if (index > 0) {

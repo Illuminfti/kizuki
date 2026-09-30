@@ -63,15 +63,17 @@ function visibleTo(ctx: ServeContext, hidden: AuditDenial[] = []): (claim: Claim
   if (ctx.principal.kind === "owner") return () => true;
   const grant = ctx.principal.grant;
   const reader = claimReader(ctx.db, grant, { owner: false, purpose: "recall" });
+  const correctionReader = claimReader(ctx.db, grant, { owner: false, purpose: "correction" });
   return (claim) => {
     // The real reason goes to the owner's audit row, never to the caller.
-    if (!reader.canRead(claim)) {
+    const decision = authorize(grant, claimServable(claim));
+    if (!decision.allow) hidden.push({ id: claim.claim_id, reason: decision.reason });
+    if (!decision.allow) return false;
+    if (!reader.canRead(claim) || !correctionReader.canRead(claim)) {
       hidden.push({ id: claim.claim_id, reason: "held" });
       return false;
     }
-    const decision = authorize(grant, claimServable(claim));
-    if (!decision.allow) hidden.push({ id: claim.claim_id, reason: decision.reason });
-    return decision.allow;
+    return true;
   };
 }
 

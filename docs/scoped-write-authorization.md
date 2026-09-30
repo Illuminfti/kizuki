@@ -28,7 +28,9 @@ grammar against an ephemeral in-memory document; it adds no durable index or
 retrieval implementation. A nomination that matched only a credential-shaped
 span is dropped without incrementing the response's redaction tally. Owner
 search retains its existing matching behavior. Matching the canon excerpt can
-omit a raw match beyond the excerpt's bound.
+omit a raw match beyond the excerpt's bound. An agent's engine nomination,
+including a fuzzy match, is dropped when the served text does not satisfy the
+floor's query grammar.
 
 Entity title, handle and projected-label matching, and world discovery label
 matching and ordering, use served labels. Local graph traversal authorizes edges

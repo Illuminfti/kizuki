@@ -223,6 +223,7 @@ test("correct answers alike for every kind of hidden claim and audits why", asyn
     expect(await probe(reader, hidden)).toEqual(await probe(reader, missing));
   // A subject-scoped agent has no reach past person:ada.
   await same("subjected", { claim_id: keyed.claim_id }, { claim_id: absent });
+  await same("reader-public", { claim_id: keyed.claim_id }, { claim_id: absent });
   await same("subjected", { subject: "person:grace" }, { subject: "person:nobody" });
   await same("reader-public", { claim_key: keyed.claim_key! }, { claim_key: "0".repeat(64) });
   if (keylessId !== null) {

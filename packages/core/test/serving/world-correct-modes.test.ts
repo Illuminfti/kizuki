@@ -633,6 +633,8 @@ test("a relaying agent corrects, a node token from another principal is refused,
       target: { world_claim: edge["claim"] },
     });
     expect(done.data!.claim_id).toBeString();
+    expect(done.data!.receipt_id).toBeString();
+    expect(done.data!.rewritten).toHaveLength(1);
     const seen = s.kit.card(
       reader,
       "concept",
