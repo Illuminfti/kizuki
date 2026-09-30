@@ -19,6 +19,10 @@ export interface Redactor {
   readonly counts: RedactionCounts;
   /** A window is cut only after sanitation, in served code-point coordinates. */
   text(value: string, window?: { offset: number; span: number; inline?: boolean }): string;
+  /** Add trusted presentation around sanitized text without reinterpreting it. */
+  format(value: string, render: (text: string) => string): string;
+  /** Assemble sanitized fields and trusted presentation within this call. */
+  join(values: readonly string[]): string;
 }
 
 export function stripInvisible(value: string): string {
@@ -48,6 +52,25 @@ export function createRedactor(principal: Pick<Principal, "kind">, exactSecrets:
         output = Array.from(output).slice(window.offset, window.offset + window.span).join("");
         served.add(output);
       }
+      return output;
+    },
+    format(value, render) {
+      const output = neutralizeControlTags(sanitizeCapturedText(render(this.text(value))));
+      served.add(output);
+      return output;
+    },
+    join(values) {
+      const ranges: { start: number; end: number }[] = [];
+      let joined = "";
+      for (const value of values) {
+        const part = this.text(value);
+        ranges.push({ start: joined.length, end: joined.length + part.length });
+        joined += part;
+      }
+      const scrubbed = scrubText(joined, exactSecrets, scrub, ranges);
+      tallyRedactions(counts, scrubbed.redactions);
+      const output = neutralizeControlTags(scrubbed.text);
+      served.add(output);
       return output;
     },
   };

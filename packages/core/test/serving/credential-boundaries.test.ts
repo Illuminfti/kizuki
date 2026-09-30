@@ -254,10 +254,11 @@ test("serving a preview scrubs a bounded amount of text, not the whole capture",
     let scrubbed = 0;
     const real = createRedactor({ kind: "agent" });
     const redactor: Redactor = {
+      ...real,
       counts: real.counts,
-      text(value) {
+      text(value, window) {
         scrubbed += value.length;
-        return real.text(value);
+        return real.text(value, window);
       },
     };
     const ctx = { ...f.agent("reader-public"), redactor };

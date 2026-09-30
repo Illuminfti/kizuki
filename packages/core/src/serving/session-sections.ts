@@ -118,15 +118,16 @@ function stamps(claim: Claim): string {
 /** A world statement line: same stamps as a working-knowledge claim, with the situation named. */
 function situationLine(state: SituationState, item: SituationItem, redactor: Redactor): string {
   // Redacted before it is cut, so a secret on the cut is gone whole.
-  const say = (text: string): string => clamp(redactor.text(text));
+  const say = (text: string): string => redactor.format(text, (value) => JSON.stringify(clamp(value)));
   const hedge =
     item.polarity === "negative" || item.mode !== "asserted"
       ? ` polarity=${item.polarity} mode=${item.mode}`
       : "";
-  return (
-    `- [claim:${inline(item.claim.claim_id)}] ${stamps(item.claim)}${hedge}` +
-    ` :: situation ${JSON.stringify(say(state.label ?? state.subject))} ${inline(item.predicate.slice(10))} ${JSON.stringify(say(item.text))}\n`
-  );
+  return redactor.join([
+    `- [claim:${inline(item.claim.claim_id)}] ${stamps(item.claim)}${hedge} :: situation `,
+    say(state.label ?? state.subject), " ",
+    redactor.format(item.predicate.slice(10), inline), " ", say(item.text), "\n",
+  ]);
 }
 
 function piece(
@@ -156,8 +157,8 @@ function claimPiece(
     heading,
     claimLine({
       ...claim,
-      object: claim.object === null ? null : clamp(redactor.text(claim.object)),
-    }),
+      object: claim.object === null ? null : redactor.format(claim.object, clamp),
+    }, redactor),
     [claim.claim_id],
     reader,
   );
@@ -386,13 +387,22 @@ export function collectSessionPieces(
       const first = members[0];
       const values = members.map(
         (member) =>
-          `${member.polarity === "negative" ? "not " : ""}${JSON.stringify(clamp(redactor.text(member.object ?? "")))} [claim:${inline(member.claim_id)}] ${stamps(member)} status=${member.status}`,
+          redactor.join([
+            member.polarity === "negative" ? "not " : "",
+            redactor.format(member.object ?? "", (value) => JSON.stringify(clamp(value))),
+            ` [claim:${inline(member.claim_id)}] ${stamps(member)} status=${member.status}`,
+          ]),
       );
       lines.push(
         piece(
           "uncertain",
           "## uncertain (contradictions and open questions)",
-          `- conflict key=${inline(conflict.claim_key.slice(0, 12))} live=${members.length} :: ${inline(redactor.text(first?.subject ?? "-"))} ${inline(redactor.text(first?.predicate ?? "-"))} ${values.join(" vs ")}\n`,
+          redactor.join([
+            `- conflict key=${inline(conflict.claim_key.slice(0, 12))} live=${members.length} :: `,
+            redactor.format(first?.subject ?? "-", inline), " ",
+            redactor.format(first?.predicate ?? "-", inline), " ",
+            ...values.flatMap((value, index) => index === 0 ? [value] : [" vs ", value]), "\n",
+          ]),
           members.map((member) => member.claim_id),
           reader,
         ),

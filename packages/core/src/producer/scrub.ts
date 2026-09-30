@@ -21,7 +21,14 @@ export interface ScrubbedText {
   readonly redactions: readonly Redaction[];
 }
 
-type Span = { readonly kind: RedactionKind; readonly start: number; readonly end: number };
+type Span = {
+  readonly kind: RedactionKind;
+  readonly start: number;
+  readonly end: number;
+  /** Include the detector's prefix when testing already-sanitized ranges. */
+  readonly contextStart?: number;
+  readonly contextEnd?: number;
+};
 
 /**
  * Patterns are linear: each keyword or run start is scanned once, and a match
@@ -167,17 +174,17 @@ function spans(text: string): Span[] {
   for (const pattern of [BEARER, AUTH_BEARER]) for (const match of matches(text, pattern)) {
       if (/^\[redacted:[a-z_]+\]$/.test(match[2]!)) continue;
       const start = match.index + match[1]!.length;
-      found.push({ kind: "bearer", start, end: start + match[2]!.length });
+      found.push({ kind: "bearer", start, end: start + match[2]!.length, contextStart: match.index });
     }
   for (const pattern of [AUTHORIZATION, AUTH_RAW]) for (const match of matches(text, pattern)) {
     if (/^\[redacted:[a-z_]+\]$/.test(match[2]!)) continue;
     const start = match.index + match[1]!.length;
-    found.push({ kind: "authorization", start, end: start + match[2]!.length });
+    found.push({ kind: "authorization", start, end: start + match[2]!.length, contextStart: match.index });
   }
   for (const match of matches(text, URL_CREDENTIALS)) {
     if (/^\[redacted:[a-z_]+\]$/.test(match[1]!)) continue;
     const [start, end] = match.indices![1]!;
-    found.push({ kind: "url_credentials", start, end });
+    found.push({ kind: "url_credentials", start, end, contextStart: match.index, contextEnd: match.index + match[0].length });
   }
   let blockEnd = 0;
   for (const match of /[:=]/.test(text) ? matches(text, ASSIGNMENT) : []) {
@@ -194,8 +201,8 @@ function spans(text: string): Span[] {
     if (/^(?:max_tokens|tokens|token_count|input_tokens|output_tokens)$/.test(name) && value.length < 8 && /^\d+[,;.)\]}]*$/.test(value)) continue;
     if (which === 4 && /^[|>](?:[1-9][+-]?|[+-][1-9]?)?$/.test(value) && match[0].includes(":")) {
       blockEnd = yamlBlockEnd(text, match.index, end, value);
-      found.push({ kind: "secret_assignment", start, end: blockEnd });
-    } else found.push({ kind: "secret_assignment", start, end });
+      found.push({ kind: "secret_assignment", start, end: blockEnd, contextStart: match.index });
+    } else found.push({ kind: "secret_assignment", start, end, contextStart: match.index });
   }
   for (const match of matches(text, WORD_RUN)) found.push(...seedSpans(match[0], match.index));
   return found;
@@ -285,7 +292,12 @@ function matchingView(text: string): { text: string; starts: number[]; ends: num
   return { text: view, starts, ends, removed };
 }
 
-export function scrubText(text: string, exactSecrets: readonly string[] = [], credentialShapes = true): ScrubbedText {
+export function scrubText(
+  text: string,
+  exactSecrets: readonly string[] = [],
+  credentialShapes = true,
+  sanitizedRanges: readonly { start: number; end: number }[] = [],
+): ScrubbedText {
   const view = matchingView(text);
   const matched = view?.text ?? text;
   const found = credentialShapes ? spans(matched) : [];
@@ -296,8 +308,16 @@ export function scrubText(text: string, exactSecrets: readonly string[] = [], cr
       found.push({ kind: "api_token", start, end: start + secret.length });
     }
   }
-  const original = view === undefined ? found : found.map((span) => ({ ...span, start: view.starts[span.start]!, end: view.ends[span.end - 1]! }));
-  const kept = disjoint([...original, ...(view?.removed ?? [])]);
+  const original = view === undefined ? found : found.map((span) => ({
+    ...span, start: view.starts[span.start]!, end: view.ends[span.end - 1]!,
+    contextStart: view.starts[span.contextStart ?? span.start]!,
+    contextEnd: view.ends[(span.contextEnd ?? span.end) - 1]!,
+  }));
+  // Assembly may create a new credential across fields. Only a detector fully
+  // contained in one sanitized field is inert, including its name/header.
+  const introduced = original.filter((span) => !sanitizedRanges.some((range) =>
+    range.start <= (span.contextStart ?? span.start) && range.end >= (span.contextEnd ?? span.end)));
+  const kept = disjoint([...introduced, ...(view?.removed ?? [])]);
   if (kept.length === 0) return { text, redactions: [] };
   const redactions: Redaction[] = [];
   let out = "";
