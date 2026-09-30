@@ -64,6 +64,22 @@ test("URL passwords are scrubbed when the username is empty", async () => {
   } finally { f.dispose(); }
 });
 
+test("quoted and re-flowed PEM text is scrubbed without swallowing following stamps", async () => {
+  const f = await serveFixture();
+  try {
+    const header = ["-----BEGIN", ["PRIVATE", "KEY-----"].join("\n> ")].join(" ");
+    const footer = ["-----END", ["PRIVATE", "KEY-----"].join(" ")].join(" ");
+    for (const complete of [false, true]) {
+      const end = complete ? `\n> ${footer}` : " (ev: synthetic)";
+      const text = `> ${header}\n> ${"A".repeat(64)}${end}\n- following record: keep this`;
+      const id = storeEvent(f.db, `quoted-pem-${complete}`, "2026-02-28T10:30:00Z", text, "person:ada", "public");
+      const answer = serveTimeline(f.agent("reader-public"), { event_id: id });
+      expect(answer.quoted[0]?.text).toBe(`> [redacted:pem]${complete ? "" : " (ev: synthetic)"}\n- following record: keep this`);
+      expect(answer.redacted).toEqual({ pem: 1 });
+    }
+  } finally { f.dispose(); }
+});
+
 test("YAML block scalar credentials are removed without consuming the next field", async () => {
   const f = await serveFixture();
   try {
