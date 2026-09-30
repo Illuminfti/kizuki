@@ -56,9 +56,11 @@ test("children receive only explicit runtime variables and no model credentials"
 });
 
 test("child peak RSS is normalized to bytes against a resident allocation", async () => {
+  const retained = Buffer.alloc(256 * 1024 * 1024, 1);
   const result = await command(["-e", "const buffer=Buffer.alloc(64*1024*1024,1); console.log(process.memoryUsage().rss); console.log(buffer[0]);"]);
   const resident = Number(result.stdout.split("\n")[0]);
   expect(result.rss_bytes).toBeGreaterThanOrEqual(64 * 1024 * 1024);
   expect(result.rss_bytes).toBeGreaterThan(resident * .8);
   expect(result.rss_bytes).toBeLessThan(resident * 2);
+  expect(retained[0]).toBe(1);
 });
