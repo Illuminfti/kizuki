@@ -1,5 +1,6 @@
 import { sourceCaptureAdmission, type SourceAdmission } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
+import { setImmediate as yieldToHost } from "node:timers/promises";
 import type { Connector, CursorStoreDelta, Manifest, SyncBatch } from "../contracts/connector";
 import {
   EVENT_LIMITS,
@@ -832,6 +833,9 @@ export async function runToCompletion(
   const sliceSpent = (batches: number): boolean => slice !== undefined &&
     (batches >= (slice.max_batches ?? Infinity) || performance.now() - started >= (slice.deadline_ms ?? Infinity));
   for (let batch = 0; batch < maxBatches; batch += 1) {
+    // Resolved connector promises can monopolize the microtask queue. Let
+    // signals and host timers run after the previous batch durably committed.
+    if (batch > 0) await yieldToHost();
     if (opts?.stopRequested?.() === true) return { ...total, has_more: true };
     // A slice always reads one batch, so a spent deadline cannot starve a source.
     if (batch > 0 && sliceSpent(batch)) {

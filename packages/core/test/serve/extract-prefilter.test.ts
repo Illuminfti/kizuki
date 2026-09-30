@@ -120,6 +120,24 @@ test("a thousand short messages cost no model call, and the receipt counts each 
   ).toEqual(receipt.records_prefiltered);
 });
 
+test("a host stop callback runs between prefilter-only extraction steps", async () => {
+  const vault = throughputVault(1_000, () => "ok");
+  const db = openLedger(vault.ledger);
+  disposers.push(vault.dispose, () => db.close());
+  const { producer, calls } = fixtureProducer(() => db);
+  let stop = false;
+  const task = setImmediate(() => { stop = true; });
+  try {
+    const receipt = await runRail(db, vault.vault, "sync", {
+      hooks: { producer, claims: { db }, model_ref: MODEL },
+      stopRequested: () => stop,
+    });
+    expect(receipt.stopped).toBe("serve:stop_requested");
+    expect(receipt.records_prefiltered?.["too_short"] ?? 0).toBeLessThanOrEqual(8);
+    expect(calls).toEqual([]);
+  } finally { clearImmediate(task); }
+});
+
 test("previously deferred short records are consumed without a model call", async () => {
   const vault = throughputVault(16, index => index % 2 === 0 ? "ok" : recordText(index));
   const db = openLedger(vault.ledger);

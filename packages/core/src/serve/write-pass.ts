@@ -8,6 +8,7 @@ import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent"
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import type { Database } from "bun:sqlite";
+import { setImmediate as yieldToHost } from "node:timers/promises";
 import {
   BudgetExhausted,
   resolveTarget,
@@ -562,6 +563,9 @@ async function runExtraction(
   // Every step files its decision and advances the cursor before the next
   // one starts, so a kill loses at most the request in flight.
   for (let taken = 0, steps = 0; taken < pass.limits.max_calls_per_pass; steps++) {
+    // Prefilter-only steps perform no asynchronous model work. Give stop
+    // signals and host timers a turn between their durable cursor commits.
+    if (steps > 0) await yieldToHost();
     if (options.stopRequested?.() === true) { tally.stopped = STOP_REQUESTED; return; }
     // A spent pass starts no further step; the next pass resumes from the cursor.
     if (steps > 0 && Date.parse(clock()) - started >= pass.limits.max_pass_seconds * 1_000) return;

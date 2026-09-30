@@ -161,28 +161,27 @@ test("a spent deadline still reads one batch per connection, and a stop request 
 const MEGABYTE = 1024 * 1024;
 /** Growth allowed once the heap has its working set. Retaining what the passes scan or store would cost several times this. */
 const MEMORY_GROWTH_BOUND_MB = 64;
+/** Includes initial heap growth before the working set has warmed. */
+const TOTAL_MEMORY_GROWTH_BOUND_MB = 128;
 
 /**
  * A tree shaped like a multi-gigabyte transcript store at test scale: many large
- * files whose bytes are mostly tool output the connector never keeps, and whose
- * conversation turns are longer than an event may be. The scan-byte cap slices
- * each file, including batches that store nothing but must advance their cursor.
+ * files filled with conversation turns longer than an event may be. Unlike a
+ * tool-output-only fixture, every scanned turn reaches the ledger and derived
+ * index, exercising the retained working set as well as the file reader.
  */
 function transcriptStore(root: string, files: number): { bytes: number } {
   mkdirSync(join(root, "proj"), { recursive: true });
-  const toolOutput = "y".repeat(3 * MEGABYTE);
   const longTurn = "Synthetic reasoning about the exporter and the importer plan. ".repeat(700);
-  const toolLine = JSON.stringify({
-    type: "user", uuid: "tool-result", sessionId: "synthetic-session", timestamp: "2026-01-15T10:00:00.000Z",
-    message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: toolOutput }] },
-  }) + "\n";
   let bytes = 0;
   for (let file = 0; file < files; file++) {
     const path = join(root, "proj", `s-${file}.jsonl`);
-    const first = turn(file, 0, `${longTurn}${file}`) + "\n";
-    writeFileSync(path, first);
-    for (let line = 0; line < 36; line++) appendFileSync(path, toolLine);
-    bytes += first.length + 36 * toolLine.length;
+    writeFileSync(path, "");
+    for (let line = 0; line < 2_600; line++) {
+      const record = turn(file, line, `${file}.${line}: ${longTurn}`) + "\n";
+      appendFileSync(path, record);
+      bytes += Buffer.byteLength(record);
+    }
   }
   return { bytes };
 }
@@ -201,16 +200,19 @@ test("the real serve loop keeps RSS bounded across twenty session batches", asyn
       new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
     ]);
     expect(exit, stderr).toBe(0);
-    const { samples, passes, stored, sweeps } = JSON.parse(stdout) as {
-      samples: number[]; passes: { has_more: boolean; events_stored: number; errors: string[] }[];
+    const { baseline, samples, passes, stored, sweeps } = JSON.parse(stdout) as {
+      baseline: number; samples: number[]; passes: { has_more: boolean; events_stored: number; errors: string[] }[];
       stored: number; sweeps: number;
     };
     expect(samples).toHaveLength(20);
     expect(passes).toHaveLength(20);
     expect(passes.every(receipt => receipt.has_more && receipt.errors.length === 0)).toBe(true);
     expect(stored).toBe(passes.reduce((sum, receipt) => sum + receipt.events_stored, 0));
-    expect(stored).toBeGreaterThan(5);
+    expect(passes.every(receipt => receipt.events_stored >= 50)).toBe(true);
+    expect(stored).toBeGreaterThanOrEqual(1_000);
     expect(sweeps).toBeGreaterThan(1);
+    expect(Math.max(...samples) - baseline, `baseline ${baseline} MB; rss samples ${samples.map(Math.round).join(" ")}`)
+      .toBeLessThan(TOTAL_MEMORY_GROWTH_BOUND_MB);
     const warm = Math.max(...samples.slice(2, 5));
     const growth = Math.max(...samples.slice(5)) - warm;
     expect(growth, `rss in MB after each pass: ${samples.map(Math.round).join(" ")}`).toBeLessThan(MEMORY_GROWTH_BOUND_MB);

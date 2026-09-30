@@ -90,8 +90,10 @@ A value outside its range, a fraction or a string keeps that key's default.
   checkpoint. A connection that still has more stops at that cursor and the
   receipt says `has_more`; the write pass, extraction and the derived refresh
   then run as usual, and the next pass resumes from the cursor. The rail reads a
-  stop request between batches. A pass that a stop request ended before a
-  connection was exhausted stops as `serve:stop_requested`, skips the derived
+  stop request between batches and gives signals and host timers a turn at
+  those durable boundaries, even when connector promises resolve immediately.
+  A pass stopped before a connection was exhausted reports
+  `serve:stop_requested`, skips the derived
   refresh, and leaves it to the retrieval sweep after the next start. Other
   rails run between passes, so a large first backfill delays them by at most one
   pass and not by the whole drain. `kizuki sync [connector]` and `kizuki backfill` are not
@@ -177,7 +179,9 @@ one of the `max_calls_per_pass` steps, and a pass keeps going through them
 until it reaches a record worth a request, the end of the ledger, a stop
 request or `max_pass_seconds`. A chat backfill of short messages therefore
 costs no model calls and moves at the speed of the ledger, not one step per
-pass. The rule is fixed in the build; there is no setting for it.
+pass. These steps also yield to signals and host timers between cursor commits,
+so a stop can arrive while processing a run of trivial messages. The rule is
+fixed in the build; there is no setting for it.
 
 ## Rejected responses and daily budgets
 

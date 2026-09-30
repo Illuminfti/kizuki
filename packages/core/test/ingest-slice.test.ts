@@ -261,6 +261,24 @@ describe("runToCompletion in bounded slices", () => {
     }
   });
 
+  test("a host stop callback can run between immediately resolved connector batches", async () => {
+    const db = database();
+    let stop = false;
+    const task = setImmediate(() => { stop = true; });
+    try {
+      const connector = new PagedConnector(BATCHES);
+      const result = await runToCompletion(db, connector, "fixture", SOURCE, "sync", {
+        slice: { max_batches: BATCHES }, stopRequested: () => stop,
+      });
+      expect(result.has_more).toBe(true);
+      expect(result.stored).toBeLessThanOrEqual(1);
+      expect(result.errors).toEqual([]);
+    } finally {
+      clearImmediate(task);
+      db.close();
+    }
+  });
+
   test("the unsliced call keeps its contract: the batch ceiling is an error, not a yield", async () => {
     const db = database();
     try {

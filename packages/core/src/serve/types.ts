@@ -296,7 +296,7 @@ export interface ServeConfig {
   readonly journal_retention_days: number;
   /** Sync rail period, applied to the persisted schedule when the service starts. */
   readonly sync_period_s: number;
-  /** Seconds after which a connection's drain starts no further batch in one sync pass; the next pass resumes from its cursor. */
+  /** Seconds shared among connection drains in one sync pass; each resumes from its cursor after its share is spent. */
   readonly connector_drain_seconds: number;
   /** Batches one connection may drain in one sync pass. */
   readonly connector_drain_batches: number;

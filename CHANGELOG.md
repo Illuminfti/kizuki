@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Connector drains and prefilter-only extraction yield to the host between
+  durable batches, so signals and timer callbacks can stop an active pass
+  even when its promises resolve immediately.
+
 - Purge is physically total. After it, the purged text is gone from claim and
   proposal payloads (ids, provenance and receipts stay), from archive copies
   and stage images, from the search index and retrieval store, and from freed

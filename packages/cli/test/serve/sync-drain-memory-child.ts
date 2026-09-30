@@ -6,6 +6,7 @@ import { createServeRuntime } from "../../src/serve-runtime";
 
 const vault = process.argv[2]!;
 const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
+const baseline = process.memoryUsage().rss / (1024 * 1024);
 const samples: number[] = [];
 let clock = Date.parse("2026-01-15T10:00:00.000Z");
 const now = () => new Date(clock).toISOString();
@@ -35,7 +36,7 @@ try {
       };
     },
   });
-  console.log(JSON.stringify({ samples,
+  console.log(JSON.stringify({ baseline, samples,
     passes: listRunReceipts(db, { rail: "sync", limit: 30 }).map(receipt => ({
       has_more: receipt.has_more === true, events_stored: receipt.events_stored, errors: receipt.errors,
     })),
