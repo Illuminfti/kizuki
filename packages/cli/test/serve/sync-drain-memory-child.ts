@@ -8,6 +8,11 @@ import { createServeRuntime } from "../../src/serve-runtime";
 const vault = process.argv[2]!;
 const source = process.argv[3]!;
 const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
+// Idle sweeps coalesce their receipts. One pending synthetic operation with
+// no port available makes continued sweep attempts observable.
+db.query(`INSERT INTO retrieval_ops (op_id, store, op, doc_id, state, created_at)
+  VALUES ('rss-probe', 'store', 'upsert', 'doc-1', 'pending', ?)`
+).run("2026-01-15T10:00:00.000Z");
 const baseline = process.memoryUsage().rss / (1024 * 1024);
 const samples: number[] = [];
 const batches: number[] = [];

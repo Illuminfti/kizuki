@@ -16,12 +16,11 @@ const BATCH = 500;
 
 const turn = (file: number, line: number, text: string) =>
   JSON.stringify({
-    type: "user",
+    type: line % 2 === 0 ? "user" : "assistant",
     uuid: `u-${file}-${line}`,
     sessionId: `s-${file}`,
     timestamp: "2026-01-15T10:00:00.000Z",
-    cwd: "/work/example-app",
-    message: { role: "user", content: text },
+    message: { role: line % 2 === 0 ? "user" : "assistant", content: text },
   });
 
 /** A transcript tree of `files` sessions with `turns` conversation turns each. */
@@ -170,20 +169,26 @@ const TOTAL_MEMORY_GROWTH_BOUND_MB = 128;
  * tool-output-only fixture, every scanned turn reaches the ledger and derived
  * index, exercising the retained working set as well as the file reader.
  */
-function transcriptStore(root: string, files: number): { bytes: number } {
+function transcriptStore(root: string, files: number, turns: number): { bytes: number } {
   mkdirSync(join(root, "proj"), { recursive: true });
   // Keep large captured payloads without making this memory probe a tokenizer
   // benchmark. The identifier is synthetic; the importer clips every turn.
   const longTurn = "Synthetic export decision: retain this artifact identifier: " +
     "synthetic".repeat(4_800) + ". Keep the exporter and importer stable.";
+  // Encode the common payload once; fixture setup need not rescan gigabytes
+  // through JSON.stringify. Each turn still has a distinct identity and text.
+  const quotedTail = JSON.stringify(longTurn).slice(1);
   let bytes = 0;
   for (let file = 0; file < files; file++) {
     const path = join(root, "proj", `s-${file}.jsonl`);
     writeFileSync(path, "");
-    for (let start = 0; start < 2_600; start += 100) {
-      const chunk = Array.from({ length: 100 }, (_, offset) => {
+    for (let start = 0; start < turns; start += 100) {
+      const chunk = Array.from({ length: Math.min(100, turns - start) }, (_, offset) => {
         const line = start + offset;
-        return turn(file, line, `${file}.${line}: ${longTurn}`);
+        const quotedHead = JSON.stringify(`${file}.${line}: `).slice(0, -1);
+        return turn(file, line, "").replace(
+          '"content":""', () => `"content":${quotedHead}${quotedTail}`,
+        );
       }).join("\n") + "\n";
       appendFileSync(path, chunk);
       bytes += Buffer.byteLength(chunk);
@@ -194,7 +199,7 @@ function transcriptStore(root: string, files: number): { bytes: number } {
 
 test("the real serve loop keeps RSS bounded across twenty session batches", async () => {
   const sessions = h.tempDir("kizuki-sessions-drain-");
-  const { bytes } = transcriptStore(sessions, 20);
+  const { bytes } = transcriptStore(sessions, 200, 260);
   expect(bytes).toBeGreaterThan(2_048 * MEGABYTE);
   const { setup, db, sourceKey } = enrolled(sessions, "[serve]\nconnector_drain_batches = 10\nsync_period_s = 60\n");
   db.close();
@@ -220,8 +225,8 @@ test("the real serve loop keeps RSS bounded across twenty session batches", asyn
     expect(stored).toBe(passes.reduce((sum, receipt) => sum + receipt.events_stored, 0));
     expect(stored).toBe(batches.reduce((sum, count) => sum + count, 0));
     expect(stored).toBeGreaterThanOrEqual(1_000);
-    // Two sync passes have one interval between them. An idle sweep receipt
-    // may be coalesced, so prove its schedule by its position, not its count.
+    // A pending synthetic operation keeps sweeps observable. Prove their
+    // schedule by their position between the two sync passes.
     expect(sweeps.some(at => at >= passes[0]!.finished_at && at <= passes[1]!.started_at)).toBe(true);
     expect(Math.max(...samples) - baseline, `baseline ${baseline} MB; rss samples ${samples.map(Math.round).join(" ")}`)
       .toBeLessThan(TOTAL_MEMORY_GROWTH_BOUND_MB);
