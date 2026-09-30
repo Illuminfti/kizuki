@@ -1,5 +1,9 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { openLedger } from "../../src/ledger/db";
+import { inspectSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
+import { registerConnection } from "../../src/ledger/connections";
+import { accept } from "../../src/ledger/ledger";
+import { validEvent } from "../fixtures";
 import {
   MIN_RECORD_CONTENT_CHARS,
   prefilterReason,
@@ -60,7 +64,7 @@ test("a record with nothing to extract is named by reason and everything else go
   expect(
     prefilterReason({ text: "a".repeat(MIN_RECORD_CONTENT_CHARS) }),
   ).toBeNull();
-  // A very long record of emoji is decided without copying or counting all of it.
+  // A very long record of emoji is scanned without an intermediate character array.
   expect(prefilterReason({ text: "\u{1F44D}".repeat(500_000) })).toBe(
     "no_words",
   );
@@ -138,6 +142,39 @@ test("a host stop callback runs between prefilter-only extraction steps", async 
   } finally { clearImmediate(task); }
 });
 
+test("denied extraction text changes neither prefilter counts nor step usage", async () => {
+  const observed = [];
+  for (const text of ["ok", "\u{1F44D}", "", recordText(0)]) {
+    const vault = throughputVault(24, () => text);
+    const db = openLedger(vault.ledger);
+    disposers.push(vault.dispose, () => db.close());
+    const source = inspectSourceGrant(db, "01J00000000000000000000SRC")!;
+    setSourceGrant(db, {
+      source_key: source.source_key,
+      expected_revision: source.revision,
+      operation_id: "deny-extraction",
+      policy: { ...source.policy, purposes: source.policy.purposes.filter(purpose => purpose !== "extract") },
+    });
+    const { producer, calls } = fixtureProducer(() => db);
+    const receipt = await runRail(db, vault.vault, "sync", {
+      hooks: { producer, claims: { db }, model_ref: MODEL },
+    });
+    expect(calls).toEqual([]);
+    const cursor = readExtractCursor(db)?.split("\t").at(-1);
+    observed.push({
+      prefiltered: receipt.records_prefiltered,
+      calls: receipt.model.calls,
+      errors: receipt.errors,
+      stopped: receipt.stopped,
+      frontier: vault.eventIds.indexOf(cursor!),
+      deferred: db.query<{ n: number }, []>("SELECT count(*) AS n FROM extract_deferred_inputs").get()!.n,
+    });
+  }
+  expect(observed).toEqual(Array.from({ length: 4 }, () => ({
+    prefiltered: undefined, calls: 0, errors: [], stopped: null, frontier: 7, deferred: 8,
+  })));
+});
+
 test("previously deferred short records are consumed without a model call", async () => {
   const vault = throughputVault(16, index => index % 2 === 0 ? "ok" : recordText(index));
   const db = openLedger(vault.ledger);
@@ -200,6 +237,36 @@ test("a journaled decision counts its trivial records on replay after restart", 
   });
   expect(calls).toHaveLength(2);
   expect(readExtractCursor(db)?.endsWith(`\t${vault.eventIds.at(-1)!}`)).toBe(true);
+});
+
+test("journal replay does not count prefiltered text whose extraction grant was withdrawn", async () => {
+  const vault = throughputVault(1, () => "ok");
+  const db = openLedger(vault.ledger);
+  disposers.push(vault.dispose, () => db.close());
+  const source = inspectSourceGrant(db, "01J00000000000000000000SRC")!;
+  const secondSource = "01J00000000000000000000SRD";
+  registerConnection(db, "kizuki.fixture", secondSource);
+  setSourceGrant(db, {
+    source_key: secondSource, expected_revision: 0, operation_id: "replay-fixture-grant",
+    policy: source.policy,
+  });
+  const accepted = accept(db, {
+    ...validEvent(), connector_id: "kizuki.fixture", source_record_id: "replay-meaningful",
+    text: recordText(1), subjects: [],
+  }, { source: { source_key: secondSource, expected_revision: 1 } });
+  expect(accepted.status).toBe("stored");
+  const { producer, calls } = fixtureProducer(() => db);
+  journalExtractBatch(db, await mineLiveDrafts(db, producer), MODEL, producer);
+  setSourceGrant(db, {
+    source_key: source.source_key, expected_revision: source.revision, operation_id: "replay-deny-extraction",
+    policy: { ...source.policy, purposes: source.policy.purposes.filter(purpose => purpose !== "extract") },
+  });
+  const receipt = await runRail(db, vault.vault, "sync", {
+    hooks: { producer, claims: { db }, model_ref: MODEL },
+  });
+  expect(receipt.errors).toEqual([]);
+  expect(receipt.records_prefiltered).toBeUndefined();
+  expect(calls).toHaveLength(1);
 });
 
 test("short messages between real ones never reach the model and never hold the cursor back", async () => {

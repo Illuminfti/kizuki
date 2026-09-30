@@ -833,9 +833,6 @@ export async function runToCompletion(
   const sliceSpent = (batches: number): boolean => slice !== undefined &&
     (batches >= (slice.max_batches ?? Infinity) || performance.now() - started >= (slice.deadline_ms ?? Infinity));
   for (let batch = 0; batch < maxBatches; batch += 1) {
-    // Resolved connector promises can monopolize the microtask queue. Let
-    // signals and host timers run after the previous batch durably committed.
-    if (batch > 0) await yieldToHost();
     if (opts?.stopRequested?.() === true) return { ...total, has_more: true };
     // A slice always reads one batch, so a spent deadline cannot starve a source.
     if (batch > 0 && sliceSpent(batch)) {
@@ -845,6 +842,9 @@ export async function runToCompletion(
     const { result, terminal, continue_empty } = await runConnector(db, connector, connector_id, source_key, mode, context);
     absorb(total, result);
     total.cursor = stored();
+    // Even a terminal batch must deliver pending host callbacks before the
+    // caller can start another connection. The batch is already durable.
+    await yieldToHost();
     if (result.errors.length > 0) return total;
     if (terminal) return total;
     if (total.cursor === null) return total;

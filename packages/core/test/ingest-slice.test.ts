@@ -310,6 +310,29 @@ describe("runToCompletion in bounded slices", () => {
     }
   });
 
+  test("a terminal batch delivers a host stop callback before another connection can start", async () => {
+    const db = database();
+    let stop = false;
+    const task = setImmediate(() => { stop = true; });
+    try {
+      const first = new PagedConnector(1);
+      const finished = await runToCompletion(db, first, "fixture", SOURCE, "sync", {
+        slice: { max_batches: 100 }, stopRequested: () => stop,
+      });
+      expect(finished).toMatchObject({ stored: 1, cursor: "page-1", errors: [] });
+      expect(finished.has_more).toBeUndefined();
+      const next = new PagedConnector(2);
+      const stopped = await runToCompletion(db, next, "fixture", SOURCE, "sync", {
+        slice: { max_batches: 100 }, stopRequested: () => stop,
+      });
+      expect(stopped).toMatchObject({ stored: 0, cursor: "page-1", has_more: true });
+      expect(next.cursors).toEqual([]);
+    } finally {
+      clearImmediate(task);
+      db.close();
+    }
+  });
+
   test("the unsliced call keeps its contract: the batch ceiling is an error, not a yield", async () => {
     const db = database();
     try {

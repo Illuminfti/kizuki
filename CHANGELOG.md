@@ -6,7 +6,10 @@
 
 - Connector drains and prefilter-only extraction yield to the host between
   durable batches, so signals and timer callbacks can stop an active pass
-  even when its promises resolve immediately.
+  even when its promises resolve immediately. Terminal batches yield before
+  another connection can start.
+- Extraction prefilter counts obey current source permission, including journal
+  replay. Denied text cannot change skip counters or extraction step usage.
 
 - Purge is physically total. After it, the purged text is gone from claim and
   proposal payloads (ids, provenance and receipts stay), from archive copies
@@ -417,7 +420,7 @@
   pass within one batch and skip the derived refresh until the next start.
   `kizuki sync [connector]` and `kizuki backfill` still drain to exhaustion;
   `kizuki sync --once` takes the rail's slice.
-- Extraction skips records with nothing to extract before any model request:
+- Extraction skips authorized records with nothing to extract before any model request:
   explicit service kinds (`service`), no text at all (`empty`), no letter or digit (`no_words`, such as emoji or
   punctuation) and fewer than 12 letters and digits (`too_short`; each Han,
   kana or hangul character counts four). The cursor moves past them, they are

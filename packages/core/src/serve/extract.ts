@@ -1022,12 +1022,13 @@ function withPrefiltered(mined: MineResult, prefiltered: ReadonlyMap<string, Pre
 }
 
 /** Reconstruct skip counts from a journal's input partition after its frontier commit. */
-export function replayedPrefilterCounts(db: Database, batch: DurableExtractBatch): Readonly<Partial<Record<PrefilterReason, number>>> | undefined {
+export function replayedPrefilterCounts(db: Database, batch: DurableExtractBatch, producer: ExtractionProducerPort): Readonly<Partial<Record<PrefilterReason, number>>> | undefined {
   if (batch.filing_version === null || batch.mode !== "frontier" || readExtractCursor(db) === batch.previous_cursor) return undefined;
   const requested = new Set([...batch.model_inputs, ...batch.deferred_inputs].map(input => input.event_id));
   const counts: Partial<Record<PrefilterReason, number>> = {};
   for (const id of batch.input_ids) {
     if (requested.has(id)) continue;
+    if (!sourceEventsAllowed(db, [id], { owner: false, purpose: "extract", model: true, port: producer })) continue;
     const event = readEvent(db, id);
     if (event === null || !extractEligible(db, event)) continue;
     const reason = prefilterReason(event);
@@ -1120,16 +1121,18 @@ async function mineBatch(
     const eligible = db.transaction(() =>
       batch.events.filter(event => extractEligible(db, event)),
     ).immediate();
-    // Nothing a model could use never waits for consent either: it is not deferred.
-    const meaningful = eligible.filter(event => {
+    // Check permission before inspecting content. Denied text must change
+    // neither prefilter counts nor the number of steps this pass spends.
+    const authorized = eligible.filter(event => sourceEventsAllowed(db, [event.event_id], scope));
+    usable = authorized.filter(event => {
       const reason = prefilterReason(event);
       if (reason !== null) prefiltered.set(event.event_id, reason);
       return reason === null;
     });
-    usable = meaningful.filter(event => sourceEventsAllowed(db, [event.event_id], scope));
     modelInputs = usable.map(event => sourceInput(db, event, producer));
-    deferredInputs = source_epoch === 0 ? [] : meaningful
-      .filter(event => !usable.some(candidate => candidate.event_id === event.event_id))
+    const authorizedIds = new Set(authorized.map(event => event.event_id));
+    deferredInputs = source_epoch === 0 ? [] : eligible
+      .filter(event => !authorizedIds.has(event.event_id))
       .map(event => sourceInput(db, event, producer));
     if (usable.length === 0 && source_epoch > 0) {
       return { source_epoch, mined: { status: "deferred", count: deferredInputs.length }, drafts: [],

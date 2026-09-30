@@ -651,7 +651,7 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
     // Replay files an existing decision; it is not another extraction.
     const filed = await fileProducedDrafts(claims, pending, producer);
     if (filed === null) return settled("stop", { errors: ["extract cursor changed before durable batch commit"] });
-    const prefiltered = replayedPrefilterCounts(db, pending);
+    const prefiltered = replayedPrefilterCounts(db, pending, producer);
     return settled("continue", { deduped: filed.deduped, superseded: filed.superseded,
       ...(prefiltered === undefined ? {} : { prefiltered }) });
   });

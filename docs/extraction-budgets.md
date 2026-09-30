@@ -150,8 +150,9 @@ follow a single order.
 
 ## Records with nothing to extract
 
-Before it plans a request, the loop classifies trivial records using a fixed,
-deterministic rule over their kind and text:
+Before it plans a request, the loop checks extraction permission, then
+classifies authorized trivial records using a fixed, deterministic rule over
+their kind and text:
 
 | Reason | Record |
 | --- | --- |
@@ -160,15 +161,17 @@ deterministic rule over their kind and text:
 | `no_words` | Text with no letter or digit, such as emoji or punctuation. |
 | `too_short` | Fewer than 12 letters and digits, such as `ok`, `thanks!` or `12:30`. Each Han, kana or hangul character counts four. |
 
-The cursor moves past such a record without a request, and it is not queued
-for later the way a record a source grant does not yet cover is. The pass's
-run receipt counts them by reason in `records_prefiltered`, and only for
-records its committed cursor passed: a step that reads more records than one
+The cursor moves past such an authorized record without a request. A record
+whose source grant does not permit extraction stays deferred regardless of its
+text; it contributes no prefilter count and retains ordinary step accounting.
+The pass's run receipt counts authorized skips by reason in
+`records_prefiltered`, only for records its committed cursor passed: a step that reads more records than one
 request takes counts the rest when a later step passes them. The ledger keeps
 every record, so search, timeline, context and a source purge are unaffected.
 Trivial records beside a segmented record are counted when its final segment
 commits the cursor. A journaled decision replayed after restart reconstructs
-the counts from its durable input partition without another model request.
+the counts from its durable input partition under current extraction permission,
+without another model request.
 Older deferred records are checked too, under their current extraction grant,
 and removed from that queue in the same durable step. This is a minimum-content
 rule, not a semantic classifier: a short fact below the threshold is also
