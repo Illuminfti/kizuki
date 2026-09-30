@@ -12,7 +12,7 @@ export function validOverlap(a: Relation["valid"], b: Relation["valid"]): boolea
     (a.until === null || compareRfc3339(b.from, "from", a.until, "until") < 0);
 }
 
-const SINGLE = new Set(["concept.definition", "learning.assistance", "situation.objective", "situation.blocker", "situation.change"]);
+const SINGLE = new Set(["concept.definition", "learning.assistance"]);
 export const conflictEnricher: Enricher = (frame, body) => {
   const complete = !body.overflow && body.gaps.length === 0 && sourceCoverage(frame.ctx).length === 0;
   return { ...body, claims: body.claims.map((claim) => {

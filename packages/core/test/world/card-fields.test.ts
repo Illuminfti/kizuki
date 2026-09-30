@@ -3,6 +3,10 @@ import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
 import { setSourceGrant } from "../../src/ledger/source-grants";
 import { cardFixture } from "./card-fixture";
 import { observe } from "../helpers/noninterference";
+import { openLedger } from "../../src/ledger/db";
+import { worldFixture } from "../serving/world-fixture";
+import { worldSeed } from "../helpers/world-seed";
+import { readWorldView } from "@kizuki/core/world";
 
 test("overlapping definitions and opposite polarities mark both claims conflicting", async () => {
   const f = await cardFixture();
@@ -100,4 +104,19 @@ test("assistance for another actor, another task or a disjoint valid window cann
     expect(application.assistanceEvidence).toHaveLength(1);
     expect(application.assistanceEvidence[0]!.conflict).toBe("none_observed");
   } finally { f.dispose(); }
+});
+
+test("several stated Situation blockers are uncertain slots, not contradictory facts", async () => {
+  const db = openLedger(":memory:");
+  try {
+    const f = await worldFixture(db, { kind: "situation", subject: "project:launch", label: "Launch" });
+    await worldSeed(db, { sourceKey: f.sourceKey, kind: "situation", subject: "project:launch", label: "Launch", predicates: [
+      { predicate: "situation.blocker", object: { kind: "literal", value: "Pending materials" } },
+      { predicate: "situation.blocker", object: { kind: "literal", value: "Pending scheduling" } },
+    ] });
+    const result = readWorldView(f.ctx, { operation: "situation", situation: f.ref, valid: { kind: "all" }, knownAt: { kind: "current" } });
+    if (!("result" in result) || result.result.status === "unavailable" || result.result.data.schema !== "kizuki.situation-card/v1") throw new Error("situation unavailable");
+    expect(result.result.data.blocker).toBeNull();
+    expect(result.result.data.uncertainty.filter((r) => r.predicate === "situation.blocker").map((r) => r.conflict)).toEqual(["none_observed", "none_observed"]);
+  } finally { db.close(); }
 });
