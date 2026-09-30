@@ -27,11 +27,15 @@ const ID_CHUNK = 500;
 /** False means the scan was truncated, never that the unscanned tail was clean. */
 function metadataLines(value: unknown, key: string, out: string[], depth: number): boolean {
   if (out.length >= MAX_METADATA_VALUES || depth > EVENT_LIMITS.metadataDepth) return false;
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") out.push(`${key}=${value}`);
-  else if (Array.isArray(value)) {
-    for (const item of value) if (!metadataLines(item, key, out, depth + 1)) return false;
-  } else if (value !== null && typeof value === "object") {
-    for (const [name, item] of Object.entries(value)) if (!metadataLines(item, name, out, depth + 1)) return false;
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") out.push(`${key}=${value}`);
+  else {
+    // Container keys are captured text too, including keys with no scalar leaf.
+    out.push(key);
+    if (Array.isArray(value)) {
+      for (const item of value) if (!metadataLines(item, key, out, depth + 1)) return false;
+    } else if (typeof value === "object") {
+      for (const [name, item] of Object.entries(value)) if (!metadataLines(item, name, out, depth + 1)) return false;
+    }
   }
   return true;
 }

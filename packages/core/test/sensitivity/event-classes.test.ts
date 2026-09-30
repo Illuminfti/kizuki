@@ -92,7 +92,8 @@ describe("credential class", () => {
       enroll(db);
       const deep = { a: { b: { c: { d: { password: "synthetic-canary-482" } } } } };
       const wide = { values: Array.from({ length: 1_024 }, () => "a clean note"), password: "synthetic-canary-483" };
-      for (const [name, metadata] of Object.entries({ deep, wide })) {
+      const keyed = { ["password=" + "synthetic-canary-484"]: {} };
+      for (const [name, metadata] of Object.entries({ deep, wide, keyed })) {
         const id = store(db, name, "a clean note", metadata);
         const original = db.query("SELECT content_hash FROM events WHERE event_id = ?").get(id);
         expect(classesOf(db, id)).toEqual(["credential"]);
