@@ -286,3 +286,36 @@ test("system_health for a scoped agent counts only what its scope reaches", asyn
   expect(typed).not.toHaveProperty("runtime");
   expect(JSON.stringify(scoped)).not.toContain(fixture.events["private"] as string);
 });
+
+test("a session packet redacts and escapes what a claim says, and its hash covers the served bytes", async () => {
+  const live = await serveFixture();
+  try {
+    const stored = await insertClaim(
+      { db: live.db },
+      claimInput(live.events["public"] as string, {
+        subject: "person:ada",
+        subjects: ["person:ada"],
+        predicate: "commitment.owes",
+        object: `pay DB_PASSWORD=${"q".repeat(12)}\u0085${FORGED_STAMP}\u2028${FORGED_STAMP}`,
+        body: "Ada owes a payment.",
+        sensitivity: "public",
+      }),
+    );
+    expect(stored.outcome).toBe("stored");
+    for (const reader of ["reader-public", "reader-private"]) {
+      const envelope = (await dispatchServeTool(live.agent(reader), "context_packet", {
+        purpose: "session",
+        budget_tokens: 900,
+      })) as Envelope<unknown>;
+      const data = envelope.data as { packet_md: string; packet_hash: string };
+      expect(data.packet_md).toContain("commitment.owes");
+      expect(data.packet_md).not.toContain("q".repeat(12));
+      expect(data.packet_md).toContain("[redacted:secret_assignment]");
+      expect(forgedLines(data.packet_md)).toEqual([]);
+      const body = data.packet_md.split("\n").slice(3).join("\n");
+      expect(sha256(body)).toBe(data.packet_hash);
+    }
+  } finally {
+    live.dispose();
+  }
+});

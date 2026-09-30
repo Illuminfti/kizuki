@@ -1,7 +1,7 @@
-import { REDACTED } from "./redaction";
 import { AUTHORITY_TIERS, ENVELOPE_SCHEMA, PAGE_TAINTS, TOOLS } from "@kizuki/core";
 import type { Tool } from "@kizuki/core";
 import { z } from "zod";
+import { REDACTED } from "./redaction";
 import { MCP_WORLD_OPS } from "./world/ops";
 import { buildWorldSurface } from "./world/surface";
 
@@ -66,8 +66,6 @@ const SOURCE_POLICY = z.strictObject({
   epoch: z.int().min(1),
   legacy_unbound: z.literal("owner_only"),
 });
-
-/** Credential-shaped spans replaced in one response, per kind; present only when something was. */
 
 export const ENVELOPE_SHAPE = z.strictObject({
   schema: z.literal(ENVELOPE_SCHEMA),

@@ -25,6 +25,7 @@ import {
 import { ENTITY_TYPES } from "./entities";
 import { collectAuthorizedTimeline } from "./ledger";
 import { blockquote, oneLine, redactorOf, stripInvisible } from "./redact";
+import type { Redactor } from "./redact";
 import { retrievalCandidates, retrievalGraphCandidates } from "./retrieval";
 import type { PacketSection, SessionSection } from "./sections";
 import type { CanonChunk, QuotedChunk, ServeContext } from "./types";
@@ -120,8 +121,10 @@ function confidenceLabel(value: number): string {
 }
 
 /** One stamped working-knowledge line; every claim-controlled scalar stays escaped. */
-export function claimLine(claim: Claim): string {
-  const object = claim.object ?? "";
+export function claimLine(claim: Claim, redactor?: Redactor): string {
+  // The object is redacted before it is quoted, so a value in quotes still
+  // reads as a value to the scrubber, and escaped so no line break survives.
+  const object = redactor === undefined ? claim.object ?? "" : redactor.text(claim.object ?? "");
   return (
     `- [claim:${inline(claim.claim_id)}] c=${confidenceLabel(claim.confidence)}` +
     ` s=${claim.sensitivity} taint=${claim.taint} auth=${claim.authority} status=${claim.status}` +
@@ -396,9 +399,7 @@ export async function collectPieces(
       pieces.push({
         section: "claims",
         heading: "## working knowledge",
-        // The object is redacted before it is quoted, so a value in quotes
-        // still reads as a value to the scrubber.
-        block: claimLine({ ...claim, object: claim.object === null ? null : redactorOf(ctx).text(claim.object) }),
+        block: claimLine(claim, redactorOf(ctx)),
         audit: reader.auditClaim(claim.claim_id),
       });
     }
