@@ -32,7 +32,10 @@ to their command's validation; `--vault` requires a nonempty value. Missing
 values and unknown options are usage errors.
 
 `--json` prints a `kizuki.cli.<verb>/v1` envelope with `status`, `data`,
-`degraded`, and `warnings`. Diagnostics stay on stderr.
+`degraded`, and `warnings`. Diagnostics stay on stderr. Stdout and stderr are
+written completely before the process exits, so a document larger than the
+pipe buffer reaches `| jq` or a hook whole; a reader that closes early ends
+the output without an error.
 
 Exit codes: `0` success, `1` runtime failure, `2` usage / unknown / retired
 verb. Promised output is on stdout. Diagnostics go to stderr.
@@ -359,13 +362,18 @@ checkpoint. `database is locked` is not an error this CLI reports.
 ## query
 
 ```text
-usage: kizuki query <text> [--scope canon|ledger|all] [--limit N] [--json] [--degraded]
+usage: kizuki query <text> [--scope canon|ledger|all] [--limit N] [--json] [--degraded] [--full-text]
 ```
 
 FTS floor. Ceiling is `private`. Unlabeled hits are withheld on stderr
 (`withheld=N (no sensitivity label)`). A stale or partial index exits `1`
 unless `--degraded` is set. Zero labeled hits and zero withheld prints
 `0 hits` on stderr.
+
+Ledger hits carry an excerpt of the captured record, at most 600 characters.
+A cut excerpt ends with `…` in text output and has `"truncated": true` in
+`--json`. `--full-text` returns whole records; a large capture then makes a
+large document. Canon hits are unchanged.
 
 Reads wait out ordinary daemon writes rather than failing: `query` and
 `context` keep the owner access-audit writer on the same bounded busy timeout
