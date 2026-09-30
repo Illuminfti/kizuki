@@ -135,6 +135,19 @@ function checkpointState(db: Database, connector: string, source: string): { che
   catch { return { checkpoint: null, unreadable: true }; }
 }
 
+/** Lexical instant order, followed by the original accepted spelling. */
+function occurrenceBoundSql(column: string): string {
+  const seconds = instantSecondSql(column);
+  // UTC evidence needs no calendar conversion. Numeric offsets use the same
+  // normalization as grant windows, including offsets beyond SQLite's limit.
+  // The latest supported offset can carry year 9999 into year 10000, outside
+  // strftime's range; its positive epoch key sorts after all four-digit years.
+  const wall = `replace(substr(${column}, 1, 17) || CASE WHEN substr(${column}, 18, 2) = '60' THEN '59' ELSE substr(${column}, 18, 2) END, 't', 'T')`;
+  return `(CASE WHEN lower(substr(${column}, -1)) = 'z' THEN ${wall}
+    ELSE coalesce(strftime('%Y-%m-%dT%H:%M:%S', ${seconds}, 'unixepoch'), '~' || printf('%012d', ${seconds})) END
+    || '.' || printf('%09d', ${instantNanoSql(column)}) || char(9) || ${column})`;
+}
+
 function coverageReports(db: Database, sources: readonly string[] | null, filter: { clauses: string[]; bindings: (string | number)[] } | null, inventoryVisible = filter === null): SourceCoverageReport[] {
   const reports: SourceCoverageReport[] = [];
   for (const item of inspectConnections(db, { includeDisconnected: true, ...(sources === null ? {} : { sourceKeys: sources }) })) {
@@ -146,18 +159,14 @@ function coverageReports(db: Database, sources: readonly string[] | null, filter
     const clauses = filter?.clauses ?? [LIVE_PREDICATE];
     const bindings = filter?.bindings ?? [];
     const where = `b.source_key=? AND ${clauses.join(" AND ")}`;
-    // Shift epoch seconds to year zero for positive, fixed-width keys. Reuse
-    // grant-window ordering, including nanoseconds, leap seconds and offsets.
-    // Keep the original timestamp behind the 23-character ordering prefix;
-    // aggregate both bounds in one pass instead of sorting twice.
+    // Aggregate both bounds in one pass, preserving the accepted timestamp.
     const totals = db.query<{ ingested: number; first: string | null; last: string | null }, (string | number)[]>(
       `WITH eligible AS MATERIALIZED (
-         SELECT printf('%012d:%09d:%s', ${instantSecondSql("events.occurred_at")} + 62167219200,
-             ${instantNanoSql("events.occurred_at")}, events.occurred_at) AS bound
+         SELECT ${occurrenceBoundSql("events.occurred_at")} AS bound
          FROM source_event_bindings b JOIN events ON events.event_id=b.event_id WHERE ${where}
-       ) SELECT count(*) AS ingested, substr(min(bound),24) AS first,
-         substr(max(bound),24) AS last FROM eligible`
+       ) SELECT count(*) AS ingested, min(bound) AS first, max(bound) AS last FROM eligible`
     ).get(source, ...bindings)!;
+    const original = (bound: string | null) => bound === null ? null : bound.slice(bound.indexOf("\t") + 1);
     const errors = checkpoint?.last_result.errors.length ?? 0;
     const complete = checkpoint?.backfill_complete === true;
     const state = unreadable ? "unreadable" : errors > 0 ? "failed" : complete ? "complete" : checkpoint === null ? "never_run" : "in_progress";
@@ -175,7 +184,7 @@ function coverageReports(db: Database, sources: readonly string[] | null, filter
     if (errors > 0 || (scan?.failed ?? 0) > 0) add("failed_pass", "The latest capture pass has failures.", "Resolve the error class and retry this source.");
     reports.push({ connector_id: connector, source_key: source, scanned: scan?.scanned ?? null, ingested: totals.ingested,
       excluded: scan?.excluded ?? [], pending: scan?.pending ?? null, failed: scan == null ? (errors > 0 ? errors : null) : Math.max(scan.failed, errors),
-      truncated: scan?.truncated ?? null, first_occurred_at: totals.first, last_occurred_at: totals.last,
+      truncated: scan?.truncated ?? null, first_occurred_at: original(totals.first), last_occurred_at: original(totals.last),
       backfill_complete: complete, backfill_state: state, last_successful_pass_at: pass?.last_successful_pass_at ?? null,
       last_error_class: unreadable ? "unreadable_state" : pass?.last_error_class ?? (errors > 0 ? "failed" : null), blind_spots });
   }

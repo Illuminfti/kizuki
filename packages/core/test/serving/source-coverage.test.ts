@@ -6,6 +6,9 @@ import { validEvent } from "../fixtures";
 import { inspectSourceCoverage, readSourceCoverage } from "../../src/world/coverage";
 import { worldFixture } from "./world-fixture";
 import { disconnect, registerConnection } from "../../src/ledger/connections";
+import { rfc3339Instant } from "../../src/agents/time";
+import { instantNanoSql, instantSecondSql } from "../../src/query/sql";
+import { LIVE_PREDICATE } from "../../src/ledger/ledger";
 
 test("coverage filters hidden sources before reading their malformed checkpoints", async () => {
   const db = openLedger(":memory:");
@@ -68,6 +71,28 @@ test("owner diagnostics disclose never-run and disconnected sources without evid
   } finally { db.close(); }
 });
 
+test("coverage bounds agree with grant instant ordering at timestamp boundaries", async () => {
+  const groups = [
+    ["0001-01-01T00:00:00+23:59", "9999-12-31T23:59:59-23:59"],
+    ["2026-04-01t00:00:00.000000001z", "2026-04-01T00:00:00.000000002+00:00"],
+    ["2026-04-01T00:59:60Z", "2026-04-01T00:59:59.999999998Z"],
+    ["2026-01-01T00:00:00Z", "2026-01-01T23:59:00+23:59"],
+  ];
+  for (const inputs of groups) {
+    const db = openLedger(":memory:");
+    try {
+      const seen = await worldFixture(db);
+      for (const [i, at] of inputs.entries()) {
+        expect(accept(db, { ...validEvent(), connector_id: "world.fixture", source_record_id: `boundary-${i}`, occurred_at: at },
+          { source: { source_key: seen.sourceKey, expected_revision: 1 } }).status).toBe("stored");
+      }
+      const order = (at: string) => rfc3339Instant(at, "fixture");
+      const all = [...inputs, validEvent().occurred_at].sort((a, b) => order(a).epochSecond - order(b).epochSecond || order(a).nanos - order(b).nanos || (a < b ? -1 : a > b ? 1 : 0));
+      expect(inspectSourceCoverage(db)[0]).toMatchObject({ first_occurred_at: all[0], last_occurred_at: all.at(-1) });
+    } finally { db.close(); }
+  }
+});
+
 
 test("owner coverage aggregates a synthetic 50000-record ledger without a filesystem inventory", async () => {
   const db = openLedger(":memory:");
@@ -81,7 +106,17 @@ test("owner coverage aggregates a synthetic 50000-record ledger without a filesy
       }
     })();
     const timings: number[] = [];
+    const previous = db.query<{ ingested: number }, [string]>(`WITH eligible AS MATERIALIZED (
+      SELECT printf('%012d:%09d:%s', ${instantSecondSql("events.occurred_at")} + 62167219200,
+        ${instantNanoSql("events.occurred_at")}, events.occurred_at) AS bound
+      FROM source_event_bindings b JOIN events ON events.event_id=b.event_id
+      WHERE b.source_key=? AND ${LIVE_PREDICATE}
+    ) SELECT count(*) AS ingested, min(bound), max(bound) FROM eligible`);
+    const baseline: number[] = [];
     for (let i = 0; i < 3; i++) {
+      const oldStart = performance.now();
+      expect(previous.get(seen.sourceKey)!.ingested).toBe(50_000);
+      baseline.push(performance.now() - oldStart);
       const start = performance.now();
       const report = inspectSourceCoverage(db);
       timings.push(performance.now() - start);
@@ -89,5 +124,6 @@ test("owner coverage aggregates a synthetic 50000-record ledger without a filesy
       expect(report[0]!.scanned).toBeNull();
     }
     console.info(`source coverage 50000-record collection milliseconds: ${timings.map(n => n.toFixed(2)).join(", ")}`);
+    console.info(`previous timestamp aggregation milliseconds: ${baseline.map(n => n.toFixed(2)).join(", ")}`);
   } finally { db.close(); }
 }, 120_000);
