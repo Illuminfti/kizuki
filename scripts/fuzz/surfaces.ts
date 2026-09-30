@@ -57,6 +57,8 @@ export async function surfaceDriver(target: typeof SURFACES[number], scratch: st
             if (response.status >= 500) throw new Error("http-crash");
             const result = await response.text();
             if (result.length > 1024 * 1024) throw new Error("output-unbounded");
+            const envelope = JSON.parse(result) as { error?: { code?: unknown } };
+            if (envelope.error?.code === "error") throw new Error("http-crash");
           }
         }
       }

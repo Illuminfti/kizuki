@@ -1,11 +1,26 @@
 import { join } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { cases, CORPUS_SIZE } from "./cases";
 import { CI_SEED, runFuzz, TARGETS } from "./run";
 import { supervise } from "./supervisor";
 import { parseCase } from "./parsers";
+import { surfaceDriver } from "./surfaces";
 
 const linuxTest = test.if(process.platform === "linux");
+
+test("a generic HTTP serving failure fails the campaign instead of counting as refusal", async () => {
+  const scratch = mkdtempSync(join(tmpdir(), "kizuki-fuzz-http-"));
+  const driver = await surfaceDriver("http", scratch);
+  try {
+    const db = new Database(join(scratch, "vault/.kizuki/kizuki.db"));
+    try { db.exec("DROP TABLE events"); } finally { db.close(); }
+    const text = "{}";
+    await expect(driver.run({ id: "synthetic", text, bytes: Buffer.from(text) })).rejects.toThrow("http-crash");
+  } finally { await driver.close(); rmSync(scratch, { recursive: true, force: true }); }
+});
 
 test("wrapped Gmail corpus reaches MIME body parsing and emits valid evidence", () => {
   const text = "synthetic MIME evidence";

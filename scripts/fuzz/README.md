@@ -112,6 +112,9 @@ The pinned MCP SDK already caps its stdio read buffer. An absent-buffer-bound
 claim did not reproduce, so this branch does not replace the SDK transport.
 The mutation target exercises MCP arguments over real JSON-RPC rather than
 pretending that calling a schema validator alone tests the adapter.
+Generic MCP and standing HTTP serving failures fail the campaign, even when
+the adapter encodes them as an error result or HTTP 400. Regressions damage
+only synthetic storage to prove these failures cannot count as parser refusals.
 
 The context-packet newline/stamp and Unicode-tag regression passes on the
 current base after its serving-redaction change. The regression is enabled in
