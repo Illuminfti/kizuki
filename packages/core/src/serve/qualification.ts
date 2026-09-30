@@ -44,7 +44,7 @@ function periodAllowed(rail: string, period_s: number): boolean {
 }
 /** The hour a daily rail's slot is pinned to, or null for a rail on a fixed period. */
 function slotHour(profile: QualificationProfile, rail: string): number | null {
-  return railDefinition(rail)?.slot_hour === undefined ? null : profile.brief_hour;
+  return railDefinition(rail)?.slot_hour?.({ brief_hour: profile.brief_hour }) ?? null;
 }
 export function qualificationDate(value: unknown): number {
   if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value)) throw new Error("invalid evidence timestamp");

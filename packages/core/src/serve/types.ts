@@ -62,22 +62,6 @@ export const CONFIDENCE_SPREAD_MIN = 0.02;
 
 export const WRITER_LEASE = "writer";
 
-/**
- * The rails that ship with the loop, and their starting schedule. The ledger
- * seeds this table when a vault opens and must not import the rail registry
- * (it would pull the daemon into the ledger's import graph), so the numbers
- * live here. `rail-registry.ts` builds each shipped definition from this table.
- */
-export const RAIL_IDS = [
-  "sync",
-  "retrieval-sweep",
-  "purge-sweep",
-  "embed-backfill",
-  "brief",
-  "doctor-sweep",
-  "journal-prune",
-] as const;
-export type ShippedRailId = (typeof RAIL_IDS)[number];
 /** Any registered rail's id. `isRailId` in `rail-registry.ts` says whether one is registered. */
 export type RailId = string;
 
@@ -112,16 +96,6 @@ export interface RailSpec {
   readonly jitter_s: number;
   readonly enabled: boolean;
 }
-
-export const DEFAULT_RAILS: readonly (RailSpec & { readonly rail: ShippedRailId })[] = [
-  { rail: "sync", period_s: DEFAULT_SYNC_PERIOD_S, jitter_s: 90, enabled: true },
-  { rail: "retrieval-sweep", period_s: 5 * 60, jitter_s: 0, enabled: true },
-  { rail: "purge-sweep", period_s: 10 * 60, jitter_s: 0, enabled: true },
-  { rail: "embed-backfill", period_s: 60, jitter_s: 0, enabled: true },
-  { rail: "brief", period_s: 24 * 60 * 60, jitter_s: 0, enabled: true },
-  { rail: "doctor-sweep", period_s: 60 * 60, jitter_s: 0, enabled: true },
-  { rail: "journal-prune", period_s: 24 * 60 * 60, jitter_s: 0, enabled: true },
-];
 
 export interface ScheduleRow {
   readonly rail: RailId;

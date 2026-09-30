@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { openLedger } from "../../src/ledger/db";
@@ -14,16 +14,15 @@ import {
   listRails,
   registerRail,
   renderRailsTable,
-  railSchedules,
-  seedRailSchedules,
   type RailDefinition,
 } from "../../src/serve/rail-registry";
 import { dueRails, runRail, runServeOnce } from "../../src/serve/rails";
 import { listRunReceipts, persistRunReceipt, readRunReceiptsLog, recoverRunJournal } from "../../src/serve/receipts";
-import { listSchedules } from "../../src/serve/schema";
+import { listSchedules, seedSchedules } from "../../src/serve/schema";
 import { writeServeIntent } from "../../src/serve/intent";
 import type { SupervisorHost } from "../../src/serve/supervisor";
-import { DEFAULT_RAILS, InjectedCrash, RAIL_IDS, ServeDaemonError, WRITER_LEASE, emptyRunTotals, type RunReceipt } from "../../src/serve/types";
+import { InjectedCrash, ServeDaemonError, WRITER_LEASE, emptyRunTotals, type RunReceipt } from "../../src/serve/types";
+import { DEFAULT_RAILS, RAIL_IDS } from "../../src/serve/rail-registry";
 
 // Some of these tests start a real process; bound them for a loaded host.
 setDefaultTimeout(60_000);
@@ -77,12 +76,10 @@ describe("the registry", () => {
     expect(listRails().map((rail) => rail.id)).toEqual([...RAIL_IDS]);
   });
 
-  test("the ledger layer seeds the shipped schedule without reaching the registry", () => {
+  test("the ledger layer seeds every registered definition", () => {
+    register();
     const { db } = vault();
     expect(listSchedules(db).map((row) => row.rail).sort()).toEqual([...RAIL_IDS].sort());
-    for (const file of ["schema.ts", "types.ts", "config.ts"]) {
-      expect(readFileSync(join(import.meta.dir, "../../src/serve", file), "utf8"), file).not.toMatch(/from\s+"[^"]*(?:rail-registry|builtin-rails|rail-definition)"/);
-    }
   });
 
   test("defineRail refuses ids and schedules the loop could not use", () => {
@@ -108,11 +105,11 @@ describe("the registry", () => {
 
   test("schedule seeding and the due list follow the registry", () => {
     const { db } = vault();
-    expect(railSchedules(db).map((row) => row.rail)).not.toContain("fixture-rail");
-    register();
-    seedRailSchedules(db);
     expect(listSchedules(db).map((row) => row.rail)).not.toContain("fixture-rail");
-    const row = railSchedules(db).find((item) => item.rail === "fixture-rail");
+    register();
+    seedSchedules(db);
+    expect(listSchedules(db).map((row) => row.rail)).toContain("fixture-rail");
+    const row = listSchedules(db).find((item) => item.rail === "fixture-rail");
     expect(row).toMatchObject({ period_s: 300, jitter_s: 0, enabled: true });
     expect(dueRails(db, "2026-10-01T00:00:00Z")).toContain("fixture-rail");
     db.query("UPDATE schedules SET enabled = 0 WHERE rail = 'fixture-rail'").run();
@@ -164,7 +161,7 @@ describe("running a registered rail", () => {
   test("a one-shot pass skips a disabled rail", async () => {
     const { path, db } = vault();
     register();
-    seedRailSchedules(db);
+    seedSchedules(db);
     db.query("UPDATE schedules SET enabled = 0 WHERE rail = 'fixture-rail'").run();
     const receipts = await runServeOnce(db, path, { now: () => "2026-10-01T00:00:00Z" });
     expect(receipts.map((receipt) => receipt.rail)).not.toContain("fixture-rail");
@@ -267,12 +264,12 @@ describe("doctor and a registered rail", () => {
 });
 
 describe("a kill mid-run leaves a consistent receipt", () => {
-  const schedule = (db: ReturnType<typeof vault>["db"]) => railSchedules(db).find((row) => row.rail === "fixture-rail")!;
+  const schedule = (db: ReturnType<typeof vault>["db"]) => listSchedules(db).find((row) => row.rail === "fixture-rail")!;
 
   test("an interruption before the receipt lands leaves nothing to reconcile", async () => {
     const { path, db } = vault();
     register({ run: () => { throw new InjectedCrash("after-file"); } });
-    seedRailSchedules(db);
+    seedSchedules(db);
     const before = schedule(db);
     await expect(runRail(db, path, "fixture-rail")).rejects.toBeInstanceOf(InjectedCrash);
     expect(listRunReceipts(db)).toEqual([]);
@@ -284,7 +281,7 @@ describe("a kill mid-run leaves a consistent receipt", () => {
     test(`a crash ${crashAfter} converges on one receipt and one schedule step`, async () => {
       const { path, db } = vault();
       register();
-      seedRailSchedules(db);
+      seedSchedules(db);
       const first = schedule(db).next_run_at;
       await expect(runRail(db, path, "fixture-rail", { crashAfter })).rejects.toBeInstanceOf(InjectedCrash);
       recoverRunJournal(db, path);
@@ -336,7 +333,17 @@ describe("the operator docs", () => {
       return;
     }
     const body = doc.slice(doc.indexOf(START) + START.length, doc.indexOf(END)).trim();
-    expect(body, "regenerate with: KIZUKI_WRITE_RAILS_DOC=1 bun test packages/core/test/serve/rail-registry.test.ts").toBe(table);
+    expect(body, "regenerate with: KIZUKI_WRITE_RAILS_DOC=1 ktest bun test packages/core/test/serve/rail-registry.test.ts --timeout 120000").toBe(table);
+  });
+
+  test("the operator seam catalogue names implementation and executable tests", () => {
+    const root = join(import.meta.dir, "../../../..");
+    const entries = JSON.parse(readFileSync(join(root, "docs/world/packet-seams.json"), "utf8")) as {
+      packet: string; implementation: string[]; tests: string[]; docs: string;
+    }[];
+    const entry = entries.find((row) => row.packet === "F5")!;
+    expect(entry).toBeDefined();
+    for (const path of [...entry.implementation, ...entry.tests, entry.docs]) expect(existsSync(join(root, path))).toBe(true);
   });
 
   test("a rail registered at runtime stays out of the shipped table", () => {

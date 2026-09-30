@@ -51,7 +51,7 @@ interface RailFields {
   /** The longer period the rail may back off to while it has no configured work. */
   readonly idle_period_s?: number;
   /** Pins the due slot to this UTC hour of the day instead of a fixed period. */
-  readonly slot_hour?: (config: ServeConfig) => number;
+  readonly slot_hour?: (config: Pick<ServeConfig, "brief_hour">) => number;
   /** The file a run leaves behind. A rail that writes one always keeps its receipt, idle or not. */
   readonly artifact?: (vaultPath: string, day: string) => string;
   /** The rail ends degraded to report what doctor found, so a degraded streak is not its own fault. */

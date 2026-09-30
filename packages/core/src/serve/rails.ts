@@ -20,8 +20,8 @@ import { parseFrontmatter } from "../vault/frontmatter";
 import { inspectServeDoctor } from "./doctor";
 import { createFileNotifier } from "./notifier-file";
 import { CAPTURE_REPAIR_RECEIPT_PENDING, stageCaptureRepairReceipt, coalesceNoopReceipt, recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
-import { applyRailPeriod, initServe } from "./schema";
-import { railDefinition, railSchedules, seedRailSchedules } from "./rail-registry";
+import { applyRailPeriod, initServe, listSchedules } from "./schema";
+import { railDefinition } from "./rail-registry";
 import type { RailRunContext } from "./rail-definition";
 import {
   InjectedCrash,
@@ -141,7 +141,7 @@ function nextHourUtc(now: string, hour: number): string {
 
 export function dueRails(db: Database, now: string): RailId[] {
   const due: RailId[] = [];
-  for (const schedule of railSchedules(db)) {
+  for (const schedule of listSchedules(db)) {
     if (!schedule.enabled) continue;
     if (schedule.next_run_at === null || schedule.next_run_at <= now) {
       due.push(schedule.rail);
@@ -451,8 +451,7 @@ async function runRailImpl(
       // do not import older receipt/usage journals before validating a sync decision.
       definition.preflight?.(db);
       initServe(db);
-      seedRailSchedules(db);
-      if (definition.recover_canon !== false && inspectCanonRecovery(db).pending) {
+        if (definition.recover_canon !== false && inspectCanonRecovery(db).pending) {
         // Writer-held mode: a held write blocks only new canon writes, so the
         // rails that ingest, index or prune keep running around it.
         try { recoverCanonWrites({ db, vault_path: vaultPath }); }
@@ -568,9 +567,8 @@ export async function runServeOnce(
   if (options.rails === undefined) {
     // A rail registered after the vault opened has no schedule row until it is seeded.
     initServe(db);
-    seedRailSchedules(db);
   }
-  const rails = options.rails ?? railSchedules(db).filter((row) => row.enabled).map((row) => row.rail);
+  const rails = options.rails ?? listSchedules(db).filter((row) => row.enabled).map((row) => row.rail);
   const receipts: RunReceipt[] = [];
   for (const rail of rails) {
     receipts.push(await runRailImpl(db, vaultPath, rail, options));

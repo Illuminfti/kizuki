@@ -1,8 +1,6 @@
-import type { Database } from "bun:sqlite";
 import { BUILTIN_RAILS } from "./builtin-rails";
 import type { RailDefinition } from "./rail-definition";
-import { listSchedules, seedSchedules } from "./schema";
-import type { RailSpec, ScheduleRow } from "./types";
+import type { RailSpec } from "./types";
 
 export { defineRail } from "./rail-definition";
 export type { PendingWork, RailDefinition, RailRunContext, RailWorkProbe } from "./rail-definition";
@@ -26,6 +24,17 @@ for (const rail of SHIPPED) {
   registered.set(rail.id, rail);
 }
 
+/** Compatibility arrays are immutable projections of the registered definitions. */
+export let RAIL_IDS: readonly string[];
+export let DEFAULT_RAILS: readonly RailSpec[];
+function refreshDefaults(): void {
+  RAIL_IDS = Object.freeze([...registered.keys()]);
+  DEFAULT_RAILS = Object.freeze([...registered.values()].map((rail) => Object.freeze({
+    rail: rail.id, period_s: rail.period_s, jitter_s: rail.jitter_s, enabled: true,
+  })));
+}
+refreshDefaults();
+
 /** Every registered rail, in registration order: the shipped rails, then extension rails, then runtime registrations. */
 export function listRails(): readonly RailDefinition[] {
   return [...registered.values()];
@@ -39,17 +48,6 @@ export function isRailId(value: string): boolean {
   return registered.has(value);
 }
 
-/** Seed a schedule for every registered rail. `initServe` seeds only the shipped ones. */
-export function seedRailSchedules(db: Database): void {
-  const specs: RailSpec[] = listRails().map((rail) => ({ rail: rail.id, period_s: rail.period_s, jitter_s: rail.jitter_s, enabled: true }));
-  seedSchedules(db, specs);
-}
-
-/** The schedule rows of the registered rails. */
-export function railSchedules(db: Database): ScheduleRow[] {
-  return listSchedules(db, isRailId);
-}
-
 /**
  * Register a rail at runtime, for tests and embedders. Shipped rails belong in
  * `EXTENSION_RAILS`. Returns the function that removes it again.
@@ -57,7 +55,12 @@ export function railSchedules(db: Database): ScheduleRow[] {
 export function registerRail(rail: RailDefinition): () => void {
   if (registered.has(rail.id)) throw new Error(`duplicate rail id: ${rail.id}`);
   registered.set(rail.id, rail);
-  return () => { if (registered.get(rail.id) === rail) registered.delete(rail.id); };
+  refreshDefaults();
+  return () => {
+    if (registered.get(rail.id) !== rail) return;
+    registered.delete(rail.id);
+    refreshDefaults();
+  };
 }
 
 function period(seconds: number): string {

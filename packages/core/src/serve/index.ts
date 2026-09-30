@@ -2,13 +2,11 @@ export {
   CALIBRATION_BAND,
   CONFIDENCE_SPREAD_MIN,
   CRASH_POINTS,
-  DEFAULT_RAILS,
   DEFAULT_SERVE_CONFIG,
   EMPTY_STREAK,
   HEARTBEAT_SECONDS,
   InjectedCrash,
   LEASE_RECLAIM_HEARTBEATS,
-  RAIL_IDS,
   RETRIEVAL_SLA_SECONDS,
   RUN_RECEIPTS_PATH,
   RUN_RECEIPT_RETENTION_DAYS,
@@ -24,6 +22,7 @@ export {
   isCrashPoint,
   isServeIntent,
 } from "./types";
+export { DEFAULT_RAILS, RAIL_IDS } from "./rail-registry";
 export type {
   CalibrationDoctor,
   CrashPoint,

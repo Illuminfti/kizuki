@@ -9,11 +9,23 @@
     "http": "/v1/world_view",
     "app": "World cards and discovery through /app/v1/world_view",
     "seams": {
-      "core": ["packages/core/src/world/public.ts", "packages/core/src/world/pipeline/read.ts", "packages/core/src/contracts/world-card-kit.ts"],
-      "cli": ["packages/cli/src/commands/world.ts"],
-      "mcp": ["packages/mcp/src/world/surface.ts"],
-      "http": ["packages/core/src/serve/http.ts"],
-      "app": ["packages/cli/src/app/host.ts"]
+      "core": [
+        "packages/core/src/world/public.ts",
+        "packages/core/src/world/pipeline/read.ts",
+        "packages/core/src/contracts/world-card-kit.ts"
+      ],
+      "cli": [
+        "packages/cli/src/commands/world.ts"
+      ],
+      "mcp": [
+        "packages/mcp/src/world/surface.ts"
+      ],
+      "http": [
+        "packages/core/src/serve/http.ts"
+      ],
+      "app": [
+        "packages/cli/src/app/host.ts"
+      ]
     },
     "tests": [
       "packages/core/test/world/pipeline-golden.test.ts",
@@ -44,5 +56,28 @@
       "packages/cli/test/world-ops.test.ts",
       "packages/mcp/test/world-ops.test.ts"
     ]
+  },
+  {
+    "packet": "F5",
+    "kind": "operator",
+    "core": [
+      "runRail",
+      "runServeOnce",
+      "inspectServeDoctor"
+    ],
+    "cli": [
+      "kizuki serve --once",
+      "kizuki serve run <rail>",
+      "kizuki doctor --json"
+    ],
+    "implementation": [
+      "packages/core/src/serve/rail-registry.ts",
+      "packages/core/src/serve/rails.ts"
+    ],
+    "tests": [
+      "packages/core/test/serve/rail-registry.test.ts",
+      "packages/cli/test/serve/rail-registry.test.ts"
+    ],
+    "docs": "docs/world/f5.md"
   }
 ]
