@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
-import { DEFAULT_RAILS, RAIL_IDS, initServe, listSchedules, listRunReceipts, readLease, WRITER_LEASE } from "@kizuki/core";
+import { DEFAULT_RAILS, RAIL_IDS, initServe, listSchedules, listRunReceipts, readLease, acquireLease, releaseLease, thisProcess, WRITER_LEASE } from "@kizuki/core";
 import { defineRail, openLedger, registerRail } from "@kizuki/core/testing";
 import type { CliIo } from "../../src/commands/index";
 import { doctorCommand } from "../../src/commands/doctor";
@@ -96,6 +96,21 @@ describe("a rail registered only in a test", () => {
     expect(holder).toBe(process.pid);
     const db = vault.ledger();
     try { expect(readLease(db, WRITER_LEASE)).toBeNull(); } finally { db.close(); }
+  });
+
+  test("a live foreign lease prevents extension work and leaves a failed receipt", async () => {
+    fixtureRail("fixture-tick");
+    const vault = session();
+    const db = vault.ledger();
+    const holder = { ...thisProcess(), pid: process.ppid, isAlive: () => true };
+    try {
+      expect(acquireLease(db, holder).acquired).toBe(true);
+      const ran = await vault.run("run", "fixture-tick", "--json");
+      expect(ran.code).toBe(1);
+      expect(calls).toBe(0);
+      expect(JSON.parse(ran.out[0]!).data).toMatchObject({ rail: "fixture-tick", status: "failed" });
+      expect(readLease(db, WRITER_LEASE)?.holder_pid).toBe(holder.pid);
+    } finally { releaseLease(db, holder); db.close(); }
   });
 
   test("is refused by serve run until it is registered", async () => {
