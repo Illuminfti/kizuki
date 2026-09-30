@@ -57,3 +57,12 @@ test("a successful exit without a completion receipt fails closed", async () => 
   const result = await supervise([process.execPath, PROBE, "early-exit"], { timeoutMs: 5000, rssMiB: 512 });
   expect(result.property).toBe("worker-incomplete");
 });
+
+test("worker RSS receipts exclude the larger parent address space", async () => {
+  const held = Buffer.alloc(192 * 1024 * 1024, 1);
+  const result = await supervise([process.execPath, PROBE, "receipt"], { timeoutMs: 5000, rssMiB: 128 });
+  expect(result).toMatchObject({ code: 0, limit: null, property: null, completed: 0 });
+  expect(result.peakRssKiB).toBeLessThanOrEqual(128 * 1024);
+  // Keep the parent allocation resident until after the child has been reaped.
+  expect(held[held.length - 1]).toBe(1);
+});

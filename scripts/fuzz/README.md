@@ -41,6 +41,13 @@ before the next sample, and the OS can still kill a process. A resource kill
 is a failure, never a parser refusal. Use a private `TMPDIR` with trusted
 ancestors when vault custody rejects a shared scratch hierarchy.
 
+Both samples and final receipts use Linux `VmHWM` for the current executable's
+address space. [`getrusage` statistics survive `exec`](https://man7.org/linux/man-pages/man2/getrusage.2.html), so Bun's
+`process.resourceUsage().maxRSS` can retain the larger parent's peak and
+incorrectly fail a small worker in the full CI test process. A regression
+holds a larger allocation in the parent while supervising a small child;
+the allocation-flood regression still checks a real worker budget breach.
+
 ## Coverage and properties
 
 | Targets | Seam exercised | Properties |

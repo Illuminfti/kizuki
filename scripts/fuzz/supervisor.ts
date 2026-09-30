@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { peakRssKiB as executablePeakRssKiB } from "./rss";
 
 export interface Budget { timeoutMs: number; rssMiB: number }
 export interface WorkerReceipt { code: number; limit: "time" | "memory" | "output" | null; lastCase: string; completed: number; peakRssKiB: number; property: string | null }
@@ -19,8 +19,7 @@ export async function supervise(command: string[], budget: Budget): Promise<Work
   const deadline = setTimeout(() => stop("time"), budget.timeoutMs);
   const sample = setInterval(() => {
     try {
-      const status = readFileSync(`/proc/${child.pid}/status`, "utf8");
-      const peak = Number(/^VmHWM:\s+(\d+)\s+kB$/m.exec(status)?.[1] ?? 0);
+      const peak = executablePeakRssKiB(child.pid);
       peakRssKiB = Math.max(peakRssKiB, peak);
       if (peakRssKiB > budget.rssMiB * 1024) stop("memory");
     } catch (error) {

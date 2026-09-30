@@ -5,6 +5,7 @@ import type { Parser } from "./parsers";
 import { FILE_TARGETS, fileCase } from "./files";
 import type { FileTarget } from "./files";
 import { SURFACES, surfaceDriver } from "./surfaces";
+import { peakRssKiB } from "./rss";
 
 const [target, seedText, countText, scratch] = process.argv.slice(2);
 if (!target || !scratch || !seedText || !countText) throw new Error("invalid fuzz worker configuration");
@@ -52,7 +53,7 @@ try {
   }
   await surface?.close();
   surface = undefined;
-  process.stdout.write(JSON.stringify({ completed, maxRssKiB: process.resourceUsage().maxRSS }) + "\n");
+  process.stdout.write(JSON.stringify({ completed, maxRssKiB: peakRssKiB() }) + "\n");
 } catch (error) {
   // Never print error messages/causes or captured text. Case ids and seed replay it.
   const properties = ["invalid-ingress", "sensitivity-lowered", "output-unbounded", "nondeterministic-parser", "prototype-pollution", "network-egress", "symlink-admitted", "invalid-encoding-admitted", "archive-expansion-admitted", "resume-lost", "inert-grant-admitted", "http-crash", "capture-trust-confusion"];
