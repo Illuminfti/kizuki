@@ -40,6 +40,17 @@ test("an invalid outer prefix cannot hide a credential wrapped inside it", async
   } finally { f.dispose(); }
 });
 
+test("encoded URL userinfo is scrubbed before decoding changes its delimiters", async () => {
+  const f = await serveFixture();
+  try {
+    const id = storeEvent(f.db, "url-encoded-userinfo", "2026-02-28T10:30:00Z",
+      "custom://reader:p%2Fq%40r%20s@example.test/path", "person:ada", "public");
+    const answer = serveTimeline(f.agent("reader-public"), { event_id: id });
+    expect(answer.quoted[0]?.text).toBe("custom://[redacted:url_credentials]@example.test/path");
+    expect(answer.redacted).toEqual({ url_credentials: 1 });
+  } finally { f.dispose(); }
+});
+
 test("YAML block scalar credentials are removed without consuming the next field", async () => {
   const f = await serveFixture();
   try {
