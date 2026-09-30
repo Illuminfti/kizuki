@@ -105,6 +105,54 @@ test("source consent denial invalidates a conditional baseline uniformly and pre
   expect(readWorldView(made.reader, concept(made))).toEqual({ status: "not_found" });
 });
 
+async function duplicateLabelSupport(made: NoninterferenceScene) {
+  await worldSeed(made.db, {
+    sourceKey: "independent-view-source", subject: "topic:bayes", label: "Bayesian updating", discover: false,
+  });
+}
+
+function deniedDiscoveryBaseline(made: NoninterferenceScene) {
+  const input = { operation: "find_concepts", label: "Bayesian updating", ...WHEN };
+  const first = readWorldView(made.reader, input);
+  if (!("result" in first) || first.result.status !== "current" || !("validUntil" in first.result)) throw new Error("no discovery baseline");
+  revoke(made, made.visible.concept.sourceKey);
+  const fresh = readWorldView(made.reader, input);
+  if (!("result" in fresh) || fresh.result.status !== "current") throw new Error("no surviving projection");
+  expect(fresh.result.data).toEqual(first.result.data);
+  return { ...input, priorView: first.result.view };
+}
+
+test("baseline dependencies lose consent even when independent support preserves every projected byte", async () => {
+  const made = await setup();
+  await duplicateLabelSupport(made);
+  const input = deniedDiscoveryBaseline(made);
+  expect(serveWorldView(made.reader, input).data).toMatchObject({ result: REQUIRED });
+});
+
+test("hidden purge of revoked baseline evidence preserves conditional bytes, errors and work", async () => {
+  let completed = 0;
+  await assertNoninterference({
+    scene: async () => {
+      const made = await hiddenScene();
+      await duplicateLabelSupport(made);
+      return made;
+    },
+    mutations: [{ name: "revoked support purge", apply: (made) => {
+      purgeEvents(made.db, made.vaultPath, { event_id: made.visible.concept.eventId }, "synthetic-revoked-support-purge");
+    } }],
+    cases: (made) => {
+      const input = deniedDiscoveryBaseline(made);
+      return [{ name: "denied discovery baseline", run: (ctx) => {
+        const value = serveWorldView(ctx, input);
+        expect(value.data).toMatchObject({ result: REQUIRED });
+        completed++;
+        return value;
+      } }];
+    },
+  });
+  expect(completed).toBe(4);
+});
+
 test("purge erases discovery label payload and dependencies while independent evidence keeps the object alive", async () => {
   const made = await setup();
   await worldSeed(made.db, {

@@ -56,6 +56,10 @@ revocation leaves the answer and read work unchanged. Withdrawn dependencies
 discard the pending view and reproject once under current authority. A
 conditional target denied by current source consent returns
 `new_view_required`; a fresh read of that target remains `not_found`.
+Baseline lookup also checks its retained support dependencies before returning
+the stored projection. Withdrawn consent invalidates that baseline even when
+independent support keeps every freshly projected byte identical; a later purge
+of the withdrawn evidence cannot reveal its removal through the conditional read.
 
 ## Share and resume
 

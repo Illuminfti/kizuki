@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { ServeContext } from "../../serving/types";
 import { createHash } from "node:crypto";
 import { canonicalJson } from "../../util/hash";
 import type { ViewToken, WorldOpData, WorldRecord, WorldViewResult } from "../ops/types";
@@ -36,12 +37,13 @@ function requestDigest(input: WorldRecord): string {
  * evicted, erased, another principal's, from another grant or for another
  * request is not looked into further: it is stale, and every cause is the same.
  */
-export function openView(db: Database, ns: WorldNamespace, input: WorldRecord, prior: ViewToken | null): ViewSession {
+export function openView(ctx: ServeContext, ns: WorldNamespace, input: WorldRecord, prior: ViewToken | null): ViewSession {
+  const { db } = ctx;
   const now = new Date().toISOString();
   const partition = viewPartitionOf(db, ns.principalId);
   const digest = requestDigest(input);
   const baseline =
-    prior === null || partition === null ? null : lookupView(db, partition, ns.id, digest, prior.token, now);
+    prior === null || partition === null ? null : lookupView(ctx, partition, ns.id, digest, prior.token, now);
   return { ns, partition, digest, prior, baseline, stale: prior !== null && baseline === null, now, requestRefs: wireRefs(input) };
 }
 
