@@ -514,9 +514,15 @@ export function persistRunReceipt(
   db: Database,
   vaultPath: string,
   receipt: RunReceipt,
-  options: { crashAfter?: CrashPoint; artifactPath?: string } = {},
+  options: { crashAfter?: CrashPoint; artifactPath?: string; advanceSchedule?: boolean } = {},
 ): void {
-  receipt = withScheduleTransition(db, vaultPath, redactReceipt(receipt));
+  receipt = redactReceipt(receipt);
+  if (options.advanceSchedule !== false) receipt = withScheduleTransition(db, vaultPath, receipt);
+  else {
+    // A denied attempt records its audit result without claiming the active slot.
+    const { schedule_transition: _transition, ...audit } = receipt;
+    receipt = audit;
+  }
   if (options.artifactPath !== undefined) {
     mkdirSync(dirname(options.artifactPath), { recursive: true, mode: 0o700 });
     if (!existsSync(options.artifactPath)) {

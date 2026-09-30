@@ -8,6 +8,8 @@ import { openLedger } from "../../src/ledger/db";
 import { purgeEvents } from "../../src/ledger/purge";
 import { initVault } from "../../src/vault/init";
 import { runRail } from "../../src/serve/rails";
+import { readLease } from "../../src/serve/leases";
+import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS, WRITER_LEASE } from "../../src/serve/types";
 import { readExtractCursor } from "../../src/serve/extract";
 import { listClaims } from "../../src/claims/store";
 import { listRunReceipts } from "../../src/serve/receipts";
@@ -87,8 +89,11 @@ test("concurrent rails admit at most one write at a daily cap of one", async () 
   const one = runRail(f.db, f.path, "sync", { hooks: { ...f.hooks, producer, sync: sync(first.promise) } });
   const two = runRail(f.db, f.path, "sync", { hooks: { ...f.hooks, producer, sync: sync(second.promise) } });
   first.resolve(); const a = await one; second.resolve(); const b = await two;
-  expect(a.canon_writes + b.canon_writes).toBe(1);
-  expect(b.stopped).toBe("budget:canon_writes_per_day");
+  expect(b.status).toBe("failed");
+  expect(b.errors).toEqual(["a rail is already running for this vault"]);
+  const retry = await runRail(f.db, f.path, "sync", { hooks: { ...f.hooks, producer } });
+  expect(a.canon_writes + b.canon_writes + retry.canon_writes).toBe(1);
+  expect(retry.stopped).toBe("budget:canon_writes_per_day");
   expect(f.db.query<{ used: number }, []>("SELECT used FROM budget_ledger WHERE name='canon_writes_per_day'").get()?.used).toBe(1);
   f.db.close();
 });
@@ -203,7 +208,11 @@ test("killed producer attempt is durable, uncertain and counted separately from 
     const db = openLedger(join(f.path, ".kizuki/kizuki.db"));
     try {
       expect(db.query("SELECT * FROM extract_usage").all()).toHaveLength(1);
-      await runRail(db, f.path, "doctor-sweep");
+      const lease = readLease(db, WRITER_LEASE)!;
+      expect((await runRail(db, f.path, "doctor-sweep", { now: () => lease.heartbeat_at })).status).toBe("failed");
+      expect(db.query("SELECT * FROM extract_usage").all()).toHaveLength(1);
+      const retryAt = new Date(Date.parse(lease.heartbeat_at) + HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS * 1000).toISOString();
+      await runRail(db, f.path, "doctor-sweep", { now: () => retryAt });
       const interrupted = listRunReceipts(db).find(r => r.model.calls > 0)!;
       expect(interrupted.status).toBe("failed");
       expect(interrupted.model).toMatchObject({ calls: 1, model_ref: "model:original", usage_unknown: true });
@@ -211,7 +220,7 @@ test("killed producer attempt is durable, uncertain and counted separately from 
       const { inspectServeDoctor } = await import("../../src/serve/doctor");
       expect(inspectServeDoctor(db, f.path).model.last_success_at).toBeNull();
       expect(readExtractCursor(db)).toBeNull();
-      await runRail(db, f.path, "sync", { hooks: { ...f.hooks, claims: { db } } });
+      await runRail(db, f.path, "sync", { now: () => retryAt, hooks: { ...f.hooks, claims: { db } } });
       expect(listRunReceipts(db).reduce((n, r) => n + r.model.calls, 0)).toBe(2);
     } finally { db.close(); }
   } finally { child.kill(); await child.exited; }
