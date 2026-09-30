@@ -179,11 +179,13 @@ describe("a relayed correction cannot override the owner's own correction (R22-1
     });
     const ownerClaim = owner.data!.claim_id!;
     for (const name of ["reader-private", "downgraded"]) {
-      const held = await refusal(() =>
-        serveCorrect(live.agent(name), { statement: "Actually it was right.", target: { claim_id: ownerClaim } }),
-      );
-      expect(held.code).toBe("held");
-      expect(held.message).toContain("owner's own correction");
+      for (const dry_run of [false, true]) {
+        const held = await refusal(() =>
+          serveCorrect(live.agent(name), { statement: "Actually it was right.", target: { claim_id: ownerClaim }, dry_run }),
+        );
+        expect(held.code).toBe("held");
+        expect(held.message).toContain("owner's own correction");
+      }
     }
     expect(getClaim(live.db, ownerClaim)?.status).toBe("live");
   });
