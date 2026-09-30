@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { rawSubjectRefKey, type ClaimV2Assertion, type QualifiedSuppliedRef, type RawSubjectRef } from "../contracts/claim-v2";
+import { rawSubjectNamespace, rawSubjectRefKey, type ClaimV2Assertion, type QualifiedSuppliedRef, type RawSubjectRef } from "../contracts/claim-v2";
 import type { TextAnchor } from "../contracts/producer-v2";
 import { canonicalJson, sha256Hex } from "../util/hash";
 import { utf8ByteLength } from "../util/validate";
@@ -63,15 +63,31 @@ function hasSubject(event: ReturnType<typeof eventFromRow>, id: string): boolean
   return event.subjects.some(subject => subject.subject_id === id);
 }
 
-function nativeTarget(event: ReturnType<typeof eventFromRow>): { readonly claim_id: string; readonly semantic_key: string; readonly subject: RawSubjectRef; readonly predicate: string } | null {
+/** Endpoints beyond the subject that a native statement attests: at most the ones one assertion can name. */
+const MAX_NATIVE_ENDPOINTS = 16;
+
+function attestedEndpoints(value: unknown, subject: RawSubjectRef): readonly RawSubjectRef[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_NATIVE_ENDPOINTS) return null;
+  const keys = new Set<string>([rawSubjectRefKey(subject)]);
+  for (const ref of value as RawSubjectRef[]) {
+    if (!(qualifiedSupplied(ref) || canonicalOccurrence(ref)) || keys.has(rawSubjectRefKey(ref))) return null;
+    keys.add(rawSubjectRefKey(ref));
+  }
+  return value as RawSubjectRef[];
+}
+
+function nativeTarget(event: ReturnType<typeof eventFromRow>): { readonly claim_id: string; readonly semantic_key: string; readonly subject: RawSubjectRef; readonly predicate: string; readonly endpoints: readonly RawSubjectRef[] } | null {
   const target = event.metadata.world_target;
-  if (typeof target !== "object" || target === null || Array.isArray(target) || Object.keys(target).length !== 4) return null;
-  const value = target as { claim_id?: unknown; semantic_key?: unknown; subject?: unknown; predicate?: unknown };
+  if (typeof target !== "object" || target === null || Array.isArray(target)) return null;
+  const value = target as { claim_id?: unknown; semantic_key?: unknown; subject?: unknown; predicate?: unknown; endpoints?: unknown };
+  if (Object.keys(target).length !== (Object.hasOwn(target, "endpoints") ? 5 : 4)) return null;
   if (typeof value.claim_id !== "string" || !isUlid(value.claim_id) || typeof value.semantic_key !== "string" || !/^[a-f0-9]{64}$/.test(value.semantic_key) || typeof value.predicate !== "string" ||
       typeof value.subject !== "object" || value.subject === null) return null;
   const subject = value.subject as RawSubjectRef;
-  return qualifiedSupplied(subject) || canonicalOccurrence(subject)
-    ? { claim_id: value.claim_id, semantic_key: value.semantic_key, subject, predicate: value.predicate } : null;
+  if (!(qualifiedSupplied(subject) || canonicalOccurrence(subject))) return null;
+  const endpoints = attestedEndpoints(value.endpoints, subject);
+  return endpoints === null ? null : { claim_id: value.claim_id, semantic_key: value.semantic_key, subject, predicate: value.predicate, endpoints };
 }
 
 function isNativeCorrection(db: Database, event: ReturnType<typeof eventFromRow>): boolean {
@@ -94,9 +110,11 @@ export function validateWorldEndpointProofs(
   if (cited.length !== anchors(semantic).length) throw new ClaimError("provenance_unresolved", "world endpoint cites an invalid event");
   if (sourceKey === null) {
     const target = cited.map(({ event }) => isNativeCorrection(db, event) ? nativeTarget(event) : null).find((value): value is NonNullable<typeof value> => value !== null);
-    if (target === undefined || canonicalJson(semantic.subject) !== canonicalJson(target.subject) || semantic.predicate !== target.predicate ||
+    // The statement attests the subject it corrects and, beyond it, only the endpoints the writer recorded with it.
+    const attested = target === undefined ? null : new Set([target.subject, ...target.endpoints].map(rawSubjectRefKey));
+    if (target === undefined || attested === null || canonicalJson(semantic.subject) !== canonicalJson(target.subject) || semantic.predicate !== target.predicate ||
         !cited.some(({ event }) => isNativeCorrection(db, event) && hasSubject(event, target.subject.id)) ||
-        assertionEndpoints(semantic).some(ref => canonicalJson(ref) !== canonicalJson(target.subject))) {
+        assertionEndpoints(semantic).some(ref => !attested.has(rawSubjectRefKey(ref)))) {
       throw new ClaimError("provenance_unresolved", "native world endpoint lacks its immutable correction target");
     }
     if (!options.restore) {
@@ -105,6 +123,12 @@ export function validateWorldEndpointProofs(
       if (priorSemantic === null || semanticKey(priorSemantic) !== target.semantic_key || priorSemantic.discriminator !== "assertion" ||
           !sameRef(priorSemantic.subject, target.subject) || priorSemantic.predicate !== target.predicate) {
         throw new ClaimError("provenance_unresolved", "native world endpoint target is not a live attested claim");
+      }
+      // A node the statement adds must already be one the world holds; the statement cannot mint an endpoint.
+      const held = new Set(assertionEndpoints(priorSemantic).map(rawSubjectRefKey));
+      for (const ref of target.endpoints) {
+        if (!held.has(rawSubjectRefKey(ref)) && db.query("SELECT 1 FROM semantic_bindings WHERE raw_kind=? AND raw_namespace=? AND raw_id=?").get(ref.kind, rawSubjectNamespace(ref), ref.id) === null)
+          throw new ClaimError("provenance_unresolved", "native world endpoint names a node the world does not hold");
       }
     }
     // The immutable correction target attests the existing endpoint. It does

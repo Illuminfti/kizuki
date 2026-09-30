@@ -249,9 +249,25 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("tell");
-      expect(body.data.options).toEqual(["--claim", "--world-claim", "--since", "--until"]);
+      expect(body.data.options).toEqual([
+        "--claim",
+        "--world-claim",
+        "--since",
+        "--until",
+        "--mode",
+        "--object",
+        "--object-ref",
+        "--object-vocabulary",
+        "--perspective-mode",
+        "--refresh-concept-ref",
+      ]);
       expect(body.data.flags).toEqual(["--dry-run", "--json", "--verbose"]);
-      expect(body.data.bounds).toEqual({ "--since": "TIME", "--until": "TIME" });
+      expect(body.data.bounds).toMatchObject({
+        "--since": "TIME",
+        "--until": "TIME",
+        "--mode": "replace_object|retract|reclassify_mode",
+        "--perspective-mode": "suggested|hypothetical|questioned",
+      });
       expect(body.data.irreversible).toBe(false);
     }
     const text = runCli(env, "tell", "--help");
@@ -259,6 +275,8 @@ describe("help", () => {
     expect(text.stdout).toContain("--world-claim");
     expect(text.stdout).toContain("--since");
     expect(text.stdout).toContain("--until");
+    expect(text.stdout).toContain("--mode");
+    expect(text.stdout).toContain("--refresh-concept-ref");
     expect(text.stdout).toContain("--dry-run");
     expect(text.stdout).not.toContain("--about");
     expect(text.stdout).not.toContain("--page");

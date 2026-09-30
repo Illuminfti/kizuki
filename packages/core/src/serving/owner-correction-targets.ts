@@ -10,11 +10,16 @@ import { isWorldCanonReceipt } from '../canon/world-receipt';
 import { assertWorldReceiptBasis, worldBasisAllowed, worldCanonPath, worldClaimHandle } from '../canon/world-materialization';
 import { eligibleWorldClaim } from '../world/projection';
 import { issueWorldRef, worldNamespace, type WireRef } from '../world/references';
+import { unsupportedCorrectionReason, type UnsupportedAssertionReason } from '../world/correction-support';
 
 const MAX_TARGETS = 200;
 type Belief = { subject: string | null; predicate: string | null; object: string | null; body: string; authority: string; sensitivity: string };
 type OwnerCorrectionClaim = Belief & ({ claim_id: string } | {
     kind: 'world'; target: { world_claim: WireRef<'claim'> } | null; unsupported_reason: 'unsupported_assertion' | null;
+    /** Why the writer cannot take the claim, from the documented reason codes. */
+    unsupported_code: UnsupportedAssertionReason | null;
+    /** How the claim is held, so a form can say what a correction will keep. */
+    object_kind: 'literal' | 'vocabulary' | 'node'; polarity: 'positive' | 'negative'; perspective_mode: string;
 });
 type OwnerCorrectionTargets = { claims: OwnerCorrectionClaim[]; truncated: boolean };
 
@@ -41,15 +46,14 @@ export function inspectOwnerPageCorrectionTargets(ctx: Pick<ServeContext, 'db' |
                 const support = eligible?.supports.find(support => support.row.support_key === item.supports[0]?.support_key);
                 if (!eligible || !support) return { claims: [], truncated: false };
                 const semantic = eligible.semantic;
-                // This is presentation of the writer's current grammar, not
-                // admission. Preview and write recheck it inside serveCorrect.
-                const supported = semantic.object.kind === 'literal' &&
-                    (semantic.subject.kind === 'occurrence' || 'namespace' in semantic.subject) && semantic.context.length === 0 && semantic.polarity === 'positive' &&
-                    semantic.perspective.holder === null && semantic.perspective.speaker === null && semantic.perspective.addressee === null &&
-                    semantic.perspective.mode === 'asserted' && semantic.perspective.interpretation === 'explicit';
+                // This is presentation of the writer's own answer, not admission.
+                // Preview and write recheck it inside serveCorrect.
+                const unsupported = unsupportedCorrectionReason(semantic), supported = unsupported === null;
                 claims.push({ kind: 'world', target: supported ? { world_claim: issueWorldRef(ctx.db, namespace, 'claim', item.claim_id) } : null,
-                    unsupported_reason: supported ? null : 'unsupported_assertion', subject: null, predicate: semantic.predicate,
-                    object: semantic.object.kind === 'literal' ? String(semantic.object.value) : null,
+                    unsupported_reason: supported ? null : 'unsupported_assertion', unsupported_code: unsupported,
+                    object_kind: semantic.object.kind === 'subject' ? 'node' : semantic.object.kind, polarity: semantic.polarity,
+                    perspective_mode: semantic.perspective.mode, subject: null, predicate: semantic.predicate,
+                    object: semantic.object.kind === 'literal' ? String(semantic.object.value) : semantic.object.kind === 'vocabulary' ? semantic.object.ref.id : null,
                     body: support.admission.rendering.body, authority: support.admission.authority,
                     sensitivity: sourceSensitivity(ctx.db, support.events.map(event => event.event_id), getClaim(ctx.db, item.claim_id)!.sensitivity) });
             }
