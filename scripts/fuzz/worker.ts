@@ -12,10 +12,11 @@ const seed = Number(seedText), count = Number(countText);
 let completed = 0;
 let activeCase = "startup";
 const originalFetch = globalThis.fetch;
+let httpOrigin: string | null = null;
 globalThis.fetch = ((input: string | URL | Request, options?: RequestInit) => {
   const url = new URL(input instanceof Request ? input.url : String(input));
-  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1") throw new Error("network-egress");
-  return originalFetch(input, options);
+  if (url.origin !== httpOrigin) throw new Error("network-egress");
+  return originalFetch(input, { ...options, redirect: "error" });
 }) as typeof fetch;
 
 function outcome(parser: Parser, input: Parameters<typeof parseCase>[1], wrapped: boolean): string {
@@ -32,7 +33,10 @@ function outcome(parser: Parser, input: Parameters<typeof parseCase>[1], wrapped
 
 let surface: Awaited<ReturnType<typeof surfaceDriver>> | undefined;
 try {
-  if ((SURFACES as readonly string[]).includes(target)) surface = await surfaceDriver(target as typeof SURFACES[number], scratch);
+  if ((SURFACES as readonly string[]).includes(target)) {
+    surface = await surfaceDriver(target as typeof SURFACES[number], scratch);
+    httpOrigin = surface.httpOrigin;
+  }
   for (const input of cases(seed, count)) {
     activeCase = input.id;
     process.stdout.write(JSON.stringify({ case: activeCase }) + "\n");

@@ -8,4 +8,6 @@ if (mode === "hang") {
   setInterval(() => held.push(Buffer.alloc(8 * 1024 * 1024, 1)), 10);
 } else if (mode === "output") {
   process.stdout.write("x".repeat(8192) + "\n");
+} else if (mode === "early-exit") {
+  process.stdout.write('{"case":"early-exit-probe"}\n');
 } else throw new Error("unknown supervision probe");

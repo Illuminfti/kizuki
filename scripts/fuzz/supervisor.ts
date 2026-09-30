@@ -9,6 +9,7 @@ export async function supervise(command: string[], budget: Budget): Promise<Work
   const child = Bun.spawn(command, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
   let limit: WorkerReceipt["limit"] = null, lastCase = "startup", completed = 0, peakRssKiB = 0;
   let property: string | null = null;
+  let complete = false;
   const stop = (reason: NonNullable<WorkerReceipt["limit"]>) => {
     if (limit === null) {
       limit = reason;
@@ -47,6 +48,8 @@ export async function supervise(command: string[], budget: Budget): Promise<Work
             if (typeof value["completed"] === "number") completed = value["completed"];
             if (typeof value["maxRssKiB"] === "number") peakRssKiB = Math.max(peakRssKiB, value["maxRssKiB"]);
             if (typeof value["property"] === "string") property = value["property"];
+            if (Number.isSafeInteger(value["completed"]) && (value["completed"] as number) >= 0 &&
+                typeof value["maxRssKiB"] === "number" && Number.isFinite(value["maxRssKiB"]) && value["maxRssKiB"] > 0) complete = true;
           } catch { stop("output"); return; }
         }
         if (pending.length > 4096) { stop("output"); return; }
@@ -58,6 +61,7 @@ export async function supervise(command: string[], budget: Budget): Promise<Work
     const code = await child.exited;
     await consume;
     if (peakRssKiB > budget.rssMiB * 1024) limit = "memory";
+    if (code === 0 && limit === null && property === null && !complete) property = "worker-incomplete";
     return { code, limit, lastCase, completed, peakRssKiB, property };
   } finally {
     clearTimeout(deadline); clearInterval(sample);

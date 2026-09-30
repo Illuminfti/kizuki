@@ -52,3 +52,8 @@ test("supervisor bounds output even when the child exits immediately", async () 
   const result = await supervise([process.execPath, PROBE, "output"], { timeoutMs: 5000, rssMiB: 512 });
   expect(result.limit).toBe("output");
 });
+
+test("a successful exit without a completion receipt fails closed", async () => {
+  const result = await supervise([process.execPath, PROBE, "early-exit"], { timeoutMs: 5000, rssMiB: 512 });
+  expect(result.property).toBe("worker-incomplete");
+});

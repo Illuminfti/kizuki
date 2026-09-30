@@ -23,6 +23,7 @@ export async function surfaceDriver(target: typeof SURFACES[number], scratch: st
     try { return JSON.parse(input.text); } catch { return { query: input.text, text: input.text }; }
   }
   return {
+    httpOrigin: http?.url ?? null,
     async run(input: FuzzCase): Promise<void> {
       if (target === "mcp") await fuzzStdioBytes({ db, vaultPath, principal }, input.bytes);
       const args = argumentsFor(input);

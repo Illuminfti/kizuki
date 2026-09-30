@@ -34,7 +34,8 @@ checks the worker's final maximum-RSS accounting, bounds protocol lines to
 4 KiB, kills a child that exceeds its time, memory, or output budget, and
 waits for its exit. Scratch trees are created beneath `TMPDIR` and removed
 after exit, including killed workers. The supervisor tests exercise a
-synchronous hang and an allocation flood. RSS sampling is a watchdog, not a
+synchronous hang, an allocation flood, output overflow and a premature zero
+exit without a completion receipt. Missing receipts fail closed. RSS sampling is a watchdog, not a
 kernel allocation quota: a short allocation spike can temporarily overshoot
 before the next sample, and the OS can still kill a process. A resource kill
 is a failure, never a parser refusal. Use a private `TMPDIR` with trusted
