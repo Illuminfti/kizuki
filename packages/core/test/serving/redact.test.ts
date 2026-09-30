@@ -5,15 +5,17 @@ import { packetTokens } from "../../src/serving/packet-tokenizer";
 import { readServableEvents } from "../../src/serving/ledger";
 import {
   FORGED_STAMP,
-  KINDS_PRESENT,
   SECRETS,
   SECRET_FRAGMENTS,
   TAG_TEXT,
 } from "../helpers/synthetic-secrets";
 import { redactFixture } from "./redact-fixture";
 import type { RedactFixture } from "./redact-fixture";
-import type { Envelope } from "../../src/serving/types";
+import type { Envelope, EnvelopeV2 } from "../../src/serving/types";
 import type { Tool } from "../../src/agents";
+import type { ContextPacketDataV2, PacketContentV2 } from "../../src/serving/v2/context-packet";
+
+type ServedEnvelope = Envelope<unknown> | EnvelopeV2;
 
 setDefaultTimeout(60_000);
 
@@ -29,12 +31,12 @@ async function serve(
   reader: "owner" | string,
   tool: Tool,
   args: Record<string, unknown>,
-): Promise<Envelope<unknown>> {
+): Promise<ServedEnvelope> {
   const ctx = reader === "owner" ? fixture.owner() : fixture.agent(reader);
-  return (await dispatchServeTool(ctx, tool, args)) as Envelope<unknown>;
+  return dispatchServeTool(ctx, tool, args, ctx.principal.kind === "agent" ? { response_contract: "kizuki.envelope/v2" } : {});
 }
 
-function expectClean(envelope: Envelope<unknown>): string {
+function expectClean(envelope: ServedEnvelope): string {
   const wire = JSON.stringify(envelope);
   for (const fragment of SECRET_FRAGMENTS) expect(wire).not.toContain(fragment);
   expect(wire).toContain("[redacted:");
@@ -43,18 +45,28 @@ function expectClean(envelope: Envelope<unknown>): string {
 }
 
 /** The owner's copy is raw. Previews and excerpts cut long text, so only the leading secret is asserted. */
-function expectRaw(envelope: Envelope<unknown>): void {
+function expectRaw(envelope: ServedEnvelope): void {
   const wire = JSON.stringify(envelope);
   expect(wire).toContain(SECRET_FRAGMENTS[0]!);
   expect(wire).not.toContain("[redacted:");
   expect(envelope).not.toHaveProperty("redacted");
 }
 
-function expectCounts(envelope: Envelope<unknown>): void {
-  for (const kind of KINDS_PRESENT)
-    expect(envelope.redacted?.[kind]).toBeGreaterThan(0);
-  const wire = JSON.stringify(envelope.redacted);
-  for (const fragment of SECRET_FRAGMENTS) expect(wire).not.toContain(fragment);
+function expectClosed(envelope: ServedEnvelope): void {
+  expect(Object.keys(envelope).sort()).toEqual(["at", "canon", "data", "principal", "quoted", "schema", "tool"]);
+}
+
+function packetOf(envelope: ServedEnvelope): PacketContentV2 {
+  expect(envelope.schema).toBe("kizuki.envelope/v2");
+  const packet = envelope.data as ContextPacketDataV2;
+  if (packet.result.status === "unchanged") throw new Error("expected packet content");
+  return packet.result.data;
+}
+
+function packetMdOf(envelope: ServedEnvelope): string {
+  return envelope.schema === "kizuki.envelope/v2"
+    ? packetOf(envelope).packetMd
+    : (envelope.data as { packet_md: string }).packet_md;
 }
 
 const READERS = ["reader-public", "reader-private"] as const;
@@ -73,7 +85,7 @@ test("search serves canon and captured text with every credential shape replaced
       envelope.quoted.some((chunk) => chunk.event_id === fixture.secretEvent),
     ).toBe(true);
     expectClean(envelope);
-    expectCounts(envelope);
+    expectClosed(envelope);
   }
   expectRaw(
     await serve("owner", "search", {
@@ -91,7 +103,7 @@ test("get_page keeps the page identity and hash-bearing fields while its body is
   });
   expectRaw(owner);
   expectClean(agent);
-  expectCounts(agent);
+  expectClosed(agent);
   const [ownerChunk, agentChunk] = [owner.canon[0]!, agent.canon[0]!];
   for (const field of [
     "page_id",
@@ -113,9 +125,9 @@ test("timeline previews and expansions are redacted before they are cut", async 
   expect(list.quoted.map((chunk) => chunk.event_id)).toContain(
     fixture.secretEvent,
   );
-  // The 160-character preview may end inside a marker, so the count is the evidence here.
+  // The preview may end inside a marker; full expansion below proves replacement.
   for (const fragment of SECRET_FRAGMENTS) expect(JSON.stringify(list)).not.toContain(fragment);
-  expect(list.redacted?.pem).toBe(1);
+  expectClosed(list);
   expect(await serve("owner", "timeline", day)).not.toHaveProperty("redacted");
 
   const first = await serve("reader-public", "timeline", {
@@ -147,7 +159,7 @@ test("timeline previews and expansions are redacted before they are cut", async 
   expectRaw(owner);
 });
 
-test("context_packet redacts every section, keeps its budget exact and reports counts", async () => {
+test("context_packet redacts every section, keeps its budget exact inside the closed envelope", async () => {
   const args = {
     purpose: "recall",
     query: "kettle",
@@ -159,22 +171,17 @@ test("context_packet redacts every section, keeps its budget exact and reports c
   };
   for (const reader of READERS) {
     const envelope = await serve(reader, "context_packet", args);
-    const data = envelope.data as {
-      packet_md: string;
-      tokens_estimate: number;
-      budget_tokens: number;
-      sections: Record<string, number>;
-    };
+    const data = packetOf(envelope);
     expect(data.sections["canon"]).toBeGreaterThan(0);
     expect(data.sections["timeline"]).toBeGreaterThan(0);
     expect(data.sections["claims"]).toBeGreaterThan(0);
     expectClean(envelope);
-    expectCounts(envelope);
-    expect(data.packet_md).toContain(
+    expectClosed(envelope);
+    expect(data.packetMd).toContain(
       `DB_PASSWORD=[redacted:secret_assignment]`,
     );
-    expect(data.tokens_estimate).toBe(packetTokens(data.packet_md));
-    expect(data.tokens_estimate).toBeLessThanOrEqual(data.budget_tokens);
+    expect(data.tokens).toBe(packetTokens(data.packetMd));
+    expect(data.tokens).toBeLessThanOrEqual(data.budgetTokens);
   }
   expectRaw(await serve("owner", "context_packet", args));
 });
@@ -202,7 +209,7 @@ test("a task section is redacted before it is packed", async () => {
   const wire = JSON.stringify(envelope);
   expect(wire).not.toContain(SECRETS["ghp"]!.marker);
   expect(wire).toContain("[redacted:api_token]");
-  expect(envelope.redacted).toEqual({ api_token: 1 });
+  expectClosed(envelope);
 });
 
 test("query_entities and graph_neighbors serve redacted text", async () => {
@@ -237,18 +244,22 @@ test("query_entities and graph_neighbors serve redacted text", async () => {
   ).toContain("w".repeat(12));
 });
 
-test("ids, hashes and etags are not touched, and the packet hash is that of the body served", async () => {
+test("ids and integrity are unchanged, and the packet baseline covers the served content", async () => {
   const args = { purpose: "recall", query: "kettle", include: ["canon"], budget_tokens: 2000 };
   const owner = await serve("owner", "context_packet", args);
   const first = await serve("reader-private", "context_packet", args);
+  const current = (first.data as ContextPacketDataV2).result;
+  if (current.status !== "current") throw new Error("expected a current packet");
   const second = await serve("reader-private", "context_packet", args);
-  type Packet = { packet_md: string; packet_hash: string; etag: string };
-  const [ownerData, firstData, secondData] = [owner.data as Packet, first.data as Packet, second.data as Packet];
-  expect(secondData.packet_hash).toBe(firstData.packet_hash);
-  expect(firstData.etag).toBe(firstData.packet_hash);
-  const body = (data: { packet_md: string }) => data.packet_md.split("\n").slice(3).join("\n");
-  expect(new Bun.CryptoHasher("sha256").update(body(firstData)).digest("hex")).toBe(firstData.packet_hash);
-  expect(firstData.packet_hash).not.toBe(ownerData.packet_hash);
+  expect((second.data as ContextPacketDataV2).result).toMatchObject({ status: "current", view: current.view, data: current.data });
+  const retained = await serve("reader-private", "context_packet", { ...args, priorView: current.view });
+  expect((retained.data as ContextPacketDataV2).result).toMatchObject({ status: "unchanged", view: current.view });
+  expect((retained.data as ContextPacketDataV2).result).not.toHaveProperty("data");
+  const ownerData = owner.data as { packet_md: string; packet_hash: string; etag: string };
+  const ownerBody = ownerData.packet_md.split("\n").slice(3).join("\n");
+  expect(new Bun.CryptoHasher("sha256").update(ownerBody).digest("hex")).toBe(ownerData.packet_hash);
+  expect(ownerData.etag).toBe(ownerData.packet_hash);
+  expect(current.data.packetMd).not.toContain(SECRET_FRAGMENTS[0]!);
   expect(first.canon.map((chunk) => chunk.page_id)).toEqual(owner.canon.map((chunk) => chunk.page_id));
   expect(first.canon.map((chunk) => chunk.sources)).toEqual(owner.canon.map((chunk) => chunk.sources));
   const raw = await serve("owner", "timeline", { event_id: fixture.secretEvent });
@@ -267,7 +278,7 @@ test("a page or capture that imitates a stamp line is quoted, and hidden charact
   };
   for (const reader of ["owner", "reader-public"]) {
     const envelope = await serve(reader, "context_packet", args);
-    const packet = (envelope.data as { packet_md: string }).packet_md;
+    const packet = packetMdOf(envelope);
     const lines = packet.split("\n");
     expect(packet).toContain(FORGED_STAMP);
     // The imitation only ever appears behind the quotation prefix, never at the start of a line.
@@ -314,7 +325,7 @@ test("a title or path with a line break cannot open a second packet line", async
     include: ["canon"],
     budget_tokens: 2000,
   });
-  const packet = (envelope.data as { packet_md: string }).packet_md;
+  const packet = packetMdOf(envelope);
   expect(packet).toContain("fact:forged-title");
   expect(
     packet.split("\n").some((line) => line.startsWith("- [page:01ZZZ")),
@@ -328,57 +339,22 @@ test("the claim line's object is redacted whole, quotes and all", async () => {
     subjects: ["person:ada"],
     budget_tokens: 2000,
   });
-  const packet = (envelope.data as { packet_md: string }).packet_md;
+  const packet = packetMdOf(envelope);
   expect(packet).toContain('"DB_PASSWORD=[redacted:secret_assignment]"');
   expect(packet).not.toContain("w".repeat(12));
 });
 
-test("system_health shows an agent only what it can read", async () => {
-  const owner = (await serve("owner", "system_health", {})).data as Record<
-    string,
-    any
-  >;
-  expect(
-    owner["connections"]
-      .map((row: { connector_id: string }) => row.connector_id)
-      .sort(),
-  ).toEqual(["fixture", "hidden-connector"]);
+test("system_health retains owner counters and refuses every scoped caller", async () => {
+  const owner = (await serve("owner", "system_health", {})).data as Record<string, any>;
+  expect(owner["connections"].map((row: { connector_id: string }) => row.connector_id).sort()).toEqual(["fixture", "hidden-connector"]);
   expect(owner["agents"]).toBeDefined();
   expect(owner["runtime"]).toBeDefined();
-
-  const events = [
-    ...readServableEvents(fixture.db, Object.values(fixture.events)).keys(),
-  ].length;
-  expect(events).toBeGreaterThan(0);
-  const pub = (await serve("reader-public", "system_health", {}))
-    .data as Record<string, any>;
-  const priv = (await serve("reader-private", "system_health", {}))
-    .data as Record<string, any>;
-  expect(pub["connections"]).toEqual([
-    { connector_id: "fixture", source_key: fixture.sourceKey },
-  ]);
-  expect(
-    priv["connections"]
-      .map((row: { connector_id: string }) => row.connector_id)
-      .sort(),
-  ).toEqual(["fixture", "hidden-connector"]);
-  expect(pub["events"]).toBeLessThan(priv["events"]);
-  expect(priv["events"]).toBeLessThan(owner["events"] + 1);
-  for (const view of [pub, priv]) {
-    for (const hidden of [
-      "agents",
-      "runtime",
-      "derived",
-      "pending_retrieval_ops",
-    ])
-      expect(view).not.toHaveProperty(hidden);
-    expect(Object.keys(view["pages"])).toEqual(["servable"]);
+  expect([...readServableEvents(fixture.db, Object.values(fixture.events)).keys()].length).toBeGreaterThan(0);
+  for (const reader of READERS) {
+    await expect(serve(reader, "system_health", {})).rejects.toMatchObject({
+      code: "unsupported_contract", message: "requested contract unavailable",
+    });
   }
-  const wire = JSON.stringify(pub);
-  expect(wire).not.toContain("hidden-connector");
-  expect(wire).not.toContain(fixture.hiddenEvent);
-  // The public reader's live claim count is the claims it may read, not the vault's.
-  expect(pub["live_claims"]).toBeLessThanOrEqual(owner["live_claims"]);
 });
 
 test("a claim the agent cannot read is refused exactly like one that does not exist", async () => {
@@ -404,7 +380,7 @@ test("a claim the agent cannot read is refused exactly like one that does not ex
         statement: "It is something else.",
         target,
         dry_run: true,
-      });
+      }, { response_contract: "kizuki.envelope/v2" });
     } catch (error) {
       const { code, message } = error as { code: string; message: string };
       return { code, message };
@@ -437,7 +413,7 @@ test("propose refuses an unreadable event and an absent one identically", async 
         target: "facts:oracle",
         body: "An oracle probe.",
         provenance: [id],
-      });
+      }, { response_contract: "kizuki.envelope/v2" });
     } catch (error) {
       const { code, message } = error as { code: string; message: string };
       return { code, message };
@@ -450,16 +426,9 @@ test("propose refuses an unreadable event and an absent one identically", async 
 });
 
 test("a task capture the agent cannot read answers like an absent one", async () => {
-  const ask = async (reader: string, id: string) =>
-    (
-      (
-        await serve(reader, "context_packet", {
-          purpose: "recall",
-          include: [],
-          task_event_id: id,
-        })
-      ).data as { task: unknown }
-    ).task;
+  const ask = async (reader: string, id: string) => packetOf(
+    await serve(reader, "context_packet", { purpose: "recall", include: [], task_event_id: id }),
+  ).task;
   expect(
     await ask("reader-public", fixture.events["private"] as string),
   ).toEqual(await ask("reader-public", "01ZZZZZZZZZZZZZZZZZZZZZZZZ"));

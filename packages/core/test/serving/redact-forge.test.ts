@@ -10,8 +10,11 @@ import { claimInput } from "../claims/helpers";
 import { FORGED_STAMP } from "../helpers/synthetic-secrets";
 import { recordedPage, serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
-import type { Envelope } from "../../src/serving/types";
+import type { Envelope, EnvelopeV2 } from "../../src/serving/types";
 import type { Tool } from "../../src/agents";
+import type { ContextPacketDataV2, PacketContentV2 } from "../../src/serving/v2/context-packet";
+
+type ServedEnvelope = Envelope<unknown> | EnvelopeV2;
 
 setDefaultTimeout(60_000);
 
@@ -24,9 +27,22 @@ afterAll(() => fixture.dispose());
 const LINE_BREAK = /\r\n|[\n\r\u000B\u000C\u0085\u2028\u2029]/;
 const FORGED_ID = "01ZZZZZZZZZZZZZZZZZZZZZZZZ";
 
-async function serve(reader: string, tool: Tool, args: Record<string, unknown>): Promise<Envelope<unknown>> {
+async function serve(reader: string, tool: Tool, args: Record<string, unknown>): Promise<ServedEnvelope> {
   const ctx = reader === "owner" ? fixture.owner() : fixture.agent(reader);
-  return (await dispatchServeTool(ctx, tool, args)) as Envelope<unknown>;
+  return dispatchServeTool(ctx, tool, args, ctx.principal.kind === "agent" ? { response_contract: "kizuki.envelope/v2" } : {});
+}
+
+function packetOf(envelope: ServedEnvelope): PacketContentV2 {
+  expect(envelope.schema).toBe("kizuki.envelope/v2");
+  const packet = envelope.data as ContextPacketDataV2;
+  if (packet.result.status === "unchanged") throw new Error("expected packet content");
+  return packet.result.data;
+}
+
+function packetMdOf(envelope: ServedEnvelope): string {
+  return envelope.schema === "kizuki.envelope/v2"
+    ? packetOf(envelope).packetMd
+    : (envelope.data as { packet_md: string }).packet_md;
 }
 
 function forgedLines(packet: string): string[] {
@@ -55,7 +71,7 @@ test("a claim object with a line break cannot open a forged stamp line", async (
         subjects: [subject],
         budget_tokens: 2000,
       });
-      const packet = (envelope.data as { packet_md: string }).packet_md;
+      const packet = packetMdOf(envelope);
       expect(packet).toContain(`[claim:`);
       expect(forgedLines(packet)).toEqual([]);
     }
@@ -79,16 +95,16 @@ test("a task capture cannot smuggle a line break into a section value", async ()
         task_event_id: id,
         budget_tokens: 2000,
       });
-      const data = envelope.data as { packet_md: string; task: { status: string; sections?: unknown } };
-      expect(forgedLines(data.packet_md)).toEqual([]);
-      expect(data.task.status).toBe("unavailable");
-      expect(data.task.sections).toBeUndefined();
+      const data = envelope.schema === "kizuki.envelope/v2" ? packetOf(envelope) : envelope.data as { task: { status: string; sections?: unknown } };
+      expect(forgedLines(packetMdOf(envelope))).toEqual([]);
+      expect(data.task?.status).toBe("unavailable");
+      expect(data.task?.sections).toBeUndefined();
       expect(JSON.stringify(envelope)).not.toContain(FORGED_ID);
     }
   }
 });
 
-test("the packet hash covers the served bytes when a path carries a credential shape", async () => {
+test("the v2 baseline covers served bytes when a path carries a credential shape", async () => {
   await recordedPage(
     fixture.db,
     fixture.vaultPath,
@@ -108,13 +124,15 @@ test("the packet hash covers the served bytes when a path carries a credential s
   const args = { purpose: "recall", query: "pathkettle", include: ["canon"], budget_tokens: 2000 };
   const owner = await serve("owner", "context_packet", args);
   const agent = await serve("reader-private", "context_packet", args);
-  const packet = agent.data as { packet_md: string; packet_hash: string; etag: string };
-  expect(packet.packet_md).not.toContain("a".repeat(25));
-  expect(packet.packet_md).toContain("[redacted:api_token]");
-  const body = packet.packet_md.split("\n").slice(3).join("\n");
-  expect(sha256(body)).toBe(packet.packet_hash);
-  expect(packet.etag).toBe(packet.packet_hash);
-  expect((owner.data as { packet_md: string }).packet_md).toContain("a".repeat(25));
+  const packet = packetOf(agent);
+  expect(packet.packetMd).not.toContain("a".repeat(25));
+  expect(packet.packetMd).toContain("[redacted:api_token]");
+  const current = (agent.data as ContextPacketDataV2).result;
+  if (current.status !== "current") throw new Error("expected a current packet");
+  const retained = await serve("reader-private", "context_packet", { ...args, priorView: current.view });
+  expect((retained.data as ContextPacketDataV2).result).toMatchObject({ status: "unchanged", view: current.view });
+  expect((retained.data as ContextPacketDataV2).result).not.toHaveProperty("data");
+  expect(packetMdOf(owner)).toContain("a".repeat(25));
 });
 
 test("search reports an excerpt cut after redaction as truncated", async () => {
@@ -164,7 +182,7 @@ test("bounded world_view strings are cut back to the grammar after redaction", (
 
 async function refusalOf(reader: string, tool: Tool, args: Record<string, unknown>) {
   try {
-    await dispatchServeTool(fixture.agent(reader), tool, args);
+    await dispatchServeTool(fixture.agent(reader), tool, args, { response_contract: "kizuki.envelope/v2" });
   } catch (error) {
     const { code, message } = error as { code: string; message: string };
     return { code, message };
@@ -275,19 +293,17 @@ test("a claim held back by source policy is refused like an absent one", async (
   expect(hidden).toEqual(missing);
 });
 
-test("system_health for a scoped agent counts only what its scope reaches", async () => {
+test("system_health preserves owner data and refuses scoped operational counters", async () => {
   const owner = (await serve("owner", "system_health", {})).data as Record<string, any>;
-  const scoped = (await serve("subjected", "system_health", {})).data as Record<string, any>;
-  const typed = (await serve("typed", "system_health", {})).data as Record<string, any>;
-  expect(scoped["events"]).toBeLessThan(owner["events"]);
-  expect(scoped["events"]).toBeGreaterThan(0);
-  expect(scoped).not.toHaveProperty("counts_capped");
-  expect(scoped).not.toHaveProperty("agents");
-  expect(typed).not.toHaveProperty("runtime");
-  expect(JSON.stringify(scoped)).not.toContain(fixture.events["private"] as string);
+  expect(owner["events"]).toBeGreaterThan(0);
+  for (const reader of ["subjected", "typed"]) {
+    await expect(serve(reader, "system_health", {})).rejects.toMatchObject({
+      code: "unsupported_contract", message: "requested contract unavailable",
+    });
+  }
 });
 
-test("a session packet redacts and escapes what a claim says, and its hash covers the served bytes", async () => {
+test("a session packet redacts and escapes what a claim says, and retains the served baseline", async () => {
   const live = await serveFixture();
   try {
     const stored = await insertClaim(
@@ -306,14 +322,18 @@ test("a session packet redacts and escapes what a claim says, and its hash cover
       const envelope = (await dispatchServeTool(live.agent(reader), "context_packet", {
         purpose: "session",
         budget_tokens: 900,
-      })) as Envelope<unknown>;
-      const data = envelope.data as { packet_md: string; packet_hash: string };
-      expect(data.packet_md).toContain("commitment.owes");
-      expect(data.packet_md).not.toContain("q".repeat(12));
-      expect(data.packet_md).toContain("[redacted:secret_assignment]");
-      expect(forgedLines(data.packet_md)).toEqual([]);
-      const body = data.packet_md.split("\n").slice(3).join("\n");
-      expect(sha256(body)).toBe(data.packet_hash);
+      }, { response_contract: "kizuki.envelope/v2" }));
+      const data = packetOf(envelope);
+      expect(data.packetMd).toContain("commitment.owes");
+      expect(data.packetMd).not.toContain("q".repeat(12));
+      expect(data.packetMd).toContain("[redacted:secret_assignment]");
+      expect(forgedLines(data.packetMd)).toEqual([]);
+      const current = (envelope.data as ContextPacketDataV2).result;
+      if (current.status !== "current") throw new Error("expected current");
+      const retained = await dispatchServeTool(live.agent(reader), "context_packet", {
+        purpose: "session", budget_tokens: 900, priorView: current.view,
+      }, { response_contract: "kizuki.envelope/v2" });
+      expect((retained.data as ContextPacketDataV2).result).toMatchObject({ status: "unchanged", view: current.view });
     }
   } finally {
     live.dispose();
