@@ -231,4 +231,25 @@ describe("kizuki tell with a world claim", () => {
     );
     expect(legacy.exitCode).toBe(2);
   });
+  test("v2 forwards correction modes and renders the refreshed concept in text and JSON", async () => {
+    for (const json of [false, true]) {
+      const { env, ref } = await world();
+      const claim = card(env, ref).definitions[0]!["claim"].token;
+      const told = runCli(env, "tell", "That is not what it means.",
+        "--world-claim", claim, "--mode", "retract", "--refresh-concept-ref", ref,
+        "--response-contract", "kizuki.envelope/v2", ...(json ? ["--json"] : []));
+      expect(told.exitCode, told.stderr).toBe(0);
+      if (json) {
+        const body = JSON.parse(told.stdout);
+        expect(body.schema).toBe("kizuki.cli-result/v2");
+        expect(body.result.data.mode).toBe("retract");
+        expect(body.result.data.refreshedWorld.result.data.definitions[0].polarity).toBe("negative");
+      } else {
+        expect(told.stdout).toContain("Refreshed concept: Bayesian updating");
+        expect(told.stdout).toContain("- concept.definition: not Revise beliefs using evidence");
+      }
+      expect(card(env, ref).definitions[0]).toMatchObject({ polarity: "negative" });
+    }
+  });
+
 });
