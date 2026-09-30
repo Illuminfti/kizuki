@@ -44,7 +44,7 @@ function concept(env: Record<string, string | undefined>): { relations: Relation
   return JSON.parse(read.stdout).data.data.result.data;
 }
 
-test("tell corrects the literal of a denied, a quoted and a contexted world claim and keeps each shape", async () => {
+test("tell corrects denied and contexted claims and refuses to rewrite a quotation", async () => {
   const setup = tempVault();
   const db = openLedger(join(setup.vault, ".kizuki/kizuki.db"));
   try {
@@ -83,7 +83,6 @@ test("tell corrects the literal of a denied, a quoted and a contexted world clai
 
   for (const [claim, statement] of [
     [denied, "Coin flips only when the coin is fair."],
-    [quoted, "Null hypothesis tests."],
     [contexted, "Naive Bayes filters."],
   ] as const) {
     const told = runCli(
@@ -97,11 +96,23 @@ test("tell corrects the literal of a denied, a quoted and a contexted world clai
     expect(told.exitCode, told.stderr).toBe(0);
   }
 
+  for (const args of [
+    [],
+    ["--mode", "retract"],
+    ["--mode", "reclassify_mode", "--perspective-mode", "suggested"],
+  ]) {
+    const refused = runCli(setup.env, "tell", "Nope, wrong.", "--world-claim", quoted.claim.token, ...args, "--json");
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain("unsupported_assertion: quoted_attribution");
+    expect(refused.stdout).toBe("");
+  }
+
   const after = concept(setup.env).relations;
   expect(after).toHaveLength(3);
   const values = after.map((relation) => relation.object.value);
   expect(values).toContain("Coin flips only when the coin is fair.");
-  expect(values).toContain("Null hypothesis tests.");
+  expect(values).toContain("Frequentist tests");
+  expect(values).not.toContain("Null hypothesis tests.");
   expect(values).toContain("Naive Bayes filters.");
   expect(values).not.toContain("Coin flips");
   expect(
@@ -110,13 +121,7 @@ test("tell corrects the literal of a denied, a quoted and a contexted world clai
         relation.object.value === "Coin flips only when the coin is fair.",
     )!.polarity,
   ).toBe("negative");
-  const requoted = after.find(
-    (relation) => relation.object.value === "Null hypothesis tests.",
-  )!;
-  expect(requoted.perspective.mode).toBe("quoted");
-  expect(requoted.perspective.speaker?.token).toBe(
-    quoted.perspective.speaker?.token,
-  );
+  expect(after.find(relation => relation.object.value === "Frequentist tests")).toEqual(quoted);
   expect(
     after.find((relation) => relation.object.value === "Naive Bayes filters.")!
       .context[0]?.token,

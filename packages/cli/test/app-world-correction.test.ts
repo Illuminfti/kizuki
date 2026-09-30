@@ -125,23 +125,27 @@ test('App correction target union rejects mixed, malformed and extra fields befo
 });
 
 test('valid opaque references to unsupported assertions and unknown references cannot append native corrections', async () => {
-    const f = await fixture();
+    const f = await fixture(false, shapes);
     try {
+        const before = readFileSync(join(f.vault, f.path), 'utf8');
         const db = openLedger(f.dbPath);
         let classification: { kind: 'claim'; token: string };
+        let quoted: { kind: 'claim'; token: string };
         try {
             const world = readWorldView({ db, vaultPath: f.vault, principal: OWNER }, {
                 operation: 'concept', concept: f.world.ref, valid: { kind: 'all' }, knownAt: { kind: 'current' },
             });
             if ('status' in world || world.result.status === 'unavailable' || !('concept' in world.result.data)) throw new Error('fixture concept unavailable');
             classification = world.result.data.concept.classificationClaims[0]!;
+            quoted = world.result.data.relations.find(relation => relation.perspective.mode === 'quoted')!.claim;
         } finally { db.close(); }
-        for (const ref of [classification, { kind: 'claim', token: 'z'.repeat(43) }]) {
+        for (const ref of [classification, quoted, { kind: 'claim', token: 'z'.repeat(43) }]) {
             const input = { target: { world_claim: ref }, statement: 'A replacement that must not be filed.' };
             expect((await f.request('correction_preview', input)).ok).toBe(false);
             expect((await f.done((await f.request('correct', input)).data.operation_id)).state).toBe('failed');
         }
         expect(f.nativeEvents()).toBe(0);
+        expect(readFileSync(join(f.vault, f.path), 'utf8')).toBe(before);
     } finally { await f.close(); }
 });
 
@@ -164,8 +168,8 @@ test('the target list offers every shape the writer takes, states how it is held
         const denied = named('concept.example', claim => claim.polarity === 'negative');
         expect(denied).toMatchObject({ object: 'Coin flips', perspective_mode: 'asserted', unsupported_reason: null });
         expect(denied.target.world_claim.kind).toBe('claim');
-        expect(named('concept.counterexample')).toMatchObject({ perspective_mode: 'quoted', unsupported_reason: null });
-        expect(named('concept.counterexample').target).not.toBeNull();
+        const quoted = named('concept.counterexample');
+        expect(quoted).toMatchObject({ perspective_mode: 'quoted', target: null, unsupported_reason: 'unsupported_assertion', unsupported_code: 'quoted_attribution' });
         expect(named('concept.example', claim => claim.object === 'Spam filters').target).not.toBeNull();
         expect(named('concept.requires')).toMatchObject({ object_kind: 'node', object: null, unsupported_reason: null });
         expect(named('concept.requires').target).not.toBeNull();
@@ -173,7 +177,7 @@ test('the target list offers every shape the writer takes, states how it is held
         expect(classification.target).toBeNull();
         expect(classification.unsupported_reason).toBe('unsupported_assertion');
         expect(classification.unsupported_code).toBe('classification_claim');
-        expect(claims.filter(claim => claim.target === null)).toEqual([classification]);
+        expect(claims.filter(claim => claim.target === null)).toEqual([classification, quoted]);
     } finally { await f.close(); }
 });
 

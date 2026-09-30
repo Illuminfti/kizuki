@@ -1,6 +1,6 @@
 # Correction modes and owner assertions over refs
 
-Status: implemented on the ocean integration branch. Evidence date: 2026-09-29.
+Status: implemented on this branch; awaiting integration. Evidence date: 2026-09-30.
 
 This page describes how an owner, or an agent relaying the owner, corrects a
 world claim: the three modes, the claim shapes the writer takes, what each
@@ -14,8 +14,9 @@ It records the owner's statement as native evidence, files one new claim at
 owner authority, retires the claim it replaces, and rewrites the claim's world
 page in the same pass under one receipt. `kizuki undo RECEIPT` reverses all of
 it. The new claim keeps the old claim's subject, predicate, context and
-perspective roles. It is valid from the moment of the correction, and the
-owner's statement is both its evidence and its rendering on the page.
+unattributed perspective mode. Claims with attributed perspectives are refused.
+It is valid from the moment of the correction, and the owner's statement is
+both its evidence and its rendering on the page.
 
 | Mode | Argument | Result |
 | --- | --- | --- |
@@ -36,14 +37,17 @@ owner says this is not so".
 
 ## Claim shapes
 
-Negative, roled, contexted, quoted, hypothetical, suggested, questioned and
-node-object claims are all taken. A claim is refused as `unsupported_assertion`
-with one of these reason codes:
+Negative, contexted, hypothetical, suggested, questioned and node-object claims
+are taken when they have no holder, speaker or addressee. Quoted and reported
+claims are refused in every mode, including dry runs, so the original claim
+stays live with its original evidence and attribution. A claim is refused as
+`unsupported_assertion` with one of these reason codes:
 
 | Reason code | Meaning |
 | --- | --- |
 | `classification_claim` | A `world.kind` claim classifies its subject. A second classification contradicts the first while it is live, so a classification is not corrected in place. |
 | `not_an_assertion` | The claim's stored meaning is not a plain world assertion. |
+| `quoted_attribution` | The claim is quoted or reported, or names a holder, speaker or addressee. The owner's statement cannot replace another perspective's words or attribution. |
 
 The owner's target list (`inspectOwnerPageCorrectionTargets`, the App
 `correction_targets` route) asks the writer's own function, so a claim is listed
@@ -77,8 +81,8 @@ writer only accepts a node the world already holds.
 The native evidence records the endpoints it attests. An event's
 `world_target.endpoints` lists every endpoint of the new claim beyond its
 subject, sorted. Restore checks the new claim against that list, so a
-corrected roled or node-object claim survives backup, restore and the purge of
-the source that first named its roles. Older corrections carry no list and
+corrected contexted or node-object claim survives backup, restore and the purge of
+the source that first named its endpoints. Older corrections carry no list and
 attest only their subject, as before.
 
 ## Surfaces
@@ -129,6 +133,7 @@ read was unavailable.
 | Refresh cannot be read after the commit | `refreshedWorld` unavailable with reason `storage`; the correction stands. |
 | Dry run | The same answer as a real call, prefixed "Would", and nothing written in any mode. |
 | Classification claim | `unsupported_assertion: classification_claim`, no native evidence. |
+| Quoted, reported or attributed claim | `unsupported_assertion: quoted_attribution`, no native evidence; original claim stays live. |
 | Caller cannot relay the owner | Held before mutation: `correction relay is not granted`. |
 
 ## Known limits
@@ -156,7 +161,7 @@ read was unavailable.
 ```bash
 bun test packages/core/test/serving/world-correct-modes.test.ts
 bun test packages/mcp/test/correct-modes.test.ts packages/mcp/test/tools-list.test.ts packages/mcp/test/schema.test.ts
-bun test packages/cli/test/tell-modes.test.ts packages/cli/test/tell-shapes.test.ts packages/cli/test/app-world-correction-shapes.test.ts
-bun test packages/core/test/serving/world-occurrence-correction.test.ts packages/cli/test/app-world-correction.test.ts
+bun test packages/cli/test/tell-modes.test.ts packages/cli/test/tell-shapes.test.ts packages/cli/test/app-world-correction.test.ts
+bun test packages/core/test/serving/world-occurrence-correction.test.ts
 bun run typecheck
 ```

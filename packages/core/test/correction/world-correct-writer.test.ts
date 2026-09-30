@@ -114,6 +114,23 @@ test("the writer refuses before recording: an unknown node, a wrong object kind,
       "unsupported_assertion",
       "classification_claim",
     );
+    const quoted = await s.kit.write({
+      subject: "topic:bayes", predicate: "concept.counterexample",
+      object: { literal: "Frequentist tests" }, mode: "quoted", speaker: "person:sam",
+    });
+    const meaning = readClaimV2Semantic(s.db, quoted);
+    for (const world of [
+      { mode: "replace_object" },
+      { mode: "retract" },
+      { mode: "reclassify_mode", to: "suggested" },
+    ] as const) {
+      await refused(
+        { statement: "Nope, wrong.", target: { claim_id: quoted }, world },
+        "unsupported_assertion", "quoted_attribution",
+      );
+      expect(getClaim(s.db, quoted)!.status).toBe("live");
+      expect(readClaimV2Semantic(s.db, quoted)).toEqual(meaning);
+    }
     await refused(
       { statement: "x".repeat(401), target: { claim_id: s.definition } },
       "statement_invalid",

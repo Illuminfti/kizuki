@@ -50,6 +50,7 @@ export interface AssertionSpec {
   readonly mode?: ClaimV2Perspective["mode"];
   readonly holder?: string;
   readonly speaker?: string;
+  readonly addressee?: string;
   readonly context?: readonly string[];
 }
 
@@ -129,6 +130,7 @@ export function correctionKit(db: Database, vaultPath: string, options: Correcti
         ...("subject" in spec.object ? [spec.object.subject] : []),
         ...(spec.holder === undefined ? [] : [spec.holder]),
         ...(spec.speaker === undefined ? [] : [spec.speaker]),
+        ...(spec.addressee === undefined ? [] : [spec.addressee]),
         ...(spec.context ?? []),
       ]),
     ];
@@ -151,7 +153,7 @@ export function correctionKit(db: Database, vaultPath: string, options: Correcti
     if (accepted.status !== "stored")
       throw new Error(`event was not stored: ${JSON.stringify(accepted)}`);
     const anchor = { event_id: accepted.event.event_id, ...SPAN };
-    const roles = spec.holder !== undefined || spec.speaker !== undefined;
+    const roles = spec.holder !== undefined || spec.speaker !== undefined || spec.addressee !== undefined;
     const object: ClaimV2Object =
       "literal" in spec.object
         ? { kind: "literal", value: spec.object.literal }
@@ -170,7 +172,7 @@ export function correctionKit(db: Database, vaultPath: string, options: Correcti
       perspective: {
         holder: spec.holder === undefined ? null : ref(spec.holder),
         speaker: spec.speaker === undefined ? null : ref(spec.speaker),
-        addressee: null,
+        addressee: spec.addressee === undefined ? null : ref(spec.addressee),
         mode: spec.mode ?? "asserted",
         interpretation: "explicit",
         anchors: roles ? [anchor] : [],

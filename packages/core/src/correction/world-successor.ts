@@ -25,10 +25,10 @@ function refused(detail: string): CorrectError {
 
 /**
  * The claim a correction files, from the claim it replaces: the same subject,
- * predicate, context and roles, changed in exactly the one way its mode names,
+ * predicate and context, changed in exactly the one way its mode names,
  * valid from the moment of the correction and anchored on the owner's own
- * statement. The old claim's perspective and context are kept; only a mode
- * that says otherwise changes them.
+ * statement. Attributed perspectives are refused before planning; the new
+ * assertion has no holder, speaker or addressee.
  */
 export function worldSuccessor(
   prior: ClaimMeaning,
@@ -44,8 +44,6 @@ export function worldSuccessor(
     throw refused(`reclassify_mode: the claim is already ${world.to}`);
   }
   const anchor = { event_id: eventId, start_utf16: 0, end_utf16: statement.length };
-  const roles = prior.perspective;
-  const named = roles.holder !== null || roles.speaker !== null || roles.addressee !== null;
   const object: ClaimV2Object =
     world.mode === "replace_object" ? (world.object ?? { kind: "literal", value: statement }) : prior.object;
   return {
@@ -55,10 +53,12 @@ export function worldSuccessor(
     predicate: prior.predicate,
     object,
     perspective: {
-      ...roles,
-      mode: world.mode === "reclassify_mode" ? world.to : roles.mode,
+      holder: null,
+      speaker: null,
+      addressee: null,
+      mode: world.mode === "reclassify_mode" ? world.to : prior.perspective.mode,
       interpretation: "explicit",
-      anchors: named ? [anchor] : [],
+      anchors: [],
     },
     context: prior.context,
     polarity: world.mode === "retract" ? "negative" : prior.polarity,

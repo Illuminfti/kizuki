@@ -19,6 +19,7 @@ import { assertWorldState } from "../../src/world/integrity";
 import {
   correctionKit,
   worldData,
+  type AssertionSpec,
   type ClaimRef,
   type WorldRef,
 } from "../helpers/world-correct-kit";
@@ -86,6 +87,59 @@ const nativeEvidence = (s: Scene) =>
   s.db
     .query<{ n: number }, []>("SELECT count(*) AS n FROM native_owner_evidence")
     .get()!.n;
+
+test.each([
+  { mode: "quoted", speaker: "person:sam" },
+  { mode: "quoted" },
+  { mode: "reported" },
+  { holder: "person:sam" },
+  { speaker: "person:sam" },
+  { addressee: "person:sam" },
+] satisfies Partial<AssertionSpec>[])("all correction modes preserve an attributed claim (%j)", async (perspective) => {
+  const s = await scene();
+  try {
+    const id = await s.kit.write({
+      subject: "topic:bayes",
+      predicate: "concept.counterexample",
+      object: { literal: "Frequentist tests" },
+      ...perspective,
+    });
+    s.kit.materialize("topic:bayes");
+    const before = s.card();
+    const page = s.page();
+    const claim = getClaim(s.db, id);
+    const meaning = readClaimV2Semantic(s.db, id);
+    const tables = ["events", "claims", "claim_v2_support", "canon_receipts", "claim_supersessions"];
+    const counts = () => tables.map(table => s.db.query<{ n: number }, []>(`SELECT count(*) AS n FROM ${table}`).get()!.n);
+    const recorded = counts();
+    const target = { world_claim: relationOf(before, "concept.counterexample")["claim"] };
+    const attempts: CorrectArgs[] = [
+      { target, statement: "Null hypothesis tests.", mode: "replace_object" },
+      { target, statement: "Nope, wrong.", mode: "retract" },
+      { target, statement: "That was an idea.", mode: "reclassify_mode", perspective_mode: "suggested" },
+    ];
+    for (const args of attempts) {
+      for (const dry_run of [false, true]) {
+        await expect(serveCorrect(s.kit.ctx, { ...args, dry_run })).rejects.toThrow("unsupported_assertion: quoted_attribution");
+        expect(nativeEvidence(s)).toBe(0);
+        expect(counts()).toEqual(recorded);
+        expect(getClaim(s.db, id)).toEqual(claim);
+        expect(readClaimV2Semantic(s.db, id)).toEqual(meaning);
+        expect(s.card()).toEqual(before);
+        expect(s.page()).toBe(page);
+      }
+    }
+    const audits = s.db.query<{ served: string; denied: string }, []>("SELECT served, denied FROM agent_audit WHERE tool='correct'").all();
+    expect(audits).toHaveLength(6);
+    for (const audit of audits) {
+      expect(JSON.parse(audit.served)).toEqual([]);
+      expect(JSON.parse(audit.denied)).toEqual([{ id: "tool:correct", reason: "invalid_arguments" }]);
+    }
+    assertWorldState(s.db);
+  } finally {
+    s.dispose();
+  }
+});
 
 test("replace_object files the named literal beside the owner's words, rewrites the page and undoes", async () => {
   const s = await scene();
@@ -307,7 +361,7 @@ test("reclassify_mode moves an asserted objective to uncertainty and leaves the 
   }
 });
 
-test("a correction keeps polarity, roles, context and the node object of the claim it replaces", async () => {
+test("a correction keeps polarity, context and node objects and leaves quoted claims unchanged", async () => {
   const s = await scene();
   try {
     await s.kit.write({
@@ -343,15 +397,15 @@ test("a correction keeps polarity, roles, context and the node object of the cla
       statement: "Fair coin flips.",
       target: { world_claim: seen.get("Coin flips")!["claim"] },
     });
-    const quoted = await serveCorrect(s.kit.ctx, {
+    await expect(serveCorrect(s.kit.ctx, {
       statement: "Null hypothesis tests.",
       target: { world_claim: seen.get("Frequentist tests")!["claim"] },
-    });
+    })).rejects.toThrow("unsupported_assertion: quoted_attribution");
     const contexted = await serveCorrect(s.kit.ctx, {
       statement: "Naive Bayes filters.",
       target: { world_claim: seen.get("Spam filters")!["claim"] },
     });
-    for (const done of [denied, quoted, contexted])
+    for (const done of [denied, contexted])
       expect(done.data!.claim_id).toBeString();
 
     const after = new Map<string, Record<string, any>>(
@@ -365,11 +419,8 @@ test("a correction keeps polarity, roles, context and the node object of the cla
     expect(after.get("Fair coin flips.")).toMatchObject({
       polarity: "negative",
     });
-    const requoted = after.get("Null hypothesis tests.")!;
-    expect(requoted["perspective"]).toMatchObject({
-      mode: "quoted",
-      speaker: seen.get("Frequentist tests")!["perspective"].speaker,
-    });
+    expect(after.has("Null hypothesis tests.")).toBe(false);
+    expect(after.get("Frequentist tests")).toEqual(seen.get("Frequentist tests"));
     expect(after.get("Naive Bayes filters.")!["context"]).toEqual(
       seen.get("Spam filters")!["context"],
     );
@@ -393,17 +444,16 @@ test("a correction keeps polarity, roles, context and the node object of the cla
   }
 });
 
-test("a corrected roled claim survives the purge of the source that named its roles", async () => {
+test("a corrected contexted claim survives the purge of the source that named its context", async () => {
   const s = await scene();
   try {
-    const quotedId = await s.kit.write({
+    const contextedId = await s.kit.write({
       subject: "topic:bayes",
       predicate: "concept.counterexample",
       object: { literal: "Frequentist tests" },
-      mode: "quoted",
-      speaker: "person:sam",
+      context: ["project:mail"],
     });
-    const source = getClaim(s.db, quotedId)!.provenance[0]!;
+    const source = getClaim(s.db, contextedId)!.provenance[0]!;
     const target = relationOf(s.card(), "concept.counterexample");
     const done = await serveCorrect(s.kit.ctx, {
       statement: "Null hypothesis tests.",
@@ -413,13 +463,14 @@ test("a corrected roled claim survives the purge of the source that named its ro
       s.db,
       s.vault.path,
       { event_id: source },
-      "correct-roled-source-erased",
+      "correct-context-source-erased",
     );
     expect(getClaim(s.db, done.data!.claim_id!)!.status).toBe("live");
     assertWorldState(s.db);
     const survivor = relationOf(s.card(), "concept.counterexample");
     expect(survivor["object"].value).toBe("Null hypothesis tests.");
-    expect(survivor["perspective"].mode).toBe("quoted");
+    expect(survivor["perspective"].mode).toBe("asserted");
+    expect(survivor["context"]).toEqual(target["context"]);
   } finally {
     s.dispose();
   }
