@@ -36,7 +36,7 @@ test("a newly enrolled stdio client uses v2 on every tool, and hidden revocation
     const read = await clients.readConcept(clients.agent);
     expect(read.card?.schema).toBe("kizuki.envelope/v2");
     const inputs: Record<string, Record<string, unknown>> = {
-      search: { query: "Bayesian" }, get_page: { id: "absent:page" }, query_entities: { type: "concept" },
+      search: { query: "Bayesian" }, get_page: { id: "absent:page" }, query_entities: { type: "topic" },
       timeline: { since: "2026-01-01T00:00:00Z", until: "2030-01-01T00:00:00Z" },
       context_packet: { query: "Bayesian", budget_tokens: 1_000 }, graph_neighbors: { id: "absent:page" },
       system_health: {}, world_view: { operation: "describe" },

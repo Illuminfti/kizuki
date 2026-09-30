@@ -12,7 +12,7 @@ function cases(scene: NoninterferenceScene): ReadCase[] {
   const inputs: Record<(typeof TOOLS)[number], Record<string, unknown>> = {
     search: { query: "Bayesian", scope: "all" },
     get_page: { id: "absent:page" },
-    query_entities: { type: "concept" },
+    query_entities: { type: "topic" },
     timeline: { since: "2026-01-01T00:00:00Z", until: "2030-01-01T00:00:00Z" },
     context_packet: { query: "Bayesian", budget_tokens: 1_000 },
     graph_neighbors: { id: "absent:page" },
