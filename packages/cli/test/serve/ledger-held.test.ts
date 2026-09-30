@@ -9,6 +9,7 @@ import {
 import { join, resolve } from "node:path";
 import {
   listConnections,
+  getCheckpoint,
   listRunReceipts,
   pidAlive,
   readBootId,
@@ -219,6 +220,31 @@ test("an import beside a running daemon completes, records itself as the holder 
   expect(await daemon.exited).toBe(0);
 });
 
+for (const stopMode of ["SIGTERM", "serve stop"] as const) {
+  test(`${stopMode} exits without restarting while a writer holds the ledger beyond TimeoutStopSec`, async () => {
+    const setup = tempVault();
+    const daemon = startDaemon(setup);
+    await until("the first pass of every rail", 60_000,
+      () => readLedger(setup, db => listRunReceipts(db).length >= 7) || null);
+    const holder = await holdLedger(setup, 100_000);
+    const started = Date.now();
+    if (stopMode === "SIGTERM") daemon.kill("SIGTERM");
+    else {
+      const stop = await runCliAsync(setup.env, "serve", "stop", "--vault", setup.vault);
+      expect(stop.exitCode, stop.stderr).toBe(0);
+    }
+    const exit = await Promise.race([daemon.exited, Bun.sleep(40_000).then(() => "timeout")]);
+    expect(exit).toBe(0);
+    expect(Date.now() - started).toBeLessThan(40_000);
+    expect(holder.exitCode).toBeNull();
+    expect(existsSync(join(setup.vault, ".kizuki", "serve.pid"))).toBe(false);
+    const output = await new Response(daemon.stderr).text();
+    expect(output).not.toContain('"event":"start_held"');
+    holder.kill("SIGKILL");
+    await holder.exited;
+  });
+}
+
 test("a daemon started while the ledger is held waits and starts, instead of exiting into the supervisor's start limit", async () => {
   const setup = tempVault();
   // Longer than every bounded wait the ledger has, so the first start is refused.
@@ -243,6 +269,32 @@ test("a daemon started while the ledger is held waits and starts, instead of exi
   expect(await daemon.exited).toBe(0);
   const journal = await new Response(daemon.stderr).text();
   expect(journal).toContain('"event":"start_held"');
+});
+
+test("SIGTERM cancels startup retries while the ledger remains held", async () => {
+  const setup = tempVault();
+  const holder = await holdLedger(setup, 100_000);
+  const daemon = startDaemon(setup);
+  let output = "";
+  const drain = (async () => {
+    const reader = daemon.stderr.getReader();
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) return;
+        output += new TextDecoder().decode(chunk.value);
+      }
+    } finally { reader.releaseLock(); }
+  })();
+  await until("startup backoff", 60_000, () => output.includes('"event":"start_held"') || null);
+  daemon.kill("SIGTERM");
+  expect(await Promise.race([daemon.exited, Bun.sleep(10_000).then(() => "timeout")])).toBe(0);
+  await drain;
+  expect(holder.exitCode).toBeNull();
+  expect(existsSync(join(setup.vault, ".kizuki", "serve.pid"))).toBe(false);
+  expect(output.match(/"event":"start_held"/g)).toHaveLength(1);
+  holder.kill("SIGKILL");
+  await holder.exited;
 });
 
 async function daemonInsideModelRequest(setup: Setup) {
@@ -359,4 +411,78 @@ test("kizuki serve stop during a model request aborts it too", async () => {
   } finally {
     endpoint.stop();
   }
+});
+
+test("SIGTERM during connector draining commits only the batch in flight and a restart resumes the remaining batches and sources", async () => {
+  const fixture = tempVault();
+  const setup = { ...fixture, env: { ...fixture.env, BEEPER_TOKEN: "synthetic-drain-token" } };
+  let draining = false;
+  const batches: number[] = [];
+  let finishBatch!: () => void;
+  const currentBatch = new Promise<void>(resolve => { finishBatch = resolve; });
+  const server = Bun.serve({
+    hostname: "127.0.0.1", port: 0,
+    async fetch(request) {
+      const url = new URL(request.url);
+      if (url.pathname === "/v1/info") {
+        return Response.json({ app: { name: "Beeper", version: "fixture" }, server: { status: "running" } });
+      }
+      if (url.pathname !== "/v1/messages/search") return new Response("not found", { status: 404 });
+      const index = draining ? Number(url.searchParams.get("cursor") ?? "0") + 1 : 0;
+      if (draining) batches.push(index);
+      if (index === 1) await currentBatch;
+      return Response.json({
+        items: [{ id: `fixture-${index}`, accountID: "fixture-account", chatID: "fixture-chat",
+          senderID: "fixture-sender", sortKey: String(index), timestamp: `2026-09-04T10:00:0${index}Z`, text: "A synthetic library update." }],
+        hasMore: draining && index < 3, oldestCursor: String(index), newestCursor: String(index),
+      });
+    },
+  });
+  try {
+    const connected = await runCliAsync(setup.env, "connect", "beeper", "--token-ref", "env:BEEPER_TOKEN",
+      "--endpoint", `http://127.0.0.1:${server.port}`);
+    expect(connected.exitCode, connected.stderr).toBe(0);
+    const source = readLedger(setup, db => listConnections(db).find(item => item.connector_id === "kizuki.beeper")!);
+    readLedger(setup, db => setSourceGrant(db, {
+      source_key: source.source_key, expected_revision: 0, operation_id: "fixture-drain-grant",
+      policy: { purposes: ["capture", "recall", "session", "derive"],
+        allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked",
+        egress: "local_only", sensitivity_floor: "public" },
+    }));
+    const initial = await runCliAsync(setup.env, "sync", "beeper");
+    expect(initial.exitCode, initial.stderr).toBe(0);
+    const otherSource = await runCliAsync(setup.env, "connect", "markdown-folder", "--source", setup.notes);
+    expect(otherSource.exitCode, otherSource.stderr).toBe(0);
+    readLedger(setup, db => setSourceGrant(db, {
+      source_key: listConnections(db).find(item => item.connector_id === "kizuki.markdown-folder")!.source_key,
+      expected_revision: 0, operation_id: "fixture-second-source-grant",
+      policy: { purposes: ["capture", "recall", "session", "derive"],
+        allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked",
+        egress: "local_only", sensitivity_floor: "public" },
+    }));
+    draining = true;
+    const daemon = startDaemon(setup);
+    await until("the first connector batch in flight", 60_000, () => batches.length === 1 || null);
+    daemon.kill("SIGTERM");
+    // Deliver the signal before the current bounded provider operation finishes.
+    await Bun.sleep(100);
+    finishBatch();
+    expect(await Promise.race([daemon.exited, Bun.sleep(10_000).then(() => "timeout")])).toBe(0);
+    expect(batches).toEqual([1]);
+    const receipt = readLedger(setup, db => listRunReceipts(db, { rail: "sync" }).at(-1))!;
+    expect(receipt).toMatchObject({ stopped: "serve:stop_requested", status: "stopped", events_stored: 1, errors: [] });
+    const checkpoint = readLedger(setup, db => getCheckpoint(db, "kizuki.beeper", source.source_key))!;
+    expect(JSON.parse(checkpoint.sync_cursor!).after).toBe("1");
+    expect(readLedger(setup, db => db.query<{ n: number }, []>("SELECT count(*) AS n FROM events WHERE connector_id='kizuki.markdown-folder'").get()!.n)).toBe(0);
+    // The next pass starts from the committed batch, then reaches the later source.
+    readLedger(setup, db => db.query("UPDATE schedules SET next_run_at=NULL WHERE rail='sync'").run());
+    const restarted = startDaemon(setup);
+    await until("remaining batches and the second source", 60_000, () =>
+      batches.length === 3 && readLedger(setup, db =>
+        db.query<{ n: number }, []>("SELECT count(*) AS n FROM events WHERE connector_id='kizuki.markdown-folder'").get()!.n) === 3 || null);
+    expect(batches).toEqual([1, 2, 3]);
+    const stop = await runCliAsync(setup.env, "serve", "stop", "--vault", setup.vault);
+    expect(stop.exitCode, stop.stderr).toBe(0);
+    expect(await restarted.exited).toBe(0);
+  } finally { finishBatch(); await server.stop(true); }
 });

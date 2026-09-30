@@ -186,6 +186,9 @@ async function runSyncRail(
           errors: [] as string[],
         }
       : await hooks.sync();
+  if (stopRequested?.()) {
+    return { ...synced, status: "stopped", stopped: "serve:stop_requested" };
+  }
   const written = await runWritePass(db, vaultPath, {
     budget,
     extraction,

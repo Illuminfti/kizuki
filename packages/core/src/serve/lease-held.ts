@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { isLedgerBusy } from "../ledger/busy";
-import { readServePid } from "./daemon";
+import { readServePid } from "./process-marker";
 import { pidAlive, readLease } from "./leases";
 import { LEDGER_LEASE_HELD_STOP } from "./types";
 

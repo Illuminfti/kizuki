@@ -110,6 +110,12 @@ A stop takes seconds: it aborts a model request in flight instead of waiting for
 it. The longest thing a stop can still wait for is one connector call, which the
 host bounds at 60 seconds, so the unit's `TimeoutStopSec=90s` is that bound plus
 a 30 second margin and does not depend on `[ports.llm] timeout_ms`.
+Connector draining finishes and checkpoints the current batch, then starts no
+new batch or source. A stop also cancels startup backoff. If the ledger remains
+held during final sealing, the daemon exits after bounded cleanup and leaves
+the existing seal intact for the next successful writer to advance; it never
+starts the daemon again. Doctor reads the bounded journal tail for pending rail
+receipts and counts each run once, including while the writer is still active.
 
 Definitions and service intent use bounded private files, atomic replacement and
 directory synchronization. A process lock serializes changes for one vault. A

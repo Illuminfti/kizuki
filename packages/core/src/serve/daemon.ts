@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { recoverCanonWrites } from "../canon/recovery";
 import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { canonRecoveryNextStep, readCanonRecoveryHold } from "../canon/stage-recovery";
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fsyncSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import nodeProcess from "node:process";
 import { LEDGER_LOOP_PROBE_TIMEOUT_MS } from "../ledger/limits";
@@ -29,7 +29,6 @@ import {
   LEDGER_HELD_BACKOFF_MAX_MS,
   LEDGER_HELD_BACKOFF_MIN_MS,
   LEDGER_LEASE_HELD_STOP,
-  SERVE_PID_PATH,
   STOP_WATCH_MS,
   ServeDaemonError,
   isRailId,
@@ -38,6 +37,7 @@ import {
   type RunExecution,
   type RunReceipt,
 } from "./types";
+import { readServePid, readServeProcessMarker, servePidPath, type ServeProcessMarker } from "./process-marker";
 import { clearServeStopRequest, serveStopRequested } from "./stop-control";
 
 interface ServeDaemonOptionsBase {
@@ -54,6 +54,10 @@ interface ServeDaemonOptionsBase {
   readonly shouldContinue?: () => boolean;
   /** One structured line per held recovery attempt; defaults to stderr. */
   readonly log?: (line: string) => void;
+  /** Terminal command cancellation, including startup and final cleanup. */
+  readonly signal?: AbortSignal;
+  /** Startup finished; subsequent contention must never restart this invocation. */
+  readonly onStarted?: () => void;
 }
 
 export interface ServeDaemonOptions extends ServeDaemonOptionsBase {
@@ -75,41 +79,8 @@ export interface ServeStatus {
   readonly http: { host: string; port: number } | null;
 }
 
-export function servePidPath(vaultPath: string): string {
-  return join(vaultPath, SERVE_PID_PATH);
-}
+export { readServePid, readServeProcessMarker, servePidPath, type ServeProcessMarker } from "./process-marker";
 
-export interface ServeProcessMarker { pid: number; boot_id: string; instance_id: string; }
-export function readServeProcessMarker(vaultPath: string): ServeProcessMarker | null {
-  const path = servePidPath(vaultPath);
-  if (!existsSync(path)) return null;
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    if (!fstatSync(fd).isFile() || fstatSync(fd).size > 4096) return null;
-    const raw = readFileSync(fd, "utf8");
-    if (raw.length > 4096) return null;
-    let value: unknown;
-    try { value = JSON.parse(raw); } catch { return null; }
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const marker = value as Record<string, unknown>;
-    if (Object.keys(marker).sort().join() !== "boot_id,instance_id,pid" || !Number.isSafeInteger(marker.pid) || Number(marker.pid) < 1 || typeof marker.boot_id !== "string" || !marker.boot_id || marker.boot_id.length > 128 || typeof marker.instance_id !== "string" || !marker.instance_id || marker.instance_id.length > 128) return null;
-    return marker as unknown as ServeProcessMarker;
-  } finally { closeSync(fd); }
-}
-export function readServePid(vaultPath: string): number | null {
-  const marker = readServeProcessMarker(vaultPath);
-  if (marker) return marker.pid;
-  const path = servePidPath(vaultPath);
-  if (!existsSync(path)) return null;
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    if (!fstatSync(fd).isFile() || fstatSync(fd).size > 4096) return null;
-    const raw = readFileSync(fd, "utf8").trim();
-    if (!/^[1-9]\d{0,9}$/.test(raw)) return null;
-    const pid = Number(raw);
-    return Number.isSafeInteger(pid) ? pid : null;
-  } finally { closeSync(fd); }
-}
 function syncPidDirectory(path: string): void {
   const fd = openSync(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try { fsyncSync(fd); } finally { closeSync(fd); }
@@ -166,6 +137,8 @@ export async function runServeDaemon(
   // inside the supervisor's stop timeout whatever the model timeout is.
   const stopSignal = new AbortController();
   const requestStop = (): void => { stopping = true; stopSignal.abort(); };
+  options.signal?.addEventListener("abort", requestStop, { once: true });
+  if (options.signal?.aborted) requestStop();
   // A long sync pass reads the same request before each extraction step.
   const stopRequested = (): boolean => stopping || serveStopRequested(vaultPath, ownMarker);
   const log = options.log ?? ((line: string) => { nodeProcess.stderr.write(`${line}\n`); });
@@ -223,8 +196,7 @@ export async function runServeDaemon(
       log("serve: endpoint hint could not be written; clients must find the daemon another way");
     }
   }
-
-
+  options.onStarted?.();
     if (options.once === true) {
       const rails =
         options.rails ??
@@ -294,7 +266,14 @@ export async function runServeDaemon(
       }
     }
     return { receipts, http };
+  } catch (error) {
+    // A stop queued against the startup marker is terminal too. Observe it
+    // before cleanup removes the marker/request, or a busy startup could be
+    // mistaken for another attempt after the requested shutdown.
+    if (asLeaseHeld(vaultPath, error, db) !== null && stopRequested()) return { receipts, http };
+    throw error;
   } finally {
+    options.signal?.removeEventListener("abort", requestStop);
     nodeProcess.off("SIGTERM", requestStop);
     nodeProcess.off("SIGINT", requestStop);
     try { if (http !== null) { clearServeEndpoint(vaultPath); await http.stop(); } }

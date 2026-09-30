@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { CanonFilesError, openCanonFiles, type CanonFiles, type CanonFileSnapshot } from "../vault/canon-files";
 import { withMutationFilesSync } from "../vault/mutation-files";
 import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-scope";
-import type { ServeProcessMarker } from "./daemon";
+import type { ServeProcessMarker } from "./process-marker";
 
 const MARKER = ".kizuki/serve.pid";
 const REQUEST = ".kizuki/serve-stop.json";

@@ -115,12 +115,14 @@ async function syncConnections(
   store: Parameters<typeof listHostConnections>[1],
   env: Record<string, string | undefined>,
   pace: (() => void) | undefined,
+  signal: AbortSignal | undefined,
 ): Promise<RailSyncResult> {
   let events_synced = 0;
   let events_stored = 0;
   let events_duplicate = 0;
   const errors: string[] = [];
   for (const selected of listHostConnections(db, store)) {
+    if (signal?.aborted) break;
     if (selected.state === null) {
       if (errors.length < MAX_SYNC_ERRORS) errors.push("connection state unavailable");
       continue;
@@ -128,13 +130,14 @@ async function syncConnections(
     try {
       const connector = await loadConnector(selected, store, db, env);
       try {
+        if (signal?.aborted) break;
         const result = await runToCompletion(
           db,
           connector,
           selected.connection.connector_id,
           selected.connection.source_key,
           "sync",
-          { vault_path: vaultPath, ...(pace === undefined ? {} : { pace }) },
+          { vault_path: vaultPath, ...(pace === undefined ? {} : { pace }), ...(signal === undefined ? {} : { signal }) },
         );
         events_stored += result.stored;
         events_duplicate += result.duplicates;
@@ -169,7 +172,7 @@ interface ServeRuntimeOptions {
   readonly err: (line: string) => void;
   /** Strict by default; the daemon can retain its useful local capture floor. */
   readonly configurationErrorMode?: "throw" | "disable-model";
-  /** Aborts every model and judge request of this runtime, so a daemon stop never waits one out. */
+  /** Aborts model requests and stops connector draining after its current committed batch. */
   readonly signal?: AbortSignal;
   /** A foreground caller's pacer, so its sync leaves the ledger free between commits for a running daemon. */
   readonly pace?: () => void;
@@ -347,7 +350,7 @@ export async function createServeRuntime(options: ServeRuntimeOptions): Promise<
       ...(binding?.producer === undefined ? {} : { producer: binding.producer }),
       claims,
       sync: async () => {
-        const result = await syncConnections(options.db, options.vaultPath, options.store, options.env, options.pace);
+        const result = await syncConnections(options.db, options.vaultPath, options.store, options.env, options.pace, options.signal);
         return configurationUnavailable
           ? { ...result, errors: [...result.errors, "model configuration unavailable"] }
           : result;

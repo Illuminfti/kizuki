@@ -2,6 +2,7 @@ import {
   detectSupervisorKind,
   inspectServeDoctor,
   installServeService,
+  LedgerLeaseHeldError,
   isCrashPoint,
   isRailId,
   queryServeService,
@@ -17,7 +18,7 @@ import {
   uninstallServeService,
 } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
-import { LedgerMigrationRequiredError, withVault } from "../context";
+import { LedgerMigrationRequiredError, withReadVault, withVault } from "../context";
 import { jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 import { serveSupervisorHost } from "../service-host";
@@ -96,6 +97,26 @@ export const serveCommand: Command = {
         return mode === "--service-custody" ? serviceStartupExit(error.reason) : 1;
       }
     }
+    // Stop is a file control request, so it must not acquire SQLite's writer.
+    if (verb === "stop") {
+      try {
+        return await withReadVault(io, async ctx => {
+          const result = await requestServeStop(ctx.vaultPath);
+          if (parsed.flags.has("--json")) io.out(jsonEnvelope("serve", "ok", result));
+          else io.out(result.status === "queued" ? "stop request queued" : "stop request already queued");
+          return 0;
+        }, { retrieval: "none" });
+      } catch (error) {
+        if (!(error instanceof ServeStopError)) throw error;
+        io.err(error.message);
+        return 1;
+      } finally { custody?.close(); }
+    }
+    const daemon = verb === undefined && !["--once", "--install", "--uninstall"].some(flag => parsed.flags.has(flag));
+    const stop = new AbortController();
+    const requestStop = (): void => stop.abort();
+    let started = false;
+    let completed = false;
     const start = (): Promise<number> => withVault(io, async (ctx) => {
       const kind = detectSupervisorKind(io.env);
       const host = serveSupervisorHost(io.env, ctx.vaultPath);
@@ -159,19 +180,6 @@ export const serveCommand: Command = {
         return 0;
       }
 
-      if (verb === "stop") {
-        try {
-          const result = await requestServeStop(ctx.vaultPath);
-          if (parsed.flags.has("--json")) io.out(jsonEnvelope("serve", "ok", result));
-          else io.out(result.status === "queued" ? "stop request queued" : "stop request already queued");
-          return 0;
-        } catch (error) {
-          if (!(error instanceof ServeStopError)) throw error;
-          io.err(error.message);
-          return 1;
-        }
-      }
-
       if (verb === "run") {
         if (rail === undefined || !isRailId(rail)) throw new UsageError(this.usage);
         const crashAfter = parsed.options.get("--crash-after");
@@ -205,10 +213,12 @@ export const serveCommand: Command = {
           ? { crashAfter }
           : {}),
         process: thisProcess(),
+        ...(daemon ? { signal: stop.signal, onStarted: () => { started = true; } } : {}),
         log: line => io.err(line),
         acquireRuntime: ({ signal }) => createServeRuntime({ ...ctx, env: io.env, err: io.err, configurationErrorMode: "disable-model", signal }),
         ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
       });
+      completed = true;
       if (parsed.flags.has("--json")) {
         io.out(
           jsonEnvelope("serve", "ok", {
@@ -228,16 +238,34 @@ export const serveCommand: Command = {
       }
       if (result.http !== null) await result.http.stop();
       return 0;
-    }, { retrieval: verb === "status" || verb === "stop" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required" });
+    }, { retrieval: verb === "status" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required" });
     // The long-running loop outwaits a held ledger; every other verb reports it.
-    const daemon = verb === undefined && !["--once", "--install", "--uninstall"].some(flag => parsed.flags.has(flag));
-    try { return await (daemon ? untilLedgerFree(start, { log: line => io.err(line) }) : start());
+    if (daemon) {
+      process.on("SIGTERM", requestStop);
+      process.on("SIGINT", requestStop);
+    }
+    try { return (await (daemon ? untilLedgerFree(start, {
+      log: line => io.err(line), signal: stop.signal, shouldRetry: () => !started,
+    }) : start())) ?? 0;
     } catch (error) {
+      // The daemon already closed its runtime, marker and lease. A busy final
+      // seal is bounded cleanup, never a reason to run that lifecycle again.
+      // Keep the prior monotonic floor; the next successful writer seals it.
+      if (daemon && completed && error instanceof LedgerLeaseHeldError) {
+        io.err("serve: ledger seal deferred while another writer is active; shutdown complete");
+        return 0;
+      }
       // An older sealed ledger needs the explicit init migration. Restarting
       // the installed unit cannot change that, so it exits as a refusal.
       if (!(error instanceof LedgerMigrationRequiredError) || custody === undefined) throw error;
       io.err(`error: ${error.message}`);
       return serviceStartupExit("migration_required");
-    } finally { custody?.close(); }
+    } finally {
+      if (daemon) {
+        process.off("SIGTERM", requestStop);
+        process.off("SIGINT", requestStop);
+      }
+      custody?.close();
+    }
   },
 };
