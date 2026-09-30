@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { readRailCursor, writeRailCursor } from "../ledger/checkpoints";
 import { tableExists } from "../ledger/schema";
 import { isPlainObject } from "../util/validate";
+import { redactReceiptError } from "./receipts";
 
 /**
  * Typed pages the canon writer could not write, kept across passes so one
@@ -40,7 +41,7 @@ function parse(handle: string, raw: string): StuckPage | null {
     if (!/^[0-9a-f]{32}$/.test(handle) || typeof attempts !== "number" || !Number.isSafeInteger(attempts) || attempts < 1 ||
         typeof path !== "string" || path !== `auto/world/${handle}.md` || typeof reason !== "string" || typeof last_at !== "string" ||
         !Number.isFinite(Date.parse(last_at))) return null;
-    return { handle, path, attempts, reason, last_at };
+    return { handle, path, attempts, reason: redactReceiptError(reason).slice(0, MAX_REASON), last_at };
   } catch {
     return null;
   }
@@ -80,7 +81,7 @@ export function recordStuckPage(
     handle: page.handle,
     path: page.path,
     attempts: (previous?.attempts ?? 0) + 1,
-    reason: page.reason.slice(0, MAX_REASON),
+    reason: redactReceiptError(page.reason).slice(0, MAX_REASON),
     last_at: now,
   };
   const { handle: _handle, ...stored } = next;

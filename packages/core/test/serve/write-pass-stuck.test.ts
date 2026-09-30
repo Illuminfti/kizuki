@@ -19,6 +19,21 @@ import { writeRailCursor } from "../../src/ledger/checkpoints";
 const fixtures: CanonFixture[] = [];
 afterEach(() => { for (const fixture of fixtures.splice(0)) fixture.dispose(); });
 
+test("doctor redacts and bounds a restored quarantine reason", () => {
+  const f = canonFixture();
+  fixtures.push(f);
+  const handle = "a".repeat(32);
+  const marker = "synthetic-secret-value-1234567890";
+  const now = "2026-03-01T00:03:00.000Z";
+  writeRailCursor(f.db, "kizuki.canon.writer", `stuck:${handle}`, JSON.stringify({
+    path: worldCanonPath(handle), attempts: 3, reason: `secret=${marker} ${"failure ".repeat(50)}`, last_at: now,
+  }));
+  const page = inspectServeDoctor(f.db, f.vault, { now }).quarantined.pages[0]!;
+  expect(page.reason).not.toContain(marker);
+  expect(page.reason).toContain("[redacted]");
+  expect(page.reason.length).toBeLessThanOrEqual(200);
+});
+
 test("malformed quarantine locators cannot hold a healthy page or enter doctor output", async () => {
   const f = canonFixture();
   fixtures.push(f);
@@ -130,7 +145,10 @@ test("a page that starts to write is cleared, and doctor lists what is set aside
   expect(report.quarantined.pages[0]).toMatchObject({ handle: created.handle, path: created.path, attempts: 3 });
   // The owner fixes what stuck it; after the day the page is tried, written, and forgotten.
   unlinkSync(join(f.vault, created.path));
-  clock += QUARANTINE_MS;
+  clock = Date.parse(report.quarantined.pages[0]!.until) - 1;
+  expect((await pass()).canon_writes).toBe(0);
+  expect(listQuarantinedPages(f.db, now())).toHaveLength(1);
+  clock += 1;
   const written = await pass();
   expect(written.errors).toEqual([]);
   expect(written.canon_writes).toBe(1);

@@ -165,6 +165,7 @@ failure sets it aside for another day, a success forgets it.
 `kizuki doctor` and `kizuki serve status` print `quarantined typed pages=N`,
 and doctor adds a `quarantined` line with the path, handle, failed passes, end
 of the wait and last error of each. A set-aside page is not a service failure.
+Restored reasons receive the same redaction and length bound before display.
 The state is one `rail_cursors` row per handle, so it survives a restart and a
 backup.
 
