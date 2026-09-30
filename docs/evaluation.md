@@ -45,18 +45,25 @@ It never inserts claim rows or writes canon directly.
 The model endpoint named by the synthetic consent policy uses a reserved test
 domain; the fake LLM has no network transport and needs no credential.
 
-The records, oracle and logical clock are fixed. The runner evaluates in an
-isolated Bun child process that installs `AS_OF` before loading Core or the CLI.
+The records, oracle, logical clock and fixture entropy are fixed. The runner
+evaluates in an isolated Bun child process that installs `AS_OF` and a
+counter-based fixture byte stream before loading Core or the CLI.
 Generation, imports, writes, native proposals/corrections, surface reads and
 session hooks all use that clock, including code that reads `Date` directly.
-The caller's clock is unchanged; timers and the worker's outer deadline still
-use real elapsed time. Advancing the host calendar does not age these fixtures
+The caller's clock and randomness are unchanged; timers and the worker's outer
+deadline still use real elapsed time. Advancing the host calendar does not age these fixtures
 out of the retrieval window or change correction validity.
 
-Core still mints random IDs and opaque handles. Fresh vaults are semantically
-reproducible, not byte-identical. Tokenization of those references can change
-token counts and, near a packet's budget boundary, packed selection. Reports
-retain the actual observations so every score can be recomputed without a model.
+The worker controls Web Crypto `getRandomValues` and `randomUUID`, plus Node
+`randomBytes` and `randomUUID`, so Core still mints identifiers and opaque
+handles through its normal public paths. Fixture bytes come from SHA-256 of a
+fixed domain and increasing counter. They are predictable and belong only to
+synthetic vaults; they are never a product credential source. On the same
+revision and pinned toolchain, repeated full-persona runs produce identical
+observations, semantic scores and token counts, including packet selection
+near its budget boundary. This does not promise byte-identical vaults: paths
+and other host bookkeeping can differ. Reports retain the actual observations
+so every score can be recomputed without a model.
 
 ## Principals and surfaces
 
@@ -139,8 +146,10 @@ denial probes contain real readable facts; the corrected blocker and proposed
 relationship must also be retrievable under their expected access.
 An end-to-end command check rejects a flag in place of the destination before
 any vault work and preserves an existing file at that name. Subprocess tests
-compare fresh runs under different host dates, including semantic scores,
-native correction/receipt timestamps and serving clocks. They also break the
+compare three fresh full-persona workers, including all observations, per-question
+scores, summaries and token counts. They also compare small-persona runs under
+different host dates, including native correction/receipt timestamps and serving
+clocks, while preserving caller entropy. Tests break the
 synthetic retrieval floor and exercise the resulting unavailable observation,
 failure summary and command exit gate while retaining usable degraded fallbacks.
 

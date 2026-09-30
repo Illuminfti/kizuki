@@ -2,8 +2,28 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import nodeCrypto from "node:crypto";
 import { AS_OF } from "./persona";
+import { runEvaluation } from "./run";
 import type { EvaluationReport } from "./run";
+
+test("fresh full-persona evaluations preserve every score across three isolated workers", async () => {
+  const callerEntropy = [crypto.getRandomValues, crypto.randomUUID, nodeCrypto.randomBytes, nodeCrypto.randomUUID];
+  const first = await runEvaluation({ size: "full" });
+  expect(first.persona).toBe("orchard-v1:full");
+  expect(first.rows).toHaveLength(first.questions.length * 8);
+  expect(first.summaries.every(row => row.leak_count === 0 && row.failures === 0)).toBe(true);
+  const semanticRows = (report: EvaluationReport) => report.rows.map(({ tokens_used, ...row }) => row);
+  for (let repeat = 0; repeat < 2; repeat += 1) {
+    const report = await runEvaluation({ size: "full" });
+    expect(report.build).toEqual(first.build);
+    expect(semanticRows(report)).toEqual(semanticRows(first));
+    expect(report.rows).toEqual(first.rows);
+    expect(report.summaries).toEqual(first.summaries);
+    expect(report.observations).toEqual(first.observations);
+  }
+  expect([crypto.getRandomValues, crypto.randomUUID, nodeCrypto.randomBytes, nodeCrypto.randomUUID]).toEqual(callerEntropy);
+}, 120_000);
 
 async function runFixture(mode: string, root: string, hostTime?: string) {
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "regression-fixture.ts"), mode, root, ...(hostTime === undefined ? [] : [hostTime])], {
@@ -49,9 +69,8 @@ test("fresh evaluations preserve semantic scores and native timestamps under shi
       }
       reports.push(report);
     }
-    // Core mints random opaque references, whose tokenization is measured separately.
-    const semanticRows = (report: EvaluationReport) => report.rows.map(({ tokens_used, ...row }) => row);
-    expect(semanticRows(reports[1]!)).toEqual(semanticRows(reports[0]!));
+    expect(reports[1]!.rows).toEqual(reports[0]!.rows);
+    expect(reports[1]!.observations).toEqual(reports[0]!.observations);
     const around = reports[0]!.rows.find(row => row.principal === "owner" && row.surface === "session_hook" && row.question_id === "around")!;
     expect(around).toMatchObject({ recalled: 3, expected: 3 });
   } finally { rmSync(root, { recursive: true, force: true }); }
