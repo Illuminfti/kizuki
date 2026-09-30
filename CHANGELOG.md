@@ -216,7 +216,7 @@
   `kizuki.imap-cursor/v2` and v1 cursors still read and migrate. Marking the
   messages of a page as seen is one merge per page instead of one per message.
 - Typed extraction no longer lets model output launder injected text into clean
-  canon. Every typed claim read from external text is stored `taint: quoted`
+  canon. New typed claims read from external text are stored `taint: quoted`
   and renders into a quoted page; in a context packet such a page sits under the
   quoted-capture heading as a block quotation, not under canon. A literal must
   be contained, on whole tokens and after normalization, in the span it cites,
@@ -228,6 +228,8 @@
   owner, agent, grant, permission, policy, access or audit, and claims whose
   page body uses any of those terms are held, invisible to reads and
   canon, until two independent enrolled sources support them or the owner does.
+  A selected source support renders quoted even on a retained clean parent, and
+  a parent authority label cannot replace currently permitted native support.
   See [docs/model-output-trust.md](docs/model-output-trust.md).
 - The legacy wiki and events importers refuse, with
   `source_contains_kizuki_vault`, a source that is or contains a Kizuki vault,

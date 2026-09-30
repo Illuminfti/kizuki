@@ -43,8 +43,9 @@ export function heldClaimSql(alias: string, permitted: { sql: string; bindings: 
   const bodyTerms = AUTHORITY_TERMS.map(term => `(lower(json_extract(s.admission,'$.rendering.body')) LIKE '%${term}%')`).join(" OR ");
   const scoped = permitted.sql;
   return {
-    sql: `(${alias}.authority = 'model_inference'
-    AND (EXISTS (SELECT 1 FROM claim_v2_semantics m WHERE m.claim_id = ${alias}.claim_id
+    // A parent tier can outlive the reader's access to its native contribution.
+    // Only the currently permitted supports below can release the hold.
+    sql: `((EXISTS (SELECT 1 FROM claim_v2_semantics m WHERE m.claim_id = ${alias}.claim_id
         AND (m.predicate IN (${identity}) OR (m.predicate LIKE 'decision.%' AND m.object_kind = 'literal' AND (${terms}))))
       OR EXISTS (SELECT 1 FROM claim_v2_support s WHERE s.claim_id = ${alias}.claim_id AND (${bodyTerms}) AND ${scoped}))
     AND NOT EXISTS (SELECT 1 FROM claim_v2_support s WHERE s.claim_id = ${alias}.claim_id AND s.support_origin = 'native_owner' AND ${scoped})
