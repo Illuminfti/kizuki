@@ -51,6 +51,18 @@ test("encoded URL userinfo is scrubbed before decoding changes its delimiters", 
   } finally { f.dispose(); }
 });
 
+test("URL passwords are scrubbed when the username is empty", async () => {
+  const f = await serveFixture();
+  try {
+    const value = "synthetic" + "Credential123";
+    const id = storeEvent(f.db, "url-password-only", "2026-02-28T10:30:00Z",
+      `redis://:${value}@example.test/0`, "person:ada", "public");
+    const answer = serveTimeline(f.agent("reader-public"), { event_id: id });
+    expect(answer.quoted[0]?.text).toBe("redis://[redacted:url_credentials]@example.test/0");
+    expect(answer.redacted).toEqual({ url_credentials: 1 });
+  } finally { f.dispose(); }
+});
+
 test("YAML block scalar credentials are removed without consuming the next field", async () => {
   const f = await serveFixture();
   try {
