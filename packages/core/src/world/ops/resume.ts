@@ -10,7 +10,7 @@ export const resumeOp: WorldOpFactory = (ops) => ({
   dataSchemas: ops.flatMap((op) => op.source === "claims" && op.readObject !== undefined ? op.dataSchemas : []) as [string, ...string[]],
   parse: ({ handle }) => typeof handle === "string" && isWorldWireToken(handle) ? handle : null,
   run: (frame, handle, when) => {
-    const saved = lookupResume(frame.ctx.db, handle);
+    const saved = lookupResume(frame.ctx, handle);
     if (saved === null) return { status: "new_view_required" };
     const op = findWorldOp(frame.registry, saved.operation);
     if (op?.source !== "claims" || op.readObject === undefined) return { status: "new_view_required" };

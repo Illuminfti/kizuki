@@ -27,12 +27,12 @@ function discoveryOp(
         ? { label, cursor }
         : null;
     },
-    run: ({ ctx, ns }, { label, cursor }, { valid }) => {
+    run: ({ ctx, ns, dependencies }, { label, cursor }, { valid }) => {
       // A cursor is an object reference this principal was issued for the last match of the previous page.
       const after =
         cursor === null ? null : resolveWorldObject(ctx.db, ns, cursor);
       if (cursor !== null && after === null) throw new WorldViewError();
-      return coveredOutcome(discoverWorld(ctx, ns, kind, label, valid, after));
+      return coveredOutcome(discoverWorld(ctx, ns, kind, label, valid, after, undefined, dependencies));
     },
   };
 }

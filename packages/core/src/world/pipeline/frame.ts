@@ -1,5 +1,6 @@
 import type { ServeContext } from "../../serving/types";
 import type { WorldValidQuery } from "../../serving/world-view";
+import type { WorldDependencies } from "../dependencies";
 import type { WorldNamespace } from "../references";
 import { newReadStats, type ReadStats } from "./stats";
 
@@ -31,6 +32,7 @@ export interface ReadFrame {
   readonly cutoff: RecordedCutoff;
   readonly budget: ReadBudget;
   readonly stats: ReadStats;
+  readonly dependencies?: WorldDependencies | undefined;
 }
 
 let sink: ReadFrame[] | null = null;
@@ -39,6 +41,7 @@ export function newReadFrame(
   ctx: ServeContext,
   ns: WorldNamespace,
   valid: WorldValidQuery,
+  dependencies?: WorldDependencies,
 ): ReadFrame {
   const frame: ReadFrame = {
     ctx,
@@ -47,6 +50,7 @@ export function newReadFrame(
     cutoff: { kind: "current" },
     budget: { bytes: 0 },
     stats: newReadStats(),
+    dependencies,
   };
   sink?.push(frame);
   return frame;

@@ -1,6 +1,7 @@
 import type { ViewGap } from "../../contracts/concept-card";
 import type { ServeContext } from "../../serving/types";
 import type { WorldNamespace } from "../references";
+import type { WorldDependencies } from "../dependencies";
 
 /** Raised by any operation's parse or run; the gate audits it as invalid_arguments. */
 export class WorldViewError extends Error {
@@ -98,6 +99,7 @@ export interface WorldFrame {
   readonly ns: WorldNamespace;
   /** The operations the reader dispatches over; `share` and `resume` look their target up here. */
   readonly registry: WorldOpRegistry;
+  readonly dependencies?: WorldDependencies;
 }
 
 export interface WorldWhen {

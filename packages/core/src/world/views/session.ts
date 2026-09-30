@@ -7,6 +7,7 @@ import { projectionBytes, wireRefs } from "./bytes";
 import { viewPartitionOf } from "./partitions";
 import { fingerprintOf, issueView, lookupView } from "./store";
 import type { StoredView } from "./store";
+import { dependencyRefs, type WorldDependencies } from "../dependencies";
 
 /** What a view-issuing read carries from the moment it is admitted to the moment it answers. */
 export interface ViewSession {
@@ -64,6 +65,7 @@ export function settleView<T extends WorldOpData>(
   session: ViewSession,
   operation: string,
   data: T,
+  dependencies: WorldDependencies,
 ): WorldViewResult<T> {
   const bytes = projectionBytes(operation, data);
   const { baseline, partition, prior } = session;
@@ -74,7 +76,7 @@ export function settleView<T extends WorldOpData>(
     try {
       // A nested transaction is a savepoint: a refused insert leaves no half-issued token.
       const issued = db.transaction(() =>
-        issueView(db, partition, session.ns, session.digest, bytes, [...new Set([...session.requestRefs, ...wireRefs(data)])], session.now),
+        issueView(db, partition, session.ns, session.digest, bytes, [...new Set([...session.requestRefs, ...wireRefs(data), ...dependencyRefs(db, session.ns, dependencies)])], session.now),
       )();
       if (issued !== null)
         return { status: "current", view: { kind: "view", token: issued.token }, data, validUntil: issued.validUntil };
