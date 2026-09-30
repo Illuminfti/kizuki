@@ -15,6 +15,13 @@
   HTTP boundaries with isolated workers, resource watchdogs and a replayable
   synthetic corpus; see `scripts/fuzz/README.md` for CI and long local modes
   and the enabled packet-rendering regression.
+- Beeper response reads use fixed storage and one deadline, refuse an oversized
+  body without waiting for the provider to settle stream cancellation, and
+  report a stalled body as unavailable. The local app reports malformed JSON,
+  invalid source-policy fields, refused correction and world-view input, an
+  unknown undo receipt and an unsupported calendar id as `invalid_request`
+  rather than `unavailable`, and a missing Google client configuration as
+  `misconfigured`.
 
 - Purge is physically total. After it, the purged text is gone from claim and
   proposal payloads (ids, provenance and receipts stay), from archive copies
