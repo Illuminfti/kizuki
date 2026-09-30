@@ -92,7 +92,9 @@ export function pendingCanonRewrite(ctx: ServeContext, claim: Claim): CanonRecov
       if (!pending.some(prior => prior.receipt_id === item.receipt_id)) pending.push(item);
     }
   }
-  if (pending.length > 0) return pending;
+  // Recovery holds page reads. A claim grant cannot authorize that page's
+  // metadata, including when a client replays the correction before recovery.
+  if (pending.length > 0) return ctx.principal.kind === "owner" ? pending : [];
   // The global writer hold also blocks this unreceipted correction's known
   // page. Report that fact without attributing the unrelated receipt to it.
   if (claim.receipt_id === null && bound.length > 0 && readCanonWriteIntent(ctx.db) !== null) return [];

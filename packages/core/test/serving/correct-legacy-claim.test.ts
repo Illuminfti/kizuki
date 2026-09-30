@@ -54,7 +54,7 @@ async function canonTexts(live: Fixture, query: string): Promise<string[]> {
 }
 
 describe("serveCorrect retracts a claim that has no predicate", () => {
-  test("a permitted correction withholds mixed-sensitivity page snapshots and metadata", async () => {
+  test.each([false, true])("a permitted correction withholds mixed-sensitivity page snapshots and metadata (recovery=%s)", async (recovery) => {
     fixture = await serveFixture();
     const live = fixture;
     const { claimId, pagePath } = await writtenUnkeyed(live);
@@ -74,13 +74,13 @@ describe("serveCorrect retracts a claim that has no predicate", () => {
     expect(readFileSync(join(live.vaultPath, pagePath), "utf8")).toContain(privateText);
     const search = await serveSearch(live.agent("reader-public"), { query: "canary" });
     expect(JSON.stringify(search)).not.toContain(privateText);
+    if (recovery) {
+      live.db.exec("CREATE TRIGGER synthetic_mixed_page_receipt_failure BEFORE INSERT ON canon_receipts BEGIN SELECT RAISE(FAIL,'synthetic-receipt-failure'); END");
+    }
     const envelope = await serveCorrect(live.agent("reader-public"), {
       statement: "The compiler ships weekly.", target: { claim_id: claimId },
     });
     expect(getClaim(live.db, claimId)?.status).toBe("superseded");
-    expect(envelope.data?.receipt_id).toBeString();
-    const receipt = getCanonReceipt(live.db, envelope.data!.receipt_id!);
-    expect(receipt?.page_path).toBe(pagePath);
     const after = readFileSync(join(live.vaultPath, pagePath), "utf8");
     expect(after).toContain("The compiler ships weekly.");
     expect(after).toContain(privateText);
@@ -89,8 +89,24 @@ describe("serveCorrect retracts a claim that has no predicate", () => {
     expect(JSON.stringify(envelope)).not.toContain(privateText);
     expect(JSON.stringify(envelope)).not.toContain(live.events["private"]!);
     expect(JSON.stringify(envelope)).not.toContain(pagePath);
-    expect(JSON.stringify(envelope)).not.toContain(receipt!.before_hash!);
-    expect(JSON.stringify(envelope)).not.toContain(receipt!.after_hash);
+    if (recovery) {
+      expect(envelope.data?.recovery_pending).toEqual([]);
+      const replay = await serveCorrect(live.agent("reader-public"), {
+        statement: "The compiler ships weekly.", target: { claim_id: claimId },
+      });
+      expect(replay.data?.claim_id).toBe(envelope.data!.claim_id!);
+      expect(replay.data?.recovery_pending).toEqual([]);
+      expect(JSON.stringify(replay)).not.toContain(privateText);
+      expect(JSON.stringify(replay)).not.toContain(live.events["private"]!);
+      expect(JSON.stringify(replay)).not.toContain(pagePath);
+      expect(listSupersessions(live.db).filter(row => row.loser === claimId)).toHaveLength(1);
+    } else {
+      expect(envelope.data?.receipt_id).toBeString();
+      const receipt = getCanonReceipt(live.db, envelope.data!.receipt_id!);
+      expect(receipt?.page_path).toBe(pagePath);
+      expect(JSON.stringify(envelope)).not.toContain(receipt!.before_hash!);
+      expect(JSON.stringify(envelope)).not.toContain(receipt!.after_hash);
+    }
   });
 
   for (const [name, principal] of [
