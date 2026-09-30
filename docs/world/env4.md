@@ -22,4 +22,4 @@ owner compatibility. This guard applies at Core dispatch, the shared host
 seam; internal legacy serving helpers retain their existing contracts.
 
 No migration is required. This draft depends on the envelope and packet v2
-implementation and its remaining shared-reader noninterference repairs.
+implementation. D-ENV remains ungranted; this PR must stay draft and unmerged.
