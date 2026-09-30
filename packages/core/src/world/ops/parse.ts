@@ -2,6 +2,7 @@ import { compareRfc3339 } from "../../agents/time";
 import { isRfc3339 } from "../../util/time";
 import { isPlainObject } from "../../util/validate";
 import type {
+  ViewToken,
   WorldKnownAt,
   WorldObjectRef,
   WorldRecord,
@@ -53,8 +54,12 @@ export function parseWorldRef(
 ): WorldSnapshotRef | null;
 export function parseWorldRef(
   value: unknown,
-  kind: "object" | "snapshot",
-): WorldObjectRef | WorldSnapshotRef | null {
+  kind: "view",
+): ViewToken | null;
+export function parseWorldRef(
+  value: unknown,
+  kind: "object" | "snapshot" | "view",
+): WorldObjectRef | WorldSnapshotRef | ViewToken | null {
   if (!isPlainObject(value) || !exact(value, ["kind", "token"])) return null;
   if (
     value.kind !== kind ||

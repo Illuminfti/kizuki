@@ -18,6 +18,7 @@ function discoveryOp(
     name: `find_${kind}s`,
     keys: { required: ["label"], optional: ["cursor"] },
     dataSchemas: [`kizuki.${kind}-matches/v1`],
+    views: true,
     parse: (input) => {
       const { label, cursor } = input;
       if (typeof label !== "string" || label.length > 200) return null;
