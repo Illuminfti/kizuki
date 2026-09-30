@@ -9,7 +9,7 @@ import { applyEventClassesTable, backfillCredentialClasses } from "../event-clas
  * column and takes the default denial, so no stored grant is rewritten.
  * Additive: it touches no existing event or grant row.
  */
-export function applyEventClassesV34(db: Database): void {
+export function applyEventClassesMigration(db: Database): void {
   applyEventClassesTable(db);
   addDenyClasses(db);
   backfillCredentialClasses(db);

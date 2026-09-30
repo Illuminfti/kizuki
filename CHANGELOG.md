@@ -203,7 +203,7 @@
   matches the shared secret patterns. Agent grants gain the optional
   `deny_classes`; when absent it denies `credential`, so existing agents lose
   credential-shaped material and nothing else. `agent list` shows the effective
-  list. Ledger migration 34 adds the class table and stamps stored events.
+  list. Ledger migration 35 adds the class table and stamps stored events.
 - Grants may name subject ids with spaces and other printable characters, as
   importer subject mappings produce them.
 - `system_health` reports `pages.withheld` and, to the owner, the path of each

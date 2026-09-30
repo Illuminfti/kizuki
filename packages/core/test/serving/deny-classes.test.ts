@@ -346,6 +346,8 @@ describe("correct honours class denial on a ledger with no source grants", () =>
       if (result.ok) continue;
       const field = Object.keys(target)[0] as keyof typeof unknownTargets;
       const unknown = await outcome("cred-default", { [field]: unknownTargets[field] }, dry);
+      expect(unknown.ok).toBe(false);
+      if (unknown.ok) continue;
       expect(result).toEqual(unknown);
       expect(result.message).not.toContain(claimId);
       expect(result.message).not.toContain(claimKey);

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { addAgent, authenticate } from "../../src/agents";
 import { exportVault, restoreVault } from "../../src/export";
 import { initVault } from "../../src/vault/init";
-import { openLedger } from "../../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 import {
   credentialShaped,
   classesOfEvents,
@@ -289,9 +289,9 @@ describe("restore", () => {
   });
 });
 
-describe("migration 34", () => {
-  test("upgrading from 33 adds the table and the grant column, stamps stored events and keeps grants", () => {
-    const dir = mkdtempSync(join(tmpdir(), "kizuki-classes-v34-"));
+describe("class migration", () => {
+  test("upgrading from the previous version adds the table and the grant column, stamps stored events and keeps grants", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kizuki-classes-migration-"));
     dirs.push(dir);
     const path = join(dir, "ledger.sqlite");
     const first = openLedger(path);
@@ -313,7 +313,7 @@ describe("migration 34", () => {
     });
     first.exec("DROP TABLE event_classes");
     first.exec("ALTER TABLE agent_grants DROP COLUMN deny_classes");
-    first.query("UPDATE schema_version SET version = 33").run();
+    first.query("UPDATE schema_version SET version = ?").run(LEDGER_SCHEMA_VERSION - 1);
     first.close();
 
     const upgraded = openLedger(path);
