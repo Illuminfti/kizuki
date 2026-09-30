@@ -248,7 +248,7 @@ function matches(ctx: Parameters<typeof readWorldView>[0], label = "") {
   return result.result.data.matches;
 }
 
-test("discovery issues only returned object refs and grant changes erase namespaces", async () => {
+test("discovery issues returned objects and evidence refs, and grant changes erase namespaces", async () => {
   const db = openLedger(":memory:");
   try {
     const f = await worldFixture(db, { label: "École" });
@@ -261,7 +261,12 @@ test("discovery issues only returned object refs and grant changes erase namespa
           "SELECT ref_kind,count(*) AS n FROM world_wire_refs GROUP BY ref_kind",
         )
         .all(),
-    ).toEqual([{ ref_kind: "object", n: 1 }]);
+    ).toEqual([
+      { ref_kind: "admission", n: 2 },
+      { ref_kind: "claim", n: 2 },
+      { ref_kind: "event_version", n: 1 },
+      { ref_kind: "object", n: 1 },
+    ]);
     const added = addAgent(db, "grant-change", { ...OWNER_AGENT_GRANT });
     const ctx = { ...f.ctx, principal: authenticate(db, added.token)! };
     const old = matches(ctx)[0]!.ref;
