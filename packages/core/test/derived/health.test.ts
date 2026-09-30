@@ -8,6 +8,7 @@ import { latestLedgerCursor } from "../../src/ledger/ledger";
 import { indexEvent } from "../../src/search/indexer";
 import { inspectServeDoctor } from "../../src/serve/doctor";
 import { runRail } from "../../src/serve/rails";
+import type { ServeContext } from "../../src/serving/types";
 import { serveSearch } from "../../src/serving/search";
 import { serveGraph } from "../../src/serving/graph";
 import { listCanonPagesReport } from "../../src/vault/pages";
@@ -191,4 +192,190 @@ test("adding a hidden root does not change an empty graph reply", async () => {
   await recordedPage(f.db, f.vaultPath, "facts/hidden.md", { ...data, id: "fact:hidden", sensitivity: "private" }, "Hidden tea.");
   rebuildDerived(f.db, f.vaultPath);
   expect(stable(await serveGraph(ctx, { id: "fact:hidden" }))).toEqual(before);
+});
+
+test("hidden canon additions and malformed revisions preserve serving work counters", async () => {
+  const { observe } = await import("../helpers/noninterference");
+  const f = fixture();
+  await recordedPage(f.db, f.vaultPath, "facts/tea.md", data, "Tea with [[Kettle]].");
+  const principal = authenticate(f.db, addAgent(f.db, "counted-reader", { ...OWNER_AGENT_GRANT, ceiling: "public" }).token)!;
+  const ctx = { ...f.ctx, principal };
+  rebuildDerived(f.db, f.vaultPath);
+  const reads = [
+    { name: "search", run: (ctx: ServeContext) => serveSearch(ctx, { query: "Tea" }) },
+    { name: "graph", run: (ctx: ServeContext) => serveGraph(ctx, { id: "fact:tea" }) },
+  ];
+  // Warm the serving memo before measuring both snapshots.
+  for (const read of reads) await observe(ctx, read);
+  const before = await Promise.all(reads.map(read => observe(ctx, read)));
+  await recordedPage(f.db, f.vaultPath, "facts/private.md", { ...data, id: "fact:private", sensitivity: "private" }, "Tea with [[Tea]].");
+  rebuildDerived(f.db, f.vaultPath);
+  // An owner read must not invalidate the narrow reader's authority memo.
+  await serveSearch(f.ctx, { query: "Tea" });
+  for (let n = 0; n < reads.length; n++) expect(await observe(ctx, reads[n]!)).toEqual(before[n]);
+  const file = join(f.vaultPath, "facts/private.md");
+  writeFileSync(file, readFileSync(file, "utf8").replace(/^title:.*$/m, "title: ["));
+  for (let n = 0; n < reads.length; n++) expect(await observe(ctx, reads[n]!)).toEqual(before[n]);
+  f.db.query("INSERT INTO canon_holds VALUES (?, ?, ?, ?)").run("facts/private.md", "synthetic-hold", "synthetic recovery", "2026-09-29T12:00:00.000Z");
+  for (let n = 0; n < reads.length; n++) expect(await observe(ctx, reads[n]!)).toEqual(before[n]);
+  expect(f.doctor().skipped_pages_total).toBe(1);
+  await expect(serveSearch(f.ctx, { query: "Tea" })).rejects.toThrow("serving failed");
+});
+
+test("idle reconciliation restores the FTS actually served", async () => {
+  const { reconcileDerivedPages } = await import("../../src/derived-refresh");
+  const f = fixture();
+  await recordedPage(f.db, f.vaultPath, "facts/tea.md", data, "Tea with [[Kettle]].");
+  rebuildDerived(f.db, f.vaultPath);
+  f.db.exec("DROP TABLE search_docs");
+  expect((await serveSearch(f.ctx, { query: "Tea" })).data?.degraded).toContain("index-degraded");
+  reconcileDerivedPages(f.db, f.vaultPath);
+  const result = await serveSearch(f.ctx, { query: "Tea" });
+  expect(result.canon.map(page => page.page_id)).toEqual(["fact:tea"]);
+  expect(result.data?.degraded ?? []).not.toContain("index-degraded");
+  expect((await serveSearch(f.ctx, { query: "Kettle", scope: "ledger" })).quoted).toHaveLength(1);
+});
+
+test("readable ledger backlog and recreated empty indexes report degradation", async () => {
+  const { applyDerivedV10 } = await import("../../src/derived");
+  const f = fixture();
+  const principal = authenticate(f.db, addAgent(f.db, "ledger-reader", { ...OWNER_AGENT_GRANT, ceiling: "public" }).token)!;
+  const reader = { ...f.ctx, principal };
+  rebuildDerived(f.db, f.vaultPath);
+  const privateEvent = storedEvent(f.db, "private-backlog", { sensitivity_hint: "private" });
+  expect((await serveSearch(reader, { query: "kettle", scope: "ledger" })).data?.degraded ?? []).not.toContain("index-degraded");
+  expect((await serveSearch(f.ctx, { query: "kettle", scope: "ledger" })).data?.degraded).toContain("index-degraded");
+  const event = storedEvent(f.db, "public-backlog", { sensitivity_hint: "public" });
+  expect((await serveSearch(reader, { query: "kettle", scope: "ledger" })).data?.degraded).toContain("index-degraded");
+  indexEvent(f.db, privateEvent);
+  indexEvent(f.db, event);
+  expect((await serveSearch(reader, { query: "kettle", scope: "ledger" })).data?.degraded ?? []).not.toContain("index-degraded");
+  f.db.exec("DROP TABLE search_documents");
+  applyDerivedV10(f.db);
+  expect((await serveSearch(reader, { query: "kettle", scope: "ledger" })).data?.degraded).toContain("index-degraded");
+});
+
+test("a partial walk repairs every page's graph projection", async () => {
+  const { reconcileDerivedPages } = await import("../../src/derived-refresh");
+  const f = fixture();
+  const originals = new Map<string, string>();
+  for (const name of ["alpha", "tea"]) {
+    const path = `facts/${name}.md`;
+    await recordedPage(f.db, f.vaultPath, path, { ...data, id: `fact:${name}`, title: name }, `${name} with [[Kettle]].`);
+    const file = join(f.vaultPath, path);
+    originals.set(file, readFileSync(file, "utf8"));
+    writeFileSync(file, readFileSync(file, "utf8").replace("with", "changed with"));
+  }
+  writeFileSync(join(f.vaultPath, "facts/invalid.md"), "---\nid: fact:invalid\n---\nInvalid schema.");
+  rebuildDerived(f.db, f.vaultPath);
+  for (const [file, content] of originals) writeFileSync(file, content);
+  reconcileDerivedPages(f.db, f.vaultPath);
+  for (const name of ["alpha", "tea"]) {
+    const result = await serveGraph(f.ctx, { id: `fact:${name}` });
+    expect(result.data?.edges.some(edge => edge.dst === "Kettle")).toBe(true);
+  }
+  expect(readDerivedMeta(f.db, "graph")).toMatchObject({ status: "degraded", skipped_count: 1 });
+});
+
+test("subject and event graph roots disclose permitted omissions even with no edges", async () => {
+  const f = fixture();
+  const { sourceIds } = await recordedPage(f.db, f.vaultPath, "facts/tea.md", data, "Tea with [[Kettle]].");
+  const file = join(f.vaultPath, "facts/tea.md");
+  writeFileSync(file, readFileSync(file, "utf8").replace("Tea with", "Unrecorded tea with"));
+  rebuildDerived(f.db, f.vaultPath);
+  for (const id of ["person:ada", "Kettle", sourceIds[0]!, `event:${sourceIds[0]!}`]) {
+    expect((await serveGraph(f.ctx, { id })).data?.degraded).toContain("index-degraded");
+  }
+  expect((await serveGraph(f.ctx, { id: "person:absent" })).data?.degraded ?? []).not.toContain("index-degraded");
+});
+
+test("gap repair and old metadata reconcile durable event coverage", () => {
+  const f = fixture();
+  rebuildDerived(f.db, f.vaultPath);
+  const a = storedEvent(f.db, "a"), b = storedEvent(f.db, "b");
+  indexEvent(f.db, b);
+  expect(readDerivedMeta(f.db, "search")?.ledger_watermark).toBeNull();
+  indexEvent(f.db, a);
+  let cursor = latestLedgerCursor(f.db)!;
+  expect(readDerivedMeta(f.db, "search")?.ledger_watermark).toBe(`${cursor.accepted_at}\t${cursor.event_id}`);
+  f.db.query("UPDATE derived_meta SET ledger_watermark=NULL WHERE layer='search'").run();
+  const c = storedEvent(f.db, "c");
+  indexEvent(f.db, c);
+  indexEvent(f.db, c); // Retrying the same batch must preserve the frontier.
+  cursor = latestLedgerCursor(f.db)!;
+  expect(f.doctor().derived.search?.ledger_watermark).toBe(`${cursor.accepted_at}\t${cursor.event_id}`);
+});
+
+test("idle reconciliation repairs old watermarks and accounts for tombstones", async () => {
+  const { reconcileDerivedPages } = await import("../../src/derived-refresh");
+  const f = fixture();
+  const a = storedEvent(f.db, "removed"), b = storedEvent(f.db, "survivor");
+  indexEvent(f.db, b);
+  expect(readDerivedMeta(f.db, "search")?.ledger_watermark).toBeNull();
+  const tombstone = storedEvent(f.db, "removed", { deleted: true });
+  indexEvent(f.db, tombstone);
+  let cursor = latestLedgerCursor(f.db)!;
+  expect(readDerivedMeta(f.db, "search")?.ledger_watermark).toBe(`${cursor.accepted_at}\t${cursor.event_id}`);
+  expect(f.db.query("SELECT 1 FROM search_documents WHERE doc_id=?").get(`event:${a.event_id}`)).toBeNull();
+  f.db.query("UPDATE derived_meta SET ledger_watermark=NULL WHERE layer='search'").run();
+  reconcileDerivedPages(f.db, f.vaultPath);
+  cursor = latestLedgerCursor(f.db)!;
+  expect(f.doctor().derived.search?.ledger_watermark).toBe(`${cursor.accepted_at}\t${cursor.event_id}`);
+});
+
+test("denied receipted subjects cannot poison parsing or serving work", async () => {
+  const { observe } = await import("../helpers/noninterference");
+  const f = fixture();
+  await recordedPage(f.db, f.vaultPath, "facts/tea.md", data, "Tea with [[Kettle]].");
+  const principal = authenticate(f.db, addAgent(f.db, "subject-counted-reader", { ...OWNER_AGENT_GRANT, subjects: ["person:ada"] }).token)!;
+  const ctx = { ...f.ctx, principal };
+  rebuildDerived(f.db, f.vaultPath);
+  const read = { name: "search", run: (ctx: ServeContext) => serveSearch(ctx, { query: "Tea" }) };
+  await observe(ctx, read);
+  const before = await observe(ctx, read);
+  await recordedPage(f.db, f.vaultPath, "facts/other.md", { ...data, id: "fact:other", subjects: ["person:other"] }, "Tea with [[Kettle]].");
+  rebuildDerived(f.db, f.vaultPath);
+  expect(await observe(ctx, read)).toEqual(before);
+  const file = join(f.vaultPath, "facts/other.md");
+  writeFileSync(file, readFileSync(file, "utf8").replace(/^title:.*$/m, "title: ["));
+  expect(await observe(ctx, read)).toEqual(before);
+  expect(f.doctor().skipped_pages_total).toBe(1);
+});
+
+test("source-denied malformed pages preserve the permitted serving corpus", async () => {
+  const { accept } = await import("../../src/ledger/ledger");
+  const { registerConnection } = await import("../../src/ledger/connections");
+  const { setSourceGrant } = await import("../../src/ledger/source-grants");
+  const { validEvent } = await import("../fixtures");
+  const { ulid } = await import("../../src/util/ulid");
+  const { observe } = await import("../helpers/noninterference");
+  const f = fixture();
+  const visibleSource = ulid(), hiddenSource = ulid();
+  for (const [key, recall] of [[visibleSource, true], [hiddenSource, false]] as const) {
+    registerConnection(f.db, "fixture", key);
+    setSourceGrant(f.db, { source_key: key, expected_revision: 0, operation_id: ulid(), policy: {
+      purposes: recall ? ["capture", "derive", "recall"] : ["capture", "derive"],
+      allowed_fields: ["text", "subjects", "attachments", "metadata"],
+      retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public",
+    } });
+  }
+  const capture = (key: string) => {
+    const result = accept(f.db, { ...validEvent(), connector_id: "fixture", source_record_id: ulid(), sensitivity_hint: "public", text: "Tea with [[Kettle]]." }, { source: { source_key: key, expected_revision: 1 } });
+    if (result.status !== "stored") throw new Error("synthetic capture failed");
+    return result.event.event_id;
+  };
+  await recordedPage(f.db, f.vaultPath, "facts/tea.md", data, "Tea with [[Kettle]].", [capture(visibleSource)]);
+  const principal = authenticate(f.db, addAgent(f.db, "source-reader", { ...OWNER_AGENT_GRANT, ceiling: "public" }).token)!;
+  const ctx = { ...f.ctx, principal };
+  rebuildDerived(f.db, f.vaultPath);
+  const read = { name: "source search", run: (ctx: ServeContext) => serveSearch(ctx, { query: "Tea" }) };
+  await observe(ctx, read);
+  const before = await observe(ctx, read);
+  await recordedPage(f.db, f.vaultPath, "facts/hidden-source.md", { ...data, id: "fact:hidden-source" }, "Unrelated source prose.", [capture(hiddenSource)]);
+  rebuildDerived(f.db, f.vaultPath);
+  expect(await observe(ctx, read)).toEqual(before);
+  const file = join(f.vaultPath, "facts/hidden-source.md");
+  writeFileSync(file, readFileSync(file, "utf8").replace(/^title:.*$/m, "title: ["));
+  expect(await observe(ctx, read)).toEqual(before);
+  expect(f.doctor().skipped_pages_total).toBe(1);
 });

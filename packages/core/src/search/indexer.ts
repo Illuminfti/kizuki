@@ -4,8 +4,7 @@ import type { RetrievalAuthority } from "../contracts/retrieval";
 import { readDerivedMeta, stampDerived } from "../derived-meta";
 import type { DerivedStamp } from "../derived-meta";
 import { assertDerivedDiscoveryReady, markDerivedHeld, readDerivedHolds } from "../derived-holds";
-import { latestLedgerCursor, readSince, replayLive } from "../ledger/ledger";
-import { MAX_READ_SINCE } from "../ledger/limits";
+import { latestLedgerCursor, LIVE_PREDICATE, replayLive } from "../ledger/ledger";
 import { tableExists } from "../ledger/schema";
 import { retrievalDocId } from "../retrieval/ids";
 import { ulid } from "../util/ulid";
@@ -287,29 +286,32 @@ export function indexEvent(db: Database, event: CaptureEvent): void {
   indexEvents(db, [event]);
 }
 
-/**
- * Index one bounded batch of ledger events in a single transaction. A
- * per-event transaction pays one durable commit per record, which is what
- * makes a large estate never finish catching up.
- */
+/** Durable live coverage, shared by incremental indexing and idle reconciliation. */
+export function searchLedgerWatermark(db: Database): string | null {
+  // Durable live coverage closes old gaps and repairs stale upgrade stamps.
+  // Tombstoned records no longer belong to the served corpus.
+  const gap = db.query<{ accepted_at: string; event_id: string }, []>(`
+    SELECT accepted_at, event_id FROM events WHERE ${LIVE_PREDICATE}
+    AND NOT EXISTS (
+      SELECT 1 FROM search_documents d JOIN search_docs f ON f.rowid=d.rowid AND f.doc_id=d.doc_id
+      WHERE d.doc_id='event:' || events.event_id AND d.scope='ledger'
+    ) ORDER BY accepted_at, event_id LIMIT 1
+  `).get();
+  const cursor = gap === null ? latestLedgerCursor(db) : db.query<{ accepted_at: string; event_id: string }, [string, string]>(`
+    SELECT accepted_at, event_id FROM events WHERE (accepted_at, event_id) < (?, ?)
+    ORDER BY accepted_at DESC, event_id DESC LIMIT 1
+  `).get(gap.accepted_at, gap.event_id);
+  return cursor === null ? null : `${cursor.accepted_at}\t${cursor.event_id}`;
+}
+
+/** Index one bounded batch and its health stamp in the same transaction. */
 export function indexEvents(db: Database, events: readonly CaptureEvent[]): void {
   if (events.length === 0) return;
   initSearch(db);
   db.transaction(() => {
     for (const event of events) replaceEvent(db, event);
     const previous = readDerivedMeta(db, "search");
-    const parts = previous?.ledger_watermark?.split("\t");
-    let since = parts?.length === 2 ? { accepted_at: parts[0]!, event_id: parts[1]! } : null;
-    // Advance only a contiguous indexed prefix, never the latest unprocessed event.
-    const ids = new Set(events.map(event => event.event_id));
-    let watermark = previous?.ledger_watermark ?? null;
-    for (let offset = 0; offset < events.length; offset += MAX_READ_SINCE) {
-      const next = readSince(db, since, Math.min(MAX_READ_SINCE, events.length - offset));
-      if (!next.events.every(event => ids.has(event.event_id))) break;
-      if (next.cursor === null || next.events.length === 0) break;
-      since = next.cursor;
-      watermark = `${since.accepted_at}\t${since.event_id}`;
-    }
+    const watermark = searchLedgerWatermark(db);
     const count = db.query<{ n: number }, []>("SELECT count(*) AS n FROM search_documents").get()!.n;
     stampDerived(db, {
       layer: "search", generation: previous?.generation ?? ulid(), rebuilt_at: new Date().toISOString(),

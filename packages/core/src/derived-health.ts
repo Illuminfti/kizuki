@@ -6,6 +6,7 @@ import { canonPagesHash, isLiveCanonPage } from "./vault/pages";
 import { assessLivePageEvidence, isDeterministicBrief } from "./vault/provenance";
 import { sourceEventsAllowed } from "./ledger/source-grants";
 import { CanonAuthorityResolver } from "./canon/authority";
+import { searchLedgerWatermark } from "./search/indexer";
 import { ulid } from "./util/ulid";
 
 /** Owner diagnostics over the same current exclusions used by local projections. */
@@ -27,6 +28,7 @@ export function derivedPageSkips(db: Database, report: CanonPageReport): { path:
 export function refreshSearchHealth(db: Database, report: CanonPageReport): void {
   const existing = readDerivedMeta(db, "search");
   const skips = derivedPageSkips(db, report);
+  const watermark = searchLedgerWatermark(db);
   const counts = db.query<{ scope: string; n: number }, []>("SELECT scope, count(*) AS n FROM search_documents GROUP BY scope").all();
   const docs = counts.reduce((sum, row) => sum + row.n, 0);
   const events = counts.find(row => row.scope === "ledger")?.n ?? 0;
@@ -38,7 +40,7 @@ export function refreshSearchHealth(db: Database, report: CanonPageReport): void
     doc_count: docs, source_count: report.pages.filter(page => isLiveCanonPage(page) && !isDeterministicBrief(page)).length + events,
     skipped_count: skippedCount,
     status: skippedCount > 0 || report.truncated ? "degraded" : "ok",
-    ledger_watermark: existing?.ledger_watermark ?? null,
+    ledger_watermark: watermark,
     canon_hash: skippedCount === 0 && !report.truncated ? canonPagesHash(report.pages.filter(isLiveCanonPage)) : null,
     port_id: "kizuki.retrieval.fts5", contract: "kizuki.retrieval/v1",
   });

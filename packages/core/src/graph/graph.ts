@@ -113,7 +113,7 @@ function withoutCodeSpans(body: string): string {
   return parts.join("");
 }
 
-function wikilinks(body: string): string[] {
+export function wikilinks(body: string): string[] {
   const source = withoutCodeSpans(body);
   if (!source.includes("[[")) return [];
   const targets: string[] = [];
@@ -399,7 +399,7 @@ export function refreshGraphHealth(db: Database, pages: readonly CanonPage[], sk
   const stamp = stampGraph(
     db,
     {
-      generation: previous?.generation ?? ulid(),
+      generation: previous?.status === "ok" ? previous.generation : ulid(),
       pages: live,
       skipped: [],
       rebuilt_at: new Date().toISOString(),
@@ -429,8 +429,15 @@ export function refreshPageEdges(
   pages: readonly CanonPage[],
   skipped: number,
 ): void {
+  refreshPageEdgesBatch(db, [page], pages, skipped);
+}
+
+/** One exclusion snapshot and link index for all known repairs in a partial walk. */
+export function refreshPageEdgesBatch(db: Database, changed: readonly CanonPage[], pages: readonly CanonPage[], skipped: number): void {
   assertDerivedDiscoveryReady(db);
-  const held = graphExclusions(db, [...pages.filter(candidate => candidate.relPath !== page.relPath), page]);
+  const replacements = new Map(changed.map(page => [page.relPath, page]));
+  const snapshot = [...pages.filter(page => !replacements.has(page.relPath)), ...changed];
+  const held = graphExclusions(db, snapshot);
   if (!held.complete) {
     db.exec("DELETE FROM graph_edges");
     stampGraphIncomplete(db, skipped, held.withheldCount);
@@ -438,23 +445,25 @@ export function refreshPageEdges(
   }
   removeHeldEdges(db, held);
   if (skipped === 0) {
-    replacePageEdges(db, pages);
-    refreshGraphHealth(db, pages);
+    replacePageEdges(db, snapshot);
+    refreshGraphHealth(db, snapshot);
     return;
   }
-  const index = linkIndexFromPages(pages);
+  const index = linkIndexFromPages(snapshot);
   const byId = new Map(
-    pages.filter(candidate => held.evidence.has(candidate.relPath) && !held.paths.has(candidate.relPath)).map((candidate) => [candidate.id, candidate]),
+    snapshot.filter(candidate => held.evidence.has(candidate.relPath) && !held.paths.has(candidate.relPath)).map((candidate) => [candidate.id, candidate]),
   );
-  if (isLiveCanonPage(page) && !held.paths.has(page.relPath)) {
-    db.query("DELETE FROM graph_edges WHERE src = ?").run(page.id);
-    const eventHints = eventSensitivityHints(db, sourceEventIds([page]));
-    for (const edge of pageEdges(page, index, byId, eventHints, held.evidence.get(page.relPath)!.revision.authority)) {
-      if (isHeldEdge(edge, held)) continue;
-      insertEdge(db, edge);
+  const eventHints = eventSensitivityHints(db, sourceEventIds(changed));
+  for (const page of changed) {
+    if (isLiveCanonPage(page) && !held.paths.has(page.relPath)) {
+      db.query("DELETE FROM graph_edges WHERE src = ?").run(page.id);
+      for (const edge of pageEdges(page, index, byId, eventHints, held.evidence.get(page.relPath)!.revision.authority)) {
+        if (isHeldEdge(edge, held)) continue;
+        insertEdge(db, edge);
+      }
+    } else {
+      db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(page.id, page.id);
     }
-  } else {
-    db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(page.id, page.id);
   }
   stampGraphIncomplete(db, skipped, held.withheldCount);
 }

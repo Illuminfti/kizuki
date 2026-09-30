@@ -1,5 +1,6 @@
 import { visibleIndexDegraded, visibleLedgerIndexMissing } from "./index-health";
 import type { Database } from "bun:sqlite";
+import { authorize } from "../agents";
 import type { AuditDenial, AuditItem, Grant } from "../agents";
 import { canonReadGeneration } from "../canon/write-intent";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
@@ -19,7 +20,7 @@ import {
   scopedWindow,
   text,
 } from "./arguments";
-import { canonChunk, eligible, excerptOf, loadCanon, pageDecision } from "./canon";
+import { canonChunk, eligible, excerptOf, loadCanon, pageDecision, pageScope } from "./canon";
 import type { CanonIndex } from "./canon";
 import { claimsEpoch } from "./epoch";
 import { auditArguments, gateAsync } from "./gate";
@@ -234,6 +235,8 @@ export async function serveSearch(
     for (const id of nominated.ids) seen.add(id);
     const rankedOpts = {
       ...base,
+      ceiling: grant.ceiling,
+      canonPaths: index.pages.filter(page => authorize(narrowed, pageScope(page)).allow).map(page => page.relPath),
       limit: MAX_RETRIEVAL_LIMIT,
       source: {
         owner: ctx.principal.kind === "owner",
