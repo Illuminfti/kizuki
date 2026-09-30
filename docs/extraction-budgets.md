@@ -154,6 +154,8 @@ the entire registry or walking the vault. A cold or discarded registry takes
 one full reconciliation. Ordinary derived refresh and rebuild still reconcile
 files added, removed or rewritten outside the writer; a canon write does not
 scan unrelated files for edits. Serving checks current evidence on each read.
+Pass accounting reads only receipts appended during the page's writer hold,
+plus live reservations and intents.
 
 A typed page group that fails three passes is named in the receipt's typed
 `canon_quarantined` entries with its handle, generated page path, failure

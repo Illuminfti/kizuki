@@ -1,8 +1,10 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import type { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBudgetTracker } from "../../src/canon/budget";
+import { rebuildDerived } from "../../src/derived";
 import type { ProducerPort } from "../../src/contracts/producer";
 import { openLedger } from "../../src/ledger/db";
 import { runRail } from "../../src/serve/rails";
@@ -11,6 +13,7 @@ import { tryWriteFlock } from "../../src/serve/flock";
 import { fileProposal } from "../../src/staging/proposals";
 import { initVault } from "../../src/vault/init";
 import { putEvent } from "../claims/helpers";
+import { seedLivePages } from "../helpers/bulk-pages";
 
 const dirs: string[] = [];
 afterEach(() => { for (const directory of dirs.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -64,6 +67,35 @@ test("the pass lets the writer go before every page", async () => {
   expect(free.every(Boolean)).toBe(true);
   db.close();
 });
+
+test("one write pass does not enumerate historical receipt identities", async () => {
+  const { path, db, options } = pending(1);
+  seedLivePages(db, path, 1_000);
+  rebuildDerived(db, path);
+  let receiptRows = 0;
+  const original = db.query.bind(db);
+  // Count real rows returned to JavaScript, independent of the SQL spelling.
+  const instrument = ((...args: Parameters<Database["query"]>) => {
+    const statement = original(...args);
+    return new Proxy(statement, {
+      get(target, key) {
+        const value = Reflect.get(target, key);
+        if (key === "all") return (...bindings: unknown[]) => {
+          const rows: unknown[] = Reflect.apply(value, target, bindings);
+          receiptRows += rows.filter(row => row !== null && typeof row === "object" && "receipt_id" in row).length;
+          return rows;
+        };
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  }) as Database["query"];
+  const read = spyOn(db, "query").mockImplementation(instrument);
+  try {
+    const result = await runWritePass(db, path, { ...options(), budget: createBudgetTracker({ canon_writes_per_run: 1 }) });
+    expect(result.canon_writes).toBe(1);
+    expect(receiptRows).toBeLessThan(16);
+  } finally { read.mockRestore(); db.close(); }
+}, 120_000);
 
 test("a stop request between two pages ends the pass with at most one more page", async () => {
   const { path, db, written, options } = pending(6);

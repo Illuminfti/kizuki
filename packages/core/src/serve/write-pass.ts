@@ -431,7 +431,8 @@ function writeNextPage(
     const { handle, claims: typedClaims } = typed;
     attempted.add(handle);
     const path = worldCanonPath(handle);
-    const before = occupyingWriteIds(db);
+    const receiptBoundary = lastReceiptRow(db);
+    const before = occupyingWriteIds(db, receiptBoundary);
     try {
       const receipt = applyCanonWriteOwned(scope, io, typedClaims, worldCanonTarget(db, typedClaims[0]!.claim_id), { writer: "loop", budget });
       tally.canon_writes += 1; tally.claims_written += receipt.claim_ids.length;
@@ -439,7 +440,7 @@ function writeNextPage(
       clearStuckPage(db, handle);
       return "wrote";
     } catch (error) {
-      if (!(error instanceof BudgetExhausted)) tally.canon_writes += newOccupyingWrites(before, occupyingWriteIds(db));
+      if (!(error instanceof BudgetExhausted)) tally.canon_writes += newOccupyingWrites(before, occupyingWriteIds(db, receiptBoundary));
       if (error instanceof BudgetExhausted) { tally.stopped = error.stopped; return "done"; }
       const reason = redactReceiptError(error);
       tally.errors.push(`${reason} (page ${handle} at ${path})`);
@@ -463,7 +464,8 @@ function writeNextPage(
       else requireExternalEvents(db, claim.provenance);
       const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
-      const before = occupyingWriteIds(db);
+      const receiptBoundary = lastReceiptRow(db);
+      const before = occupyingWriteIds(db, receiptBoundary);
       try {
         applyCanonWriteOwned(scope, io, claim, decision, { writer: "loop", budget });
         tally.canon_writes += 1;
@@ -473,7 +475,7 @@ function writeNextPage(
       } catch (error) {
         // File/JSONL can land before the receipt row; count the SQLite slot.
         if (!(error instanceof BudgetExhausted)) {
-          const committed = newOccupyingWrites(before, occupyingWriteIds(db));
+          const committed = newOccupyingWrites(before, occupyingWriteIds(db, receiptBoundary));
           tally.canon_writes += committed;
           tally.claims_written += committed;
         }
@@ -492,13 +494,19 @@ function writeNextPage(
   return "done";
 }
 
-/** SQLite receipts, live reservations, and pending intents — never the JSONL log. */
-function occupyingWriteIds(db: Database): Set<string> {
+/** Writer ownership keeps this boundary stable until the page finishes. */
+function lastReceiptRow(db: Database): number {
+  if (!tableExists(db, "canon_receipts")) return 0;
+  return db.query<{ row_id: number | null }, []>("SELECT max(rowid) AS row_id FROM canon_receipts").get()?.row_id ?? 0;
+}
+
+/** New SQLite receipts, live reservations, and pending intents — never historical IDs or the JSONL log. */
+function occupyingWriteIds(db: Database, afterReceiptRow: number): Set<string> {
   const ids = new Set<string>();
   if (tableExists(db, "canon_receipts")) {
-    for (const row of db.query<{ receipt_id: string }, []>(
-      "SELECT receipt_id FROM canon_receipts WHERE writer = 'loop'",
-    ).all()) {
+    for (const row of db.query<{ receipt_id: string }, [number]>(
+      "SELECT receipt_id FROM canon_receipts WHERE rowid > ? AND writer = 'loop'",
+    ).all(afterReceiptRow)) {
       ids.add(row.receipt_id);
     }
   }
