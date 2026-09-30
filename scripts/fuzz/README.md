@@ -11,7 +11,7 @@ From the repository root on Linux, using the pinned Bun version and the shared
 build host's test semaphore:
 
 ```sh
-ktest bun test scripts/fuzz/fuzz.test.ts --timeout 120000
+ktest bun test scripts/fuzz --timeout 120000
 ktest bun scripts/fuzz/run.ts --seed 5369869
 ktest bun scripts/fuzz/run.ts --long --seed 5369869
 ktest bun scripts/fuzz/run.ts --long --target imap-mime --seed 5369869 --cases 10000
@@ -21,7 +21,9 @@ The first command is included in ordinary Bun test discovery and therefore
 in the existing CI verify job (which runs Bun directly). On a private local
 machine without `ktest`, omit that prefix. Its budget is the fixed corpus plus eight
 seeded cases per target, a 20-second deadline per worker, a 512 MiB RSS
-ceiling, and a 120-second test deadline. The standalone command uses the same
+ceiling, and a 120-second test deadline. Resource-supervised tests are skipped
+on other platforms; the standalone command refuses unsupported RSS accounting.
+The standalone command uses the same
 budget. Long mode adds 2,000 seeded cases per target and gives each worker
 five minutes; `--cases` overrides the generated count (0–100,000). `--target`
 selects one target, and the same seed and count replay the complete sequence.
@@ -55,15 +57,18 @@ the allocation-flood regression still checks a real worker budget breach.
 | `canon-frontmatter`, `wiki-frontmatter` | Markdown frontmatter readers | Determinism, bounded output, malformed-input refusal, prototype isolation |
 | `chatgpt`, `claude`, `pocket`, `whatsapp`, `omnivore`, `beacon` | Export parsers, raw grammar and wrapped text | Determinism; normalized ChatGPT, Claude and Beacon events pass frozen ingress |
 | `receipt`, `render-output` | Local adapter admission | Bounded refusal with synthetic consent; no reference fetch |
-| `ics`, `ics-rrule` | Calendar grammar, event mapping, recurrence rule parser | Nesting and component refusal, bounded output; mapped events pass ingress |
+| `ics`, `ics-rrule`, `ics-files` | Calendar grammar, event mapping, recurrence rule parser and file backfill | Nesting and recurrence refusal, symlink and UTF-8 refusal, sparse oversized files, bounded output; mapped events pass ingress |
 | `imap-mime`, `imap-response` | MIME event mapping and response tokenizer | Invalid octets, multipart prefix ambiguity, depth and part limits, ingress validity |
 | `telegram` | Typed provider message projection | Private sensitivity preserved; host ingress admission checked separately |
+| `screenpipe-frame`, `screenpipe-audio`, `whoop`, `beeper` | Provider projections and synthetic Beeper response admission | Malformed timestamps/schema, selected metric bags, private sensitivity, mapped ingress bounds |
 | `x-ytd`, `x-api`, `gmail`, `google-calendar` | Archive wrapper and provider response projections | Determinism, malformed schema refusal, bounded output |
 | `session-claude`, `session-codex` | Session JSONL record interpretation | Harness-text exclusion, sanitized evidence, ingress validity |
 | `markdown-files`, `wiki-files` | Folder backfill and wiki scanning | Cyclic/file symlinks excluded, malformed UTF-8 refusal, sparse oversized pages, compressed cursor expansion ceiling |
 | `session-files-claude`, `session-files-codex`, `legacy-jsonl`, `legacy-sqlite` | File readers, resumable JSONL paging and corrupt read-only SQLite exports | Oversized input, malformed bytes, bounded batches, forward progress past hostile rows |
-| `x-archive` | Archive directory scan | Malformed account/tweet data, file symlink refusal, sparse oversized account part |
+| `x-archive` | Archive directory scan | Malformed account/tweet data, file symlink refusal, sparse oversized account part and ZIP refusal |
+| `chatgpt-files`, `claude-files`, `beacon-files`, `pocket-files`, `omnivore-files`, `whatsapp-files` | Export backfill including highlights and media references | Raw and wrapped file admission, sparse oversized exports, primary/optional symlink exclusion, valid ingress and nonempty projection witnesses |
 | `http`, `mcp` | Loopback HTTP and SDK client over in-memory JSON-RPC plus raw stdio framing | Every one of the ten tools; inert grant refusal, argument mutations, captured instruction text stays in `quoted` |
+| `app-http` | All app protocol routes over loopback HTTP through the real app host | Bad bearer refusal before dispatch, raw malformed body mutations, bounded output, prototype isolation; supervisor access is refused |
 
 No export importer in this matrix decompresses a ZIP file. X refuses ZIP
 input; the supported compressed Markdown cursor is tested with expansion
@@ -78,9 +83,7 @@ readers can deliberately replacement-decode malformed octets into evidence.
 A decoded replacement character is not itself a crash or authorization
 failure. The Telegram mapper can return an event that host ingress refuses;
 the harness does not mistake a mapper for an authorization or ingestion API.
-The matrix does not exercise screenpipe or WHOOP projections, the complete
-Pocket/Omnivore/WhatsApp filesystem and media mapping stages, or app-specific
-HTTP route handlers. It also does not cover every credential/state decoder,
+The matrix does not cover every credential/state decoder,
 provider SDK transport, filesystem replacement race, or arbitrary stream
 timing. Existing package conformance and boundary tests remain required.
 
@@ -103,22 +106,13 @@ claim did not reproduce, so this branch does not replace the SDK transport.
 The mutation target exercises MCP arguments over real JSON-RPC rather than
 pretending that calling a schema validator alone tests the adapter.
 
-A desired context-packet rendering regression is retained as a named skipped
-test in `packages/core/test/serve/packet-instruction-fuzz.test.ts`. Captured
-newlines can create stamp-looking Markdown outside the quoted prefix; tag
-characters can survive the packet rendering. The serving redaction lane owns
-that overlapping renderer. Replay the desired assertion with:
-
-```sh
-KIZUKI_FUZZ_REPRODUCE=1 ktest bun test packages/core/test/serve/packet-instruction-fuzz.test.ts --timeout 120000
-```
-
-A skipped assertion is open work, not a passing safety claim. The structured
-`canon`/`quoted` separation checks do not prove that flattened packet Markdown
-is safe. Integrate the serving redaction lane and enable this assertion only
-after the same head passes it. Other hidden-evidence noninterference work
-remains in the serving lanes; this branch exercises the inert grant and does
-not claim a complete noninterference proof for every authorized read.
+The context-packet newline/stamp and Unicode-tag regression passes on the
+current base after its serving-redaction change. The regression is enabled in
+`packages/core/test/serve/packet-instruction-fuzz.test.ts`; this branch adds no
+second renderer. Structured `canon`/`quoted` separation alone would not prove
+flattened Markdown safety. Complete hidden-evidence noninterference remains
+the serving lanes' responsibility; this campaign exercises inert grants and
+does not claim a proof for every authorized read.
 
 The JSONL source symlink regression also failed on the base. Its reader now
 opens with no-follow/non-blocking flags, checks the open descriptor for a
@@ -133,3 +127,18 @@ start, end, recurrence origin and a valid leap day. The [provider event
 resource](https://developers.google.com/workspace/calendar/api/v3/reference/events)
 documents these date fields (checked 2026-09-30). This is an offline parser
 check; it does not qualify a live account or change authentication.
+
+ICS file backfill followed symlinks and replacement-decoded malformed UTF-8.
+It now reads through one no-follow/non-blocking regular-file descriptor with a
+fixed byte ceiling, rejects size changes, and decodes UTF-8 strictly. The
+regression covers both refusals; the file campaign also probes oversized
+calendars. [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545) specifies UTF-8
+for iCalendar (checked 2026-09-30). Parent-directory replacement races remain
+outside this descriptor's final-component guarantee.
+
+Beeper emitted a provider message beyond frozen ingress bounds. Its backfill
+now validates the projected events before returning a batch or advancing a
+cursor; the regression checks refusal and a valid retry. This is a local
+synthetic response check, not live-account qualification or an authentication
+change. Provider documentation retrieval was unavailable on 2026-09-30;
+existing authentication and pagination contracts are preserved.

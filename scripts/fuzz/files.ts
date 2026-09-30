@@ -10,18 +10,59 @@ import { createClaudeCodeSessionsConnector, createCodexSessionsConnector } from 
 import { scanArchive, MAX_ACCOUNT_BYTES } from "../../packages/connector-x/src/archive";
 import { checkEvents, NOW } from "./parsers";
 import type { FuzzCase } from "./cases";
+import { EXPORT_TARGETS, exportCase } from "./exports";
+import type { ExportTarget } from "./exports";
+import { createIcsConnector } from "../../packages/connector-ics/src/connector";
+import { MAX_ICS_CHARS } from "../../packages/connector-ics/src/unfold";
 
-export const FILE_TARGETS = ["markdown-files", "wiki-files", "session-files-claude", "session-files-codex", "legacy-jsonl", "legacy-sqlite", "x-archive"] as const;
+export const FILE_TARGETS = ["markdown-files", "wiki-files", "session-files-claude", "session-files-codex", "legacy-jsonl", "legacy-sqlite", "x-archive", "ics-files", ...EXPORT_TARGETS] as const;
 export type FileTarget = typeof FILE_TARGETS[number];
 
 /** Fresh tree per case; every path is inside the supervisor's private scratch root. */
 export async function fileCase(target: FileTarget, input: FuzzCase, scratch: string): Promise<void> {
+  if ((EXPORT_TARGETS as readonly string[]).includes(target)) return exportCase(target as ExportTarget, input, scratch);
   const tree = join(scratch, "tree");
   rmSync(tree, { recursive: true, force: true });
   mkdirSync(tree, { mode: 0o700 });
   const outside = join(scratch, "outside.md");
   writeFileSync(outside, "outside-canary", { mode: 0o600 });
+  if (target === "ics-files") {
+    for (const wrapped of [false, true]) {
+      const file = join(tree, "calendar.ics");
+      rmSync(file, { force: true });
+      const content = wrapped ? Buffer.concat([
+        Buffer.from("BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:synthetic\nDTSTART:20260115T120000Z\nDESCRIPTION:"),
+        input.bytes, Buffer.from("\nEND:VEVENT\nEND:VCALENDAR\n"),
+      ]) : input.bytes;
+      writeFileSync(file, content);
+      if (input.id === "traversal") {
+        const linked = join(scratch, "linked.ics");
+        writeFileSync(linked, content); rmSync(file); symlinkSync(linked, file);
+      }
+      if (input.id === "huge-line") truncateSync(file, MAX_ICS_CHARS + 1);
+      try {
+        const batch = await createIcsConnector({ path: file }, { now: () => new Date(NOW) }).backfill(null);
+        if (input.id === "traversal") throw new Error("symlink-admitted");
+        if (input.id === "huge-line") throw new Error("oversized-file-admitted");
+        if (input.id.startsWith("invalid-utf8")) throw new Error("invalid-encoding-admitted");
+        checkEvents(batch.events);
+        if (wrapped && input.id === "object" && batch.events.length === 0) throw new Error("projection-unreached");
+      } catch (error) {
+        if (!(error instanceof KizukiError)) throw error;
+        if (wrapped && input.id === "object") throw new Error("projection-unreached");
+      }
+    }
+    return;
+  }
   if (target === "x-archive") {
+    if (input.id === "zip-refusal") {
+      const archive = join(tree, "archive.zip");
+      writeFileSync(archive, input.bytes);
+      truncateSync(archive, 512 * 1024 * 1024);
+      try { await scanArchive(archive); throw new Error("archive-expansion-admitted"); }
+      catch (error) { if (!(error instanceof KizukiError)) throw error; }
+      return;
+    }
     mkdirSync(join(tree, "data"));
     const account = join(tree, "data/account.js");
     writeFileSync(account, 'window.YTD.account.part0 = [{"account":{"accountId":"1","username":"example"}}];');

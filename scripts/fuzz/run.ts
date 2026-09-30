@@ -6,6 +6,7 @@ import { FILE_TARGETS } from "./files";
 import { SURFACES } from "./surfaces";
 import { supervise } from "./supervisor";
 import type { WorkerReceipt } from "./supervisor";
+import { CORPUS_SIZE } from "./cases";
 
 export const TARGETS = [...PARSERS, ...FILE_TARGETS, ...SURFACES];
 export const CI_SEED = 0x51f00d;
@@ -23,6 +24,7 @@ export async function runFuzz(options: RunOptions = {}): Promise<{ seed: number;
       const scratch = join(root, target); mkdirSync(scratch, { mode: 0o700 });
       const receipt = await supervise([process.execPath, join(import.meta.dir, "worker.ts"), target, String(seed), String(count), scratch],
         { timeoutMs: options.long ? 300_000 : 20_000, rssMiB: 512 });
+      if (receipt.code === 0 && receipt.property === null && receipt.completed !== CORPUS_SIZE + count) receipt.property = "worker-incomplete";
       receipts.push({ target, ...receipt });
       if (receipt.code !== 0 || receipt.limit !== null || receipt.property !== null) break;
     }

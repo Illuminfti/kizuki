@@ -5,6 +5,8 @@ import { CI_SEED, runFuzz, TARGETS } from "./run";
 import { supervise } from "./supervisor";
 import { parseCase } from "./parsers";
 
+const linuxTest = test.if(process.platform === "linux");
+
 test("wrapped Gmail corpus reaches MIME body parsing and emits valid evidence", () => {
   const text = "synthetic MIME evidence";
   const event = parseCase("gmail", { id: "synthetic", text, bytes: Buffer.from(text) }, true);
@@ -24,7 +26,7 @@ test("seed and corpus replay exactly", () => {
   expect(hashes(CI_SEED)).not.toEqual(hashes(CI_SEED + 1));
 });
 
-test("hostile parser corpus and seeded CI budget", async () => {
+linuxTest("hostile parser corpus and seeded CI budget", async () => {
   const result = await runFuzz();
   const failure = result.receipts.find(receipt => receipt.code !== 0 || receipt.limit !== null || receipt.property !== null);
   expect(failure, JSON.stringify(failure)).toBeUndefined();
@@ -37,28 +39,28 @@ test("hostile parser corpus and seeded CI budget", async () => {
 
 const PROBE = join(import.meta.dir, "supervisor-probe.ts");
 
-test("supervisor kills and reaps a synchronous hang", async () => {
+linuxTest("supervisor kills and reaps a synchronous hang", async () => {
   const result = await supervise([process.execPath, PROBE, "hang"], { timeoutMs: 300, rssMiB: 512 });
   expect(result.limit).toBe("time");
   expect(result.code).not.toBe(0);
 });
 
-test("supervisor refuses an RSS budget breach", async () => {
+linuxTest("supervisor refuses an RSS budget breach", async () => {
   const result = await supervise([process.execPath, PROBE, "memory"], { timeoutMs: 5000, rssMiB: 128 });
   expect(result.limit).toBe("memory");
 });
 
-test("supervisor bounds output even when the child exits immediately", async () => {
+linuxTest("supervisor bounds output even when the child exits immediately", async () => {
   const result = await supervise([process.execPath, PROBE, "output"], { timeoutMs: 5000, rssMiB: 512 });
   expect(result.limit).toBe("output");
 });
 
-test("a successful exit without a completion receipt fails closed", async () => {
+linuxTest("a successful exit without a completion receipt fails closed", async () => {
   const result = await supervise([process.execPath, PROBE, "early-exit"], { timeoutMs: 5000, rssMiB: 512 });
   expect(result.property).toBe("worker-incomplete");
 });
 
-test("worker RSS receipts exclude the larger parent address space", async () => {
+linuxTest("worker RSS receipts exclude the larger parent address space", async () => {
   const held = Buffer.alloc(192 * 1024 * 1024, 1);
   const result = await supervise([process.execPath, PROBE, "receipt"], { timeoutMs: 5000, rssMiB: 128 });
   expect(result).toMatchObject({ code: 0, limit: null, property: null, completed: 0 });

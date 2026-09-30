@@ -112,3 +112,4 @@ scripts/fuzz/surfaces.ts:run.fetch#2:synthetic owner requests to the worker-owne
 scripts/fuzz/surfaces.ts:run.fetch#3:synthetic captured-text separation check against the worker-owned loopback HTTP listener
 packages/core/test/serve/http-hostile.test.ts:withHttp.fetch#1:synthetic malformed-body requests to the test-owned loopback HTTP listener
 packages/core/test/serve/http-hostile.test.ts:(toplevel).fetch#1:synthetic oversized chunked body sent to the test-owned loopback HTTP listener
+scripts/fuzz/app.ts:run.fetch#1:synthetic app requests to the worker-owned loopback HTTP listener; bearer and origin refusal are checked before dispatch

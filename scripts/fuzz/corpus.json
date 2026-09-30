@@ -97,5 +97,17 @@
   {
     "id": "calendar-invalid-date",
     "text": "{\"id\":\"synthetic\",\"status\":\"confirmed\",\"updated\":\"2026-01-15T12:00:00.000Z\",\"start\":{\"date\":\"2026-99-99\"},\"end\":{\"date\":\"2026-01-16\"}}"
+  },
+  {
+    "id": "ics-recurrence-expansion",
+    "text": "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:synthetic\nDTSTART:20200101T120000Z\nRRULE:FREQ=SECONDLY;COUNT=2147483647\nSUMMARY:Synthetic\nEND:VEVENT\nEND:VCALENDAR\n"
+  },
+  {
+    "id": "optional-symlink",
+    "text": "synthetic media evidence"
+  },
+  {
+    "id": "zip-refusal",
+    "hex": "504b03040000000000000000000000000000000000000000000000000000"
   }
 ]

@@ -7,9 +7,10 @@ import { fuzzStdioBytes, mcpFuzzDriver } from "../../packages/mcp/test/fuzz-driv
 import type { FuzzCase } from "./cases";
 import { NOW } from "./parsers";
 
-export const SURFACES = ["http", "mcp"] as const;
+export const SURFACES = ["http", "mcp", "app-http"] as const;
 
 export async function surfaceDriver(target: typeof SURFACES[number], scratch: string) {
+  if (target === "app-http") return (await import("./app")).appDriver(scratch);
   const vaultPath = join(scratch, "vault");
   initVault(vaultPath);
   const db = openLedger(join(vaultPath, ".kizuki/kizuki.db"));

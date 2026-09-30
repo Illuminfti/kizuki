@@ -21,10 +21,14 @@ import { messageEvent as gmailEvent } from "../../packages/connector-gmail/src/e
 import { object as calendarObject } from "../../packages/connector-google-calendar/src/state";
 import { event as googleEvent } from "../../packages/connector-google-calendar/src/events";
 import { SessionReader } from "../../packages/connector-agent-sessions/src/session";
+import { mapFrame, mapTranscription } from "../../packages/connector-screenpipe/src/map";
+import { recordEvent } from "../../packages/connector-whoop/src/events";
+import { RESOURCES } from "../../packages/connector-whoop/src/state";
+import { createBeeperConnector } from "../../packages/connector-beeper/src/connector";
 import type { FuzzCase } from "./cases";
 
 export const NOW = "2026-01-15T12:00:00.000Z";
-export const PARSERS = ["canon-frontmatter", "wiki-frontmatter", "chatgpt", "claude", "pocket", "whatsapp", "omnivore", "beacon", "receipt", "render-output", "ics", "ics-rrule", "imap-mime", "imap-response", "telegram", "x-ytd", "x-api", "gmail", "google-calendar", "session-claude", "session-codex"] as const;
+export const PARSERS = ["canon-frontmatter", "wiki-frontmatter", "chatgpt", "claude", "pocket", "whatsapp", "omnivore", "beacon", "receipt", "render-output", "ics", "ics-rrule", "imap-mime", "imap-response", "telegram", "x-ytd", "x-api", "gmail", "google-calendar", "session-claude", "session-codex", "screenpipe-frame", "screenpipe-audio", "whoop", "beeper"] as const;
 export type Parser = typeof PARSERS[number];
 
 function json(text: string): unknown {
@@ -88,6 +92,39 @@ export function parseCase(target: Parser, input: FuzzCase, wrapped: boolean): un
       checkEvents([result]); return result;
     }
     case "google-calendar": return googleEvent("synthetic", "synthetic", wrapped ? { id: "1", status: "confirmed", updated: NOW, start: { dateTime: NOW }, end: { dateTime: "2026-01-15T13:00:00.000Z" }, summary: text } : calendarObject(json(text)), NOW, ["summary"], NOW);
+    case "screenpipe-frame": {
+      const result = mapFrame({ id: 1, timestamp: wrapped ? NOW : text, full_text: text,
+        app_name: "Synthetic", window_name: null, browser_url: null, device_name: "Synthetic",
+        focused: true, text_source: null, capture_trigger: null, snapshot_path: null,
+        document_path: null, video_chunk_id: null, offset_index: 0 }, NOW);
+      checkEvents([result]); return result;
+    }
+    case "screenpipe-audio": {
+      const result = mapTranscription({ id: 1, audio_chunk_id: 1, offset_index: 0,
+        timestamp: wrapped ? NOW : text, transcription: text, device: "Synthetic",
+        is_input_device: true, speaker_id: null, speaker_name: null,
+        transcription_engine: "synthetic", start_time: null, end_time: null }, NOW);
+      checkEvents([result]); return result;
+    }
+    case "whoop": {
+      const id = "00000000-0000-0000-0000-000000000001";
+      const result = RESOURCES.map(resource => recordEvent(resource, wrapped ? {
+        user_id: 1, id: resource === "cycle" ? 1 : id, cycle_id: 1, sleep_id: id,
+        created_at: NOW, updated_at: NOW, score_state: "SCORED", start: NOW,
+        end: NOW, timezone_offset: "Z", nap: false, sport_name: "Synthetic",
+        // Mutate selected metric bags, not just an ignored provider field.
+        score: json(text),
+      } : json(text), "1", ["metrics", "activity"], NOW));
+      checkEvents(result); return result;
+    }
+    case "beeper": {
+      const body = wrapped ? Buffer.from(JSON.stringify({ items: [{ id: "1", accountID: "1", chatID: "1", sortKey: "1", timestamp: NOW, text }], hasMore: false })) : input.bytes;
+      const connector = createBeeperConnector({ token_secret_ref: "env:SYNTHETIC_BEEPER_TOKEN" }, {
+        now: () => new Date(NOW), fetch: async () => new Response(new Uint8Array(body)),
+      });
+      return connector.connect(async () => "synthetic-token").then(() => connector.backfill(null))
+        .then(batch => { checkEvents(batch.events); return batch; }).finally(() => connector.revoke());
+    }
     case "session-claude": case "session-codex": {
       const flavor = target === "session-claude" ? "claude-code" : "codex";
       const reader = new SessionReader({ flavor, connectorId: flavor === "codex" ? "kizuki.codex-sessions" : "kizuki.claude-code-sessions", relpath: "synthetic.jsonl", includeSubagents: false, excludeCwd: [], observedAt: NOW });
