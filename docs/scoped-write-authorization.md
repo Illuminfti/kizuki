@@ -27,8 +27,9 @@ or captured text that the response serves. The check uses the existing FTS query
 grammar against an ephemeral in-memory document; it adds no durable index or
 retrieval implementation. A nomination that matched only a credential-shaped
 span is dropped without incrementing the response's redaction tally. Owner
-search retains its existing matching behavior. Matching the canon excerpt can
-omit a raw match beyond the excerpt's bound. An agent's engine nomination,
+search retains its existing matching behavior. Matching an excerpt can omit a
+raw match beyond its bound; ledger search honors `full_text` when requested.
+An agent's engine nomination,
 including a fuzzy match, is dropped when the served text does not satisfy the
 floor's query grammar.
 

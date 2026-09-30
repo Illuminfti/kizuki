@@ -75,6 +75,7 @@ function classify(
   grant: Grant,
   hits: Pick<SearchHit, "doc_id" | "scope">[],
   seen: Set<string>,
+  fullText: boolean,
   matches?: ReturnType<typeof servedTextMatcher>["matches"],
 ): Classification {
   const result: Classification = { canon: [], quoted: [], withheld: [] };
@@ -111,7 +112,11 @@ function classify(
       result.withheld.push({ id: quoted.event_id, reason: decision.reason });
       continue;
     }
-    if (matches !== undefined && !matches("", createRedactor(index.sourceContext.principal).text(quoted.text))) continue;
+    if (matches !== undefined) {
+      const preview = { ...index.sourceContext, redactor: createRedactor(index.sourceContext.principal) };
+      const served = fullText ? preview.redactor.text(quoted.text) : excerptOf(quoted.text, LEDGER_EXCERPT, preview).excerpt;
+      if (!matches("", served)) continue;
+    }
     seen.add(hit.doc_id);
     result.quoted.push(quotedChunk(quoted, decision.sensitivity, index.sourceContext));
   }
@@ -236,6 +241,7 @@ export async function serveSearch(
             scope: doc_id.startsWith("page:") ? "canon" : "ledger",
           } as const)),
           seen,
+          fullText,
           matcher?.matches,
         ),
       );
@@ -270,7 +276,7 @@ export async function serveSearch(
         previousPage = pageKey;
         absorbClassification(
           classified,
-          classify(ctx.db, index, narrowed, ranked.candidates, seen, matcher?.matches),
+          classify(ctx.db, index, narrowed, ranked.candidates, seen, fullText, matcher?.matches),
         );
         if (
           authorizedCount(classified) >= MAX_RETRIEVAL_LIMIT ||

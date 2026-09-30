@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
 import { correct } from "../../src/correction/correct";
+import { rebuildDerived } from "../../src/derived";
 import type { RetrievalPort } from "../../src/contracts/retrieval";
 import { getClaim, insertClaim } from "../../src/claims/store";
 import { accept } from "../../src/ledger/ledger";
@@ -16,7 +17,7 @@ import { temporaryPortContext } from "../contracts/fixtures";
 import { DIRECT_RETRIEVAL_DESCRIPTOR, ReferenceRetrievalPort } from "../contracts/reference-retrieval";
 import { claimInput } from "../claims/helpers";
 import { enrollSource, worldSeed } from "../helpers/world-seed";
-import { recordedPage, serveFixture } from "./helpers";
+import { recordedPage, serveFixture, storeEvent } from "./helpers";
 
 const proposal = (event: string) => ({
   kind: "claim" as const, target: "facts:exact", body: "Ada lives in Lisbon.",
@@ -145,6 +146,20 @@ test("canon search and packets drop matches found only in redacted text", async 
     const readable = await serveSearch(f.agent("reader-public"), { query: "synthetic searchable" });
     expect(readable.canon.map(item => item.page_id)).toEqual(["fact:redacted-search"]);
     expect(readable.canon[0]?.title).toBe("[redacted:api_token]");
+  } finally { f.dispose(); }
+});
+
+test("ledger search matches the served excerpt unless full text is requested", async () => {
+  const f = await serveFixture();
+  try {
+    const id = storeEvent(f.db, "excerpt-match", "2026-02-28T12:00:00Z",
+      `${".".repeat(700)} endofrecordterm`, "person:ada", "public");
+    rebuildDerived(f.db, f.vaultPath);
+    const ctx = f.agent("reader-public");
+    expect((await serveSearch(ctx, { query: "endofrecordterm", scope: "ledger" })).quoted).toEqual([]);
+    const full = await serveSearch(ctx, { query: "endofrecordterm", scope: "ledger", full_text: true });
+    expect(full.quoted.map(item => item.event_id)).toEqual([id]);
+    expect(full.quoted[0]?.text).toContain("endofrecordterm");
   } finally { f.dispose(); }
 });
 
