@@ -246,7 +246,9 @@ test("the owner can correct a reading that was downgraded for lacking a quoted b
     expect(definition.perspective).toMatchObject({ mode: "uncertain", interpretation: "inferred" });
     const changed = await serveCorrect(ctx, { statement: "A synthetic transformation.", target: { world_claim: definition.claim } });
     const corrected = readClaimV2Semantic(f.db, changed.data!.claim_id!)!;
-    expect(corrected).toMatchObject({ object: { kind: "literal", value: "A synthetic transformation." }, perspective: { mode: "asserted", interpretation: "explicit" } });
+    // replace_object keeps the prior mode under the merged correction contract;
+    // the owner's evidence makes the replacement explicit.
+    expect(corrected).toMatchObject({ object: { kind: "literal", value: "A synthetic transformation." }, perspective: { mode: "uncertain", interpretation: "explicit" } });
     expect(getClaim(f.db, changed.data!.claim_id!)?.taint).toBe("clean");
   } finally { f.db.close(); }
 });
