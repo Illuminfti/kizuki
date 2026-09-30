@@ -9,23 +9,11 @@
     "http": "/v1/world_view",
     "app": "World cards and discovery through /app/v1/world_view",
     "seams": {
-      "core": [
-        "packages/core/src/world/public.ts",
-        "packages/core/src/world/pipeline/read.ts",
-        "packages/core/src/contracts/world-card-kit.ts"
-      ],
-      "cli": [
-        "packages/cli/src/commands/world.ts"
-      ],
-      "mcp": [
-        "packages/mcp/src/world/surface.ts"
-      ],
-      "http": [
-        "packages/core/src/serve/http.ts"
-      ],
-      "app": [
-        "packages/cli/src/app/host.ts"
-      ]
+      "core": ["packages/core/src/world/public.ts", "packages/core/src/world/pipeline/read.ts", "packages/core/src/contracts/world-card-kit.ts"],
+      "cli": ["packages/cli/src/commands/world.ts"],
+      "mcp": ["packages/mcp/src/world/surface.ts"],
+      "http": ["packages/core/src/serve/http.ts"],
+      "app": ["packages/cli/src/app/host.ts"]
     },
     "tests": [
       "packages/core/test/world/pipeline-golden.test.ts",
@@ -68,6 +56,7 @@
     "app": "World card refresh, share and resume through /app/v1/world_view",
     "tests": [
       "packages/core/test/serving/world-views.test.ts",
+      "packages/core/test/serving/world-view-security.test.ts",
       "packages/core/test/serving/world-resume.test.ts",
       "packages/core/test/world/view-tables.test.ts",
       "packages/cli/test/world-views.test.ts",

@@ -1,6 +1,6 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { OWNER, setGrant } from "../../src/agents";
+import { OWNER, OWNER_AGENT_GRANT, addAgent, authenticate, setGrant } from "../../src/agents";
 import { readWorldView, serveWorldView } from "@kizuki/core/world";
 import { purgeEvents } from "../../src/ledger/purge";
 import { inspectSourceGrant, revokeSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
@@ -65,6 +65,34 @@ test("unreadable resume handles preserve bytes, errors and work across hidden mu
     } }];
   } });
   expect(completed).toBe(HIDDEN_MUTATIONS.length * 4);
+});
+
+test("resume rejects a claim outside the reader's type grant before projection, including after erasure", async () => {
+  let completed = 0;
+  await assertNoninterference({
+    scene: async () => {
+      const made = await hiddenScene();
+      const agent = addAgent(made.db, "capture-only-reader", { ...OWNER_AGENT_GRANT, types: ["note"] });
+      return { ...made, reader: { ...made.reader, principal: authenticate(made.db, agent.token)! } };
+    },
+    mutations: [{ name: "unreadable claim purge", apply: (made) => {
+      purgeEvents(made.db, made.vaultPath, { event_id: made.visible.concept.eventId }, "synthetic-claim-purge");
+    } }],
+    cases: (made) => {
+      const shared = readWorldView({ ...made.reader, principal: OWNER }, {
+        operation: "share", of: { operation: "concept", concept: made.visible.concept.ref }, ...WHEN,
+      });
+      if (!("result" in shared) || !("data" in shared.result) || shared.result.data.schema !== "kizuki.resume-handle/v1") throw new Error("no handle");
+      const handle = shared.result.data.handle;
+      return [{ name: "claim-denied resume", run: (ctx) => {
+        const value = serveWorldView(ctx, { operation: "resume", handle, ...WHEN });
+        expect(value.data).toMatchObject({ result: REQUIRED });
+        completed++;
+        return value;
+      } }];
+    },
+  });
+  expect(completed).toBe(4);
 });
 
 test("source consent denial invalidates a conditional baseline uniformly and preserves fresh not_found", async () => {
