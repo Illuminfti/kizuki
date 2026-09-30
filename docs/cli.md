@@ -539,7 +539,7 @@ events, including when the owner speaks directly. A public page rewritten
 with a private correction becomes private; lower-ceiling readers no longer
 receive the page or its source event ids.
 
-A claim an importer produced has no subject and no predicate, so there is no
+A claim an importer produced may have no predicate, so there is no
 claim key to supersede a group by. `--claim` on such a claim supersedes exactly
 that claim, records the supersession, and rewrites the page that already holds
 it; it never creates a second page for the same target. A claim no page holds

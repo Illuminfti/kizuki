@@ -73,6 +73,28 @@ test("withdrawn derive consent refuses native correction before any effects", as
   }
 });
 
+test("a grant narrowed after preflight keeps the writer refusal actionable", async () => {
+  const f = await seeded();
+  const before = readFileSync(join(f.vault, "people/grace.md"), "utf8");
+  expect(inspectCorrectionConsent(f.io, f.claim)).toEqual({ allowed: true });
+  // The correction clock runs after consent preflight and before filing.
+  const io = { ...f.io, now: () => {
+    setSourceGrant(f.db, { source_key: f.source, expected_revision: 1, operation_id: "narrow-after-preflight",
+      policy: { purposes: ["capture", "correction", "recall", "session"],
+        allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" } });
+    return "2026-03-01T00:00:00Z";
+  } };
+  const error = await correct(io, { statement: "Grace works at Northwind.", target: { claim_id: f.claim.claim_id } })
+    .catch((caught: unknown) => caught);
+  expect(error).toBeInstanceOf(CorrectError);
+  if (!(error instanceof CorrectError)) throw error;
+  expect(error.code).toBe("source_access_denied");
+  expect(error.message).toContain(`source ${f.source} does not permit derive`);
+  expect(error.message).toContain(`kizuki connect grant --source ${f.source} --policy POLICY.json --expected-revision 2 --operation-id OPERATION`);
+  expect(readFileSync(join(f.vault, "people/grace.md"), "utf8")).toBe(before);
+});
+
 test("retained page evidence needs derive consent even when the corrected claim has it", async () => {
   const f = await seeded();
   const source = ulid();
