@@ -44,7 +44,7 @@ test("an admitted supported concept is discoverable and returns evidence-qualifi
     expect(result).not.toHaveProperty("denied");
     const serialized = JSON.stringify(result);
     expect(serialized).toContain("Revise beliefs using evidence");
-    expect(serialized).toContain('"independence":"unknown"');
+    expect(serialized).toContain('"independence":"independent"');
     expect(serialized).not.toContain(f.sourceKey);
     expect(serialized).not.toContain(f.eventId);
     for (const id of f.claims) expect(serialized).not.toContain(id);

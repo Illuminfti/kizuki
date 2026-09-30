@@ -1,4 +1,5 @@
 import type { ConceptCoverage, Relation } from "../../contracts/concept-card";
+import type { ConceptLearning } from "../../contracts/concept-card";
 import type { CardSummary } from "../pipeline/enrich";
 import { WorldProjectionBudgetError, type ReadFrame } from "../pipeline/frame";
 import type { Cluster } from "../pipeline/group";
@@ -26,6 +27,7 @@ export interface CardInput {
   readonly relations: readonly Relation[];
   readonly summary: CardSummary | null;
   readonly coverage: ConceptCoverage;
+  readonly learning: readonly ConceptLearning[];
 }
 
 /** What every assembled card carries, whatever its kind. */
