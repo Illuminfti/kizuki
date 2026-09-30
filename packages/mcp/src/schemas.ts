@@ -157,9 +157,22 @@ export function negotiatedEnvelopeFor(tool: Tool) {
   const v1 = envelopeFor(tool);
   if (tool === "system_health") return v1;
   const v2 = envelopeV2For(tool);
-  // The pinned SDK emits draft-7. Generate the union together so its shared
-  // definitions and references resolve from the advertised schema's root.
-  const advertised = z.toJSONSchema(z.union([v1, v2]), { target: "draft-7" });
+  // Keep common chunk constraints at the object root. Repeating both full
+  // schemas in anyOf would exceed the existing tools/list size budget.
+  const alternatives = [
+    {
+      properties: { schema: { const: ENVELOPE_SCHEMA }, principal: { type: "string" }, data: { type: "object" } },
+      required: ["denied"],
+    },
+    {
+      properties: {
+        schema: { const: ENVELOPE_V2_SCHEMA }, principal: { type: "object" },
+        denied: false, has_withheld: false, source_policy: false, redacted: false,
+        ...(tool === "context_packet" ? { data: z.toJSONSchema(PACKET_DATA_V2, { target: "draft-7" }) } : {}),
+      },
+      required: ["data"],
+    },
+  ];
   return v1.extend({
     schema: z.enum([ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA]),
     principal: z.union([z.string(), worldRef("principal")]),
@@ -168,13 +181,13 @@ export function negotiatedEnvelopeFor(tool: Tool) {
   }).superRefine((value, ctx) => {
     const schema = value.schema === ENVELOPE_SCHEMA ? v1 : v2;
     if (!schema.safeParse(value).success) ctx.addIssue({ code: "custom", message: "invalid negotiated envelope" });
-  }).meta({ anyOf: advertised.anyOf, definitions: advertised.definitions });
+  }).meta({ anyOf: alternatives });
 }
 
 /** Core judges the separate selector before the SDK parses the tool fields. */
 export function selectableInput<T extends z.ZodObject>(input: T) {
   return input.extend({ response_contract: z.unknown().optional().describe(
-    "Select kizuki.envelope/v1 or kizuki.envelope/v2 separately from tool input. Token sessions default to v2; unsupported selectors receive an audited Core refusal.",
+    "Select kizuki.envelope/v1 or kizuki.envelope/v2. Tokens default to v2; unsupported selectors receive an audited refusal.",
   ) });
 }
 

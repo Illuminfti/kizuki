@@ -96,6 +96,7 @@ describe("the correct tool", () => {
       "object",
       "perspective_mode",
       "refresh_world",
+      "response_contract",
       "statement",
       "target",
     ]);
