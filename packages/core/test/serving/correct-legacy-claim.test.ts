@@ -91,7 +91,19 @@ describe("serveCorrect retracts a claim that has no predicate", () => {
     expect(JSON.stringify(envelope)).not.toContain(pagePath);
     if (recovery) {
       expect(envelope.data?.recovery_pending).toEqual([]);
-      const replay = await serveCorrect(live.agent("reader-public"), {
+      // The statement's private evidence raises the correction above the
+      // original caller's ceiling. Replay cannot grant that caller read access.
+      expect(getClaim(live.db, envelope.data!.claim_id!)?.sensitivity).toBe("private");
+      const refused = await serveCorrect(live.agent("reader-public"), {
+        statement: "The compiler ships weekly.", target: { claim_id: claimId },
+      }).catch((error: unknown) => error);
+      expect(refused).toMatchObject({ code: "invalid_arguments", message: "invalid arguments: target.claim_id: names no live claim" });
+      expect(JSON.stringify(refused)).not.toContain(privateText);
+      expect(JSON.stringify(refused)).not.toContain(live.events["private"]!);
+      expect(JSON.stringify(refused)).not.toContain(pagePath);
+      // This caller can read the correction claim, but recovery still holds
+      // the page. A claim grant does not disclose the held page's metadata.
+      const replay = await serveCorrect(live.agent("reader-private"), {
         statement: "The compiler ships weekly.", target: { claim_id: claimId },
       });
       expect(replay.data?.claim_id).toBe(envelope.data!.claim_id!);
