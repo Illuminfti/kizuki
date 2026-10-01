@@ -175,11 +175,12 @@ interface ScopedCorrectIo extends CorrectIo {
 }
 
 function scopeCorrection(scope: VaultMutationScope, io: CorrectIo): ScopedCorrectIo {
-  if (io.grant === undefined) return io;
   const producer = io.producer ?? "owner";
   if (!producer.startsWith("agent:")) return io;
-  const agent = getAgent(io.db, producer.slice("agent:".length));
-  const resolved = agent === null ? null : principalForAgentId(io.db, agent.agent_id);
+  const identity = producer.slice("agent:".length);
+  const agent = getAgent(io.db, identity);
+  const resolved = principalForAgentId(io.db, identity) ??
+    (agent === null ? null : principalForAgentId(io.db, agent.agent_id));
   if (resolved === null) throw new CorrectError("tool_not_granted", "correction principal is unavailable");
   const ctx: ServeContext = { db: io.db, vaultPath: io.vault_path, principal: resolved };
   const reader = claimReader(io.db, ctx.principal.grant,
@@ -896,7 +897,9 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
       receipt = applyCanonWriteOwned(scope, canon, stored, writeDecision, {
         writer: "correction",
         budget,
-        ...(io.readScope === undefined ? {} : { readScope: io.readScope }),
+        ...(io.readScope === undefined ? {} : { readScope: {
+          ...io.readScope, correction: { claim_id: stored.claim_id, event_id: accepted.event_id },
+        } }),
       });
     } catch (error) {
       const pending = correctionRecoveryPending(io.db, stored.claim_id, page.rel_path);

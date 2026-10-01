@@ -72,27 +72,31 @@ function unified(relPath: string, before: string, after: string): string {
 function boundPages(ctx: ServeContext, claimKeys: string[]): string[] {
   if (claimKeys.length === 0 || !tableExists(ctx.db, "page_index")) return [];
   const placeholders = claimKeys.map(() => "?").join(", ");
-  const index = ctx.principal.kind === "owner" ? undefined : loadCanon(ctx);
-  return ctx.db
-    .query<{ rel_path: string }, string[]>(
+  const index = ctx.principal.kind === "owner" ? undefined : loadCanon({ ...ctx, sourcePurpose: "recall" });
+  const pages: string[] = [];
+  const statement = ctx.db
+    .prepare<{ rel_path: string }, string[]>(
       `SELECT DISTINCT p.rel_path AS rel_path
          FROM claim_bindings b JOIN page_index p ON p.page_id = b.page_id
         WHERE b.claim_key IN (${placeholders})
         ORDER BY p.rel_path`,
-    )
-    .all(...claimKeys)
-    .map((row) => row.rel_path)
-    .filter(path => {
-      if (index === undefined) return true;
-      const page = index.byPath.get(path);
-      return page !== undefined && pageDecision(index, ctx.principal.grant, page).allow;
-    })
-    .slice(0, CORRECTION_MAX_PAGES);
+    );
+  try {
+    for (const { rel_path } of statement.iterate(...claimKeys)) {
+      if (index !== undefined) {
+        const page = index.byPath.get(rel_path);
+        if (page === undefined || !pageDecision(index, ctx.principal.grant, page).allow) continue;
+      }
+      pages.push(rel_path);
+      if (pages.length === CORRECTION_MAX_PAGES) break;
+    }
+    return pages;
+  } finally { statement.finalize(); }
 }
 
 /** The caller has authorized this correction claim and its inherited evidence. */
 export function pendingCanonRewrite(ctx: ServeContext, claim: Claim): CanonRecoveryPending[] | undefined {
-  const index = ctx.principal.kind === "owner" ? undefined : loadCanon(ctx);
+  const index = ctx.principal.kind === "owner" ? undefined : loadCanon({ ...ctx, sourcePurpose: "recall" });
   const pending = correctionRecoveryPending(ctx.db, claim.claim_id).filter(item => {
     if (index === undefined) return true;
     const page = index.byPath.get(item.page_path);
@@ -146,7 +150,7 @@ export function rewriteCanon(
         ? decision.chosen.rel_path
         : decision.rel_path;
     if (ctx.principal.kind !== "owner") {
-      const index = loadCanon(ctx);
+      const index = loadCanon({ ...ctx, sourcePurpose: "recall" });
       const page = index.byPath.get(relPath);
       // Neither the write nor its receipt, diff or unreached list may reach
       // beyond the caller's page read grant.

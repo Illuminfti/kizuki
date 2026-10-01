@@ -57,25 +57,72 @@ export interface WorldMaterialization {
  readonly title:string;readonly pageType:PageType;
 }
 export interface WorldMaterializationScope {
- readonly context: ServeContext;
- readonly claims: ClaimVisibility;
+  readonly context: ServeContext;
+  readonly claims: ClaimVisibility;
+  /** This pass's native statement is caller-owned input, even when recorded private. */
+  readonly correction?: { readonly claim_id: string; readonly event_id: string };
 }
 /** Select one complete admitted rendering per assertion; never pool partial or denied support. */
-export function selectWorldMaterialization(db:Database,handle:string,readScope?:WorldMaterializationScope):WorldMaterialization|null {
- if(readScope!==undefined&&readScope.context.db!==db)throw new CanonWriteError("decision_stale","typed canon read scope names another ledger");
- const ctx=readScope?.context??context(db),visibility=readScope?.claims,permitted=authorizedSupportSql(ctx),budget:ReadBudget={bytes:0};
- const candidates=db.query<{claim_id:string},(string|number)[]>(`SELECT DISTINCT claims.claim_id FROM claims JOIN claim_v2_support s USING(claim_id) JOIN semantic_allocations a USING(support_key) JOIN semantic_bindings b USING(handle_id) JOIN claim_v2_semantics m ON m.claim_id=claims.claim_id AND m.subject_kind=b.raw_kind AND m.subject_id=b.raw_id AND (b.raw_kind='occurrence' OR (json_extract(m.payload,'$.subject.namespace.connector_id')=json_extract(b.raw_namespace,'$.connector_id') AND json_extract(m.payload,'$.subject.namespace.source_key')=json_extract(b.raw_namespace,'$.source_key'))) WHERE claims.is_world_typed=1 AND claims.status='live' AND a.handle_id=? AND ${permitted.sql} ${visibility===undefined?"":`AND (${visibility.sql})`} ORDER BY claims.claim_id LIMIT ?`).all(handle,...permitted.bindings,...(visibility?.bindings??[]),MAX_PAGE_CLAIMS+1);
- const claims:Claim[]=[],basis:WorldClaimBasis[]=[];let title="Knowledge record",pageType:PageType=DEFAULT_PAGE_TYPE;
- for(const candidate of candidates) {
-  if(worldClaimHandle(db,candidate.claim_id)!==handle)continue;
-  const eligible=eligibleWorldClaim(ctx,candidate.claim_id,{kind:"all"},budget),support=eligible?.supports[0],claim=getClaim(db,candidate.claim_id);
-  if(eligible===null||support===undefined||claim===null||!(visibility?.canRead(claim)??true))continue;
-  if(claims.length===MAX_PAGE_CLAIMS)throw new CanonWriteError("batch_too_large","world page exceeds its bounded materialization");
-  const semantic=eligible.semantic;
-  pageType=pageTypeOf(semantic,pageType);title=titleOf(semantic,title);
-  claims.push(render(claim,support));basis.push({claim_id:claim.claim_id,semantic_key:semanticKey(semantic),supports:[{support_key:support.row.support_key,admission_hash:worldAdmissionHash(support.admission)}]});
- }
- return claims.length===0?null:{handle,claims,basis,title,pageType};
+export function selectWorldMaterialization(
+  db: Database,
+  handle: string,
+  readScope?: WorldMaterializationScope,
+): WorldMaterialization | null {
+  if (readScope !== undefined && readScope.context.db !== db)
+    throw new CanonWriteError("decision_stale", "typed canon read scope names another ledger");
+  const ctx = readScope?.context ?? context(db);
+  const visibility = readScope?.claims;
+  const permitted = authorizedSupportSql(ctx);
+  const budget: ReadBudget = { bytes: 0 };
+  const candidates = db.query<{ claim_id: string }, (string | number)[]>(`
+    SELECT DISTINCT claims.claim_id FROM claims
+    JOIN claim_v2_support s USING(claim_id)
+    JOIN semantic_allocations a USING(support_key)
+    JOIN semantic_bindings b USING(handle_id)
+    JOIN claim_v2_semantics m ON m.claim_id=claims.claim_id
+      AND m.subject_kind=b.raw_kind AND m.subject_id=b.raw_id
+      AND (b.raw_kind='occurrence' OR (
+        json_extract(m.payload,'$.subject.namespace.connector_id')=json_extract(b.raw_namespace,'$.connector_id')
+        AND json_extract(m.payload,'$.subject.namespace.source_key')=json_extract(b.raw_namespace,'$.source_key')))
+    WHERE claims.is_world_typed=1 AND claims.status='live' AND a.handle_id=?
+      AND ${permitted.sql} ${visibility === undefined ? "" : `AND (${visibility.sql})`}
+    ORDER BY claims.claim_id LIMIT ?
+  `).all(handle, ...permitted.bindings, ...(visibility?.bindings ?? []), MAX_PAGE_CLAIMS + 1);
+  const correction = readScope?.correction;
+  if (correction !== undefined && !candidates.some(candidate => candidate.claim_id === correction.claim_id))
+    candidates.push({ claim_id: correction.claim_id });
+
+  const claims: Claim[] = [];
+  const basis: WorldClaimBasis[] = [];
+  let title = "Knowledge record", pageType: PageType = DEFAULT_PAGE_TYPE;
+  for (const candidate of candidates) {
+    if (worldClaimHandle(db, candidate.claim_id) !== handle) continue;
+    const own = correction?.claim_id === candidate.claim_id ? correction : undefined;
+    // Restrict the exemption to the exact newly recorded native statement, never
+    // other support attached to the assertion. All existing evidence uses ctx.
+    const supportKeys = own === undefined ? undefined : db.query<{ support_key: string }, [string, string, string]>(`
+      SELECT s.support_key FROM claim_v2_support s
+      WHERE s.claim_id=? AND s.support_origin='native_owner'
+        AND EXISTS(SELECT 1 FROM claim_v2_support_events se WHERE se.support_key=s.support_key AND se.event_id=?)
+        AND NOT EXISTS(SELECT 1 FROM claim_v2_support_events se WHERE se.support_key=s.support_key AND se.event_id<>?)
+    `).all(candidate.claim_id, own.event_id, own.event_id).map(row => row.support_key);
+    const eligible = eligibleWorldClaim(own === undefined ? ctx : context(db), candidate.claim_id,
+      { kind: "all" }, budget, supportKeys === undefined ? {} : { supportKeys });
+    const support = eligible?.supports[0];
+    const claim = getClaim(db, candidate.claim_id);
+    if (eligible === null || support === undefined || claim === null ||
+      (own === undefined && !(visibility?.canRead(claim) ?? true))) continue;
+    if (claims.length === MAX_PAGE_CLAIMS)
+      throw new CanonWriteError("batch_too_large", "world page exceeds its bounded materialization");
+    const semantic = eligible.semantic;
+    pageType = pageTypeOf(semantic, pageType);
+    title = titleOf(semantic, title);
+    claims.push(render(claim, support));
+    basis.push({ claim_id: claim.claim_id, semantic_key: semanticKey(semantic), supports: [{
+      support_key: support.row.support_key, admission_hash: worldAdmissionHash(support.admission),
+    }] });
+  }
+  return claims.length === 0 ? null : { handle, claims, basis, title, pageType };
 }
 /** Exact selected historical support remains valid after supersession, but never after source loss. */
 export function worldBasisAllowed(ctx:ServeContext,basis:readonly WorldClaimBasis[]|null,historical=false):boolean {

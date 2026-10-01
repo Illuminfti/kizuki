@@ -665,6 +665,7 @@ test("a scoped typed correction does not materialize or receipt an unreadable un
     }).token)! };
     const card = s.kit.card(relay, "concept", s.kit.find(relay, "concept", "Bayesian"));
     expect(JSON.stringify(card)).not.toContain("Unpublished restricted example");
+    const pageBefore = s.page();
     const done = await serveCorrect(relay, { statement: "Update using public evidence.", mode: "replace_object",
       target: { world_claim: definitionRef(card) } });
     expect(done.data?.rewritten).toHaveLength(1);
@@ -672,6 +673,13 @@ test("a scoped typed correction does not materialize or receipt an unreadable un
     expect(JSON.stringify(done)).not.toContain("Unpublished restricted example");
     expect(getClaim(s.db, hidden)).toEqual(prior);
     expect(s.page()).not.toContain("Unpublished restricted example");
+    expect(s.page()).toContain("Update using public evidence.");
+    expect(s.db.query<{ sensitivity_hint: string }, [string]>(
+      "SELECT sensitivity_hint FROM events WHERE event_id=?",
+    ).get(done.data!.event_id!)?.sensitivity_hint).toBe("private");
+    await undoReceipt({ db: s.db, vault_path: s.vault.path }, done.data!.receipt_id!);
+    expect(s.page()).toBe(pageBefore);
+    expect(getClaim(s.db, hidden)).toEqual(prior);
   } finally { s.dispose(); }
 });
 

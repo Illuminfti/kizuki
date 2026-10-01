@@ -23,13 +23,18 @@ Readable pages continue through the existing receipted writer. This adds no
 client page writer or owner approval step.
 Typed correction rematerialization uses the same read scope before its candidate
 cap. Unpublished hidden claims stay absent from the page and retain their receipt
-state.
+state. The writer may include the caller's exact newly recorded correction
+statement; this does not widen the statement's private evidence label or admit
+any unrelated support. Shared correction calls resolve an agent's current stored
+grant even when a caller omits a grant argument. Unknown or revoked relays fail
+closed. A hidden recording does not change a correction retry's refusal.
 
 For agents, search nominations must also match the redacted title and excerpt
 or captured text that the response serves. The check uses the existing FTS query
 grammar against an ephemeral in-memory document; it adds no durable index or
 retrieval implementation. A nomination that matched only a credential-shaped
-span is dropped without incrementing the response's redaction tally. Owner
+span is dropped without incrementing the response's redaction tally. Candidate
+previews use detached redactors; only selected results contribute to that tally. Owner
 search retains its existing matching behavior. Matching an excerpt can omit a
 raw match beyond its bound; ledger search honors `full_text` when requested.
 An agent's engine nomination,
@@ -41,6 +46,8 @@ matching and ordering, use served labels. Local graph traversal authorizes edges
 before counting them or following their endpoints. The response cap and
 `truncated` describe admitted edges. A retrieval provider's raw overflow flag
 does not prove authorized overflow; the local graph floor checks that separately.
+Agent traversals supplement provider results with that floor whether the provider
+reports overflow or not, so its raw flag cannot change the admitted edge set.
 
 These rules constrain public serving responses and mutations. They do not promise
 constant execution time: canon snapshots and derived candidate scans still do
@@ -52,4 +59,6 @@ Verification lives in `packages/core/test/serving/write-visibility.test.ts`,
 `packages/core/test/claims/scoped-idempotency.test.ts`. The cases cover mixed-page
 correction, hidden duplicate and conflict oracles, source-grant visibility,
 corroboration and retirement, prefix probing, served-label matching, graph caps,
-fresh databases, upgrades, rollback and prepared retries.
+retry refusals, stored relay grants, returned-result redaction counts, fresh
+databases, upgrades, rollback and prepared retries. Typed rematerialization is
+covered in `packages/core/test/serving/world-correct-modes.test.ts`.

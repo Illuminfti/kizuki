@@ -246,9 +246,9 @@ export async function serveGraph(
         decisions,
         !walked.ok,
       );
-      // A provider's raw overflow cannot reveal how many of its unseen edges
-      // survive Core authorization. The local floor can prove scoped overflow.
-      if (walked.ok && walked.truncated && ctx.principal.kind !== "owner") {
+      // Supplement every agent traversal, independently of the provider's raw
+      // overflow flag. Only the scoped floor can prove authorized overflow.
+      if (walked.ok && ctx.principal.kind !== "owner") {
         const floor = scopedFloor();
         const extra = classifyGraph(floor.edges, index, grant,
           readServableEvents(ctx.db, floor.edges.filter(edge => edge.kind === "source").map(edge => edge.dst)),

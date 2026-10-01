@@ -80,13 +80,13 @@ export interface CorrectIo {
   readonly retrieval?: RetrievalPort;
   readonly retrieval_store?: string;
   readonly budget?: BudgetTracker;
-  /** Default `owner`. An `agent:<id>` relay records `x-relayed-by`. */
+  /** Default `owner`. An enrolled `agent:<id or name>` uses its stored grant and records `x-relayed-by`. */
   readonly producer?: Producer;
   /**
    * RFC 0002 §6.4. False downgrades the insert to `owner_authored`.
    * Default true.
    */
   readonly relay_owner_corrections?: boolean;
-  /** When set, `correct` must be in `grant.tools`. */
+  /** Optional trusted owner restriction. Agents always use their current stored grant. */
   readonly grant?: Grant;
 }

@@ -78,6 +78,11 @@ function classify(
   fullText: boolean,
   matches?: ReturnType<typeof servedTextMatcher>["matches"],
 ): Classification {
+  // Candidate previews must not charge redactions to the response. Render the
+  // final selected rows with the call's redactor after applying its limit.
+  index = { ...index, sourceContext: {
+    ...index.sourceContext, redactor: createRedactor(index.sourceContext.principal),
+  } };
   const result: Classification = { canon: [], quoted: [], withheld: [] };
   const pageSeen = new Set<string>();
 
@@ -94,14 +99,11 @@ function classify(
         result.withheld.push({ id: page.id, reason: decision.reason });
         continue;
       }
-      if (matches !== undefined) {
-        const preview = { ...index.sourceContext, redactor: createRedactor(index.sourceContext.principal) };
-        const { excerpt } = excerptOf(page.body, 600, preview);
-        if (!matches(preview.redactor.text(typeof page.data["title"] === "string" ? page.data["title"] : ""), excerpt)) continue;
-      }
+      const { excerpt, truncated } = excerptOf(page.body, LEDGER_EXCERPT, index.sourceContext);
+      const chunk = canonChunk(index, page, decision, excerpt, truncated);
+      if (matches !== undefined && !matches(chunk.title, chunk.excerpt)) continue;
       seen.add(hit.doc_id);
-      const { excerpt, truncated } = excerptOf(page.body, 600, index.sourceContext);
-      result.canon.push(canonChunk(index, page, decision, excerpt, truncated));
+      result.canon.push(chunk);
       continue;
     }
 
@@ -112,13 +114,10 @@ function classify(
       result.withheld.push({ id: quoted.event_id, reason: decision.reason });
       continue;
     }
-    if (matches !== undefined) {
-      const preview = { ...index.sourceContext, redactor: createRedactor(index.sourceContext.principal) };
-      const served = fullText ? preview.redactor.text(quoted.text) : excerptOf(quoted.text, LEDGER_EXCERPT, preview).excerpt;
-      if (!matches("", served)) continue;
-    }
+    const chunk = boundedQuote(quotedChunk(quoted, decision.sensitivity, index.sourceContext), fullText, index.sourceContext);
+    if (matches !== undefined && !matches("", chunk.text)) continue;
     seen.add(hit.doc_id);
-    result.quoted.push(quotedChunk(quoted, decision.sensitivity, index.sourceContext));
+    result.quoted.push(chunk);
   }
 
   return result;
@@ -286,7 +285,20 @@ export async function serveSearch(
         }
         offset += ranked.candidates.length;
       }
-      const canon = classified.canon.slice(0, rows), quoted = classified.quoted.slice(0, Math.max(0, rows - classified.canon.length)).map(chunk => boundedQuote(chunk, fullText, index.sourceContext));
+      const canon = classified.canon.slice(0, rows).map(candidate => {
+        const page = index.byId.get(candidate.page_id)!;
+        const decision = pageDecision(index, narrowed, page);
+        if (!decision.allow) throw new ServeError("held", "canon evidence unavailable");
+        const { excerpt, truncated } = excerptOf(page.body, LEDGER_EXCERPT, index.sourceContext);
+        return canonChunk(index, page, decision, excerpt, truncated);
+      });
+      const quoted = classified.quoted.slice(0, Math.max(0, rows - canon.length)).map(candidate => {
+        const source = currentQuotedSource(ctx.db, candidate.event_id);
+        if (source === null) throw new ServeError("held", "evidence unavailable");
+        const decision = eventDecision(narrowed, source, index.sourceContext);
+        if (!decision.allow) throw new ServeError("held", "evidence unavailable");
+        return boundedQuote(quotedChunk(source, decision.sensitivity, index.sourceContext), fullText, index.sourceContext);
+      });
       const canonicalSubjects = new Map(canon.map(chunk => [chunk.page_id, canonSubjects(index, index.byId.get(chunk.page_id)!)]));
       const projection = projectSubjectLabels(index, narrowed, at, [...canonicalSubjects.values()].flat().concat(quoted.flatMap(chunk => chunk.subjects)), canon.length + quoted.length);
       const audit = new Map<string, AuditItem>();
