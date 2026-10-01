@@ -94,7 +94,7 @@ export function withCanonMutationSync<T extends CanonIo, R>(io: T, work: (scope:
   } finally { if (!deferred) reconcile(); }
 }
 
-export function withCanonMutationAsync<T extends CanonIo, R>(
+export async function withCanonMutationAsync<T extends CanonIo, R>(
   io: T,
   work: (scope: VaultMutationScope, io: T) => R | PromiseLike<R>,
 ): Promise<R> {
