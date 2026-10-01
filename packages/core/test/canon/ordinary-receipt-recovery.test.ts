@@ -212,6 +212,18 @@ test("a warm validation cache cannot certify an externally rewritten prefix", ()
   expect(refreshed.prefix_sha256).not.toBe(admitted.prefix_sha256);
 });
 
+test("cached admission revalidates a corrupt same-size prefix even when its modification time is restored", () => {
+  const f = fixture(), prior = line("prior");
+  writeFileSync(f.log, prior, { mode: 0o600 });
+  checkpoint(f);
+  const original = statSync(f.log), changed = Buffer.from(prior);
+  changed[0] = 33;
+  writeFileSync(f.log, changed);
+  fs.utimesSync(f.log, original.atime, original.mtime);
+  expect(() => checkpoint(f)).toThrow("canon_receipt_stream_receipt_invalid");
+  expect(readFileSync(f.log)).toEqual(changed);
+});
+
 test("steady-state admission and completion read only the new journal suffix", () => {
   const f = fixture(), exact = line();
   writeFileSync(f.log, Buffer.concat(Array.from({ length: 500 }, (_, index) => line(`prior-${index}`))), { mode: 0o600 });

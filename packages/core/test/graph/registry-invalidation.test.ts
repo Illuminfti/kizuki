@@ -1,5 +1,5 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { existsSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { OWNER } from "../../src/agents";
 import { resolveTarget } from "../../src/canon/arbiter";
@@ -16,6 +16,7 @@ import { serveGraph } from "../../src/serving/graph";
 import { ulid } from "../../src/util/ulid";
 import { listCanonPages } from "../../src/vault/pages";
 import * as pages from "../../src/vault/pages";
+import { serializePage } from "../../src/vault/frontmatter";
 import { validEvent } from "../fixtures";
 import { recordedPage } from "../helpers/recorded-page";
 import { searchDb, tempVault } from "../search/helpers";
@@ -130,22 +131,29 @@ test("interrupted projection, unrelated write and retry preserve every unrelated
   rebuildDerived(db, vault.path); expect(rows(db)).toEqual(incremental);
 });
 
-test("a moved explicit ID retains owner-edit protection before derived refresh", async () => {
-  const { db, vault } = fixture();
-  const written = await recordedPage(db, vault.path, "facts/target.md", { ...DATA, id: "fact:target" }, "Original.");
-  rebuildDerived(db, vault.path);
-  renameSync(join(vault.path, "facts/target.md"), join(vault.path, "facts/moved.md"));
-  const filed = await insertClaim({ db }, { kind: "entity", target: "fact:target", body: "Replacement.", frontmatter: { type: "fact" },
-    provenance: written.sourceIds, subjects: [], producer: "model", model_ref: "fixture:synthetic", confidence: 1,
-    sensitivity: "personal", taint: "clean" });
-  if (filed.outcome !== "stored") throw Error("fixture claim failed");
-  expect(resolveTarget({ db, vault_path: vault.path }, filed.claim)).toEqual({ action: "skip", reason: "owner_edited_body" });
-  const walk = spyOn(pages, "listCanonPagesReport");
-  try {
-    withCanonMutationSync(snapshotCanonIo({ db, vault_path: vault.path }), (_scope, owned) => {
-      expect(resolveTarget(owned, filed.claim)).toEqual({ action: "skip", reason: "owner_edited_body" });
-      expect(walk).not.toHaveBeenCalled();
-    });
-  } finally { walk.mockRestore(); }
-  expect(existsSync(join(vault.path, "fact/target.md"))).toBe(false);
-});
+for (const locator of ["missing", "different identity"] as const) {
+  test(`a moved explicit ID with a ${locator} locator retains owner-edit protection before derived refresh`, async () => {
+    const { db, vault } = fixture();
+    const written = await recordedPage(db, vault.path, "facts/target.md", { ...DATA, id: "fact:target" }, "Original.");
+    rebuildDerived(db, vault.path);
+    renameSync(join(vault.path, "facts/target.md"), join(vault.path, "facts/moved.md"));
+    if (locator === "different identity") {
+      writeFileSync(join(vault.path, "facts/target.md"), serializePage({ data: { ...DATA, id: "fact:another" }, body: "Another page." }));
+    }
+    const moved = readFileSync(join(vault.path, "facts/moved.md"));
+    const filed = await insertClaim({ db }, { kind: "entity", target: "fact:target", body: "Replacement.", frontmatter: { type: "fact" },
+      provenance: written.sourceIds, subjects: [], producer: "model", model_ref: "fixture:synthetic", confidence: 1,
+      sensitivity: "personal", taint: "clean" });
+    if (filed.outcome !== "stored") throw Error("fixture claim failed");
+    expect(resolveTarget({ db, vault_path: vault.path }, filed.claim)).toEqual({ action: "skip", reason: "owner_edited_body" });
+    const walk = spyOn(pages, "listCanonPagesReport");
+    try {
+      withCanonMutationSync(snapshotCanonIo({ db, vault_path: vault.path }), (_scope, owned) => {
+        expect(resolveTarget(owned, filed.claim)).toEqual({ action: "skip", reason: "owner_edited_body" });
+        expect(walk).not.toHaveBeenCalled();
+      });
+    } finally { walk.mockRestore(); }
+    expect(existsSync(join(vault.path, "fact/target.md"))).toBe(false);
+    expect(readFileSync(join(vault.path, "facts/moved.md"))).toEqual(moved);
+  });
+}

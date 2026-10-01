@@ -96,31 +96,30 @@ test("the receipted writer does no vault walk and assesses only its page", async
   }
 });
 
-test("the first write after registry loss reconciles outside writer ownership", async () => {
-  const { db, vault } = vaultOf(4_000);
-  clearGraphRegistry(db);
-  const original = provenance.assessLivePageEvidence;
-  let outside = 0, inside = 0;
-  const assess = spyOn(provenance, "assessLivePageEvidence").mockImplementation((...args) => {
-    if (args[1].relPath !== "facts/first.md") {
-      if (outside === 0) {
-        const lock = tryWriteFlock(vault.path);
-        expect(lock).not.toBeNull(); lock?.release();
-      }
-      outside++;
-    } else {
+for (const registry of ["discarded", "pre-upgrade"] as const) {
+  test(`the first write with a ${registry} registry reconciles outside writer ownership`, async () => {
+    const { db, vault } = vaultOf(4_000);
+    if (registry === "discarded") clearGraphRegistry(db);
+    else db.exec("DROP TABLE graph_page_sources");
+    const original = provenance.assessLivePageEvidence;
+    let outside = 0, inside = 0, unrelatedInside = 0;
+    const assess = spyOn(provenance, "assessLivePageEvidence").mockImplementation((...args) => {
       const lock = tryWriteFlock(vault.path);
-      if (lock === null) inside++;
-      else lock.release();
-    }
-    return original(...args);
-  });
-  try {
-    await recordedPage(db, vault.path, "facts/first.md", { ...PAGE, id: "fact:first", title: "First" }, "First write.");
-    expect(outside).toBeGreaterThanOrEqual(4_000);
-    expect(inside).toBeGreaterThan(0);
+      if (args[1].relPath !== "facts/first.md") {
+        if (lock === null) unrelatedInside++;
+        else outside++;
+      } else if (lock === null) inside++;
+      lock?.release();
+      return original(...args);
+    });
+    try {
+      await recordedPage(db, vault.path, "facts/first.md", { ...PAGE, id: "fact:first", title: "First" }, "First write.");
+      expect(outside).toBeGreaterThanOrEqual(4_000);
+      expect(inside).toBeGreaterThan(0);
+      expect(unrelatedInside).toBe(0);
+    } finally { assess.mockRestore(); }
     const incremental = edges(db);
     rebuildDerived(db, vault.path);
     expect(edges(db)).toEqual(incremental);
-  } finally { assess.mockRestore(); }
-}, 120_000);
+  }, 120_000);
+}
