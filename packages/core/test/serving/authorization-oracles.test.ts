@@ -318,8 +318,10 @@ test("the shared correction writer resolves an agent's stored grant even when th
     expect(answer.superseded.map(item => item.claim_id)).toEqual([open.claim.claim_id]);
     expect(getClaim(f.db, hiddenId)).toEqual(before);
     expect(JSON.stringify(answer)).not.toContain(hiddenId);
+    const replacementId = answer.claim_ids[0];
+    if (replacementId === undefined) throw new Error("correction claim missing");
     await expect(correct({ db: f.db, vault_path: f.vaultPath, producer: "agent:unknown-reader" },
-      { statement: "Ada works at Acme.", target: { claim_id: answer.claim_ids[0] } }))
+      { statement: "Ada works at Acme.", target: { claim_id: replacementId } }))
       .rejects.toThrow("principal is unavailable");
   } finally { f.dispose(); }
 });
