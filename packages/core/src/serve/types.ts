@@ -389,8 +389,9 @@ export interface EgressDoctor {
   readonly retention: "provider_managed";
 }
 
-/** One derived layer as its last rebuild stamped it. */
+/** One derived layer as its last indexing pass stamped it. */
 export interface DerivedDoctor {
+  readonly ledger_watermark: string | null;
   readonly rebuilt_at: string | null;
   readonly doc_count: number;
   /** The stamp's status; null when the layer was never stamped. */

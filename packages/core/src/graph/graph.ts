@@ -19,7 +19,7 @@ import {
   stringArray,
 } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
-import { projectablePageEvidence } from "../vault/provenance";
+import { isDeterministicBrief, projectablePageEvidence } from "../vault/provenance";
 import { linkIndexFromPages, resolveWikilink } from "./resolve";
 import type { LinkIndex } from "./resolve";
 import { initGraph } from "./schema";
@@ -113,7 +113,7 @@ function withoutCodeSpans(body: string): string {
   return parts.join("");
 }
 
-function wikilinks(body: string): string[] {
+export function wikilinks(body: string): string[] {
   const source = withoutCodeSpans(body);
   if (!source.includes("[[")) return [];
   const targets: string[] = [];
@@ -296,7 +296,7 @@ function graphExclusions(db: Database, pages: readonly CanonPage[]) {
     missing.delete(page.relPath);
     // Unheld inactive pages do not resolve links or suppress ordinary prose targets.
     if (!held.paths.has(page.relPath) && (!isLiveCanonPage(page) || evidence.has(page.relPath))) continue;
-    if (!held.paths.has(page.relPath) && isLiveCanonPage(page)) withheldCount += 1;
+    if (!held.paths.has(page.relPath) && isLiveCanonPage(page) && !isDeterministicBrief(page)) withheldCount += 1;
     held.paths.add(page.relPath);
     held.pageIds.add(page.id);
     const base = page.relPath.split("/").pop()!;
@@ -372,7 +372,7 @@ function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount:
     layer: "graph",
     generation: existing?.generation ?? ulid(),
     rebuilt_at: new Date().toISOString(),
-    doc_count: existing?.doc_count ?? 0,
+    doc_count: db.query<{ n: number }, []>("SELECT count(*) AS n FROM graph_edges").get()!.n,
     source_count: existing?.source_count ?? 0,
     skipped_count: skippedCount + withheldCount,
     status: "degraded",
@@ -384,10 +384,10 @@ function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount:
   });
 }
 
-function restoreGraphStamp(db: Database, pages: readonly CanonPage[]): void {
+export function refreshGraphHealth(db: Database, pages: readonly CanonPage[], skipped = 0): void {
+  assertDerivedDiscoveryReady(db);
   const excluded = graphExclusions(db, pages);
-  const existing = readDerivedMeta(db, "graph");
-  if (excluded.withheldCount === 0 && (existing === null || existing.status === "ok")) return;
+  if (skipped > 0 || !excluded.complete) { stampGraphIncomplete(db, skipped, excluded.withheldCount); return; }
   const live = pages.filter(page => excluded.evidence.has(page.relPath) && !excluded.paths.has(page.relPath));
   const edges =
     db
@@ -395,22 +395,27 @@ function restoreGraphStamp(db: Database, pages: readonly CanonPage[]): void {
         "SELECT count(*) AS count FROM graph_edges",
       )
       .get()?.count ?? 0;
-  stampDerived(
+  const previous = readDerivedMeta(db, "graph");
+  const stamp = stampGraph(
     db,
-    stampGraph(
-      db,
-      {
-        generation: ulid(),
-        pages: live,
-        skipped: [],
-        rebuilt_at: new Date().toISOString(),
-        canon_hash: canonPagesHash(live),
-      },
-      live.length,
-      edges,
-      excluded.withheldCount,
-    ),
+    {
+      generation: previous?.status === "ok" ? previous.generation : ulid(),
+      pages: live,
+      skipped: [],
+      rebuilt_at: new Date().toISOString(),
+      canon_hash: canonPagesHash(live),
+    },
+    live.length,
+    edges,
+    excluded.withheldCount,
   );
+  // An idle pass must not turn a search-only rebuild into a graph generation.
+  if (previous !== null && previous.status === stamp.status
+    && previous.doc_count === stamp.doc_count && previous.source_count === stamp.source_count
+    && previous.skipped_count === stamp.skipped_count && previous.ledger_watermark === stamp.ledger_watermark
+    && previous.canon_hash === stamp.canon_hash && previous.port_id === stamp.port_id
+    && previous.contract === stamp.contract && previous.space === stamp.space) return;
+  stampDerived(db, stamp);
 }
 
 /**
@@ -424,8 +429,15 @@ export function refreshPageEdges(
   pages: readonly CanonPage[],
   skipped: number,
 ): void {
+  refreshPageEdgesBatch(db, [page], pages, skipped);
+}
+
+/** One exclusion snapshot and link index for all known repairs in a partial walk. */
+export function refreshPageEdgesBatch(db: Database, changed: readonly CanonPage[], pages: readonly CanonPage[], skipped: number): void {
   assertDerivedDiscoveryReady(db);
-  const held = graphExclusions(db, [...pages.filter(candidate => candidate.relPath !== page.relPath), page]);
+  const replacements = new Map(changed.map(page => [page.relPath, page]));
+  const snapshot = [...pages.filter(page => !replacements.has(page.relPath)), ...changed];
+  const held = graphExclusions(db, snapshot);
   if (!held.complete) {
     db.exec("DELETE FROM graph_edges");
     stampGraphIncomplete(db, skipped, held.withheldCount);
@@ -433,23 +445,25 @@ export function refreshPageEdges(
   }
   removeHeldEdges(db, held);
   if (skipped === 0) {
-    replacePageEdges(db, pages);
-    restoreGraphStamp(db, pages);
+    replacePageEdges(db, snapshot);
+    refreshGraphHealth(db, snapshot);
     return;
   }
-  const index = linkIndexFromPages(pages);
+  const index = linkIndexFromPages(snapshot);
   const byId = new Map(
-    pages.filter(candidate => held.evidence.has(candidate.relPath) && !held.paths.has(candidate.relPath)).map((candidate) => [candidate.id, candidate]),
+    snapshot.filter(candidate => held.evidence.has(candidate.relPath) && !held.paths.has(candidate.relPath)).map((candidate) => [candidate.id, candidate]),
   );
-  if (isLiveCanonPage(page) && !held.paths.has(page.relPath)) {
-    db.query("DELETE FROM graph_edges WHERE src = ?").run(page.id);
-    const eventHints = eventSensitivityHints(db, sourceEventIds([page]));
-    for (const edge of pageEdges(page, index, byId, eventHints, held.evidence.get(page.relPath)!.revision.authority)) {
-      if (isHeldEdge(edge, held)) continue;
-      insertEdge(db, edge);
+  const eventHints = eventSensitivityHints(db, sourceEventIds(changed));
+  for (const page of changed) {
+    if (isLiveCanonPage(page) && !held.paths.has(page.relPath)) {
+      db.query("DELETE FROM graph_edges WHERE src = ?").run(page.id);
+      for (const edge of pageEdges(page, index, byId, eventHints, held.evidence.get(page.relPath)!.revision.authority)) {
+        if (isHeldEdge(edge, held)) continue;
+        insertEdge(db, edge);
+      }
+    } else {
+      db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(page.id, page.id);
     }
-  } else {
-    db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(page.id, page.id);
   }
   stampGraphIncomplete(db, skipped, held.withheldCount);
 }
@@ -471,7 +485,7 @@ export function removePageEdges(
   removeHeldEdges(db, held);
   if (skipped === 0) {
     replacePageEdges(db, pages);
-    restoreGraphStamp(db, pages);
+    refreshGraphHealth(db, pages);
     return;
   }
   db.query("DELETE FROM graph_edges WHERE src = ? OR dst = ?").run(pageId, pageId);
