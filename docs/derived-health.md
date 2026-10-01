@@ -39,5 +39,7 @@ admission rules. Permission filtering precedes health provenance
 reconstruction; ledger health checks the authorized live corpus against both
 the companion and the FTS rows actually served. An incremental pass restores
 recreated FTS contents and repairs every known page during a partial walk.
+An idle pass keeps the search stamp degraded while live ledger rows are missing
+from the served index, and clears that status once indexing restores coverage.
 Configured retrieval-port availability and ranking have their own declarations
 and are unchanged by this floor health.

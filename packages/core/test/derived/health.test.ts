@@ -174,8 +174,10 @@ test("graph metadata already clears a repaired revision on the base", async () =
 test("a receipted incremental canon write updates both layer counts", async () => {
   const f = fixture();
   rebuildDerived(f.db, f.vaultPath);
-  await recordedPage(f.db, f.vaultPath, "facts/tea.md", data, "Tea with [[Kettle]].");
-  expect(readDerivedMeta(f.db, "search")).toMatchObject({ status: "ok", doc_count: 1, skipped_count: 0 });
+  const source = storedEvent(f.db, "tea-source", { sensitivity_hint: "public" });
+  indexEvent(f.db, source);
+  await recordedPage(f.db, f.vaultPath, "facts/tea.md", data, "Tea with [[Kettle]].", [source.event_id]);
+  expect(readDerivedMeta(f.db, "search")).toMatchObject({ status: "ok", doc_count: 2, skipped_count: 0 });
   expect(readDerivedMeta(f.db, "graph")).toMatchObject({ status: "ok", doc_count: 3, source_count: 1, skipped_count: 0 });
 });
 
@@ -321,6 +323,23 @@ test("idle reconciliation repairs old watermarks and accounts for tombstones", a
   reconcileDerivedPages(f.db, f.vaultPath);
   cursor = latestLedgerCursor(f.db)!;
   expect(f.doctor().derived.search?.ledger_watermark).toBe(`${cursor.accepted_at}\t${cursor.event_id}`);
+});
+
+test("idle health keeps incomplete ledger recovery degraded until coverage returns", async () => {
+  const { applyDerivedV10 } = await import("../../src/derived");
+  const { reconcileDerivedPages } = await import("../../src/derived-refresh");
+  const f = fixture();
+  const event = storedEvent(f.db, "recover-ledger", { sensitivity_hint: "public" });
+  rebuildDerived(f.db, f.vaultPath);
+  f.db.exec("DROP TABLE search_documents");
+  applyDerivedV10(f.db);
+  reconcileDerivedPages(f.db, f.vaultPath);
+  expect(f.doctor().derived.search).toMatchObject({ status: "degraded", ledger_watermark: null });
+  expect((await serveSearch(f.ctx, { query: "kettle", scope: "ledger" })).data?.degraded).toContain("index-degraded");
+  indexEvent(f.db, event);
+  reconcileDerivedPages(f.db, f.vaultPath);
+  expect(f.doctor().derived.search).toMatchObject({ status: "ok", doc_count: 1 });
+  expect((await serveSearch(f.ctx, { query: "kettle", scope: "ledger" })).data?.degraded ?? []).not.toContain("index-degraded");
 });
 
 test("denied receipted subjects cannot poison parsing or serving work", async () => {
