@@ -54,6 +54,33 @@ async function canonTexts(live: Fixture, query: string): Promise<string[]> {
 }
 
 describe("serveCorrect retracts a claim that has no predicate", () => {
+  test("a readable page that becomes private withholds its rewrite metadata", async () => {
+    fixture = await serveFixture();
+    const live = fixture;
+    const { claimId, pagePath } = await writtenUnkeyed(live);
+    const ctx = live.agent("reader-public");
+    const before = await serveSearch(ctx, { query: "nightly" });
+    expect(JSON.stringify(before)).toContain(OLD);
+    const statement = "The compiler ships weekly.";
+    const envelope = await serveCorrect(ctx, { statement, target: { claim_id: claimId } });
+    const data = envelope.data!;
+    expect(getClaim(live.db, claimId)?.status).toBe("superseded");
+    expect(getClaim(live.db, data.claim_id!)?.sensitivity).toBe("private");
+    expect(data.superseded.map(entry => entry.claim_id)).toEqual([claimId]);
+    expect(data.rewritten).toEqual([]);
+    const receipt = getCanonReceipt(live.db, data.receipt_id!);
+    expect(receipt?.page_path).toBe(pagePath);
+    const response = JSON.stringify(envelope);
+    expect(response).not.toContain(pagePath);
+    expect(response).not.toContain(receipt!.before_hash!);
+    expect(response).not.toContain(receipt!.after_hash);
+    const page = readFileSync(join(live.vaultPath, pagePath), "utf8");
+    expect(page).toContain(statement);
+    expect(page).not.toContain(OLD);
+    const after = await serveSearch(ctx, { query: "weekly" });
+    expect(JSON.stringify(after)).not.toContain(statement);
+  });
+
   test.each([false, true])("a permitted correction withholds mixed-sensitivity page snapshots and metadata (recovery=%s)", async (recovery) => {
     fixture = await serveFixture();
     const live = fixture;
