@@ -7,7 +7,7 @@ import {
   rebuildRetrieval,
 } from "../../packages/core/src";
 import { capture, fixtureClaims, ledger, MODEL, producer, readFixture, retrieval, usesRetrieval } from "./fixture";
-import { checkVault, InvariantFailure, retrievalProjection } from "./invariants";
+import { checkVault, InvariantFailure } from "./invariants";
 import { refreshAndPublishDerived } from "../../packages/cli/src/derived";
 import { worldCanonTarget } from "../../packages/core/src/canon/world-materialization";
 import { journalExtractBatch, mineLiveDrafts } from "../../packages/core/src/serve/extract";
@@ -187,13 +187,6 @@ try {
       const begun = existsSync(begunPath) ? readFileSync(begunPath, "utf8").split("\n").slice(0, -1).map(line => JSON.parse(line) as NonNullable<typeof fixture.activeTargets>) : [];
       fixture.activeTargets = { claims: begun.flatMap(value => value.claims), receipts: begun.flatMap(value => value.receipts) };
       await checkVault(db, vault, fixture, false, port);
-      if (port !== undefined) {
-        if ((await port.health()).status !== "ready") throw new InvariantFailure("retrieval_health");
-        const before = await retrievalProjection(port);
-        if (fixture.operation === "retrieval-rebuild" && before !== fixture.retrievalProjection) throw new InvariantFailure("committed_retrieval_changed");
-        await rebuildRetrieval(db, vault, port);
-        if (await retrievalProjection(port) !== before) throw new InvariantFailure("retrieval_rebuild_not_equal");
-      }
       const output = join(root, "output");
       if ((fixture.operation === "export" || fixture.operation === "backup") && existsSync(output)) {
         const validated = join(root, "validated-output");

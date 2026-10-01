@@ -120,6 +120,24 @@ describe("kizuki.retrieval.fts5", () => {
     ]);
   });
 
+  test("an empty lexical query inventories visible documents with stable ordering and scope", async () => {
+    const { port } = openPort();
+    await port.upsert([...SYNTHETIC_DOCS, PRIVATE_CORRECTION]);
+    const query = { ...SYNTHETIC_QUERY, text: "", scope: {}, ceiling: "private" as const };
+    const inventory = await port.search(query);
+    expect(inventory.hits.map(hit => hit.doc_id)).toEqual([
+      "page:private-correction", "page:grace", "claim:grace-email",
+    ]);
+    expect(inventory.hits[0]).toEqual({
+      doc_id: PRIVATE_CORRECTION.doc_id, score: 0, snippet: PRIVATE_CORRECTION.text,
+      kind: "page", sensitivity: "private", taint: "clean", authority: "owner_correction",
+    });
+    expect((await port.search({ ...query, ceiling: "personal" })).hits.map(hit => hit.doc_id)).toEqual(["page:grace"]);
+    expect((await port.search({ ...query, scope: { kinds: ["claim"] } })).hits.map(hit => hit.doc_id)).toEqual(["claim:grace-email"]);
+    expect((await port.search({ ...query, scope: { subjects: ["person:absent"] } })).hits).toEqual([]);
+    expect((await port.search({ ...query, limit: 1 })).hits.map(hit => hit.doc_id)).toEqual(["page:private-correction"]);
+  });
+
   test("applies the ceiling in the store and never widens", async () => {
     const { port } = openPort();
     await port.upsert([...SYNTHETIC_DOCS, PRIVATE_CORRECTION]);

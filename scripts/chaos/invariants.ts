@@ -4,13 +4,14 @@ import { basename, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   doctorVault, getCanonReceiptRecord, inspectCanonRecoveryDetail, inspectLedgerHealth,
-  inspectServeDoctor, listCanonPagesReport, readHolds, RECEIPTS_PATH, sha256Hex, verifyPurge,
+  inspectServeDoctor, listCanonPagesReport, MAX_RETRIEVAL_LIMIT, readHolds, readRetrievalDocuments,
+  rebuildRetrieval, RECEIPTS_PATH, sha256Hex, verifyPurge,
 } from "../../packages/core/src";
 import { rebuildDerived } from "../../packages/core/src/internal";
 import { assertWorldState } from "../../packages/core/src/world/integrity";
 import { contentSignature } from "../../packages/core/src/claims/hash";
 import type { Fixture } from "./fixture";
-import type { RetrievalPort } from "../../packages/core/src";
+import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../../packages/core/src";
 
 export class InvariantFailure extends Error {
   constructor(code: string, readonly detail?: unknown) { super(code); this.name = "InvariantFailure"; }
@@ -128,11 +129,20 @@ export function projection(db: Database): string {
   });
 }
 
-export async function retrievalProjection(port: RetrievalPort): Promise<string> {
+export async function retrievalProjection(port: RetrievalPort, docs: readonly RetrievalDoc[]): Promise<string> {
+  // Inventory every visible document, including corrections outside the golden
+  // vocabulary. Document probes also cover titles, longer bodies and scopes.
+  const queries: Pick<RetrievalQuery, "text" | "scope">[] =
+    ["", "astronomy OR lighthouse", "Acme"].map(text => ({ text, scope: {} }));
+  for (const doc of docs) {
+    const scope = { kinds: [doc.kind], ...(doc.subjects.length === 0 ? {} : { subjects: doc.subjects }) };
+    for (const text of ["", doc.title, doc.text]) queries.push({ text, scope });
+  }
   const results = [];
-  for (const text of ["astronomy OR lighthouse", "Acme"]) {
-    const result = await port.search({ text, mode: "lexical", scope: {}, ceiling: "private", limit: 100, deadline_ms: 10_000 });
-    results.push({ hits: result.hits, degraded: result.degraded, space: result.space });
+  for (const query of queries) {
+    const result = await port.search({ ...query, mode: "lexical", ceiling: "private", limit: MAX_RETRIEVAL_LIMIT, deadline_ms: 10_000 });
+    requireInvariant(result.hits.length < MAX_RETRIEVAL_LIMIT, "retrieval_projection_truncated");
+    results.push({ query, hits: result.hits, degraded: result.degraded, space: result.space });
   }
   return json(results);
 }
@@ -147,7 +157,7 @@ function fileNames(root: string): string[] {
   return names;
 }
 
-/** Check the recovered state before rebuilding, then compare the complete floor projection. */
+/** Check recovered state before rebuilding each store, then compare its observable projection. */
 export async function checkVault(db: Database, vault: string, fixture: Fixture, portableRestore = false, port?: RetrievalPort): Promise<void> {
   requireInvariant(inspectLedgerHealth(db, { full: true }).ok, "ledger_integrity");
   assertWorldState(db);
@@ -213,4 +223,12 @@ export async function checkVault(db: Database, vault: string, fixture: Fixture, 
   rebuildDerived(db, vault);
   const after = projection(db);
   if (after !== before) throw new InvariantFailure("rebuild_not_equal", { before: JSON.parse(before), after: JSON.parse(after) });
+  if (port !== undefined) {
+    requireInvariant((await port.health()).status === "ready", "retrieval_health");
+    const docs = readRetrievalDocuments(db, vault);
+    const nativeBefore = await retrievalProjection(port, docs);
+    if (fixture.operation === "retrieval-rebuild") requireInvariant(nativeBefore === fixture.retrievalProjection, "committed_retrieval_changed");
+    await rebuildRetrieval(db, vault, port);
+    requireInvariant(await retrievalProjection(port, docs) === nativeBefore, "retrieval_rebuild_not_equal");
+  }
 }

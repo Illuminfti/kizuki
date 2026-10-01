@@ -62,8 +62,12 @@ compared to that baseline. Portable restore can regenerate an empty legacy
 content signature; the oracle checks the exact expected signature using the
 existing core hash contract. Every other claim field and all snapshot rows
 remain exact. All native FTS5 trials compare complete hits,
-scores, snippets and trust labels for two fixture queries before and after a
-second rebuild. Native rebuild trials also compare with the pre-crash result.
+scores, snippets and trust labels for an inventory query, the golden fixture
+queries and each authoritative document's title and body scoped to its kind
+and subjects before and after a second rebuild. The inventory includes correction
+documents that match neither golden query. A saturated result limit fails the
+check instead of silently comparing a partial inventory. Native rebuild trials
+also compare with the pre-crash result.
 
 Stdout is a `kizuki.chaos/v1` JSON receipt. Stderr records operation, trial,
 chosen delay, actual SIGKILL versus completion, and the fixed failure code.
@@ -135,7 +139,8 @@ recovery. Eleven fixed cuts check preservation of acknowledged writes and artifa
 and purge cuts exercise their committed recovery state. Negative oracle tests
 check changed independent bytes and committed claims, missing doctrine,
 insecure control files, both actual canon staging filename forms, illegal
-active-target mutations, missing derived rows, and a damaged published restore.
+active-target mutations, missing derived rows, a damaged published restore,
+and native correction content and trust-label corruption.
 Focused verification is:
 
 ```sh

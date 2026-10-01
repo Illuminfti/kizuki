@@ -414,7 +414,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
            authority
          FROM search_docs
          WHERE ${clauses.join(" AND ")}
-         ORDER BY ${rankExpr},
+         ORDER BY score DESC,
            CASE authority
              WHEN 'owner_correction' THEN 0
              WHEN 'owner_authored' THEN 1

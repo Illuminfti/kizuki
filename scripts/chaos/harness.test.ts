@@ -3,10 +3,68 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OPERATIONS, random, runCampaign } from "./harness";
-import { ledger, prepare } from "./fixture";
-import { checkVault } from "./invariants";
-import { restoreVault } from "../../packages/core/src";
+import { ledger, prepare, retrieval } from "./fixture";
+import { checkVault, retrievalProjection } from "./invariants";
+import { correct, readRetrievalDocuments, rebuildRetrieval, restoreVault } from "../../packages/core/src";
+import type { RetrievalHit } from "../../packages/core/src";
 import { canonStageRelPath } from "../../packages/core/src/vault/write";
+
+for (const damage of ["content", "long-content", "title", "authority", "taint", "sensitivity", "subjects", "missing"] as const) {
+  test(`the oracle rejects native correction ${damage} outside its golden queries`, async () => {
+    const root = mkdtempSync(join(tmpdir(), "kizuki-chaos-correction-"));
+    const fixture = await prepare(root, "correction");
+    const vault = join(root, "vault"), db = ledger(vault), port = retrieval(vault);
+    try {
+      const id = fixture.claimIds[0]!;
+      fixture.activeTargets = { claims: [id], receipts: [fixture.receiptIds[0]!] };
+      const statement = damage === "long-content"
+        ? `${"The researcher continues studying celestial objects. ".repeat(5)}The researcher now works at Northwind.`
+        : "The researcher now works at Northwind.";
+      const result = await correct({ db, vault_path: vault, retrieval: port }, {
+        statement, target: { claim_id: id },
+      });
+      await rebuildRetrieval(db, vault, port);
+      await checkVault(db, vault, fixture, false, port);
+      const docs = readRetrievalDocuments(db, vault);
+      const doc = docs.find(doc => doc.doc_id === `claim:${result.claim_ids[0]}`)!;
+      expect(doc.text).toContain("Northwind");
+      expect(doc.text).not.toMatch(/astronomy|lighthouse|Acme/i);
+      if (damage === "content") {
+        const [inventory] = JSON.parse(await retrievalProjection(port, docs)) as { hits: RetrievalHit[] }[];
+        expect(inventory!.hits.map(hit => hit.doc_id).sort()).toEqual(docs.map(doc => doc.doc_id).sort());
+        for (const doc of docs) expect(inventory!.hits.find(hit => hit.doc_id === doc.doc_id)).toMatchObject({
+          snippet: doc.text, kind: doc.kind, sensitivity: doc.sensitivity, taint: doc.taint, authority: doc.authority,
+        });
+      }
+      if (damage === "long-content") expect(doc.text.indexOf("Northwind")).toBeGreaterThan(160);
+      if (damage === "missing") await port.remove([doc.doc_id]);
+      else {
+        const corrupted = { ...doc };
+        switch (damage) {
+          case "content": case "long-content": corrupted.text = doc.text.replace("Northwind", "Southwind"); break;
+          case "title": corrupted.title = "Synthetic replacement title"; break;
+          case "authority": corrupted.authority = "model_inference"; break;
+          case "taint": corrupted.taint = doc.taint === "clean" ? "quoted" : "clean"; break;
+          case "sensitivity": corrupted.sensitivity = "public"; break;
+          case "subjects": corrupted.subjects = ["person:unrelated"]; break;
+        }
+        await port.upsert([corrupted]);
+      }
+      await expect(checkVault(db, vault, fixture, false, port)).rejects.toThrow("retrieval_rebuild_not_equal");
+    } finally { await port.close(); db.close(); rmSync(root, { recursive: true, force: true }); }
+  }, 60_000);
+}
+
+test("the native oracle refuses a saturated inventory instead of comparing a partial result", async () => {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-chaos-inventory-"));
+  const fixture = await prepare(root, "canon");
+  const vault = join(root, "vault"), db = ledger(vault), port = retrieval(vault);
+  try {
+    const doc = readRetrievalDocuments(db, vault).find(doc => doc.kind === "claim")!;
+    await port.upsert(Array.from({ length: 101 }, (_, record) => ({ ...doc, doc_id: `claim:synthetic-extra-${record}` })));
+    await expect(checkVault(db, vault, fixture, false, port)).rejects.toThrow("retrieval_projection_truncated");
+  } finally { await port.close(); db.close(); rmSync(root, { recursive: true, force: true }); }
+}, 60_000);
 
 for (const damage of ["doctrine", "control", "quarantine", "stage", "bounded-stage", "active-body", "active-provenance", "active-status"] as const) {
   test(`the oracle rejects ${damage} damage even without an acknowledgment`, async () => {

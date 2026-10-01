@@ -4,7 +4,7 @@ import { join } from "node:path";
 import {
   accept, applyCanonWrite, backupVault, bindLocalSourcePort, createBudgetTracker, createFts5RetrievalPort, exportVault, FTS5_RETRIEVAL_ID,
   getCanonReceiptRecord, getClaim, hardenLedgerFile, initVault, insertClaim, listCanonPagesReport, registerConnection,
-  rebuildRetrieval, resolveTarget, retryCanonProjectionObligations, setSourceGrant, ulid,
+  readRetrievalDocuments, rebuildRetrieval, resolveTarget, retryCanonProjectionObligations, setSourceGrant, ulid,
 } from "../../packages/core/src";
 import type { CaptureEventInput, Claim, ProducerPort } from "../../packages/core/src";
 import type { ClaimV2Assertion } from "../../packages/core/src/contracts/claim-v2";
@@ -181,7 +181,7 @@ export async function prepare(root: string, operation: Operation): Promise<Fixtu
     if (operation === "restore-snapshot") await backupVault(db, vault, join(root, "artifact"));
     if (port !== undefined) {
       await rebuildRetrieval(db, vault, port);
-      if (operation === "retrieval-rebuild") fixture.retrievalProjection = await retrievalProjection(port);
+      if (operation === "retrieval-rebuild") fixture.retrievalProjection = await retrievalProjection(port, readRetrievalDocuments(db, vault));
     }
     writeFileSync(join(root, "fixture.json"), JSON.stringify(fixture), { mode: 0o600 });
     return fixture;
