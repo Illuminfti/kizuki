@@ -6,6 +6,7 @@ import { openLedger } from "@kizuki/core/internal";
 import { createHelpers, fixtureConsent } from "../helpers";
 import { fakeSystemd } from "../serve/supervisor-fixture";
 import { nextStep } from "../../src/commands/doctor-next";
+import { worldFixture } from "../../../core/test/serving/world-fixture";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
 setDefaultTimeout(120_000);
@@ -60,6 +61,37 @@ const truncatedRun = {
 };
 
 describe("doctor tells the daemon's story from a shell without its secret", () => {
+  test("typed classifiers are not correctable and next selects a supported claim", async () => {
+    const setup = tempVault();
+    const connected = runCli(setup.env, "connect", "markdown-folder", "--source", setup.notes);
+    expect(connected.exitCode, connected.stderr).toBe(0);
+    const sourceKey = connected.stdout.match(/source=([0-9A-HJKMNPQRSTVWXYZ]{26})/)?.[1];
+    expect(sourceKey).toBeDefined();
+    const granted = runCli(setup.env, "connect", "grant", "--source", sourceKey!, ...fixtureConsent(setup.root));
+    expect(granted.exitCode, granted.stderr).toBe(0);
+    const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+    let ids: string[];
+    try {
+      ids = (await worldFixture(db, { connector: "kizuki.markdown-folder", sourceKey: sourceKey!, floor: "private" })).claims;
+    } finally {
+      db.close();
+    }
+    const rebuilt = runCli(setup.env, "rebuild");
+    expect(rebuilt.exitCode, rebuilt.stderr).toBe(0);
+    const result = runCli(setup.env, "doctor", "--json");
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = JSON.parse(result.stdout).data;
+    expect(report.live_claims.find((claim: { claim_id: string }) => claim.claim_id === ids[0]).correctable).toBe(false);
+    for (const id of ids.slice(1)) {
+      expect(report.live_claims.find((claim: { claim_id: string }) => claim.claim_id === id).correctable).toBe(true);
+    }
+    const next = nextStep(report)!;
+    expect(next).not.toContain(ids[0]!);
+    expect(ids.slice(1).some((id) => next.endsWith(id))).toBe(true);
+    // A vault whose only live target is the classifier gets an honest fallback.
+    expect(nextStep({ ...report, live_claims: report.live_claims.filter((claim: { claim_id: string }) => claim.claim_id === ids[0]) })).toContain("kizuki audit");
+  });
+
   test("the model line reads receipts under the ref with the host, and next follows the failure", () => {
     const setup = tempVault();
     configuredModel(setup.vault);
@@ -190,17 +222,44 @@ describe("nextStep", () => {
       top_failure: top,
       extraction: { hint },
     }) as never;
-  const claims = [{ claim_id: "01JCLAIM" }];
+  const claims = [{ claim_id: "01JCLAIM", correctable: true }];
   const failed = (top: Top, hint: string | null = null) =>
-    nextStep({ ok: false, serve: serve(top, hint), live_claims: claims, filed_claims: [] });
+    nextStep({ ok: false, serve: serve(top, hint), live_claims: claims, filed_claims: [], corrections_refused: [] });
 
   test("is the correction hint only when the report is ok", () => {
     expect(
-      nextStep({ ok: true, serve: serve(null), live_claims: claims, filed_claims: [] }),
+      nextStep({ ok: true, serve: serve(null), live_claims: claims, filed_claims: [], corrections_refused: [] }),
     ).toBe('next: kizuki tell "<statement>" --claim 01JCLAIM');
     expect(
-      nextStep({ ok: true, serve: serve(null), live_claims: [], filed_claims: [] }),
+      nextStep({ ok: true, serve: serve(null), live_claims: [], filed_claims: [], corrections_refused: [] }),
     ).toBeNull();
+  });
+
+  test("never suggests tell for a claim the source grants would refuse", () => {
+    const refused = [{ claim_id: "01JCLAIM", correctable: false }];
+    const grant = nextStep({
+      ok: true,
+      serve: serve(null),
+      live_claims: refused,
+      filed_claims: [],
+      corrections_refused: [{ source_key: "01JSOURCE", revision: 3 }],
+    });
+    expect(grant).not.toContain("kizuki tell");
+    expect(grant).toContain("kizuki connect grant --source 01JSOURCE");
+    expect(grant).toContain("--expected-revision 3");
+    const other = nextStep({ ok: true, serve: serve(null), live_claims: refused, filed_claims: [], corrections_refused: [] });
+    expect(other).not.toContain("kizuki tell");
+    expect(other).toContain("kizuki audit");
+    // A claim the owner can correct wins over a source that cannot be corrected.
+    expect(
+      nextStep({
+        ok: true,
+        serve: serve(null),
+        live_claims: [...refused, { claim_id: "01JOTHER", correctable: true }],
+        filed_claims: [],
+        corrections_refused: [{ source_key: "01JSOURCE", revision: 3 }],
+      }),
+    ).toBe('next: kizuki tell "<statement>" --claim 01JOTHER');
   });
 
   test("follows the structured top failure when the report failed", () => {

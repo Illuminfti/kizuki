@@ -2,16 +2,19 @@ import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, UndoError, u
 import { UsageError, parseArguments, requirePositional } from "../args";
 import { withVault } from "../context";
 import { tryRefreshDerived } from "../derived";
+import { DEFAULT_WRITER_WAIT_SECONDS, parseWriterWait, waitForWriter } from "../writer-wait";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 export const UNDO_SCHEMA = {
-  options: [],
+  options: ["--wait"],
   flags: ["--cascade"],
+  defaults: { "--wait": String(DEFAULT_WRITER_WAIT_SECONDS) },
+  bounds: { "--wait": "SECONDS" },
 } as const satisfies CommandHelpSchema;
 
 export const undoCommand: Command = {
   name: "undo",
-  usage: "undo <receipt_id> [--cascade]",
+  usage: "undo <receipt_id> [--cascade] [--wait SECONDS]",
   summary: "restore prior canon bytes from a write receipt",
   schema: UNDO_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -21,14 +24,22 @@ export const undoCommand: Command = {
     });
     const [receiptId] = requirePositional(parsed.positionals, 1);
     if (receiptId === undefined) throw new UsageError(this.usage);
+    const wait = parseWriterWait(parsed.options.get("--wait"));
 
     return withVault(io, async (ctx) => {
       const original = getCanonReceipt(ctx.db, receiptId);
       try {
-        const revert = await undoReceipt(
-          { db: ctx.db, vault_path: ctx.vaultPath, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) },
-          receiptId,
-          { cascade: parsed.flags.has("--cascade") },
+        const revert = await waitForWriter(
+          io,
+          ctx.vaultPath,
+          wait,
+          (error) => error instanceof UndoError && error.code === "writer_busy",
+          () =>
+            undoReceipt(
+              { db: ctx.db, vault_path: ctx.vaultPath, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) },
+              receiptId,
+              { cascade: parsed.flags.has("--cascade") },
+            ),
         );
         io.out(`receipt_id=${revert.receipt_id}`);
         io.out(`reverts=${revert.reverts ?? ""}`);

@@ -294,26 +294,6 @@ describe("serveCorrect retires what the owner says is wrong", () => {
     ).toBe(0);
   });
 
-  test("a claim with no predicate cannot be corrected", async () => {
-    const live = await newFixture();
-    const keyless = await servePropose(live.agent("reader-private"), {
-      kind: "claim",
-      target: "facts:keyless",
-      body: "A claim with nothing to key it.",
-      subjects: ["person:ada"],
-      provenance: [live.events["public"] as string],
-    });
-    const error = await refusal(() =>
-      serveCorrect(live.owner(), {
-        statement: "That is wrong.",
-        target: { claim_id: keyless.data?.claim_id ?? "" },
-      }),
-    );
-    expect(error.message).toBe(
-      "invalid arguments: target.claim_id: names a claim with no predicate to correct",
-    );
-  });
-
   test("a relayed correction is on the record and bounded by the grant", async () => {
     const live = await newFixture();
     const wrong = await fileClaim(

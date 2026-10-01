@@ -82,6 +82,14 @@
 - IMAP sign-in ends with an optional date floor (`Only mail since
   (YYYY-MM-DD) [all]:`, stored as `since`). Mail received before it, by
   INTERNALDATE at midnight UTC, is not fetched or remembered.
+- `kizuki tell` and `kizuki undo` wait for a busy canon writer instead of
+  refusing on first sight. `--wait SECONDS` (default 30, `0` refuses at once)
+  bounds the wait, and stderr names the process holding the writer.
+- `kizuki doctor` prints `corrections: refused (grant lacks correction)` for
+  each source whose grant lacks the `correction` purpose while live claims rest
+  on it, marks each listed claim `correctable` in `--json`, and no longer
+  suggests `tell` when `tell` would be refused.
+
 - `kizuki agent list [--json]` shows enrolled agents with their state, grant
   epoch and grant summary, and never a credential. `kizuki agent grant NAME
   --grant FILE --operation-id ID` replaces an enrolled agent's grant in place:
@@ -221,6 +229,19 @@
   `| jq` or a hook truncated and unparseable. Every command's stdout and stderr
   now go out with a synchronous write that waits for a slow reader; a reader
   that closes early ends the output quietly.
+- Conversational correction works on every claim a real vault holds. `kizuki
+  tell --claim` on a claim with no predicate, such as an importer's, now
+  supersedes exactly that claim, rewrites the page that holds it and prints
+  every receipt; before it printed "Superseded 0 claims" and left the wrong
+  claim live. MCP `correct` accepts such a claim by `claim_id` as a claim-level
+  retraction instead of refusing it.
+- A correction refused because a source grant lacks `correction` names the
+  source, the missing purpose and the exact `kizuki connect grant` command. The
+  documented example policies now carry `correction` and `audit`.
+- A correction an agent relays can no longer replace the owner's own
+  correction, is stored with taint `quoted` and `x-relayed-by`, and is never
+  filed below the corrected claim's or its own statement's sensitivity, so
+  relayed private text cannot land on a public page.
 - The daily brief is stamped private when it names a page that ever received a
   private receipt (a repair never lowers it), says when rail failure groups
   were omitted, and the brief repair also rewrites the run-id

@@ -1,5 +1,6 @@
 import { authorize } from "../agents";
 import type { AuditDenial, DenyReason, Grant, Servable } from "../agents";
+import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { getClaim, listClaims } from "../claims/store";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
 import { claimReader } from "./claims";
@@ -106,7 +107,10 @@ export function resolve(
     if (claim === null || claim.status !== "live" || !visible(claim)) {
       throw refuse("target.claim_id", "names no live claim", hidden);
     }
-    if (claim.claim_key === null) {
+    // An importer's claim has no key and is retracted by identity. A typed
+    // world claim is keyless too but keeps its meaning in a support journal
+    // that only the typed correction writer preserves.
+    if (claim.claim_key === null && readClaimV2Semantic(ctx.db, claim.claim_id) !== null) {
       throw refuse(
         "target.claim_id",
         "names a claim with no predicate to correct",

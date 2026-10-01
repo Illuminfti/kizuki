@@ -12,6 +12,7 @@ import { correctionRecoveryPending } from "../correction/recovery";
 import { CanonRecoveryError, readCanonWriteIntent } from "../canon/write-intent";
 import type { CanonRecoveryPending } from "../correction/types";
 import type { ServeContext } from "./types";
+import { loadCanon, pageDecision } from "./canon";
 
 /**
  * RFC 0002 §6.3 step 5 bounds the blast radius of one correction. The writer
@@ -91,7 +92,9 @@ export function pendingCanonRewrite(ctx: ServeContext, claim: Claim): CanonRecov
       if (!pending.some(prior => prior.receipt_id === item.receipt_id)) pending.push(item);
     }
   }
-  if (pending.length > 0) return pending;
+  // Recovery holds page reads. A claim grant cannot authorize that page's
+  // metadata, including when a client replays the correction before recovery.
+  if (pending.length > 0) return ctx.principal.kind === "owner" ? pending : [];
   // The global writer hold also blocks this unreceipted correction's known
   // page. Report that fact without attributing the unrelated receipt to it.
   if (claim.receipt_id === null && bound.length > 0 && readCanonWriteIntent(ctx.db) !== null) return [];
@@ -118,15 +121,24 @@ export function rewriteCanon(
   });
   const bound = boundPages(ctx, supersededKeys);
   let targetPath: string | undefined;
+  let visibleBound: string[] = [];
 
   try {
+    const beforeIndex = loadCanon(ctx);
+    const visibleBefore = new Set(beforeIndex.pages.filter(page =>
+      pageDecision(beforeIndex, ctx.principal.grant, page).allow,
+    ).map(page => page.relPath));
+    visibleBound = bound.filter(path => visibleBefore.has(path));
     const held = pendingCanonRewrite(ctx, claim);
-    if (held !== undefined) return { ...NOTHING, unreached: bound, failed: true, recovery_pending: held };
+    // Recovery holds content reads, but the owner can still audit the receipt
+    // for this authorized correction. Agents need page access for its metadata.
+    if (held !== undefined) return { ...NOTHING, unreached: visibleBound, failed: true,
+      recovery_pending: ctx.principal.kind === "owner" ? held : held.filter(item => visibleBefore.has(item.page_path)) };
     const decision = resolveTarget(io, claim);
     // A correction rewrites what exists. It never mints a page for a reading
     // nothing ever materialized: that claim is the writer's own work.
     if (decision.action === "skip" || decision.action === "create") {
-      return { ...NOTHING, unreached: bound };
+      return { ...NOTHING, unreached: visibleBound };
     }
     const relPath =
       decision.action === "conflict"
@@ -139,11 +151,17 @@ export function rewriteCanon(
       budget,
     });
     const after = pageText(io, receipt.page_path);
+    const afterIndex = loadCanon(ctx);
+    const afterPage = afterIndex.byPath.get(receipt.page_path);
+    // A claim-level authorization grants no access to other content on its
+    // page. Both snapshots must be readable before hashes, paths or diffs leave.
+    const canShow = visibleBefore.has(receipt.page_path) && afterPage !== undefined &&
+      pageDecision(afterIndex, ctx.principal.grant, afterPage).allow;
     const pending = correctionRecoveryPending(io.db, claim.claim_id, receipt.page_path);
     return {
-      ...(pending.length === 0 ? {} : { recovery_pending: pending }),
+      ...(pending.length === 0 ? {} : { recovery_pending: ctx.principal.kind === "owner" || canShow ? pending : [] }),
       receipt_id: receipt.receipt_id,
-      rewritten: [
+      rewritten: canShow ? [
         {
           page_path: receipt.page_path,
           page_action: receipt.page_action,
@@ -152,16 +170,17 @@ export function rewriteCanon(
           receipt_id: receipt.receipt_id,
           diff: unified(receipt.page_path, before, after),
         },
-      ],
-      unreached: bound.filter((path) => path !== receipt.page_path),
+      ] : [],
+      unreached: visibleBound.filter((path) => path !== receipt.page_path),
       failed: false,
     };
   } catch (error) {
     // The claim stays durable. A failed row commit can follow file publication;
     // only the matching durable recovery record may identify that uncertainty.
     const pending = correctionRecoveryPending(io.db, claim.claim_id, targetPath);
-    return { ...NOTHING, unreached: bound, failed: true,
-      ...(pending.length > 0 || error instanceof CanonRecoveryError ? { recovery_pending: pending } : {}),
+    return { ...NOTHING, unreached: visibleBound, failed: true,
+      ...(pending.length > 0 || error instanceof CanonRecoveryError ? { recovery_pending:
+        ctx.principal.kind === "owner" ? pending : pending.filter(item => visibleBound.includes(item.page_path)) } : {}),
     };
   }
 }

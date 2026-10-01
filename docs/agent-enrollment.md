@@ -51,6 +51,12 @@ include the owner's own corrections. Without it, a corrected world claim is
 absent from that agent's cards: the superseded value is withdrawn and the
 owner's replacement is not shown. Enable it for an assistant that should read
 the corrected world state.
+A correction a relaying agent files is the agent's text, not the owner's. It is
+stored with taint `quoted` and an `x-relayed-by` stamp, is filed at least as
+private as the claim it corrects and as its own statement, and is held instead
+of replacing a correction the owner made directly with `kizuki tell` or an
+owner session. A claim with no predicate, such as an importer's, is retracted
+whole by its `claim_id`; it takes no `object`.
 `null` for types or subjects means unrestricted along that dimension; `[]`
 allows none. The grant still applies the tool list, sensitivity ceiling, source
 consent and other Core policy. `since` and `until` filter evidence time; they do

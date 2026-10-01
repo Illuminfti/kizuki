@@ -12,7 +12,8 @@ import { parseFrontmatter, serializePage } from "../vault/frontmatter";
 import { commitWorldCanonErasure, commitCanonWrite } from "./recovery";
 import { worldErasureFinalReceipt, assertCanonAdmission, canonPageRecoveryPending, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type WorldCanonErasureIntent, type CanonWriteIntent } from "./write-intent";
 import { archiveRelPath, hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
-import { requireSourceEvents, sourceSensitivity } from "../ledger/source-grants";
+import { sourceSensitivity } from "../ledger/source-grants";
+import { requireCanonSourceConsent } from "./consent";
 import { commitMachineByteIntent, requireExternalEvents } from "../ledger/event-origin";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding, SourceTombstoneError } from "./source-tombstone";
 import { subjectPageType } from "../vault/subject-type";
@@ -216,7 +217,7 @@ function persistedClaims(io: CanonIo, claims: readonly Claim[], allowWritten = f
 }
 
 function assertProvenance(io: CanonIo, provenance: readonly string[]): void {
-  requireSourceEvents(io.db, provenance, { owner: true, purpose: "derive" });
+  requireCanonSourceConsent(io.db, provenance);
   if (provenance.length === 0 || !tableExists(io.db, "events")) {
     throw new CanonWriteError("provenance_unresolved", "a canon write needs provenance that resolves");
   }
@@ -379,10 +380,11 @@ function supersededRefs(io: CanonIo, decision: TargetDecision): CanonReceipt["su
   if (decision.action !== "supersede") return [];
   return decision.superseded.map((claimId) => {
     const loser = getClaim(io.db, claimId);
-    if (loser === null || loser.claim_key === null) {
-      throw new CanonWriteError("decision_stale", `superseded claim ${claimId} has no conflict key`);
+    if (loser === null) {
+      throw new CanonWriteError("decision_stale", `superseded claim ${claimId} is missing`);
     }
-    return { claim_id: claimId, claim_key: loser.claim_key };
+    // An unkeyed claim retires by identity: its id stands where a key would.
+    return { claim_id: claimId, claim_key: loser.claim_key ?? claimId };
   });
 }
 
@@ -484,7 +486,7 @@ export function applyCanonWriteOwned(
   if (invalid.length > 0) {
     throw new CanonWriteError("frontmatter_invalid", invalid[0] ?? "invalid page");
   }
-  requireSourceEvents(io.db, Array.isArray(prepared.page.data["sources"]) ? prepared.page.data["sources"].filter((id): id is string => typeof id === "string") : [], { owner: true, purpose: "derive" });
+  requireCanonSourceConsent(io.db, Array.isArray(prepared.page.data["sources"]) ? prepared.page.data["sources"].filter((id): id is string => typeof id === "string") : []);
   prepared.sensitivity = sourceSensitivity(io.db, provenance, prepared.sensitivity);
   prepared.page.data["sensitivity"] = prepared.sensitivity;
   const superseded = typed ? io.db.query<{claim_id:string;claim_key:string},[string]>("SELECT s.loser AS claim_id,m.semantic_key AS claim_key FROM claim_supersessions s JOIN claim_v2_semantics m ON m.claim_id=s.loser WHERE s.winner IN (SELECT value FROM json_each(?)) ORDER BY s.loser").all(JSON.stringify(ownedClaims.map(item=>item.claim_id))) : supersededRefs(io, decision);
@@ -507,7 +509,7 @@ export function applyCanonWriteOwned(
       assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after);
     }
     assertProvenance(io, provenance);
-    requireSourceEvents(io.db, existingSources(prepared.page), { owner: true, purpose: "derive" });
+    requireCanonSourceConsent(io.db, existingSources(prepared.page));
     if (sourceSensitivity(io.db, provenance, prepared.sensitivity) !== prepared.page.data["sensitivity"]) {
       throw new CanonWriteError("decision_stale", "source sensitivity changed before byte admission");
     }
@@ -706,10 +708,7 @@ export function applyPurgeRewrite(
           : tier,
       retained[0]!.authority,
     );
-    requireSourceEvents(io.db, existingSources(input.source_erasure.page), {
-      owner: true,
-      purpose: "derive",
-    });
+    requireCanonSourceConsent(io.db, existingSources(input.source_erasure.page));
   } else {
     authority = resolver.resolve(input.rel_path, existing.hash);
   }
@@ -794,7 +793,7 @@ export function applyPurgeRewrite(
     receipt, before: Buffer.from(existing.content), after: Buffer.from(serializePage(next)),
     completion: { mode: "purge", claim_kind: "purge_review", page_id: pageId,
       subject_key: typeof retainedSubject === "string" ? retainedSubject : null, original_receipt_id: null },
-  }, () => requireSourceEvents(io.db, existingSources(next).map(eventIdFromReference), { owner: true, purpose: "derive" }));
+  }, () => requireCanonSourceConsent(io.db, existingSources(next).map(eventIdFromReference)));
 }
 
 /** Rebuild typed pages from independent admitted support; erase both receipt images on source loss. */
@@ -821,7 +820,7 @@ function applyWorldPurgeRewrite(scope:VaultMutationScope,io:CanonIo,input:PurgeR
   if(prepared!==null) {
     prepared.sensitivity=sourceSensitivity(io.db,sources,prepared.sensitivity);
     prepared.page.data["sensitivity"]=prepared.sensitivity;
-    requireSourceEvents(io.db,sources,{owner:true,purpose:"derive"});
+    requireCanonSourceConsent(io.db, sources);
   }
   const after=prepared===null?null:Buffer.from(serializePage(prepared.page));
   const at=nowOf(io),purgeReceiptId=proof[0]!.purge_receipt_id;
@@ -967,7 +966,7 @@ function applySourcePurgeWrite(scope: VaultMutationScope, io: CanonIo, input: So
       if (input.purged_event_ids.some(id => io.db.query(
         "SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'",
       ).get(id) === null)) throw new CanonWriteError("decision_stale", "source erasure admission changed");
-      if (next !== null) requireSourceEvents(io.db, existingSources(next), { owner: true, purpose: "derive" });
+      if (next !== null) requireCanonSourceConsent(io.db, existingSources(next));
     });
     const cap = grantCanonWrite("loop", intent.receipt.receipt_id, io.vault_path, files);
     const outcome = writePage(cap, join(io.vault_path, input.rel_path), next ?? { data, body: "\n" }, {

@@ -1,4 +1,5 @@
 import type { ClaimMeaning, ClaimV2Semantic } from "../contracts/claim-v2";
+import { CLAIM_MEANING_SCHEMA, CLAIM_V2_SCHEMA } from "../contracts/claim-v2";
 import { WORLD_KIND_PREDICATE } from "../contracts/world-kinds";
 
 /**
@@ -19,7 +20,7 @@ export type UnsupportedAssertionReason = keyof typeof UNSUPPORTED_ASSERTION_REAS
 export function unsupportedCorrectionReason(
   meaning: ClaimV2Semantic | ClaimMeaning,
 ): UnsupportedAssertionReason | null {
-  if (meaning.discriminator !== "assertion") return "not_an_assertion";
+  if ((meaning.schema !== CLAIM_MEANING_SCHEMA && meaning.schema !== CLAIM_V2_SCHEMA) || meaning.discriminator !== "assertion") return "not_an_assertion";
   if (meaning.predicate === WORLD_KIND_PREDICATE) return "classification_claim";
   const perspective = meaning.perspective;
   if (
