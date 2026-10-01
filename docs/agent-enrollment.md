@@ -140,7 +140,7 @@ in URLs of any scheme (`url_credentials`), secret-named assignments in shell,
 JSON or YAML, including indented block scalars (`secret_assignment`), and
 mnemonic-like lowercase word runs
 (`seed_phrase`). The same Core patterns protect coding-session capture.
-Wrapped tokens, re-flowed PEM headers, blank lines after an assignment and
+Wrapped tokens, quoted or re-flowed PEM headers, blank lines after an assignment and
 percent-encoded credential forms are recognized. Existing redaction markers
 are inert on a second envelope pass, so each replacement is counted once.
 The redactor tracks windows and rendered blocks within each call, preserving
@@ -178,7 +178,11 @@ an id the agent may not read with the same answer as an absent id.
 
 Limits. Shape matching is a heuristic backstop, not detection of every possible
 secret or persuasive instruction. It does not remove a credential an agent
-already knows. Counts describe replacements during response assembly, including
+already knows. Standalone token-like lines following a variable-length token
+are conservatively treated as continuations, including short fragments. Short
+words within a following prose sentence and sibling assignments remain intact.
+Bare shell variable references are kept, but literal YAML values beginning with
+`$` are scrubbed. Counts describe replacements during response assembly, including
 bounded candidates subsequently omitted by the packet budget. `world_view`
 evidence spans refer to stored capture offsets; expanding them after an earlier
 redaction can select a different served window.

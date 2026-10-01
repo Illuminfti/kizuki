@@ -8,9 +8,10 @@ disk. It registers two connectors that share one parser:
 
 Each user prompt and each assistant message with text becomes one private
 `message` event. Thinking, tool inputs and tool results are never read. Text is
-sanitized and scrubbed of secret-shaped strings before it is emitted, and a
-turn carrying Kizuki's own context packet is skipped. The connector emits no
-tombstones and makes no network call.
+sanitized and scrubbed of secret-shaped strings before it is emitted. Harness
+scaffolding, including hook-injected Kizuki context, is removed while surrounding
+owner words are kept. A turn whose remaining text carries Kizuki's context
+marker is skipped. The connector emits no tombstones and makes no network call.
 
 Enrollment, the recommended consent policy, what is captured and the limits
 are documented in [docs/connect.md](../../docs/connect.md#coding-session-transcripts).

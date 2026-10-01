@@ -38,7 +38,7 @@ export interface TaskAttachment {
     | "budget"
     | "bounds"
     | "unparsed";
-  /** SHA-256 of the current capture. Absent when the text is withheld. */
+  /** SHA-256 of the served projection for agents, raw capture for owners. Absent when withheld. */
   integrity?: string;
   sections?: Record<TaskKind, string[]>;
   omitted?: TaskKind[];

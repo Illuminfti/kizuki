@@ -34,14 +34,14 @@ type Span = {
  * Patterns are linear: each keyword or run start is scanned once, and a match
  * consumes what it scans, so a long identifier-like run cannot make a scan quadratic.
  */
-const PEM_HEADER = /-----BEGIN ([A-Z0-9 \t\r\n]{1,60})-----/g;
-const PEM_DELIMITER = /-----(BEGIN|END) ([A-Z0-9 \t\r\n]{1,60})-----/g;
-const PEM_BODY_LINE = /[A-Za-z0-9+/=]+[ \t]*(?:\r?\n|$)/y;
-const PEM_METADATA_LINE = /(?:Proc-Type|DEK-Info):[^\r\n]*(?:\r?\n|$)|[ \t]*\r?\n/y;
-const PEM_END = /-----END ([A-Z0-9 \t\r\n]{1,60})-----/y;
+const PEM_HEADER = /-----BEGIN[ \t\r\n]+([A-Z0-9 \t\r\n>]{1,60})-----/g;
+const PEM_DELIMITER = /-----(BEGIN|END)[ \t\r\n]+([A-Z0-9 \t\r\n>]{1,60})-----/g;
+const PEM_BODY_LINE = /(?:[ \t]*>[ \t]*)?[A-Za-z0-9+/=]+(?:[ \t]*\r?\n|[ \t]*$|(?=[ \t]+\())/y;
+const PEM_METADATA_LINE = /(?:[ \t]*>[ \t]*)?(?:(?:Proc-Type|DEK-Info):[^\r\n]*(?:\r?\n|$)|[ \t]*\r?\n)/y;
+const PEM_END = /(?:[ \t]*>[ \t]*)?-----END[ \t\r\n]+([A-Z0-9 \t\r\n>]{1,60})-----/y;
 const JWT = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g;
 const API_TOKEN = /(?:kzk_[0-9A-HJKMNP-TV-Z]{52}|kzs_[A-Za-z0-9_-]{43}|sk-[A-Za-z0-9_-]{20,}|[sr]k_live_[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{16,}|AIza[A-Za-z0-9_-]{30,}|(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9]))/g;
-const WRAPPED_TOKEN = /(kzk_|kzs_|sk-|[sr]k_live_|gh[pousr]_|github_pat_|glpat-|npm_|xox[abposr]-|xapp-|AIza|AKIA|ASIA)([A-Za-z0-9_-]{0,256})[ \t]{0,16}\r?\n[ \t]{0,16}([A-Za-z0-9_-]{1,512})/g;
+const WRAPPED_TOKEN = /(kzk_|kzs_|sk-|[sr]k_live_|gh[pousr]_|github_pat_|glpat-|npm_|xox[abposr]-|xapp-|AIza|AKIA|ASIA)([A-Za-z0-9_-]{0,256})[ \t]{0,16}\r?\n[ \t]{0,16}([A-Za-z0-9_-]+)/g;
 const BEARER = /(\bBearer\s+)([^\s"'<>,;]{16,})/gi;
 const AUTH_BEARER = /(\bAuthorization["']?\s{0,1024}[:=]\s{0,1024}["']?Bearer\s+)([^\s"'<>,;]+)/gi;
 const AUTHORIZATION = /(\bAuthorization["']?\s{0,1024}[:=]\s{0,1024}["']?(?:Basic|Token)\s+)([^\s"'<>,;]+)/gi;
@@ -128,13 +128,18 @@ function yamlBlockEnd(text: string, field: number, valueEnd: number, indicator: 
   return end;
 }
 
+/** Markdown quote prefixes may split a PEM label across captured lines. */
+function pemLabel(label: string): string {
+  return label.replace(/[>\s]+/g, " ").trim();
+}
+
 function spans(text: string): Span[] {
   const found: Span[] = [];
   // A single delimiter scan handles complete blocks with legacy metadata.
   // Reset at a new header so repeated incomplete headers never rescan a suffix.
   let opened: { start: number; label: string } | undefined;
   for (const match of matches(text, PEM_DELIMITER)) {
-    const label = match[2]!.replace(/\s+/g, " ");
+    const label = pemLabel(match[2]!);
     if (match[1] === "BEGIN") opened = { start: match.index, label };
     else if (opened !== undefined && opened.label === label) {
       found.push({ kind: "pem", start: opened.start, end: match.index + match[0].length });
@@ -156,7 +161,7 @@ function spans(text: string): Span[] {
       }
       PEM_END.lastIndex = cursor;
       const closing = PEM_END.exec(text);
-      if (closing !== null && closing[1]!.replace(/\s+/g, " ") === match[1]!.replace(/\s+/g, " ")) {
+      if (closing !== null && pemLabel(closing[1]!) === pemLabel(match[1]!)) {
         end = cursor + closing[0].length;
       }
     }
@@ -167,10 +172,13 @@ function spans(text: string): Span[] {
   for (const match of matches(text, WRAPPED_TOKEN)) {
     // A following assignment is a sibling field, not the key's continuation.
     if (/^[ \t]*[:=]/.test(text.slice(match.index + match[0].length))) continue;
-    // A complete first line is already protected; its following prose is not
-    // a continuation. An incomplete prefix needs the joined view below.
+    // Fixed-length tokens cannot need another line once complete. For variable
+    // tokens, withhold a standalone fragment of any length, or a long fragment
+    // followed by prose. A short word within a following sentence is preserved.
     const first = match[1]! + match[2]!;
-    if ([...matches(first, API_TOKEN)].length > 0) continue;
+    const standalone = /^[ \t]*(?:\r?\n|$)/.test(text.slice(match.index + match[0].length));
+    if ([...matches(first, API_TOKEN)].length > 0 &&
+        (/^(?:kzk_|kzs_|AKIA|ASIA)$/.test(match[1]!) || (!standalone && match[3]!.length < 16))) continue;
     // Validate the joined shape with the same pattern, rather than a second token catalogue.
     const joined = first + match[3]!;
     if ([...matches(joined, API_TOKEN)].length > 0) {
@@ -200,7 +208,11 @@ function spans(text: string): Span[] {
     const which = [2, 3, 4].find(index => match[index] !== undefined)!;
     const [start, end] = match.indices![which]!;
     const value = match[which]!;
-    if ((which === 4 && value.startsWith("$")) || /^\[redacted:[a-z_]+\]$/.test(value)) continue;
+    // A bare shell variable reference is not its resolved secret. In YAML,
+    // however, '$' is ordinary literal text and must not bypass redaction.
+    const separator = text.slice(match.index, start);
+    if ((which === 4 && separator.includes("=") && /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$/.test(value)) ||
+        /^\[redacted:[a-z_]+\]$/.test(value)) continue;
     const prefix = /[A-Za-z0-9_.-]*$/.exec(text.slice(Math.max(0, match.index - 100), match.index))![0];
     const name = (prefix + match[0].slice(0, match[0].search(/["'\s=:]/))).toLowerCase();
     if (name === "token" && which === 4 && /:\s*\S+$/.test(match[0]) && /^(?:string|number|boolean|undefined|null)[,;.)\]}]*$/.test(value)) continue;
