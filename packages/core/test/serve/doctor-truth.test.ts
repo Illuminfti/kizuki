@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,7 +31,12 @@ import { validEvent } from "../fixtures";
 import { throughputVault, ENDPOINT, MODEL } from "./throughput-fixture";
 
 const dirs: string[] = [];
+beforeEach(() => {
+  // Acceptance must precede the fixture receipts, regardless of the host date.
+  setSystemTime(new Date("2026-09-30T00:00:00.000Z"));
+});
 afterEach(() => {
+  setSystemTime();
   for (const directory of dirs.splice(0))
     rmSync(directory, { recursive: true, force: true });
 });
