@@ -33,6 +33,8 @@ optional, and the defaults below are the behavior described above:
 ```toml
 [serve]
 sync_period_s = 900        # 60..86400; sync rail period
+connector_drain_seconds = 120  # 1..3600; seconds a sync pass spends reading sources
+connector_drain_batches = 100  # 1..10000; batches one connection reads per sync pass
 
 [extraction]
 max_calls_per_pass = 1     # 1..256; extraction steps one sync pass may take
@@ -45,7 +47,7 @@ max_output_tokens_per_day = 4000000  # 1024..1000000000; billed output tokens pe
 ```
 
 A value outside its range, a fraction or a string keeps that key's default.
-`kizuki doctor` and `kizuki serve status` print the effective values on one
+`kizuki doctor` and `kizuki serve status` print the extraction limits and sync period on one
 `throughput` line, and `doctor --json` and `serve status --json` report them as
 `serve.throughput`.
 
@@ -71,13 +73,31 @@ A value outside its range, a fraction or a string keeps that key's default.
   purged, or the model is unavailable. Steps that make no request, such as
   advancing over records a source grant does not cover or skipping a record,
   still count toward the limit, so the default pass is the same single step as
-  before.
+  before. The exception is a step that only passes over records with nothing
+  to extract; see [records with nothing to extract](#records-with-nothing-to-extract).
 - **Time per pass.** Once `max_pass_seconds` have passed, the pass starts no
   further step; the request in flight finishes and is filed, and the next pass
   resumes from the cursor. Rails run one at a time, so this bounds how long a
   pass keeps retrieval, purge and embedding catch-up waiting. Passes run back
   to back while the sync rail is due, so for continuous extraction set
   `sync_period_s` no longer than `max_pass_seconds`.
+- **Reading sources.** Before extraction the sync rail reads each enrolled
+  source in a bounded slice. `connector_drain_seconds` is the time for the whole
+  pass, shared equally among the connections left, so a connection that
+  finishes early lends the rest of its share; `connector_drain_batches` caps
+  the batches one connection reads. Each connection reads at least one batch,
+  and the batch in flight when the time is spent finishes and commits with its
+  checkpoint. A connection that still has more stops at that cursor and the
+  receipt says `has_more`; the write pass, extraction and the derived refresh
+  then run as usual, and the next pass resumes from the cursor. The rail reads a
+  stop request between batches and gives signals and host timers a turn at
+  those durable boundaries, even when connector promises resolve immediately.
+  A pass stopped before a connection was exhausted reports
+  `serve:stop_requested`, skips the derived
+  refresh, and leaves it to the retrieval sweep after the next start. Other
+  rails run between passes, so a large first backfill delays them by at most one
+  pass and not by the whole drain. `kizuki sync [connector]` and `kizuki backfill` are not
+  sliced; `kizuki sync --once` runs the rail and takes its slice.
 - **Per-request limits.** `records_per_request` and the two token reservations
   bound each typed request. More records per request need a larger output
   reservation: an ordinary record's anchored response runs to one to three
@@ -127,6 +147,45 @@ decision whose previous cursor must equal the committed one. Concurrent
 requests would have to be planned against state that does not exist yet and
 thrown away whenever an earlier request fails, and filing would no longer
 follow a single order.
+
+## Records with nothing to extract
+
+Before it plans a request, the loop checks extraction permission, then
+classifies authorized trivial records using a fixed, deterministic rule over
+their kind and text. Extraction requires permission for the text field even
+when it is empty, so hidden text cannot change skip counts or step usage:
+
+| Reason | Record |
+| --- | --- |
+| `service` | An explicit `service` or `service_message` kind, even with text. Ordinary message text is never interpreted as a service marker. |
+| `empty` | No text at all, such as an attachment or a service notice on its own. |
+| `no_words` | Text with no letter or digit, such as emoji or punctuation. |
+| `too_short` | Fewer than 12 letters and digits, such as `ok`, `thanks!` or `12:30`. Each Han, kana or hangul character counts four. |
+
+The cursor moves past such an authorized record without a request. A record
+whose source grant does not permit extraction stays deferred regardless of its
+text; it contributes no prefilter count and retains ordinary step accounting.
+The pass's run receipt counts authorized skips by reason in
+`records_prefiltered`, only for records its committed cursor passed: a step that reads more records than one
+request takes counts the rest when a later step passes them. The ledger keeps
+every record, so search, timeline, context and a source purge are unaffected.
+Trivial records beside a segmented record are counted when its final segment
+commits the cursor. A journaled decision replayed after restart reconstructs
+the counts from its durable input partition under current extraction permission,
+without another model request.
+Older deferred records are checked too, under their current extraction grant,
+and removed from that queue in the same durable step. This is a minimum-content
+rule, not a semantic classifier: a short fact below the threshold is also
+passed over. Owner corrections still use the correction path.
+
+A step that only passes over such records makes no request, so it does not use
+one of the `max_calls_per_pass` steps, and a pass keeps going through them
+until it reaches a record worth a request, the end of the ledger, a stop
+request or `max_pass_seconds`. A chat backfill of short messages therefore
+costs no model calls and moves at the speed of the ledger, not one step per
+pass. These steps also yield to signals and host timers between cursor commits,
+so a stop can arrive while processing a run of trivial messages. The rule is
+fixed in the build; there is no setting for it.
 
 ## Rejected responses and daily budgets
 

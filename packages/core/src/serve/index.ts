@@ -110,6 +110,7 @@ export type {
   RailRefreshReport,
   RailRuntime,
   RailRuntimeV2,
+  RailSyncDrain,
   RailSyncResult,
   RunRailOptions,
   RunRailOptionsV2,

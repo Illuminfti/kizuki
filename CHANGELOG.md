@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Connector drains and prefilter-only extraction yield to the host between
+  durable batches, so signals and timer callbacks can stop an active pass
+  even when its promises resolve immediately. Terminal batches yield before
+  another connection can start.
+- Extraction prefilter counts obey current source permission, including journal
+  replay. Denied text cannot change skip counters or extraction step usage.
+
 - Purge is physically total. After it, the purged text is gone from claim and
   proposal payloads (ids, provenance and receipts stay), from archive copies
   and stage images, from the search index and retrieval store, and from freed
@@ -400,6 +407,29 @@
   run through the same notifier, keeping its body. The run receipt records
   `pages_repaired`. A page that cannot be rewritten degrades the run with
   `brief-repair-failed` and is tried again on the next sweep.
+- The sync rail drains connectors in bounded slices. `[serve]
+  connector_drain_seconds` (1 to 3,600, default 120) is the time one pass
+  spends reading sources, shared equally among the connections left, and
+  `connector_drain_batches` (1 to 10,000, default 100) caps the batches one
+  connection reads per pass. A connection that is not exhausted when either is
+  spent stops at its last committed cursor, the pass still runs the write pass
+  and the derived refresh, its run receipt carries `has_more`, and the next
+  pass resumes from the cursor. A first backfill of a large source therefore
+  no longer holds the retrieval, purge and other rails for hours, and the rail
+  reads a stop request between batches, so `serve stop` and SIGTERM end a
+  pass within one batch and skip the derived refresh until the next start.
+  `kizuki sync [connector]` and `kizuki backfill` still drain to exhaustion;
+  `kizuki sync --once` takes the rail's slice.
+- Extraction skips authorized records with nothing to extract before any model request:
+  explicit service kinds (`service`), no text at all (`empty`), no letter or digit (`no_words`, such as emoji or
+  punctuation) and fewer than 12 letters and digits (`too_short`; each Han,
+  kana or hangul character counts four). The cursor moves past them, they are
+  not deferred, and the run receipt counts them by reason in
+  `records_prefiltered`. Such a step makes no request and no longer uses one of
+  the pass's `max_calls_per_pass` steps, so a chat backfill of short messages
+  passes over thousands per pass, still bounded by `max_pass_seconds`. The
+  records stay in the ledger for search, timeline and context. Older deferred
+  records use the same prefilter under their current extraction grant.
 
 ## 1.0.2 (2026-09-24)
 

@@ -151,7 +151,8 @@ describe("extract tri-state cursor", () => {
     });
     if (tombstone.status !== "stored") throw new Error("tombstone fixture failed");
     putEvent(db, { source_record_id: "context", text: "KIZUKI CONTEXT v1\nprincipal=owner" });
-    putEvent(db, { source_record_id: "live", text: "live source" });
+    putEvent(db, { source_record_id: "live", text: "A live source describes a synthetic task." });
+    putEvent(db, { source_record_id: "trivial", text: "ok" });
     let seen = [] as readonly string[];
     const producer = stubProducer({ status: "ok", claims: [], usage: { calls: 1, input_tokens: 1, output_tokens: 1 } });
     const mined = await mineLiveDrafts(db, {
@@ -162,7 +163,8 @@ describe("extract tri-state cursor", () => {
       },
     });
     expect(mined.mined.status).toBe("empty");
-    expect(seen).toEqual(["live source"]);
+    expect(seen).toEqual(["A live source describes a synthetic task."]);
+    expect(mined.prefiltered).toEqual({ too_short: 1 });
     expect(commitExtractCursor(db, mined)).toBe(true);
     db.close();
     rmSync(directory, { recursive: true, force: true });

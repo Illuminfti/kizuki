@@ -147,7 +147,7 @@ test("strict runtime callers still reject invalid configuration, credentials, an
       const disabled = await createServeRuntime({ ...options, configurationErrorMode: "disable-model" });
       try {
         expect(disabled.hooks.model_ref).toBeNull(); expect(disabled.hooks.producer).toBeUndefined();
-        expect((await disabled.hooks.sync!()).errors).toEqual(["model configuration unavailable"]);
+        expect((await disabled.hooks.sync!({ deadline_ms: 60_000, max_batches: 100 })).errors).toEqual(["model configuration unavailable"]);
       } finally { await disabled.close(); }
     }
   } finally { db.close(); }

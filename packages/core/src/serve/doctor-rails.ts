@@ -204,6 +204,7 @@ function produced(receipt: RunReceipt): boolean {
     receipt.claims_extracted > 0 ||
     receipt.claims_deduped > 0 ||
     (receipt.records_skipped ?? 0) > 0 ||
+    receipt.records_prefiltered !== undefined ||
     receipt.claims_written > 0 ||
     receipt.canon_writes > 0 ||
     receipt.retrieval.upserts > 0 ||

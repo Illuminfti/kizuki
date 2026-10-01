@@ -47,6 +47,7 @@ import {
   type RecordSegment,
   type SkippedRecord,
 } from "./extract-oversized";
+import { prefilterReason, type PrefilterReason } from "./extract-prefilter";
 import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig } from "./types";
 
 const EXTRACT_SOURCE_KEY = "extract";
@@ -107,6 +108,8 @@ export interface MineResult {
   readonly segment?: RecordSegment;
   /** The record passed over because no safe split fits one request. */
   readonly skipped?: SkippedRecord;
+  /** Records the cursor passes without a request because they carry no extractable content, by reason. */
+  readonly prefiltered?: Readonly<Partial<Record<PrefilterReason, number>>>;
 }
 
 export interface DurableExtractBatch {
@@ -363,7 +366,8 @@ function validateInputPartition(
   const order = new Map(eligibleIds.map((id, index) => [id, index]));
   const union = new Set([...modelIds, ...deferredIds]);
   if (union.size !== modelIds.length + deferredIds.length ||
-      eligible.some(event => !union.has(event.event_id) && validateEventOrigin(db, event).origin !== "self") ||
+      // A record the prefilter passes over is in neither list: its reason is a function of its text.
+      eligible.some(event => !union.has(event.event_id) && prefilterReason(event) === null && validateEventOrigin(db, event).origin !== "self") ||
       !orderedSubset(modelIds, order) ||
       !orderedSubset(deferredIds, order)) {
     throw new Error("durable extraction input partition is corrupt");
@@ -997,6 +1001,48 @@ export async function mineLiveDrafts(
   producer: ExtractionProducerPort,
   limits: WorldRequestLimits = DEFAULT_EXTRACTION_CONFIG,
 ): Promise<MineResult> {
+  const prefiltered = new Map<string, PrefilterReason>();
+  return withPrefiltered(await mineBatch(db, producer, limits, prefiltered), prefiltered);
+}
+
+/**
+ * The prefilter counts only the records this step's cursor passes: a step that
+ * asks for fewer records than it read leaves the rest to be read, and counted,
+ * by the next one. A record part-way through its segments holds the cursor.
+ */
+function withPrefiltered(mined: MineResult, prefiltered: ReadonlyMap<string, PrefilterReason>): MineResult {
+  if (prefiltered.size === 0 || mined.cursor === null ||
+      (mined.segment !== undefined && mined.segment.end < mined.segment.chars)) return mined;
+  const counts: Partial<Record<PrefilterReason, number>> = {};
+  for (const id of mined.input_ids ?? []) {
+    const reason = prefiltered.get(id);
+    if (reason !== undefined) counts[reason] = (counts[reason] ?? 0) + 1;
+  }
+  return Object.keys(counts).length === 0 ? mined : { ...mined, prefiltered: counts };
+}
+
+/** Reconstruct skip counts from a journal's input partition after its frontier commit. */
+export function replayedPrefilterCounts(db: Database, batch: DurableExtractBatch, producer: ExtractionProducerPort): Readonly<Partial<Record<PrefilterReason, number>>> | undefined {
+  if (batch.filing_version === null || batch.mode !== "frontier" || readExtractCursor(db) === batch.previous_cursor) return undefined;
+  const requested = new Set([...batch.model_inputs, ...batch.deferred_inputs].map(input => input.event_id));
+  const counts: Partial<Record<PrefilterReason, number>> = {};
+  for (const id of batch.input_ids) {
+    if (requested.has(id)) continue;
+    if (!sourceEventsAllowed(db, [id], { owner: false, purpose: "extract", model: true, port: producer })) continue;
+    const event = readEvent(db, id);
+    if (event === null || !extractEligible(db, event)) continue;
+    const reason = prefilterReason(event);
+    if (reason !== null) counts[reason] = (counts[reason] ?? 0) + 1;
+  }
+  return Object.keys(counts).length === 0 ? undefined : counts;
+}
+
+async function mineBatch(
+  db: Database,
+  producer: ExtractionProducerPort,
+  limits: WorldRequestLimits,
+  prefiltered: Map<string, PrefilterReason>,
+): Promise<MineResult> {
   requireAtomicExtractReplay(db);
   const previous_cursor = readExtractCursor(db);
   const source_epoch = sourcePolicyEpoch(db);
@@ -1039,6 +1085,15 @@ export async function mineLiveDrafts(
       if (usable.length === 0) advanceExtractCheckpoint(db, DEFERRED_SCAN_KEY, queued.at(-1)!.event_id);
     }).immediate();
     if (usable.length > 0) {
+      // Old deferred state can contain trivial records. Consume a trivial
+      // prefix as an empty decision; meaningful prefixes still use the same
+      // durable input partition and never send those records to the model.
+      const firstSkipped = usable.findIndex(event => prefilterReason(event) !== null);
+      const skipping = firstSkipped === 0;
+      const boundary = skipping
+        ? usable.findIndex(event => prefilterReason(event) === null)
+        : firstSkipped;
+      if (boundary > 0) usable = usable.slice(0, boundary);
       mode = "deferred";
       inputIds = usable.map(event => event.event_id);
       modelInputs = usable.map(event => sourceInput(db, event, producer));
@@ -1046,6 +1101,11 @@ export async function mineLiveDrafts(
       const row = db.query<{ accepted_at: string }, [string]>("SELECT accepted_at FROM events WHERE event_id=?").get(last.event_id);
       if (row === null) throw new Error("deferred extraction input is missing");
       cursor = { event_id: last.event_id, accepted_at: row.accepted_at };
+      if (skipping) {
+        for (const event of usable) prefiltered.set(event.event_id, prefilterReason(event)!);
+        return { source_epoch, mined: { status: "empty" }, drafts: [], previous_cursor, cursor,
+          input_ids: inputIds, mode, model_inputs: modelInputs, deferred_inputs: [] };
+      }
     }
   }
 
@@ -1061,10 +1121,18 @@ export async function mineLiveDrafts(
     const eligible = db.transaction(() =>
       batch.events.filter(event => extractEligible(db, event)),
     ).immediate();
-    usable = eligible.filter(event => sourceEventsAllowed(db, [event.event_id], scope));
+    // Check permission before inspecting content. Denied text must change
+    // neither prefilter counts nor the number of steps this pass spends.
+    const authorized = eligible.filter(event => sourceEventsAllowed(db, [event.event_id], scope));
+    usable = authorized.filter(event => {
+      const reason = prefilterReason(event);
+      if (reason !== null) prefiltered.set(event.event_id, reason);
+      return reason === null;
+    });
     modelInputs = usable.map(event => sourceInput(db, event, producer));
+    const authorizedIds = new Set(authorized.map(event => event.event_id));
     deferredInputs = source_epoch === 0 ? [] : eligible
-      .filter(event => !usable.some(candidate => candidate.event_id === event.event_id))
+      .filter(event => !authorizedIds.has(event.event_id))
       .map(event => sourceInput(db, event, producer));
     if (usable.length === 0 && source_epoch > 0) {
       return { source_epoch, mined: { status: "deferred", count: deferredInputs.length }, drafts: [],

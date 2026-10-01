@@ -8,6 +8,7 @@ import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent"
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import type { Database } from "bun:sqlite";
+import { setImmediate as yieldToHost } from "node:timers/promises";
 import {
   BudgetExhausted,
   resolveTarget,
@@ -42,6 +43,7 @@ import {
   mineLiveDrafts,
   producedClaimInput,
   readDurableExtractBatch,
+  replayedPrefilterCounts,
   requeuePassedOverRecords,
   requireAtomicExtractReplay,
   type DurableExtractBatch,
@@ -77,6 +79,8 @@ export interface WritePassResult {
   readonly claims_superseded: number;
   /** Records extraction passed over for good without claims; each has its reason in `errors`. */
   readonly records_skipped: number;
+  /** Records passed over before any request because they carry no extractable content, by reason. */
+  readonly records_prefiltered: Readonly<Record<string, number>>;
   readonly canon_writes: number;
   readonly claims_rejected: Readonly<Record<string, number>>;
   readonly model: Omit<RunModelReport, "model_ref">;
@@ -88,13 +92,13 @@ export interface WritePassResult {
 
 /** A pass's totals, kept across its short writer holds. */
 type PassTally = {
-  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "model" | "oversized" | "errors">]: WritePassResult[K];
-} & { readonly oversized: { segments: number; skipped: number }; readonly errors: string[] };
+  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "model" | "oversized" | "errors" | "records_prefiltered">]: WritePassResult[K];
+} & { readonly oversized: { segments: number; skipped: number }; readonly records_prefiltered: Record<string, number>; readonly errors: string[] };
 
 function emptyTally(): PassTally {
   return {
     revived: 0, claims_extracted: 0, claims_written: 0, claims_written_extracted: 0, claims_deduped: 0,
-    claims_superseded: 0, records_skipped: 0, canon_writes: 0, oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
+    claims_superseded: 0, records_skipped: 0, records_prefiltered: {}, canon_writes: 0, oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
   };
 }
 
@@ -354,7 +358,9 @@ export async function runWritePass(
   });
   const tally = emptyTally();
   const metrics = emptyMetrics();
-  const result = (): WritePassResult => ({ ...tally, oversized: { ...tally.oversized }, ...metricResult(metrics) });
+  const result = (): WritePassResult => ({
+    ...tally, oversized: { ...tally.oversized }, records_prefiltered: { ...tally.records_prefiltered }, ...metricResult(metrics),
+  });
 
   const opened = await holdWriter(io, (_scope, owned) => { tally.revived = reviveUncontestedSkipped(owned.db); });
   if (!opened.held) { tally.stopped = opened.stopped; return result(); }
@@ -556,10 +562,14 @@ async function runExtraction(
   }
   // Every step files its decision and advances the cursor before the next
   // one starts, so a kill loses at most the request in flight.
-  for (let taken = 0; taken < pass.limits.max_calls_per_pass; taken++) {
+  for (let taken = 0, steps = 0; taken < pass.limits.max_calls_per_pass; steps++) {
+    // Prefilter-only steps perform no asynchronous model work. Give stop
+    // signals and host timers a turn between their durable cursor commits.
+    if (steps > 0) await yieldToHost();
     if (options.stopRequested?.() === true) { tally.stopped = STOP_REQUESTED; return; }
     // A spent pass starts no further step; the next pass resumes from the cursor.
-    if (taken > 0 && Date.parse(clock()) - started >= pass.limits.max_pass_seconds * 1_000) return;
+    if (steps > 0 && Date.parse(clock()) - started >= pass.limits.max_pass_seconds * 1_000) return;
+    const requested = metrics.calls;
     let outcome: StepOutcome;
     try {
       outcome = await extractionStep(pass);
@@ -575,11 +585,17 @@ async function runExtraction(
     tally.records_skipped = Math.max(0, tally.records_skipped + outcome.skipped - outcome.requeued);
     tally.oversized.segments += outcome.segments;
     tally.oversized.skipped += outcome.oversized_skipped;
+    for (const [reason, records] of Object.entries(outcome.prefiltered ?? {})) {
+      tally.records_prefiltered[reason] = (tally.records_prefiltered[reason] ?? 0) + records;
+    }
     tally.errors.push(...outcome.errors);
     tally.stopped = outcome.stopped;
     // The refusal history changed after this step's request was recorded.
     if (metrics.calls > 0 && metrics.last?.usage_unknown !== true) recordUsage(metricResult(metrics));
     if (outcome.next === "stop") return;
+    // A step that only passed over records with nothing to extract made no
+    // request; it must not use up the steps that bound the model's work.
+    if (metrics.calls > requested || outcome.prefilter_only !== true) taken++;
   }
 }
 
@@ -605,6 +621,10 @@ interface StepOutcome {
   readonly segments: number;
   /** Records too large for one request passed over with a retry receipt. */
   readonly oversized_skipped: number;
+  /** Records passed over before any request because they carry no extractable content, by reason. */
+  readonly prefiltered?: Readonly<Record<string, number>>;
+  /** Only a fresh, empty prefilter decision is exempt from the extraction step cap. */
+  readonly prefilter_only?: true;
   readonly stopped: string | null;
   readonly errors: readonly string[];
 }
@@ -630,9 +650,10 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
     if (pending === null) return null;
     // Replay files an existing decision; it is not another extraction.
     const filed = await fileProducedDrafts(claims, pending, producer);
-    return filed === null
-      ? settled("stop", { errors: ["extract cursor changed before durable batch commit"] })
-      : settled("continue", { deduped: filed.deduped, superseded: filed.superseded });
+    if (filed === null) return settled("stop", { errors: ["extract cursor changed before durable batch commit"] });
+    const prefiltered = replayedPrefilterCounts(db, pending, producer);
+    return settled("continue", { deduped: filed.deduped, superseded: filed.superseded,
+      ...(prefiltered === undefined ? {} : { prefiltered }) });
   });
   if (!replay.held) return settled("stop", { stopped: replay.stopped });
   if (replay.value !== null) return replay.value;
@@ -724,7 +745,8 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
         return filed === null
           ? settled("stop", { errors: ["extract cursor changed before commit"] })
           : settled("continue", { extracted, deduped: filed.deduped, superseded: filed.superseded,
-            segments: mined.segment === undefined ? 0 : 1 });
+            segments: mined.segment === undefined ? 0 : 1,
+            ...(mined.prefiltered === undefined ? {} : { prefiltered: mined.prefiltered }) });
       });
     }
     default: {
@@ -746,9 +768,15 @@ function advance(pass: ExtractionPass, mined: MineResult, errors: readonly strin
 /** The cursor commit of `advance`, for a caller that already holds the writer. */
 function advanceHeld(pass: ExtractionPass, mined: MineResult, errors: readonly string[] = []): StepOutcome {
   if (!commitExtractCursor(pass.db, mined)) return settled("stop", { errors: [...errors, "extract cursor changed before commit"] });
-  if (mined.skipped !== undefined) return settled("continue", { oversized_skipped: 1, errors });
-  if (mined.mined.status === "skipped") return settled("continue", { skipped: 1, errors: [...errors, `record skipped: ${mined.mined.reason}`] });
-  return settled("continue", { segments: mined.segment === undefined ? 0 : 1, errors });
+  const prefiltered = mined.prefiltered === undefined ? {} : { prefiltered: mined.prefiltered };
+  if (mined.skipped !== undefined) return settled("continue", { oversized_skipped: 1, errors, ...prefiltered });
+  if (mined.mined.status === "skipped") return settled("continue", { skipped: 1, errors: [...errors, `record skipped: ${mined.mined.reason}`], ...prefiltered });
+  const noModelWork = mined.mined.status === "empty" ||
+    (mined.mined.status === "deferred" && mined.mined.count === 0);
+  const prefilterOnly = noModelWork && mined.prefiltered !== undefined &&
+    (mined.mode === "deferred" || (mined.model_inputs?.length ?? 0) === 0);
+  return settled("continue", { segments: mined.segment === undefined ? 0 : 1, errors, ...prefiltered,
+    ...(prefilterOnly ? { prefilter_only: true } : {}) });
 }
 
 /**
