@@ -1,10 +1,11 @@
 import type { Database } from "bun:sqlite";
 import type { ViewGap } from "../contracts/concept-card";
-import { inspectCheckpoints } from "../ledger/connections";
+import { getCheckpoint, LedgerError } from "../ledger/connections";
 import { tableExists } from "../ledger/schema";
 import { readExtractCursor } from "../serve/extract";
 import type { ServeContext } from "../serving/types";
 import { authorizedEventSql } from "./policy-sql";
+import type { WorldDependencies } from "./dependencies";
 
 export type SourceCoverageGap = Extract<
   ViewGap,
@@ -22,22 +23,30 @@ function visibleSources(ctx: ServeContext): string[] {
     .query<{ source_key: string }, (string | number)[]>(
       `SELECT sg.source_key FROM source_grants sg WHERE EXISTS (
          SELECT 1 FROM source_event_bindings b JOIN events ON events.event_id = b.event_id
-          WHERE b.source_key = sg.source_key AND ${clauses.join(" AND ")})`,
+          WHERE b.source_key = sg.source_key AND ${clauses.join(" AND ")}) ORDER BY sg.source_key`,
     )
     .all(...bindings)
     .map((row) => row.source_key);
 }
 
 /** Import unfinished, last run errored, or the run record unreadable. A source with no checkpoint has no recorded run and adds no gap. */
-function sourceIncomplete(db: Database, visible: ReadonlySet<string>): boolean {
+function sourceIncomplete(db: Database, visible: readonly string[]): boolean {
   if (!tableExists(db, "checkpoints")) return false;
-  return inspectCheckpoints(db).some((item) =>
-    !item.ok
-      ? visible.has(item.source_key)
-      : visible.has(item.value.source_key) &&
-        (!item.value.backfill_complete ||
-          item.value.last_result.errors.length > 0),
-  );
+  // Filter before loading or decoding checkpoints: a hidden checkpoint cannot
+  // add returned rows, errors or work to this read or its final revalidation.
+  const rows = db.query<{ connector_id: string; source_key: string }, [string]>(`
+    SELECT connector_id,source_key FROM checkpoints
+    WHERE source_key IN (SELECT value FROM json_each(?)) ORDER BY connector_id,source_key
+  `).all(JSON.stringify(visible));
+  return rows.some((row) => {
+    try {
+      const checkpoint = getCheckpoint(db, row.connector_id, row.source_key);
+      return checkpoint !== null && (!checkpoint.backfill_complete || checkpoint.last_result.errors.length > 0);
+    } catch (error) {
+      if (error instanceof LedgerError || error instanceof SyntaxError) return true;
+      throw error;
+    }
+  });
 }
 
 /** The extraction cursor is `accepted_at<TAB>event_id`, the order `readSince` walks. Unreadable means start of ledger. */
@@ -91,7 +100,7 @@ function extractBacklog(ctx: ServeContext, visible: readonly string[]): boolean 
  * visible source's import or run state is shown whole, while events outside the
  * grant never count toward visibility or backlog.
  */
-export function sourceCoverage(ctx: ServeContext): SourceCoverageGap[] {
+export function sourceCoverage(ctx: ServeContext, dependencies?: WorldDependencies): SourceCoverageGap[] {
   const { db } = ctx;
   if (
     !tableExists(db, "source_grants") ||
@@ -99,9 +108,11 @@ export function sourceCoverage(ctx: ServeContext): SourceCoverageGap[] {
   )
     return [];
   const visible = visibleSources(ctx);
-  if (visible.length === 0) return [];
   const gaps: SourceCoverageGap[] = [];
-  if (sourceIncomplete(db, new Set(visible))) gaps.push("coverage");
-  if (extractBacklog(ctx, visible)) gaps.push("pending_consolidation");
+  if (visible.length > 0) {
+    if (sourceIncomplete(db, visible)) gaps.push("coverage");
+    if (extractBacklog(ctx, visible)) gaps.push("pending_consolidation");
+  }
+  if (dependencies !== undefined) dependencies.coverage = { sources: visible, gaps };
   return gaps;
 }

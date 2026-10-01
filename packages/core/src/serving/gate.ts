@@ -357,7 +357,7 @@ export function gate<T>(
   tool: Tool,
   args: Record<string, unknown>,
   run: (call: ServeCall) => Served<T>,
-  /** Revalidate the read's dependencies on every call, under the final output transaction, instead of a global source fence. */
+  /** Revalidate the read's dependencies on every call, under the final output transaction, instead of global source and purge fences. */
   recheckSourcePolicy?: (call: ServeCall, served: Served<T>) => Served<T>,
 ): Envelope<T> {
   try {
@@ -381,11 +381,13 @@ function gated<T>(
   const sourceEpoch = sourcePolicyEpoch(live.db);
   const purgeEpoch = purgeReadEpoch(live.db);
   const readEpoch = tool === "query_entities" ? claimsEpoch(live.db) : null;
-  const canonGeneration = tool === "propose" || tool === "correct" ? null : canonReadGeneration(live.db);
+  // World views read claims and evidence, never canon bytes. Their dependency
+  // check also covers purges without observing unrelated canon publication.
+  const canonGeneration = tool === "propose" || tool === "correct" || tool === "world_view" ? null : canonReadGeneration(live.db);
   let served: Served<T>;
   try {
     served = run({ ctx: live, at });
-    if (purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
+    if (recheckSourcePolicy === undefined && purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
     if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
     if (recheckSourcePolicy === undefined && sourcePolicyEpoch(live.db) !== sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
     if (readEpoch !== null) {

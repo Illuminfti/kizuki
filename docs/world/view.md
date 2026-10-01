@@ -50,9 +50,12 @@ roll back issuance and degrade to `not_issued` without losing the fresh body.
 Hidden sources, claims and identity changes cannot alter another principal's
 baseline comparison, reservation or eviction order.
 
-The audited serving gate revalidates the projection's authorized support and
-current principal grant in the final output transaction. An unrelated source
-revocation leaves the answer and read work unchanged. Withdrawn dependencies
+The audited serving gate revalidates the projection's authorized support,
+source coverage and current principal grant in the final output transaction.
+Coverage includes authorized sources outside the card's support, their import
+checkpoints and readable extraction backlog. Hidden checkpoints are filtered
+before loading. An unrelated source revocation or purge leaves the answer,
+errors and read work unchanged. Withdrawn or changed dependencies
 discard the pending view and reproject once under current authority. A
 conditional target denied by current source consent returns
 `new_view_required`; a fresh read of that target remains `not_found`.
@@ -86,6 +89,9 @@ revoked-issuer handles all return `new_view_required`.
 Handle resolution always performs bounded lookup and authorization checks
 before projecting a target. Unreadable and erased targets take the same path,
 including the same returned-row and statement work counters.
+The final output transaction checks handle existence, expiry, issuer activity
+and target authorization again. Invalidation after projection discards its
+pending token and returns the uniform `new_view_required` result.
 
 A handle stores its digest, semantic target, object operation, valid window,
 normalized issuer scope and scope digest, and an internal recorded-time marker.
