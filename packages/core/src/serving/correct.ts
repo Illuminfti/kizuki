@@ -585,7 +585,7 @@ export async function serveCorrect<C extends ResponseContract = typeof ENVELOPE_
           }
         }
       }
-      const resolved = resolve(ctx, args.target);
+      const resolved = resolve(ctx, args.target, contract);
       const sourceReader = claimReader(ctx.db, grant, {
         owner: ctx.principal.kind === "owner",
         purpose: "correction",

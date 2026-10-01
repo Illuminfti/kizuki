@@ -63,10 +63,19 @@ describe("host-date isolation", () => {
       for (const correction of data.corrections) expect(correction).toEqual({ created_at: AS_OF, asserted_at: AS_OF, valid_from: AS_OF });
       expect(data.receipts.length).toBeGreaterThan(0);
       expect(data.receipts.every((at: string) => at === AS_OF)).toBe(true);
+      for (const principal of ["owner", "fresh-agent"]) {
+        const timestamps = data.hook_audit[principal] as string[];
+        expect(timestamps.length).toBeGreaterThan(0);
+        expect(timestamps.every(at => at === AS_OF)).toBe(true);
+      }
       const report = data.report as EvaluationReport;
       expect(report.as_of).toBe(AS_OF);
       for (const { surface, observation } of report.observations) {
-        if (surface === "session_hook") expect(observation.output).toContain(`at=${AS_OF}`);
+        if (surface === "session_hook") {
+          const header = observation.output.split("\n").slice(0, 3).join("\n");
+          expect(header.startsWith("KIZUKI CONTEXT v2\n")).toBe(true);
+          expect(header).not.toMatch(/\b(?:at|epoch|claims_epoch|etag|packet_hash)=/);
+        }
         else if (surface === "context_packet" || surface === "search") expect(JSON.parse(observation.output).at).toBe(AS_OF);
         else for (const envelope of JSON.parse(observation.output)) expect(envelope.at).toBe(AS_OF);
       }

@@ -6,8 +6,8 @@ import { claimReader } from "./claims";
 import { authorizedClaimSql } from "./claim-policy-sql";
 import type { Claim } from "../contracts/proposal";
 import { identifier } from "./arguments";
-import { ServeError } from "./types";
-import type { ServeContext } from "./types";
+import { ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA, ServeError } from "./types";
+import type { ResponseContract, ServeContext } from "./types";
 
 /**
  * A subject with more live keyed readings than this is not a target: the
@@ -103,6 +103,7 @@ export function claimVisibleTo(ctx: ServeContext, claim: Claim): boolean {
 export function resolve(
   ctx: ServeContext,
   target: CorrectTarget | undefined,
+  contract: ResponseContract = ENVELOPE_SCHEMA,
 ): Resolved {
   if (target === undefined) {
     throw refuse("target", "name a claim, a claim key or a subject");
@@ -116,9 +117,11 @@ export function resolve(
 
   const hidden: AuditDenial[] = [];
   const visible = visibleTo(ctx, hidden);
+  // Only the compatibility path gathers privileged denial diagnostics.
+  const scopedV2 = ctx.principal.kind === "agent" && contract === ENVELOPE_V2_SCHEMA;
   if (target.claim_id !== undefined) {
     const id = identifier("target.claim_id", target.claim_id);
-    const policy = ctx.principal.kind === "owner" ? null : authorizedClaimSql(ctx);
+    const policy = scopedV2 ? authorizedClaimSql(ctx) : null;
     const selected = policy === null || ctx.db.query<{ claim_id: string }, (string | number)[]>(
       `SELECT claim_id FROM claims WHERE claim_id=? AND status='live' AND ${policy.sql}`,
     ).get(id, ...policy.bindings) !== null;
@@ -142,7 +145,7 @@ export function resolve(
     if (!CLAIM_KEY.test(target.claim_key)) {
       throw refuse("target.claim_key", "must be a claim key");
     }
-    const claims = ctx.principal.kind === "owner" ? listClaims(ctx.db, {
+    const claims = !scopedV2 ? listClaims(ctx.db, {
       claim_key: target.claim_key,
       status: "live",
       limit: MAX_CANDIDATES,
@@ -157,7 +160,7 @@ export function resolve(
   // Narrowed in SQL. Reading a default page of the table and filtering it in
   // memory stops finding real targets the moment a vault outgrows that page.
   const subject = identifier("target.subject", target.subject);
-  const claims = ctx.principal.kind === "owner" ? listClaims(ctx.db, {
+  const claims = !scopedV2 ? listClaims(ctx.db, {
     status: "live",
     subject,
     keyed: true,
