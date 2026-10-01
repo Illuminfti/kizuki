@@ -163,6 +163,23 @@ test("ledger search matches the served excerpt unless full text is requested", a
   } finally { f.dispose(); }
 });
 
+test("search tallies redactions only for returned matches", async () => {
+  const f = await serveFixture();
+  try {
+    const visible = storeEvent(f.db, "returned-match", "2026-02-28T12:00:00Z",
+      "countprobe visible", "person:ada", "public");
+    storeEvent(f.db, "unreturned-match", "2026-02-28T12:01:00Z",
+      `countprobe ${"longer note ".repeat(100)} password=${["synthetic", "value"].join("")}`,
+      "person:ada", "public");
+    rebuildDerived(f.db, f.vaultPath);
+    const answer = await serveSearch(f.agent("reader-public"), {
+      query: "countprobe", scope: "ledger", limit: 1,
+    });
+    expect(answer.quoted.map(item => item.event_id)).toEqual([visible]);
+    expect(answer.redacted).toBeUndefined();
+  } finally { f.dispose(); }
+});
+
 test("world discovery matches served labels", async () => {
   const f = await serveFixture();
   try {
@@ -215,6 +232,26 @@ test("a provider's hidden overflow does not set graph truncation", async () => {
   } finally { f.dispose(); temporary.cleanup(); }
 });
 
+test("a provider's overflow flag cannot change the authorized graph result", async () => {
+  const f = await serveFixture();
+  const descriptor = { ...DIRECT_RETRIEVAL_DESCRIPTOR, supports: ["lexical", "graph"] as const };
+  const temporary = temporaryPortContext(descriptor);
+  const retrieval: RetrievalPort = new ReferenceRetrievalPort(temporary.ctx, descriptor);
+  let truncated = false;
+  retrieval.neighbors = async entity => ({
+    entity: entity.entity_id, truncated,
+    edges: [{ from: "fact:linked", to: f.events.public!, type: "source", weight: 1, provenance: [f.events.public!] }],
+  });
+  try {
+    const ctx = { ...f.agent("reader-public"), retrieval };
+    const before = await serveGraph(ctx, { id: "fact:linked" });
+    truncated = true;
+    const after = await serveGraph(ctx, { id: "fact:linked" });
+    expect(after.data).toEqual(before.data);
+    expect(after.data?.truncated).toBe(false);
+  } finally { f.dispose(); temporary.cleanup(); }
+});
+
 
 test("the shared correction writer also excludes hidden peers", async () => {
   const f = await serveFixture();
@@ -233,5 +270,56 @@ test("the shared correction writer also excludes hidden peers", async () => {
     expect(answer.superseded.map(item => item.claim_id)).toEqual([open.claim.claim_id]);
     expect(getClaim(f.db, hiddenId)).toEqual(before);
     expect(JSON.stringify(answer)).not.toContain(hiddenId);
+  } finally { f.dispose(); }
+});
+
+test("an unreadable correction recording does not reveal its replacement through retry refusal", async () => {
+  const f = await serveFixture();
+  try {
+    const hidden = await insertClaim({ db: f.db }, claimInput(f.events.private!, {
+      subject: "person:ada", predicate: "employment.works_at", object: "Acme",
+      body: "Ada works at Acme.", sensitivity: "private",
+    }));
+    if (hidden.outcome !== "stored") throw new Error(hidden.outcome);
+    const statement = "Ada works at Globex.";
+    await serveCorrect(f.owner(), {
+      statement, target: { claim_id: hidden.claim.claim_id }, object: "Globex",
+    });
+    const refusal = async (claim_id: string): Promise<string> => {
+      try {
+        await serveCorrect(f.agent("reader-public"), {
+          statement, target: { claim_id }, object: "Workshop",
+        });
+        throw new Error("expected refusal");
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
+    expect(await refusal(hidden.claim.claim_id)).toBe(await refusal("missing-claim"));
+  } finally { f.dispose(); }
+});
+
+test("the shared correction writer resolves an agent's stored grant even when the caller omits it", async () => {
+  const f = await serveFixture();
+  try {
+    const open = await insertClaim({ db: f.db }, claimInput(f.events.public!, {
+      subject: "person:ada", predicate: "employment.works_at", object: "Acme",
+      body: "Ada works at Acme.", sensitivity: "public",
+    }));
+    if (open.outcome !== "stored") throw new Error(open.outcome);
+    const hidden = await insertClaim({ db: f.db }, claimInput(f.events.private!, {
+      subject: "person:ada", predicate: "employment.works_at", object: "Private org",
+      body: "Ada works at Private org.", sensitivity: "private",
+    }));
+    const hiddenId = hidden.outcome === "contested" ? hidden.incoming.claim_id : hidden.claim.claim_id;
+    const before = getClaim(f.db, hiddenId);
+    const answer = await correct({ db: f.db, vault_path: f.vaultPath, producer: "agent:reader-public" },
+      { statement: "Ada works at Globex.", target: { claim_id: open.claim.claim_id } });
+    expect(answer.superseded.map(item => item.claim_id)).toEqual([open.claim.claim_id]);
+    expect(getClaim(f.db, hiddenId)).toEqual(before);
+    expect(JSON.stringify(answer)).not.toContain(hiddenId);
+    await expect(correct({ db: f.db, vault_path: f.vaultPath, producer: "agent:unknown-reader" },
+      { statement: "Ada works at Acme.", target: { claim_id: answer.claim_ids[0] } }))
+      .rejects.toThrow("principal is unavailable");
   } finally { f.dispose(); }
 });
