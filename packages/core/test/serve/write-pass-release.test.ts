@@ -14,6 +14,8 @@ import { fileProposal } from "../../src/staging/proposals";
 import { initVault } from "../../src/vault/init";
 import { putEvent } from "../claims/helpers";
 import { seedLivePages } from "../helpers/bulk-pages";
+import { clearGraphRegistry } from "../../src/graph/graph";
+import * as pages from "../../src/vault/pages";
 
 const dirs: string[] = [];
 afterEach(() => { for (const directory of dirs.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -96,6 +98,23 @@ test("one write pass does not enumerate historical receipt identities", async ()
     expect(receiptRows).toBeLessThan(16);
   } finally { read.mockRestore(); db.close(); }
 }, 120_000);
+
+test("a cold write pass discovers page identities outside writer ownership", async () => {
+  const { path, db, options } = pending(1);
+  seedLivePages(db, path, 200);
+  rebuildDerived(db, path);
+  clearGraphRegistry(db);
+  const original = pages.listCanonPagesReport;
+  const walk = spyOn(pages, "listCanonPagesReport").mockImplementation((...args) => {
+    const lock = tryWriteFlock(path);
+    expect(lock).not.toBeNull(); lock?.release();
+    return original(...args);
+  });
+  try {
+    expect((await runWritePass(db, path, options())).canon_writes).toBe(1);
+    expect(walk).toHaveBeenCalled();
+  } finally { walk.mockRestore(); db.close(); }
+});
 
 test("a stop request between two pages ends the pass with at most one more page", async () => {
   const { path, db, written, options } = pending(6);

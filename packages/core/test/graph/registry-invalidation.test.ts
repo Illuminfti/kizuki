@@ -138,7 +138,9 @@ for (const locator of ["missing", "different identity"] as const) {
     rebuildDerived(db, vault.path);
     renameSync(join(vault.path, "facts/target.md"), join(vault.path, "facts/moved.md"));
     if (locator === "different identity") {
-      writeFileSync(join(vault.path, "facts/target.md"), serializePage({ data: { ...DATA, id: "fact:another" }, body: "Another page." }));
+      writeFileSync(join(vault.path, "facts/target.md"), serializePage({
+        data: { ...DATA, id: "fact:another", sources: written.sourceIds }, body: "Another page.",
+      }), { mode: 0o600 });
     }
     const moved = readFileSync(join(vault.path, "facts/moved.md"));
     const filed = await insertClaim({ db }, { kind: "entity", target: "fact:target", body: "Replacement.", frontmatter: { type: "fact" },

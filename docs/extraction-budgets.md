@@ -152,8 +152,10 @@ After the graph registry has been initialized, a receipted write assesses
 only that page's evidence and refreshes its edges and the incoming links whose
 resolution changed. Indexed page names resolve those links without loading
 the entire registry or walking the vault. A cold or discarded registry takes
-one full reconciliation before writer acquisition. Changed source consent and
-source tombstones reassess affected pages before acquisition as well. Ordinary
+one full reconciliation outside writer ownership. The canon pass prepares it
+before taking the writer; direct writes repair it after committed work releases
+the writer. Changed source consent and tombstones reassess affected pages outside
+ownership as well. Ordinary
 derived refresh and rebuild still reconcile files added, removed or rewritten
 outside the writer; a canon write does not
 scan unrelated files for edits. Serving checks current evidence on each read.

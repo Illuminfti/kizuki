@@ -52,6 +52,7 @@ import { backoffRemaining, readRejections, recordRejection, writeRejections } fr
 import { redactReceiptError } from "./receipts";
 import { runWorldJobs } from "./world-jobs";
 import { clearStuckPage, listQuarantinedPages, recordStuckPage } from "./write-quarantine";
+import { reconcileCanonGraph } from "../canon/graph-maintenance";
 
 /**
  * A pass ends by itself after this many canon writes, or after the run budget's
@@ -396,6 +397,7 @@ async function writeCanon(io: CanonIo, options: WritePassOptions, tally: PassTal
   const attempted = new Set<string>();
   while (tally.canon_writes < limit) {
     if (options.stopRequested?.() === true) { tally.stopped = STOP_REQUESTED; return; }
+    reconcileCanonGraph(io.db, io.vault_path);
     const step = await holdWriter(io, (scope, owned) => {
       try {
         settleWriteReservations(owned.db, owned.vault_path);

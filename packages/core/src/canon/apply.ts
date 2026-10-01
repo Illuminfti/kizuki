@@ -10,7 +10,7 @@ import {
 } from "../ledger/canon-source-survivor-lineage";
 import { parseFrontmatter, serializePage } from "../vault/frontmatter";
 import { commitWorldCanonErasure, commitCanonWrite } from "./recovery";
-import { worldErasureFinalReceipt, assertCanonAdmission, canonPageRecoveryPending, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type WorldCanonErasureIntent, type CanonWriteIntent } from "./write-intent";
+import { worldErasureFinalReceipt, advanceCanonReadGeneration, assertCanonAdmission, canonPageRecoveryPending, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type WorldCanonErasureIntent, type CanonWriteIntent } from "./write-intent";
 import { archiveRelPath, hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
 import { requireSourceEvents, sourceSensitivity } from "../ledger/source-grants";
 import { commitMachineByteIntent, requireExternalEvents } from "../ledger/event-origin";
@@ -884,6 +884,7 @@ function finishSourceErasure(scope: VaultMutationScope, io: CanonIo, intent: Sou
                 }
             }
             io.db.query("DELETE FROM canon_source_erasure_intents WHERE page_path=?").run(receipt.page_path);
+            advanceCanonReadGeneration(io.db);
             stream.verifyBinding();
         }).immediate();
     } finally {
