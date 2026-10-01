@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -64,7 +64,7 @@ function vault() {
   return { path, db: openLedger(join(path, ".kizuki", "kizuki.db")) };
 }
 
-/** Minute `n` after 2026-10-01T00:00:00Z, later than any event these tests accept. */
+/** Minute `n` after 2026-10-01T00:00:00Z, after capture's logical clock. */
 const minute = (n: number): string =>
   new Date(Date.parse("2026-10-01T00:00:00Z") + n * 60_000).toISOString();
 
@@ -104,21 +104,27 @@ function capture(
   db: ReturnType<typeof openLedger>,
   count: number,
 ): { event_id: string; accepted_at: string }[] {
-  return Array.from({ length: count }, (_, index) => {
-    const stored = accept(db, {
-      ...validEvent(),
-      source_record_id: `truth-${serial}-${index}`,
+  // Captures precede the simulated runs, independently of the host date.
+  setSystemTime(new Date("2026-09-30T12:00:00Z"));
+  try {
+    return Array.from({ length: count }, (_, index) => {
+      const stored = accept(db, {
+        ...validEvent(),
+        source_record_id: `truth-${serial}-${index}`,
+      });
+      if (stored.status !== "stored") throw new Error("fixture capture failed");
+      return {
+        event_id: stored.event.event_id,
+        accepted_at: db
+          .query<{ accepted_at: string }, [string]>(
+            "SELECT accepted_at FROM events WHERE event_id=?",
+          )
+          .get(stored.event.event_id)!.accepted_at,
+      };
     });
-    if (stored.status !== "stored") throw new Error("fixture capture failed");
-    return {
-      event_id: stored.event.event_id,
-      accepted_at: db
-        .query<{ accepted_at: string }, [string]>(
-          "SELECT accepted_at FROM events WHERE event_id=?",
-        )
-        .get(stored.event.event_id)!.accepted_at,
-    };
-  });
+  } finally {
+    setSystemTime();
+  }
 }
 
 function railOf(report: ReturnType<typeof inspectServeDoctor>, rail: RailId) {
