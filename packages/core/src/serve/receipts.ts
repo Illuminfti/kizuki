@@ -34,6 +34,7 @@ import {
   type RunExecution,
   type RunScheduleTransition,
   type RunStatus,
+  type CanonQuarantineNotice,
 } from "./types";
 
 const RUN_STATUSES = new Set(["ok", "degraded", "stopped", "failed"]);
@@ -46,6 +47,19 @@ export function redactReceiptText(text: string): string {
   return text
     .replace(/\/(?:home|Users|tmp|var|workspace|opt)\/[^\s"']+/g, "[path]")
     .replace(/\b[A-Za-z0-9_-]{20,}\b/g, "[redacted]");
+}
+
+function quarantineNotices(value: unknown): { canon_quarantined?: CanonQuarantineNotice[] } {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 10_000) return {};
+  const notices: CanonQuarantineNotice[] = [];
+  for (const item of value) {
+    if (!isPlainObject(item) || Object.keys(item).sort().join() !== "attempts,handle,path,until" ||
+        typeof item.handle !== "string" || !/^[0-9a-f]{32}$/.test(item.handle) || item.path !== `auto/world/${item.handle}.md` ||
+        typeof item.attempts !== "number" || !Number.isSafeInteger(item.attempts) || item.attempts < 3 ||
+        typeof item.until !== "string" || !Number.isFinite(Date.parse(item.until)) || new Date(item.until).toISOString() !== item.until) return {};
+    notices.push({ handle: item.handle, path: item.path as string, attempts: item.attempts, until: item.until });
+  }
+  return { canon_quarantined: notices };
 }
 
 /** A display marker cannot recover the original model reference identity. */
@@ -196,6 +210,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
           .filter((item): item is string => typeof item === "string")
           .map(redactReceiptText)
       : [],
+    ...quarantineNotices(value["canon_quarantined"]),
   };
 }
 

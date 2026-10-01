@@ -3,6 +3,7 @@ import type { CorrectArgs, WorldReadResult } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
 import { tryRefreshDerived } from "../derived";
+import { whileWriterBusy } from "../writer-wait";
 import { clean, jsonEnvelope } from "../output";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
@@ -102,7 +103,7 @@ export const tellCommand: Command = {
     return withVault(io, async (ctx) => {
       try {
         if (worldClaim !== undefined) {
-          const served = await serveCorrect(
+          const served = await whileWriterBusy(() => serveCorrect(
             {
               db: ctx.db,
               vaultPath: ctx.vaultPath,
@@ -120,7 +121,7 @@ export const tellCommand: Command = {
               ...(refresh === undefined ? {} : { refresh_world: { operation: "concept" as const, concept: { kind: "object" as const, token: refresh } } }),
               ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
             },
-          );
+          ));
           if (served.data === undefined) throw new CorrectError("target_required", "world claim correction was not recorded");
           const pending = served.data.recovery_pending !== undefined;
           const derived = pending ? { degraded: [] as string[] } : tryRefreshDerived(ctx.db, ctx.vaultPath);
@@ -139,7 +140,7 @@ export const tellCommand: Command = {
           for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
           return pending ? 1 : 0;
         }
-        const result = await correct(
+        const result = await whileWriterBusy(() => correct(
           { db: ctx.db, vault_path: ctx.vaultPath, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) },
           {
             statement,
@@ -149,7 +150,7 @@ export const tellCommand: Command = {
               : { scope: { ...(since === undefined ? {} : { since }), ...(until === undefined ? {} : { until }) } }),
             ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
           },
-        );
+        ));
         const pending = result.recovery_pending !== undefined;
         const derived = pending ? { degraded: [] as string[] } : tryRefreshDerived(ctx.db, ctx.vaultPath);
         if (parsed.flags.has("--json")) {

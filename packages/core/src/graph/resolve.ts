@@ -17,12 +17,26 @@ function unique(ids: readonly string[] | undefined): string | null {
   return ids !== undefined && ids.length === 1 ? (ids[0] ?? null) : null;
 }
 
-export function linkIndexFromPages(pages: readonly CanonPage[]): LinkIndex {
+/** A page a wikilink can resolve to. */
+export interface LinkTarget {
+  readonly id: string;
+  readonly relPath: string;
+  readonly title: string | null;
+}
+
+/** Every string that names this page in a wikilink, lowercase. */
+export function linkKeys(page: LinkTarget): string[] {
+  const stem = page.relPath.replace(/\.md$/i, "");
+  const base = page.relPath.split("/").pop()!;
+  return [page.id, page.relPath, stem, base, base.replace(/\.md$/i, ""), ...(page.title === null ? [] : [page.title])]
+    .map((key) => key.toLowerCase());
+}
+
+export function linkIndexFromTargets(pages: readonly LinkTarget[]): LinkIndex {
   const byId = new Map<string, string>();
   const byPath = new Map<string, string[]>();
   const byTitle = new Map<string, string[]>();
   for (const page of pages) {
-    if (!isLiveCanonPage(page)) continue;
     byId.set(page.id, page.id);
     addKey(byPath, page.relPath, page.id);
     const stem = page.relPath.replace(/\.md$/i, "");
@@ -32,13 +46,19 @@ export function linkIndexFromPages(pages: readonly CanonPage[]): LinkIndex {
       addKey(byPath, base, page.id);
       addKey(byPath, base.replace(/\.md$/i, ""), page.id);
     }
-    const title = typeof page.data["title"] === "string"
-      ? page.data["title"].toLowerCase()
-      : "";
+    const title = page.title?.toLowerCase() ?? "";
     if (title.length === 0) continue;
     addKey(byTitle, title, page.id);
   }
   return { byId, byPath, byTitle };
+}
+
+export function linkIndexFromPages(pages: readonly CanonPage[]): LinkIndex {
+  return linkIndexFromTargets(pages.filter(isLiveCanonPage).map((page) => ({
+    id: page.id,
+    relPath: page.relPath,
+    title: typeof page.data["title"] === "string" ? page.data["title"] : null,
+  })));
 }
 
 /**

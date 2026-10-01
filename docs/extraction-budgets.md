@@ -42,10 +42,13 @@ max_output_tokens = 8192   # 1024..16384; typed extraction only, reasoning inclu
 max_pass_seconds = 60      # 30..600; no step starts after this many seconds
 max_calls_per_day = 1000   # 1..100000; model requests per UTC day, rejected ones included
 max_output_tokens_per_day = 4000000  # 1024..1000000000; billed output tokens per UTC day
+
+[budget]
+canon_writes_per_run = 32  # 0..10000; canon pages one sync pass may write
 ```
 
 A value outside its range, a fraction or a string keeps that key's default.
-`kizuki doctor` and `kizuki serve status` print the effective values on one
+`kizuki doctor` and `kizuki serve status` print the effective extraction and schedule values on one
 `throughput` line, and `doctor --json` and `serve status --json` report them as
 `serve.throughput`.
 
@@ -92,18 +95,24 @@ A value outside its range, a fraction or a string keeps that key's default.
 - **Memory.** Each step reuses the connection's cached statements and finalizes
   the ones it prepares itself, so a long pass does not accumulate statements
   or heap. Canon writing after extraction keeps its own limits, including at
-  most 32 canon writes per pass.
+  most `canon_writes_per_run` canon writes per pass (see
+  [canon writes per pass](#canon-writes-per-pass)).
 - **The writer during a pass.** A pass holds the vault writer only for local
-  durable work: filing a step's decision and cursor, and the canon writes that
-  end the pass. It never holds it across a model request, so owner verbs that
-  need the writer, such as `undo`, `tell`, purge and `kizuki serve stop`, go
-  through while a request is in flight. An answer that arrives after a purge or
+  durable work: filing a step's decision and cursor, and each canon write. It
+  takes and releases the writer for every page, and stays away from it for a
+  moment between pages, so waiting `tell` and `undo` commands can acquire it
+  before the pass finishes. Other operations can acquire it during the same
+  gap, but keep their existing busy-writer behavior.
+  `kizuki tell` and `kizuki undo` wait up to 30 seconds for a write in progress
+  before they report `writer_busy`. The pass never holds the writer across a
+  model request either. An answer that arrives after a purge or
   another pass changed its inputs or the cursor is discarded, never filed. An
   answer waits up to five seconds for a writer another operation holds; after
   that the pass stops as `lock:busy` and the next one asks again.
 - **Stopping.** `kizuki serve stop`, SIGTERM and SIGINT end a pass before its
-  next step. The request in flight finishes and is filed, canon writing waits
-  for the next start, and the receipt stops as `serve:stop_requested`. The
+  next step, and before the next canon page. The request in flight finishes and
+  is filed, the page being written finishes, later pages wait for the next
+  start, and the receipt stops as `serve:stop_requested`. The
   service's stop timeout therefore needs to cover one request, not a pass.
 - **Model health.** A pass is judged by how it ended. The receipt's
   `model.answered` counts the requests the model answered, and
@@ -127,6 +136,50 @@ decision whose previous cursor must equal the committed one. Concurrent
 requests would have to be planned against state that does not exist yet and
 thrown away whenever an earlier request fails, and filing would no longer
 follow a single order.
+
+## Canon writes per pass
+
+After extraction the pass writes canon one page at a time, up to
+`[budget] canon_writes_per_run` pages (default 32; the daily ceiling
+`canon_writes_per_day` still applies). A value below 32 stops the pass at that
+many pages as `budget:canon_writes_per_run`. From 32 up the pass ends `ok` when
+it reaches the number and the next pass continues; a value above 32 used to
+change nothing, because the pass ended at 32 whatever the setting. A vault with
+a long queue can raise it, and one with a slow model can lower it.
+`doctor --json` reports it as `serve.model.budget.canon_writes_per_run.limit`.
+
+After the graph registry has been initialized, a receipted write assesses
+only that page's evidence and refreshes its edges and the incoming links whose
+resolution changed. Indexed page names resolve those links without loading
+the entire registry or walking the vault. A cold or discarded registry takes
+one full reconciliation outside writer ownership. The canon pass prepares it
+before taking the writer; direct writes repair it after committed work releases
+the writer. Changed source consent and tombstones reassess affected pages outside
+ownership as well. Ordinary
+derived refresh and rebuild still reconcile files added, removed or rewritten
+outside the writer; a canon write does not
+scan unrelated files for edits. Serving checks current evidence on each read.
+Pass accounting reads only receipts appended during the page's writer hold,
+plus live reservations and intents.
+
+Ordinary receipt checkpoints reuse process-local validation only while the
+journal's file identity, size, permissions and modification metadata match.
+Completion appends and reads back the exact new receipt line. Restart recovery,
+external journal changes and receipt redaction retain full prefix validation.
+
+A typed page group that fails three passes is named in the receipt's typed
+`canon_quarantined` entries with its handle, generated page path, failure
+count and retry time. Error strings remain fully redacted. After
+three failed passes in a row the page is set aside for 24 hours: later passes
+skip it, so groups behind it are written, and the receipt says
+`set aside until <time>`. When the day is over the page is tried once more; a
+failure sets it aside for another day, a success forgets it.
+`kizuki doctor` and `kizuki serve status` print `quarantined typed pages=N`,
+and doctor adds a `quarantined` line with the path, handle, failed passes, end
+of the wait and last error of each. A set-aside page is not a service failure.
+Restored reasons receive the same redaction and length bound before display.
+The state is one `rail_cursors` row per handle, so it survives a restart and a
+backup.
 
 ## Rejected responses and daily budgets
 
@@ -316,6 +369,7 @@ under the current authorization checks.
 Use the repository's pinned Bun version:
 
 ```bash
+bun test packages/core/test/serve/write-pass-release.test.ts packages/core/test/serve/write-pass-stuck.test.ts packages/core/test/canon/write-scaling.test.ts packages/core/test/graph/registry-refresh.test.ts packages/cli/test/tell-writer-busy.test.ts
 bun test packages/core/test/serve/extraction-budget.test.ts packages/core/test/serve/extraction-throughput.test.ts packages/core/test/serve/extraction-rejections.test.ts packages/core/test/serve/oversized-records.test.ts packages/core/test/producer/model.test.ts packages/core/test/source-model-egress.test.ts
 bun test packages/llm/test/openai-compatible.test.ts packages/cli/test/serve/extraction-throughput.test.ts packages/cli/test/serve/oversized-records.test.ts
 bun test packages/core/test

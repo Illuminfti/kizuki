@@ -1,4 +1,4 @@
-import { pendingWorldCanonClaims, worldCanonTarget } from "../canon/world-materialization";
+import { pendingWorldCanonClaims, worldCanonPath, worldCanonTarget } from "../canon/world-materialization";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
 import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
@@ -25,7 +25,7 @@ import type { DroppedDraftV2, ProduceResultV2, ProducerV2Port } from "../contrac
 import { formatProducerDiagnostic, readProducerDiagnostic } from "../producer/diagnostics";
 import { invokeProducer, invokeProducerV2, type ValidatedProduceResult } from "../producer/result";
 import type { WorldDraftInsert } from "../producer/world-drafts";
-import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig, type RunModelReport, type RunOversizedReport } from "./types";
+import { DEFAULT_EXTRACTION_CONFIG, type CanonQuarantineNotice, type ExtractionConfig, type RunModelReport, type RunOversizedReport } from "./types";
 import {
   prepareClaimInsert,
   retryRetrievalOps,
@@ -51,8 +51,14 @@ import { isProducerV2, type ExtractionProducerPort } from "./extract-v2";
 import { backoffRemaining, readRejections, recordRejection, writeRejections } from "./extract-rejections";
 import { redactReceiptError } from "./receipts";
 import { runWorldJobs } from "./world-jobs";
+import { clearStuckPage, listQuarantinedPages, recordStuckPage } from "./write-quarantine";
+import { reconcileCanonGraph } from "../canon/graph-maintenance";
 
-/** One sync pass never materializes more than this many unwritten claims. */
+/**
+ * A pass ends by itself after this many canon writes, or after the run budget's
+ * limit when that is larger, so the vault's `canon_writes_per_run` can raise it.
+ * A smaller run budget stops the pass first, as `budget:canon_writes_per_run`.
+ */
 const WRITE_PASS_LIMIT = 32;
 /** Owner-edited skips stay live; scan past them so they cannot fill the write cap. */
 const WRITE_PASS_SCAN = 256;
@@ -67,6 +73,8 @@ const DAILY_OUTPUT_TOKENS = "model_output_tokens_per_day";
 /** An answered request waits this long for a writer another operation holds before it is discarded. */
 const SETTLE_WAIT_MS = 5_000;
 const SETTLE_POLL_MS = 25;
+/** The writer stays free this long between two pages: twice a waiter's poll, so every poller finds it. */
+const PAGE_GAP_MS = 2 * SETTLE_POLL_MS;
 
 export interface WritePassResult {
   readonly revived: number;
@@ -78,6 +86,7 @@ export interface WritePassResult {
   /** Records extraction passed over for good without claims; each has its reason in `errors`. */
   readonly records_skipped: number;
   readonly canon_writes: number;
+  readonly canon_quarantined: readonly CanonQuarantineNotice[];
   readonly claims_rejected: Readonly<Record<string, number>>;
   readonly model: Omit<RunModelReport, "model_ref">;
   /** Segments filed and records skipped with a retry receipt, for records too large for one request. */
@@ -88,13 +97,13 @@ export interface WritePassResult {
 
 /** A pass's totals, kept across its short writer holds. */
 type PassTally = {
-  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "model" | "oversized" | "errors">]: WritePassResult[K];
-} & { readonly oversized: { segments: number; skipped: number }; readonly errors: string[] };
+  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "model" | "oversized" | "errors" | "canon_quarantined">]: WritePassResult[K];
+} & { readonly oversized: { segments: number; skipped: number }; readonly errors: string[]; readonly canon_quarantined: CanonQuarantineNotice[] };
 
 function emptyTally(): PassTally {
   return {
     revived: 0, claims_extracted: 0, claims_written: 0, claims_written_extracted: 0, claims_deduped: 0,
-    claims_superseded: 0, records_skipped: 0, canon_writes: 0, oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
+    claims_superseded: 0, records_skipped: 0, canon_writes: 0, canon_quarantined: [], oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
   };
 }
 
@@ -371,57 +380,104 @@ export async function runWritePass(
   if (jobs.stopped) { tally.stopped = STOP_REQUESTED; return result(); }
   // No model configured: claims stay live and unwritten; doctor says so.
   if (!modelConfigured(options)) return result();
-  const written = await holdWriter(io, (scope, owned) => {
-    try {
-      settleWriteReservations(owned.db, owned.vault_path);
-      writeCanon(scope, owned, options.budget, tally);
-    } finally {
-      settleWriteReservations(owned.db, owned.vault_path);
-    }
-  });
-  if (!written.held) tally.stopped = written.stopped;
+  await writeCanon(io, options, tally);
   return result();
 }
 
-function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracker, tally: PassTally): void {
+type Page = "wrote" | "failed" | "done";
+
+/**
+ * Materializes unwritten live claims one page at a time. Each page takes the
+ * writer and lets it go again, and a stop request is read between pages, so an
+ * owner verb, a request or a stop waits for one page and not for the pass.
+ */
+async function writeCanon(io: CanonIo, options: WritePassOptions, tally: PassTally): Promise<void> {
+  const limit = Math.max(WRITE_PASS_LIMIT, options.budget.usage().canon_writes_per_run.limit);
+  const now = options.now ?? (() => new Date().toISOString());
+  const attempted = new Set<string>();
+  while (tally.canon_writes < limit) {
+    if (options.stopRequested?.() === true) { tally.stopped = STOP_REQUESTED; return; }
+    reconcileCanonGraph(io.db, io.vault_path);
+    const step = await holdWriter(io, (scope, owned) => {
+      try {
+        settleWriteReservations(owned.db, owned.vault_path);
+        return writeNextPage(scope, owned, options.budget, tally, attempted, now());
+      } finally {
+        settleWriteReservations(owned.db, owned.vault_path);
+      }
+    }, SETTLE_WAIT_MS);
+    if (!step.held) { tally.stopped = step.stopped; return; }
+    if (step.value === "done") return;
+    // A write that could not complete keeps its intent and blocks every later one.
+    if (inspectCanonRecovery(io.db).pending) { tally.stopped = "recovery:held"; return; }
+    await new Promise(resolve => setTimeout(resolve, PAGE_GAP_MS));
+  }
+}
+
+/**
+ * Writes the next page that is not one this pass already tried, or reports
+ * none is left. A typed page that failed too often is skipped for a day; a
+ * claim the arbiter leaves to the owner is passed over without a page.
+ */
+function writeNextPage(
+  scope: VaultMutationScope,
+  io: CanonIo,
+  budget: BudgetTracker,
+  tally: PassTally,
+  attempted: Set<string>,
+  now: string,
+): Page {
   const { db } = io;
-  for (const typedClaims of pendingWorldCanonClaims(db, WRITE_PASS_LIMIT)) {
-    if (tally.canon_writes >= WRITE_PASS_LIMIT) break;
-    const primary=typedClaims[0]!;
-    const decision=worldCanonTarget(db,primary.claim_id);
-    const before=occupyingWriteIds(db);
+  const typed = pendingWorldCanonClaims(db, 1, new Set([...attempted, ...listQuarantinedPages(db, now).map(page => page.handle)]))[0];
+  if (typed !== undefined) {
+    const { handle, claims: typedClaims } = typed;
+    attempted.add(handle);
+    const path = worldCanonPath(handle);
+    const receiptBoundary = lastReceiptRow(db);
+    const before = occupyingWriteIds(db, receiptBoundary);
     try {
-      const receipt=applyCanonWriteOwned(scope,io,typedClaims,decision,{writer:"loop",budget});
-      tally.canon_writes+=1;tally.claims_written+=receipt.claim_ids.length;
-      tally.claims_written_extracted+=typedClaims.filter(claim=>claim.producer==="model"&&receipt.claim_ids.includes(claim.claim_id)).length;
-    } catch(error) {
-      if(!(error instanceof BudgetExhausted))tally.canon_writes+=newOccupyingWrites(before,occupyingWriteIds(db));
-      if(error instanceof BudgetExhausted){tally.stopped=error.stopped;break;}
-      tally.errors.push(redactReceiptError(error));
+      const receipt = applyCanonWriteOwned(scope, io, typedClaims, worldCanonTarget(db, typedClaims[0]!.claim_id), { writer: "loop", budget });
+      tally.canon_writes += 1; tally.claims_written += receipt.claim_ids.length;
+      tally.claims_written_extracted += typedClaims.filter(claim => claim.producer === "model" && receipt.claim_ids.includes(claim.claim_id)).length;
+      clearStuckPage(db, handle);
+      return "wrote";
+    } catch (error) {
+      if (!(error instanceof BudgetExhausted)) tally.canon_writes += newOccupyingWrites(before, occupyingWriteIds(db, receiptBoundary));
+      if (error instanceof BudgetExhausted) { tally.stopped = error.stopped; return "done"; }
+      const reason = redactReceiptError(error);
+      tally.errors.push(`${reason} (page ${handle} at ${path})`);
+      // A recovery hold is the writer's state, not this page's fault.
+      if (!(error instanceof CanonRecoveryError)) {
+        const held = recordStuckPage(db, { handle, path, reason }, now);
+        if (held !== null) {
+          tally.canon_quarantined.push({ handle, path, attempts: held.attempts, until: held.until });
+          tally.errors.push(`typed page ${handle} at ${path} set aside until ${held.until} after ${held.attempts} failed passes`);
+        }
+      }
+      return "failed";
     }
   }
 
-  const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN);
-  for (const claim of pending) {
-    if (tally.canon_writes >= WRITE_PASS_LIMIT) break;
+  for (const claim of listUnwrittenLiveClaims(db, WRITE_PASS_SCAN)) {
+    if (attempted.has(claim.claim_id)) continue;
+    attempted.add(claim.claim_id);
     try {
       if (requiresSourceTombstoneBinding(db, claim)) requireSourceTombstoneProposal(db, claim, io);
       else requireExternalEvents(db, claim.provenance);
       const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
-      const before = occupyingWriteIds(db);
+      const receiptBoundary = lastReceiptRow(db);
+      const before = occupyingWriteIds(db, receiptBoundary);
       try {
-        applyCanonWriteOwned(scope, io, claim, decision, {
-          writer: "loop",
-          budget,
-        });
+        applyCanonWriteOwned(scope, io, claim, decision, { writer: "loop", budget });
         tally.canon_writes += 1;
         tally.claims_written += 1;
         if (claim.producer === "model") tally.claims_written_extracted += 1;
+        return "wrote";
       } catch (error) {
         // File/JSONL can land before the receipt row; count the SQLite slot.
         if (!(error instanceof BudgetExhausted)) {
-          const committed = newOccupyingWrites(before, occupyingWriteIds(db));
+          const committed = newOccupyingWrites(before, occupyingWriteIds(db, receiptBoundary));
           tally.canon_writes += committed;
           tally.claims_written += committed;
         }
@@ -431,20 +487,28 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
       if (error instanceof SelfOriginError) continue;
       if (error instanceof BudgetExhausted) {
         tally.stopped = error.stopped;
-        break;
+        return "done";
       }
       tally.errors.push(redactReceiptError(error));
+      return "failed";
     }
   }
+  return "done";
 }
 
-/** SQLite receipts, live reservations, and pending intents — never the JSONL log. */
-function occupyingWriteIds(db: Database): Set<string> {
+/** Writer ownership keeps this boundary stable until the page finishes. */
+function lastReceiptRow(db: Database): number {
+  if (!tableExists(db, "canon_receipts")) return 0;
+  return db.query<{ row_id: number | null }, []>("SELECT max(rowid) AS row_id FROM canon_receipts").get()?.row_id ?? 0;
+}
+
+/** New SQLite receipts, live reservations, and pending intents — never historical IDs or the JSONL log. */
+function occupyingWriteIds(db: Database, afterReceiptRow: number): Set<string> {
   const ids = new Set<string>();
   if (tableExists(db, "canon_receipts")) {
-    for (const row of db.query<{ receipt_id: string }, []>(
-      "SELECT receipt_id FROM canon_receipts WHERE writer = 'loop'",
-    ).all()) {
+    for (const row of db.query<{ receipt_id: string }, [number]>(
+      "SELECT receipt_id FROM canon_receipts WHERE rowid > ? AND writer = 'loop'",
+    ).all(afterReceiptRow)) {
       ids.add(row.receipt_id);
     }
   }

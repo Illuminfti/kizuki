@@ -72,6 +72,8 @@ export interface CanonPageReport {
   pages: CanonPage[];
   skipped: SkippedPage[];
   truncated: boolean;
+  /** Stat signature of every markdown file the walk looked at, page or not. */
+  signatures: ReadonlyMap<string, string>;
 }
 
 export function stringArray(value: unknown): string[] {
@@ -116,6 +118,9 @@ interface WalkState {
   cache: CanonPageCache | null;
   /** Files remembered by this walk; replaces the cache when the walk ends. */
   remembered: Map<string, ParsedFile>;
+  signatures: Map<string, string>;
+  /** Stat every file but read none: only `signatures` is meaningful. */
+  statOnly: boolean;
 }
 
 function withholdDuplicate(
@@ -156,6 +161,7 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     const stat = lstatSync(path, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isFile()) {
       state.skipped.push(skip(relPath, "unreadable", "unreadable: not a regular file"));
+      state.signatures.set(relPath, "not-a-file");
       return;
     }
     size = Number(stat.size);
@@ -163,8 +169,11 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     signature = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
   } catch (error) {
     state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
+    state.signatures.set(relPath, "unreadable");
     return;
   }
+  state.signatures.set(relPath, signature);
+  if (state.statOnly) return;
 
   if (size > MAX_CANON_PAGE_BYTES) {
     state.skipped.push(
@@ -259,11 +268,12 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
     return;
   }
 
+  const relDirectory = relative(vaultPath, directory).split(sep).join("/");
   for (const entry of entries) {
     if (state.truncated) return;
     if (depth === 0 && (entry.name === ".kizuki" || entry.name === "archive")) continue;
     const target = join(directory, entry.name);
-    const relPath = relative(vaultPath, target).split(sep).join("/");
+    const relPath = relDirectory === "" ? entry.name : `${relDirectory}/${entry.name}`;
     if (entry.isSymbolicLink()) {
       if (isCanonPagePath(relPath)) {
         if (depth + 1 > MAX_CANON_DEPTH) {
@@ -299,24 +309,40 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
   }
 }
 
-export function listCanonPagesReport(
-  vaultPath: string,
-  cache?: CanonPageCache,
-): CanonPageReport {
-  const state: WalkState = {
+function newWalkState(cache: CanonPageCache | null, statOnly: boolean): WalkState {
+  return {
     pages: [],
     skipped: [],
     seen: new Map(),
     files: 0,
     bytes: 0,
     truncated: false,
-    cache: cache ?? null,
+    cache,
     remembered: new Map(),
+    signatures: new Map(),
+    statOnly,
   };
+}
+
+export function listCanonPagesReport(
+  vaultPath: string,
+  cache?: CanonPageCache,
+): CanonPageReport {
+  const state = newWalkState(cache ?? null, false);
   walk(state, vaultPath, vaultPath, 0);
   if (cache !== undefined) cache.files = state.remembered;
   state.skipped.sort((left, right) => compareName(left.relPath, right.relPath));
-  return { pages: state.pages, skipped: state.skipped, truncated: state.truncated };
+  return { pages: state.pages, skipped: state.skipped, truncated: state.truncated, signatures: state.signatures };
+}
+
+/**
+ * What a walk would look at, without reading or parsing any file: the stat
+ * signature of every markdown file. Two equal maps mean no page changed.
+ */
+export function scanCanonSignatures(vaultPath: string): ReadonlyMap<string, string> {
+  const state = newWalkState(null, true);
+  walk(state, vaultPath, vaultPath, 0);
+  return state.signatures;
 }
 
 export function listCanonPages(vaultPath: string): CanonPage[] {
@@ -336,7 +362,7 @@ export function fatalCanonSkips(
 }
 
 /** Stable hash of live page identity and path. Shared by search and graph stamps. */
-export function canonPagesHash(pages: readonly CanonPage[]): string {
+export function canonPagesHash(pages: readonly Pick<CanonPage, "id" | "relPath">[]): string {
   const material = pages
     .map((page) => `${page.id}\t${page.relPath}`)
     .sort()

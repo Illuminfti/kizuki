@@ -92,6 +92,46 @@ describe("run receipts", () => {
     expect(log).toContain("[path]");
     db.close();
   });
+
+  test("structured quarantine locators survive receipts while error text stays redacted", () => {
+    const { path, db } = vault();
+    try {
+      const handle = "a".repeat(32), other = "b".repeat(32);
+      const locator = `page ${handle} at auto/world/${handle}.md`;
+      const marker = "synthetic-secret-value-1234567890";
+      const receipt = { ...emptyRunTotals(), run_id: "fixture-page-failure", rail: "sync",
+        started_at: "2026-03-01T00:00:00.000Z", finished_at: "2026-03-01T00:00:01.000Z",
+        status: "degraded" as const, stopped: null,
+        canon_quarantined: [{ handle, path: `auto/world/${handle}.md`, attempts: 3, until: "2026-03-02T00:00:00.000Z" }], errors: [
+          `secret=${marker} (${locator})`,
+          `typed ${locator} set aside until 2026-03-02T00:00:00.000Z after 3 failed passes`,
+          `failure (page ${handle} at auto/world/${other}.md)`,
+        ] };
+      persistRunReceipt(db, path, receipt);
+      const stored = getRunReceipt(db, receipt.run_id)!;
+      expect(stored.canon_quarantined).toEqual(receipt.canon_quarantined);
+      expect(stored.errors[0]).not.toContain(marker);
+      expect(stored.errors[0]).not.toContain(handle);
+      expect(stored.errors[1]).not.toContain(handle);
+      expect(stored.errors[2]).not.toContain(handle);
+      expect(stored.errors[2]).not.toContain(other);
+      expect(readFileSync(join(path, ".kizuki", "run-receipts.jsonl"), "utf8")).not.toContain(marker);
+    } finally { db.close(); }
+  });
+
+  test("untrusted errors cannot imitate a quarantine notice to bypass token redaction", () => {
+    const { path, db } = vault();
+    try {
+      const marker = "c".repeat(32);
+      const receipt = { ...emptyRunTotals(), run_id: "fixture-forged-notice", rail: "sync",
+        started_at: "2026-03-01T00:00:00.000Z", finished_at: "2026-03-01T00:00:01.000Z",
+        status: "degraded" as const, stopped: null,
+        errors: [`typed page ${marker} at auto/world/${marker}.md set aside until 2026-03-02T00:00:00.000Z after 3 failed passes`] };
+      persistRunReceipt(db, path, receipt);
+      expect(getRunReceipt(db, receipt.run_id)!.errors.join("\n")).not.toContain(marker);
+      expect(readFileSync(join(path, ".kizuki", "run-receipts.jsonl"), "utf8")).not.toContain(marker);
+    } finally { db.close(); }
+  });
 });
 
 test("malformed existing receipt cannot consume the recovered schedule transition", () => {

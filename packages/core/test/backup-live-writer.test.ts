@@ -1,5 +1,5 @@
 import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { backupVault, restoreSnapshot, verifySnapshot } from "../src/snapshot";
@@ -18,6 +18,9 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "kizuki-snapshot-"));
   const vault = join(root, "vault");
   initVault(vault);
+  // The child writes at most 128 pages; each restored snapshot needs room for
+  // the writability check regardless of how quickly those pages land.
+  writeFileSync(join(vault, ".kizuki", "serve.toml"), "[budget]\ncanon_writes_per_day = 1000\n", { mode: 0o600 });
   const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
   disposers.push(() => { db.close(); rmSync(root, { recursive: true, force: true }); });
   return { root, vault, db };
