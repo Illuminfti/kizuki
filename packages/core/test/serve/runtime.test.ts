@@ -65,6 +65,32 @@ test("acquisition failure is receipted without exposing its exception", async ()
   expect(readFileSync(join(f.vault, ".kizuki/run-receipts.jsonl"), "utf8")).not.toContain("synthetic private");
 });
 
+for (const refuses of [false, true]) {
+  test(`cancellation during runtime acquisition records a stop and starts no refresh, refuses=${refuses}`, async () => {
+    const f = fixture();
+    const stop = new AbortController();
+    let refreshes = 0, closes = 0;
+    const receipt = await runRail(f.db, f.vault, "retrieval-sweep", {
+      signal: stop.signal,
+      acquireRuntime: async () => {
+        stop.abort();
+        if (refuses) stop.signal.throwIfAborted();
+        return {
+          hooks: { refresh: async () => {
+            refreshes++;
+            return { indexed: 0, remaining: 0, degraded: [] };
+          } },
+          close: async () => { closes++; },
+        };
+      },
+    });
+    expect(receipt).toMatchObject({ status: "stopped", stopped: "serve:stop_requested", errors: [] });
+    expect(refreshes).toBe(0);
+    expect(closes).toBe(refuses ? 0 : 1);
+    expect(listRunReceipts(f.db)).toEqual([receipt]);
+  });
+}
+
 test("close failure preserves work counts and produces a failed receipt", async () => {
   const f = fixture(); let closes = 0;
   const receipt = await runRail(f.db, f.vault, "sync", {

@@ -494,6 +494,7 @@ async function runRailImpl(
       if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
         throw new Error("rail hooks and acquireRuntime are mutually exclusive");
       }
+      options.signal?.throwIfAborted();
       if (options.ledgerHeld === true) throw new LedgerLeaseHeldError("the ledger writer is held");
       // A failed preflight may append this run's audit receipt only. In particular,
       // do not import older receipt/usage journals before validating a sync decision.
@@ -527,9 +528,12 @@ async function runRailImpl(
         try { runtime = await options.acquireRuntime({ signal: options.signal ?? new AbortController().signal }); }
         catch (error) {
           if (isLedgerBusy(error) || error instanceof LedgerLeaseHeldError) throw error;
+          if (options.signal?.aborted && (error === options.signal.reason ||
+              (error instanceof Error && error.name === "AbortError"))) throw error;
           throw new Error("rail runtime acquisition failed");
         }
       }
+      options.signal?.throwIfAborted();
       hooks = withResolvedModel(runtime?.hooks ?? options.hooks);
       if (rail === "retrieval-sweep" && inspectCanonRecovery(db).projection_pending > 0) {
         const result = await retryCanonProjectionObligations({ db, vault_path: vaultPath,
