@@ -42,7 +42,7 @@ test("typed reads use the actual relay grant and reject source withdrawal",async
   expect(pageDecision(granted,grantedCtx.principal.grant,granted.byPath.get(path)!).allow).toBe(true);
   revokeSourceGrant(f.db,{source_key:w.sourceKey,expected_revision:1,operation_id:"review-withdraw"});
   const withdrawn=loadCanon(grantedCtx);
-  expect(pageDecision(withdrawn,grantedCtx.principal.grant,withdrawn.byPath.get(path)!).allow).toBe(false);
+  expect(withdrawn.byPath.has(path)).toBe(false);
  }finally{f.dispose();}
 });
 
