@@ -169,6 +169,21 @@ test("redaction marker prefixes cannot stand in for redacted values", async () =
   } finally { f.dispose(); }
 });
 
+test("a marker cut by the excerpt bound cannot confirm a redacted prefix", async () => {
+  const f = await serveFixture();
+  try {
+    const keyword = ["pass", "word"].join("");
+    const event = storeEvent(f.db, "cut-marker", "2026-02-28T12:00:00Z",
+      `${".".repeat(584)}${keyword}=redacted`, "person:ada", "public");
+    rebuildDerived(f.db, f.vaultPath);
+    const args = { query: "red*", scope: "ledger" as const };
+    expect((await serveSearch(f.owner(), args)).quoted.map(item => item.event_id)).toContain(event);
+    const answer = await serveSearch(f.agent("reader-public"), args);
+    expect(answer.quoted).toEqual([]);
+    expect(answer.redacted).toBeUndefined();
+  } finally { f.dispose(); }
+});
+
 test("ledger search matches the served excerpt unless full text is requested", async () => {
   const f = await serveFixture();
   try {
