@@ -49,8 +49,10 @@ The serving functions retain a second bounded query for denial bookkeeping.
 That internal query returns identities only, sharing the same filters, order
 and limit as before. It selects no title, body, snippet or event preview. Core
 loads current policy metadata to decide which identities were withheld. The
-public envelope still reports denial counts without exposing withheld IDs or
-content. These helpers are excluded from the public package and query exports;
+owner envelope reports denial counts; agent envelopes omit those counts and
+withheld identities. Agent search also rechecks query terms against served,
+redacted text, as described in [Scoped writes and served-text matching](scoped-write-authorization.md).
+These helpers are excluded from the public package and query exports;
 there is no public unrestricted-query option.
 
 ## Verification

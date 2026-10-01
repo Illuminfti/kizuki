@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Agent proposals and corrections compare and retire only readable claims, and
+  unreadable canon pages remain untouched and unnamed. Search and entity labels
+  match served redacted text; graph limits count authorized edges.
 - Purge is physically total. After it, the purged text is gone from claim and
   proposal payloads (ids, provenance and receipts stay), from archive copies
   and stage images, from the search index and retrieval store, and from freed

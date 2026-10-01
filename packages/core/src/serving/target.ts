@@ -1,7 +1,6 @@
 import { authorize } from "../agents";
 import type { AuditDenial, DenyReason, Grant, Servable } from "../agents";
 import { getClaim, listClaims } from "../claims/store";
-import { sourcePolicyEpoch } from "../ledger/source-grants";
 import { claimReader } from "./claims";
 import type { Claim } from "../contracts/proposal";
 import { identifier } from "./arguments";
@@ -63,17 +62,18 @@ export interface Resolved {
 function visibleTo(ctx: ServeContext, hidden: AuditDenial[] = []): (claim: Claim) => boolean {
   if (ctx.principal.kind === "owner") return () => true;
   const grant = ctx.principal.grant;
-  const reader = claimReader(ctx.db, grant, { owner: false, purpose: "correction" });
-  const sourcePolicy = sourcePolicyEpoch(ctx.db) > 0;
+  const reader = claimReader(ctx.db, grant, { owner: false, purpose: "recall" });
+  const correctionReader = claimReader(ctx.db, grant, { owner: false, purpose: "correction" });
   return (claim) => {
     // The real reason goes to the owner's audit row, never to the caller.
-    if (sourcePolicy && !reader.canRead(claim)) {
+    const decision = authorize(grant, claimServable(claim));
+    if (!decision.allow) hidden.push({ id: claim.claim_id, reason: decision.reason });
+    if (!decision.allow) return false;
+    if (!reader.canRead(claim) || !correctionReader.canRead(claim)) {
       hidden.push({ id: claim.claim_id, reason: "held" });
       return false;
     }
-    const decision = authorize(grant, claimServable(claim));
-    if (!decision.allow) hidden.push({ id: claim.claim_id, reason: decision.reason });
-    return decision.allow;
+    return true;
   };
 }
 
@@ -98,6 +98,8 @@ export function resolve(
 
   const hidden: AuditDenial[] = [];
   const visible = visibleTo(ctx, hidden);
+  const visibility = ctx.principal.kind === "owner" ? undefined
+    : claimReader(ctx.db, ctx.principal.grant, { owner: false, purpose: "recall" }).visibility;
   if (target.claim_id !== undefined) {
     const claim = getClaim(
       ctx.db,
@@ -124,6 +126,7 @@ export function resolve(
       status: "live",
       limit: MAX_CANDIDATES,
       filter: visible,
+      ...(visibility === undefined ? {} : { visibility }),
     });
     if (claims.length === 0) {
       throw refuse("target.claim_key", "names no live claim", hidden);
@@ -140,6 +143,7 @@ export function resolve(
     keyed: true,
     limit: MAX_CANDIDATES,
     filter: visible,
+    ...(visibility === undefined ? {} : { visibility }),
   });
   if (claims.length === 0) {
     throw refuse("target.subject", "names no live keyed claim", hidden);

@@ -10,6 +10,7 @@ import { CorrectError } from "../../src/correction/errors";
 import { getClaimsEpoch } from "../../src/correction/epoch";
 import { OWNER_CONNECTOR_ID } from "../../src/correction/types";
 import { TOOLS } from "../../src/agents/types";
+import { addAgent, OWNER_AGENT_GRANT } from "../../src/agents";
 import { accept } from "../../src/ledger/ledger";
 import { registerConnection } from "../../src/ledger/connections";
 import { revokeSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
@@ -324,6 +325,7 @@ describe("correct", () => {
 
   test("an agent-relayed correct call is owner tier and records its relay", async () => {
     const { fixture, claimId } = await writtenGrace();
+    addAgent(fixture.db, "reviewer", OWNER_AGENT_GRANT);
     const result = await correct(
       {
         db: fixture.db,

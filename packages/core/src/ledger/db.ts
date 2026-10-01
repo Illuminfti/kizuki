@@ -34,7 +34,8 @@ import { applyWorldTables } from "../world/schema";
 import { applyClaimV2TablesV31 } from "./migrations/claim-v2-v31";
 import { applyPurgeReingestV34 } from "./migrations/purge-reingest-v34";
 import { applyCursorStoreV35 } from "./migrations/cursor-store-v35";
-import { CURSOR_STORE_MIGRATION_VERSION, PURGE_REINGEST_MIGRATION_VERSION } from "../world/tables/versions";
+import { applyScopedClaimIdempotency } from "../claims/scoped-idempotency";
+import { SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION, CURSOR_STORE_MIGRATION_VERSION, PURGE_REINGEST_MIGRATION_VERSION } from "../world/tables/versions";
 
 interface Migration {
   version: number;
@@ -231,6 +232,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 33, apply: applyWorldCanonV33 },
   { version: PURGE_REINGEST_MIGRATION_VERSION, apply: applyPurgeReingestV34 },
   { version: CURSOR_STORE_MIGRATION_VERSION, apply: applyCursorStoreV35 },
+  { version: SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION, apply: applyScopedClaimIdempotency },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -298,6 +300,7 @@ function migrate(db: Database, options: { includeStaging?: boolean } = {}): void
     db.transaction(() => {
       applyDerivedV10(db);
       repairClaimsCompatibility(db, options);
+      applyScopedClaimIdempotency(db);
     }).immediate();
     assertLedgerSchema(db, latest);
     return;
@@ -316,6 +319,7 @@ function migrate(db: Database, options: { includeStaging?: boolean } = {}): void
         writeSchemaVersion(db, migration.version);
       }
       repairClaimsCompatibility(db, options);
+      applyScopedClaimIdempotency(db);
       if (rebuildReceipts && db.query("PRAGMA foreign_key_check").get() !== null)
         throw new LedgerStoreError("corrupt", "typed canon migration violated foreign keys");
     }).immediate();

@@ -1,3 +1,4 @@
+import { loadCanon, pageDecision } from "./canon";
 import { assertPageRelPath } from "../canon/paths";
 import { createBudgetTracker, resolveTarget } from "../canon";
 import { applyCanonWriteOwned } from "../canon/apply";
@@ -71,20 +72,36 @@ function unified(relPath: string, before: string, after: string): string {
 function boundPages(ctx: ServeContext, claimKeys: string[]): string[] {
   if (claimKeys.length === 0 || !tableExists(ctx.db, "page_index")) return [];
   const placeholders = claimKeys.map(() => "?").join(", ");
-  return ctx.db
-    .query<{ rel_path: string }, [...string[], number]>(
+  const index = ctx.principal.kind === "owner" ? undefined : loadCanon({ ...ctx, sourcePurpose: "recall" });
+  const pages: string[] = [];
+  const statement = ctx.db
+    .prepare<{ rel_path: string }, string[]>(
       `SELECT DISTINCT p.rel_path AS rel_path
          FROM claim_bindings b JOIN page_index p ON p.page_id = b.page_id
         WHERE b.claim_key IN (${placeholders})
-        ORDER BY p.rel_path LIMIT ?`,
-    )
-    .all(...claimKeys, CORRECTION_MAX_PAGES)
-    .map((row) => row.rel_path);
+        ORDER BY p.rel_path`,
+    );
+  try {
+    for (const { rel_path } of statement.iterate(...claimKeys)) {
+      if (index !== undefined) {
+        const page = index.byPath.get(rel_path);
+        if (page === undefined || !pageDecision(index, ctx.principal.grant, page).allow) continue;
+      }
+      pages.push(rel_path);
+      if (pages.length === CORRECTION_MAX_PAGES) break;
+    }
+    return pages;
+  } finally { statement.finalize(); }
 }
 
 /** The caller has authorized this correction claim and its inherited evidence. */
 export function pendingCanonRewrite(ctx: ServeContext, claim: Claim): CanonRecoveryPending[] | undefined {
-  const pending = correctionRecoveryPending(ctx.db, claim.claim_id);
+  const index = ctx.principal.kind === "owner" ? undefined : loadCanon({ ...ctx, sourcePurpose: "recall" });
+  const pending = correctionRecoveryPending(ctx.db, claim.claim_id).filter(item => {
+    if (index === undefined) return true;
+    const page = index.byPath.get(item.page_path);
+    return page !== undefined && pageDecision(index, ctx.principal.grant, page).allow;
+  });
   const bound = boundPages(ctx, claim.claim_key === null ? [] : [claim.claim_key]);
   for (const path of bound) {
     for (const item of correctionRecoveryPending(ctx.db, claim.claim_id, path)) {
@@ -132,6 +149,14 @@ export function rewriteCanon(
       decision.action === "conflict"
         ? decision.chosen.rel_path
         : decision.rel_path;
+    if (ctx.principal.kind !== "owner") {
+      const index = loadCanon({ ...ctx, sourcePurpose: "recall" });
+      const page = index.byPath.get(relPath);
+      // Neither the write nor its receipt, diff or unreached list may reach
+      // beyond the caller's page read grant.
+      if (page === undefined || !pageDecision(index, ctx.principal.grant, page).allow)
+        return { ...NOTHING, unreached: bound };
+    }
     targetPath = relPath;
     const before = pageText(io, relPath);
     const receipt = applyCanonWriteOwned(scope, io, claim, decision, {

@@ -633,6 +633,8 @@ test("a relaying agent corrects, a node token from another principal is refused,
       target: { world_claim: edge["claim"] },
     });
     expect(done.data!.claim_id).toBeString();
+    expect(done.data!.receipt_id).toBeString();
+    expect(done.data!.rewritten).toHaveLength(1);
     const seen = s.kit.card(
       reader,
       "concept",
@@ -649,6 +651,36 @@ test("a relaying agent corrects, a node token from another principal is refused,
   } finally {
     s.dispose();
   }
+});
+
+test("a scoped typed correction does not materialize or receipt an unreadable unpublished claim", async () => {
+  const s = await scene();
+  try {
+    const hidden = await s.kit.write({ subject: "topic:bayes", predicate: "concept.counterexample",
+      object: { literal: "Unpublished restricted example" }, sensitivity: "private" });
+    const prior = getClaim(s.db, hidden);
+    const relay = { ...s.kit.ctx, principal: authenticate(s.db, addAgent(s.db, "public-relay", {
+      ...OWNER_AGENT_GRANT, ceiling: "public", relay_owner_corrections: true,
+      tools: ["world_view", "correct"],
+    }).token)! };
+    const card = s.kit.card(relay, "concept", s.kit.find(relay, "concept", "Bayesian"));
+    expect(JSON.stringify(card)).not.toContain("Unpublished restricted example");
+    const pageBefore = s.page();
+    const done = await serveCorrect(relay, { statement: "Update using public evidence.", mode: "replace_object",
+      target: { world_claim: definitionRef(card) } });
+    expect(done.data?.rewritten).toHaveLength(1);
+    expect(JSON.stringify(done)).not.toContain(hidden);
+    expect(JSON.stringify(done)).not.toContain("Unpublished restricted example");
+    expect(getClaim(s.db, hidden)).toEqual(prior);
+    expect(s.page()).not.toContain("Unpublished restricted example");
+    expect(s.page()).toContain("Update using public evidence.");
+    expect(s.db.query<{ sensitivity_hint: string }, [string]>(
+      "SELECT sensitivity_hint FROM events WHERE event_id=?",
+    ).get(done.data!.event_id!)?.sensitivity_hint).toBe("private");
+    await undoReceipt({ db: s.db, vault_path: s.vault.path }, done.data!.receipt_id!);
+    expect(s.page()).toBe(pageBefore);
+    expect(getClaim(s.db, hidden)).toEqual(prior);
+  } finally { s.dispose(); }
 });
 
 test("a retired claim takes no second correction, and a mode is part of a correction's identity", async () => {
