@@ -31,11 +31,16 @@ test("full reports retain repeated idle samples and a duration for each warmed o
 
 test("full idle measurements reject a single sample, short windows and inconsistent protocols", () => {
   const report = fullReport();
+  expect(() => parseReport({
+    ...report,
+    protocol: { ...report.protocol, idle_repetitions: 1, idle_observed_ms: [60_001] },
+    metrics: { ...report.metrics, "serve.idle_cpu_percent": distribution("CPU %", [1]) },
+  })).toThrow("invalid benchmark report semantics");
   for (const protocol of [
-    { ...report.protocol, idle_repetitions: 1, idle_observed_ms: [60_001] },
     { ...report.protocol, idle_observed_ms: [60_001, 59_999, 60_003] },
     { ...report.protocol, idle_observed_ms: [60_001] },
     { ...report.protocol, idle_window_ms: 59_999 },
+    { ...report.protocol, idle_window_ms: 90_000 },
     { ...report.protocol, idle_warmup: "omitted" },
   ]) expect(() => parseReport({ ...report, protocol })).toThrow();
   expect(() => parseReport({ ...report, metrics: { ...report.metrics, "serve.idle_cpu_percent": distribution("CPU %", [1]) } })).toThrow();

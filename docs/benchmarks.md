@@ -178,8 +178,9 @@ warmup, zero repetitions/window and an empty duration array.
 The full S and M profiles were measured on 2026-09-30 from clean implementation
 commit `16cb4747265db60d03250aef8cd859897dd1ef38`, using seed 1, Bun 1.3.14,
 linux/x64 and 12 logical CPUs. S began with load averages 54.4, 44.29, 45.5;
-M began with 45.05, 48.61, 47.88. The baseline refresh changes documentation only
-relative to that measurement revision; benchmark and product code match it.
+M began with 45.05, 48.61, 47.88. Subsequent changes affect documentation and
+report-validator tests only; benchmark and product implementations match the
+measurement revision.
 Both reports passed the runtime validator, and their emitted schemas and
 Markdown summaries matched the implementation. The host was shared and busy;
 these numbers are a recorded reference, not an isolated hardware comparison or
@@ -226,7 +227,7 @@ not achieved speedups or release gates.
 | `cold_cli.context_query.wall_ms` | ms | 1302.096 | 1124.169 | 130.210 | 112.417 |
 | `cold_cli.world_discovery.wall_ms` | ms | 724.018 | 656.682 | 72.402 | 65.668 |
 | `doctor.wall_ms` | ms | 968.886 | 1096.763 | 96.889 | 109.676 |
-| `doctor.peak_rss_bytes` | MiB | 137.062 | 162.324 | — | — |
+| `doctor.peak_rss_bytes` | MiB | 137.063 | 162.324 | — | — |
 | `export.wall_ms` | ms | 2779.390 | 117296.101 | 277.939 | 11729.610 |
 | `restore.wall_ms` | ms | 2865.568 | 18385.026 | 286.557 | 1838.503 |
 | `purge.wall_ms` | ms | 1269.766 | 5922.647 | 126.977 | 592.265 |
