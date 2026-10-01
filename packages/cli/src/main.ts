@@ -186,7 +186,8 @@ async function dispatch(argv: string[]): Promise<number> {
     // Global vault parsing happens before command dispatch, but hooks promise silence on errors.
     let verbIndex = 0;
     while (argv[verbIndex] === "--vault" || argv[verbIndex]?.startsWith("--vault=")) {
-      verbIndex += argv[verbIndex] === "--vault" ? 2 : 1;
+      const hasValue = argv[verbIndex + 1] !== undefined && !argv[verbIndex + 1]!.startsWith("--");
+      verbIndex += argv[verbIndex] === "--vault" && hasValue ? 2 : 1;
     }
     if (!(error instanceof UsageError) || argv[verbIndex] !== "hook" || argv[verbIndex + 1] !== "session-start") throw error;
     if (argv.includes("--verbose")) io.err("hook: nothing injected (usage)");

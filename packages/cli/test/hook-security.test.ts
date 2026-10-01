@@ -109,6 +109,15 @@ test.each([
   },
 );
 
+test("a missing vault value before the hook is silent even when followed by another option", () => {
+  const env = isolatedEnv();
+  const args = ["--vault", "--vault", "/nonexistent/vault", "hook", "session-start", "--harness", "generic"];
+  expect(runCli(env, ...args)).toEqual({ exitCode: 0, stdout: "", stderr: "" });
+  expect(runCli(env, ...args, "--verbose")).toEqual({
+    exitCode: 0, stdout: "", stderr: "hook: nothing injected (usage)\n",
+  });
+});
+
 test("generic context drops terminal sequences and record separator controls", async () => {
   const f = seeded(`Atlas note ${controls} end`);
   const run = await hook(f.env, ["--owner", "--vault", f.vault]);
