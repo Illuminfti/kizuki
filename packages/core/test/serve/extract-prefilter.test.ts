@@ -142,7 +142,7 @@ test("a host stop callback runs between prefilter-only extraction steps", async 
   } finally { clearImmediate(task); }
 });
 
-test("denied extraction text changes neither prefilter counts nor step usage", async () => {
+test.each(["purpose", "text field"] as const)("denied extraction %s changes neither prefilter counts nor step usage", async (denial) => {
   const observed = [];
   for (const text of ["ok", "\u{1F44D}", "", recordText(0)]) {
     const vault = throughputVault(24, () => text);
@@ -153,26 +153,30 @@ test("denied extraction text changes neither prefilter counts nor step usage", a
       source_key: source.source_key,
       expected_revision: source.revision,
       operation_id: "deny-extraction",
-      policy: { ...source.policy, purposes: source.policy.purposes.filter(purpose => purpose !== "extract") },
+      policy: denial === "purpose"
+        ? { ...source.policy, purposes: source.policy.purposes.filter(purpose => purpose !== "extract") }
+        : { ...source.policy, allowed_fields: source.policy.allowed_fields.filter(field => field !== "text") },
     });
     const { producer, calls } = fixtureProducer(() => db);
-    const receipt = await runRail(db, vault.vault, "sync", {
-      hooks: { producer, claims: { db }, model_ref: MODEL },
-    });
-    expect(calls).toEqual([]);
-    const cursor = readExtractCursor(db)?.split("\t").at(-1);
-    observed.push({
-      prefiltered: receipt.records_prefiltered,
-      calls: receipt.model.calls,
-      errors: receipt.errors,
-      stopped: receipt.stopped,
-      frontier: vault.eventIds.indexOf(cursor!),
-      deferred: db.query<{ n: number }, []>("SELECT count(*) AS n FROM extract_deferred_inputs").get()!.n,
-    });
+    for (let pass = 0; pass < 2; pass++) {
+      const receipt = await runRail(db, vault.vault, "sync", {
+        hooks: { producer, claims: { db }, model_ref: MODEL },
+      });
+      expect(calls).toEqual([]);
+      const cursor = readExtractCursor(db)?.split("\t").at(-1);
+      observed.push({
+        prefiltered: receipt.records_prefiltered,
+        calls: receipt.model.calls,
+        errors: receipt.errors,
+        stopped: receipt.stopped,
+        frontier: vault.eventIds.indexOf(cursor!),
+        deferred: db.query<{ n: number }, []>("SELECT count(*) AS n FROM extract_deferred_inputs").get()!.n,
+      });
+    }
   }
-  expect(observed).toEqual(Array.from({ length: 4 }, () => ({
-    prefiltered: undefined, calls: 0, errors: [], stopped: null, frontier: 7, deferred: 8,
-  })));
+  expect(observed).toEqual(Array.from({ length: 4 }, () => [7, 15].map(frontier => ({
+    prefiltered: undefined, calls: 0, errors: [], stopped: null, frontier, deferred: frontier + 1,
+  }))).flat());
 });
 
 test("previously deferred short records are consumed without a model call", async () => {
@@ -239,8 +243,8 @@ test("a journaled decision counts its trivial records on replay after restart", 
   expect(readExtractCursor(db)?.endsWith(`\t${vault.eventIds.at(-1)!}`)).toBe(true);
 });
 
-test("journal replay does not count prefiltered text whose extraction grant was withdrawn", async () => {
-  const vault = throughputVault(1, () => "ok");
+test.each([["purpose", "ok"], ["text field", ""]] as const)("journal replay does not count prefiltered text after %s permission was withdrawn", async (denial, text) => {
+  const vault = throughputVault(1, () => text);
   const db = openLedger(vault.ledger);
   disposers.push(vault.dispose, () => db.close());
   const source = inspectSourceGrant(db, "01J00000000000000000000SRC")!;
@@ -259,7 +263,9 @@ test("journal replay does not count prefiltered text whose extraction grant was 
   journalExtractBatch(db, await mineLiveDrafts(db, producer), MODEL, producer);
   setSourceGrant(db, {
     source_key: source.source_key, expected_revision: source.revision, operation_id: "replay-deny-extraction",
-    policy: { ...source.policy, purposes: source.policy.purposes.filter(purpose => purpose !== "extract") },
+    policy: denial === "purpose"
+      ? { ...source.policy, purposes: source.policy.purposes.filter(purpose => purpose !== "extract") }
+      : { ...source.policy, allowed_fields: source.policy.allowed_fields.filter(field => field !== "text") },
   });
   const receipt = await runRail(db, vault.vault, "sync", {
     hooks: { producer, claims: { db }, model_ref: MODEL },

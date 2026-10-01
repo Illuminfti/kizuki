@@ -152,7 +152,8 @@ follow a single order.
 
 Before it plans a request, the loop checks extraction permission, then
 classifies authorized trivial records using a fixed, deterministic rule over
-their kind and text:
+their kind and text. Extraction requires permission for the text field even
+when it is empty, so hidden text cannot change skip counts or step usage:
 
 | Reason | Record |
 | --- | --- |
