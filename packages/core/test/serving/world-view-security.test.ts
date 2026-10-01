@@ -1,16 +1,23 @@
-import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, expect, setDefaultTimeout, setSystemTime, test } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { OWNER, OWNER_AGENT_GRANT, addAgent, authenticate, setGrant } from "../../src/agents";
+import { OWNER, OWNER_AGENT_GRANT, addAgent, authenticate, revokeAgent, setGrant } from "../../src/agents";
+import { readClaimV2Semantic } from "../../src/claims/claim-v2-commit";
+import { semanticKey } from "../../src/claims/claim-v2-keys";
+import { insertClaim } from "../../src/claims/store";
+import { advanceCanonReadGeneration } from "../../src/canon/write-intent";
+import { recordNativeCorrection } from "../../src/correction/evidence";
 import { readWorldView, serveWorldView } from "@kizuki/core/world";
 import { purgeEvents } from "../../src/ledger/purge";
 import { inspectSourceGrant, revokeSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
 import { assertNoninterference, hiddenScene, HIDDEN_MUTATIONS } from "../helpers/noninterference";
 import type { NoninterferenceScene } from "../helpers/noninterference";
 import { worldSeed } from "../helpers/world-seed";
+import { validEvent } from "../fixtures";
 
 setDefaultTimeout(120_000);
 const scenes: NoninterferenceScene[] = [];
-afterEach(() => { for (const made of scenes.splice(0)) made.dispose(); });
+beforeEach(() => setSystemTime(new Date("2030-01-01T00:00:00.000Z")));
+afterEach(() => { for (const made of scenes.splice(0)) made.dispose(); setSystemTime(); });
 const WHEN = { valid: { kind: "all" }, knownAt: { kind: "current" } } as const;
 const REQUIRED = { status: "new_view_required" } as const;
 const concept = (made: NoninterferenceScene) => ({ operation: "concept", concept: made.refs.concept, ...WHEN });
@@ -106,9 +113,38 @@ test("source consent denial invalidates a conditional baseline uniformly and pre
 });
 
 async function duplicateLabelSupport(made: NoninterferenceScene) {
-  await worldSeed(made.db, {
-    sourceKey: "independent-view-source", subject: "topic:bayes", label: "Bayesian updating", discover: false,
-  });
+  const input = { operation: "find_concepts", label: "Bayesian updating", ...WHEN };
+  const before = readWorldView(made.reader, input);
+  if (!("result" in before) || before.result.status !== "current") throw new Error("no discovery");
+  // Source-supplied endpoints are namespace-bound. Independent owner evidence
+  // can attest the existing object through the shared native support writer.
+  for (const claimId of made.visible.concept.claims.slice(0, 2)) {
+    const semantic = readClaimV2Semantic(made.db, claimId);
+    if (semantic?.discriminator !== "assertion") throw new Error("no assertion");
+    const text = "Independent owner evidence for the existing concept.";
+    const event = recordNativeCorrection(made.db, {
+      ...validEvent(), connector_id: "kizuki.owner", source_record_id: `view-support-${claimId}`,
+      text, sensitivity_hint: "public", subjects: [{ subject_id: semantic.subject.id, role: "about" }], metadata: { world_target: {
+        claim_id: claimId, semantic_key: semanticKey(semantic), subject: semantic.subject, predicate: semantic.predicate,
+      } },
+    }, "a".repeat(64));
+    const supported = { ...semantic, schema: "kizuki.claim/v2" as const,
+      perspective: { ...semantic.perspective, anchors: [] },
+      anchors: [{ event_id: event.event_id, start_utf16: 0, end_utf16: text.length }] };
+    const stored = await insertClaim({ db: made.db }, {
+      kind: "claim", body: text, provenance: [event.event_id], producer: "owner", intent: "correct",
+      confidence: 1, sensitivity: "public", subjects: [semantic.subject.id], semantic: supported,
+      events: [{ event_id: event.event_id, connector_id: "kizuki.owner", taint: "owner", text }],
+      world_admission: { schema: "kizuki.world-admission/v1", semantic: supported,
+        rendering: { body: text, frontmatter: {} }, authority: "owner_authored", confidence: 1, epistemicKind: "model_inference" },
+    });
+    expect(stored.outcome).toBe("duplicate");
+    if (stored.outcome !== "duplicate") throw new Error("no independent support");
+    expect(stored.claim.claim_id).toBe(claimId);
+  }
+  const after = readWorldView(made.reader, input);
+  if (!("result" in after) || after.result.status !== "current") throw new Error("no surviving discovery");
+  expect(after.result.data).toEqual(before.result.data);
 }
 
 function deniedDiscoveryBaseline(made: NoninterferenceScene) {
@@ -190,6 +226,154 @@ test("hidden consent revoked after projection preserves conditional bytes, error
   expect(revoked).toBe(1);
 });
 
+test("hidden purge after projection preserves conditional bytes, errors and work at the audited seam", async () => {
+  const armed = new WeakSet<NoninterferenceScene>();
+  let completed = 0, purged = 0;
+  await assertNoninterference({
+    mutations: [{ name: "hidden purge after snapshot", apply: (made) => { armed.add(made); } }],
+    cases: (made) => {
+      const priorView = baseline(made);
+      return [{ name: "audited conditional read", run: (ctx) => {
+        const db = afterSnapshot(ctx.db, () => {
+          if (armed.has(made)) {
+            purgeEvents(made.db, made.vaultPath, { event_id: made.hidden.eventId }, "synthetic-hidden-race-purge");
+            purged++;
+          }
+        });
+        const value = serveWorldView({ ...ctx, db }, { ...concept(made), priorView });
+        expect(value.data).toMatchObject({ result: { status: "unchanged", view: priorView } });
+        completed++;
+        return value;
+      } }];
+    },
+  });
+  expect(completed).toBe(4);
+  expect(purged).toBe(1);
+});
+
+test("visible purge after projection discards conditional data and the retained baseline", async () => {
+  const made = await setup(), priorView = baseline(made);
+  const db = afterSnapshot(made.db, () => {
+    purgeEvents(made.db, made.vaultPath, { event_id: made.visible.concept.eventId }, "synthetic-visible-race-purge");
+  });
+  expect(serveWorldView({ ...made.reader, db }, { ...concept(made), priorView }).data).toMatchObject({ result: REQUIRED });
+  expect(readWorldView(made.reader, { ...concept(made), priorView })).toMatchObject({ result: REQUIRED });
+});
+
+test("unrelated canon publication after projection preserves conditional bytes, errors and work", async () => {
+  const armed = new WeakSet<NoninterferenceScene>();
+  let advanced = 0;
+  await assertNoninterference({
+    mutations: [{ name: "unrelated canon generation after snapshot", apply: (made) => { armed.add(made); } }],
+    cases: (made) => {
+      const priorView = baseline(made);
+      return [{ name: "audited conditional read", run: (ctx) => {
+        const db = afterSnapshot(ctx.db, () => {
+          if (armed.has(made)) {
+            made.db.transaction(() => advanceCanonReadGeneration(made.db)).immediate();
+            advanced++;
+          }
+        });
+        const value = serveWorldView({ ...ctx, db }, { ...concept(made), priorView });
+        expect(value.data).toMatchObject({ result: { status: "unchanged", view: priorView } });
+        return value;
+      } }];
+    },
+  });
+  expect(advanced).toBe(1);
+});
+
+test.each(["erased", "expired", "revoked", "quarantined"])("resume %s after projection returns uniform invalidation", async (cause) => {
+  const made = await setup();
+  const shared = readWorldView(made.reader, {
+    operation: "share", of: { operation: "concept", concept: made.refs.concept }, ...WHEN,
+  });
+  if (!("result" in shared) || !("data" in shared.result) || shared.result.data.schema !== "kizuki.resume-handle/v1") throw new Error("no handle");
+  const owner = { ...made.reader, principal: OWNER };
+  const db = afterSnapshot(made.db, () => {
+    if (cause === "erased") made.db.query("DELETE FROM world_resume_handles").run();
+    if (cause === "expired") setSystemTime(new Date("2030-01-02T00:00:00.000Z"));
+    if (cause === "revoked") revokeAgent(made.db, "narrow-reader");
+    if (cause === "quarantined") made.db.query("UPDATE agents SET quarantined_at=? WHERE name='narrow-reader'").run(new Date().toISOString());
+  });
+  const input = { operation: "resume", handle: shared.result.data.handle, ...WHEN };
+  const value = serveWorldView({ ...owner, db }, input).data;
+  expect(value).toMatchObject({ result: REQUIRED });
+  expect(value).toEqual(readWorldView(owner, { ...input, handle: "A".repeat(43) }));
+  expect(readWorldView(owner, input)).toEqual(value);
+  expect(JSON.stringify(value)).not.toContain("Bayesian updating");
+});
+
+function incompleteSource(made: NoninterferenceScene, sourceKey: string) {
+  const result = JSON.stringify({ stored: 1, duplicates: 0, errors: [], proposals_created: 0, withdrawn: 0, retractions_filed: 0, cursor: null });
+  made.db.query(`INSERT INTO checkpoints(connector_id,source_key,cursor,mode,updated_at,last_run_at,last_result,backfill_complete)
+    VALUES ('world.fixture',?,NULL,'backfill',?,?,?,0)`).run(sourceKey, new Date().toISOString(), new Date().toISOString(), result);
+}
+
+test("coverage-only source revocation after projection removes its gap before the conditional answer", async () => {
+  const made = await setup(), priorView = baseline(made);
+  incompleteSource(made, made.visible.situation.sourceKey);
+  const db = afterSnapshot(made.db, () => revoke(made, made.visible.situation.sourceKey));
+  const input = { ...concept(made), priorView };
+  const value = serveWorldView({ ...made.reader, db }, input).data;
+  expect(value).toMatchObject({ result: { status: "unchanged", view: priorView } });
+  expect(value).toEqual(readWorldView(made.reader, input));
+});
+
+test("coverage becomes partial after projection and cannot return unchanged", async () => {
+  const made = await setup(), priorView = baseline(made);
+  const db = afterSnapshot(made.db, () => incompleteSource(made, made.visible.situation.sourceKey));
+  const input = { ...concept(made), priorView };
+  const value = serveWorldView({ ...made.reader, db }, input).data;
+  expect(value).toMatchObject({ result: { status: "incomplete", reasons: ["coverage"] } });
+  expect(value).toEqual(readWorldView(made.reader, input));
+});
+
+test("coverage-only purge after projection removes the purged source's gap", async () => {
+  const made = await setup(), priorView = baseline(made);
+  incompleteSource(made, made.visible.situation.sourceKey);
+  const db = afterSnapshot(made.db, () => {
+    purgeEvents(made.db, made.vaultPath, { event_id: made.visible.situation.eventId }, "synthetic-coverage-race-purge");
+  });
+  const input = { ...concept(made), priorView };
+  const value = serveWorldView({ ...made.reader, db }, input).data;
+  expect(value).toMatchObject({ result: { status: "unchanged", view: priorView } });
+  expect(value).toEqual(readWorldView(made.reader, input));
+});
+
+test("newly extract-granted backlog after projection makes the conditional answer incomplete", async () => {
+  const made = await setup(), priorView = baseline(made);
+  const grant = inspectSourceGrant(made.db, made.visible.situation.sourceKey)!;
+  const db = afterSnapshot(made.db, () => setSourceGrant(made.db, {
+    source_key: grant.source_key, expected_revision: grant.revision, operation_id: "view-extraction-backlog",
+    policy: { ...grant.policy, purposes: [...grant.policy.purposes, "extract"] },
+  }));
+  const input = { ...concept(made), priorView };
+  const value = serveWorldView({ ...made.reader, db }, input).data;
+  expect(value).toMatchObject({ result: { status: "incomplete", reasons: ["pending_consolidation"] } });
+  expect(value).toEqual(readWorldView(made.reader, input));
+});
+
+test("hidden checkpoint after projection preserves conditional bytes, errors and work", async () => {
+  const armed = new WeakSet<NoninterferenceScene>();
+  let changed = 0;
+  await assertNoninterference({
+    mutations: [{ name: "hidden checkpoint after snapshot", apply: (made) => { armed.add(made); } }],
+    cases: (made) => {
+      const priorView = baseline(made);
+      return [{ name: "audited conditional read", run: (ctx) => {
+        const db = afterSnapshot(ctx.db, () => {
+          if (armed.has(made)) { incompleteSource(made, made.hidden.sourceKey); changed++; }
+        });
+        const value = serveWorldView({ ...ctx, db }, { ...concept(made), priorView });
+        expect(value.data).toMatchObject({ result: { status: "unchanged", view: priorView } });
+        return value;
+      } }];
+    },
+  });
+  expect(changed).toBe(1);
+});
+
 test("visible consent revoked after projection prevents stale data and unchanged at the audited seam", async () => {
   const made = await setup(), priorView = baseline(made);
   const db = afterSnapshot(made.db, () => revoke(made, made.visible.concept.sourceKey));
@@ -225,5 +409,6 @@ test("source revalidation preserves the request purpose when recall remains auth
     policy: { ...grant.policy, purposes: grant.policy.purposes.filter((purpose) => purpose !== "derive") },
   }));
   expect(serveWorldView({ ...ctx, db }, input).data).toMatchObject({ result: REQUIRED });
+  expect(readWorldView(ctx, concept(made))).toEqual({ status: "not_found" });
   expect(readWorldView(made.reader, concept(made))).toMatchObject({ result: { status: "current" } });
 });

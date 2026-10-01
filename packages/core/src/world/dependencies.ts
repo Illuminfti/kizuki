@@ -3,16 +3,19 @@ import type { Database } from "bun:sqlite";
 import type { Eligible } from "./pipeline/eligible";
 import { authorizedSupportSql } from "./policy-sql";
 import { issueWorldRef, type WorldNamespace } from "./references";
+import { sourceCoverage, type SourceCoverageGap } from "./coverage";
 
 /** Complete authorized evidence used by a projection, including evidence omitted from its wire body. */
 export interface WorldDependencies {
   readonly claims: Set<string>;
   readonly supports: Set<string>;
   readonly events: Set<string>;
+  /** Authorized sources and the completeness/backlog gaps observed during assembly. */
+  coverage: { readonly sources: readonly string[]; readonly gaps: readonly SourceCoverageGap[] } | null;
 }
 
 export function worldDependencies(): WorldDependencies {
-  return { claims: new Set(), supports: new Set(), events: new Set() };
+  return { claims: new Set(), supports: new Set(), events: new Set(), coverage: null };
 }
 
 export function recordWorldDependencies(deps: WorldDependencies, item: Eligible): void {
@@ -32,12 +35,16 @@ export function dependencyRefs(db: Database, ns: WorldNamespace, deps: WorldDepe
   ];
 }
 
-/** Always one aggregate row, whether hidden source policy moved or not. No hidden support is read. */
-export function worldDependenciesAuthorized(ctx: ServeContext, deps: WorldDependencies): boolean {
+/** Revalidate support consent and authorized source coverage; hidden state contributes no returned rows. */
+export function worldDependenciesCurrent(ctx: ServeContext, deps: WorldDependencies): boolean {
   const permitted = authorizedSupportSql(ctx);
   const row = ctx.db.query<{ n: number }, (string | number)[]>(`
     SELECT count(*) AS n FROM claim_v2_support s
     WHERE s.support_key IN (SELECT value FROM json_each(?)) AND ${permitted.sql}
   `).get(JSON.stringify([...deps.supports]), ...permitted.bindings);
-  return row?.n === deps.supports.size;
+  if (row?.n !== deps.supports.size) return false;
+  if (deps.coverage === null) return true;
+  const current = worldDependencies();
+  sourceCoverage(ctx, current);
+  return JSON.stringify(current.coverage) === JSON.stringify(deps.coverage);
 }

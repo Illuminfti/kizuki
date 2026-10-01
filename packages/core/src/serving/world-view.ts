@@ -27,9 +27,9 @@ import {
 } from "../world/references";
 import { openView, settleView } from "../world/views/session";
 import type { ViewSession } from "../world/views/session";
-import { worldDependencies, worldDependenciesAuthorized, type WorldDependencies } from "../world/dependencies";
+import { worldDependencies, worldDependenciesCurrent, type WorldDependencies } from "../world/dependencies";
 import { wireDigest } from "../world/views/store";
-import type { ShareData } from "../world/views/resume";
+import { lookupResume, type ShareData } from "../world/views/resume";
 import { isPlainObject } from "../util/validate";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
@@ -207,7 +207,7 @@ function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, depe
     throw new ServeError("unknown_agent", "unknown agent");
   if (!toolAllowed(principal.grant, "world_view"))
     throw new ServeError("tool_not_granted", "tool not granted");
-  ctx = { ...ctx, principal, sourcePurpose: "recall" };
+  ctx = { ...ctx, principal, sourcePurpose: ctx.sourcePurpose ?? "recall" };
   if (!isPlainObject(input)) throw new WorldViewError();
   const op = findWorldOp(registry, input.operation);
   if (op === undefined) throw new WorldViewError();
@@ -299,16 +299,19 @@ export function serveWorldView(
     auditArguments(args),
     ({ ctx: live }) => project(live),
     ({ ctx: live }, served) => {
-      // Revalidate only this projection's authorized evidence on every call,
-      // so unrelated hidden policy changes alter neither the answer nor work.
+      // Revalidate evidence, coverage and resume validity in the output snapshot,
+      // so unrelated hidden policy or purge changes alter neither bytes nor work.
       const current = resolvePrincipal(live.db, live.principal);
       if (current === null) throw new ServeError("unknown_agent", "unknown agent");
       if (!toolAllowed(current.grant, "world_view")) throw new ServeError("tool_not_granted", "tool not granted");
       const changed = readPrincipal?.kind === "agent" && current.kind === "agent" && readPrincipal.grant_epoch !== current.grant_epoch;
       const fresh = { ...live, principal: current };
-      if (!changed && worldDependenciesAuthorized(fresh, dependencies)) return served;
+      const resumeValid = args.operation !== "resume" || (typeof args.handle === "string" && lookupResume(fresh, args.handle) !== null);
+      if (!changed && resumeValid && worldDependenciesCurrent(fresh, dependencies)) return served;
       const data = served.data;
-      if (data !== undefined && "result" in data && "view" in data.result && "kind" in data.result.view) {
+      // Only a newly issued token is pending output. An unchanged baseline
+      // must remain available when reprojection becomes incomplete.
+      if (data !== undefined && "result" in data && data.result.status === "current" && "kind" in data.result.view) {
         live.db.query("DELETE FROM world_view_tokens WHERE token_hash=?").run(wireDigest(data.result.view.token));
       }
       return project(fresh);

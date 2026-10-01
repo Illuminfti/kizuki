@@ -1,15 +1,17 @@
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, expect, setDefaultTimeout, setSystemTime, test } from "bun:test";
 import { readWorldView, serveWorldView } from "@kizuki/core/world";
 import { collectReadFrames, withWorldPipeline } from "@kizuki/core/testing";
 import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
 import { openLedger } from "../../src/ledger/db";
 import type { ServeContext } from "../../src/serving/types";
 import type { Grouper } from "../../src/world/pipeline/group";
-import { checkNoninterference, HIDDEN_MUTATIONS, type ReadCase } from "../helpers/noninterference";
+import { canonicalBytes, checkNoninterference, HIDDEN_MUTATIONS, type ReadCase } from "../helpers/noninterference";
 import { worldSeed } from "../helpers/world-seed";
 import { validateConceptCard, type ConceptCard } from "../../src/contracts/concept-card";
 
 setDefaultTimeout(120_000);
+beforeEach(() => setSystemTime(new Date("2030-01-01T00:00:00.000Z")));
+afterEach(() => setSystemTime());
 
 const view = (label: string, cursor?: string) => ({
   operation: "find_concepts", label, ...(cursor === undefined ? {} : { cursor }),
@@ -171,7 +173,7 @@ test("group size is bounded after authorization and an oversized visible group r
     );
     const before = read([anchor]);
     const hidden = read([anchor, ...invisible]);
-    expect(hidden.result).toEqual(before.result);
+    expect(canonicalBytes(hidden.result)).toEqual(canonicalBytes(before.result));
     expect(hidden.frames[0]!.stats).toEqual(before.frames[0]!.stats);
     for (let i = 0; i < 128; i += 1)
       await worldSeed(db, { subject: `topic:bounded-${i}`, label: `Bounded ${i}`, discover: false });
