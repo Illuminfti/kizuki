@@ -2,6 +2,7 @@ import {
   RETRIEVAL_CAPABILITIES,
   RETRIEVAL_CONTRACT,
   PROVENANCE_ERASURE_CAPABILITY,
+  MUTATION_FENCE_CAPABILITY,
   requireProvenanceErasure,
   validateAbsenceProof,
   validateProvenanceAbsenceProof,
@@ -75,6 +76,12 @@ export async function runRetrievalConformance(
   try {
     port = await harness.create(context.ctx);
     await port.upsert(harness.fixtures.docs.map(validateRetrievalDoc));
+    if (port.descriptor.supports.includes(MUTATION_FENCE_CAPABILITY)) {
+      if (typeof port.fenceMutations !== "function" ||
+          (await port.fenceMutations()).store !== port.descriptor.id) {
+        failures.push("retrieval: declared mutation fence is unavailable or names another store");
+      }
+    }
     const result = await port.search(harness.fixtures.query);
     const ids = result.hits.map(({ doc_id }) => doc_id).sort();
     const expected = [...harness.fixtures.expected_doc_ids].sort();

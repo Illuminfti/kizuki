@@ -12,7 +12,7 @@ import { recoverCanonWrites } from "../../src/canon/recovery";
 import { canonReadGeneration, inspectCanonRecovery, readCanonWriteIntent } from "../../src/canon/write-intent";
 import { readCanonProjectionObligation, retryCanonProjectionObligations } from "../../src/canon/projection-obligations";
 import { undoReceipt } from "../../src/canon/undo";
-import { getClaim } from "../../src/claims/store";
+import { claimRetrievalDoc, getClaim, pendingRetrievalOps, retryRetrievalOps } from "../../src/claims/store";
 import { createDurableWriteBudget, readDailyBudget, settleWriteReservations } from "../../src/serve/budget-ledger";
 import { registerConnection } from "../../src/ledger/connections";
 import { accept } from "../../src/ledger/ledger";
@@ -353,7 +353,7 @@ test("source revocation during actual engine upsert prevents acknowledgment and 
   expect(getCanonReceipt(f.db, receipt.receipt_id)).toEqual(receipt);
 });
 
-test("child death after real engine mutation retains unknown execution even after the local lease is reacquired", async () => {
+test("child death after real engine mutation reconciles only after the native generation is fenced", async () => {
   const f = await fixture(), temporary = temporaryPortContext(FTS5_RETRIEVAL_DESCRIPTOR);
   cleanup.push(temporary.cleanup);
   const receipt = write({ ...f.io, retrieval_store: FTS5_RETRIEVAL_DESCRIPTOR.id }, f.claim);
@@ -372,10 +372,93 @@ test("child death after real engine mutation retains unknown execution even afte
   const port = createFts5RetrievalPort(temporary.ctx); cleanup.push(() => { void port.close(); });
   const actual = await port.search({ text: "partnerships", mode: "lexical", scope: { kinds: ["page"] }, ceiling: "private", limit: 5, deadline_ms: 1000 });
   expect(actual.hits[0]?.doc_id).toBe(receipt.retrieval_ops[0]!.doc);
-  await expect(retryCanonProjectionObligations({ ...f.io, retrieval: port })).rejects.toThrow("projection_pending");
-  await expect(undoReceipt({ ...f.io, retrieval: port }, receipt.receipt_id)).rejects.toThrow("projection_pending");
-  expect(getCanonReceipt(f.db, receipt.receipt_id)?.reverted_by).toBeNull();
+  expect((await retryCanonProjectionObligations({ ...f.io, retrieval: port })).completed).toEqual([receipt.receipt_id]);
+  expect(readCanonProjectionObligation(f.db, receipt.receipt_id)).toBeNull();
+  expect((await retryCanonProjectionObligations({ ...f.io, retrieval: port })).completed).toEqual([]);
+  const reverted = await undoReceipt({ ...f.io, retrieval: port }, receipt.receipt_id);
+  expect(getCanonReceipt(f.db, receipt.receipt_id)?.reverted_by).toBe(reverted.receipt_id);
+  expect((await port.verifyAbsent([receipt.retrieval_ops[0]!.doc])).found).toEqual([]);
+});
+
+test("started native publication revalidates source authority after fencing and retains its hold on denial", async () => {
+  const f = await fixture(true), temporary = temporaryPortContext(FTS5_RETRIEVAL_DESCRIPTOR);
+  cleanup.push(temporary.cleanup);
+  const port = bindLocalSourcePort(createFts5RetrievalPort(temporary.ctx), { store_id: "local:fenced-recovery" });
+  cleanup.push(() => { void port.close(); });
+  const io = { ...f.io, retrieval: port, retrieval_store: port.descriptor.id };
+  const receipt = write(io, f.claim), upsert = port.upsert.bind(port);
+  port.upsert = async docs => { await upsert(docs); throw new Error("synthetic lost response"); };
+  await expect(retryCanonProjectionObligations(io)).rejects.toThrow("synthetic lost response");
+  port.upsert = upsert;
+  const fence = port.fenceMutations.bind(port);
+  let calls = 0;
+  port.upsert = async docs => { calls++; return upsert(docs); };
+  port.fenceMutations = async () => {
+    const result = await fence();
+    revokeSourceGrant(f.db, { source_key: f.source!, expected_revision: 1, operation_id: "synthetic-revoke-during-fence" });
+    return result;
+  };
+  await expect(retryCanonProjectionObligations(io)).rejects.toThrow("authority_changed");
+  expect(calls).toBe(0);
   expect(readCanonProjectionObligation(f.db, receipt.receipt_id)?.value.external_execution).toEqual(["started"]);
+});
+
+test("a fence error or mismatched proof cannot schedule an unknown publication", async () => {
+  const f = await fixture(), temporary = temporaryPortContext(FTS5_RETRIEVAL_DESCRIPTOR);
+  cleanup.push(temporary.cleanup);
+  const port = createFts5RetrievalPort(temporary.ctx); cleanup.push(() => { void port.close(); });
+  const io = { ...f.io, retrieval: port, retrieval_store: port.descriptor.id };
+  const receipt = write(io, f.claim), upsert = port.upsert.bind(port);
+  port.upsert = async docs => { await upsert(docs); throw new Error("synthetic lost response"); };
+  await expect(retryCanonProjectionObligations(io)).rejects.toThrow("synthetic lost response");
+  let calls = 0;
+  port.upsert = async docs => { calls++; return upsert(docs); };
+  port.fenceMutations = async () => { throw new Error("synthetic fence busy"); };
+  await expect(retryCanonProjectionObligations(io)).rejects.toThrow("synthetic fence busy");
+  port.fenceMutations = async () => ({ store: "kizuki.retrieval.second" });
+  await expect(retryCanonProjectionObligations(io)).rejects.toThrow("authority_changed");
+  expect(calls).toBe(0);
+  expect(readCanonProjectionObligation(f.db, receipt.receipt_id)?.value.external_execution).toEqual(["started"]);
+});
+
+for (const missing of ["capability", "method"] as const) {
+  test(`unknown publication stays held without a fence ${missing}`, async () => {
+    const f = await fixture(), temporary = temporaryPortContext(FTS5_RETRIEVAL_DESCRIPTOR);
+    cleanup.push(temporary.cleanup);
+    const descriptor = { ...FTS5_RETRIEVAL_DESCRIPTOR,
+      ...(missing === "capability" ? { supports: ["lexical", "provenance-erasure/v1"] } : {}),
+    };
+    const port = createFts5RetrievalPort(temporary.ctx, descriptor); cleanup.push(() => { void port.close(); });
+    if (missing === "method") Object.defineProperty(port, "fenceMutations", { value: undefined });
+    const io = { ...f.io, retrieval: port, retrieval_store: port.descriptor.id };
+    const receipt = write(io, f.claim), upsert = port.upsert.bind(port);
+    port.upsert = async docs => { await upsert(docs); throw new Error("synthetic lost response"); };
+    await expect(retryCanonProjectionObligations(io)).rejects.toThrow("synthetic lost response");
+    let calls = 0;
+    port.upsert = async docs => { calls++; return upsert(docs); };
+    await expect(retryCanonProjectionObligations(io)).rejects.toThrow("projection_pending");
+    expect(calls).toBe(0);
+    expect(readCanonProjectionObligation(f.db, receipt.receipt_id)?.value.external_execution).toEqual(["started"]);
+    expect(getCanonReceipt(f.db, receipt.receipt_id)).toEqual(receipt);
+  });
+}
+
+test("undo journals native claim lifecycle publication in its canon transaction and restart removes the reverted claim", async () => {
+  const f = await fixture(), temporary = temporaryPortContext(FTS5_RETRIEVAL_DESCRIPTOR);
+  cleanup.push(temporary.cleanup);
+  const port = createFts5RetrievalPort(temporary.ctx); cleanup.push(() => { void port.close(); });
+  await port.upsert([claimRetrievalDoc(f.claim)]);
+  const io = { ...f.io, retrieval: port, retrieval_store: port.descriptor.id };
+  const receipt = write(io, f.claim);
+  await retryCanonProjectionObligations(io);
+  const reverted = await undoReceipt({ ...f.io, retrieval_store: port.descriptor.id }, receipt.receipt_id);
+  expect(reverted.projection_pending).toBe(true);
+  expect(pendingRetrievalOps(f.db).map(op => op.doc_id)).toContain(f.claim.claim_id);
+  f.reopen(); recoverCanonWrites(f.io);
+  await retryCanonProjectionObligations({ ...f.io, retrieval: port });
+  await retryRetrievalOps({ db: f.db, retrieval: port });
+  expect((await port.verifyAbsent([`claim:${f.claim.claim_id}`, receipt.retrieval_ops[0]!.doc])).found).toEqual([]);
+  expect(pendingRetrievalOps(f.db)).toEqual([]);
 });
 
 test("pending revert after admit-before-stage crash restores independent B survivor on A revocation", async () => {

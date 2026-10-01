@@ -139,7 +139,7 @@ Each external operation has one durable state:
 | State | Meaning | Recovery behavior |
 | --- | --- | --- |
 | `scheduled` | No execution attempt has started | May execute with the matching configured store and current source permission |
-| `started` | An attempt began; its outcome may be unknown | Remains held; automatic retry and successor writes are refused |
+| `started` | An attempt began; its outcome may be unknown | Requires an opt-in store-generation mutation fence before replay; otherwise remains held |
 | `acknowledged` | The port reported success and all continuation checks passed | May finish the remaining projection work and clear its hold |
 
 The writer commits `started` before calling an engine. It acknowledges an upsert
@@ -149,20 +149,39 @@ page bytes, receipt, store identity and read generation before acknowledging the
 same obligation by digest. A lost response, thrown operation or process death
 does not prove that an old write can no longer arrive.
 
-Version 1 provides no local-engine exception to the unknown-outcome rule. Even a
-newly acquired local engine lease leaves a previously `started` operation held.
-This limit is deliberate and must be reported as pending, not as a universal
-automatic recovery guarantee.
+The opt-in `mutation-fence/v1` capability adds `fenceMutations` without changing
+existing retrieval store formats. Its
+method must prove exclusive ownership of the current store generation and that
+all prior mutations have stopped and cannot publish later. Ownership lasts
+until the instance closes. Native FTS5 provides this through its lifetime kernel
+lock, current root/lock/store/database identities, synchronous SQL mutations,
+and SQLite writer acquisition. It refuses a pending asynchronous rebuild or
+changed custody; retained mutations also refuse a replaced generation.
 
-`retryCanonProjectionObligations` resumes known scheduled work. Undo first tries
-to settle prior work on its page and refuses a successor while that work remains
-pending. If undo's own canon transition commits but its external projection
+Recovery checks the obligation and source permission before fencing, then
+revalidates page bytes, receipt, policy epoch, source permission, store identity
+and canon read generation after the await. Only then may it change `started`
+back to `scheduled` by digest and replay the same idempotent operation. Another
+crash at either boundary is recoverable through the same checks. This creates
+no new canon receipt and does not grant authority from a successful fence.
+
+Ports without the capability and method remain held. The remote adapter does
+not forward a server's native fence: delayed transport requests would need a
+separate protocol. A caller lease, timeout or reopened connection alone never
+permits unknown-execution replay.
+
+`retryCanonProjectionObligations` resumes scheduled work and safely fenced
+native work. Undo first tries to settle prior work on its page and refuses a
+successor while that work remains pending. If undo's own canon transition commits but its external projection
 cannot complete, its result includes `projection_pending: true`; the receipt,
 archive and claim lifecycle stay durably bound to that one undo.
+Claim lifecycle publication is queued in that same transaction using the
+original receipt's store binding, so restart can remove reverted claims or
+republish reinstated claims even when the port was unavailable during undo.
 
 ## Owner commands and source withdrawal
 
-`kizuki recover --json` attempts the original write and known scheduled projection
+`kizuki recover --json` attempts the original write and eligible projection
 work. It exits unsuccessfully while completion fails or any hold remains.
 `kizuki doctor` reports pending recovery, and both doctor and `serve status`
 fail when a write intent has been pending for more than 300 seconds, naming the

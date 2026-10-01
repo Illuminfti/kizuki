@@ -24,6 +24,15 @@ test("native advisory lock refuses symlink and hardlink aliases", () => {
   linkSync(actual, join(root, "hard"));
   expect(() => tryAdvisoryFileLock(join(root, "hard"))).toThrow();
 });
+test("a retained advisory lock detects replacement and release", () => {
+  const path = join(fixture(), "held.lock"), lock = tryAdvisoryFileLock(path)!;
+  try {
+    lock.assertCurrent();
+    rmSync(path); writeFileSync(path, "", { mode: 0o600 });
+    expect(() => lock.assertCurrent()).toThrow("identity changed");
+  } finally { lock.release(); }
+  expect(() => lock.assertCurrent()).toThrow("closed");
+});
 test("actual child death releases kernel ownership on the unchanged inode", async () => {
   const path = join(fixture(), "held.lock"), module = fileURLToPath(new URL("../../src/util/advisory-file-lock.ts", import.meta.url));
   const child = Bun.spawn([process.execPath, "--eval", `const {tryAdvisoryFileLock}=await import(${JSON.stringify(module)}); const lock=tryAdvisoryFileLock(${JSON.stringify(path)}); if(!lock)process.exit(2); console.log('held'); await Bun.stdin.text();`], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });

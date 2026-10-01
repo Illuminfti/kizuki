@@ -9,6 +9,7 @@ function load() {
 }
 
 export interface AdvisoryFileLock {
+  assertCurrent(): void;
   release(): void;
 }
 
@@ -23,7 +24,16 @@ export function tryAdvisoryFileLockFd(fd: number, current: () => { ino: number; 
       throw new Error("advisory file lock identity changed");
     }
     let released = false;
-    return { release() { if (!released) { released = true; closeSync(fd); } } };
+    return {
+      assertCurrent() {
+        if (released) throw new Error("advisory file lock is closed");
+        const held = fstatSync(fd), named = current();
+        if (!held.isFile() || held.nlink !== 1 || !named.isFile() || held.ino !== named.ino || held.dev !== named.dev) {
+          throw new Error("advisory file lock identity changed");
+        }
+      },
+      release() { if (!released) { released = true; closeSync(fd); } },
+    };
   } catch {
     closeSync(fd);
     throw new Error("advisory file lock acquisition failed");

@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -21,6 +22,7 @@ import {
   RETRIEVAL_CONTRACT,
   RETRIEVAL_CONTRACT_MINOR,
   PROVENANCE_ERASURE_CAPABILITY,
+  MUTATION_FENCE_CAPABILITY,
   validateProvenanceEventIds,
   requireRetrievalCapability,
   validateRetrievalDoc,
@@ -64,7 +66,7 @@ export const FTS5_RETRIEVAL_DESCRIPTOR = {
   kind: "retrieval",
   contract: RETRIEVAL_CONTRACT,
   contract_minor: RETRIEVAL_CONTRACT_MINOR,
-  supports: ["lexical", PROVENANCE_ERASURE_CAPABILITY],
+  supports: ["lexical", PROVENANCE_ERASURE_CAPABILITY, MUTATION_FENCE_CAPABILITY],
   requires_lease: true,
   optional_package: null,
 } as const satisfies PortDescriptor;
@@ -134,6 +136,8 @@ export class Fts5RetrievalPort implements RetrievalPort {
   private readonly lock: AdvisoryFileLock;
   private readonly ownedRoot: OwnedDirectory | null;
   private rebuilding = false;
+  private readonly storeIdentity: { dev: number; ino: number };
+  private readonly databaseIdentity: { dev: number; ino: number };
 
   constructor(
     ctx: PortContext,
@@ -157,12 +161,41 @@ export class Fts5RetrievalPort implements RetrievalPort {
       this.db.exec("PRAGMA secure_delete = ON");
       initFts5RetrievalStore(this.db);
       chmodSync(dbPath, 0o600);
+      this.storeIdentity = lstatSync(join(ctx.data_dir, "store"));
+      this.databaseIdentity = lstatSync(dbPath);
       this.ensureEngineJson();
     } catch (error) {
       this.db.close();
       this.lock.release();
       this.ownedRoot?.close();
       throw error;
+    }
+  }
+
+  async fenceMutations(): Promise<{ store: string }> {
+    this.assertMutable();
+    if (this.ownedRoot === null) throw new PortError("not_supported", "native mutation fencing is unsupported", false);
+    // A replaced lock name must not let a still-running SQL transaction pass
+    // the fence. Acquiring SQLite's writer proves that transaction has ended.
+    this.db.transaction(() => {
+      this.assertGeneration();
+    }).immediate();
+    return { store: this.descriptor.id };
+  }
+
+  private assertGeneration(): void {
+    try {
+      this.ownedRoot?.assertCurrent();
+      this.lock.assertCurrent();
+      const store = lstatSync(join(this.ctx.data_dir, "store"));
+      const database = lstatSync(join(this.ctx.data_dir, FTS5_RETRIEVAL_STORE_REL));
+      if (!store.isDirectory() || !database.isFile() || database.nlink !== 1 ||
+          store.dev !== this.storeIdentity.dev || store.ino !== this.storeIdentity.ino ||
+          database.dev !== this.databaseIdentity.dev || database.ino !== this.databaseIdentity.ino) {
+        throw new Error("owned generation changed");
+      }
+    } catch {
+      throw new PortError("unavailable", "native mutation fence custody changed", false);
     }
   }
 
@@ -175,6 +208,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
 
   private writeDocs(validated: readonly RetrievalDoc[]): RetrievalMutationReport {
     this.db.transaction(() => {
+      this.assertGeneration();
       const removeDocs = this.db.query<never, [string]>(
         "DELETE FROM search_docs WHERE doc_id = ?",
       );
@@ -264,7 +298,9 @@ export class Fts5RetrievalPort implements RetrievalPort {
         docs.push(structuredClone(validateRetrievalDoc(doc)));
       }
       this.assertOpen();
+      this.assertGeneration();
       this.db.transaction(() => {
+        this.assertGeneration();
         this.db.exec("DELETE FROM search_docs; DELETE FROM search_documents");
         this.writeDocs(docs);
         this.setMeta("rebuilt_at", this.ctx.clock());
@@ -278,6 +314,8 @@ export class Fts5RetrievalPort implements RetrievalPort {
   private assertMutable(): void {
     this.assertOpen();
     if (this.rebuilding) throw new PortError("unavailable", "retrieval rebuild is in progress", true);
+    // No retained instance may publish into a replaced lock/store generation.
+    this.assertGeneration();
   }
 
   async search(query: RetrievalQuery): Promise<RetrievalResult> {
@@ -376,7 +414,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
            authority
          FROM search_docs
          WHERE ${clauses.join(" AND ")}
-         ORDER BY ${rankExpr},
+         ORDER BY score DESC,
            CASE authority
              WHEN 'owner_correction' THEN 0
              WHEN 'owner_authored' THEN 1
@@ -423,6 +461,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
     this.assertMutable();
     const values = JSON.stringify(byProvenance ? ids.flatMap(id => [id, `event:${id}`]) : ids);
     this.db.transaction(() => {
+      this.assertGeneration();
       for (const table of ["search_documents", "search_docs"] as const) {
         const condition = byProvenance
           ? `EXISTS (SELECT 1 FROM json_each(${table}.provenance) AS p WHERE p.value IN (SELECT value FROM json_each(?)))`
@@ -585,6 +624,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
   }
 
   private projectEngineJson(): void {
+    this.assertGeneration();
     const path = join(this.ctx.data_dir, FTS5_RETRIEVAL_ENGINE_REL);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     const content = `${JSON.stringify(this.committedEngine())}\n`;
