@@ -143,6 +143,7 @@ mnemonic-like lowercase word runs
 Wrapped tokens, quoted or re-flowed PEM headers, blank lines after an assignment and
 percent-encoded credential forms are recognized. Existing redaction markers
 are inert on a second envelope pass, so each replacement is counted once.
+Complete credentials on consecutive lines retain separate replacement counts.
 The redactor tracks windows and rendered blocks within each call, preserving
 clipped markers while still checking credentials newly formed across fields.
 It covers `search`, `get_page`, `timeline` and expansion, every context-packet

@@ -169,6 +169,9 @@ function spans(text: string): Span[] {
   }
   for (const match of matches(text, JWT)) found.push({ kind: "jwt", start: match.index, end: match.index + match[0].length });
   for (const match of matches(text, API_TOKEN)) found.push({ kind: "api_token", start: match.index, end: match.index + match[0].length });
+  // An independently recognizable credential on the next line is not a
+  // continuation. Reuse detected starts rather than scanning each suffix again.
+  const credentialStarts = new Set(found.map((span) => span.start));
   for (const match of matches(text, WRAPPED_TOKEN)) {
     // A following assignment is a sibling field, not the key's continuation.
     if (/^[ \t]*[:=]/.test(text.slice(match.index + match[0].length))) continue;
@@ -177,8 +180,10 @@ function spans(text: string): Span[] {
     // followed by prose. A short word within a following sentence is preserved.
     const first = match[1]! + match[2]!;
     const standalone = /^[ \t]*(?:\r?\n|$)/.test(text.slice(match.index + match[0].length));
+    const continuationStart = match.index + match[0].length - match[3]!.length;
     if ([...matches(first, API_TOKEN)].length > 0 &&
-        (/^(?:kzk_|kzs_|AKIA|ASIA)$/.test(match[1]!) || (!standalone && match[3]!.length < 16))) continue;
+        (credentialStarts.has(continuationStart) || /^(?:kzk_|kzs_|AKIA|ASIA)$/.test(match[1]!) ||
+         (!standalone && match[3]!.length < 16))) continue;
     // Validate the joined shape with the same pattern, rather than a second token catalogue.
     const joined = first + match[3]!;
     if ([...matches(joined, API_TOKEN)].length > 0) {
