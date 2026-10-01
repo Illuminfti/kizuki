@@ -565,7 +565,7 @@ in [what an agent is served](agent-enrollment.md#what-an-agent-is-served).
 Status: shipped
 
 ```text
-usage: kizuki hook session-start --harness claude-code|codex|generic [--budget N] [--timeout-ms MS] [--token-ref env:VAR|file:/absolute/path] [--direct] [--verbose]
+usage: kizuki hook session-start --harness claude-code|codex|generic [--budget N] [--timeout-ms MS] [--token-ref env:VAR|file:/absolute/path | --owner] [--direct] [--verbose]
 ```
 
 Prints a compact, bounded, provenance-labelled context block
@@ -579,7 +579,9 @@ claude-code` and `--harness codex` print
 `--harness generic` prints the plain text. Quoted and taint labels stay on the
 lines. `--budget` is 50 to 2000 tokens (default 450) and `--timeout-ms` is 100
 to 60000 (default 2500). `--token-ref` reads as an enrolled agent, so the call is
-audited under that agent's name; without it the hook reads as the owner. The
+audited under that agent's name. Without it the hook prints nothing unless
+`--owner` explicitly selects owner authority. Every principal's hook output is
+secret-scrubbed at the agent grade and stripped of terminal controls. The
 reference is a file or an environment variable, never the token itself.
 
 It exits 0 and prints nothing on a timeout, a denied or revoked credential, a
@@ -589,7 +591,10 @@ to standard error and never a path, token or captured text. `--direct` reads in
 the current process without contacting the daemon; its deadline cannot interrupt
 a read already running. A misconfigured command is silent and exits 0 too, and
 out-of-range numbers are clamped to their bounds, so a settings typo never
-fails a session. The hook writes nothing and
+fails a session, including malformed `--vault` arguments. Output over 64 KiB
+(including UTF-8 encoding, JSON framing and the final newline) is omitted;
+`--verbose` reports `oversized`. Source installs must use the safe Bun launcher
+in [integrations](integrations.md#how-the-hook-behaves). The hook writes no canon and
 contacts only the loopback daemon. See [integrations](integrations.md) for
 Claude Code, Codex and generic recipes.
 

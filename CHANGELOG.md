@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Make session hooks require a scoped credential or explicit `--owner`, scrub
+  every principal's output, bypass proxies on loopback, isolate fallback startup
+  and environment, remove terminal controls, cap output at 64 KiB, and keep
+  vault argument errors silent with accurate timeout diagnostics.
+
 ### Fixed
 
 - Purge is physically total. After it, the purged text is gone from claim and
