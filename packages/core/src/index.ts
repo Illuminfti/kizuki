@@ -516,7 +516,7 @@ export type {
   CorrectResult,
 } from "./correction";
 
-export { doctorVault } from "./vault/doctor";
+export { doctorVault, inspectDoctorCanon } from "./vault/doctor";
 export type { DoctorPageResult, DoctorVaultResult } from "./vault/doctor";
 export { parseFrontmatter, serializePage } from "./vault/frontmatter";
 export type { VaultPage } from "./vault/frontmatter";
@@ -643,10 +643,14 @@ export {
   isLiveCanonPage,
   listCanonPages,
   listCanonPagesReport,
+  scanCanonPages,
 } from "./vault/pages";
 export type {
   CanonPage,
   CanonPageReport,
+  CanonPageMetadata,
+  CanonPageHeader,
+  CanonScanReport,
   ScanFailureCode,
   SkippedPage,
 } from "./vault/pages";

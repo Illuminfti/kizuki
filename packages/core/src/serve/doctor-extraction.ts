@@ -14,29 +14,13 @@ const TRUNCATION_HINT_AFTER = 3;
 const TRUNCATION_HINT =
   'responses keep being truncated: set [ports.llm] reasoning_effort (for example "low") or raise [extraction] max_output_tokens in serve.toml';
 
-function truncated(receipt: RunReceipt): boolean {
+export function isTruncatedReceipt(receipt: RunReceipt): boolean {
   const diagnostic = receipt.model.diagnostic;
   return (
     receipt.model.last_request !== "answered" &&
     diagnostic?.stage === "response" &&
     diagnostic.rule === "response_truncated"
   );
-}
-
-/**
- * Newest-first passes whose request came back truncated. A pass that made no
- * request neither extends nor ends the run; any other outcome ends it.
- */
-function consecutiveTruncations(syncReceipts: readonly RunReceipt[]): number {
-  let count = 0;
-  for (let index = syncReceipts.length - 1; index >= 0; index -= 1) {
-    const receipt = syncReceipts[index];
-    if (receipt === undefined) continue;
-    if (truncated(receipt)) count += 1;
-    else if (receipt.model.calls > 0 || receipt.model.diagnostic !== undefined)
-      break;
-  }
-  return count;
 }
 
 function lastExtractedAt(db: Database): string | null {
@@ -52,18 +36,16 @@ function lastExtractedAt(db: Database): string | null {
 
 /**
  * How far extraction has got. The backlog is what waits past the extract
- * cursor for a granted source, counted up to a bound; `syncReceipts` is
- * oldest first and only reads the fields every receipt has, so older receipts
- * simply count nothing.
+ * cursor for a granted source, counted up to a bound. The caller supplies
+ * the consecutive truncation count from its bounded receipt window.
  */
 export function extractionDoctor(
   db: Database,
-  syncReceipts: readonly RunReceipt[],
+  rejections: number,
   modelOn: boolean,
 ): ExtractionDoctor {
   const counted = extractBacklog(db, EXTRACT_BACKLOG_CAP);
   const capped = counted >= EXTRACT_BACKLOG_CAP;
-  const rejections = consecutiveTruncations(syncReceipts);
   const hint = rejections >= TRUNCATION_HINT_AFTER ? TRUNCATION_HINT : null;
   const last = lastExtractedAt(db);
   return {

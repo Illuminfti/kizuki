@@ -147,12 +147,9 @@ export function parseFrontmatter(markdown: string): VaultPage {
     if (Object.prototype.hasOwnProperty.call(data, key)) {
       throw new SyntaxError(`${key}: duplicate frontmatter key`);
     }
-    Object.defineProperty(data, key, {
-      value: parseValue(line.slice(separator + 1).trim(), key),
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
+    const value = parseValue(line.slice(separator + 1).trim(), key);
+    // KEY refuses leading underscores, including the inherited prototype setter.
+    data[key] = value;
   }
 
   return {

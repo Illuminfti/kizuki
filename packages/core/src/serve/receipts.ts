@@ -2,14 +2,14 @@ import type { Database } from "bun:sqlite";
 import {
   appendFileSync,
   closeSync,
+  constants,
   existsSync,
   fstatSync,
+  ftruncateSync,
   fsyncSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readSync,
-  renameSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -19,6 +19,7 @@ import { sha256Hex } from "../util/hash";
 import { readProducerDiagnostic } from "../producer/diagnostics";
 import { REDACTION_KINDS } from "../producer/scrub";
 import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-scope";
+import { tryAdvisoryFileLock } from "../util/advisory-file-lock";
 import { pidAlive, readBootId } from "./leases";
 import { loadServeConfig } from "./config";
 import {
@@ -297,15 +298,33 @@ export function readModelRunHistory(db: Database, since: string, limit = 10_000)
   ).all(since, limit + 1);
   return {
     truncated: rows.length > limit,
-    receipts: rows.slice(0, limit).reverse().map(row => {
-      try {
-        const receipt = parseRunReceipt(JSON.parse(row.report));
-        // Keep an unknown position rather than letting malformed selected
-        // history make an earlier success appear to be the latest attempt.
-        return receipt?.rail === "sync" && receipt.run_id === row.run_id && receipt.finished_at === row.finished_at ? receipt : null;
-      } catch { return null; }
-    }),
+    receipts: rows.slice(0, limit).reverse().map(normalizeModelHistoryRow),
   };
+}
+
+function normalizeModelHistoryRow(row: { report: string; run_id: string; finished_at: string }): RunReceipt | null {
+  try {
+    const receipt = parseRunReceipt(JSON.parse(row.report));
+    // Preserve unknown positions rather than falsely resolving a newer attempt.
+    return receipt?.rail === "sync" && receipt.run_id === row.run_id && receipt.finished_at === row.finished_at ? receipt : null;
+  } catch { return null; }
+}
+
+/** Newest first. The return value records the extra raw row beyond the window. */
+export function visitModelRunHistory(
+  db: Database, since: string, limit: number,
+  visit: (receipt: RunReceipt | null) => void,
+): boolean {
+  if (!tableExists(db, "run_receipts")) return false;
+  const rows = db.query<{ report: string; run_id: string; finished_at: string }, [string, number]>(MODEL_RUN_HISTORY_SQL);
+  let count = 0;
+  for (const row of rows.iterate(since, limit + 1)) {
+    if (count === limit) return true;
+    visit(normalizeModelHistoryRow(row));
+    count++;
+    if (count % 128 === 0) Bun.gc(false);
+  }
+  return false;
 }
 
 /** Newest embed-backfill runs `readEmbeddingReceipts` looks through: a day at the default period. */
@@ -357,38 +376,59 @@ export function getRunReceipt(db: Database, runId: string): RunReceipt | null {
 export function readRunReceiptsLog(vaultPath: string, tailBytes?: number): RunReceipt[] {
   const path = runReceiptsPath(vaultPath);
   if (!existsSync(path)) return [];
-  return readJournalText(path, tailBytes)
-    .split("\n")
-    .flatMap((line) => {
-      if (line.trim().length === 0) return [];
-      let value: unknown;
-      try { value = JSON.parse(line); } catch { return []; }
-      const parsed = parseRunReceipt(value);
-      return parsed === null ? [] : [parsed];
-    });
+  return [...iterateRunReceiptsLog(vaultPath, tailBytes)];
 }
 
-function readJournalText(path: string, tailBytes: number | undefined): string {
-  if (tailBytes === undefined) return readFileSync(path, "utf8");
-  const fd = openSync(path, "r");
+/** Stream replay: a receipt is the allocation unit, never the entire journal. */
+function* iterateRunReceiptsLog(vaultPath: string, tailBytes?: number): Generator<RunReceipt> {
+  const path = runReceiptsPath(vaultPath);
+  if (!existsSync(path)) return;
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    const size = fstatSync(fd).size;
-    if (size <= tailBytes) return readFileSync(fd, "utf8");
-    const buffer = Buffer.alloc(tailBytes);
-    readSync(fd, buffer, 0, tailBytes, size - tailBytes);
-    const text = buffer.toString("utf8");
-    // The window starts mid-line; drop the partial first line.
-    const firstBreak = text.indexOf("\n");
-    return firstBreak === -1 ? "" : text.slice(firstBreak + 1);
-  } finally {
-    closeSync(fd);
-  }
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1) throw new Error("run receipt journal is not a regular private file");
+    const size = stat.size;
+    let position = tailBytes === undefined ? 0 : Math.max(0, size - tailBytes);
+    let partial = position > 0;
+    const buffer = Buffer.alloc(64 * 1024);
+    let pieces: Buffer[] = [];
+    const parse = (bytes: Buffer): RunReceipt | null => {
+      try { return parseRunReceipt(JSON.parse(bytes.toString("utf8"))); }
+      catch { return null; }
+    };
+    while (position < size) {
+      const read = readSync(fd, buffer, 0, Math.min(buffer.length, size - position), position);
+      if (read === 0) break;
+      position += read;
+      let start = 0;
+      for (let end = buffer.indexOf(10, start); end >= 0 && end < read; end = buffer.indexOf(10, start)) {
+        if (!partial) {
+          pieces.push(buffer.subarray(start, end));
+          const receipt = parse(Buffer.concat(pieces));
+          if (receipt !== null) yield receipt;
+        }
+        pieces = [];
+        partial = false;
+        start = end + 1;
+      }
+      if (!partial && start < read) pieces.push(Buffer.from(buffer.subarray(start, read)));
+    }
+    if (!partial && pieces.length > 0) {
+      const receipt = parse(Buffer.concat(pieces));
+      if (receipt !== null) yield receipt;
+    }
+  } finally { closeSync(fd); }
 }
 
 function appendJsonl(vaultPath: string, receipt: RunReceipt): void {
   const path = runReceiptsPath(vaultPath);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  appendFileSync(path, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
+  const fd = openSync(path, constants.O_CREAT | constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1) throw new Error("run receipt journal is not a regular private file");
+    appendFileSync(fd, `${JSON.stringify(receipt)}\n`);
+  } finally { closeSync(fd); }
 }
 
 /** A repair batch has committed; its rail receipt still needs journal publication. */
@@ -510,6 +550,20 @@ export function persistRunReceipt(
   receipt: RunReceipt,
   options: { crashAfter?: CrashPoint; artifactPath?: string } = {},
 ): void {
+  withRunJournal(vaultPath, () => persistRunReceiptLocked(db, vaultPath, receipt, options));
+}
+
+function withRunJournal<T>(vaultPath: string, work: () => T): T {
+  mkdirSync(join(vaultPath, ".kizuki"), { recursive: true, mode: 0o700 });
+  const lock = tryAdvisoryFileLock(join(vaultPath, ".kizuki", "run-receipts.flock"));
+  if (lock === null) throw new Error("run receipt journal is busy; retry the operation");
+  try { return work(); } finally { lock.release(); }
+}
+
+function persistRunReceiptLocked(
+  db: Database, vaultPath: string, receipt: RunReceipt,
+  options: { crashAfter?: CrashPoint; artifactPath?: string },
+): void {
   receipt = withScheduleTransition(db, vaultPath, redactReceipt(receipt));
   if (options.artifactPath !== undefined) {
     mkdirSync(dirname(options.artifactPath), { recursive: true, mode: 0o700 });
@@ -563,11 +617,7 @@ function applyScheduleTransition(db: Database, vaultPath: string, receipt: RunRe
  */
 export function recoverRunJournal(db: Database, vaultPath: string, activeRunIds: ReadonlySet<string> = new Set()): string[] {
   const recovered: string[] = [];
-  for (const receipt of readRunReceiptsLog(vaultPath)) {
-    const existing = getRunReceipt(db, receipt.run_id);
-    insertReceiptRow(db, receipt, vaultPath);
-    if (existing === null || existing.stopped === CAPTURE_REPAIR_RECEIPT_PENDING) recovered.push(receipt.run_id);
-  }
+  withRunJournal(vaultPath, () => replayRunJournal(db, vaultPath, recovered));
   // A repair may stop before JSONL publication. Its committed progress row is
   // the outbox, so restart publishes the same run identity and count once.
   if (!tableExists(db, "run_receipts")) return recovered;
@@ -597,13 +647,20 @@ export function recoverRunJournal(db: Database, vaultPath: string, activeRunIds:
   return recovered;
 }
 
+function replayRunJournal(db: Database, vaultPath: string, recovered: string[]): void {
+  for (const receipt of iterateRunReceiptsLog(vaultPath)) {
+    const existing = getRunReceipt(db, receipt.run_id);
+    insertReceiptRow(db, receipt, vaultPath);
+    if (existing === null || existing.stopped === CAPTURE_REPAIR_RECEIPT_PENDING) recovered.push(receipt.run_id);
+  }
+}
+
 /**
- * Bound the receipt journal by age and size. Receipts older than `cutoff` go,
- * then the oldest survivors go until the journal fits `maxBytes`, but the newest
- * valid in-window receipt always stays. The surviving rows replace the JSONL file
- * atomically before the dropped rows are deleted, so a crash between the two
- * leaves at worst rows the journal no longer names, never journal rows the
- * ledger cannot replay.
+ * SQLite retains audit history by age. The JSONL file is the publication
+ * recovery journal: once every line has reached SQLite it can be retired,
+ * without serializing the surviving history back to disk. Recover before
+ * retiring, then range-delete: a crash at either boundary retains extra rows,
+ * never loses an unpublished receipt or resurrects an expired one on replay.
  */
 export function pruneRunReceipts(
   db: Database,
@@ -611,45 +668,37 @@ export function pruneRunReceipts(
   cutoff: string,
   maxBytes: number = RUN_RECEIPT_JOURNAL_MAX_BYTES,
 ): { deleted: number; rewritten: number } {
-  const before = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()?.n ?? 0;
-  const rows = db
-    .query<{ run_id: string; report: string }, [string, string]>(
-      "SELECT run_id, report FROM run_receipts WHERE finished_at >= ? AND stopped IS NOT ? ORDER BY finished_at DESC, run_id DESC",
-    )
-    .all(cutoff, CAPTURE_REPAIR_RECEIPT_PENDING);
-  const kept: string[] = [];
-  let bytes = 0;
-  for (const row of rows) {
-    let valid = false;
-    try { valid = parseRunReceipt(JSON.parse(row.report)) !== null; } catch { valid = false; }
-    if (!valid) continue;
-    bytes += Buffer.byteLength(row.report) + 1;
-    if (kept.length > 0 && bytes > maxBytes) break;
-    kept.push(row.report);
-  }
-  kept.reverse();
-  const oldestKept = kept.length === 0 ? null : (JSON.parse(kept[0]!) as { finished_at: string; run_id: string });
-  const path = runReceiptsPath(vaultPath);
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const staged = `${path}.tmp`;
-  const fd = openSync(staged, "w", 0o600);
+  return withRunJournal(vaultPath, () => {
+    const path = runReceiptsPath(vaultPath);
+    const expired = db.query<{ n: number }, [string, string]>(
+      "SELECT COUNT(*) AS n FROM run_receipts WHERE finished_at < ? AND stopped IS NOT ?",
+    ).get(cutoff, CAPTURE_REPAIR_RECEIPT_PENDING)!.n;
+    // Do not even open an unchanged journal for writing.
+    if (expired === 0 && (!existsSync(path) || fileSize(path) <= maxBytes)) return { deleted: 0, rewritten: 0 };
+    replayRunJournal(db, vaultPath, []);
+    if (existsSync(path)) {
+      const fd = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW);
+      try {
+        const stat = fstatSync(fd);
+        if (!stat.isFile() || stat.nlink !== 1) throw new Error("run receipt journal is not a regular private file");
+        ftruncateSync(fd, 0);
+        fsyncSync(fd);
+      } finally { closeSync(fd); }
+    }
+    const deleted = db.transaction(() => db.query(
+      "DELETE FROM run_receipts WHERE finished_at < ? AND stopped IS NOT ?",
+    ).run(cutoff, CAPTURE_REPAIR_RECEIPT_PENDING).changes).immediate();
+    return { deleted, rewritten: 0 };
+  });
+}
+
+function fileSize(path: string): number {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    writeFileSync(fd, kept.map((report) => `${report}\n`).join(""));
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  renameSync(staged, path);
-  db.transaction(() => {
-    // A staged repair is an outbox record, never a published journal line.
-    // Retention cannot erase it before its committed skips are receipted.
-    if (oldestKept === null) db.query("DELETE FROM run_receipts WHERE finished_at < ? AND stopped IS NOT ?")
-      .run(cutoff, CAPTURE_REPAIR_RECEIPT_PENDING);
-    else db.query("DELETE FROM run_receipts WHERE (finished_at < ? OR (finished_at = ? AND run_id < ?)) AND stopped IS NOT ?")
-      .run(oldestKept.finished_at, oldestKept.finished_at, oldestKept.run_id, CAPTURE_REPAIR_RECEIPT_PENDING);
-  }).immediate();
-  const after = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()?.n ?? 0;
-  return { deleted: before - after, rewritten: kept.length };
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1) throw new Error("run receipt journal is not a regular private file");
+    return stat.size;
+  } finally { closeSync(fd); }
 }
 
 /**
@@ -660,10 +709,12 @@ export function pruneRunReceipts(
  */
 export function orphanJournalReceipts(db: Database, vaultPath: string): string[] {
   const orphans: string[] = [];
-  for (const receipt of readRunReceiptsLog(vaultPath, DOCTOR_JOURNAL_TAIL_BYTES)) {
+  let scanned = 0;
+  for (const receipt of iterateRunReceiptsLog(vaultPath, DOCTOR_JOURNAL_TAIL_BYTES)) {
     if (getRunReceipt(db, receipt.run_id) === null) {
       orphans.push(receipt.run_id);
     }
+    if (++scanned % 128 === 0) Bun.gc(false);
   }
   return orphans;
 }

@@ -13,13 +13,14 @@ import { inspectConnectionStateRecovery } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
 import { tableExists } from "../ledger/schema";
 import { inspectPurgeHealth } from "../ledger/purge";
-import { listCanonPagesReport, type CanonPageReport } from "../vault/pages";
+import { scanCanonPages, type CanonScanReport } from "../vault/pages";
 import { loadConfiguredModelRef, loadEmbeddingSelection, loadServeConfig, type EmbeddingSelection } from "./config";
 import { ageSeconds, railDoctor, syncPassWait } from "./doctor-rails";
 import { egressDoctor, extractionDoctor } from "./doctor-extraction";
 import { readServeIntent } from "./intent";
 import { serviceFile } from "./service-files";
-import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readEmbeddingReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
+import { isRedactedModelReference, orphanJournalReceipts, readEmbeddingReceipts, visitModelRunHistory, redactReceiptText } from "./receipts";
+import { readDoctorReceiptTotals, readDoctorExtractingClock, readDoctorRailHistory, readDoctorTruncationCount, type DoctorReceiptTotals } from "./doctor-receipts";
 import { sha256Hex } from "../util/hash";
 import { listSchedules } from "./schema";
 import { countOversizedRecords, RETRY_SKIPPED_COMMAND } from "./extract-oversized";
@@ -72,6 +73,8 @@ export interface ServeDoctorOptions {
    * to true.
    */
   readonly page_walk?: boolean;
+  /** A validated header snapshot from the same doctor invocation. */
+  readonly canon_scan?: CanonScanReport;
   /**
    * False when the caller runs inside the service: its supervisor, intent and
    * liveness are the service's own to know, so they are neither checked nor a
@@ -116,21 +119,6 @@ type ExtractingClock =
   | { readonly kind: "unparseable" }
   | { readonly kind: "at"; readonly started_at: string };
 
-function latestExtractingStartedAt(receipts: RunReceipt[]): ExtractingClock {
-  let startedAt: string | null = null;
-  let latest = Number.NEGATIVE_INFINITY;
-  for (const receipt of receipts) {
-    if (receipt.claims_extracted <= 0 && receipt.claims_written <= 0) continue;
-    const at = Date.parse(receipt.started_at);
-    if (!Number.isFinite(at)) return { kind: "unparseable" };
-    if (at >= latest) {
-      latest = at;
-      startedAt = receipt.started_at;
-    }
-  }
-  return startedAt === null ? { kind: "none" } : { kind: "at", started_at: startedAt };
-}
-
 /** True first fill only when every live/superseded asserted_at parses. */
 function initialCapture(db: Database, startedAt: string): boolean {
   if (!tableExists(db, "claims")) return false;
@@ -158,9 +146,9 @@ function initialCapture(db: Database, startedAt: string): boolean {
   return Number(row?.prior ?? 0) === 0 && Number(row?.current ?? 0) !== 0;
 }
 
-function calibration(db: Database, receipts: RunReceipt[], now: string): CalibrationDoctor {
+function calibration(db: Database, totals: DoctorReceiptTotals, clock: ExtractingClock, now: string): CalibrationDoctor {
   const failures: string[] = [];
-  if (receipts.length === 0) {
+  if (totals.count === 0) {
     return {
       window_days: RUN_RECEIPT_RETENTION_DAYS,
       write_rate: null,
@@ -173,12 +161,9 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
       failures,
     };
   }
-  const extracted = receipts.reduce((sum, receipt) => sum + receipt.claims_extracted, 0);
-  const written = receipts.reduce((sum, receipt) => sum + (receipt.claims_written_extracted ?? receipt.claims_written), 0);
-  const deduped = receipts.reduce((sum, receipt) => sum + receipt.claims_deduped, 0);
+  const { extracted, written, deduped } = totals;
   const writeRate = written / Math.max(1, extracted);
   const dedupRate = deduped / Math.max(1, extracted);
-  const clock = latestExtractingStartedAt(receipts);
   // An unreadable receipt clock cannot tell a first fill from drift. Say so
   // rather than quietly judging the vault as if it were in steady state.
   if (clock.kind === "unparseable") failures.push("calibration_clock_unreadable");
@@ -224,10 +209,7 @@ function calibration(db: Database, receipts: RunReceipt[], now: string): Calibra
   if (measurable.length >= MIN_CALIBRATION_SAMPLE && spread !== null && spread < CONFIDENCE_SPREAD_MIN) {
     failures.push("confidence_not_produced");
   }
-  const today = now.slice(0, 10);
-  const canonToday = receipts
-    .filter((receipt) => receipt.finished_at.startsWith(today))
-    .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
+  const canonToday = totals.canon_today;
   const subjects = tableExists(db, "claims")
     ? db
         .query<{ subject: string; writes: number }, []>(
@@ -276,7 +258,8 @@ function modelAnswered(receipt: RunReceipt): boolean {
 }
 
 function modelDoctor(
-  history: ModelRunHistory,
+  db: Database,
+  since: string,
   modelRef: string | null | undefined,
   reasoningEffort: string | null | undefined,
   configuredModelRef: string | null | undefined,
@@ -285,53 +268,66 @@ function modelDoctor(
   configCanonRun: number,
   lastRunUsed: number,
 ): ModelDoctor {
-  const receipts = history.receipts;
   const on = typeof modelRef === "string" && modelRef.length > 0;
   const unverified = !on && typeof configuredModelRef === "string" && configuredModelRef.length > 0;
   const currentRef = on ? modelRef : unverified ? configuredModelRef : null;
   const currentDigest = currentRef === null ? null : sha256Hex(currentRef);
   const displayRef = currentRef === null ? null : redactReceiptText(currentRef);
-  const current = currentRef === null ? [] : receipts.filter((receipt): receipt is RunReceipt => receipt !== null && receipt.rail === "sync" && (
-    receipt.model.model_ref_sha256 !== undefined ? receipt.model.model_ref_sha256 === currentDigest :
-      receipt.model.model_ref !== null && !isRedactedModelReference(receipt.model.model_ref) && receipt.model.model_ref === currentRef
-  ));
-  const unattributed = currentRef === null ? [] : receipts.filter((receipt): receipt is RunReceipt => receipt !== null && receipt.rail === "sync" &&
-    receipt.model.model_ref_sha256 === undefined && receipt.model.model_ref !== null && isRedactedModelReference(receipt.model.model_ref) &&
-    receipt.model.model_ref === displayRef && (receipt.model.calls > 0 || modelFailure(receipt) !== null));
-  const latestFirst = [...current].reverse();
-  const lastOk = latestFirst.find(modelAnswered);
-  const lastFailed = latestFirst.find(receipt => modelFailure(receipt) !== null);
-  const lastFailure = lastFailed === undefined ? null : { at: lastFailed.finished_at, detail: modelFailure(lastFailed)! };
-  const lastAttempt = latestFirst.find(receipt => receipt.model.calls > 0 || modelFailure(receipt) !== null);
-  const currentFailure = lastAttempt !== undefined && modelFailure(lastAttempt) !== null ? lastFailure : null;
-  const lastUnattributed = unattributed.at(-1);
-  // Use the durable receipt order, including its run-id tie break. An older
-  // known success cannot resolve a newer potentially matching unknown attempt.
-  const lastAttemptIndex = lastAttempt === undefined ? -1 : receipts.lastIndexOf(lastAttempt);
-  const historyUnverified = (lastUnattributed !== undefined && receipts.lastIndexOf(lastUnattributed) > lastAttemptIndex) ||
-    receipts.lastIndexOf(null) > lastAttemptIndex || (history.truncated && lastAttempt === undefined);
-  const unavailable = current.reduce((sum, receipt) => sum + receipt.model.unavailable, 0);
+  const observed = {
+    lastOkAt: null as string | null,
+    lastFailure: null as ModelDoctor["last_failure"],
+    currentFailure: null as ModelDoctor["current_failure"],
+  };
+  let attempted = false, seenCurrent = false, unknownBeforeAttempt = false;
+  let unattributed = 0, unavailable = 0, consecutiveFailures = 0;
+  let streakEnded = false;
+  const truncated = currentRef !== null && visitModelRunHistory(db, since, DOCTOR_SYNC_RECEIPTS, receipt => {
+    if (receipt === null) {
+      if (!attempted) unknownBeforeAttempt = true;
+      return;
+    }
+    const failure = modelFailure(receipt);
+    const reference = receipt.model.model_ref;
+    if (receipt.model.model_ref_sha256 === undefined && reference !== null &&
+        isRedactedModelReference(reference) && reference === displayRef &&
+        (receipt.model.calls > 0 || failure !== null)) {
+      unattributed++;
+      if (!attempted) unknownBeforeAttempt = true;
+    }
+    const matches = receipt.model.model_ref_sha256 !== undefined
+      ? receipt.model.model_ref_sha256 === currentDigest
+      : reference !== null && !isRedactedModelReference(reference) && reference === currentRef;
+    if (!matches) return;
+    seenCurrent = true;
+    unavailable += receipt.model.unavailable;
+    if (observed.lastOkAt === null && modelAnswered(receipt)) observed.lastOkAt = receipt.finished_at;
+    const failed = failure === null ? null : { at: receipt.finished_at, detail: failure };
+    if (observed.lastFailure === null && failed !== null) observed.lastFailure = failed;
+    if (!attempted && (receipt.model.calls > 0 || failure !== null)) {
+      attempted = true;
+      observed.currentFailure = failed;
+    }
+    if (!streakEnded) {
+      if (failure !== null) consecutiveFailures++;
+      else if (receipt.model.calls > 0) streakEnded = true;
+    }
+  });
+  const historyUnverified = unknownBeforeAttempt || (truncated && !attempted);
   const effort = on ? reasoningEffort ?? null : null;
-  // A pass that made no request neither extends nor ends the run of failures.
-  let consecutiveFailures = 0;
-  for (const receipt of latestFirst) {
-    if (modelFailure(receipt) !== null) consecutiveFailures += 1;
-    else if (receipt.model.calls > 0) break;
-  }
   // This process cannot bind the model, so the daemon's own receipts are the
   // evidence; "unverified" is only for a configured model no daemon ever ran.
-  const daemonSeen = unverified && current.length > 0;
-  const daemonView = `daemon last_success=${lastOk?.finished_at ?? "never"}${lastFailure === null ? "" : ` last_failure=${lastFailure.detail} at ${lastFailure.at}`} consecutive_failures=${consecutiveFailures}`;
+  const daemonSeen = unverified && seenCurrent;
+  const daemonView = `daemon last_success=${observed.lastOkAt ?? "never"}${observed.lastFailure === null ? "" : ` last_failure=${observed.lastFailure.detail} at ${observed.lastFailure.at}`} consecutive_failures=${consecutiveFailures}`;
   return {
     canon_writing: on ? "on" : daemonSeen ? "configured" : unverified ? "unverified" : "off",
     model_ref: on ? displayRef : null,
     reasoning_effort: effort,
-    last_success_at: lastOk?.finished_at ?? null,
-    last_failure: lastFailure,
-    current_failure: currentFailure,
-    unattributed_receipts: unattributed.length,
+    last_success_at: observed.lastOkAt ?? null,
+    last_failure: observed.lastFailure,
+    current_failure: observed.currentFailure,
+    unattributed_receipts: unattributed,
     history_unverified: historyUnverified,
-    history_truncated: history.truncated,
+    history_truncated: truncated,
     unavailable,
     consecutive_failures: consecutiveFailures,
     budget: {
@@ -339,14 +335,14 @@ function modelDoctor(
       canon_writes_per_day: { used: usedToday, limit: configCanonDay },
     },
     detail: (on
-      ? `canon writing: on (${displayRef}, reasoning_effort=${effort ?? "provider-default"}); last_success=${lastOk?.finished_at ?? "never"} unavailable=${unavailable}${lastFailure === null ? "" : `; last_failure=${lastFailure.detail} (at ${lastFailure.at})`}`
+      ? `canon writing: on (${displayRef}, reasoning_effort=${effort ?? "provider-default"}); last_success=${observed.lastOkAt ?? "never"} unavailable=${unavailable}${observed.lastFailure === null ? "" : `; last_failure=${observed.lastFailure.detail} (at ${observed.lastFailure.at})`}`
       : daemonSeen
         ? `canon writing: configured; ${daemonView}`
       : unverified
         ? "canon writing: unverified (model configured but not bound by the running host)"
       : "canon writing: off (no model configured — connectors, ledger, search, timeline and undo still work)") +
-      (unattributed.length === 0 ? "" : `; model history: unattributed receipts=${unattributed.length}`) +
-      (history.truncated ? "; selected history window truncated; last_success, last_failure and counts cover only selected receipts" : "") +
+      (unattributed === 0 ? "" : `; model history: unattributed receipts=${unattributed}`) +
+      (truncated ? "; selected history window truncated; last_success, last_failure and counts cover only selected receipts" : "") +
       (historyUnverified ? "; current history unverified" : ""),
   };
 }
@@ -379,7 +375,7 @@ function countWriterRoles(db: Database): StoreDoctor["writers"] {
   return writers;
 }
 
-function countOriginPages(report: CanonPageReport): StoreDoctor["origin"] {
+function countOriginPages(report: CanonScanReport): StoreDoctor["origin"] {
   let machine = 0;
   let human = 0;
   for (const relPath of [
@@ -405,7 +401,7 @@ function storeDoctor(
   vaultPath: string,
   now: string,
   embeddingReceipts: RunReceipt[],
-  pages: CanonPageReport,
+  pages: CanonScanReport,
   embedding: EmbeddingSelection,
 ): StoreDoctor {
   const pendingRetrieval = countPendingRetrievalOps(db);
@@ -512,26 +508,31 @@ export function inspectServeDoctor(
   const modelConfigured = Boolean(modelRef || configuredModelRef);
   // Bounded reads: the newest sync passes, and the newest runs of every other
   // rail. A week of receipts is mostly no-op maintenance runs that judge nothing.
-  const syncHistory = readModelRunHistory(db, since, DOCTOR_SYNC_RECEIPTS);
-  const syncReceipts = syncHistory.receipts.filter((receipt): receipt is RunReceipt => receipt !== null);
+  const totals = readDoctorReceiptTotals(db, since, DOCTOR_SYNC_RECEIPTS, now.slice(0, 10));
   const work = { db, model_configured: modelConfigured, embedding_configured: options.embedding_configured ?? embedding.state === "configured" };
-  const rails = DEFAULT_RAILS.map((spec) => railDoctor(
-    spec.rail,
-    spec.rail === "sync" ? syncReceipts : listRunReceipts(db, { rail: spec.rail, since, limit: DOCTOR_RAIL_RECEIPTS }),
-    schedules.get(spec.rail)?.period_s ?? spec.period_s,
-    now,
-    expectLive,
-    syncPassWait(config.extraction),
-    work,
-    schedules.get(spec.rail)?.last_run_at ?? null,
-  ));
-  const usedToday = syncReceipts
-    .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
-    .reduce((sum, receipt) => sum + receipt.canon_writes, 0);
-  const lastSync = syncReceipts.at(-1);
+  const histories = new Map(DEFAULT_RAILS.map(spec => [spec.rail,
+    readDoctorRailHistory(db, spec.rail, since, spec.rail === "sync" ? DOCTOR_SYNC_RECEIPTS : DOCTOR_RAIL_RECEIPTS),
+  ]));
+  const rails = DEFAULT_RAILS.map((spec) => {
+    const history = histories.get(spec.rail)!;
+    return railDoctor(
+      spec.rail,
+      history.receipts,
+      schedules.get(spec.rail)?.period_s ?? spec.period_s,
+      now,
+      expectLive,
+      syncPassWait(config.extraction),
+      work,
+      schedules.get(spec.rail)?.last_run_at ?? null,
+      history,
+    );
+  });
+  const usedToday = totals.canon_today;
+  const lastSync = histories.get("sync")?.receipts.at(-1);
   const lastRunUsed = lastSync?.budget.canon_writes_per_run?.used ?? lastSync?.canon_writes ?? 0;
   const model = modelDoctor(
-    modelConfigured ? syncHistory : { receipts: [], truncated: false },
+    db,
+    since,
     modelRef,
     options.reasoning_effort,
     configuredModelRef,
@@ -540,16 +541,16 @@ export function inspectServeDoctor(
     config.canon_writes_per_run,
     lastRunUsed,
   );
-  const skipped = syncReceipts.reduce((sum, receipt) => sum + (receipt.records_skipped ?? 0), 0);
+  const skipped = totals.skipped;
   const throughput = throughputDoctor(config, schedules.get("sync")?.period_s ?? config.sync_period_s, skipped);
   const oversized = oversizedDoctor(db);
-  const pages: CanonPageReport =
+  const pages: CanonScanReport =
     options.page_walk === false
       ? { pages: [], skipped: [], truncated: false }
-      : listCanonPagesReport(vaultPath);
+      : options.canon_scan ?? scanCanonPages(vaultPath);
   const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
-  const cal = calibration(db, syncReceipts, now);
-  const extraction = extractionDoctor(db, syncReceipts, model.canon_writing !== "off");
+  const cal = calibration(db, totals, totals.extracting_count === 0 ? { kind: "none" } : readDoctorExtractingClock(db, since, DOCTOR_SYNC_RECEIPTS), now);
+  const extraction = extractionDoctor(db, totals.model_attempts === 0 ? 0 : readDoctorTruncationCount(db, since, DOCTOR_SYNC_RECEIPTS), model.canon_writing !== "off");
   const { egress, failures: egressFailures } = egressDoctor(db);
   const found: { text: string; top: TopFailure }[] = [];
   const fail = (text: string, kind: TopFailure["kind"] = "other", rail: RailId | null = null): void => {

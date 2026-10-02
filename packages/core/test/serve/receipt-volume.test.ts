@@ -226,23 +226,23 @@ describe("receipt journal bounds", () => {
     const { path, db } = vault();
     seed(path, db, 10);
     const result = pruneRunReceipts(db, path, at(6));
-    expect(result).toEqual({ deleted: 6, rewritten: 4 });
-    expect(journalLines(path)).toHaveLength(4);
+    expect(result).toEqual({ deleted: 6, rewritten: 0 });
+    expect(journalLines(path)).toHaveLength(0);
     expect(listRunReceipts(db).map((item) => item.finished_at)).toEqual([at(6), at(7), at(8), at(9)]);
     db.close();
   });
 
-  test("journal-prune bounds the journal by size, dropping the oldest and keeping rows and file in step", () => {
+  test("journal-prune retires a replayed journal over the size ceiling and retains SQL audit history", () => {
     const { path, db } = vault();
     seed(path, db, 40, "x".repeat(200));
     const lineBytes = Buffer.byteLength(journalLines(path)[0]!) + 1;
     const result = pruneRunReceipts(db, path, at(-1), lineBytes * 10 + 5);
-    expect(result).toEqual({ deleted: 30, rewritten: 10 });
+    expect(result).toEqual({ deleted: 0, rewritten: 0 });
     expect(statSync(runReceiptsPath(path)).size).toBeLessThanOrEqual(lineBytes * 10 + 5);
     const remaining = listRunReceipts(db);
-    expect(remaining).toHaveLength(10);
-    expect(remaining[0]!.finished_at).toBe(at(30));
-    expect(journalLines(path).map((line) => JSON.parse(line).finished_at)).toEqual(remaining.map((item) => item.finished_at));
+    expect(remaining).toHaveLength(40);
+    expect(remaining[0]!.finished_at).toBe(at(0));
+    expect(journalLines(path)).toEqual([]);
     db.close();
   });
 
@@ -261,30 +261,30 @@ describe("receipt journal bounds", () => {
     // The size ceiling, plus the prune rail's own receipt appended after it.
     expect(statSync(runReceiptsPath(path)).size).toBeLessThan(8 * 1024 * 1024 + 4096);
     const remaining = listRunReceipts(db, { rail: "test-rail" });
-    expect(remaining.length).toBeLessThan(12);
+    expect(remaining).toHaveLength(12);
     expect(remaining.at(-1)!.run_id).toBe("01JBIG00000000000000000011");
-    expect(journalLines(path).filter((line) => line.includes("test-rail"))).toHaveLength(remaining.length);
+    expect(journalLines(path).filter((line) => line.includes("test-rail"))).toHaveLength(0);
     expect(listRunReceipts(db, { rail: "journal-prune" })).toHaveLength(1);
     db.close();
   });
 
-  test("a single receipt over the cap is kept, never the whole table dropped", () => {
+  test("an oversized recovery journal does not shorten SQL retention", () => {
     const { path, db } = vault();
     seed(path, db, 3, "x".repeat(200));
     const result = pruneRunReceipts(db, path, at(-1), 10);
-    expect(result).toEqual({ deleted: 2, rewritten: 1 });
-    expect(listRunReceipts(db).map((item) => item.finished_at)).toEqual([at(2)]);
-    expect(journalLines(path)).toHaveLength(1);
+    expect(result).toEqual({ deleted: 0, rewritten: 0 });
+    expect(listRunReceipts(db).map((item) => item.finished_at)).toEqual([at(0), at(1), at(2)]);
+    expect(journalLines(path)).toHaveLength(0);
     db.close();
   });
 
-  test("with nothing valid in the window only expired rows go", () => {
+  test("an unreadable persisted receipt prevents journal retirement", () => {
     const { path, db } = vault();
     seed(path, db, 3);
     db.query("UPDATE run_receipts SET report = 'not json' WHERE finished_at >= ?").run(at(1));
-    const result = pruneRunReceipts(db, path, at(1));
-    expect(result).toEqual({ deleted: 1, rewritten: 0 });
-    expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()!.n).toBe(2);
+    expect(() => pruneRunReceipts(db, path, at(1))).toThrow("invalid existing run receipt");
+    expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()!.n).toBe(3);
+    expect(journalLines(path)).toHaveLength(3);
     db.close();
   });
 

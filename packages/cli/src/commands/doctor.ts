@@ -11,7 +11,7 @@ import {
   countUnwrittenLiveClaims,
   countLiveClaimsByProducer,
   countWrittenLiveClaims,
-  doctorVault,
+  inspectDoctorCanon,
   getCanonReceiptRecord,
   getCheckpoint,
   inspectLedgerHealth,
@@ -21,11 +21,10 @@ import {
   isCaptureFanoutSkip,
   latestReceiptForPage,
   listClaims,
-  listCanonPagesReport,
   readHolds,
   readVaultId,
 } from "@kizuki/core";
-import type { CaptureFanoutCounts, ClaimStatus, LiveClaimProducers } from "@kizuki/core";
+import type { CanonScanReport, CaptureFanoutCounts, ClaimStatus, LiveClaimProducers } from "@kizuki/core";
 import { readSqliteRuntime } from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
@@ -240,8 +239,8 @@ function hashDriftCoverageLine(coverage: HashDriftCoverage): string {
 function hashDrift(
   vaultPath: string,
   ctx: ReadVaultContext,
+  report: CanonScanReport,
 ): { problems: { page: string; error: string }[]; coverage: HashDriftCoverage } {
-  const report = listCanonPagesReport(vaultPath);
   const selected = report.pages.slice(0, HASH_DRIFT_CAP);
   const problems: { page: string; error: string }[] = [];
   let checked = 0;
@@ -362,7 +361,7 @@ async function collect(
     id: hold.proposal_id,
   }));
 
-  const vault = doctorVault(vaultPath, ctx.db);
+  const { vault, scan } = inspectDoctorCanon(vaultPath, ctx.db);
   const ledger = inspectLedgerHealth(ctx.db, { full: fullIntegrity });
   const problems = vault.pages.flatMap((page) =>
     page.errors.map((error) => ({ page: page.page, error })),
@@ -402,7 +401,7 @@ async function collect(
           : `canon hold ${failure.id} pending for ${failure.age_s}s (SLA ${PURGE_SLA_SECONDS}s)`,
     });
   }
-  const hashDriftResult = hashDrift(vaultPath, ctx);
+  const hashDriftResult = hashDrift(vaultPath, ctx, scan);
   problems.push(...hashDriftResult.problems);
 
   const freshness = indexFreshness(ctx.db, vaultPath);
@@ -441,6 +440,7 @@ async function collect(
   const configuredModel = boundModel ?? configuredModelBinding(ctx.vaultPath);
   const serve = inspectServeDoctor(ctx.db, vaultPath, {
     supervisor: host,
+    canon_scan: scan,
     model_ref: boundModel?.model_ref ?? null,
     reasoning_effort: boundModel?.reasoning_effort ?? null,
     embedding_configured: embeddingConfigured(vaultPath),

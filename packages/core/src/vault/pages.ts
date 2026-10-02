@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, readdirSync } from "node:fs";
+import { closeSync, lstatSync, openSync, readSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { hashBytes } from "./write";
 import { parseFrontmatter } from "./frontmatter";
@@ -105,8 +105,20 @@ function isCanonPagePath(relPath: string): boolean {
   return relPath.endsWith(".md") && relPath !== "CANON.md" && relPath !== "SCHEMA.md";
 }
 
-interface WalkState {
-  pages: CanonPage[];
+export type CanonPageMetadata = Pick<CanonPage, "id" | "path" | "relPath">;
+
+export type CanonPageHeader = CanonPageMetadata & Pick<CanonPage, "data">;
+
+export interface CanonScanReport {
+  pages: CanonPageMetadata[];
+  skipped: SkippedPage[];
+  truncated: boolean;
+}
+
+interface WalkState<Page extends CanonPageMetadata> {
+  pages: Page[];
+  retain: (page: CanonPage) => Page;
+  headerBuffer: Buffer | null;
   skipped: SkippedPage[];
   /** First path that claimed this frontmatter id, valid or not. */
   seen: Map<string, string>;
@@ -118,8 +130,8 @@ interface WalkState {
   remembered: Map<string, ParsedFile>;
 }
 
-function withholdDuplicate(
-  state: WalkState,
+function withholdDuplicate<Page extends CanonPageMetadata>(
+  state: WalkState<Page>,
   id: string,
   firstPath: string,
   relPath: string,
@@ -138,7 +150,40 @@ function withholdDuplicate(
   );
 }
 
-function considerFile(state: WalkState, path: string, relPath: string): void {
+/** Reuse the read buffer for diagnostics; no page body survives this call. */
+function readPageBytes(path: string, buffer: Buffer, size: number): Buffer {
+  const fd = openSync(path, "r");
+  try {
+    let length = 0;
+    while (length < Math.min(buffer.length, size)) {
+      const read = readSync(fd, buffer, length, Math.min(4096, size - length, buffer.length - length), null);
+      if (read === 0) break;
+      length += read;
+      const bytes = buffer.subarray(0, length);
+      const header = frontmatterBytes(bytes);
+      if (header.length < bytes.length || length === size) return header;
+    }
+    return buffer.subarray(0, length);
+  } finally { closeSync(fd); }
+}
+
+/** The parser still validates both fences; omit bytes past the closing fence. */
+function frontmatterBytes(bytes: Buffer): Buffer {
+  let start = bytes.indexOf(10);
+  while (start !== -1) {
+    const line = start + 1;
+    if (bytes[line] === 45 && bytes[line + 1] === 45 && bytes[line + 2] === 45) {
+      const end = line + 3;
+      if (end === bytes.length) return bytes.subarray(0, end);
+      if (bytes[end] === 10) return bytes.subarray(0, end + 1);
+      if (bytes[end] === 13 && bytes[end + 1] === 10) return bytes.subarray(0, end + 2);
+    }
+    start = bytes.indexOf(10, line);
+  }
+  return bytes;
+}
+
+function considerFile<Page extends CanonPageMetadata>(state: WalkState<Page>, path: string, relPath: string): void {
   if (state.truncated) return;
   if (state.files >= MAX_CANON_PAGES) {
     state.truncated = true;
@@ -148,6 +193,9 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     return;
   }
   state.files += 1;
+  // Header diagnostics discard parser objects as they go. Ask Bun to collect
+  // those short-lived batches rather than grow its heap with the corpus size.
+  if (state.headerBuffer !== null && state.files % 128 === 0) Bun.gc(false);
 
   let size: number;
   let signature: string;
@@ -188,13 +236,13 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
   } else {
     const readAtMs = Date.now();
     try {
-      const bytes = readFileSync(path);
-      state.bytes += bytes.byteLength;
-      const parsed = parseFrontmatter(bytes.toString("utf8"));
+      const bytes = state.headerBuffer === null ? readFileSync(path) : readPageBytes(path, state.headerBuffer, size);
+      state.bytes += state.headerBuffer === null ? bytes.byteLength : size;
+      const parsed = parseFrontmatter((state.headerBuffer === null ? bytes : frontmatterBytes(bytes)).toString("utf8"));
       file = {
         // An empty signature never matches: see RACY_WINDOW_MS.
         signature: changedMs + RACY_WINDOW_MS > readAtMs ? "" : signature,
-        contentHash: hashBytes(bytes),
+        contentHash: state.headerBuffer === null ? hashBytes(bytes) : "",
         data: parsed.data,
         body: parsed.body,
         invalid: validatePage(parsed.data)[0] ?? null,
@@ -236,17 +284,17 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     return;
   }
 
-  state.pages.push({
+  state.pages.push(state.retain({
     id,
     path,
     relPath,
     data: parsed.data,
     body: parsed.body,
     contentHash,
-  });
+  }));
 }
 
-function walk(state: WalkState, directory: string, vaultPath: string, depth: number): void {
+function walk<Page extends CanonPageMetadata>(state: WalkState<Page>, directory: string, vaultPath: string, depth: number): void {
   if (state.truncated) return;
   let entries;
   try {
@@ -303,7 +351,31 @@ export function listCanonPagesReport(
   vaultPath: string,
   cache?: CanonPageCache,
 ): CanonPageReport {
-  const state: WalkState = {
+  return scanPages(vaultPath, page => page, cache);
+}
+
+/** Validate one page at a time; only identities and diagnostics survive the walk. */
+export function scanCanonPages(
+  vaultPath: string,
+  inspect?: (page: CanonPageHeader) => void,
+): CanonScanReport {
+  return scanPages(vaultPath, page => {
+    inspect?.(page);
+    const { id, path, relPath } = page;
+    return { id, path, relPath };
+  }, undefined, true);
+}
+
+function scanPages<Page extends CanonPageMetadata>(
+  vaultPath: string,
+  retain: (page: CanonPage) => Page,
+  cache?: CanonPageCache,
+  headersOnly = false,
+): { pages: Page[]; skipped: SkippedPage[]; truncated: boolean } {
+  if (headersOnly) Bun.gc(true);
+  const state: WalkState<Page> = {
+    retain,
+    headerBuffer: headersOnly ? Buffer.alloc(MAX_CANON_PAGE_BYTES) : null,
     pages: [],
     skipped: [],
     seen: new Map(),
