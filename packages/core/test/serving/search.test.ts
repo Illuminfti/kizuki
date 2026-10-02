@@ -14,7 +14,7 @@ import type { Envelope } from "../../src/serving/types";
 import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
 import { recordedPage } from "../helpers/recorded-page";
-import { serveFixture } from "./helpers";
+import { serveFixture, storeEvent } from "./helpers";
 import type { Fixture } from "./helpers";
 
 let fixture: Fixture;
@@ -683,4 +683,85 @@ describe("serveSearch authorization starvation", () => {
       live.dispose();
     }
   }, 20_000);
+});
+
+describe("serveSearch bounds captured text to an excerpt", () => {
+  const TOKEN = "excerptboundtoken";
+
+  async function withLongRecord(
+    run: (live: Fixture, longId: string, shortId: string) => Promise<void>,
+  ): Promise<void> {
+    const live = await serveFixture();
+    try {
+      // 700 astral characters so a cut by UTF-16 unit would split a pair.
+      const long = `${TOKEN} ${"\u{1F600}".repeat(700)}`;
+      const longId = storeEvent(live.db, "rec-long", "2026-02-28T12:00:00Z", long, "person:ada", "public");
+      const shortId = storeEvent(live.db, "rec-short", "2026-02-28T12:01:00Z", `${TOKEN} short`, "person:ada", "public");
+      rebuildDerived(live.db, live.vaultPath);
+      await run(live, longId, shortId);
+    } finally {
+      live.dispose();
+    }
+  }
+
+  test("a long ledger record is cut to 600 characters and marked truncated", async () => {
+    await withLongRecord(async (live, longId, shortId) => {
+      const envelope = await serveSearch(live.owner(), { query: TOKEN, scope: "ledger" });
+      const long = envelope.quoted.find((chunk) => chunk.event_id === longId);
+      const short = envelope.quoted.find((chunk) => chunk.event_id === shortId);
+      expect(Array.from(long?.text ?? "")).toHaveLength(600);
+      expect(long?.text.startsWith(TOKEN)).toBe(true);
+      expect(long?.truncated).toBe(true);
+      expect(() => new TextEncoder().encode(long?.text ?? "")).not.toThrow();
+      expect(long?.text).not.toContain("\uFFFD");
+      expect(short?.text).toBe(`${TOKEN} short`);
+      expect("truncated" in (short ?? {})).toBe(false);
+    });
+  });
+
+  test("full_text returns the whole record and no truncation mark", async () => {
+    await withLongRecord(async (live, longId) => {
+      const envelope = await serveSearch(live.owner(), { query: TOKEN, scope: "ledger", full_text: true });
+      const long = envelope.quoted.find((chunk) => chunk.event_id === longId);
+      expect(Array.from(long?.text ?? "")).toHaveLength(TOKEN.length + 1 + 700);
+      expect("truncated" in (long ?? {})).toBe(false);
+    });
+  });
+
+  test("full_text must be a boolean", async () => {
+    await withLongRecord(async (live) => {
+      const error = await refusal(() =>
+        serveSearch(live.owner(), { query: TOKEN, scope: "ledger", full_text: "yes" as unknown as boolean }),
+      );
+      expect(error.code).toBe("invalid_arguments");
+    });
+  });
+
+  test("agent excerpts redact a token across the cut and full_text keeps redaction", async () => {
+    const live = await serveFixture();
+    try {
+      const token = `sk-${"Q".repeat(48)}`;
+      const text = `${TOKEN} ${".".repeat(580 - TOKEN.length - 1)}${token}${".".repeat(200)}`;
+      const id = storeEvent(live.db, "rec-secret-boundary", "2026-02-28T12:00:00Z", text, "person:ada", "public");
+      rebuildDerived(live.db, live.vaultPath);
+
+      for (const full_text of [false, true]) {
+        const envelope = await serveSearch(live.agent("reader-public"), { query: TOKEN, scope: "ledger", full_text });
+        const hit = envelope.quoted.find(chunk => chunk.event_id === id);
+        expect(hit?.text).toContain("[redacted:api_token]");
+        expect(hit?.text).not.toContain("sk-QQ");
+        if (full_text) {
+          expect(Array.from(hit?.text ?? "").length).toBeGreaterThan(600);
+          expect("truncated" in (hit ?? {})).toBe(false);
+        } else {
+          expect(Array.from(hit?.text ?? "")).toHaveLength(600);
+          expect(hit?.truncated).toBe(true);
+        }
+      }
+      const owner = await serveSearch(live.owner(), { query: TOKEN, scope: "ledger", full_text: true });
+      expect(owner.quoted.find(chunk => chunk.event_id === id)?.text).toBe(text);
+    } finally {
+      live.dispose();
+    }
+  });
 });

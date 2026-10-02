@@ -1,3 +1,4 @@
+import { writeSync } from "node:fs";
 import { sanitize } from "@kizuki/tui";
 import type { RunResult } from "@kizuki/core";
 
@@ -15,6 +16,27 @@ export interface CliJsonEnvelope<T> {
   degraded: string[];
   warnings: string[];
   error?: CliJsonError;
+}
+
+/**
+ * Write every byte of `text` to a descriptor before returning. `process.stdout`
+ * is asynchronous on a pipe and the CLI ends with `process.exit`, which cut a
+ * large `--json` document off at the pipe buffer. A reader that has gone away
+ * (EPIPE) ends the output quietly, as it does for any Unix tool.
+ */
+export function writeAll(fd: number, text: string): void {
+  const bytes = Buffer.from(text);
+  let offset = 0;
+  while (offset < bytes.length) {
+    try {
+      offset += writeSync(fd, bytes, offset);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EPIPE") return;
+      if (code !== "EAGAIN") throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
+    }
+  }
 }
 
 export function clean(text: string): string {

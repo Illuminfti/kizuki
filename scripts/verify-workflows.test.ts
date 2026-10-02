@@ -372,6 +372,21 @@ test("manual macOS proof refuses automatic triggers, unbounded cost, and mutable
   }
 });
 
+test("native test commands retain the loaded-host timeout", () => {
+  const path = ".github/workflows/macos-native.yml";
+  const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");
+  expect(validateWorkflowText(path, text)).toEqual([]);
+  for (const [job, index] of [["native-arm64", 5], ["native-arm64", 9], ["native-service", 4]] as const) {
+    for (const replacement of ["bun test", "bun test --timeout 5000"]) {
+      const doc = Bun.YAML.parse(text) as any;
+      const step = doc.jobs[job].steps[index];
+      expect(step.run).toContain("bun test --timeout 120000");
+      step.run = step.run.replace("bun test --timeout 120000", replacement);
+      expect(validateWorkflowText(path, JSON.stringify(doc)).length).toBeGreaterThan(0);
+    }
+  }
+});
+
 test("macOS validator rejects removal or bypass of each native proof obligation", () => {
   const path = ".github/workflows/macos-native.yml";
   const text = readFileSync(resolve(import.meta.dir, "..", path), "utf8");

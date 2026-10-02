@@ -115,6 +115,11 @@ export function relPath(field: string, value: unknown): string {
   return value;
 }
 
+export function flag(field: string, value: unknown): boolean {
+  if (value !== undefined && typeof value !== "boolean") throw refuse(field, "must be true or false");
+  return value === true;
+}
+
 export function enumOf<T extends string>(
   field: string,
   value: unknown,
