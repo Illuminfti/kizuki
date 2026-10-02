@@ -2,9 +2,9 @@ import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, queryServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline, readWorldView } from '@kizuki/core';
+import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, queryServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline } from '@kizuki/core';
 import type { Connector, SourceGrantPolicy, ServeContext } from '@kizuki/core';
-import { activeWorldOps, worldOpInputKeys } from '@kizuki/core/world';
+import { activeWorldOps, serveWorldView, worldOpInputKeys } from '@kizuki/core/world';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
 import { inspectXApiState } from '@kizuki/connectors';
@@ -145,7 +145,10 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
         // The shared reader allocates opaque, principal-scoped wire references
         // inside its own transaction. The App must use that one reader, not
         // fabricate stable identifiers from its own view state.
-        if (route === 'world_view') return context(async ctx => readWorldView({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }, input));
+        if (route === 'world_view') return context(async ctx => {
+            const envelope = serveWorldView({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }, input);
+            return input.operation === 'evidence' ? envelope : envelope.data;
+        });
         if (route === 'catalog')
             return { sources: catalog() };
         if (route === 'agents') return readContext(async ctx => {

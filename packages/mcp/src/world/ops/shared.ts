@@ -28,7 +28,7 @@ export const CURSOR = WIRE_TOKEN.optional();
 
 export const worldRef = <K extends string>(kind: K) =>
   z.strictObject({ kind: z.literal(kind), token: WIRE_TOKEN });
-const worldEvidence = z.strictObject({
+export const worldEvidence = z.strictObject({
   admission: worldRef("admission"),
   eventVersion: worldRef("event_version"),
   span: z.union([
@@ -36,6 +36,7 @@ const worldEvidence = z.strictObject({
     z.strictObject({ kind: z.literal("metadata"), field: z.string().max(128) }),
   ]),
 });
+export const worldTextEvidence = worldEvidence.extend({ span: worldEvidence.shape.span.options[0] });
 export const worldRelation = z.strictObject({
   schema: z.literal("kizuki.relation/v1"),
   claim: worldRef("claim"),

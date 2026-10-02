@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { REDACTED } from "../redaction";
 import type { McpWorldOp } from "./ops/types";
-import { WORLD_KNOWN_AT, WORLD_VALID, worldGaps, worldRef } from "./ops/shared";
+import { WORLD_KNOWN_AT, WORLD_VALID, worldGaps, worldRef, worldTextEvidence } from "./ops/shared";
+
+const quotedEvidence = z.strictObject({
+  evidence: worldTextEvidence, text: z.string().max(4000), tainted: z.literal(true),
+  integrity: z.string().regex(/^[0-9a-f]{64}$/), slice_integrity: z.string().regex(/^[0-9a-f]{64}$/),
+  offset: z.number().int().nonnegative(), returned: z.number().int().nonnegative().max(2000),
+  total: z.number().int().nonnegative(), truncated: z.boolean(),
+});
 
 function names(values: readonly string[], what: string): [string, ...string[]] {
   const [first, ...rest] = values;
@@ -49,7 +56,7 @@ export function buildWorldSurface(ops: readonly McpWorldOp[]) {
     principal: worldRef("principal"),
     at: z.string(),
     canon: z.array(z.never()).max(0),
-    quoted: z.array(z.never()).max(0),
+    quoted: z.array(quotedEvidence).max(1),
     redacted: REDACTED.optional(),
     data: z.union([
       z.strictObject({ status: z.literal("not_found") }),

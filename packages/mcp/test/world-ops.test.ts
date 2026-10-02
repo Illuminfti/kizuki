@@ -65,6 +65,17 @@ describe("the MCP fragments", () => {
 });
 
 describe("the surface builder", () => {
+  test("evidence advertises only the text spans the resolver implements", () => {
+    const { input } = buildWorldSurface(MCP_WORLD_OPS);
+    const evidence = {
+      admission: { kind: "admission", token: "A".repeat(43) },
+      eventVersion: { kind: "event_version", token: "A".repeat(43) },
+      span: { kind: "text", startUtf16: 0, endUtf16: 10 },
+    };
+    expect(input.safeParse({ operation: "evidence", evidence }).success).toBe(true);
+    expect(input.safeParse({ operation: "evidence", evidence: { ...evidence, span: { kind: "metadata", field: "title" } } }).success).toBe(false);
+  });
+
   test("refuses a field that would make every other operation fail, or one two operations declare differently", () => {
     expect(() => buildWorldSurface([...MCP_WORLD_OPS, { ...pingFragment, fields: { text: z.string() } }])).toThrow(/optional or defaulted/);
     expect(() => buildWorldSurface([...MCP_WORLD_OPS, { ...pingFragment, fields: { label: z.string().optional() } }])).toThrow(/more than once/);
@@ -77,7 +88,7 @@ describe("world_view as generated from the registry", () => {
     const { schema } = await listed(await connect());
     expect(schema.properties?.["operation"]?.enum).toEqual(WORLD_OPS.map((op) => op.name));
     expect(Object.keys(schema.properties ?? {}).sort()).toEqual(
-      ["concept", "cursor", "knownAt", "label", "operation", "situation", "valid"],
+      ["concept", "cursor", "evidence", "knownAt", "label", "operation", "situation", "valid"],
     );
   });
 
