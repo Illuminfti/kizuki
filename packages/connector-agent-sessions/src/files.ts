@@ -153,6 +153,8 @@ export async function openSessionFile(
 }
 
 export interface FileLine {
+  /** Byte immediately after the terminating newline. */
+  offset: number;
   /** 1-based. */
   line: number;
   /** Bytes of the line including its terminator. */
@@ -170,15 +172,19 @@ export interface FileLine {
 export async function* readLines(
   handle: FileHandle,
   skipLines: number,
+  startOffset = 0,
+  startLine = 0,
+  endOffset = MAX_FILE_BYTES,
+  chunkBytes = CHUNK_BYTES,
 ): AsyncGenerator<FileLine> {
-  const chunk = Buffer.allocUnsafe(CHUNK_BYTES);
+  const chunk = Buffer.allocUnsafe(chunkBytes);
   let parts: Buffer[] = [];
   let lineBytes = 0;
   let oversized = false;
-  let line = 0;
-  let position = 0;
-  while (position < MAX_FILE_BYTES) {
-    const { bytesRead } = await handle.read(chunk, 0, CHUNK_BYTES, position);
+  let line = startLine;
+  let position = startOffset;
+  while (position < Math.min(endOffset, MAX_FILE_BYTES)) {
+    const { bytesRead } = await handle.read(chunk, 0, Math.min(chunkBytes, endOffset - position), position);
     if (bytesRead === 0) return;
     position += bytesRead;
     const view = chunk.subarray(0, bytesRead);
@@ -199,6 +205,7 @@ export async function* readLines(
       if (line === 1 || line > skipLines) {
         yield {
           line,
+          offset: position - bytesRead + newline + 1,
           bytes: lineBytes + 1,
           text: oversized ? null : Buffer.concat(parts).toString("utf8"),
         };

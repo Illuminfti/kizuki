@@ -4,11 +4,13 @@ export class UsageError extends Error {
 
 export interface ArgSpec {
   options?: readonly string[];
+  repeatableOptions?: readonly string[];
   flags?: readonly string[];
 }
 
 export interface ParsedArguments {
   options: Map<string, string>;
+  repeated: Map<string, string[]>;
   flags: Set<string>;
   positionals: string[];
 }
@@ -17,6 +19,8 @@ export function parseArguments(
   tokens: string[],
   spec: ArgSpec,
 ): ParsedArguments {
+  const repeatable = new Set(spec.repeatableOptions ?? []);
+  const repeated = new Map<string, string[]>();
   const optionNames = new Set(spec.options ?? []);
   const flagNames = new Set(spec.flags ?? []);
   const options = new Map<string, string>();
@@ -49,19 +53,20 @@ export function parseArguments(
       continue;
     }
     if (optionNames.has(name)) {
-      if (options.has(name)) throw new UsageError(`repeated option ${name}`);
+      if (options.has(name) && !repeatable.has(name)) throw new UsageError(`repeated option ${name}`);
       const value = inlineValue ?? tokens[index + 1];
       if (value === undefined || (inlineValue === undefined && value.startsWith("--"))) {
         throw new UsageError(`missing value for ${name}`);
       }
       options.set(name, value);
+      if (repeatable.has(name)) repeated.set(name, [...(repeated.get(name) ?? []), value]);
       if (inlineValue === undefined) index += 1;
       continue;
     }
     throw new UsageError(`unknown option ${name}`);
   }
 
-  return { options, flags, positionals };
+  return { options, repeated, flags, positionals };
 }
 
 export function extractVault(tokens: string[]): {

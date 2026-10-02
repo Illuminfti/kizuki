@@ -31,6 +31,9 @@ export interface SessionOptions {
   /** Root-relative, forward slashes. */
   relpath: string;
   includeSubagents: boolean;
+  includeHeadless?: boolean;
+  /** Classification from the last committed complete line. */
+  initialHeadless?: boolean;
   excludeCwd: readonly string[];
   observedAt: string;
 }
@@ -73,6 +76,7 @@ interface RawTurn {
 /** Interprets the lines of one transcript file in order. */
 export class SessionReader {
   readonly #options: SessionOptions;
+  #headless = false;
   #meta = {
     sessionId: null as string | null,
     cwd: null as string | null,
@@ -81,7 +85,10 @@ export class SessionReader {
 
   constructor(options: SessionOptions) {
     this.#options = options;
+    this.#headless = options.initialHeadless ?? false;
   }
+
+  get headless(): boolean { return this.#headless; }
 
   /**
    * `emit` false reads a line for session context only, as a resumed Codex
@@ -104,6 +111,11 @@ export class SessionReader {
   }
 
   #claudeTurn(raw: Record<string, unknown>): Turn | { skip: string } {
+    const entrypoint = raw["entrypoint"];
+    if (typeof entrypoint === "string") {
+      this.#headless = ["print", "sdk", "sdk-cli", "sdk-ts", "sdk-py"].includes(entrypoint);
+    }
+    if (this.#headless && this.#options.includeHeadless === false) return { skip: "headless" };
     const type = raw["type"];
     if (type !== "user" && type !== "assistant")
       return { skip: "ignored_type" };
@@ -137,6 +149,7 @@ export class SessionReader {
     const payload = raw["payload"];
     if (raw["type"] === "session_meta" && isPlainObject(payload)) {
       const git = payload["git"];
+      this.#headless = payload["source"] === "exec" || payload["originator"] === "codex_exec";
       this.#meta = {
         sessionId: str(payload["id"]),
         cwd: str(payload["cwd"]),
@@ -151,6 +164,7 @@ export class SessionReader {
     ) {
       return { skip: "ignored_type" };
     }
+    if (this.#headless && this.#options.includeHeadless === false) return { skip: "headless" };
     const role = payload["role"];
     if (role !== "user" && role !== "assistant") return { skip: "other_role" };
     return this.#finish({
@@ -212,7 +226,7 @@ export class SessionReader {
     if (
       cwd !== null &&
       this.#options.excludeCwd.some(
-        (prefix) => cwd === prefix || cwd.startsWith(`${prefix}/`),
+        (prefix) => cwd === prefix || cwd.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`),
       )
     ) {
       return { skip: "excluded_cwd" };

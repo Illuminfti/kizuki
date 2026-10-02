@@ -13,6 +13,7 @@ import type {
   PurgePlan,
   SecretResolver,
   SyncBatch,
+  RunContext,
 } from "@kizuki/core";
 import {
   CLAUDE_CODE_SESSIONS_CONNECTOR_ID,
@@ -34,6 +35,7 @@ import {
 import type { SessionPosition } from "./cursor";
 import {
   count,
+  MAX_LINE_BYTES,
   listSessionFiles,
   openSessionFile,
   readLines,
@@ -42,6 +44,7 @@ import {
 import type { Counters, SessionFile } from "./files";
 import { FIXTURE_FILES, FIXTURE_NOW } from "./fixture";
 import { SessionReader } from "./session";
+import { boundOffsets, encodeOffset, fileKey, matchesOffset, offsetDigest, parseOffset } from "./offsets";
 
 /** Files touched this long before the watermark are read again, for clock and mtime slop. */
 export const OVERLAP_MS = 120_000;
@@ -59,6 +62,8 @@ const FLAVOR: Readonly<Record<SessionsConnectorId, SessionFlavor>> = {
 
 export interface AgentSessionsDeps {
   now: () => number;
+  /** Descriptor reads can be counted without weakening the production open policy. */
+  openFile: typeof openSessionFile;
 }
 
 interface Visit {
@@ -73,6 +78,7 @@ export class AgentSessionsConnector implements Connector {
   readonly #flavor: SessionFlavor;
   readonly #config: ParsedAgentSessionsConfig;
   readonly #now: () => number;
+  readonly #openFile: typeof openSessionFile;
   readonly #manifest: Manifest;
   /** Counts since construction; `health()` reports them and no run state depends on them. */
   readonly #report: Counters = {};
@@ -87,6 +93,7 @@ export class AgentSessionsConnector implements Connector {
     this.#flavor = FLAVOR[id];
     this.#config = parseConfig(id, config);
     this.#now = deps.now ?? Date.now;
+    this.#openFile = deps.openFile ?? openSessionFile;
     this.#manifest = freezeManifest({
       schema: "kizuki.connector/v1",
       connector_id: id,
@@ -102,6 +109,7 @@ export class AgentSessionsConnector implements Connector {
         tombstones: false,
         purge: false,
         fixture: true,
+        cursor_store: "host",
         sync_from_backfill_before_first_success: true,
       },
       required_secrets: [],
@@ -149,12 +157,12 @@ export class AgentSessionsConnector implements Connector {
     }
   }
 
-  backfill(cursor: Cursor | null): Promise<SyncBatch> {
-    return this.#pass(cursor);
+  backfill(cursor: Cursor | null, context?: RunContext): Promise<SyncBatch> {
+    return this.#pass(cursor, context);
   }
 
-  sync(cursor: Cursor | null): Promise<SyncBatch> {
-    return this.#pass(cursor);
+  sync(cursor: Cursor | null, context?: RunContext): Promise<SyncBatch> {
+    return this.#pass(cursor, context);
   }
 
   async revoke(): Promise<void> {
@@ -188,7 +196,7 @@ export class AgentSessionsConnector implements Connector {
    * watermark zero, and a finished pass leaves the watermark at the newest
    * mtime it saw.
    */
-  async #pass(cursor: Cursor | null): Promise<SyncBatch> {
+  async #pass(cursor: Cursor | null, context?: RunContext): Promise<SyncBatch> {
     this.#assertActive();
     const root = await resolveRoot(this.#config.path);
     if (root === null)
@@ -213,6 +221,18 @@ export class AgentSessionsConnector implements Connector {
     const floor =
       state.watermark_ms === 0 ? -1 : state.watermark_ms - OVERLAP_MS;
     const visits = plan(listing.files, floor, state.after);
+    // A null cursor is an explicit replay. Never use offsets from a different pass.
+    const committed = context?.cursor_store ?? new Map<string, string>();
+    const offsets = new Map(cursor === null ? [] : committed);
+    const finishStore = (watermark: number, keep: string | null): Pick<SyncBatch, "cursor_store"> => {
+      if (context === undefined) return {};
+      boundOffsets(offsets, listing.files.filter((file) => file.mtime_ms > watermark - OVERLAP_MS), keep);
+      const delta: Record<string, string | null> = {};
+      for (const key of committed.keys()) if (!offsets.has(key)) delta[key] = null;
+      for (const [key, value] of offsets) if (committed.get(key) !== value) delta[key] = value;
+      state.store_sha256 = offsetDigest(offsets);
+      return { cursor_store: delta };
+    };
 
     const events: CaptureEventInput[] = [];
     const observedAt = new Date(this.#now()).toISOString();
@@ -227,22 +247,49 @@ export class AgentSessionsConnector implements Connector {
 
     for (const visit of visits) {
       if (full()) break;
-      const { file, skipLines, orderMtime } = visit;
+      const { file, orderMtime } = visit;
+      let skipLines = visit.skipLines;
       newest = Math.max(newest, file.mtime_ms);
       position = {
         mtime_ms: orderMtime,
         relpath: file.relpath,
         line: skipLines,
       };
-      const opened = await openSessionFile(file.absolute);
+      const opened = await this.#openFile(file.absolute);
       if ("reason" in opened) {
         count(this.#report, opened.reason);
         continue;
       }
       count(this.#report, "files");
-      const reader = this.#reader(file.relpath, observedAt);
       try {
-        for await (const entry of readLines(opened.handle, skipLines)) {
+        const info = await opened.handle.stat();
+        const key = fileKey(file.relpath);
+        const saved = parseOffset(offsets.get(key));
+        let offset = 0;
+        let line = 0;
+        let headless = false;
+        if (saved !== null) {
+          if (await matchesOffset(opened.handle, info, saved)) {
+            offset = saved[3];
+            line = saved[4];
+            skipLines = line;
+            headless = saved[7];
+          } else {
+            // Rewrites, truncations and replacements must also restart a paused page.
+            skipLines = 0;
+          }
+        }
+        if (saved === null && context !== undefined) skipLines = 0;
+        const reader = this.#reader(file.relpath, observedAt, headless);
+        if (offset > 0 && this.#flavor === "codex") {
+          // Codex names its session on line one. Read that bounded line for context,
+          // then seek directly to the first byte the host has not committed.
+          for await (const first of readLines(opened.handle, 0, 0, 0, Math.min(info.size, MAX_LINE_BYTES + 1), 4096)) {
+            if (first.text !== null) reader.read(first.line, first.text, false);
+            break;
+          }
+        }
+        for await (const entry of readLines(opened.handle, context === undefined && !this.#config.include_headless ? 0 : skipLines, offset, line, info.size)) {
           const emit = entry.line > skipLines;
           if (entry.text === null) {
             if (emit) count(this.#report, "oversized_line");
@@ -258,6 +305,8 @@ export class AgentSessionsConnector implements Connector {
               if (outcome.redactions > 0) count(this.#report, "redactions", outcome.redactions);
             }
           }
+          offset = entry.offset;
+          line = entry.line;
           if (!emit) continue;
           position = {
             mtime_ms: orderMtime,
@@ -267,14 +316,17 @@ export class AgentSessionsConnector implements Connector {
           scanned += entry.bytes;
           if (full()) break;
         }
+        if (context !== undefined) offsets.set(key, await encodeOffset(opened.handle, info, offset, line, reader.headless));
       } finally {
         await opened.handle.close();
       }
     }
 
     if (full() && position !== null) {
+      const store = finishStore(state.watermark_ms, fileKey(position.relpath));
       return {
         events,
+        ...store,
         cursor: encodeCursor({ ...state, after: position, exhausted: false }),
         has_more: true,
       };
@@ -285,8 +337,10 @@ export class AgentSessionsConnector implements Connector {
       state.watermark_ms,
       Math.min(newest, this.#now()),
     );
+    const store = finishStore(watermark_ms, null);
     return {
       events,
+      ...store,
       cursor: encodeCursor({
         ...state,
         watermark_ms,
@@ -297,12 +351,14 @@ export class AgentSessionsConnector implements Connector {
     };
   }
 
-  #reader(relpath: string, observedAt: string): SessionReader {
+  #reader(relpath: string, observedAt: string, initialHeadless = false): SessionReader {
     return new SessionReader({
       flavor: this.#flavor,
       connectorId: this.#id,
       relpath,
       includeSubagents: this.#config.include_subagents,
+      includeHeadless: this.#config.include_headless,
+      initialHeadless,
       excludeCwd: this.#config.exclude_cwd,
       observedAt,
     });
