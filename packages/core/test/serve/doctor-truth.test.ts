@@ -64,9 +64,11 @@ function vault() {
   return { path, db: openLedger(join(path, ".kizuki", "kizuki.db")) };
 }
 
-/** Minute `n` after 2026-10-01T00:00:00Z, later than any event these tests accept. */
+// Receipts must follow captures even when the fixture's original date is past.
+const receiptEpoch = Math.max(Date.parse("2026-10-01T00:00:00Z"), Date.now() + 86_400_000);
+/** Minute `n` after the fixture epoch, later than any event these tests accept. */
 const minute = (n: number): string =>
-  new Date(Date.parse("2026-10-01T00:00:00Z") + n * 60_000).toISOString();
+  new Date(receiptEpoch + n * 60_000).toISOString();
 
 let serial = 0;
 function run(

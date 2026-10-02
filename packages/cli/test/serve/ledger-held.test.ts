@@ -414,6 +414,30 @@ test("kizuki serve stop during a model request aborts it too", async () => {
   }
 });
 
+test("SIGTERM during a model request with a held ledger preserves a stopped receipt and unknown usage", async () => {
+  const setup = tempVault();
+  const { daemon, endpoint } = await daemonInsideModelRequest(setup);
+  const holder = await holdLedger(setup, 150_000);
+  try {
+    const started = Date.now();
+    daemon.kill("SIGTERM");
+    expect(await daemon.exited).toBe(0);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(holder.exitCode).toBeNull();
+    const sync = readRunReceiptsLog(setup.vault).filter(receipt => receipt.rail === "sync").at(-1);
+    expect(sync).toMatchObject({
+      status: "stopped",
+      stopped: "serve:stop_requested",
+      model: { calls: 1, usage_unknown: true, unavailable: 0 },
+      errors: [],
+    });
+  } finally {
+    if (holder.exitCode === null) holder.kill("SIGTERM");
+    await holder.exited;
+    endpoint.stop();
+  }
+});
+
 test("SIGTERM during connector draining commits only the batch in flight and a restart resumes the remaining batches and sources", async () => {
   const fixture = tempVault();
   const setup = { ...fixture, env: { ...fixture.env, BEEPER_TOKEN: "synthetic-drain-token" } };

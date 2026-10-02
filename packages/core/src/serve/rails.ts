@@ -592,7 +592,9 @@ async function runRailImpl(
     if (usage !== null) {
       const metrics = JSON.parse(usage.metrics) as Pick<RunReceipt, "model" | "claims_rejected" | "claims_extracted">;
       partial = { ...partial, ...metrics, model: { ...metrics.model, model_ref: usage.model_ref } };
-      if (metrics.model.usage_unknown === true) partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "model attempt interrupted; token usage unknown"] };
+      // A contended ledger can retain the pre-request usage marker after an
+      // abort. Keep that uncertainty without reclassifying a requested stop.
+      if (metrics.model.usage_unknown === true && !stopRequested()) partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "model attempt interrupted; token usage unknown"] };
     }
     const repairProgress = getRunReceipt(db, runId);
     if (repairProgress?.stopped === CAPTURE_REPAIR_RECEIPT_PENDING) {
