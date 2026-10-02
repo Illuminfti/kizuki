@@ -19,18 +19,13 @@ import type {
   WorldValidQuery,
   WorldViewResult,
 } from "../world/ops/types";
-import {
-  issueWorldRef,
-  worldNamespace,
-  type WireRef,
-} from "../world/references";
+import { worldNamespace } from "../world/references";
 import { isPlainObject } from "../util/validate";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
-import type { RedactionCounts } from "./redact";
 import { clampWorldData } from "./world-clamp";
-import { ServeError } from "./types";
-import type { ServeContext } from "./types";
+import { ENVELOPE_V2_SCHEMA, ServeError } from "./types";
+import type { EnvelopeV2, ServeContext } from "./types";
 
 export { WorldViewError } from "../world/ops/types";
 export { isWorldWireToken } from "../world/ops/parse";
@@ -78,17 +73,7 @@ export type WorldReadResult =
       readonly operation: string;
       readonly result: WorldViewResult<WorldData>;
     };
-export type WorldViewEnvelope = {
-  readonly schema: "kizuki.envelope/v2";
-  readonly tool: "world_view";
-  readonly principal: WireRef<"principal">;
-  readonly at: string;
-  readonly canon: readonly [];
-  readonly quoted: readonly [];
-  /** Credential-shaped spans replaced in this response, per kind. Never the values. */
-  readonly redacted?: RedactionCounts;
-  readonly data: WorldReadResult;
-};
+export type WorldViewEnvelope = EnvelopeV2<WorldReadResult, "world_view", readonly [], readonly []>;
 
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const ALL_VALID: WorldValidQuery = { kind: "all" };
@@ -189,10 +174,8 @@ export function serveWorldView(
   args: Record<string, unknown>,
   registry: WorldOpRegistry = activeWorldOps(),
 ): WorldViewEnvelope {
-  // The gate is not wrapped in a transaction: a refusal rolls back everything
-  // inside one, and the audit row and rate reservation of a denied call must
-  // outlive the refusal. The projection opens its own transaction, so a failed
-  // projection still issues no references.
+  // Reservation precedes the gate's protected read and publication boundary,
+  // so a refused projection still leaves its audit row and rate reservation.
   const envelope = gate(
     ctx,
     "world_view",
@@ -214,23 +197,7 @@ export function serveWorldView(
         throw error;
       }
     },
+    ENVELOPE_V2_SCHEMA,
   );
-  return ctx.db
-    .transaction((): WorldViewEnvelope => {
-      const principal = resolvePrincipal(ctx.db, ctx.principal);
-      if (principal === null)
-        throw new ServeError("unknown_agent", "unknown agent");
-      const ns = worldNamespace(ctx.db, principal);
-      return {
-        schema: "kizuki.envelope/v2",
-        tool: "world_view",
-        principal: issueWorldRef(ctx.db, ns, "principal", ns.principalId),
-        at: envelope.at,
-        canon: [],
-        quoted: [],
-        ...(envelope.redacted === undefined ? {} : { redacted: envelope.redacted }),
-        data: clampWorldData(envelope.data!),
-      };
-    })
-    .immediate();
+  return { ...envelope, data: clampWorldData(envelope.data!) } as WorldViewEnvelope;
 }

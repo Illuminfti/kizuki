@@ -1,21 +1,25 @@
-import { ServeError, dispatchServeTool, resolvePrincipal, toolAllowed } from "@kizuki/core";
-import { activeWorldOps, findWorldOp, worldOpInputKeys } from "@kizuki/core/world";
+import { ServeError, TOOLS, dispatchServeTool, resolvePrincipal, toolAllowed } from "@kizuki/core";
+import { ENVELOPE_V2_SCHEMA, activeWorldOps, findWorldOp, worldOpInputKeys, negotiateServeContract } from "@kizuki/core/world";
 import type { WorldViewEnvelope, Envelope, ServeContext, Tool } from "@kizuki/core";
+import type { EnvelopeV2 } from "@kizuki/core/world";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   CORRECT_INPUT,
   ENTITIES_INPUT,
-  envelopeFor,
+  negotiatedEnvelopeFor,
+  selectableInput,
   GET_PAGE_INPUT,
   GRAPH_INPUT,
   HEALTH_INPUT,
   PACKET_INPUT,
+  PACKET_INPUT_V2,
   PROPOSE_INPUT,
   SEARCH_INPUT,
   TIMELINE_INPUT,
   WORLD,
 } from "./schemas";
 import { SERVER_VERSION } from "./version";
+import { compactToolSchema } from "./compact-schema";
 import type { McpWorldOp } from "./world/ops";
 import { buildWorldSurface } from "./world/surface";
 
@@ -36,6 +40,13 @@ export const TOOL_DESCRIPTIONS: Record<Tool, string> = {
   propose: `File a claim for the receipted writer to act on. It never changes canon by itself. ${TAINT_RULE}`,
   correct: `Relay the owner's own correction of something the store has wrong, naming the claim, the claim key or the subject it is about. The statement is recorded verbatim, retires the claim it contradicts and rewrites the note bound to it, under one receipt that undo reverses; pass "object" to say what the claim should read instead, or "dry_run" to see what would change. A claim from world_view is named by target.world_claim and takes a mode: replace_object (the default; object may be a literal, a vocabulary value or a node token), retract (the owner denies it) or reclassify_mode (with perspective_mode suggested, hypothetical or questioned, for what was an idea and not a fact). refresh_world returns the corrected card in the same call. ${TAINT_RULE}`,
 };
+
+/** What a token principal is told: its brief has a view, not an epoch or a digest to hand back. */
+const SCOPED_PACKET_DESCRIPTION = TOOL_DESCRIPTIONS.context_packet
+  .replace(
+    'and advertise capabilities=["delta"] with retain_prefix plus prior_hash to skip an unchanged body.',
+    "and pass priorView, the view of a brief you still hold, to skip an unchanged body.",
+  );
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -59,7 +70,7 @@ type ToolResult = {
   isError?: boolean;
 };
 
-function served(envelope: Envelope<unknown> | WorldViewEnvelope): ToolResult {
+function served(envelope: Envelope<unknown> | EnvelopeV2): ToolResult {
   return {
     content: [{ type: "text", text: JSON.stringify(envelope) }],
     structuredContent: envelope,
@@ -91,7 +102,7 @@ function refused(error: unknown): ToolResult {
 }
 
 async function respond(
-  run: () => Promise<Envelope<unknown> | WorldViewEnvelope>,
+  run: () => Promise<Envelope<unknown> | EnvelopeV2>,
 ): Promise<ToolResult> {
   try {
     return served(await run());
@@ -124,14 +135,15 @@ function engineArguments(
 
 /** The advertised world_view shape is a summary; every answer is held to the whole grammar. */
 function checked(
-  envelope: Envelope<unknown> | WorldViewEnvelope,
+  envelope: Envelope<unknown> | EnvelopeV2,
   answer: { safeParse(value: unknown): { success: boolean } },
 ): WorldViewEnvelope {
   if (!answer.safeParse(envelope).success) throw new ServeError("error", "serving failed");
   return envelope as WorldViewEnvelope;
 }
 
-type ListHandler = (request: unknown, extra: unknown) => Promise<{ tools: { name: string }[] }>;
+type ListedTool = { name: string; inputSchema: Record<string, unknown>; outputSchema?: Record<string, unknown> };
+type ListHandler = (request: unknown, extra: unknown) => Promise<{ tools: ListedTool[] }>;
 
 /**
  * `tools/list` names only the tools this principal's grant allows, read from
@@ -150,7 +162,11 @@ function listOnlyGrantedTools(server: McpServer, ctx: ServeContext): void {
     const principal = resolvePrincipal(ctx.db, ctx.principal);
     return {
       ...listed,
-      tools: listed.tools.filter((tool) => principal !== null && toolAllowed(principal.grant, tool.name as Tool)),
+      tools: listed.tools.filter((tool) => principal !== null && toolAllowed(principal.grant, tool.name as Tool)).map((tool) => ({
+        ...tool,
+        inputSchema: compactToolSchema(tool.inputSchema),
+        ...(tool.outputSchema === undefined ? {} : { outputSchema: compactToolSchema(tool.outputSchema) }),
+      })),
     };
   });
 }
@@ -162,6 +178,16 @@ export interface ServerOptions {
 
 export function createServer(ctx: ServeContext, options: ServerOptions = {}): McpServer {
   const world = options.worldOps === undefined ? WORLD : buildWorldSurface(options.worldOps);
+  // Default token calls to v2; explicit selectors are judged by Core. The
+  // advertised discriminated output covers both implemented contracts.
+  const scoped = ctx.principal.kind === "agent";
+  const outputOf = negotiatedEnvelopeFor;
+  const dispatch = (tool: Tool, input: Record<string, unknown>) => {
+    const { response_contract, ...args } = input;
+    return dispatchServeTool(ctx, tool, args, {
+      response_contract: response_contract === undefined && scoped ? ENVELOPE_V2_SCHEMA : response_contract,
+    });
+  };
   const server = new McpServer(
     { name: "kizuki", version: SERVER_VERSION },
     { instructions: INSTRUCTIONS },
@@ -172,11 +198,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "Search notes and records",
       description: TOOL_DESCRIPTIONS.search,
-      inputSchema: SEARCH_INPUT,
-      outputSchema: envelopeFor("search"),
+      inputSchema: selectableInput(SEARCH_INPUT),
+      outputSchema: outputOf("search"),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "search", args)),
+    (args) => respond(() => dispatch("search", args)),
   );
 
   server.registerTool(
@@ -184,11 +210,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "Read one note",
       description: TOOL_DESCRIPTIONS.get_page,
-      inputSchema: GET_PAGE_INPUT,
-      outputSchema: envelopeFor("get_page"),
+      inputSchema: selectableInput(GET_PAGE_INPUT),
+      outputSchema: outputOf("get_page"),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "get_page", args)),
+    (args) => respond(() => dispatch("get_page", args)),
   );
 
   server.registerTool(
@@ -196,11 +222,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "List entity notes",
       description: TOOL_DESCRIPTIONS.query_entities,
-      inputSchema: ENTITIES_INPUT,
-      outputSchema: envelopeFor("query_entities"),
+      inputSchema: selectableInput(ENTITIES_INPUT),
+      outputSchema: outputOf("query_entities"),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "query_entities", args)),
+    (args) => respond(() => dispatch("query_entities", args)),
   );
 
   server.registerTool(
@@ -208,23 +234,23 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "List captured records",
       description: TOOL_DESCRIPTIONS.timeline,
-      inputSchema: TIMELINE_INPUT,
-      outputSchema: envelopeFor("timeline"),
+      inputSchema: selectableInput(TIMELINE_INPUT),
+      outputSchema: outputOf("timeline"),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "timeline", args)),
+    (args) => respond(() => dispatch("timeline", args)),
   );
 
   server.registerTool(
     "context_packet",
     {
       title: "Build a bounded brief",
-      description: TOOL_DESCRIPTIONS.context_packet,
-      inputSchema: PACKET_INPUT,
-      outputSchema: envelopeFor("context_packet"),
+      description: scoped ? SCOPED_PACKET_DESCRIPTION : TOOL_DESCRIPTIONS.context_packet,
+      inputSchema: selectableInput(PACKET_INPUT.extend({ priorView: PACKET_INPUT_V2.shape.priorView })),
+      outputSchema: outputOf("context_packet"),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "context_packet", args)),
+    (args: Record<string, unknown>) => respond(() => dispatch("context_packet", args)),
   );
 
   server.registerTool(
@@ -232,23 +258,25 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "List links around a node",
       description: TOOL_DESCRIPTIONS.graph_neighbors,
-      inputSchema: GRAPH_INPUT,
-      outputSchema: envelopeFor("graph_neighbors"),
+      inputSchema: selectableInput(GRAPH_INPUT),
+      outputSchema: outputOf("graph_neighbors"),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "graph_neighbors", args)),
+    (args) => respond(() => dispatch("graph_neighbors", args)),
   );
 
   server.registerTool(
     "system_health",
     {
       title: "Report system health",
-      description: TOOL_DESCRIPTIONS.system_health,
-      inputSchema: HEALTH_INPUT,
-      outputSchema: envelopeFor("system_health"),
+      description: scoped
+        ? `Unavailable under the scoped v2 contract; returns unsupported_contract. ${TAINT_RULE}`
+        : TOOL_DESCRIPTIONS.system_health,
+      inputSchema: selectableInput(HEALTH_INPUT),
+      outputSchema: outputOf("system_health"),
       annotations: READ_ONLY,
     },
-    () => respond(() => dispatchServeTool(ctx, "system_health", {})),
+    (args) => respond(() => dispatch("system_health", args)),
   );
 
   server.registerTool(
@@ -256,13 +284,13 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "Read a Concept or Situation",
       description: `${world.description} ${TAINT_RULE}`,
-      inputSchema: world.input,
+      inputSchema: selectableInput(world.input),
       outputSchema: world.listed,
       annotations: READ_ONLY,
     },
     (args) =>
       respond(async () =>
-        checked(await dispatchServeTool(ctx, "world_view", engineArguments(args, world.defaults)), world.answer),
+        checked(await dispatch("world_view", engineArguments(args, world.defaults)), world.answer),
       ),
   );
 
@@ -271,11 +299,11 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "File a claim for the writer",
       description: TOOL_DESCRIPTIONS.propose,
-      inputSchema: PROPOSE_INPUT,
-      outputSchema: envelopeFor("propose"),
+      inputSchema: selectableInput(PROPOSE_INPUT),
+      outputSchema: outputOf("propose"),
       annotations: WRITE,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "propose", args)),
+    (args) => respond(() => dispatch("propose", args)),
   );
 
   server.registerTool(
@@ -283,13 +311,33 @@ export function createServer(ctx: ServeContext, options: ServerOptions = {}): Mc
     {
       title: "Relay an owner correction",
       description: TOOL_DESCRIPTIONS.correct,
-      inputSchema: CORRECT_INPUT,
-      outputSchema: envelopeFor("correct"),
+      inputSchema: selectableInput(CORRECT_INPUT),
+      outputSchema: outputOf("correct"),
       annotations: WRITE,
     },
-    (args) => respond(() => dispatchServeTool(ctx, "correct", args)),
+    (args) => respond(() => dispatch("correct", args)),
   );
 
   listOnlyGrantedTools(server, ctx);
+  negotiateBeforeParsing(server, ctx);
   return server;
+}
+
+/** Like tools/list, this uses the pinned SDK's handler seam. Refusals are Core audit events. */
+function negotiateBeforeParsing(server: McpServer, ctx: ServeContext): void {
+  type Request = { params: { name: string; arguments?: Record<string, unknown> } };
+  type Handler = (request: Request, extra: unknown) => Promise<unknown>;
+  const handlers = (server.server as unknown as { _requestHandlers?: Map<string, Handler> })._requestHandlers;
+  const call = handlers?.get("tools/call");
+  if (handlers === undefined || call === undefined) throw new Error("the MCP SDK no longer exposes its tools/call handler");
+  handlers.set("tools/call", async (request, extra) => {
+    const tool = request.params.name;
+    if (!(TOOLS as readonly string[]).includes(tool)) return call(request, extra);
+    const { response_contract, ...args } = request.params.arguments ?? {};
+    try {
+      negotiateServeContract(ctx, tool as Tool, args,
+        response_contract === undefined && ctx.principal.kind === "agent" ? ENVELOPE_V2_SCHEMA : response_contract);
+    } catch (error) { return refused(error); }
+    return call(request, extra);
+  });
 }

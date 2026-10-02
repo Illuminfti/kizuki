@@ -141,8 +141,10 @@ export interface Piece {
   heading: string;
   block: string;
   canon?: CanonChunk;
+  canonHash?: string;
   quoted?: QuotedChunk;
   audit?: AuditItem[];
+  claims?: import("./claims").ClaimPublication[];
 }
 
 export interface PieceRequest {
@@ -285,6 +287,7 @@ export async function collectPieces(
         heading: "## canon",
         block: canonBlock(chunk),
         canon: chunk,
+        canonHash: page.contentHash,
       });
     }
   }
@@ -328,6 +331,7 @@ export async function collectPieces(
         heading: "## related",
         block: canonBlock(chunk),
         canon: chunk,
+        canonHash: target.contentHash,
       });
     };
     for (const plan of plans) {
@@ -401,6 +405,7 @@ export async function collectPieces(
         heading: "## working knowledge",
         block: claimLine(claim, redactorOf(ctx)),
         audit: reader.auditClaim(claim.claim_id),
+        claims: reader.publication([claim.claim_id]),
       });
     }
     for (const conflict of loadSubjectConflicts(ctx.db, wanted, reader.canRead)) {
@@ -408,6 +413,7 @@ export async function collectPieces(
         section: "claims",
         heading: "## counterevidence",
         audit: conflict.claims.flatMap((claim) => reader.auditClaim(claim.claim_id)),
+        claims: reader.publication(conflict.claims.map((claim) => claim.claim_id)),
         block:
           `- conflict key=${inline(conflict.claim_key.slice(0, 12))} live=${conflict.claims.length}` +
           ` :: ${conflict.claims.map((item) => inline(item.claim_id)).join(",")}\n`,
@@ -418,6 +424,7 @@ export async function collectPieces(
         section: "claims",
         heading: "## counterevidence",
         audit: reader.auditGroup(gap.claim_key),
+        claims: reader.publication(reader.auditGroup(gap.claim_key).map((item) => item.id)),
         block: `- gap key=${inline(gap.claim_key.slice(0, 12))} after=${inline(gap.after)} before=${inline(gap.before)}\n`,
       });
     }

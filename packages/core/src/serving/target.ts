@@ -3,6 +3,7 @@ import type { AuditDenial, DenyReason, Grant, Servable } from "../agents";
 import { getClaim, listClaims } from "../claims/store";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
 import { claimReader } from "./claims";
+import { authorizedClaimSql } from "./claim-policy-sql";
 import type { Claim } from "../contracts/proposal";
 import { identifier } from "./arguments";
 import { ServeError } from "./types";
@@ -67,14 +68,31 @@ function visibleTo(ctx: ServeContext, hidden: AuditDenial[] = []): (claim: Claim
   const sourcePolicy = sourcePolicyEpoch(ctx.db) > 0;
   return (claim) => {
     // The real reason goes to the owner's audit row, never to the caller.
+    const decision = authorize(grant, claimServable(claim));
+    if (!decision.allow) {
+      hidden.push({ id: claim.claim_id, reason: decision.reason });
+      return false;
+    }
     if (sourcePolicy && !reader.canRead(claim)) {
       hidden.push({ id: claim.claim_id, reason: "held" });
       return false;
     }
-    const decision = authorize(grant, claimServable(claim));
-    if (!decision.allow) hidden.push({ id: claim.claim_id, reason: decision.reason });
-    return decision.allow;
+    return true;
   };
+}
+
+/** Scoped targets are selected under policy before complete claims are decoded. */
+function scopedTargets(ctx: ServeContext, where: string, bindings: string[], visible: (claim: Claim) => boolean): Claim[] {
+  const policy = authorizedClaimSql(ctx);
+  const selected: Claim[] = [];
+  for (const row of ctx.db.query<{ claim_id: string }, (string | number)[]>(
+    `SELECT claim_id FROM claims WHERE status='live' AND ${where} AND ${policy.sql}
+      ORDER BY created_at, claim_id LIMIT ${MAX_CANDIDATES}`,
+  ).iterate(...bindings, ...policy.bindings)) {
+    const claim = getClaim(ctx.db, row.claim_id);
+    if (claim !== null && visible(claim)) selected.push(claim);
+  }
+  return selected;
 }
 
 /** True when `claim` is inside what `ctx.principal` could have read; the replay path uses it too. */
@@ -99,9 +117,14 @@ export function resolve(
   const hidden: AuditDenial[] = [];
   const visible = visibleTo(ctx, hidden);
   if (target.claim_id !== undefined) {
+    const id = identifier("target.claim_id", target.claim_id);
+    const policy = ctx.principal.kind === "owner" ? null : authorizedClaimSql(ctx);
+    const selected = policy === null || ctx.db.query<{ claim_id: string }, (string | number)[]>(
+      `SELECT claim_id FROM claims WHERE claim_id=? AND status='live' AND ${policy.sql}`,
+    ).get(id, ...policy.bindings) !== null;
     const claim = getClaim(
       ctx.db,
-      identifier("target.claim_id", target.claim_id),
+      selected ? id : "",
     );
     if (claim === null || claim.status !== "live" || !visible(claim)) {
       throw refuse("target.claim_id", "names no live claim", hidden);
@@ -119,12 +142,12 @@ export function resolve(
     if (!CLAIM_KEY.test(target.claim_key)) {
       throw refuse("target.claim_key", "must be a claim key");
     }
-    const claims = listClaims(ctx.db, {
+    const claims = ctx.principal.kind === "owner" ? listClaims(ctx.db, {
       claim_key: target.claim_key,
       status: "live",
       limit: MAX_CANDIDATES,
       filter: visible,
-    });
+    }) : scopedTargets(ctx, "claim_key=?", [target.claim_key], visible);
     if (claims.length === 0) {
       throw refuse("target.claim_key", "names no live claim", hidden);
     }
@@ -134,13 +157,13 @@ export function resolve(
   // Narrowed in SQL. Reading a default page of the table and filtering it in
   // memory stops finding real targets the moment a vault outgrows that page.
   const subject = identifier("target.subject", target.subject);
-  const claims = listClaims(ctx.db, {
+  const claims = ctx.principal.kind === "owner" ? listClaims(ctx.db, {
     status: "live",
     subject,
     keyed: true,
     limit: MAX_CANDIDATES,
     filter: visible,
-  });
+  }) : scopedTargets(ctx, "subject=? AND claim_key IS NOT NULL", [subject], visible);
   if (claims.length === 0) {
     throw refuse("target.subject", "names no live keyed claim", hidden);
   }
@@ -182,6 +205,7 @@ const OUT_OF_SCOPE: Record<DenyReason, string> = {
   rate_limited: "the target is outside the grant",
   busy: "the target is outside the grant",
   invalid_arguments: "the target is outside the grant",
+  unsupported_contract: "the target is outside the grant",
   error: "the target is outside the grant",
 };
 

@@ -74,7 +74,7 @@ describe("the stdio MCP server over a real client", () => {
     expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual(envelope);
   });
 
-  test("system_health observes its connection through the existing authorization gate", async () => {
+  test("system_health refuses scoped v2 before reading health and still serves owner v1", async () => {
     const running = live();
     const expected = readSqliteRuntime(running.db);
     const prepare = spyOn(running.db, "prepare");
@@ -82,7 +82,7 @@ describe("the stdio MCP server over a real client", () => {
     try {
       const denied = await call(await connect(running.agent("search-only")), "system_health", {});
       expect(denied.isError).toBe(true);
-      expect(errorOf(denied).error).toBe("tool_not_granted");
+      expect(errorOf(denied).error).toBe("unsupported_contract");
       expect(denied.structuredContent).toBeUndefined();
       expect(observations()).toBe(0);
 

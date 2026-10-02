@@ -73,11 +73,11 @@ describe("the surface builder", () => {
 });
 
 describe("world_view as generated from the registry", () => {
-  test("advertises the registered operations as its enum and no key beyond theirs", async () => {
+  test("advertises the registered operation fields and the separate contract selector", async () => {
     const { schema } = await listed(await connect());
     expect(schema.properties?.["operation"]?.enum).toEqual(WORLD_OPS.map((op) => op.name));
     expect(Object.keys(schema.properties ?? {}).sort()).toEqual(
-      ["concept", "cursor", "knownAt", "label", "operation", "situation", "valid"],
+      ["concept", "cursor", "knownAt", "label", "operation", "response_contract", "situation", "valid"],
     );
   });
 

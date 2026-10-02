@@ -19,13 +19,16 @@ import { claimsEpoch } from "./epoch";
 import { createRedactor, redactValue } from "./redact";
 import { compareText } from "../util/order";
 import { isPlainObject } from "../util/validate";
-import { LEDGER_BUSY_RETRY_AFTER_SECONDS, ServeError, ENVELOPE_SCHEMA } from "./types";
+import { LEDGER_BUSY_RETRY_AFTER_SECONDS, ServeError, ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA } from "./types";
+import { sealEnvelope } from "./v2/envelope";
+import { validatePublication } from "./v2/publication";
 import type {
   CanonChunk,
   Denied,
-  Envelope,
   QuotedChunk,
   ServeContext,
+  ResponseContract,
+  ResponseEnvelope,
 } from "./types";
 
 /** Keeps one audit row bounded while owner envelope counts stay exact. */
@@ -58,6 +61,13 @@ export interface Served<T> {
   audit_ids?: Record<string, string[]>;
   /** Authorized claim metadata actually included in the text projection. */
   audit_served?: AuditItem[];
+  /** Evidence used by a data-only projection, such as graph edges. */
+  authorization?: {
+    pages: { id: string; hash: string; sensitivity?: import("../agents").Sensitivity }[];
+    events: { id: string; sensitivity?: import("../agents").Sensitivity }[];
+    claims?: import("./claims").ClaimPublication[];
+    purpose?: import("../ledger/source-grants").SourcePurpose;
+  };
 }
 
 export interface ServeCall {
@@ -209,6 +219,15 @@ function liveContext(ctx: ServeContext): ServeContext | null {
   return { ...ctx, principal: current };
 }
 
+function assertPublicationAuthority(ctx: ServeContext, live: ServeContext): void {
+  const current = liveContext(ctx);
+  if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+  if (live.principal.kind === "agent" && current.principal.kind === "agent" &&
+      live.principal.grant_epoch !== current.principal.grant_epoch) {
+    throw new ServeError("error", "authority changed during request; retry");
+  }
+}
+
 function servedItems(canon: CanonChunk[], quoted: QuotedChunk[]): AuditItem[] {
   return [
     ...canon.map((chunk) => ({
@@ -244,6 +263,7 @@ function enter(
   tool: Tool,
   args: Record<string, unknown>,
   at: string,
+  refusal?: ServeError,
 ): Entered {
   const bag = boundedArguments(args);
   const live = liveContext(ctx);
@@ -265,6 +285,15 @@ function enter(
     ]);
     throw new ServeError("unknown_agent", "unknown agent");
   }
+  // Authority came first, so a revoked agent still reads unknown_agent. The
+  // grant check comes after: a contract refusal never depends on what the
+  // caller may read.
+  if (refusal !== undefined) {
+    updateAudit(live.db, reserved.audit_id, bag, [], [
+      { id: `tool:${tool}`, reason: refusal.code },
+    ]);
+    throw refusal;
+  }
   if (!toolAllowed(live.principal.grant, tool)) {
     updateAudit(live.db, reserved.audit_id, bag, [], [
       { id: `tool:${tool}`, reason: "tool_not_granted" },
@@ -274,8 +303,28 @@ function enter(
   return { live: { ...live, sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall", redactor: createRedactor(live.principal) }, audit_id: reserved.audit_id };
 }
 
+/**
+ * Audits and throws a refusal decided before the tool ran, such as a
+ * contract it cannot be served under. It takes the same rate reservation and
+ * leaves the same one audit row as any refused call, and reads nothing.
+ */
+export function refuseCall(
+  ctx: ServeContext,
+  tool: Tool,
+  args: Record<string, unknown>,
+  refusal: ServeError,
+): never {
+  try {
+    enter(ctx, tool, args, new Date().toISOString(), refusal);
+  } catch (error) {
+    if (error instanceof ServeError || !isLedgerBusy(error)) throw error;
+    throw ledgerBusyServeError(error);
+  }
+  throw refusal;
+}
+
 /** Contention reads as a retry, never as a broken engine or a denied grant. */
-function ledgerBusyServeError(error: unknown): ServeError {
+export function ledgerBusyServeError(error: unknown): ServeError {
   return new ServeError(
     "busy",
     "the ledger is busy while another writer holds it; retry this call",
@@ -317,14 +366,15 @@ function failed(
   throw new ServeError("error", "serving failed", { cause: error });
 }
 
-function envelopeOf<T>(
+function envelopeOf<T, C extends ResponseContract>(
   live: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
   at: string,
   auditId: string,
   served: Served<T>,
-): Envelope<T> {
+  contract: C,
+): ResponseEnvelope<T, C> {
   updateAudit(
     live.db,
     auditId,
@@ -337,6 +387,12 @@ function envelopeOf<T>(
   // and this pass covers every string that reaches the caller, whatever built it.
   const redactor = live.redactor ?? createRedactor(live.principal);
   const { canon, quoted, data } = redactValue(redactor, { canon: served.canon, quoted: served.quoted, data: served.data });
+  if (contract === ENVELOPE_V2_SCHEMA) {
+    return sealEnvelope(live, tool, at, canon, quoted, data ?? null) as unknown as ResponseEnvelope<T, C>;
+  }
+  // Read once: conditional extra queries would expose the first hidden source
+  // through work counters even when the v2 projector omits policy metadata.
+  const policyEpoch = sourcePolicyEpoch(live.db);
   return {
     schema: ENVELOPE_SCHEMA,
     tool,
@@ -346,20 +402,21 @@ function envelopeOf<T>(
     quoted,
     denied: live.principal.kind === "owner" ? collapse(served.withheld) : [],
     ...(live.principal.kind === "owner" && served.withheld.length > 0 ? { has_withheld: true as const } : {}),
-    ...(sourcePolicyEpoch(live.db) === 0 ? {} : { source_policy: { mode: "enforced" as const, epoch: sourcePolicyEpoch(live.db), legacy_unbound: "owner_only" as const } }),
+    ...(policyEpoch === 0 ? {} : { source_policy: { mode: "enforced" as const, epoch: policyEpoch, legacy_unbound: "owner_only" as const } }),
     ...(Object.keys(redactor.counts).length === 0 ? {} : { redacted: { ...redactor.counts } }),
     ...(data === undefined ? {} : { data }),
-  };
+  } as ResponseEnvelope<T, C>;
 }
 
-export function gate<T>(
+export function gate<T, C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
   run: (call: ServeCall) => Served<T>,
-): Envelope<T> {
+  contract: C = ENVELOPE_SCHEMA as C,
+): ResponseEnvelope<T, C> {
   try {
-    return gated(ctx, tool, args, run);
+    return gated(ctx, tool, args, run, contract);
   } catch (error) {
     // Reserving and updating the audit row are writes outside `failed`.
     if (error instanceof ServeError || !isLedgerBusy(error)) throw error;
@@ -367,14 +424,26 @@ export function gate<T>(
   }
 }
 
-function gated<T>(
+function gated<T, C extends ResponseContract>(
   ctx: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
   run: (call: ServeCall) => Served<T>,
-): Envelope<T> {
+  contract: C,
+): ResponseEnvelope<T, C> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
+  if (contract === ENVELOPE_V2_SCHEMA) {
+    try {
+      return live.db.transaction(() => {
+        assertPublicationAuthority(ctx, live);
+        const served = run({ ctx: live, at });
+        return envelopeOf(live, tool, args, at, audit_id, served, contract);
+      }).immediate();
+    } catch (error) {
+      failed(live, tool, args, audit_id, error);
+    }
+  }
   const sourceEpoch = sourcePolicyEpoch(live.db);
   const purgeEpoch = purgeReadEpoch(live.db);
   const readEpoch = tool === "query_entities" ? claimsEpoch(live.db) : null;
@@ -395,7 +464,7 @@ function gated<T>(
   } catch (error) {
     failed(live, tool, args, audit_id, error);
   }
-  return envelopeOf(live, tool, args, at, audit_id, served);
+  return envelopeOf(live, tool, args, at, audit_id, served, contract);
 }
 
 /**
@@ -403,28 +472,42 @@ function gated<T>(
  * async because a retrieval port may be bound to it, so the two write tools
  * come through here; nothing else about the order changes.
  */
-export async function gateAsync<T>(
+export async function gateAsync<T, C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
   run: (call: ServeCall) => Promise<Served<T>>,
-): Promise<Envelope<T>> {
+  contract: C = ENVELOPE_SCHEMA as C,
+): Promise<ResponseEnvelope<T, C>> {
   try {
-    return await gatedAsync(ctx, tool, args, run);
+    return await gatedAsync(ctx, tool, args, run, contract);
   } catch (error) {
     if (error instanceof ServeError || !isLedgerBusy(error)) throw error;
     throw ledgerBusyServeError(error);
   }
 }
 
-async function gatedAsync<T>(
+async function gatedAsync<T, C extends ResponseContract>(
   ctx: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
   run: (call: ServeCall) => Promise<Served<T>>,
-): Promise<Envelope<T>> {
+  contract: C,
+): Promise<ResponseEnvelope<T, C>> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
+  if (contract === ENVELOPE_V2_SCHEMA) {
+    try {
+      const served = await run({ ctx: live, at });
+      return live.db.transaction(() => {
+        assertPublicationAuthority(ctx, live);
+        validatePublication(live, tool, served);
+        return envelopeOf(live, tool, args, at, audit_id, served, contract);
+      }).immediate();
+    } catch (error) {
+      failed(live, tool, args, audit_id, error);
+    }
+  }
   const sourceEpoch = sourcePolicyEpoch(live.db);
   const purgeEpoch = purgeReadEpoch(live.db);
   const readEpoch = tool === "search" || tool === "context_packet" ? claimsEpoch(live.db) : null;
@@ -449,5 +532,5 @@ async function gatedAsync<T>(
   } catch (error) {
     failed(live, tool, args, audit_id, error);
   }
-  return envelopeOf(live, tool, args, at, audit_id, served);
+  return envelopeOf(live, tool, args, at, audit_id, served, contract);
 }

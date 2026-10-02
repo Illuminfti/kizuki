@@ -18,7 +18,8 @@ import {
   eventDecision,
   readServableEvents,
 } from "./ledger";
-import type { Envelope, ServeContext } from "./types";
+import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA } from "./types";
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 50;
@@ -43,10 +44,11 @@ export interface TimelineArgs {
 
 export type { TimelineExpandData } from "./expand";
 
-export function serveTimeline(
+export function serveTimeline<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
   args: TimelineArgs,
-): Envelope<TimelineExpandData | undefined> {
+  contract: C = ENVELOPE_SCHEMA as C,
+): ResponseEnvelope<TimelineExpandData | undefined, C> {
   return gate(ctx, "timeline", auditArguments(args), ({ ctx }): Served<TimelineExpandData | undefined> => {
     if (wantsTimelineExpansion(args)) return expandTimelineDetail(ctx, args);
     const grant = ctx.principal.grant;
@@ -79,7 +81,10 @@ export function serveTimeline(
 
     const { quoted, withheld, seen } = collectAuthorizedTimeline(ctx, base, rows);
 
-    const auditIds = timelineAuditCandidates(ctx.db, { ...base, limit: rows });
+    // Privileged denial enumeration belongs to the owner's audit read. A
+    // scoped response must never materialize candidates outside its grant.
+    const auditIds = ctx.principal.kind === "owner"
+      ? timelineAuditCandidates(ctx.db, { ...base, limit: rows }) : [];
     const auditFacts = readServableEvents(ctx.db, auditIds);
     for (const id of auditIds) {
       if (seen.has(id)) continue;
@@ -91,5 +96,5 @@ export function serveTimeline(
     }
 
     return { canon: [], quoted, withheld };
-  });
+  }, contract);
 }

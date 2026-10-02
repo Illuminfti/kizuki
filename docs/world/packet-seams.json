@@ -44,5 +44,87 @@
       "packages/cli/test/world-ops.test.ts",
       "packages/mcp/test/world-ops.test.ts"
     ]
+  },
+  {
+    "packet": 502,
+    "workstream": "ENV",
+    "scope": "Scoped envelope negotiation and content-baseline context packets; stored view history and World Diff remain separate work.",
+    "core": "dispatchServeTool and serveContextPacketV2",
+    "cli": "context, query and tell --response-contract (text and --json); session-start hook",
+    "mcp": "Ten tools with explicit selector negotiation and token defaults",
+    "http": "Existing /v1 tool routes with the response_contract wrapper",
+    "app": "Existing agent enrollment and world reads retain their contracts; ENV adds no App read operation",
+    "seams": {
+      "core": [
+        "packages/core/src/serving/dispatch.ts",
+        "packages/core/src/serving/packet.ts"
+      ],
+      "cli": [
+        "packages/cli/src/response-contract.ts",
+        "packages/cli/src/hook/session-start.ts"
+      ],
+      "mcp": [
+        "packages/mcp/src/server.ts"
+      ],
+      "http": [
+        "packages/core/src/serve/http.ts"
+      ],
+      "app": [
+        "packages/cli/src/app/host.ts"
+      ]
+    },
+    "tests": [
+      "packages/core/test/serving/v2-noninterference.test.ts",
+      "packages/core/test/serving/envelope-v2.test.ts",
+      "packages/core/test/serving/context-packet-v2.test.ts",
+      "packages/mcp/test/envelope-v2.test.ts",
+      "packages/cli/test/response-contract.test.ts",
+      "packages/cli/test/hook.test.ts",
+      "packages/cli/test/app-host.test.ts"
+    ],
+    "open_items": [
+      "ENV-4 requires D-ENV and remains a separate draft change."
+    ]
+  },
+  {
+    "packet": 490,
+    "workstream": "ENV",
+    "scope": "Scoped freshness reads without global policy epochs; typed references and stored view-token lifecycle remain separate work.",
+    "core": "dispatchServeTool and serveContextPacketV2",
+    "cli": "context, query and tell --response-contract (text and --json); session-start hook",
+    "mcp": "Ten tools with explicit selector negotiation and token defaults",
+    "http": "Existing /v1 tool routes with the response_contract wrapper",
+    "app": "Existing agent enrollment and world reads retain their contracts; ENV adds no App read operation",
+    "seams": {
+      "core": [
+        "packages/core/src/serving/dispatch.ts",
+        "packages/core/src/serving/packet.ts"
+      ],
+      "cli": [
+        "packages/cli/src/response-contract.ts",
+        "packages/cli/src/hook/session-start.ts"
+      ],
+      "mcp": [
+        "packages/mcp/src/server.ts"
+      ],
+      "http": [
+        "packages/core/src/serve/http.ts"
+      ],
+      "app": [
+        "packages/cli/src/app/host.ts"
+      ]
+    },
+    "tests": [
+      "packages/core/test/serving/v2-noninterference.test.ts",
+      "packages/core/test/serving/envelope-v2.test.ts",
+      "packages/core/test/serving/context-packet-v2.test.ts",
+      "packages/mcp/test/envelope-v2.test.ts",
+      "packages/cli/test/response-contract.test.ts",
+      "packages/cli/test/hook.test.ts",
+      "packages/cli/test/app-host.test.ts"
+    ],
+    "open_items": [
+      "ENV-4 requires D-ENV and remains a separate draft change."
+    ]
   }
 ]

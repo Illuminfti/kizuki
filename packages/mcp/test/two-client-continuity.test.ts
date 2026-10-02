@@ -56,10 +56,9 @@ function sameEnvelope(result: { content: { text: string }[]; structuredContent?:
 }
 
 function packet(result: ReturnType<typeof envelopeOf>) {
-  return result.data as {
-    packet_md: string; packet_hash: string; claims_epoch: number;
-    status: "current" | "superseded"; delivery: "full" | "unchanged";
-  };
+  const data = result.data as { result: { status: string; view?: unknown; data?: { packetMd: string } } };
+  if (data.result.data === undefined) throw new Error("expected a full packet");
+  return { ...data.result.data, status: data.result.status, view: data.result.view };
 }
 
 interface ContinuityClient {
@@ -264,19 +263,21 @@ async function stdioClient(vault: string, token: string): Promise<ContinuityClie
     expect(reply.result).toBeDefined();
     child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
     const listed = await request("tools/list", {});
-    const tools = (listed.result as { tools?: { name: string; outputSchema?: { properties?: object; required?: string[] } }[] } | undefined)?.tools;
+    type ListedSchema = { properties?: Record<string, unknown>; required?: string[]; anyOf?: ListedSchema[] };
+    const tools = (listed.result as { tools?: { name: string; outputSchema?: ListedSchema }[] } | undefined)?.tools;
     expect(tools?.length).toBeGreaterThan(0);
     for (const tool of tools ?? []) {
-      // world_view advertises its closed v2 envelope, which never carries these fields.
-      if (tool.name === "world_view") {
-        expect(tool.outputSchema?.properties).not.toHaveProperty("has_withheld");
-        expect(tool.outputSchema?.properties).not.toHaveProperty("source_policy");
-        continue;
+      if (tool.name === "system_health") {
+        expect(tool.outputSchema?.properties?.schema).toEqual({ const: "kizuki.envelope/v1" });
+      } else if (tool.name === "world_view") {
+        expect(Object.keys(tool.outputSchema?.properties ?? {}).sort()).toEqual(["at", "canon", "data", "principal", "quoted", "schema", "tool"]);
+      } else {
+        const v2 = tool.outputSchema?.anyOf?.find((branch) =>
+          (branch.properties?.schema as { const?: string } | undefined)?.const === "kizuki.envelope/v2");
+        expect(v2).toBeDefined();
+        expect(v2?.required).toContain("data");
+        for (const field of ["has_withheld", "source_policy", "denied", "redacted"]) expect(v2?.properties?.[field]).toBe(false);
       }
-      expect(tool.outputSchema?.properties).toHaveProperty("has_withheld");
-      expect(tool.outputSchema?.properties).toHaveProperty("source_policy");
-      expect(tool.outputSchema?.required ?? []).not.toContain("has_withheld");
-      expect(tool.outputSchema?.required ?? []).not.toContain("source_policy");
     }
     initialized = true;
     return {
@@ -317,7 +318,7 @@ async function proveContinuity(seed: SeededContinuity, a: ContinuityClient, b: C
     subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
   });
   sameEnvelope(initial);
-  expect(packet(envelopeOf(initial)).packet_md).toContain("blocked");
+  expect(packet(envelopeOf(initial)).packetMd).toContain("blocked");
 
   const correctionArgs = {
     statement: "The project is active.", target: { claim_id: claimId }, object: "active",
@@ -336,9 +337,9 @@ async function proveContinuity(seed: SeededContinuity, a: ContinuityClient, b: C
       subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
     });
     sameEnvelope(refreshed);
-    expect(packet(envelopeOf(refreshed)).packet_md).toContain("active");
-    expect(packet(envelopeOf(refreshed)).packet_md).toContain("owner_correction");
-    expect(packet(envelopeOf(refreshed)).packet_md).not.toContain("blocked");
+    expect(packet(envelopeOf(refreshed)).packetMd).toContain("active");
+    expect(packet(envelopeOf(refreshed)).packetMd).toContain("owner_correction");
+    expect(packet(envelopeOf(refreshed)).packetMd).not.toContain("blocked");
   }
   const privateValues = [
     marker, project, "blocked", "active", selectedSubject, event.event_id,
@@ -361,7 +362,7 @@ async function proveContinuity(seed: SeededContinuity, a: ContinuityClient, b: C
     subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
   });
   const beforeNarrow = packet(envelopeOf(latestB));
-  expect(beforeNarrow.packet_md).toContain("active");
+  expect(beforeNarrow.packetMd).toContain("active");
   setGrant(db, "continuity-b", { subjects: [], tools: ["context_packet"] });
   const outOfScope = await b.call("context_packet", {
     subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
@@ -372,13 +373,13 @@ async function proveContinuity(seed: SeededContinuity, a: ContinuityClient, b: C
   assertPrivateValuesAbsent(outOfScope);
   const narrowed = await b.call("context_packet", {
     include: ["claims"], purpose: "correction", budget_tokens: 500,
-    capabilities: ["delta"], retain_prefix: true, prior_hash: beforeNarrow.packet_hash, epoch: beforeNarrow.claims_epoch,
+    priorView: beforeNarrow.view,
   });
   sameEnvelope(narrowed);
-  expect(packet(envelopeOf(narrowed)).delivery).toBe("full");
+  expect(packet(envelopeOf(narrowed)).status).toBe("current");
   assertPrivateValuesAbsent(narrowed);
   const aStillAllowed = await a.call("context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
-  expect(packet(envelopeOf(aStillAllowed)).packet_md).toContain("active");
+  expect(packet(envelopeOf(aStillAllowed)).packetMd).toContain("active");
 
   const beforeReconnect = listAgents(db).map((agent) => agent.agent_id);
   await b.close();
@@ -386,7 +387,7 @@ async function proveContinuity(seed: SeededContinuity, a: ContinuityClient, b: C
   expect(listAgents(db).map((agent) => agent.agent_id)).toEqual(beforeReconnect);
   const reconnectedPacket = await reconnectedB.call("context_packet", { include: ["claims"], budget_tokens: 500 });
   sameEnvelope(reconnectedPacket);
-  expect(packet(envelopeOf(reconnectedPacket)).delivery).toBe("full");
+  expect(packet(envelopeOf(reconnectedPacket)).status).toBe("current");
   assertPrivateValuesAbsent(reconnectedPacket);
 
   revokeAgent(db, "continuity-b");
