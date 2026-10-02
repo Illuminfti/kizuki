@@ -1,3 +1,4 @@
+import { neutralizeControlTags, sanitizeCapturedText, scrubText } from "@kizuki/core/internal";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -43,10 +44,11 @@ const MAX_QUERY_CHARS = 200;
 const MAX_STDIN_WAIT_MS = 250;
 
 /** The claude-code and codex hooks share one documented SessionStart output shape. */
-export function formatHookOutput(harness: Harness, context: string): string {
+export function formatHookOutput(harness: Harness, context: string, exactSecrets: readonly string[] = []): string {
+  const text = neutralizeControlTags(scrubText(sanitizeCapturedText(context), exactSecrets).text);
   return harness === "generic"
-    ? context
-    : JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: context } });
+    ? text
+    : JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: text } });
 }
 
 /** The project's own name from the hook's working directory. The path itself never leaves this function. */
@@ -143,11 +145,13 @@ async function readInProcess(io: CliIo, options: SessionStartOptions, request: o
   const context = await withReadVault(io, async (ctx) => {
     const principal = principalFor(io, ctx.db, options.tokenRef);
     if (principal === null) return "denied" as const;
+    const standing = await bearerFor(io, ctx.vaultPath, undefined);
     const envelope = await serveContextPacket(
       {
         db: ctx.db,
         vaultPath: ctx.vaultPath,
         principal,
+        ...(standing === null ? {} : { servingSecrets: [standing] }),
         ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
       },
       request,
@@ -219,7 +223,7 @@ export async function runSessionStart(io: CliIo, options: SessionStartOptions): 
     const bearer = endpoint === null ? null : await bearerFor(io, vault, options.tokenRef);
     if (endpoint !== null && bearer !== null) {
       const wire = await callDaemon(endpoint.url, bearer, request, remaining());
-      if (wire.kind === "packet") return { output: formatHookOutput(options.harness, wire.context) };
+      if (wire.kind === "packet") return { output: formatHookOutput(options.harness, wire.context, bearer === null ? [] : [bearer]) };
       if (wire.kind === "empty") return { skip: "empty" };
       if (wire.kind === "timeout") return { skip: "timeout" };
       if (wire.kind === "refused") return { skip: "denied" };

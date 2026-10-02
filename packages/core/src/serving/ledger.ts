@@ -4,13 +4,14 @@ import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants"
 import type { ServeContext } from "./types";
 import { authorize } from "../agents";
 import type { AuditDenial, DenyReason, Grant, Sensitivity, Servable } from "../agents";
-import { previewText, timeline } from "../query/timeline";
+import { PREVIEW_CODE_POINTS, timeline } from "../query/timeline";
 import type { TimelineEntry, TimelineOptions } from "../query/timeline";
 import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
 import type { SearchHit } from "../search/query";
 import { placeholders } from "../util/sql";
 import { asSensitivity } from "./canon";
 import { redactorOf } from "./redact";
+import { boundScrubText } from "../producer/scrub";
 import type { QuotedChunk } from "./types";
 
 /** Bound on one `IN (...)` list, matching the graph layer's frontier chunk. */
@@ -121,15 +122,19 @@ export function quotedChunk(
   source: QuotedSource,
   sensitivity: Sensitivity,
   ctx: ServeContext,
+  maxChars = 4096,
 ): QuotedChunk {
+  const redactor = redactorOf(ctx);
+  const bounded = boundScrubText(source.text, maxChars);
   return {
     event_id: source.event_id,
-    connector_id: source.connector_id,
-    kind: source.kind,
+    connector_id: redactor.text(source.connector_id),
+    kind: redactor.text(source.kind),
     occurred_at: source.occurred_at,
     sensitivity,
-    subjects: source.subjects,
-    text: redactorOf(ctx).text(source.text),
+    subjects: source.subjects.map((subject) => redactor.text(subject)),
+    text: redactor.text(bounded.text),
+    ...(bounded.truncated ? { truncated: true as const } : {}),
     tainted: true,
   };
 }
@@ -209,7 +214,7 @@ export function collectAuthorizedTimeline(
       const full = currentQuotedSource(ctx.db, entry.event_id);
       if (full === null) continue;
       const chunk = quotedChunk({ ...source, text: full.text }, decision.sensitivity, ctx);
-      quoted.push({ ...chunk, text: previewText(chunk.text) });
+      quoted.push({ ...chunk, text: redactorOf(ctx).text(chunk.text, { offset: 0, span: PREVIEW_CODE_POINTS, inline: true }) });
       if (quoted.length >= limit) break;
     }
     const last = entries[entries.length - 1];

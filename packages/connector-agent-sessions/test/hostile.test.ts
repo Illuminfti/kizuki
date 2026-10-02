@@ -125,14 +125,11 @@ test("secrets are scrubbed before emission and counted in metadata", async () =>
   for (const secret of secrets) expect(serialized).not.toContain(secret);
   expect(events[0]?.text).toContain("The decision stands: keep the format stable.");
   expect(events[0]?.metadata["redactions"]).toEqual({
-    authorization: 1,
-    assignment: 1,
-    aws: 1,
-    github: 1,
+    bearer: 1,
+    secret_assignment: 1,
+    api_token: 4,
     jwt: 1,
     pem: 1,
-    sk: 1,
-    slack: 1,
   });
 });
 

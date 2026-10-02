@@ -3,19 +3,14 @@ import { EVENT_SCHEMA, isPlainObject } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import type { SessionFlavor, SessionsConnectorId } from "./config";
 import { MAX_TEXT_BYTES, boundScan, redact, sanitize, truncateUtf8, wellFormed } from "./scrub";
+import { dropScaffolding } from "./scaffolding";
+import { boundScrubText } from "@kizuki/core/internal";
 
 /** Marker of a context packet Kizuki itself served into a session. */
 const SELF_CONTEXT_MARKER = "KIZUKI CONTEXT v1";
 const OWN_TOOL_PREFIX = "mcp__kizuki__";
 /** Text a harness injects around the person's words; never theirs. */
 const HARNESS_TEXT = [
-  "<system-reminder>",
-  "<local-command-",
-  "<command-name>",
-  "<environment_context>",
-  "<user_instructions>",
-  "<permissions instructions>",
-  "<turn_aborted>",
   "# AGENTS.md instructions",
 ];
 const IDENTIFIER = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -207,7 +202,6 @@ export class SessionReader {
     }
     const text = texts.join("\n\n");
     if (text.trim() === "") return { skip: "no_text" };
-    if (text.includes(SELF_CONTEXT_MARKER)) return { skip: "self_context" };
     const cwd = str(raw.cwd);
     if (
       cwd !== null &&
@@ -249,9 +243,11 @@ export class SessionReader {
   #event(turn: Turn, line: number): LineOutcome {
     const bounded = boundScan(turn.text);
     const sanitized = sanitize(bounded.text);
-    // A marker split by invisible characters only shows after sanitizing.
-    if (sanitized.text.includes(SELF_CONTEXT_MARKER)) return { skip: "self_context" };
-    const scrubbed = redact(sanitized.text);
+    const spoken = dropScaffolding(sanitized.text);
+    // Filter feedback after removing harness blocks, preserving the person's
+    // words around a hook-injected packet. Hidden characters are already gone.
+    if (spoken.includes(SELF_CONTEXT_MARKER)) return { skip: "self_context" };
+    const scrubbed = redact(spoken);
     if (scrubbed.text.trim() === "") return { skip: "no_text" };
     const cut = truncateUtf8(scrubbed.text, MAX_TEXT_BYTES);
     const redactions = Object.values(scrubbed.redactions).reduce(
@@ -323,5 +319,5 @@ function basename(cwd: string): string {
 /** A short, inert label for display and metadata. */
 function label(value: string, max = MAX_LABEL_CHARS): string {
   // Cut before scanning: labels come from the transcript and may be huge.
-  return wellFormed(redact(sanitize(value.slice(0, MAX_LABEL_SCAN)).text).text.slice(0, max));
+  return wellFormed(redact(sanitize(boundScrubText(value, MAX_LABEL_SCAN).text).text).text.slice(0, max));
 }

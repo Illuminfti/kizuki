@@ -109,7 +109,7 @@ test('app launcher embeds offline assets and never prints its session capability
     const app = await startApp(io, { noService: true }, async (url) => { launched = url; });
     try {
         const token = new URL(launched).hash.slice('#token='.length);
-        expect(token).toHaveLength(43);
+        expect(token).toMatch(/^kzs_[A-Za-z0-9_-]{43}$/);
         expect(output.join('')).not.toContain(token);
         for (const [path, asset] of Object.entries(appAssets)) {
             const response = await fetch(app.url + path);

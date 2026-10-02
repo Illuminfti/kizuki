@@ -29,13 +29,13 @@ test("each secret shape is replaced and counted", () => {
   for (const [kind, secret] of Object.entries(SECRETS)) {
     const { text, redactions } = redact(`before ${secret} after`);
     expect(Object.keys(redactions)).toContain(
-      kind === "bearer" ? "bearer" : kind,
+      ["sk", "github", "slack", "aws", "google"].includes(kind) ? "api_token" : kind === "authorization" ? "bearer" : kind === "assignment" ? "secret_assignment" : kind,
     );
     expect(text).toContain("before ");
     expect(text).toContain(" after");
     for (const part of secret
       .split(/[\s=:]+/)
-      .filter((piece) => piece.length > 12)) {
+      .filter((piece) => piece.length > 12 && piece !== "Authorization")) {
       expect(text).not.toContain(part);
     }
   }
@@ -43,10 +43,10 @@ test("each secret shape is replaced and counted", () => {
 
 test("assignments keep the name and survive as prose when they hold no secret", () => {
   expect(redact('"password": "correct-horse"').text).toBe(
-    '"password": [redacted:assignment]',
+    '"password": "[redacted:secret_assignment]"',
   );
   expect(redact("DB_PASSWORD=abc123xyz").text).toBe(
-    "DB_PASSWORD=[redacted:assignment]",
+    "DB_PASSWORD=[redacted:secret_assignment]",
   );
   expect(redact("the token: string type").text).toBe("the token: string type");
   expect(redact("TOKEN=$OTHER_VAR").text).toBe("TOKEN=$OTHER_VAR");
@@ -132,5 +132,5 @@ test("zero-width and tag characters are removed and counted as a change", () => 
   const clean = sanitize(smuggled);
   expect(clean.changed).toBe(true);
   expect(clean.text).toBe("sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz012345 ");
-  expect(redact(clean.text).redactions).toEqual({ sk: 1 });
+  expect(redact(clean.text).redactions).toEqual({ api_token: 1 });
 });

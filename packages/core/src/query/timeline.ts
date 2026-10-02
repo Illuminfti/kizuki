@@ -50,7 +50,7 @@ interface TimelineRow {
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const OCCURRED_AT_PAIR = instantPairSql("events.occurred_at");
 const OCCURRED_AT_ORDER = `${instantSecondSql("events.occurred_at")}, ${instantNanoSql("events.occurred_at")}`;
-const PREVIEW_CODE_POINTS = 160;
+export const PREVIEW_CODE_POINTS = 160;
 
 function dayWindow(day: string): { since: string; until: string } {
   if (!DAY.test(day)) {

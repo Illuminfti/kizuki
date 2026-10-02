@@ -4,7 +4,7 @@ import type { AuditDenial } from "../agents";
 import { identifier } from "./arguments";
 import { eventDecision, currentQuotedSource } from "./ledger";
 import { packetTokens } from "./packet-tokenizer";
-import { redactorOf } from "./redact";
+import { createRedactor, redactorOf } from "./redact";
 import { ServeError } from "./types";
 import type { QuotedChunk, ServeContext } from "./types";
 
@@ -249,7 +249,10 @@ export function readTaskAttachment(
       withheld: [{ id: args.event_id, reason: decision.reason }],
     };
   }
-  const integrity = sha256(source.text);
+  // A valid task has at most 24 lines of 200 code points. Oversized records
+  // fail before parsing or secret scanning, including for the owner.
+  if (source.text.length > 16_384) return { task: { status: "incomplete", reason: "bounds" }, block: "", quoted: [], withheld: [] };
+  const integrity = sha256(ctx.principal.kind === "owner" ? source.text : createRedactor(ctx.principal, ctx.servingSecrets).text(source.text));
   if (args.integrity !== undefined && !sameDigest(args.integrity, integrity)) {
     return { task: { status: "unavailable" }, block: "", quoted: [], withheld: [] };
   }

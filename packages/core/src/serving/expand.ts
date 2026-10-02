@@ -1,3 +1,4 @@
+import { boundScrubText } from "../producer/scrub";
 import { timingSafeEqual } from "node:crypto";
 import { sha256 } from "../agents/hash";
 import { identifier, range } from "./arguments";
@@ -14,7 +15,7 @@ const DEFAULT_SPAN = 512;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 export interface TimelineExpandData {
-  /** SHA-256 of the current captured text, not of the returned window. */
+  /** SHA-256 of the bounded served projection; owner reads retain the raw capture digest. */
   integrity: string;
   /** SHA-256 of the returned window. */
   slice_integrity: string;
@@ -111,16 +112,18 @@ export function expandTimelineDetail(
     };
   }
 
-  const integrity = sha256(source.text);
+  const bounded = boundScrubText(source.text, 128 * 1024);
+  const redactor = redactorOf(ctx);
+  const served = redactor.text(bounded.text);
+  const integrity = sha256(ctx.principal.kind === "owner" ? source.text : served);
   if (pinned !== undefined && !sameDigest(pinned, integrity)) {
     return { canon: [], quoted: [], withheld: [] };
   }
 
-  // Offsets and totals are in the served text: redaction runs on the whole
-  // capture before it is cut, so a window never opens on half a secret.
-  const points = Array.from(redactorOf(ctx).text(source.text));
+  // Offsets and totals describe the bounded served projection.
+  const points = Array.from(served);
   const start = Math.min(offset, points.length);
-  const slice = points.slice(start, start + span).join("");
+  const slice = redactor.text(served, { offset: start, span });
   const returned = Array.from(slice).length;
   return {
     canon: [],
@@ -143,7 +146,7 @@ export function expandTimelineDetail(
       offset: start,
       returned,
       total: points.length,
-      truncated: start + returned < points.length,
+      truncated: bounded.truncated || start + returned < points.length,
     },
   };
 }

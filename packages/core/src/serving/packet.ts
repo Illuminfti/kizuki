@@ -1,3 +1,5 @@
+import { redactorOf } from "./redact";
+import type { Redactor } from "./redact";
 import { MAX_AUDIT_ITEMS } from "../agents/types";
 import type { AuditDenial, AuditItem } from "../agents";
 import {
@@ -236,13 +238,14 @@ function boundOverflowingCanon(
   soFar: string,
   prefix: string,
   budget: number,
+  redactor: Redactor,
 ): Piece | null {
   const fairLimit = Math.min(budget, tokens(soFar) + CANON_ATOM_FAIR_TOKENS);
   const within = (limit: number) => (block: string) =>
     tokens(`${soFar}${prefix}${block}`) <= limit;
   return (
-    boundCanonAtom(piece, within(fairLimit)) ??
-    boundCanonAtom(piece, within(budget))
+    boundCanonAtom(piece, within(fairLimit), redactor) ??
+    boundCanonAtom(piece, within(budget), redactor)
   );
 }
 
@@ -330,9 +333,10 @@ export async function serveContextPacket(
       // prose header: the marker is what identifies this text as a packet
       // when it comes back in as a captured transcript, so it leads and it
       // is verbatim.
+      const redactor = redactorOf(ctx);
       const header =
         `${PACKET_MARKER}\n` +
-        `principal=${principalName(ctx.principal)} purpose=${purpose}` +
+        `principal=${redactor.text(principalName(ctx.principal))} purpose=${purpose}` +
         ` budget=${budget} epoch=${epoch} at=${at}\n` +
         `${PACKET_RULES}\n`;
       const headerTokens = tokens(header);
@@ -463,7 +467,7 @@ export async function serveContextPacket(
             truncated = true;
             break;
           }
-          const bounded = boundOverflowingCanon(chosen, `${header}${body}`, prefix, budget);
+          const bounded = boundOverflowingCanon(chosen, `${header}${body}`, prefix, budget, redactor);
           if (bounded === null) {
             truncated = true;
             break;
@@ -478,7 +482,7 @@ export async function serveContextPacket(
           truncated = true;
           break;
         }
-        body += `${prefix}${chosen.block}`;
+        body = redactor.join([body, prefix, chosen.block]);
         heading = chosen.heading;
         if (isState) {
           stateBody += `${prefix}${chosen.block}`;
@@ -496,7 +500,7 @@ export async function serveContextPacket(
       if (taskArgs !== undefined) {
         const attached = readTaskAttachment(ctx, taskArgs, `${header}${body}`, budget);
         task = attached.task;
-        if (attached.block !== "") body += attached.block;
+        if (attached.block !== "") body = redactor.join([body, attached.block]);
         quoted.push(...attached.quoted);
         withheld.push(...attached.withheld);
       }
@@ -523,7 +527,7 @@ export async function serveContextPacket(
         degraded.length === 0 &&
         status === "current" &&
         tokens(`${header}UNCHANGED\n`) <= budget;
-      const packet = unchanged ? `${header}UNCHANGED\n` : `${header}${body}`;
+      const packet = redactor.join([header, unchanged ? "UNCHANGED\n" : body]);
 
       return {
         canon: unchanged ? [] : canon,

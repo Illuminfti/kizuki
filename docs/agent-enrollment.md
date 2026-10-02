@@ -133,29 +133,41 @@ Every text field an agent receives passes one redaction step in Core, below the
 MCP and HTTP adapters, so stdio, loopback HTTP and the `context_packet` session
 hook behave alike. It reuses the scrubber that protects model prompts. For an
 agent it replaces these shapes with `[redacted:<kind>]`: PEM blocks (`pem`), JWTs
-(`jwt`), `sk-`, `ghp_`, `github_pat_`, `xox` and `AKIA` tokens (`api_token`),
-`Authorization: Bearer` values (`bearer`), `NAME=value` assignments whose name
-contains `secret`, `token`, `password` or `api_key` (`secret_assignment`) and
-runs of twelve or more lowercase words that read as a mnemonic (`seed_phrase`).
-It covers `search`, `get_page`, `timeline` and its expansion, every
-`context_packet` section, `query_entities`, `graph_neighbors` labels and
-`world_view` cards. Ids, hashes, etags and integrity digests are not touched.
-When something was replaced, the envelope carries `redacted`, a count per kind,
-never a value. The owner principal keeps raw text and sees no `redacted` field.
+(`jwt`), Kizuki agent (`kzk_`) and prefixed serve (`kzs_`) tokens, common API tokens including
+Stripe live, Google, GitLab, npm and Slack app tokens (`api_token`), Bearer values
+(`bearer`), Basic and Token authorization values (`authorization`), credentials
+in URLs of any scheme (`url_credentials`), secret-named assignments in shell,
+JSON or YAML, including indented block scalars (`secret_assignment`), and
+mnemonic-like lowercase word runs
+(`seed_phrase`). The same Core patterns protect coding-session capture.
+Wrapped tokens, re-flowed PEM headers, blank lines after an assignment and
+percent-encoded credential forms are recognized. Existing redaction markers
+are inert on a second envelope pass, so each replacement is counted once.
+The redactor tracks windows and rendered blocks within each call, preserving
+clipped markers while still checking credentials newly formed across fields.
+It covers `search`, `get_page`, `timeline` and expansion, every context-packet
+section, entity and graph labels, and `world_view` cards. The owner keeps
+credential text for inspection; the daemon always removes its exact live
+credential, including an older unprefixed token. Session-start hook delivery
+scrubs credentials even when the hook reads as owner.
 
-Redaction runs on the whole text before an excerpt, preview or expansion window
-is cut, so a secret is not left half visible, and before a packet is packed, so
-the packet's token estimate stays exact. Offsets and totals in a `timeline`
-expansion are counted in the served text, not the stored capture; its
-`integrity` digest is still the stored capture's, taken over the raw text.
+Serving scans bounded prefixes before cutting previews and excerpts. Timeline
+and search previews cap their scan before redaction; explicit search `full_text`
+reads scrub the full requested capture rather than silently clipping it.
+Timeline expansion projects at most 131,072 source UTF-16 code units; its `total` and offsets
+refer to that scrubbed projection, and `truncated` remains true when source
+text lies beyond it. For agents, expansion and task `integrity` bind the served
+projection rather than the secret-bearing capture. Owner pins retain the raw
+capture digest. Pins from those two views are not interchangeable. Task records
+above 16,384 characters fail closed before parsing or scrubbing.
+Correction replies give agents keyed receipt digests, stable for the serving
+process lifetime; owner replies and durable undo receipts keep their raw hashes.
 
-Two rules apply to every principal, the owner included. Unicode tag characters
-and bidirectional controls are removed from served text, before the scrubber
-runs, so they cannot hide text or split a secret. In a context packet the
-excerpt of a canon page and the text of a capture are quoted line by line, and a
-title or path stays on one line, so a body line that imitates a stamp such as
-`- [page:x] s=public taint=clean ...` reads as quotation and cannot pass for a
-real stamp.
+Every principal receives text without terminal escapes, controls, zero-width
+characters, Unicode tags, bidirectional controls or variation selectors.
+Opening angle brackets are escaped, including unfinished tags, so captured
+text cannot open or close a harness block. In a packet, canon excerpts and
+captures remain quoted line by line, and titles and paths remain on one line.
 
 `system_health` for an agent counts only the pages, events and claims its grant
 can read and lists only the connections that feed that view. Each count stops at
@@ -164,17 +176,12 @@ agent counts, runtime and index details, and connection run results are owner
 only. `correct`, `propose` provenance and a `context_packet` task capture refuse
 an id the agent may not read with the same answer as an absent id.
 
-Limits. The scrubber recognizes only the shapes above; it is a heuristic
-backstop and not a guarantee, and a credential in another shape is served. The
-assignment form is `NAME=value` only: the YAML and JSON forms such as
-`"password": "x"` are not detected. It does not reach a credential an agent
-already knows or text the agent sends in. A `redacted` count reports spans
-replaced while the response was assembled, so it can include a span in a result
-that was then dropped. The `integrity` digest is a hash of the raw stored text,
-so an agent holding the redacted text can test a guess at a short redacted value
-against it offline. `world_view` evidence spans are offsets into the stored
-capture, not the served text, so a span cited by `world_view` can open the wrong
-window through `timeline` once an earlier secret in that capture was replaced.
+Limits. Shape matching is a heuristic backstop, not detection of every possible
+secret or persuasive instruction. It does not remove a credential an agent
+already knows. Counts describe replacements during response assembly, including
+bounded candidates subsequently omitted by the packet budget. `world_view`
+evidence spans refer to stored capture offsets; expanding them after an earlier
+redaction can select a different served window.
 A `world_view` label or literal that redaction lengthened is cut back to the
 length the grammar allows. Redaction narrows what is served; the grant,
 sensitivity ceiling and source consent still decide what an agent may read at

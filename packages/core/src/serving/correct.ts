@@ -37,6 +37,7 @@ import { parseIntent } from "./correct-args";
 import type { CorrectionIntent, CorrectObject, CorrectRefresh, CorrectionChange } from "./correct-args";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { getCanonReceipt } from "../canon/receipts";
+import { servedReceiptHash } from "./integrity";
 import { resolvePrincipal } from "../agents";
 import type { VaultMutationScope } from "../vault/mutation-scope";
 import type { CorrectIo } from "../correction/types";
@@ -299,8 +300,8 @@ async function correctWorldClaim(
         return [{
           page_path: rewrite.page_path,
           page_action: receipt.page_action,
-          before_hash: rewrite.before_hash,
-          after_hash: rewrite.after_hash,
+          before_hash: rewrite.before_hash === null ? null : servedReceiptHash(ctx.principal, rewrite.before_hash),
+          after_hash: servedReceiptHash(ctx.principal, rewrite.after_hash),
           receipt_id: rewrite.receipt_id,
           diff: rewrite.diff,
         }];
