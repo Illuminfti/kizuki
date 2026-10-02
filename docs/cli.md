@@ -187,6 +187,35 @@ and owner recall of text and its provenance:
 }
 ```
 
+A policy may also carry two optional keys. Both are validated when you grant
+and both are omitted from the stored policy when you leave them out, so an
+existing grant reads back exactly as it was written.
+
+- `sensitivity_default` (`public`, `personal` or `private`) is honoured only for
+  the owner-mapped importers, `import-legacy-wiki` and `import-legacy-events`,
+  whose per-record labels come from a mapping file you wrote. It sets the
+  tier those labels may lower a record to, and it may not be below the
+  connection's floor (`personal` for these importers). With it, a page the
+  importer labelled `personal` is stored `personal`; a page labelled `private`,
+  a page with no label, and a page the importer could not read stay `private`.
+  Without it, or on any other connector, every record stays at the connector's
+  own default, so nothing changes until you regrant. Withdrawing the key is not
+  retroactive: it only returns records captured afterwards to the connector
+  default, and events and claims already stored as `personal` stay `personal`.
+  To re-tighten stored material, raise `sensitivity_floor` to `private`. Set `sensitivity_floor` to `personal` in
+  the same policy, because the grant floor still raises every record to itself.
+  Claims take their tier from the sources of their own provenance events, so
+  one private source no longer raises the claims of another source of the
+  same connector.
+- `class_rules` is a list of `{ "path_glob": "06-execution/**", "class":
+  "machine_exhaust" }` objects (`class` is `machine_exhaust` or `credential`; at
+  most 32 rules). A rule marks every event of this source whose `source_record_id`
+  or recorded `relpath` matches the glob (`*` stays inside a segment, `**` spans
+  segments). Marks are recomputed for the source's stored events when a regrant
+  changes the rules; that rescan runs inside the regrant, so on a source with
+  a very large event count expect the regrant to take a while and other writers
+  to wait. See [Withheld classes](agent-enrollment.md#withheld-classes).
+
 Purposes are `capture`, `recall`, `session`, `correction`, `audit`, `derive`,
 `extract`, and `export`; choose only the uses you authorize. Populated fields
 outside `allowed_fields` refuse capture. `extract` does not make an untrusted
@@ -1174,7 +1203,11 @@ Within one adapter process, canon reads (`search`, `get_page`, `query_entities`,
 authority between calls. A page is read again when its file changes, and
 authority is resolved again when the receipt history changes, so a canon write
 or an edit on disk is visible to the next call. `system_health` still checks
-every page against the principal's grant on each call.
+every page against the principal's grant on each call. A page file that cannot
+be read, a symlink included, is withheld from every read and counted in
+`system_health` as `pages.withheld`; the owner's `withheld_pages` names its path
+and problem, and an agent sees only the count. A page that will not parse, a
+duplicate page id, or a directory that cannot be listed still refuses the read.
 
 ## agent
 

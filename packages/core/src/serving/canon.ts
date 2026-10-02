@@ -1,6 +1,10 @@
 import { resolve } from "node:path";
 import type { Database } from "bun:sqlite";
 import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
+import { classesOfEvents } from "../ledger/event-classes";
+import { classesOfPage } from "../canon/page-classes";
+import { compareRfc3339 } from "../agents/time";
+import { placeholders } from "../util/sql";
 import { canonPageRecoveryPending, canonReadGeneration } from "../canon/write-intent";
 import { authorize, sensitivity } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
@@ -12,9 +16,9 @@ import { isHeld, readHolds } from "../ledger/purge";
 import { tableExists } from "../ledger/schema";
 import {
   createCanonPageCache,
-  fatalCanonSkips,
   isLiveCanonPage,
   listCanonPagesReport,
+  splitServingSkips,
   stringArray,
 } from "../vault/pages";
 import type { CanonPageCache } from "../vault/pages";
@@ -36,6 +40,8 @@ export interface CanonIndex {
   holds: Set<string>;
   /** Hash-bound effective authority of the current page bytes. */
   authority: Map<string, AuthorityTier>;
+  /** Single page files the walk could not use: named, and served to no one. */
+  withheld: SkippedPage[];
 }
 
 export { sensitivity as asSensitivity };
@@ -135,16 +141,19 @@ function resolveAuthorities(db: Database, memo: VaultMemo, pages: readonly Canon
 /**
  * One vault walk and one hold read per served call; a file the walk finds
  * unchanged is not read again (see `VaultMemo`). A page that cannot be
- * read, parsed, or uniquely identified makes the whole read refuse: serving
- * a silently short list would under-report canon without anyone noticing.
- * Schema-invalid and oversized files are withheld and reported by doctor.
+ * parsed or uniquely identified, or a walk that cannot finish, makes the whole
+ * read refuse: serving a silently short list would under-report canon without
+ * anyone noticing. One page file that cannot be read, a symlink included, says
+ * nothing about the rest: it is withheld and named on the index, and
+ * `system_health` reports it. Schema-invalid and oversized files are withheld
+ * and reported by doctor.
  */
 export function loadCanon(ctx: ServeContext): CanonIndex {
   const generation = canonReadGeneration(ctx.db);
   assertCanonReadAdmission(ctx);
   const memo = vaultMemo(ctx.vaultPath);
   const report = listCanonPagesReport(ctx.vaultPath, memo.pages);
-  const fatal = fatalCanonSkips(report.skipped);
+  const { fatal, withheld } = splitServingSkips(report.skipped);
   if (fatal.length > 0) {
     throw new CanonUnreadableError(fatal);
   }
@@ -164,6 +173,7 @@ export function loadCanon(ctx: ServeContext): CanonIndex {
     byPath,
     holds: new Set(readHolds(ctx.db).map((hold) => hold.page_path)),
     authority: resolveAuthorities(ctx.db, memo, report.pages),
+    withheld,
   };
 }
 
@@ -190,21 +200,62 @@ export function eligible(page: CanonPage): boolean {
   return isLiveCanonPage(page);
 }
 
-export function pageServable(index: CanonIndex, page: CanonPage): Servable {
+function snapshotServable(ctx: ServeContext, page: CanonPage): Servable {
   const type = stringField(page, "type");
   return {
     id: page.id,
     sensitivity: stringField(page, "sensitivity"),
     ...(type === null ? {} : { type }),
     subjects: stringArray(page.data["subjects"]),
-    held: index.generation !== canonReadGeneration(index.sourceContext.db) || index.holds.has(page.relPath) || canonReadHeld(index.sourceContext, page),
+    held: canonReadHeld(ctx, page),
   };
+}
+
+/**
+ * The earliest and latest occurrence among a page's source events, so a
+ * time-scoped grant reads it only when every source falls in the window. A
+ * source that cannot be read leaves no span, and the window then denies it.
+ */
+function sourceSpan(db: Database, ids: readonly string[]): { from: string; to: string } | null {
+  if (ids.length === 0) return null;
+  const found = new Map(
+    db
+      .query<{ event_id: string; occurred_at: string }, string[]>(
+        `SELECT event_id, occurred_at FROM events WHERE event_id IN (${placeholders(ids.length)})`,
+      )
+      .all(...ids)
+      .map((row) => [row.event_id, row]),
+  );
+  let from: string | null = null;
+  let to: string | null = null;
+  try {
+    for (const id of ids) {
+      const at = found.get(id)?.occurred_at;
+      if (at === undefined) return null;
+      from = from === null || compareRfc3339(at, "occurred_at", from, "occurred_at") < 0 ? at : from;
+      to = to === null || compareRfc3339(at, "occurred_at", to, "occurred_at") > 0 ? at : to;
+    }
+  } catch {
+    return null;
+  }
+  return from === null || to === null ? null : { from, to };
 }
 
 export function pageDecision(
   index: CanonIndex,
   grant: Grant,
   page: CanonPage,
+): ReturnType<typeof pageSnapshotDecision> {
+  if (index.generation !== canonReadGeneration(index.sourceContext.db) || index.holds.has(page.relPath)) return { allow: false, reason: "held" };
+  return pageSnapshotDecision(index.sourceContext, grant, page);
+}
+
+/** The writer checks each exact snapshot before disclosing correction content. */
+export function pageSnapshotDecision(
+  sourceCtx: ServeContext,
+  grant: Grant,
+  page: CanonPage,
+  historicalSnapshot = false,
 ):
   | { allow: true; sensitivity: Sensitivity; taint: PageTaint; evidence: Extract<LivePageEvidence, { admitted: true }> }
   | { allow: false; reason: DenyReason } {
@@ -212,9 +263,8 @@ export function pageDecision(
   // instead of casts. A page missing either is withheld from everyone, the
   // owner included: an unstamped page may be verbatim capture, and serving
   // it as canon would hand a reader capture dressed as produced prose.
-  const sourceCtx = index.sourceContext;
-  if (index.generation !== canonReadGeneration(sourceCtx.db) || canonReadHeld(sourceCtx, page)) return { allow: false, reason: "held" };
-  const evidence = assessLivePageEvidence(sourceCtx.db, page, undefined, {...sourceCtx,principal:{...sourceCtx.principal,grant}});
+  if (canonReadHeld(sourceCtx, page)) return { allow: false, reason: "held" };
+  const evidence = assessLivePageEvidence(sourceCtx.db, page, undefined, {...sourceCtx,principal:{...sourceCtx.principal,grant}}, historicalSnapshot);
   if (!evidence.admitted) return { allow: false, reason: "held" };
   if (!sourceEventsAllowed(sourceCtx.db, evidence.sourceIds, { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
   const original = sensitivity(page.data["sensitivity"]);
@@ -222,7 +272,14 @@ export function pageDecision(
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
   const taint = asTaint(page.data["taint"]);
   if (taint === null) return { allow: false, reason: "missing_taint" };
-  const decision = authorize(grant, { ...pageServable(index, page), sensitivity: label });
+  // A page is as old as its evidence and carries the classes of its sources.
+  const span = grant.since === null && grant.until === null ? null : sourceSpan(sourceCtx.db, evidence.sourceIds);
+  const decision = authorize(grant, {
+    ...snapshotServable(sourceCtx, page),
+    ...(span === null ? {} : { occurred_span: span }),
+    classes: [...new Set([...classesOfPage(sourceCtx.db, page), ...classesOfEvents(sourceCtx.db, evidence.sourceIds)])],
+    sensitivity: label,
+  });
   return decision.allow
     ? { allow: true, sensitivity: label, taint, evidence }
     : { allow: false, reason: decision.reason };

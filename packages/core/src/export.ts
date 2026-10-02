@@ -5,7 +5,7 @@ export type { PortableLocalAdapter } from "./portable-local";
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
 import { canonReadGeneration, inspectCanonRecovery } from "./canon/write-intent";
 import { isRfc3339 } from "./util/time";
-import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed, type SourceGrant } from "./ledger/source-grants";
+import { sourcePolicyEpoch, inspectSourceGrant, sourceEventsAllowed, rebuildEventClasses, type SourceGrant } from "./ledger/source-grants";
 import { Database, constants as SQLITE_CONSTANTS } from "bun:sqlite";
 import { openOwnedDirectory, OwnedDirectoryPublicationError, type OwnedDirectory, type OwnedDirectoryIdentity } from "./util/owned-directory";
 import {
@@ -2970,6 +2970,9 @@ export function restoreVault(
           insertConnectorSensitivity(db, row);
         }
         restoreSourcePolicy(db, source, manifest, portable?.grants);
+        // Content classes are derived, so a restore recomputes them from the
+        // restored events and source rules rather than trusting a carried copy.
+        rebuildEventClasses(db);
         restorePurgeHistory(db, source, manifest);
         let intentCount = 0;
         for (const row of streamRows(

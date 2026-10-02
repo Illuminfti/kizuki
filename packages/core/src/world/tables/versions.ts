@@ -12,8 +12,14 @@ export type WorldSlotKey = (typeof WORLD_SLOT_KEYS)[number];
 export const PURGE_REINGEST_MIGRATION_VERSION = 34;
 export const CURSOR_STORE_MIGRATION_VERSION = 35;
 
-/** The last ledger version before the world table slots. */
-export const WORLD_MIGRATION_BASE = CURSOR_STORE_MIGRATION_VERSION;
+/** Fixed ledger migrations remain stable when later packets move the world base. */
+export const LEDGER_MIGRATION_VERSIONS = {
+  purgeReingest: PURGE_REINGEST_MIGRATION_VERSION,
+  eventClasses: 36,
+} as const;
+
+/** The last ledger migration before the world slots. */
+export const WORLD_MIGRATION_BASE = LEDGER_MIGRATION_VERSIONS.eventClasses;
 
 export const WORLD_MIGRATION_VERSIONS = {
   // slot: view

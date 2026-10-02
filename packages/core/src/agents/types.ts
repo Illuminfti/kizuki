@@ -34,6 +34,23 @@ export function isSensitivity(value: unknown): value is Sensitivity {
   );
 }
 
+/**
+ * Deterministic content classes stamped beside an event, never inside its
+ * revision hash. `credential` is the shared secret-pattern set; `machine_exhaust`
+ * is what an owner-declared source class rule marks.
+ */
+export const EVENT_CLASSES = ["credential", "machine_exhaust"] as const;
+export type EventClass = (typeof EVENT_CLASSES)[number];
+
+export function isEventClass(value: unknown): value is EventClass {
+  return (
+    typeof value === "string" && (EVENT_CLASSES as readonly string[]).includes(value)
+  );
+}
+
+/** What a grant that never named `deny_classes` withholds. */
+export const DEFAULT_DENY_CLASSES: readonly EventClass[] = Object.freeze(["credential"]);
+
 /** Ledger schema version that owns agents, grants, and audit. */
 export const AGENT_SCHEMA_VERSION = 9;
 
@@ -46,6 +63,13 @@ export const MAX_AUDIT_ITEMS = 256;
 /** Type or subject tokens: `person`, `fact`, `person:ada`. */
 export const GRANT_SCOPE_TOKEN =
   /^[a-z][a-z0-9_-]*(?::[A-Za-z0-9._:-]{1,120})?$/;
+
+/**
+ * A subject id in an importer's namespace: `namespace:text`, where the text is
+ * non-space characters joined by single spaces. Callers also reject control
+ * characters and apply the scope length bound.
+ */
+export const GRANT_SUBJECT_TOKEN = /^[a-z][a-z0-9_-]*:\S+(?: \S+)*$/u;
 
 export interface Grant {
   ceiling: Sensitivity;
@@ -61,6 +85,16 @@ export interface Grant {
    * overturn a correction the owner made directly.
    */
   relay_owner_corrections: boolean;
+  /**
+   * Classes this grant may not read. Absent means `DEFAULT_DENY_CLASSES`, so a
+   * grant stored before classes existed tightens by the credential class only;
+   * an explicit list, empty included, replaces the default.
+   */
+  deny_classes?: EventClass[];
+}
+
+export function denyClassesOf(grant: Pick<Grant, "deny_classes">): readonly EventClass[] {
+  return grant.deny_classes ?? DEFAULT_DENY_CLASSES;
 }
 
 /** Names one owner-initiated amendment so a retry can be recognised. */
@@ -80,6 +114,9 @@ function freezeGrant(grant: Grant): Grant {
     tools: Object.freeze([...grant.tools]),
     rate_limit_per_minute: grant.rate_limit_per_minute,
     relay_owner_corrections: grant.relay_owner_corrections,
+    ...(grant.deny_classes === undefined
+      ? {}
+      : { deny_classes: Object.freeze([...grant.deny_classes]) }),
   }) as Grant;
 }
 
@@ -141,6 +178,7 @@ export const OWNER: Principal = Object.freeze({
     tools: [...TOOLS],
     rate_limit_per_minute: 60,
     relay_owner_corrections: true,
+    deny_classes: [],
   }),
 });
 
@@ -152,6 +190,8 @@ export type DenyReason =
   | "type_out_of_scope"
   | "subject_out_of_scope"
   | "time_out_of_scope"
+  /** The item carries a content class this grant withholds. */
+  | "class_denied"
   | "tool_not_granted"
   | "unknown_agent"
   | "rate_limited"
@@ -169,6 +209,13 @@ export interface Servable {
   type?: string;
   subjects?: string[];
   occurred_at?: string;
+  /**
+   * The earliest and latest occurrence among the evidence behind a derived
+   * item. A time-scoped grant needs both ends inside its window.
+   */
+  occurred_span?: { from: string; to: string };
+  /** Content classes the item carries, its own or inherited from its sources. */
+  classes?: readonly string[];
   held?: boolean;
 }
 

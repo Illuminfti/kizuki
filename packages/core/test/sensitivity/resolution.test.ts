@@ -222,7 +222,7 @@ describe("insertClaim labels at write time", () => {
       { default_sensitivity: "private", sensitivity_floor: "personal" },
     );
     const labeled = labelClaimSensitivity(db, {
-      connector_ids: ["kizuki.screenpipe"],
+      events: [{ event_id: "01JJ0000000000000000000006", connector_id: "kizuki.screenpipe" }],
       model_label: "public",
     });
     expect(labeled.sensitivity).toBe("private");

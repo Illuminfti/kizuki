@@ -62,6 +62,21 @@ const CONNECTOR_SOURCE_CLASS: Readonly<Record<string, SourceClass>> = {
   "kizuki.codex-sessions": "agent_session",
 };
 
+/**
+ * Importers whose per-record labels come from a mapping file the owner wrote.
+ * Only these may have their labels honoured, and only when the owner's consent
+ * policy sets `sensitivity_default`; every other connector's labels are the
+ * connector's own claim and stay bounded by its class default.
+ */
+const OWNER_MAPPED_CONNECTORS: ReadonlySet<string> = new Set([
+  "kizuki.import-legacy-wiki",
+  "kizuki.import-legacy-events",
+]);
+
+export function isOwnerMappedConnector(connectorId: string): boolean {
+  return OWNER_MAPPED_CONNECTORS.has(connectorId);
+}
+
 export function sourceClassForConnector(
   connectorId: string,
 ): SourceClass | null {

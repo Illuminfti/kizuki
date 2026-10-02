@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { MAX_GRANT_SCOPE_ITEMS, type Sensitivity } from "../agents/types";
 import { LIVE_PREDICATE } from "../ledger/ledger";
-import { sourceServingSql, type SourcePurpose } from "../ledger/source-grants";
+import { sourceServingSql, type SourceServingScope } from "../ledger/source-grants";
 import { placeholders } from "../util/sql";
 import { ceilingSql, instantBoundPair, instantPairSql, instantSecondSql, instantNanoSql, requireCeiling } from "./sql";
 
@@ -21,7 +21,7 @@ export interface TimelineOptions {
   /** Exclusive lower bound on `(occurred_at, event_id)` for bounded pages. */
   after?: { occurred_at: string; event_id: string };
   /** Push compatible source-policy into SQL before LIMIT. */
-  source?: { owner: boolean; purpose?: SourcePurpose };
+  source?: SourceServingScope;
 }
 
 export interface TimelineEntry {

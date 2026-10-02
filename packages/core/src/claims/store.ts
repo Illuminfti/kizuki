@@ -7,7 +7,7 @@ import { SelfOriginError, validateEventOrigin, requireExternalEvents } from "../
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
 import { eventFromRow, type EventRow } from "../ledger/event-record";
 import { compareRfc3339 } from "../agents/time";
-import type { Sensitivity } from "../agents/types";
+import type { EventClass, Sensitivity } from "../agents/types";
 import type { RetrievalDoc, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
 import type { ClaimV2Assertion } from "../contracts/claim-v2";
 import { completeWorldAnchors, parseWorldAdmission, type WorldAdmission } from "../contracts/world-admission";
@@ -61,6 +61,8 @@ export const RETRIEVAL_SWEEP_LIMIT = 32;
 
 export interface ClaimsIo {
   readonly db: Database;
+  /** Serving principals cannot corroborate or supersede evidence they may not read. */
+  readonly deny_classes?: readonly EventClass[];
   readonly retrieval?: RetrievalPort;
   /** Actual opened vault, required only for a current source-deletion control. */
   readonly vault_path?: string;
@@ -1279,7 +1281,9 @@ function applyClaimInsert(
   worldSemanticMatch: Claim | null = null,
 ): InsertClaimResult {
   const at = nowOf(io);
-  const sourceScope = { owner: canonicalizeProducer(input.producer) !== "model" && !input.producer.startsWith("agent:"), model: canonicalizeProducer(input.producer) === "model", purpose: input.intent === "correct" ? "correction" as const : "derive" as const };
+  const sourceScope = { owner: canonicalizeProducer(input.producer) !== "model" && !input.producer.startsWith("agent:"), model: canonicalizeProducer(input.producer) === "model", purpose: input.intent === "correct" ? "correction" as const : "derive" as const,
+    ...(io.deny_classes === undefined ? {} : { deny_classes: io.deny_classes }),
+  };
   const historicalSignature = historicalClaimReplaySignature(input);
   const historicalInputAllowed = (): boolean => historicalSourceWriteAllowed(
     io.historical_source_write,
@@ -1374,7 +1378,7 @@ function applyClaimInsert(
     authority: assigned.authority,
     confidence: assigned.confidence,
     sensitivity: labelClaimSensitivity(io.db, {
-      connector_ids: [...new Set(events.map((event) => event.connector_id))],
+      events,
       event_hints: loadEventSensitivityHints(io.db, input.provenance),
       ...(input.sensitivity === undefined
         ? {}

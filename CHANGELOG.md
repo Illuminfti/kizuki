@@ -193,6 +193,22 @@
   survive a cut and the token budget stays exact. The owner keeps raw text. The
   scrubber is a heuristic; see [what an agent is served](docs/agent-enrollment.md#what-an-agent-is-served).
 
+- A source policy for an owner-mapped importer (`import-legacy-wiki`,
+  `import-legacy-events`) may set `sensitivity_default`, so the labels its
+  mapping wrote decide the tier once you regrant: a page labelled `personal` is
+  stored `personal`, and unlabelled or unreadable pages stay `private`. Nothing
+  changes for an existing grant until you regrant.
+- A source policy may carry `class_rules` (path globs marked `machine_exhaust`
+  or `credential`), and capture stamps a `credential` class on evidence that
+  matches the shared secret patterns. Agent grants gain the optional
+  `deny_classes`; when absent it denies `credential`, so existing agents lose
+  credential-shaped material and nothing else. `agent list` shows the effective
+  list. Ledger migration 36 adds the class table and stamps stored events.
+- Grants may name subject ids with spaces and other printable characters, as
+  importer subject mappings produce them.
+- `system_health` reports `pages.withheld` and, to the owner, the path of each
+  page file that could not be read.
+
 ### Fixed
 
 - Export no longer refuses because of a disconnected source that holds no
@@ -221,6 +237,9 @@
   `| jq` or a hook truncated and unparseable. Every command's stdout and stderr
   now go out with a synchronous write that waits for a slow reader; a reader
   that closes early ends the output quietly.
+- `correct` now applies a grant's class denial on every ledger, including one
+  with no source grants: a claim whose evidence carries a withheld class is
+  absent to that agent, dry run or not.
 - The daily brief is stamped private when it names a page that ever received a
   private receipt (a repair never lowers it), says when rail failure groups
   were omitted, and the brief repair also rewrites the run-id
@@ -377,6 +396,13 @@
   loaded machine does not fail tests at Bun's 5-second default. A test's own
   explicit timeout is unchanged. The CLI test helper kills a child process that
   has not exited after 90 seconds and fails that test with a clear message.
+- Claims take their sensitivity from the sources of their own provenance
+  events, not from every source of their connector, so one private source no
+  longer raises the claims of its siblings.
+- A canon page is readable to a time-scoped grant when every source it cites is
+  inside the window; before, no page was.
+- One unreadable or symlinked canon page file no longer fails every canon read
+  with `serving failed`; it is skipped and named by `system_health`.
 - A refused `kizuki export` now names the sources that block it and the exact
   grant or revocation command that clears each one, instead of a bare
   `source_export_denied`. The consent rule is unchanged: export still needs the

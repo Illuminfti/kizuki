@@ -416,6 +416,9 @@ function labelBatch(
   const policy = getConnectorSensitivity(db, connectorId, sourceKey);
   const floor = policy?.floor ?? "private";
   const defaultSensitivity = policy?.default_sensitivity ?? "private";
+  // An owner-lowered default trusts the owner's labels, not a missing one:
+  // a record that arrives without a label is unknown, and unknown is private.
+  const unlabeled = policy?.set_by === "grant" ? "private" : undefined;
   return {
     ...batch,
     events: batch.events.map((input) => {
@@ -427,7 +430,7 @@ function labelBatch(
           connector_floor: floor,
           connector_default: defaultSensitivity,
           ...(validated.value.sensitivity_hint === undefined
-            ? {}
+            ? unlabeled === undefined ? {} : { event_hint: unlabeled }
             : { event_hint: validated.value.sensitivity_hint }),
         }).sensitivity,
       };

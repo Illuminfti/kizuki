@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS agent_grants (
     relay_owner_corrections IN (0, 1)
   ),
   grant_epoch INTEGER NOT NULL DEFAULT 1 CHECK (grant_epoch >= 1),
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  deny_classes TEXT
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS agent_audit (
@@ -70,6 +71,12 @@ function addColumn(db: Database, table: string, column: string, ddl: string): vo
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
 }
 
+/** NULL is "never named": the reader applies the default class denial. */
+export function addDenyClasses(db: Database): void {
+  if (!tableExists(db, "agent_grants")) return;
+  addColumn(db, "agent_grants", "deny_classes", "deny_classes TEXT");
+}
+
 /**
  * Bring a standalone or pre-v9 agent schema forward without inventing a
  * second owner. Missing columns default closed: no relay, epoch 1.
@@ -91,6 +98,7 @@ function migrateExisting(db: Database): void {
     "grant_epoch",
     "grant_epoch INTEGER NOT NULL DEFAULT 1",
   );
+  addDenyClasses(db);
   if (!tableExists(db, "agent_audit")) return;
   addColumn(
     db,
