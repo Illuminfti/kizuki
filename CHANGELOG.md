@@ -401,6 +401,32 @@
   `pages_repaired`. A page that cannot be rewritten degrades the run with
   `brief-repair-failed` and is tried again on the next sweep.
 
+### Retrieval quality
+
+- `query`, `search` and `context --query` answer natural-language questions. A
+  question of three or more words that matches fewer than three records
+  literally is retried on its content words (stopwords dropped, stem
+  matching), keeping results that hold at least 60% of them. The result is
+  labelled `query-relaxed` and each hit carries a `coverage` share; a question
+  nothing answers reports `query-no-match`. `kizuki query --json` exposes
+  `coverage`.
+- A page titled exactly the query ranks first, and loop-written pages
+  (`auto/`, daily briefs, `rollup`) rank below owner pages at close relevance.
+- `context --query` selects captures within the window by the query instead of
+  by recency (named subjects still add their recent captures after the
+  matches). A canon page and the capture it cites are returned once, and an
+  edited record is searchable only by its current capture. A query nothing
+  matches reports `query-no-match`.
+- A page edited after its first import is dated by the edit when the wiki
+  importer re-emits it, so timeline and "what changed recently" windows find
+  the revision instead of the created date.
+- Search caps its owner audit scan at 500 candidate identities and reports
+  `scan-bound`. Authorized matches are selected separately, so withheld evidence
+  cannot change agent relaxation, ranking or diagnostics.
+- `bun run eval:retrieval` scores a synthetic golden set (keyword, paraphrase,
+  decision and unanswerable questions) with hit@1/5/20, MRR and abstention, and
+  exits 1 under its pinned minimums. See `docs/retrieval-quality.md`.
+
 ## 1.0.2 (2026-09-24)
 
 ### Added

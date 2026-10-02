@@ -223,6 +223,31 @@ describe("query", () => {
     expect(hit?.truncated).toBeUndefined();
   });
 
+  test("a question is answered by its content words and reports how much of it matched", async () => {
+    const setup = tempVault();
+    await recordCanonPage(setup, {
+      id: "fact:makers",
+      relPath: "facts/makers.md",
+      body: "Decision: onboard two market makers before the public launch.",
+    });
+
+    const asked = runCli(setup.env, "query", "What did we decide about market makers for the launch?", "--json");
+    expect(asked.exitCode).toBe(0);
+    const envelope = JSON.parse(asked.stdout.trim()) as {
+      data: { hits: SearchHit[] };
+      degraded: string[];
+    };
+    expect(envelope.data.hits.map((hit) => hit.doc_id)).toEqual(["page:fact:makers"]);
+    expect(envelope.data.hits[0]?.coverage).toBeGreaterThanOrEqual(0.6);
+    expect(envelope.data.hits[0]?.coverage).toBeLessThanOrEqual(1);
+    expect(envelope.degraded).toContain("query-relaxed");
+
+    const unanswerable = runCli(setup.env, "query", "What is the airspeed velocity of an unladen swallow?", "--json");
+    const empty = JSON.parse(unanswerable.stdout.trim()) as { data: { hits: SearchHit[] }; degraded: string[] };
+    expect(empty.data.hits).toEqual([]);
+    expect(empty.degraded).toContain("query-no-match");
+  });
+
   test("query refuses when canon receipts drift without a derived refresh", () => {
     const setup = tempVault();
     seedCanonPage(setup, {

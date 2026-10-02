@@ -274,12 +274,24 @@ function replaceEvent(db: Database, event: CaptureEvent): void {
     ).run(event.connector_id, event.source_record_id);
     return;
   }
+  // Keep every live version in the shared projection. Search selects the
+  // current version in the reader's scope, so hidden revisions cannot erase
+  // answers visible at a lower ceiling.
   insertDoc(db, eventDocument(event));
 }
 
 export function indexPage(db: Database, page: CanonPage): void {
   initSearch(db);
   db.transaction(() => replacePage(db, page)).immediate();
+}
+
+/**
+ * Index one prepared document. The caller vouches for its stamps; canon pages
+ * and ledger events go through `indexPage` and `indexEvents`, which derive them.
+ */
+export function indexDocument(db: Database, doc: SearchDocument): void {
+  initSearch(db);
+  db.transaction(() => insertDoc(db, doc)).immediate();
 }
 
 export function indexEvent(db: Database, event: CaptureEvent): void {

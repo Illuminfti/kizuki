@@ -310,7 +310,10 @@ test('a listed validating MCP client accepts real written identity evidence on c
   const search = await call(client, 'search', { query: 'orchard', scope: 'all' });
   expect(search.isError ?? false).toBe(false);
   const envelope = envelopeOf(search);
-  const quoted = (envelope['quoted'] as { event_id: string; subject_labels?: { display_name: string | null }[] }[]).find(chunk => chunk.event_id === written.event);
+  expect((envelope['canon'] as typeof canon).some(chunk => chunk.subject_labels?.[0]?.display_name === LABEL)).toBe(true);
+  expect((envelope['quoted'] as { event_id: string }[]).some(chunk => chunk.event_id === written.event)).toBe(false);
+  const capture = envelopeOf(await call(client, 'search', { query: 'orchard', scope: 'ledger' }));
+  const quoted = (capture['quoted'] as { event_id: string; subject_labels?: { display_name: string | null }[] }[]).find(chunk => chunk.event_id === written.event);
   expect(quoted?.subject_labels?.[0]?.display_name).toBe(LABEL);
   expect(JSON.parse(search.content[0]!.text)).toEqual(envelope);
 });

@@ -1302,6 +1302,7 @@ test('real written identity crosses authenticated HTTP into readable App title, 
     const path = join(setup.vault, '.kizuki', 'kizuki.db'), db = openLedger(path);
     const io = { db, vault_path: setup.vault };
     const first = await writeIdentity(io, { eventId: labelEvent(db, SUBJECT, 'public', 'Orchard names Ada Example.'), body: '> Orchard names Ada Example.', taint: 'quoted' }), handle = await writeIdentity(io, { predicate: 'identity.handle_on', object: '@ada-exact' });
+    const uncited = labelEvent(db, SUBJECT, 'public', 'Orchard reminder from another source.');
     await writeIdentity(io, { subject: `person:${'b'.repeat(64)}`, object: 'Grace Example', frontmatter: { type: 'person', title: 'My trusted human title', subjects: [`person:${'b'.repeat(64)}`] } });
     await recordedPage(db, setup.vault, 'facts/clean-base.md', { id: 'fact:clean-base', title: 'A clean base page', type: 'fact', status: 'active', sensitivity: 'public', taint: 'clean', subjects: [SUBJECT] }, 'Orchard base prose.');
     expect(readFileSync(join(setup.vault, 'facts/clean-base.md'), 'utf8')).toContain('taint: "clean"');
@@ -1317,7 +1318,8 @@ test('real written identity crosses authenticated HTTP into readable App title, 
         const body = await response.json() as { ok: boolean; data: { hits: AppHit[]; degraded: string[] } };
         expect(body.ok).toBe(true);
         const canonical = body.data.hits.find(hit => hit.scope === 'canon' && hit.title === 'a'.repeat(64) && hit.subject_labels?.some(label => label.subject === SUBJECT))!;
-        const quoted = body.data.hits.find(hit => hit.scope === 'ledger' && hit.id === first.event)!;
+        expect(body.data.hits.some(hit => hit.scope === 'ledger' && hit.id === first.event)).toBe(false);
+        const quoted = body.data.hits.find(hit => hit.scope === 'ledger' && hit.id === uncited)!;
         expect(body.data.hits.find(hit => hit.id === 'fact:clean-base')?.taint).toBe('quoted');
         expect(canonical.title).toBe('a'.repeat(64));
         expect(canonical.subject_labels?.[0]?.display_name).toBe(LABEL);

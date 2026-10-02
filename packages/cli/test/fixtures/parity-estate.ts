@@ -12,6 +12,9 @@ function keys(): string {
 
 if (mode === "keys") {
   process.stdout.write(keys());
+} else if (mode === "query-keys") {
+  const byQuery = JSON.parse(keys()) as Record<string, string[]>;
+  process.stdout.write((byQuery[query] ?? []).map(key => `${key}\n`).join(""));
 } else if (mode === "keys-unless-boom") {
   if (query.includes("boom")) {
     process.stderr.write("estate failure carrying private text: Vesper Quillfeather\n");

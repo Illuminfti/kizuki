@@ -4,8 +4,10 @@ import { canonReadGeneration } from "../canon/write-intent";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import { purgeReadEpoch } from "../derived-holds";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
+import { requireCeiling } from "../query/sql";
+import { isCurrentVersion } from "../search/versions";
 import { bareRetrievalId } from "../retrieval/ids";
-import { searchAuditCandidates } from "../search/query";
+import { NO_MATCH_LABEL, RELAXED_LABEL, searchAuditCandidates } from "../search/query";
 import type { SearchHit, SearchOptions } from "../search/query";
 import {
   enumOf,
@@ -20,6 +22,7 @@ import {
 } from "./arguments";
 import { canonChunk, eligible, excerptOf, loadCanon, pageDecision } from "./canon";
 import type { CanonIndex } from "./canon";
+import { eventsCitedByPages } from "./dedupe";
 import { claimsEpoch } from "./epoch";
 import { auditArguments, gateAsync } from "./gate";
 import type { Served } from "./gate";
@@ -27,6 +30,8 @@ import {
   eventDecision,
   quotedChunk,
 } from "./ledger";
+import { WITHHELD_SCAN_BOUND } from "./query-events";
+import { isQuestionQuery } from "../search/relax";
 import { ServeError } from "./types";
 import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
 import { retrievalCandidates } from "./retrieval";
@@ -96,6 +101,15 @@ function classify(
       continue;
     }
 
+    // An earlier version of an edited record is evidence, not a current answer.
+    if (!isCurrentVersion(db, bareRetrievalId(hit.doc_id), {
+      ceiling: requireCeiling(grant.ceiling),
+      ...(grant.types === null ? {} : { types: grant.types }),
+      ...(grant.subjects === null ? {} : { subjects: grant.subjects }),
+      ...(grant.since === null ? {} : { since: grant.since }),
+      ...(grant.until === null ? {} : { until: grant.until }),
+      source: { owner: index.sourceContext.principal.kind === "owner", purpose: index.sourceContext.sourcePurpose ?? "recall" },
+    })) continue;
     const quoted = currentQuotedSource(db, bareRetrievalId(hit.doc_id));
     if (quoted === null) continue;
     const decision = eventDecision(grant, quoted, index.sourceContext);
@@ -166,6 +180,12 @@ function assertSearchRead(ctx: ServeContext, snapshot: SearchReadSnapshot): void
 
 export interface SearchData {
   degraded: string[];
+  /**
+   * Present when the query was relaxed: the share of its content words each
+   * served page or capture holds, keyed by page id or event id. A caller that
+   * wants a stricter answer than the built-in floor thresholds it.
+   */
+  coverage?: Record<string, number>;
 }
 
 export async function serveSearch(
@@ -214,26 +234,11 @@ export async function serveSearch(
     const seen = new Set<string>();
     const narrowed = { ...grant, ...(types === undefined ? {} : { types }), ...(subjects === undefined ? {} : { subjects }), ...(window.since === undefined ? {} : { since: window.since }), ...(window.until === undefined ? {} : { until: window.until }) };
     const classified: Classification = { canon: [], quoted: [], withheld: [] };
-    absorbClassification(
-      classified,
-      classify(
-        ctx.db,
-        index,
-        narrowed,
-        nominated.ids.map((doc_id) => ({
-          doc_id,
-          scope: doc_id.startsWith("page:") ? "canon" : "ledger",
-        } as const)),
-        seen,
-      ),
-    );
-    // Preserve nomination deduplication, including denied nominations. Ranked
-    // pages retain only admitted identities; an arbitrary denied prefix must
-    // not accumulate in the cross-page set. Each page has its own bounded set.
-    for (const id of nominated.ids) seen.add(id);
     const rankedOpts = {
       ...base,
       limit: MAX_RETRIEVAL_LIMIT,
+      ceiling: grant.ceiling,
+      canonIds: index.pages.filter(page => eligible(page) && pageDecision(index, narrowed, page).allow).map(page => `page:${page.id}`),
       source: {
         owner: ctx.principal.kind === "owner",
         purpose: ctx.sourcePurpose ?? "recall",
@@ -242,6 +247,8 @@ export async function serveSearch(
     const degraded = new Set<string>();
     const read = snapshotSearchRead(ctx, index.generation);
     let offset = 0;
+    let candidatesScanned = 0;
+    const coverage = new Map<string, number>();
     let previousPage = "";
     // Page the same rank order until MAX_RETRIEVAL_LIMIT authorized hits or the
     // real end. FTS provenance is not an authorization predicate.
@@ -256,19 +263,60 @@ export async function serveSearch(
       const pageKey = ranked.candidates.map((hit) => hit.doc_id).join("\0");
       if (pageKey === previousPage) break;
       previousPage = pageKey;
-      absorbClassification(
-        classified,
-        classify(ctx.db, index, narrowed, ranked.candidates, seen),
-      );
+      for (const candidate of ranked.candidates) {
+        if (candidate.coverage !== undefined) coverage.set(bareRetrievalId(candidate.doc_id), candidate.coverage);
+      }
+      const pass = classify(ctx.db, index, narrowed, ranked.candidates, seen);
+      candidatesScanned += ranked.candidates.length;
+      absorbClassification(classified, pass);
       if (
         authorizedCount(classified) >= MAX_RETRIEVAL_LIMIT ||
         ranked.candidates.length < MAX_RETRIEVAL_LIMIT
       ) {
         break;
       }
+      if (candidatesScanned >= WITHHELD_SCAN_BOUND) {
+        degraded.add("scan-bound");
+        break;
+      }
       offset += ranked.candidates.length;
     }
-    const canon = classified.canon.slice(0, rows), quoted = classified.quoted.slice(0, Math.max(0, rows - classified.canon.length)).map(chunk => boundedQuote(chunk, fullText, index.sourceContext));
+    // Keep port-only nominations useful for keyword/fuzzy retrieval. Question
+    // answers must pass the floor's content coverage before entering a packet.
+    const question = isQuestionQuery(query);
+    if (!question) {
+      absorbClassification(classified, classify(ctx.db, index, narrowed,
+        nominated.ids.map(doc_id => ({ doc_id, scope: doc_id.startsWith("page:") ? "canon" : "ledger" } as const)), seen));
+    }
+
+    // Denial identities are owner audit information. They never determine an
+    // agent's answer, relaxation threshold, diagnostics or redaction counters.
+    if (ctx.principal.kind === "owner") {
+      for (let skipped = 0; skipped < WITHHELD_SCAN_BOUND; skipped += MAX_RETRIEVAL_LIMIT) {
+        const sample = searchAuditCandidates(ctx.db, query, {
+          ...base, limit: MAX_RETRIEVAL_LIMIT, source: rankedOpts.source, offset: skipped,
+        });
+        const denied = classify(ctx.db, index, narrowed, sample.candidates, seen).withheld;
+        const room = SEARCH_WITHHELD_CAP - classified.withheld.length;
+        if (room > 0) classified.withheld.push(...denied.slice(0, room));
+        if (sample.candidates.length < MAX_RETRIEVAL_LIMIT) break;
+        if (skipped + sample.candidates.length >= WITHHELD_SCAN_BOUND && classified.withheld.length > 0) {
+          degraded.add("scan-bound");
+        }
+      }
+    }
+    const canon = classified.canon.slice(0, rows);
+    // A canon page stands for the source record it cites; do not add the capture too.
+    const cited = eventsCitedByPages(
+      canon.flatMap((chunk) => index.byId.get(chunk.page_id) ?? []),
+      classified.quoted.map((chunk) => chunk.event_id),
+    );
+    const quoted = classified.quoted
+      .filter((chunk) => !cited.has(chunk.event_id))
+      .slice(0, Math.max(0, rows - canon.length))
+      .map(chunk => boundedQuote(chunk, fullText, index.sourceContext));
+    if (canon.length + quoted.length > 0) degraded.delete(NO_MATCH_LABEL);
+    else if (question) degraded.add(NO_MATCH_LABEL);
     const canonicalSubjects = new Map(canon.map(chunk => [chunk.page_id, canonSubjects(index, index.byId.get(chunk.page_id)!)]));
     const projection = projectSubjectLabels(index, narrowed, at, [...canonicalSubjects.values()].flat().concat(quoted.flatMap(chunk => chunk.subjects)), canon.length + quoted.length);
     const audit = new Map<string, AuditItem>();
@@ -279,10 +327,17 @@ export async function serveSearch(
     for (const reason of nominated.degraded) degraded.add(reason);
     for (const reason of projection.degraded) degraded.add(reason);
 
+    const scores = degraded.has(RELAXED_LABEL)
+      ? Object.fromEntries([...canon.map((chunk) => chunk.page_id), ...quoted.map((chunk) => chunk.event_id)].flatMap((id) => {
+          const share = coverage.get(id);
+          return share === undefined ? [] : [[id, share] as const];
+        }))
+      : undefined;
+
     return {
       canon, quoted, audit_served: [...audit.values()],
       withheld: classified.withheld,
-      ...(degraded.size === 0 ? {} : { data: { degraded: [...degraded] } }),
+      ...(degraded.size === 0 ? {} : { data: { degraded: [...degraded], ...(scores === undefined ? {} : { coverage: scores }) } }),
     };
   });
 }

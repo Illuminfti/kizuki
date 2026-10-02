@@ -22,3 +22,14 @@ export function machineOriginPath(relPath: string): string {
   if (underAutoPrefix(relPath)) return relPath;
   return `${AUTO_CANON_PREFIX}/${relPath}`;
 }
+
+/**
+ * SQL twin of `isMachineOriginPath` for a relative-path column. `column` MUST
+ * be a column reference: it is substituted several times.
+ */
+export function machineOriginSql(column: string): string {
+  return (
+    `(${column} = '${AUTO_CANON_PREFIX}' OR ${column} GLOB '${AUTO_CANON_PREFIX}/*'` +
+    ` OR ${column} GLOB 'dashboards/brief-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md')`
+  );
+}

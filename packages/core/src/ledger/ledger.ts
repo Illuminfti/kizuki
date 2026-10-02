@@ -409,6 +409,27 @@ export const LIVE_PREDICATE = `
   )
 `;
 
+/**
+ * `later` is a live capture of the same source record as `earlier` that the
+ * ledger accepted after it: the record was edited and `earlier` is a prior
+ * version. Both names are `events` aliases. The ledger keeps every version as
+ * evidence; readers that want the current text exclude the earlier ones.
+ */
+export function laterVersionSql(later: string, earlier: string): string {
+  const binding = (alias: string): string =>
+    `(SELECT source_key FROM source_event_bindings WHERE event_id = ${alias}.event_id)`;
+  return `(
+    ${later}.deleted = 0
+    AND ${later}.connector_id = ${earlier}.connector_id
+    AND ${later}.source_record_id = ${earlier}.source_record_id
+    AND ${binding(later)} IS ${binding(earlier)}
+    AND (
+      ${later}.accepted_at > ${earlier}.accepted_at
+      OR (${later}.accepted_at = ${earlier}.accepted_at AND ${later}.event_id > ${earlier}.event_id)
+    )
+  )`;
+}
+
 function replayWhere(
   filter: ReplayFilter,
   cursor: LedgerCursor | null,
