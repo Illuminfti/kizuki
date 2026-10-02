@@ -1,0 +1,10 @@
+{
+  "ceiling": "public",
+  "types": [],
+  "subjects": [],
+  "since": null,
+  "until": null,
+  "tools": ["search", "get_page", "context_packet", "system_health", "world_view"],
+  "rate_limit_per_minute": 30,
+  "relay_owner_corrections": false
+}
