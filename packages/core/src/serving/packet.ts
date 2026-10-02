@@ -106,7 +106,7 @@ export interface ContextPacketData {
   session?: SessionReport;
   purpose: PacketPurpose;
   delivery: "full" | "unchanged";
-  /** True when packing stopped because a later in-scope chunk would exceed the budget. */
+  /** True when an in-scope piece was omitted or shortened to fit the budget. */
   truncated: boolean;
   packet_hash: string;
   /** Same digest as packet_hash; named for If-None-Match / retain-prefix clients. */
@@ -455,18 +455,15 @@ export async function serveContextPacket(
         const rendered = `${prefix}${chosen.block}`;
         const candidateTokens = tokens(`${header}${body}${rendered}`);
         // A canon atom may shrink its excerpt (and title projection) to fit.
-        // Packing still stops at the first chunk that cannot fit even then:
-        // skipping ahead would make the packet depend on chunk order in a
-        // way a reader cannot predict.
+        // An oversized piece yields to later units that can still fit.
         if (candidateTokens > budget) {
+          truncated = true;
           if (chosen.canon === undefined) {
-            truncated = true;
-            break;
+            continue;
           }
           const bounded = boundOverflowingCanon(chosen, `${header}${body}`, prefix, budget);
           if (bounded === null) {
-            truncated = true;
-            break;
+            continue;
           }
           chosen = bounded;
         }
@@ -476,7 +473,7 @@ export async function serveContextPacket(
         // whose complete provenance audit cannot fit in one bounded row.
         if (audit.size + canon.length + quoted.length + freshAudit.length + chunkCount > MAX_AUDIT_ITEMS) {
           truncated = true;
-          break;
+          continue;
         }
         body += `${prefix}${chosen.block}`;
         heading = chosen.heading;

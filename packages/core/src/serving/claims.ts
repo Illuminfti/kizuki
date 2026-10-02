@@ -148,5 +148,5 @@ export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadS
     return item === undefined ? [] : [item];
   }
 
-  return { canRead, canReadAlias, invalidAlias, denied, auditClaim, auditGroup, auditAlias };
+  return { scope: { grant, source: sourceScope }, canRead, canReadAlias, invalidAlias, denied, auditClaim, auditGroup, auditAlias };
 }

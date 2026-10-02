@@ -54,6 +54,7 @@ import { readClaimV2Semantic, commitClaimV2 } from "./claim-v2-commit";
 import { semanticKey } from "./claim-v2-keys";
 import { claimKey, hashBody, normalizeObject, objectsMatch } from "./hash";
 import { isRegisteredPredicate } from "./predicates";
+import { claimReadSql, type ClaimReadScope } from "./read-scope";
 import { initClaims } from "./init";
 
 /** One sweep never walks the whole backlog: the next pass takes the rest. */
@@ -916,6 +917,8 @@ export function listClaims(
     limit?: number;
     /** Applied before the result limit; matching rows are streamed in query order. */
     filter?: (claim: Claim) => boolean;
+    /** Policy applied in SQL before rows are materialized or counted. */
+    scope?: ClaimReadScope;
   } = {},
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
@@ -934,6 +937,11 @@ export function listClaims(
     params.push(opts.subject);
   }
   if (opts.keyed === true) clauses.push("claim_key IS NOT NULL");
+  if (opts.scope !== undefined) {
+    const permitted = claimReadSql(db, opts.scope);
+    clauses.push(permitted.sql);
+    params.push(...permitted.bindings);
+  }
   const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
   const limit = opts.limit ?? 200;
   if (opts.filter !== undefined) {
