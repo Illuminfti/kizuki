@@ -406,8 +406,12 @@ export interface StoreDoctor {
   readonly oldest_purge_op_age_s: number | null;
   /** Successful embed-backfill docs/s, or null when doctor has no measured throughput. */
   readonly embedding_throughput_docs_per_s: number | null;
-  /** Whether an embedding port is configured; the vector layer is off without one and invalid when the selection cannot bind. */
-  readonly vector_layer: { readonly state: "off" | "configured" | "invalid"; readonly detail: string };
+  /**
+   * Whether an embedding port is configured; the vector layer is off without one and invalid when the selection
+   * cannot bind. A configured port that ranks nothing says why: `unbound` when the vault's retrieval is not the
+   * embedded engine, `refused` when the engine turned the corpus away as over its memory bound.
+   */
+  readonly vector_layer: { readonly state: "off" | "configured" | "invalid" | "unbound" | "refused"; readonly detail: string };
   readonly orphan_run_receipts: string[];
   readonly derived: {
     readonly search: DerivedDoctor;

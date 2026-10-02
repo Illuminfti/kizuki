@@ -132,10 +132,22 @@ export interface GraphQueryOptions {
   readonly ceiling: Sensitivity;
 }
 
+/** One bounded embedding pass: chunks embedded, distinct documents they belong to, chunks still without a vector. */
+export interface EmbedProgress {
+  readonly chunks: number;
+  readonly documents: number;
+  readonly remaining: number;
+}
+
 export interface RetrievalPort extends Port {
   /** Stage all documents before atomically replacing the active index. */
   rebuildFromDocuments?(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>): Promise<void>;
   upsert(docs: readonly RetrievalDoc[]): Promise<RetrievalMutationReport>;
+  /**
+   * Embed up to `limit` chunks that have no vector yet and report what is left.
+   * Absent when the port has no embedding provider bound.
+   */
+  embedPending?(options?: { limit?: number }): Promise<EmbedProgress>;
   search(query: RetrievalQuery): Promise<RetrievalResult>;
   /** Remove only the requested document identities and their owned projections. */
   remove(ids: readonly string[]): Promise<RetrievalMutationReport>;

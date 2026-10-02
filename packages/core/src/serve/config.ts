@@ -70,7 +70,7 @@ export function loadConfiguredModelRef(vaultPath: string): string | null {
 }
 
 /** Embedding port ids a vault may select; the host binds exactly these. */
-export const EMBEDDING_PORT_IDS: readonly string[] = ["kizuki.embedding.none", "kizuki.embedding.gguf"];
+export const EMBEDDING_PORT_IDS: readonly string[] = ["kizuki.embedding.none", "kizuki.embedding.gguf", "kizuki.embedding.local-http"];
 const EMBEDDING_CONFIG_BYTES = 65_536;
 
 /** The vault's `[ports] embedding` selection. `off` covers absence and `kizuki.embedding.none`. */

@@ -203,6 +203,34 @@ export function readRetrievalEngineSpace(vaultPath: string, portId: string): str
   }
 }
 
+export interface RetrievalEngineRefusal {
+  readonly resource?: "text_bytes" | "payload_bytes" | "documents" | "chunks" | "links";
+  readonly requested?: number;
+  readonly limit?: number;
+  readonly corpus_bytes: number;
+  readonly limit_bytes: number;
+  readonly at: string;
+}
+
+/** Why an engine turned its corpus away, read from its own metadata file without opening the engine. */
+export function readRetrievalEngineRefusal(vaultPath: string, portId: string): RetrievalEngineRefusal | null {
+  if (portId === "kizuki.retrieval.fts5") return null;
+  const path = join(vaultPath, ".kizuki", "retrieval", portId, "engine.json");
+  if (!existsSync(path)) return null;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    const refusal = isPlainObject(parsed) ? parsed.refusal : undefined;
+    if (!isPlainObject(refusal) || !Number.isSafeInteger(refusal.corpus_bytes) || !Number.isSafeInteger(refusal.limit_bytes) || typeof refusal.at !== "string") return null;
+    const resource = refusal.resource;
+    const bounded = ["text_bytes", "payload_bytes", "documents", "chunks", "links"].includes(resource as string) && Number.isSafeInteger(refusal.requested) && Number.isSafeInteger(refusal.limit);
+    return { corpus_bytes: refusal.corpus_bytes as number, limit_bytes: refusal.limit_bytes as number, at: refusal.at,
+      ...(bounded ? { resource: resource as NonNullable<RetrievalEngineRefusal["resource"]>, requested: refusal.requested as number, limit: refusal.limit as number } : {}) };
+
+  } catch {
+    return null;
+  }
+}
+
 function recordPortState(db: Database, state: RetrievalPortState): void {
   db.exec(PORT_STATE_SQL);
   db.query(

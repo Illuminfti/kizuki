@@ -1,4 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { setGrant } from "../../src/agents";
 import type {
   EntityRef,
@@ -333,4 +335,84 @@ test("serveGraph drops fabricated unresolved wikilink nominations", async () => 
   const envelope = await serveGraph({ ...f.owner(), retrieval }, { id: "person:ada" });
   expect((envelope.data?.edges ?? []).map((edge) => edge.dst)).not.toContain("NotAPage");
   expect(JSON.stringify(envelope)).not.toContain("STALE_PRIVATE_CACHE_MARKER");
+});
+
+const HYBRID_DESCRIPTOR = {
+  ...DIRECT_RETRIEVAL_DESCRIPTOR,
+  id: "test.kizuki.retrieval.hybrid",
+  supports: ["lexical", "vector", "hybrid"],
+} as const satisfies PortDescriptor;
+function modePort(descriptor: PortDescriptor, modes: string[], degraded: string[] = []): RetrievalPort {
+  const temporary = temporaryPortContext(descriptor);
+  cleanups.push(temporary.cleanup);
+  const engine = new ReferenceRetrievalPort(temporary.ctx, descriptor) as RetrievalPort;
+  engine.search = async (request) => {
+    modes.push(request.mode);
+    return { ...result(["page:person:ada"]), degraded };
+  };
+  return engine;
+}
+function selectEmbedding(vaultPath: string): void {
+  writeFileSync(join(vaultPath, ".kizuki", "serve.toml"), '[ports]\nembedding = "kizuki.embedding.gguf"\n');
+}
+
+test("search and packets ask a vector-capable engine for hybrid ranking", async () => {
+  const f = await live();
+  const modes: string[] = [];
+  const ctx = { ...f.owner(), retrieval: modePort(HYBRID_DESCRIPTOR, modes) };
+  const search = await serveSearch(ctx, { query: "a paraphrase of kettle" });
+  const packet = await serveContextPacket(ctx, { query: "a paraphrase of kettle", include: ["canon"], budget_tokens: 2_000 });
+  expect(modes).toEqual(["hybrid", "hybrid"]);
+  expect(search.data?.degraded?.filter((label) => label.startsWith("retrieval-")) ?? []).toEqual([]);
+  expect(packet.data?.retrieval_degraded ?? []).toEqual([]);
+});
+
+test("an engine without a vector lane is asked for lexical ranking only", async () => {
+  const f = await live();
+  const modes: string[] = [];
+  const search = await serveSearch({ ...f.owner(), retrieval: modePort(DIRECT_RETRIEVAL_DESCRIPTOR, modes) }, { query: "kettle" });
+  expect(modes).toEqual(["lexical"]);
+  // The vault chose no embedding port, so lexical ranking is not a degradation.
+  expect(search.data?.degraded?.filter((label) => label.startsWith("retrieval-")) ?? []).toEqual([]);
+});
+
+test("a configured embedding port the engine cannot use is labelled, not passed off as lexical by choice", async () => {
+  const f = await live();
+  selectEmbedding(f.vaultPath);
+  const modes: string[] = [];
+  const lexicalEngine = await serveSearch({ ...f.owner(), retrieval: modePort(DIRECT_RETRIEVAL_DESCRIPTOR, modes) }, { query: "kettle" });
+  expect(modes).toEqual(["lexical"]);
+  expect(lexicalEngine.data?.degraded).toContain("retrieval-vector-unavailable");
+  const unbound = await serveSearch(f.owner(), { query: "kettle" });
+  expect(unbound.data?.degraded).toContain("retrieval-vector-unavailable");
+  const busy = await serveSearch({ ...f.owner(), retrievalUnavailable: "configured-engine-unavailable" }, { query: "kettle" });
+  expect(busy.data?.degraded).toEqual(expect.arrayContaining(["retrieval-unavailable", "retrieval-vector-unavailable"]));
+  const packet = await serveContextPacket(f.owner(), { query: "kettle", budget_tokens: 2_000 });
+  expect(packet.data?.retrieval_degraded).toContain("retrieval-vector-unavailable");
+});
+
+test("engine vector degradation reaches the caller only as fixed public labels", async () => {
+  const f = await live();
+  selectEmbedding(f.vaultPath);
+  for (const [engine, label] of [
+    ["vector-skipped", "retrieval-vector-unavailable"],
+    ["vector-unavailable", "retrieval-vector-unavailable"],
+    ["embedding-space-mismatch", "retrieval-vector-unavailable"],
+    ["vector-backlog", "retrieval-vector-partial"],
+    ["keyword-zero", "retrieval-degraded"],
+  ] as const) {
+    const search = await serveSearch({ ...f.owner(), retrieval: modePort(HYBRID_DESCRIPTOR, [], [engine]) }, { query: "kettle" });
+    expect(search.data?.degraded).toContain(label);
+    expect(search.data?.degraded).not.toContain(engine);
+  }
+});
+
+test("a configured vector layer is labelled unavailable when the request cannot use the engine", async () => {
+  const f = await live();
+  selectEmbedding(f.vaultPath);
+  const failed = port(async () => { throw new Error("provider failure"); });
+  const answer = await serveSearch({ ...f.owner(), retrieval: failed }, { query: "kettle" });
+  expect(answer.data?.degraded).toContain("retrieval-vector-unavailable");
+  const scoped = await serveSearch({ ...f.owner(), retrieval: modePort(HYBRID_DESCRIPTOR, []) }, { query: "kettle", types: ["person"] });
+  expect(scoped.data?.degraded).toContain("retrieval-vector-unavailable");
 });

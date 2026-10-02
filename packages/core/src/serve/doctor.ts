@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
+import { loadConfiguredRetrieval, readRetrievalEngineRefusal } from "../retrieval/config";
 import { embeddingThroughputFromReceipts } from "../retrieval/reembed";
 import { inspectPageIndex } from "../canon";
 import { staleCanonIntentFailure } from "./canon-intent-health";
@@ -392,11 +393,26 @@ function countOriginPages(report: CanonPageReport): StoreDoctor["origin"] {
   return { machine, human };
 }
 
-function vectorLayer(embedding: EmbeddingSelection): StoreDoctor["vector_layer"] {
+function vectorLayer(embedding: EmbeddingSelection, vaultPath: string): StoreDoctor["vector_layer"] {
   switch (embedding.state) {
     case "off": return { state: "off", detail: "vector layer: off (no embedding model configured)" };
-    case "configured": return { state: "configured", detail: `vector layer: configured (${embedding.id})` };
     case "invalid": return { state: "invalid", detail: `vector layer: invalid (${embedding.message})` };
+    case "configured": {
+      let retrieval: string;
+      try { retrieval = loadConfiguredRetrieval(vaultPath).id; }
+      catch { return { state: "configured", detail: `vector layer: configured (${embedding.id})` }; }
+      if (retrieval !== "kizuki.retrieval.embedded-pg") {
+        return { state: "unbound", detail: `vector layer: not in use (${embedding.id} is configured, but retrieval is ${retrieval}; select kizuki.retrieval.embedded-pg to rank by vector)` };
+      }
+      const refusal = readRetrievalEngineRefusal(vaultPath, retrieval);
+      if (refusal !== null) {
+        return {
+          state: "refused",
+          detail: `vector layer: refused (last index update exceeded ${refusal.resource ?? "text_bytes"}: ${refusal.requested ?? refusal.corpus_bytes} > ${refusal.limit ?? refusal.limit_bytes}; the prior index is preserved, and the lexical floor remains available. Use a smaller corpus; raise max_text_bytes only with sufficient memory)`,
+        };
+      }
+      return { state: "configured", detail: `vector layer: configured (${embedding.id})` };
+    }
   }
 }
 
@@ -453,7 +469,7 @@ function storeDoctor(
     pending_purge_ops: pendingPurge,
     oldest_purge_op_age_s: ageSeconds(oldestPurge, now),
     embedding_throughput_docs_per_s: embeddingThroughputFromReceipts(embeddingReceipts),
-    vector_layer: vectorLayer(embedding),
+    vector_layer: vectorLayer(embedding, vaultPath),
     orphan_run_receipts: orphanJournalReceipts(db, vaultPath),
     derived: {
       search: {

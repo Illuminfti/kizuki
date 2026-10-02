@@ -8,13 +8,14 @@ import { skipCaptureFanoutClaims } from "../claims/capture-fanout";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
 import type { BudgetTracker } from "../canon/budget";
+import { PortError } from "../contracts/ports";
 import type { ProducerPort } from "../contracts/producer";
 import type { ProducerV2Port } from "../contracts/producer-v2";
 import { inspectPurgeHealth, listPurgeRecoveryReceipts, resumePurge } from "../ledger/purge";
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { createDurableWriteBudget } from "./budget-ledger";
-import { embedBackfillPeriod, loadServeConfig } from "./config";
+import { embedBackfillPeriod, loadEmbeddingSelection, loadServeConfig } from "./config";
 import { composeBrief, repairBriefPages, type BriefRepair } from "./brief";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { inspectServeDoctor } from "./doctor";
@@ -56,7 +57,6 @@ interface RailHooksBase {
   readonly refresh?: () => Promise<RailRefreshReport>;
   readonly claims?: ClaimsIo;
   readonly model_ref?: string | null;
-  readonly embedding_backlog?: number;
   /**
    * True when the vault configures an embedding port. The host sets it from
    * the same configuration `kizuki doctor` reads, so the sweep judges
@@ -284,6 +284,9 @@ async function runPurgeSweep(
   };
 }
 
+/** Chunks one embed-backfill pass embeds. The rail runs again a period later, so a large backlog drains over many passes. */
+export const EMBED_PASS_CHUNKS = 200;
+
 async function runEmbedBackfill(
   db: Database,
   vaultPath: string,
@@ -293,19 +296,26 @@ async function runEmbedBackfill(
   // Without an embedding port the rail backs off to a long period; configuring
   // one pulls the next run forward again.
   applyRailPeriod(db, "embed-backfill", embedBackfillPeriod(vaultPath), now);
-  const backlog = hooks?.embedding_backlog ?? 0;
-  if (backlog === 0) {
-    return { status: "ok" };
+  if (loadEmbeddingSelection(vaultPath).state === "off") return { status: "ok" };
+  // The engine's own store holds the backlog: chunks that have no vector yet.
+  const engine = hooks?.claims?.retrieval;
+  if (engine?.embedPending === undefined) return { status: "ok" };
+  try {
+    const progress = await engine.embedPending({ limit: EMBED_PASS_CHUNKS });
+    return {
+      status: "ok",
+      retrieval: { upserts: progress.documents, removals: 0, pending_ops: progress.remaining, degraded: [] },
+    };
+  } catch (error) {
+    // A stopped embedding server is a condition to report and retry, not a fault of the rail.
+    if (!(error instanceof PortError)) throw error;
+    const health = await engine.health().catch(() => undefined);
+    const backlog = health !== undefined && health.status !== "unavailable" ? Number(health.detail["backlog_depth"]) : 0;
+    return {
+      status: "degraded",
+      retrieval: { upserts: 0, removals: 0, pending_ops: Number.isSafeInteger(backlog) ? backlog : 0, degraded: ["embedding-unavailable"] },
+    };
   }
-  return {
-    status: "degraded",
-    retrieval: {
-      upserts: 0,
-      removals: 0,
-      pending_ops: backlog,
-      degraded: ["embedding-unavailable"],
-    },
-  };
 }
 
 /** A repaired page is counted on the run; one that cannot be repaired degrades it and names its day. */

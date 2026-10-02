@@ -15,7 +15,7 @@ import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
 import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, LedgerReadError, LEDGER_SCHEMA_VERSION, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch } from "@kizuki/core/internal";
 import type { LedgerReadContext } from "@kizuki/core/internal";
 import { INVOCATION, shellQuote } from "./runtime";
-import { inspectConfiguredRetrieval, openConfiguredRetrieval } from "./retrieval-runtime";
+import { inspectConfiguredRetrieval, loadConfiguredEmbedding, openConfiguredRetrieval } from "./retrieval-runtime";
 import type { CliIo } from "./commands/index";
 import {
   type KizukiConfig,
@@ -244,7 +244,7 @@ export interface ReadVaultContext extends Omit<VaultContext, "store"> {
 export async function withReadVault<T>(
   io: CliIo,
   fn: (ctx: ReadVaultContext) => Promise<T>,
-  options: { audit?: boolean; retrieval?: "optional" | "none" } = {},
+  options: { audit?: boolean; retrieval?: "bound" | "optional" | "none" } = {},
 ): Promise<T> {
   const path = configPath(io.env);
   const resolved = resolveVault(io.env, readConfig(path), io.vaultOverride);
@@ -256,7 +256,7 @@ export async function withReadVault<T>(
 async function withOpenReadVault<T>(
   io: CliIo,
   fn: (ctx: ReadVaultContext) => Promise<T>,
-  options: { audit?: boolean; retrieval?: "optional" | "none" },
+  options: { audit?: boolean; retrieval?: "bound" | "optional" | "none" },
   path: string,
   resolved: string,
 ): Promise<T> {
@@ -265,9 +265,21 @@ async function withOpenReadVault<T>(
   assertBoundVaultId(vaultPath);
   let binding = openReadyOrMigration(vaultPath, { audit: options.audit ?? false });
   let paused = false;
+  let retrieval: RetrievalPort | undefined;
   try {
-    const retrievalUnavailable = options.retrieval === "optional" && inspectConfiguredRetrieval(vaultPath);
+    // `optional` declares a configured engine unavailable without touching it. `bound` is for
+    // the reads that rank by vector: it binds the engine when it is free, and a live host that
+    // holds it leaves that read on the ledger floor with the answer saying so.
+    let retrievalUnavailable = options.retrieval !== undefined && options.retrieval !== "none" && inspectConfiguredRetrieval(vaultPath);
+    if (retrievalUnavailable && options.retrieval === "bound" && loadConfiguredEmbedding(vaultPath).id !== "kizuki.embedding.none") {
+      try { retrieval = await openConfiguredRetrieval(vaultPath); retrievalUnavailable = false; }
+      catch (error) {
+        if (!(error instanceof PortError) || !error.retryable ||
+            !["lease_required", "timeout", "unavailable"].includes(error.code)) throw error;
+      }
+    }
     const result = await fn({ configPath: path, vaultPath, get db() { binding.assertCurrent(); return binding.db; },
+      ...(retrieval === undefined ? {} : { retrieval }),
       store: createConnectionStateReader(join(vaultPath, ".kizuki")), assertCurrent: () => binding.assertCurrent(),
       async pauseForMutation(work) {
         if (paused) throw new Error("read context is already paused");
@@ -283,5 +295,7 @@ async function withOpenReadVault<T>(
     });
     binding.assertCurrent();
     return result;
-  } finally { binding.close(); }
+  } finally {
+    try { await retrieval?.close(); } finally { binding.close(); }
+  }
 }
