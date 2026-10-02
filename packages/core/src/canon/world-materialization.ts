@@ -89,7 +89,13 @@ export function assertWorldBasis(db:Database,basis:readonly WorldClaimBasis[]|nu
 /** Distinct bounded queue: neutral typed parents never enter the legacy materializer. */
 export function pendingWorldCanonClaims(db:Database,limit=32):Claim[][] {
  const ctx=context(db),permitted=authorizedSupportSql(ctx);
- const ids=db.query<{claim_id:string},(string|number)[]>(`SELECT c.claim_id FROM claims c WHERE c.is_world_typed=1 AND c.status='live' AND c.receipt_id IS NULL AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) ORDER BY c.claim_id LIMIT ?`).all(...permitted.bindings,Math.min(limit,32)*MAX_PAGE_CLAIMS);
+ const ids=db.query<{claim_id:string},(string|number)[]>(`SELECT c.claim_id FROM claims c WHERE c.is_world_typed=1 AND c.status='live' AND c.receipt_id IS NULL AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) ORDER BY CASE WHEN EXISTS (
+   SELECT 1 FROM claim_v2_semantics m JOIN semantic_bindings b ON
+    b.raw_kind=m.subject_kind AND b.raw_id=m.subject_id AND
+    (b.raw_kind='occurrence' OR (json_extract(b.raw_namespace,'$.connector_id')=json_extract(m.payload,'$.subject.namespace.connector_id') AND json_extract(b.raw_namespace,'$.source_key')=json_extract(m.payload,'$.subject.namespace.source_key')))
+   JOIN page_index p ON p.rel_path='auto/world/'||b.handle_id||'.md'
+   WHERE m.claim_id=c.claim_id) THEN 0 ELSE 1 END, c.claim_id
+   LIMIT ?`).all(...permitted.bindings,Math.min(limit,32)*MAX_PAGE_CLAIMS);
  const groups=new Map<string,Claim[]>();
  for(const {claim_id} of ids) {
   const handle=worldClaimHandle(db,claim_id),claim=getClaim(db,claim_id);if(handle===null||claim===null)continue;

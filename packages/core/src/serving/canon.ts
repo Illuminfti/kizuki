@@ -139,11 +139,11 @@ function resolveAuthorities(db: Database, memo: VaultMemo, pages: readonly Canon
  * a silently short list would under-report canon without anyone noticing.
  * Schema-invalid and oversized files are withheld and reported by doctor.
  */
-export function loadCanon(ctx: ServeContext): CanonIndex {
+export function loadCanon(ctx: ServeContext, options: { readonly include_archived?: boolean } = {}): CanonIndex {
   const generation = canonReadGeneration(ctx.db);
   assertCanonReadAdmission(ctx);
   const memo = vaultMemo(ctx.vaultPath);
-  const report = listCanonPagesReport(ctx.vaultPath, memo.pages);
+  const report = listCanonPagesReport(ctx.vaultPath, memo.pages, { include_archived: options.include_archived === true });
   const fatal = fatalCanonSkips(report.skipped);
   if (fatal.length > 0) {
     throw new CanonUnreadableError(fatal);

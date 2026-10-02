@@ -856,14 +856,26 @@ export function countWrittenLiveClaims(db: Database): number {
 export function listUnwrittenLiveClaims(
   db: Database,
   limit = 32,
+  prioritizeExisting = false,
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
   const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 32;
+  // Scheduling hints only: the arbiter still validates the actual bytes and
+  // resolves bindings. Existing mutations must not sit behind held creates.
+  const priority = prioritizeExisting && tableExists(db, "page_index") ? `
+    CASE WHEN EXISTS (SELECT 1 FROM page_index p WHERE
+      p.page_id=claims.target OR p.rel_path=replace(claims.target, ':', '/')||'.md' OR
+      p.rel_path='auto/'||replace(claims.target, ':', '/')||'.md' OR
+      p.subject_key=claims.subject OR p.page_id IN
+        (SELECT page_id FROM claim_bindings WHERE claim_key=claims.claim_key))
+      OR EXISTS (SELECT 1 FROM claim_supersessions s JOIN claims loser ON loser.claim_id=s.loser
+        WHERE s.winner=claims.claim_id AND loser.receipt_id IS NOT NULL)
+    THEN 0 ELSE 1 END,` : "";
   return db
     .query<ClaimRow, [number]>(
       `SELECT * FROM claims
         WHERE ${unwrittenLiveWhere(db)}
-        ORDER BY created_at, claim_id
+        ORDER BY ${priority} created_at, claim_id
         LIMIT ?`,
     )
     .all(bound)

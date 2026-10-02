@@ -56,6 +56,8 @@ export interface ExistingPage {
   path: string;
   relPath: string;
   content: string;
+  /** Exact snapshot size before UTF-8 decoding. */
+  byte_length: number;
   hash: string;
   page: VaultPage;
 }
@@ -112,6 +114,7 @@ export function readPage(io: CanonIo, relPath: string): ExistingPage | null {
     path,
     relPath,
     content,
+    byte_length: bytes.byteLength,
     hash: hashBytes(bytes),
     page: parseFrontmatter(content),
   };

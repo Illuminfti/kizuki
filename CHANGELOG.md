@@ -40,6 +40,21 @@
   claims, names `kizuki serve run doctor-sweep` while any are pending, and no
   longer lists them among leftover skipped rows.
 
+### Canon capacity
+
+- The fixed 10,000-file limit on the canon walk is gone. `[canon] max_live_pages`
+  in `serve.toml` (default 20,000; 100 to 250,000) sets a ceiling on pages that
+  are not archived. Independent scan file and byte budgets scale with larger
+  ceilings and can be configured for available resources.
+  Archived pages are counted apart and no longer count against the ceiling, so
+  a vault past 10,000 files keeps answering query and context and keeps
+  rebuild, export and purge working.
+- Doctor prints `canon pages live=N archived=M ceiling=C state=...` (JSON:
+  `serve.canon`) and fails at `near` (80 percent) and `full` with the next
+  step. At `full` the writer holds new pages under the named state
+  `canon_ceiling`; reads, edits within scan budgets, undo and purge continue, and
+  held claims stay live. Details in `docs/canon-capacity.md`.
+
 ### Operator safety
 
 - `serve status`, `serve --install`, `serve --uninstall` and doctor no longer

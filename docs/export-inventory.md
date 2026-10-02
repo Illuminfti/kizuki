@@ -99,8 +99,11 @@ sync complete but a later transaction or ownership cleanup fails, the error
 reports `publication: "published"` and `durability: "synced"`.
 
 Classification is bounded by 100,000 inspected directory entries and receipt
-rows, 10,000 canon pages, eight path segments, 1 MiB per inspected candidate file,
-and 64 MiB of inspected candidate bytes. Exceeding a bound refuses the export;
+rows, the vault's independent `[canon] max_scan_files` budget (40,000 canon
+files by default, live and archived together; see
+[canon capacity](canon-capacity.md)), eight path segments, 1 MiB per inspected
+candidate file, and the walk's byte bound (at least 64 MiB) of inspected
+candidate bytes. Exceeding a bound refuses the export;
 it does not publish a silently truncated canon set. Duplicate canon identities,
 invalid pages carrying an identity, unreadable candidates, and selected bytes
 that change before copying completes also refuse publication.
@@ -121,3 +124,10 @@ and store obligations are preserved; pending purge work refuses export.
 Connection re-enrollment semantics remain separate work. Existing durable extraction streams are preserved without
 another model call. Review the inventory's limits and unavailable archive count
 before relying on an export for recovery.
+
+New exports also declare a hashed `canon/limits.json` containing only the
+validated live-page ceiling and scan file/byte budgets. Restore validates
+these bounded integers and installs a canon-only `serve.toml` before typed
+canon validation and mandatory derived rebuilding. No model endpoint, secret
+reference or other runtime configuration enters this file. Older backups
+without the declared file use the default canon limits.

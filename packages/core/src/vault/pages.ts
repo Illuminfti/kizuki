@@ -1,13 +1,15 @@
-import { lstatSync, readFileSync, readdirSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { hashBytes } from "./write";
 import { parseFrontmatter } from "./frontmatter";
 import { validatePage } from "./schema";
+import { canonLimitsFor, DEFAULT_LIVE_PAGE_CEILING, loadCanonLimits, type CanonLimits } from "./canon-limits";
 
 export const MAX_CANON_PAGE_BYTES = 1_048_576;
-export const MAX_CANON_PAGES = 10_000;
 export const MAX_CANON_DEPTH = 8;
-export const MAX_CANON_WALK_BYTES = 64 * 1_048_576;
+/** Default resource budgets; each vault can configure its own scan limits. */
+export const MAX_CANON_PAGES = canonLimitsFor(DEFAULT_LIVE_PAGE_CEILING).walk_files;
+export const MAX_CANON_WALK_BYTES = canonLimitsFor(DEFAULT_LIVE_PAGE_CEILING).walk_bytes;
 
 export const SCAN_FAILURE_CODES = [
   "parse",
@@ -72,6 +74,9 @@ export interface CanonPageReport {
   pages: CanonPage[];
   skipped: SkippedPage[];
   truncated: boolean;
+  /** Actual candidate resource usage, including invalid files; archives only in maintenance mode. */
+  scanned_files: number;
+  scanned_bytes: number;
 }
 
 export function stringArray(value: unknown): string[] {
@@ -112,6 +117,8 @@ interface WalkState {
   seen: Map<string, string>;
   files: number;
   bytes: number;
+  limits: CanonLimits;
+  includeArchived: boolean;
   truncated: boolean;
   cache: CanonPageCache | null;
   /** Files remembered by this walk; replaces the cache when the walk ends. */
@@ -138,23 +145,49 @@ function withholdDuplicate(
   );
 }
 
-function considerFile(state: WalkState, path: string, relPath: string): void {
-  if (state.truncated) return;
-  if (state.files >= MAX_CANON_PAGES) {
+function reserveFile(state: WalkState): boolean {
+  if (state.files >= state.limits.walk_files) {
     state.truncated = true;
     state.skipped.push(
-      skip(".", "too_many", `vault exceeds ${MAX_CANON_PAGES} markdown files`),
+      skip(".", "too_many", `vault exceeds ${state.limits.walk_files} markdown files; raise max_scan_files under [canon] in .kizuki/serve.toml`),
     );
-    return;
+    return false;
   }
   state.files += 1;
 
+  return true;
+}
+
+/** Classify an oversized archived body without allocating or reading that body. */
+function hasArchivedHeader(path: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    if (!fstatSync(fd).isFile()) return false;
+    const bytes = Buffer.alloc(MAX_CANON_PAGE_BYTES);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = readSync(fd, bytes, offset, bytes.length - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    return parseFrontmatter(bytes.subarray(0, offset).toString("utf8")).data["status"] === "archived";
+  } catch {
+    // A header that cannot be classified stays withheld as an oversized file.
+    return false;
+  } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+function considerFile(state: WalkState, path: string, relPath: string): void {
+  if (state.truncated) return;
+  if (state.includeArchived && !reserveFile(state)) return;
   let size: number;
   let signature: string;
   let changedMs: number;
   try {
     const stat = lstatSync(path, { bigint: true });
     if (stat.isSymbolicLink() || !stat.isFile()) {
+      if (!state.includeArchived && !reserveFile(state)) return;
       state.skipped.push(skip(relPath, "unreadable", "unreadable: not a regular file"));
       return;
     }
@@ -162,20 +195,23 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     changedMs = Number((stat.mtimeNs > stat.ctimeNs ? stat.mtimeNs : stat.ctimeNs) / 1_000_000n);
     signature = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
   } catch (error) {
+    if (!state.includeArchived && !reserveFile(state)) return;
     state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
     return;
   }
 
   if (size > MAX_CANON_PAGE_BYTES) {
+    if (!state.includeArchived && hasArchivedHeader(path)) return;
+    if (!state.includeArchived && !reserveFile(state)) return;
     state.skipped.push(
       skip(relPath, "oversize", `exceeds ${MAX_CANON_PAGE_BYTES} bytes`),
     );
     return;
   }
-  if (state.bytes + size > MAX_CANON_WALK_BYTES) {
+  if (state.includeArchived && state.bytes + size > state.limits.walk_bytes) {
     state.truncated = true;
     state.skipped.push(
-      skip(relPath, "too_many", `vault exceeds ${MAX_CANON_WALK_BYTES} scanned bytes`),
+      skip(relPath, "too_many", `vault exceeds ${state.limits.walk_bytes} scanned bytes; raise max_scan_bytes under [canon] in .kizuki/serve.toml`),
     );
     return;
   }
@@ -184,12 +220,13 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
   let file: ParsedFile;
   if (remembered?.signature === signature) {
     file = remembered;
-    state.bytes += size;
+    if (state.includeArchived) state.bytes += size;
   } else {
     const readAtMs = Date.now();
     try {
       const bytes = readFileSync(path);
-      state.bytes += bytes.byteLength;
+      if (state.includeArchived) state.bytes += bytes.byteLength;
+      size = bytes.byteLength;
       const parsed = parseFrontmatter(bytes.toString("utf8"));
       file = {
         // An empty signature never matches: see RACY_WINDOW_MS.
@@ -200,6 +237,7 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
         invalid: validatePage(parsed.data)[0] ?? null,
       };
     } catch (error) {
+      if (!state.includeArchived && !reserveFile(state)) return;
       if (error instanceof SyntaxError) {
         state.skipped.push(skip(relPath, "parse", error.message));
         return;
@@ -207,6 +245,19 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
       state.skipped.push(skip(relPath, "unreadable", `unreadable: ${fsCode(error)}`));
       return;
     }
+  }
+  // Classify archives before they can claim a live identity, budget or error.
+  // Each classification is bounded by MAX_CANON_PAGE_BYTES; excluded bytes
+  // are never retained in the live memo or reported as live scan work.
+  if (!state.includeArchived) {
+    if (file.data["status"] === "archived") return;
+    if (!reserveFile(state)) return;
+    if (state.bytes + size > state.limits.walk_bytes) {
+      state.truncated = true;
+      state.skipped.push(skip(".", "too_many", `vault exceeds ${state.limits.walk_bytes} scanned bytes; raise max_scan_bytes under [canon] in .kizuki/serve.toml`));
+      return;
+    }
+    state.bytes += size;
   }
   // A remembered file hands out a copy: no caller can change what the next
   // walk is given.
@@ -302,6 +353,7 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
 export function listCanonPagesReport(
   vaultPath: string,
   cache?: CanonPageCache,
+  options: { readonly include_archived?: boolean } = {},
 ): CanonPageReport {
   const state: WalkState = {
     pages: [],
@@ -309,6 +361,8 @@ export function listCanonPagesReport(
     seen: new Map(),
     files: 0,
     bytes: 0,
+    limits: loadCanonLimits(vaultPath),
+    includeArchived: options.include_archived !== false,
     truncated: false,
     cache: cache ?? null,
     remembered: new Map(),
@@ -316,7 +370,11 @@ export function listCanonPagesReport(
   walk(state, vaultPath, vaultPath, 0);
   if (cache !== undefined) cache.files = state.remembered;
   state.skipped.sort((left, right) => compareName(left.relPath, right.relPath));
-  return { pages: state.pages, skipped: state.skipped, truncated: state.truncated };
+  return {
+    pages: state.pages,
+    skipped: state.skipped, truncated: state.truncated,
+    scanned_files: state.files, scanned_bytes: state.bytes,
+  };
 }
 
 export function listCanonPages(vaultPath: string): CanonPage[] {

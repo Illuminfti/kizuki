@@ -41,6 +41,7 @@ import { assertPageRelPath, assertReceiptPaths, assertStoredPageRelPath } from "
 import { cloneExactJson } from "../util/validate";
 import type { TargetDecision } from "./arbiter";
 import { chargeCanonWrite, type BudgetTracker } from "./budget";
+import { requireCanonWriteCapacity } from "./capacity";
 import { CanonWriteError } from "./errors";
 import { getCanonReceipt, type CanonReceipt, type PageAction, type RetrievalOpRef } from "./receipts";
 import { initCanon } from "./schema";
@@ -487,6 +488,11 @@ export function applyCanonWriteOwned(
   requireSourceEvents(io.db, Array.isArray(prepared.page.data["sources"]) ? prepared.page.data["sources"].filter((id): id is string => typeof id === "string") : [], { owner: true, purpose: "derive" });
   prepared.sensitivity = sourceSensitivity(io.db, provenance, prepared.sensitivity);
   prepared.page.data["sensitivity"] = prepared.sensitivity;
+  // Reserve positive inventory growth for every forward mutation, including
+  // edits and archive transitions. Only creation/reactivation needs a live slot.
+  const newLivePage = (existing === null || existing.page.data["status"] === "archived") && prepared.page.data["status"] !== "archived";
+  requireCanonWriteCapacity(io.vault_path, newLivePage, existing === null ? 1 : 0,
+    Buffer.byteLength(serializePage(prepared.page)) - (existing?.byte_length ?? 0));
   const superseded = typed ? io.db.query<{claim_id:string;claim_key:string},[string]>("SELECT s.loser AS claim_id,m.semantic_key AS claim_key FROM claim_supersessions s JOIN claim_v2_semantics m ON m.claim_id=s.loser WHERE s.winner IN (SELECT value FROM json_each(?)) ORDER BY s.loser").all(JSON.stringify(ownedClaims.map(item=>item.claim_id))) : supersededRefs(io, decision);
   const retrievalOps: RetrievalOpRef[] =
     io.retrieval_store === undefined
