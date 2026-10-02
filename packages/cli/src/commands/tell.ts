@@ -48,7 +48,7 @@ function objectLine(relation: { predicate: string; polarity: string; object: { k
 /** The corrected concept, as it reads now: what each claim says and how it is held. */
 function renderRefreshed(view: WorldReadResult): string[] {
   if ("status" in view) return ["Refreshed concept: not found."];
-  if (view.result.status === "unavailable") return [];
+  if (view.result.status !== "current" && view.result.status !== "incomplete") return [];
   const data = view.result.data;
   if (!("concept" in data)) return [];
   const label = clean(data.concept.labels.map((entry) => entry.text).join(" / ")) || "Concept";

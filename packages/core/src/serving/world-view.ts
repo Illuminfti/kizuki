@@ -1,14 +1,15 @@
-import { resolvePrincipal, toolAllowed } from "../agents";
+import { resolvePrincipal, toolAllowed, type Principal } from "../agents";
 import { tableExists } from "../ledger/schema";
 import { WorldProjectionBudgetError } from "../world/projection";
 import type { discoverWorld } from "../world/projection";
 import type { WorldDescribe } from "../world/ops/describe";
 import type { ConceptCard } from "../contracts/concept-card";
 import type { SituationCard } from "../contracts/situation-card";
-import { hasWorldKeys, parseWorldKnownAt, parseWorldValid } from "../world/ops/parse";
+import { hasWorldKeys, parseWorldKnownAt, parseWorldRef, parseWorldValid } from "../world/ops/parse";
 import { activeWorldOps, findWorldOp } from "../world/ops/registry";
 import { WorldViewError, worldOpKeys } from "../world/ops/types";
 import type {
+  ViewToken,
   WorldKnownAt,
   WorldObjectRef,
   WorldOp,
@@ -24,10 +25,16 @@ import {
   worldNamespace,
   type WireRef,
 } from "../world/references";
+import { openView, settleView } from "../world/views/session";
+import type { ViewSession } from "../world/views/session";
+import { worldDependencies, worldDependenciesAuthorized, type WorldDependencies } from "../world/dependencies";
+import { wireDigest } from "../world/views/store";
+import type { ShareData } from "../world/views/resume";
 import { isPlainObject } from "../util/validate";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
 import type { RedactionCounts } from "./redact";
+import { createRedactor, redactValue } from "./redact";
 import { clampWorldData } from "./world-clamp";
 import { ServeError } from "./types";
 import type { ServeContext } from "./types";
@@ -35,6 +42,7 @@ import type { ServeContext } from "./types";
 export { WorldViewError } from "../world/ops/types";
 export { isWorldWireToken } from "../world/ops/parse";
 export type {
+  ViewToken,
   WorldKnownAt,
   WorldObjectRef,
   WorldSnapshotRef,
@@ -50,27 +58,47 @@ export type WorldReadInput =
       readonly cursor?: string;
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
+      /** The view a previous complete read issued, to be told whether anything visible moved. */
+      readonly priorView?: ViewToken;
     }
   | {
       readonly operation: "situation";
       readonly situation: WorldObjectRef;
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
+      readonly priorView?: ViewToken;
     }
   | {
       readonly operation: "concept";
       readonly concept: WorldObjectRef;
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
+      readonly priorView?: ViewToken;
     }
-  | { readonly operation: "describe" };
+  | { readonly operation: "describe" }
+  | {
+      readonly operation: "share";
+      readonly of:
+        | { readonly operation: "concept"; readonly concept: WorldObjectRef }
+        | { readonly operation: "situation"; readonly situation: WorldObjectRef };
+      readonly valid: WorldValidQuery;
+      readonly knownAt: WorldKnownAt;
+    }
+  | {
+      readonly operation: "resume";
+      readonly handle: string;
+      readonly valid: WorldValidQuery;
+      readonly knownAt: WorldKnownAt;
+      readonly priorView?: ViewToken;
+    };
 
 /** The bodies the shipped operations return; each operation's `dataSchemas` say which one it is. */
 export type WorldData =
   | ConceptCard
   | SituationCard
   | ReturnType<typeof discoverWorld>
-  | WorldDescribe;
+  | WorldDescribe
+  | ShareData;
 export type WorldReadResult =
   | { readonly status: "not_found" }
   | {
@@ -78,7 +106,26 @@ export type WorldReadResult =
       readonly operation: string;
       readonly result: WorldViewResult<WorldData>;
     };
-export type WorldViewEnvelope = {
+/**
+ * What a read that names no earlier read can answer. A baseline (`priorView`)
+ * or a handle is the only way to be told `unchanged` or `new_view_required`, so
+ * a caller that sends neither is never handed a result without a body.
+ */
+export type WorldFreshInput = {
+  readonly operation: string;
+  readonly priorView?: undefined;
+  readonly handle?: undefined;
+};
+/** A record of unknown keys may carry a baseline at run time, so only an object of known keys is fresh. */
+type KnownKeys<Input> = string extends keyof Input ? never : Input;
+export type WorldFreshReadResult =
+  | { readonly status: "not_found" }
+  | {
+      readonly schema: "kizuki.world-view/v1";
+      readonly operation: string;
+      readonly result: Exclude<WorldViewResult<WorldData>, { readonly status: "unchanged" | "new_view_required" }>;
+    };
+export type WorldViewEnvelope<Read extends WorldReadResult = WorldReadResult> = {
   readonly schema: "kizuki.envelope/v2";
   readonly tool: "world_view";
   readonly principal: WireRef<"principal">;
@@ -87,7 +134,7 @@ export type WorldViewEnvelope = {
   readonly quoted: readonly [];
   /** Credential-shaped spans replaced in this response, per kind. Never the values. */
   readonly redacted?: RedactionCounts;
-  readonly data: WorldReadResult;
+  readonly data: Read;
 };
 
 const MAX_RESPONSE_BYTES = 256 * 1024;
@@ -108,11 +155,21 @@ function unavailable(
   return answer(operation, { status: "unavailable", reason });
 }
 
-/** Maps what an operation found to the result the reader serves; a body over the response bound is never partly served. */
-function present(op: WorldOp, outcome: WorldOpOutcome): WorldReadResult {
-  if (outcome.status === "not_found") return { status: "not_found" };
+/**
+ * Maps what an operation found to the result the reader serves; a body over the
+ * response bound is never partly served. A read that may issue a view carries
+ * its session, and a complete answer takes the state that session decides.
+ */
+function present(op: WorldOp, outcome: WorldOpOutcome, view: ViewSession | null, ctx: ServeContext, dependencies: WorldDependencies): WorldReadResult {
+  if (outcome.status === "not_found") {
+    if (view?.prior === undefined || view.prior === null) return { status: "not_found" };
+    ctx.db.query("DELETE FROM world_view_tokens WHERE token_hash=?").run(wireDigest(view.prior.token));
+    return answer(op.name, { status: "new_view_required" });
+  }
   if (outcome.status === "unavailable")
     return unavailable(op.name, outcome.reason);
+  if (outcome.status === "new_view_required")
+    return answer(op.name, { status: "new_view_required" });
   const { gaps } = outcome;
   if (Buffer.byteLength(JSON.stringify(outcome.data), "utf8") > MAX_RESPONSE_BYTES)
     throw new WorldProjectionBudgetError();
@@ -121,23 +178,30 @@ function present(op: WorldOp, outcome: WorldOpOutcome): WorldReadResult {
     throw new ServeError("error", "serving failed");
   // The registry is open and `WorldData` names the shipped bodies; the check above ties `data` to a declared schema.
   const data = outcome.data as WorldData;
-  return answer(
-    op.name,
-    gaps === null
-      ? { status: "current", view: { status: "not_issued" }, data }
-      : { status: "incomplete", data, reasons: gaps },
-  );
+  if (gaps !== null) return answer(op.name, { status: "incomplete", data, reasons: gaps });
+  if (view === null) return answer(op.name, { status: "current", view: { status: "not_issued" }, data });
+  // Compare and retain the final served projection. The gate redacts the raw
+  // body once for output and counts, including after a bounded reprojection.
+  const projection = ctx.redactor === undefined ? data : clampWorldData(redactValue(createRedactor(ctx.principal), data));
+  const result = settleView(ctx.db, view, op.name, projection, dependencies);
+  return answer(op.name, "data" in result ? { ...result, data } : result);
 }
 
 /**
  * Fresh model-free projection through the registered operation the input
  * names. References carry lookup identity, never authority.
  */
+export function readWorldView<Input extends WorldFreshInput>(ctx: ServeContext, input: KnownKeys<Input>, registry?: WorldOpRegistry): WorldFreshReadResult;
+export function readWorldView(ctx: ServeContext, input: unknown, registry?: WorldOpRegistry): WorldReadResult;
 export function readWorldView(
   ctx: ServeContext,
   input: unknown,
   registry: WorldOpRegistry = activeWorldOps(),
 ): WorldReadResult {
+  return read(ctx, input, registry, worldDependencies());
+}
+
+function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, dependencies: WorldDependencies): WorldReadResult {
   const principal = resolvePrincipal(ctx.db, ctx.principal);
   if (principal === null)
     throw new ServeError("unknown_agent", "unknown agent");
@@ -155,27 +219,32 @@ export function readWorldView(
         knownAt = Object.hasOwn(input, "knownAt") ? parseWorldKnownAt(input.knownAt) : CURRENT;
       if (valid === null || knownAt === null) throw new WorldViewError();
       if (knownAt.kind !== "current") return unavailable(op.name, "history");
-      return present(op, op.run(registry));
+      return present(op, op.run(registry), null, ctx, dependencies);
     }
     const query = op.parse(input),
       valid = parseWorldValid(input.valid),
-      knownAt = parseWorldKnownAt(input.knownAt);
-    if (query === null || valid === null || knownAt === null)
+      knownAt = parseWorldKnownAt(input.knownAt),
+      prior = op.views === true && Object.hasOwn(input, "priorView") ? parseWorldRef(input.priorView, "view") : null;
+    if (query === null || valid === null || knownAt === null || (Object.hasOwn(input, "priorView") && prior === null))
       throw new WorldViewError();
     if (knownAt.kind !== "current") return unavailable(op.name, "history");
     if (!tableExists(ctx.db, "world_authorization_namespaces"))
       return unavailable(op.name, "storage");
     // A nested transaction is a savepoint: failed/budgeted projections issue no refs.
     return ctx.db
-      .transaction(() =>
-        present(
-          op,
-          op.run({ ctx, ns: worldNamespace(ctx.db, principal) }, query, {
-            valid,
-            knownAt,
-          }),
-        ),
-      )
+      .transaction(() => {
+        // Admission can precede a grant amendment. Read authority and evidence
+        // from the same snapshot, including discovery without an issued ref.
+        const current = resolvePrincipal(ctx.db, ctx.principal);
+        if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+        if (!toolAllowed(current.grant, "world_view")) throw new ServeError("tool_not_granted", "tool not granted");
+        const live = { ...ctx, principal: current };
+        const ns = worldNamespace(ctx.db, current);
+        // The baseline is judged before any projection work, so an unusable one costs the same for every cause.
+        const view = op.views === true ? openView(live, ns, input, prior) : null;
+        if (view?.stale === true) return answer(op.name, { status: "new_view_required" });
+        return present(op, op.run({ ctx: live, ns, registry, dependencies }, query, { valid, knownAt }), view, live, dependencies);
+      })
       .immediate();
   } catch (error) {
     if (error instanceof WorldProjectionBudgetError)
@@ -184,6 +253,16 @@ export function readWorldView(
   }
 }
 
+export function serveWorldView<Args extends WorldFreshInput>(
+  ctx: ServeContext,
+  args: KnownKeys<Args>,
+  registry?: WorldOpRegistry,
+): WorldViewEnvelope<WorldFreshReadResult>;
+export function serveWorldView(
+  ctx: ServeContext,
+  args: Record<string, unknown>,
+  registry?: WorldOpRegistry,
+): WorldViewEnvelope;
 export function serveWorldView(
   ctx: ServeContext,
   args: Record<string, unknown>,
@@ -193,44 +272,53 @@ export function serveWorldView(
   // inside one, and the audit row and rate reservation of a denied call must
   // outlive the refusal. The projection opens its own transaction, so a failed
   // projection still issues no references.
+  let wirePrincipal: WireRef<"principal"> | undefined;
+  let readPrincipal: Principal | undefined;
+  let dependencies = worldDependencies();
+  const project = (live: ServeContext): Served<WorldReadResult> => {
+    dependencies = worldDependencies();
+    try {
+      return ctx.db.transaction(() => {
+        const data = read(live, args, registry, dependencies);
+        const principal = resolvePrincipal(ctx.db, live.principal);
+        if (principal === null) throw new ServeError("unknown_agent", "unknown agent");
+        readPrincipal = principal;
+        const ns = worldNamespace(ctx.db, principal);
+        wirePrincipal = issueWorldRef(ctx.db, ns, "principal", ns.principalId);
+        return { canon: [], quoted: [], withheld: [], data };
+      }).immediate();
+    } catch (error) {
+      if (error instanceof WorldViewError)
+        throw new ServeError("invalid_arguments", "invalid arguments: world_view");
+      throw error;
+    }
+  };
   const envelope = gate(
     ctx,
     "world_view",
     auditArguments(args),
-    ({ ctx: live }): Served<WorldReadResult> => {
-      try {
-        return {
-          canon: [],
-          quoted: [],
-          withheld: [],
-          data: readWorldView(live, args, registry),
-        };
-      } catch (error) {
-        if (error instanceof WorldViewError)
-          throw new ServeError(
-            "invalid_arguments",
-            "invalid arguments: world_view",
-          );
-        throw error;
+    ({ ctx: live }) => project(live),
+    ({ ctx: live }, served) => {
+      // Revalidate only this projection's authorized evidence on every call,
+      // so unrelated hidden policy changes alter neither the answer nor work.
+      const current = resolvePrincipal(live.db, live.principal);
+      if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+      if (!toolAllowed(current.grant, "world_view")) throw new ServeError("tool_not_granted", "tool not granted");
+      const changed = readPrincipal?.kind === "agent" && current.kind === "agent" && readPrincipal.grant_epoch !== current.grant_epoch;
+      const fresh = { ...live, principal: current };
+      if (!changed && worldDependenciesAuthorized(fresh, dependencies)) return served;
+      const data = served.data;
+      if (data !== undefined && "result" in data && "view" in data.result && "kind" in data.result.view) {
+        live.db.query("DELETE FROM world_view_tokens WHERE token_hash=?").run(wireDigest(data.result.view.token));
       }
+      return project(fresh);
     },
   );
-  return ctx.db
-    .transaction((): WorldViewEnvelope => {
-      const principal = resolvePrincipal(ctx.db, ctx.principal);
-      if (principal === null)
-        throw new ServeError("unknown_agent", "unknown agent");
-      const ns = worldNamespace(ctx.db, principal);
-      return {
-        schema: "kizuki.envelope/v2",
-        tool: "world_view",
-        principal: issueWorldRef(ctx.db, ns, "principal", ns.principalId),
-        at: envelope.at,
-        canon: [],
-        quoted: [],
-        ...(envelope.redacted === undefined ? {} : { redacted: envelope.redacted }),
-        data: clampWorldData(envelope.data!),
-      };
-    })
-    .immediate();
+  if (wirePrincipal === undefined) throw new ServeError("error", "serving failed");
+  return {
+    schema: "kizuki.envelope/v2", tool: "world_view", principal: wirePrincipal,
+    at: envelope.at, canon: [], quoted: [],
+    ...(envelope.redacted === undefined ? {} : { redacted: envelope.redacted }),
+    data: clampWorldData(envelope.data!),
+  };
 }

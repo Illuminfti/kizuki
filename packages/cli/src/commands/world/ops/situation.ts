@@ -12,7 +12,7 @@ const LABELS: Readonly<Record<string, string>> = {
 };
 
 export const situationCli: WorldCliOp<Extract<WorldData, { schema: "kizuki.situation-card/v1" }>> = {
-  usage: "--ref TOKEN",
+  usage: "--ref TOKEN [--prior-view TOKEN] [--share]",
   options: ["--ref"],
   bounds: { "--ref": "32-byte base64url object token" },
   buildInput: (options) => {

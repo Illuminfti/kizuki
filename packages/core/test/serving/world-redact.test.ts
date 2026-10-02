@@ -58,3 +58,23 @@ test("a concept card's definitions and evidence carry redacted text and untouche
     db.close();
   }
 });
+
+test("conditional views compare and retain the redacted served projection", async () => {
+  const db = openLedger(":memory:");
+  try {
+    const world = await worldFixture(db, { label: LABEL });
+    const agent = authenticate(db, addAgent(db, "conditional-redact", { ...OWNER_AGENT_GRANT }).token)!;
+    const ctx = { db, vaultPath: world.ctx.vaultPath, principal: agent };
+    const input = { operation: "find_concepts", label: "", valid: { kind: "all" }, knownAt: { kind: "current" } };
+    const first = await dispatchServeTool(ctx, "world_view", input) as {
+      redacted?: Record<string, number>;
+      data: { result: { status: string; view: { kind: "view"; token: string } } };
+    };
+    expect(first.redacted).toEqual({ secret_assignment: 1 });
+    const stored = db.query<{ projection: Uint8Array }, [string]>("SELECT projection FROM world_view_tokens WHERE partition_id=(SELECT partition_id FROM world_view_partitions WHERE principal_id=?)").all(agent.kind === "agent" ? agent.agent.agent_id : "owner");
+    expect(stored.length).toBeGreaterThan(0);
+    for (const row of stored) expect(Buffer.from(row.projection).toString()).not.toContain(PASSWORD);
+    const second = await dispatchServeTool(ctx, "world_view", { ...input, priorView: first.data.result.view });
+    expect(second).toMatchObject({ data: { result: { status: "unchanged", view: first.data.result.view } } });
+  } finally { db.close(); }
+});

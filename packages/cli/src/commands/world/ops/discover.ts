@@ -12,7 +12,7 @@ const bounds = {
 } as const;
 
 export const discoverCli: WorldCliOp<Matches> = {
-  usage: "[--label TEXT] [--cursor TOKEN]",
+  usage: "[--label TEXT] [--cursor TOKEN] [--prior-view TOKEN]",
   options: ["--label", "--cursor"],
   bounds,
   buildInput: (options) => {

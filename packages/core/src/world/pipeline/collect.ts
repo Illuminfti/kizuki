@@ -7,6 +7,7 @@ import {
 import type { WorldKindSpec } from "../../contracts/world-kinds";
 import { activeWorldRegistry } from "../../contracts/world-vocabulary";
 import { authorizedClaimSql, authorizedSupportSql, validMeaningSql } from "../policy-sql";
+import { recordWorldDependencies } from "../dependencies";
 import { eligibleWorldClaim, type Eligible } from "./eligible";
 import { claimVisibleSql, WorldProjectionBudgetError, type ReadFrame } from "./frame";
 import { group, type Cluster, type Grouper } from "./group";
@@ -31,7 +32,10 @@ function labelMatches(text: unknown, wanted: string): boolean {
 /** One claim through `eligibleWorldClaim`, counted. Every claim a read serves comes through here. */
 export function verifyClaim(frame: ReadFrame, claimId: string): Eligible | null {
   frame.stats.claimsVerified += 1;
-  return eligibleWorldClaim(frame.ctx, claimId, frame.valid, frame.budget);
+  const item = eligibleWorldClaim(frame.ctx, claimId, frame.valid, frame.budget);
+  if (item !== null && frame.dependencies !== undefined)
+    recordWorldDependencies(frame.dependencies, item);
+  return item;
 }
 
 type Binding = {

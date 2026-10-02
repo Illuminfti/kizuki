@@ -357,9 +357,11 @@ export function gate<T>(
   tool: Tool,
   args: Record<string, unknown>,
   run: (call: ServeCall) => Served<T>,
+  /** Revalidate the read's dependencies on every call, under the final output transaction, instead of a global source fence. */
+  recheckSourcePolicy?: (call: ServeCall, served: Served<T>) => Served<T>,
 ): Envelope<T> {
   try {
-    return gated(ctx, tool, args, run);
+    return gated(ctx, tool, args, run, recheckSourcePolicy);
   } catch (error) {
     // Reserving and updating the audit row are writes outside `failed`.
     if (error instanceof ServeError || !isLedgerBusy(error)) throw error;
@@ -372,6 +374,7 @@ function gated<T>(
   tool: Tool,
   args: Record<string, unknown>,
   run: (call: ServeCall) => Served<T>,
+  recheckSourcePolicy?: (call: ServeCall, served: Served<T>) => Served<T>,
 ): Envelope<T> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
@@ -384,7 +387,7 @@ function gated<T>(
     served = run({ ctx: live, at });
     if (purgeReadEpoch(live.db) !== purgeEpoch) throw new ServeError("held", "canon unavailable during purge recovery");
     if (canonGeneration !== null && canonReadGeneration(live.db) !== canonGeneration) throw new ServeError("held", "canon changed during request; retry");
-    if (sourcePolicyEpoch(live.db) !== sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
+    if (recheckSourcePolicy === undefined && sourcePolicyEpoch(live.db) !== sourceEpoch) throw new ServeError("error", "source authorization changed during serving");
     if (readEpoch !== null) {
       if (readEpoch !== claimsEpoch(live.db)) throw new ServeError("error", "memory changed during request; retry");
       const current = liveContext(ctx);
@@ -395,7 +398,16 @@ function gated<T>(
   } catch (error) {
     failed(live, tool, args, audit_id, error);
   }
-  return envelopeOf(live, tool, args, at, audit_id, served);
+  if (recheckSourcePolicy === undefined) return envelopeOf(live, tool, args, at, audit_id, served);
+  try {
+    // The dependency recheck and output/audit serialization share one policy
+    // snapshot. Audit admission stays outside it so refusals remain durable.
+    return live.db.transaction(() => envelopeOf(live, tool, args, at, audit_id,
+      recheckSourcePolicy({ ctx: live, at }, served),
+    )).immediate();
+  } catch (error) {
+    failed(live, tool, args, audit_id, error);
+  }
 }
 
 /**

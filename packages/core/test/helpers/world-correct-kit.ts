@@ -101,8 +101,8 @@ function valid(): Record<string, unknown> {
 
 /** The unwrapped data of a current or incomplete world_view answer. */
 export function worldData(result: WorldReadResult): Record<string, any> {
-  if ("status" in result || result.result.status === "unavailable")
-    throw new Error("world view unavailable");
+  if ("status" in result || (result.result.status !== "current" && result.result.status !== "incomplete"))
+    throw new Error("world view has no data");
   return result.result.data as unknown as Record<string, any>;
 }
 

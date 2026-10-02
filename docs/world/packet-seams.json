@@ -44,5 +44,23 @@
       "packages/cli/test/world-ops.test.ts",
       "packages/mcp/test/world-ops.test.ts"
     ]
+  },
+  {
+    "packet": 490,
+    "workstream": "VIEW",
+    "scope": "Conditional views and portable resume; World Diff follows separately",
+    "core": "@kizuki/core/world: readWorldView and serveWorldView",
+    "cli": "kizuki world --prior-view, --share, --resume",
+    "mcp": "world_view: priorView, share, resume",
+    "http": "/v1/world_view",
+    "app": "World card refresh, share and resume through /app/v1/world_view",
+    "tests": [
+      "packages/core/test/serving/world-views.test.ts",
+      "packages/core/test/serving/world-view-security.test.ts",
+      "packages/core/test/serving/world-resume.test.ts",
+      "packages/core/test/world/view-tables.test.ts",
+      "packages/cli/test/world-views.test.ts",
+      "packages/mcp/test/world.test.ts"
+    ]
   }
 ]

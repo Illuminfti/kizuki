@@ -81,7 +81,7 @@ export const ORACLE_ASSERTION_STATUS: FixtureRegistry = {
   "world-concept-design#a_initial_raw": deferred("CARD"),
   "world-concept-design#a_initial_concept": deferred("IDENT"),
   "world-concept-design#a_copy": deferred("CARD"),
-  "world-concept-design#a_hidden_mutation": deferred("VIEW"),
+  "world-concept-design#a_hidden_mutation": executable("packages/core/test/serving/world-views.test.ts"),
   "world-concept-design#a_owner_identity": deferred("IDENT"),
   "world-concept-design#a_historical_before_correction": deferred("KNOWN"),
   "world-concept-design#a_correction": deferred("CORRECT"),
@@ -92,7 +92,7 @@ export const ORACLE_ASSERTION_STATUS: FixtureRegistry = {
   "world-concept-design#a_second_purge": deferred("CONSOL"),
   "world-concept-design#a_erased_history": deferred("KNOWN"),
   "world-concept-design#a_owner_baseline": deferred("VIEW"),
-  "world-concept-design#a_narrowed_old_view": deferred("VIEW"),
+  "world-concept-design#a_narrowed_old_view": executable("packages/core/test/serving/world-views.test.ts"),
   "world-concept-design#a_narrowed_fresh": deferred("VIEW"),
   "world-longitudinal-design#x_a_conflict": deferred("SIT2"),
   "world-longitudinal-design#x_a_correction": deferred("CORRECT"),
@@ -100,7 +100,7 @@ export const ORACLE_ASSERTION_STATUS: FixtureRegistry = {
   "world-longitudinal-design#x_a_ack": deferred("OUTCOME"),
   "world-longitudinal-design#x_a_wrong": deferred("OUTCOME"),
   "world-longitudinal-design#x_a_correct": deferred("OUTCOME"),
-  "world-longitudinal-design#x_a_restore_old": deferred("VIEW"),
+  "world-longitudinal-design#x_a_restore_old": executable("packages/core/test/serving/world-resume.test.ts"),
   "world-longitudinal-design#x_a_restore_fresh": deferred("VIEW"),
 };
 

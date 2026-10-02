@@ -20,6 +20,9 @@ for (const kind of ["concept", "situation"] as const) {
     test(`Core and MCP grouped ${kind} discovery agree at ${total} labels`, async () => {
       fixture = mcpFixture();
       const db = fixture.db;
+      // Compare full fresh projections without their independently issued tokens.
+      // Reserved and conditional view behavior is covered by the VIEW tests.
+      db.query("DELETE FROM world_view_partitions").run();
       for (const [index, count] of counts.entries()) {
         await worldSeed(db, {
           kind, subject: `topic:label-group-${index}`, label: `Group ${index}`,
@@ -62,6 +65,7 @@ for (const kind of ["concept", "situation"] as const) {
           const agent = addAgent(db, "group-label-reader", {
             ...OWNER_AGENT_GRANT, ceiling: "public", subjects: ["topic:label-group-0"],
           });
+          db.query("DELETE FROM world_view_partitions WHERE principal_id=?").run(agent.agent.agent_id);
           const narrow = { ...ctx, principal: authenticate(db, agent.token)! };
           const visible = readWorldView(narrow, args);
           expect(visible).toMatchObject({ result: { status: "current" } });

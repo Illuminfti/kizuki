@@ -8,6 +8,7 @@ import nodeProcess from "node:process";
 import { embedBackfillPeriod, loadServeConfig } from "./config";
 import { clearServeEndpoint, writeServeEndpoint } from "./endpoint";
 import { startServeHttp } from "./http";
+import { clearViewTokens } from "../world/views/store";
 import type { ServeHttpHandle } from "./http";
 import {
   acquireLease,
@@ -153,6 +154,7 @@ export async function runServeDaemon(
   nodeProcess.once("SIGTERM", requestStop);
   nodeProcess.once("SIGINT", requestStop);
   try {
+  clearViewTokens(db);
   writePid(vaultPath, ownMarker);
   if (inspectCanonRecovery(db).pending) {
     try { recoverCanonWrites({ db, vault_path: vaultPath }); }
