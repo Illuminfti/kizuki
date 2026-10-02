@@ -2,7 +2,7 @@ import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { ServeError, SourceGrantError, UndoError, WorldViewError, CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, queryServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline, readWorldView } from '@kizuki/core';
+import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, queryServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline, readWorldView } from '@kizuki/core';
 import type { Connector, SourceGrantPolicy, ServeContext } from '@kizuki/core';
 import { activeWorldOps, worldOpInputKeys } from '@kizuki/core/world';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
@@ -84,20 +84,7 @@ function revision(value: unknown): number { if (!Number.isSafeInteger(value) || 
     throw new AppFailure('invalid_request'); return Number(value); }
 function sourceKey(value: unknown): string { const key = string(value, 26); if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(key))
     throw new AppFailure('invalid_request'); return key; }
-/** Input the caller got wrong: a refusal to correct, not a failure of this device. */
-function refusesInput(error: unknown): boolean {
-    return error instanceof ServeError && error.code === 'invalid_arguments'
-        || error instanceof WorldViewError
-        || error instanceof UndoError && error.code === 'receipt_unknown'
-        || error instanceof SourceGrantError && ['invalid_source_request', 'invalid_source_policy', 'unsupported_retention', 'unsupported_egress'].includes(error.code);
-}
-/** The operator's desktop client for the provider; one that is not configured is a misconfiguration, not an outage. */
-async function operatorClient(provider: string, env: Record<string, string | undefined>) {
-    try { return await (provider === 'gmail' ? gmailClient : googleCalendarClient)(env); }
-    catch { throw new AppFailure('misconfigured'); }
-}
 function failure(error: unknown): AppError {
-    if (refusesInput(error)) return { code: 'invalid_request', retryable: false };
     if (error instanceof CanonRecoveryError) return { code: 'recovery_pending', retryable: false };
     if (error instanceof DuplicateSourceError) return { code: 'duplicate_identity', retryable: false };
     const code = error instanceof AppFailure ? error.code : error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
@@ -506,14 +493,12 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
             if (input.fields.some(field => !supported.includes(field)) || new Set(input.fields).size !== input.fields.length || provider === 'gmail' && input.fields.length === 0)
                 throw new AppFailure('invalid_request');
             const fields = provider === 'gmail' ? gmailFields(input.fields.join(',')) : googleCalendarFields(input.fields.length ? input.fields.join(',') : 'none');
-            let calendar: string | undefined;
-            try { calendar = provider === 'google-calendar' ? googleCalendarId(input.calendar_id === undefined ? undefined : string(input.calendar_id, 1024)) : undefined; }
-            catch { throw new AppFailure('invalid_request'); }
+            const calendar = provider === 'google-calendar' ? googleCalendarId(input.calendar_id === undefined ? undefined : string(input.calendar_id, 1024)) : undefined;
             if (provider === 'gmail' && input.calendar_id !== undefined)
                 throw new AppFailure('invalid_request');
             return operation('enroll', async (job) => {
                 // Configuration refusal precedes protected state, browser and provider I/O.
-                const client = await operatorClient(provider, baseIo.env);
+                const client = await (provider === 'gmail' ? gmailClient : googleCalendarClient)(baseIo.env);
                 return context(async (ctx) => {
                     const id = provider === 'gmail' ? 'kizuki.gmail' : 'kizuki.google-calendar', rows = listConnections(ctx.db, { includeDisconnected: true }).filter(row => row.connector_id === id);
                     const previous = newSource ? undefined : key === undefined ? (rows.length === 1 ? rows[0] : undefined) : rows.find(row => row.source_key === key);
@@ -555,10 +540,7 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
                 const keys = routeKeys(route);
                 if (keys === undefined)
                     throw new AppFailure('invalid_request');
-                let raw: unknown;
-                try { raw = await request.json(); }
-                catch (error) { if (error instanceof SyntaxError) throw new AppFailure('invalid_request'); throw error; }
-                const input = object(raw);
+                const input = object(await request.json());
                 if (Object.keys(input).some(key => !keys.includes(key)))
                     throw new AppFailure('invalid_request');
                 deps.onRequest?.();
