@@ -1,0 +1,27 @@
+{
+  "schema": "kizuki.legacy-wiki-mapping/v1",
+  "title": { "field": "title" },
+  "type": {
+    "field": "type",
+    "values": {
+      "concept": "source",
+      "decision": "source",
+      "plan": "source",
+      "source": "source"
+    },
+    "default": "source"
+  },
+  "sensitivity": {
+    "field": "sensitivity",
+    "values": {},
+    "default": "private"
+  },
+  "fields": {
+    "document_id": "x-wordcell-document-id",
+    "repository_scopes": "x-wordcell-repository-scopes",
+    "tags": "x-wordcell-tags",
+    "publish": "x-wordcell-publish"
+  },
+  "target": { "mode": "mirror" },
+  "ignore": [".wordcell/**", ".git/**"]
+}
