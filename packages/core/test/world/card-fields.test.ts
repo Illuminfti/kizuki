@@ -106,6 +106,20 @@ test("assistance for another actor, another task or a disjoint valid window cann
   } finally { f.dispose(); }
 });
 
+test("a speaker does not become the actor in another learner's assistance claim", async () => {
+  const f = await cardFixture();
+  try {
+    await f.write("learning.exposure", { kind: "subject", ref: f.ref("topic:bayes") }, { subject: "person:learner", context: ["task:shared"] });
+    await f.write("learning.assistance", { kind: "vocabulary", ref: { kind: "vocabulary", id: "learning/assisted" } }, {
+      subject: "task:shared", context: ["person:other"], speaker: "person:learner",
+    });
+    const learning = f.card().learning;
+    expect(learning).toHaveLength(1);
+    expect(learning[0]!.assistance).toBe("unknown");
+    expect(learning[0]!.assistanceEvidence).toEqual([]);
+  } finally { f.dispose(); }
+});
+
 test("several stated Situation blockers are uncertain slots, not contradictory facts", async () => {
   const db = openLedger(":memory:");
   try {
