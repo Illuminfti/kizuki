@@ -6,6 +6,7 @@ import { openLedger } from "@kizuki/core/internal";
 import { createHelpers, fixtureConsent } from "../helpers";
 import { fakeSystemd } from "../serve/supervisor-fixture";
 import { nextStep } from "../../src/commands/doctor-next";
+import { RETENTION_MEANING } from "../../src/egress-view";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
 setDefaultTimeout(120_000);
@@ -130,7 +131,7 @@ describe("doctor tells the daemon's story from a shell without its secret", () =
     expect(healthy.stdout).toContain('next: kizuki tell "<statement>" --claim ');
   });
 
-  test("a source that sends text to a model is listed with host, model and retention", () => {
+  for (const retention of ["provider_managed", "zero_retention", "logged_no_training", "logged_and_trained"] as const) test(`a source that sends text to a model is listed with host, model and ${retention}`, () => {
     const setup = tempVault();
     const connected = runCli(
       setup.env,
@@ -154,7 +155,7 @@ describe("doctor tells the daemon's story from a shell without its secret", () =
         egress: {
           model_endpoint: "https://models.example.test/v1",
           model: "synthetic-model",
-          external_retention: "provider_managed",
+          external_retention: retention,
         },
         sensitivity_floor: "public",
       }),
@@ -176,8 +177,31 @@ describe("doctor tells the daemon's story from a shell without its secret", () =
     expect(granted.exitCode, granted.stderr).toBe(0);
     const result = runCli(setup.env, "doctor");
     expect(result.stdout).toContain(
-      `egress source=${key} connector=kizuki.markdown-folder host=models.example.test model=synthetic-model retention=provider_managed`,
+      `egress source=${key} connector=kizuki.markdown-folder host=models.example.test model=synthetic-model retention=${retention} (${RETENTION_MEANING[retention]})`,
     );
+  });
+
+  test("a configured judge the grant does not name is reported as a hold, and named it is not", () => {
+    const setup = tempVault();
+    const connected = runCli(setup.env, "connect", "markdown-folder", "--source", setup.notes);
+    expect(connected.exitCode, connected.stderr).toBe(0);
+    const key = connected.stdout.match(/source=([0-9A-HJKMNPQRSTVWXYZ]{26})/)![1]!;
+    writeFileSync(join(setup.vault, ".kizuki", "serve.toml"),
+      '[ports.llm]\nid = "kizuki.llm.openai-compatible"\nbase_url = "https://models.example.test/v1"\nmodel = "synthetic-model"\n[ports.systemone]\nid = "kizuki.systemone.jev"\nbase_url = "https://judge.example.test/v1"\nmodel = "synthetic-judge"\n', { mode: 0o600 });
+    const egress = { model_endpoint: "https://models.example.test/v1/chat/completions", model: "synthetic-model", external_retention: "provider_managed" };
+    const grant = (value: object, expected: number) => {
+      const policy = join(setup.root, `judge-policy-${expected}.json`);
+      writeFileSync(policy, JSON.stringify({ purposes: ["capture", "recall", "derive", "extract"], allowed_fields: ["text"], retention: "persistent_owned_until_revoked", egress: value, sensitivity_floor: "public" }), { mode: 0o600 });
+      const granted = runCli(setup.env, "connect", "grant", "--source", key, "--policy", policy, "--expected-revision", String(expected), "--operation-id", `judge-${expected}`);
+      expect(granted.exitCode, granted.stderr).toBe(0);
+    };
+    grant(egress, 0);
+    expect(runCli(setup.env, "doctor").stdout).toContain(`egress source=${key} judge host=judge.example.test model=synthetic-judge retention=logged_and_trained (undeclared); held: judge not consented`);
+    grant({ ...egress, judge_endpoint: "https://judge.example.test/v1/systemone", judge_model: "synthetic-judge" }, 1);
+    const named = runCli(setup.env, "doctor").stdout;
+    expect(named).toContain(`egress source=${key} connector=kizuki.markdown-folder host=models.example.test`);
+    expect(named).toContain(`egress source=${key} judge host=judge.example.test model=synthetic-judge retention=logged_and_trained (undeclared)`);
+    expect(named).not.toContain("held: judge not consented");
   });
 });
 

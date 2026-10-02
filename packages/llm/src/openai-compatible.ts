@@ -187,6 +187,8 @@ function buildWireBody(
     })),
     max_tokens: request.max_output_tokens,
     ...(config.reasoning_effort === null ? {} : { reasoning_effort: config.reasoning_effort }),
+    ...(config.temperature === null ? {} : { temperature: config.temperature }),
+    ...(config.json_mode ? { response_format: { type: "json_object" } } : {}),
     ...(config.provider === undefined ? {} : { provider: config.provider }),
   };
 }

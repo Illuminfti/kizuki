@@ -60,12 +60,38 @@ export interface QualityResponse {
   dropped?: number;
 }
 
+/** Facts the runner itself observed while it made the calls. A file cannot carry these. */
+export interface RunnerObservedProvenance {
+  runner: string;
+  endpoint_host: string;
+  loopback: boolean;
+  model: string;
+  calls: number;
+  request_sha256: string[];
+  response_sha256: string[];
+}
+
 export interface QualityResponseSet {
   schema: "kizuki.extraction-quality-responses/v1";
-  mode: "scripted_contract";
+  mode: "scripted_contract" | "runner_observed_model";
   corpus_sha256: string;
   model_reference: string;
   responses: QualityResponse[];
+  provenance?: RunnerObservedProvenance;
+}
+
+/**
+ * Objects the runner constructed in this process. JSON parsed from a file is never a member, so a
+ * response file cannot self-attest that a real model produced it (the scripted_contract guard stays).
+ */
+const RUNNER_OBSERVED = new WeakSet<object>();
+
+export function runnerObservedResponseSet(
+  input: Omit<QualityResponseSet, "mode" | "schema"> & { provenance: RunnerObservedProvenance },
+): QualityResponseSet {
+  const set: QualityResponseSet = { schema: "kizuki.extraction-quality-responses/v1", mode: "runner_observed_model", ...input };
+  RUNNER_OBSERVED.add(set);
+  return set;
 }
 
 export function sha256(value: string | Uint8Array): string {
@@ -184,9 +210,10 @@ export function validateCorpus(value: unknown): QualityCorpus {
 }
 
 export function validateResponseSet(value: unknown, corpus: QualityCorpus): QualityResponseSet {
-  const root = object(value, ["schema", "mode", "corpus_sha256", "model_reference", "responses"]);
+  const observed = typeof value === "object" && value !== null && RUNNER_OBSERVED.has(value);
+  const root = object(value, ["schema", "mode", "corpus_sha256", "model_reference", "responses"], observed ? ["provenance"] : []);
   requireValue(root.schema === "kizuki.extraction-quality-responses/v1", "unsupported response contract");
-  requireValue(root.mode === "scripted_contract", "recorded model provenance is unsupported; v1 accepts scripted contracts only");
+  requireValue(root.mode === "scripted_contract" || (observed && root.mode === "runner_observed_model"), "recorded model provenance is unsupported; v1 accepts scripted contracts only");
   requireValue(root.corpus_sha256 === corpusDigest(corpus), "corpus hash mismatch");
   const responses = list(root.responses, corpus.cases.length, corpus.cases.length).map((raw): QualityResponse => {
     const row = object(raw, ["case_id", "status", "response", "usage"], ["dropped"]);
@@ -201,7 +228,11 @@ export function validateResponseSet(value: unknown, corpus: QualityCorpus): Qual
       ...(row.dropped === undefined ? {} : { dropped: integer(row.dropped, 64) }) };
   });
   unique(responses.map((row) => row.case_id));
-  return { schema: "kizuki.extraction-quality-responses/v1", mode: "scripted_contract", corpus_sha256: corpusDigest(corpus), model_reference: string(root.model_reference), responses };
+  const base = { schema: "kizuki.extraction-quality-responses/v1" as const, corpus_sha256: corpusDigest(corpus), model_reference: string(root.model_reference), responses };
+  if (!observed) return { ...base, mode: "scripted_contract" };
+  const result: QualityResponseSet = { ...base, mode: "runner_observed_model", provenance: root.provenance as RunnerObservedProvenance };
+  RUNNER_OBSERVED.add(result);
+  return result;
 }
 
 export function readBoundedJson(path: string): unknown {
@@ -284,7 +315,8 @@ export function scoreExtraction(corpusInput: QualityCorpus, responseInput: Quali
   const complete = total("body_unscored") === 0;
   return {
     schema: "kizuki.extraction-quality-score/v1", scorer_version: SCORER_VERSION, mode: responses.mode,
-    qualification: "scripted_fixture_only", model_quality_claim: false,
+    qualification: responses.mode === "scripted_contract" ? "scripted_fixture_only" : "synthetic_fixture_measured",
+    model_quality_claim: false, ...(responses.provenance === undefined ? {} : { provenance: responses.provenance }),
     corpus_sha256: corpusDigest(corpus), response_set_sha256: sha256(canonicalJson(responses)),
     prompt_sha256: sha256(EXTRACTION_SYSTEM_PROMPT), scorer_sha256: sha256(readFileSync(import.meta.filename)),
     model_reference: responses.model_reference, complete, passed: complete && cases.every((row) => row.failures.length === 0),
@@ -296,7 +328,7 @@ export function scoreExtraction(corpusInput: QualityCorpus, responseInput: Quali
       abstention_recall: fraction(correctAbstentions, cases.filter((row) => row.expected_abstention).length),
       sensitivity_under_labels: total("sensitivity_under_labels"), unscored_bodies: total("body_unscored"),
     },
-    usage: { provenance: "scripted_transport_metadata", calls: responses.responses.reduce((sum, row) => sum + row.usage.calls, 0),
+    usage: { provenance: responses.mode === "scripted_contract" ? "scripted_transport_metadata" : "runner_observed_transport", calls: responses.responses.reduce((sum, row) => sum + row.usage.calls, 0),
       input_tokens: sumUsage("input_tokens"), output_tokens: sumUsage("output_tokens"),
       unknown_usage_cases: responses.responses.filter((row) => row.usage.input_tokens === null || row.usage.output_tokens === null).length },
     status_counts: statusCounts, cases,
