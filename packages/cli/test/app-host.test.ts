@@ -11,6 +11,43 @@ import { openMcpSession } from './mcp-stdio-session';
 const h = createHelpers();
 afterEach(h.cleanup);
 const policy = { purposes: ['capture', 'recall', 'session'], allowed_fields: ['text', 'subjects', 'metadata', 'attachments'], retention: 'persistent_owned_until_revoked', egress: 'local_only', sensitivity_floor: 'private' };
+test('app reports caller input refusals as invalid_request and keeps internal failures unavailable', async () => {
+    const setup = h.tempVault(), missing = '00000000000000000000000000';
+    const io: CliIo = { env: { ...setup.env, KIZUKI_GMAIL_CLIENT_ID: '' }, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => '' };
+    const host = createAppHost(io);
+    const send = async (route: string, body: string) => { const response = await host.handle(new Request(`http://127.0.0.1/app/v1/${route}`, { method: 'POST', body })); return { status: response.status, json: await response.json() as any }; };
+    const settled = async (route: string, body: unknown) => {
+        const started = await send(route, JSON.stringify(body));
+        if (!started.json.ok) return started.json;
+        for (let i = 0; i < 200; i++) {
+            const job = (await send('operation', JSON.stringify({ id: started.json.data.operation_id }))).json.data;
+            if (job.state !== 'running') return job;
+            await Bun.sleep(10);
+        }
+        throw Error('synthetic job did not finish');
+    };
+    const refused = { ok: false, error: { code: 'invalid_request', retryable: false } };
+    try {
+        for (const [route, body] of [
+            ['status', '{'],
+            ['consent', JSON.stringify({ source_key: missing, expected_revision: 0, operation_id: 'synthetic-policy', policy: { ...policy, allowed_fields: ['unknown-field'] } })],
+            ['correction_preview', JSON.stringify({ claim_id: missing, statement: 'Synthetic correction' })],
+            ['world_view', JSON.stringify({ operation: 'find_concepts', label: 'synthetic', valid: { kind: 'unknown' }, knownAt: { kind: 'current' } })],
+            ['enroll', JSON.stringify({ provider: 'google-calendar', fields: ['summary'], calendar_id: 'primary' })],
+            ['enroll', JSON.stringify({ provider: 'google-calendar', fields: ['summary'] })],
+        ] as const) expect(await send(route, body), route).toEqual({ status: 400, json: refused });
+        for (const [route, body] of [
+            ['undo', { receipt_id: 'synthetic-receipt', cascade: false }],
+            ['correct', { claim_id: missing, statement: 'Synthetic correction' }],
+        ] as const) expect((await settled(route, body)).error, route).toEqual(refused.error);
+        // An operator who has not configured the provider is misconfigured, not unavailable.
+        expect((await settled('enroll', { provider: 'gmail', fields: ['text'] })).error).toEqual({ code: 'misconfigured', retryable: false });
+        // A failure of this device is still unavailable, not a refusal.
+        const db = new Database(join(setup.vault, '.kizuki', 'kizuki.db'));
+        try { db.exec('DROP TABLE canon_receipts'); } finally { db.close(); }
+        expect((await settled('undo', { receipt_id: 'synthetic-receipt', cascade: false })).error).toEqual({ code: 'unavailable', retryable: false });
+    } finally { await host.close(); }
+});
 test.each([false, true])('app status refuses ledger replacement during read admission: schema error=%s', async schemaError => {
     const setup = h.tempVault(), path = join(setup.vault, '.kizuki', 'kizuki.db');
     const io: CliIo = { env: setup.env, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => '' };

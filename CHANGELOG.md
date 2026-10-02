@@ -4,6 +4,25 @@
 
 ### Fixed
 
+- Standing HTTP refuses oversized bodies, malformed UTF-8, excessive JSON
+  nesting and non-object argument containers before tool dispatch. Its body
+  reader shares the app endpoint's time limit and uses a 1 MiB byte limit
+  to fit Unicode proposals; the app retains its 128 KiB limit. Legacy JSONL import
+  refuses symlinks and non-regular files through the open descriptor.
+- Google Calendar refuses invalid all-day dates with a typed connector error
+  instead of throwing `RangeError`; valid leap-day dates remain accepted.
+- A seeded hostile-input fuzz campaign covers parser, file-reader, MCP and
+  HTTP boundaries with isolated workers, resource watchdogs and a replayable
+  synthetic corpus; see `scripts/fuzz/README.md` for CI and long local modes
+  and the enabled packet-rendering regression.
+- Beeper response reads use fixed storage and one deadline, refuse an oversized
+  body without waiting for the provider to settle stream cancellation, and
+  report a stalled body as unavailable. The local app reports malformed JSON,
+  invalid source-policy fields, refused correction and world-view input, an
+  unknown undo receipt and an unsupported calendar id as `invalid_request`
+  rather than `unavailable`, and a missing Google client configuration as
+  `misconfigured`.
+
 - Purge is physically total. After it, the purged text is gone from claim and
   proposal payloads (ids, provenance and receipts stay), from archive copies
   and stage images, from the search index and retrieval store, and from freed

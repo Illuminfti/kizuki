@@ -1,4 +1,4 @@
-import { KizukiError } from "@kizuki/core";
+import { DeadlineError, KizukiError, withDeadline } from "@kizuki/core";
 
 export const MAX_CALENDAR_BYTES = 16 * 1024 * 1024;
 export const MAX_REDIRECTS = 3;
@@ -81,37 +81,37 @@ function requireHttps(candidate: string): string {
   return parsed.toString();
 }
 
-async function readBounded(response: Response): Promise<string> {
+async function readBounded(response: Response, deadline: number): Promise<string> {
   const body = response.body;
   if (body === null) return "";
   const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
+  const bytes = new Uint8Array(MAX_CALENDAR_BYTES);
   let total = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new DeadlineError("calendar body deadline");
+      const { done, value } = await withDeadline(reader.read(), remaining, "calendar body deadline");
       if (done) break;
       if (value === undefined) continue;
-      total += value.byteLength;
-      if (total > MAX_CALENDAR_BYTES) {
-        await reader.cancel();
+      if (total + value.byteLength > MAX_CALENDAR_BYTES) {
         throw new KizukiError(
           "misconfigured",
           "kizuki.ics: calendar exceeds 16 MiB",
         );
       }
-      chunks.push(value);
+      bytes.set(value, total);
+      total += value.byteLength;
     }
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, total)); }
+    catch { throw new KizukiError("parse_error", "kizuki.ics: calendar feed must be UTF-8"); }
+  } catch (error) {
+    // A hostile or interrupted stream must not hold refusal open at cancellation.
+    void reader.cancel().catch(() => undefined);
+    throw error;
   } finally {
     reader.releaseLock();
   }
-  const merged = new Uint8Array(total);
-  let offset = 0;
-  for (const piece of chunks) {
-    merged.set(piece, offset);
-    offset += piece.byteLength;
-  }
-  return new TextDecoder().decode(merged);
 }
 
 /**
@@ -134,6 +134,7 @@ export function makeFetcher(fetchImpl: FetchLike): IcsFetcher {
 
       let outcome: IcsFetchResult | { redirect: string };
       try {
+        const deadline = Date.now() + FETCH_TIMEOUT_MS;
         const response = await fetchImpl(target, {
           method: "GET",
           headers,
@@ -158,7 +159,7 @@ export function makeFetcher(fetchImpl: FetchLike): IcsFetcher {
             last_modified: lastModified,
             // Reading the body belongs inside this guard: a stream that fails
             // mid-flight reports the request URL in its own message.
-            text: await readBounded(response),
+            text: await readBounded(response, deadline),
           };
         }
       } catch (error) {

@@ -1,4 +1,4 @@
-import { withDeadline } from "../util/deadline";
+import { HttpBodyError, MAX_APP_HTTP_BODY_BYTES, parseRequestArguments, readRequestText } from "./request-body";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -153,17 +153,13 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
           error: { code: "not_found", message: "unknown tool", retryable: false },
         });
       }
-      let args: Record<string, unknown> = {};
+      let args: Record<string, unknown>;
       try {
-        const body = await request.json();
-        if (body !== null && typeof body === "object" && !Array.isArray(body)) {
-          const record = body as Record<string, unknown>;
-          args = (record["args"] as Record<string, unknown> | undefined) ?? record;
-        }
-      } catch {
-        return json(400, {
+        args = parseRequestArguments(await readRequestText(request));
+      } catch (error) {
+        return json(error instanceof HttpBodyError ? error.status : 400, {
           ok: false,
-          error: { code: "config_invalid", message: "body must be JSON", retryable: false },
+          error: { code: "config_invalid", message: "body must be bounded UTF-8 JSON object", retryable: false },
         });
       }
       try {
@@ -219,18 +215,7 @@ async function appRequest(request: Request, origin: string, token: string, optio
   if (presented === null || !sameToken(presented, token)) return error(401, "unauthorized");
   if (request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return error(400, "invalid_request");
   try {
-    const reader = request.body?.getReader();
-    const chunks: Uint8Array[] = []; let size = 0;
-    const deadline = Date.now() + 5000;
-    if (reader) while (true) {
-      if (Date.now() >= deadline) { await reader.cancel(); return error(408, "invalid_request"); }
-      const next = await withDeadline(reader.read(), Math.max(1, deadline - Date.now()), "app body deadline"); if (next.done) break;
-      size += next.value.byteLength;
-      if (size > 128 * 1024) { await reader.cancel(); return error(413, "invalid_request"); }
-      chunks.push(next.value);
-    }
-    const bytes = Buffer.concat(chunks);
-    const body = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const body = await readRequestText(request, MAX_APP_HTTP_BODY_BYTES);
     return reply(await options.handle(new Request(url, { method: "POST", headers: request.headers, body })));
-  } catch { return error(400, "invalid_request"); }
+  } catch (cause) { return error(cause instanceof HttpBodyError ? cause.status : 400, "invalid_request"); }
 }

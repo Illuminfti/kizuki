@@ -106,3 +106,10 @@ packages/cli/src/hook/session-start.ts:callDaemon.fetch#1:loopback call to the r
 packages/cli/test/hook.test.ts:fakeDaemon.Bun.serve#1:synthetic daemon endpoint bound to 127.0.0.1 for the session-start hook tests
 packages/cli/test/hook.test.ts:(toplevel).realServe#1:wrapper around the real daemon listener, which stays bound to 127.0.0.1, so the test can count requests that reach the daemon handler
 packages/core/test/serve/redact-http.test.ts:post.fetch#1:loopback request to the in-process serve HTTP server in the redaction tests
+scripts/fuzz/worker.ts:(toplevel).originalFetch#1:offline fuzz worker permits only its synthetic HTTP loopback server; all other fetch destinations are refused
+scripts/fuzz/surfaces.ts:httpPost.fetch#1:synthetic owner and agent requests to the worker-owned loopback HTTP listener
+scripts/fuzz/surfaces.ts:run.fetch#1:synthetic inert-principal requests to the worker-owned loopback HTTP listener
+scripts/fuzz/surfaces.ts:run.fetch#2:synthetic captured-text separation check against the worker-owned loopback HTTP listener
+packages/core/test/serve/http-hostile.test.ts:withHttp.fetch#1:synthetic malformed-body requests to the test-owned loopback HTTP listener
+packages/core/test/serve/http-hostile.test.ts:(toplevel).fetch#1:synthetic oversized chunked body sent to the test-owned loopback HTTP listener
+scripts/fuzz/app.ts:post.fetch#1:synthetic app requests to the worker-owned loopback HTTP listener; bearer and origin refusal are checked before dispatch
