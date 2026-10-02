@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
-import { contentSignature } from "../claims/hash";
+import { contentSignature, pageClaimKey } from "../claims/hash";
 import { initClaims } from "../claims/init";
+import { getClaim, supersedePageRevisions } from "../claims/store";
 import { openLedger } from "../ledger/db";
 import {
   canonicalizeProducer,
@@ -62,6 +63,11 @@ export interface ProposalInput {
   sensitivity?: Sensitivity;
   taint?: ClaimTaint;
   authority?: AuthorityTier;
+  /**
+   * The conflict key of a page whose later revisions replace this one. Absent
+   * for every proposal that adds to a page rather than replacing it.
+   */
+  claim_key?: string | null;
 }
 
 export interface StagedProposal {
@@ -310,6 +316,9 @@ function validateInput(input: ProposalInput): void {
   if (input.authority !== undefined && !isAuthorityTier(input.authority)) {
     throw new StagingError("authority: must be a known authority tier");
   }
+  if (input.claim_key != null && !/^[0-9a-f]{64}$/.test(input.claim_key)) {
+    throw new StagingError("claim_key: must be 64 lowercase hex characters");
+  }
 }
 
 function resolveProvenance(db: Database, ids: readonly string[]): void {
@@ -377,10 +386,11 @@ function resolveLabels(
 function lookupSignatureRow(db: Database, contentHash: string): ProposalRow | null {
   return db
     .query(
-      `SELECT * FROM proposals
-        WHERE content_hash = ? AND status IN ('pending', 'promoted')
-        ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END,
-                 created_at, proposal_id
+      `SELECT p.* FROM proposals p LEFT JOIN claims c ON c.claim_id = p.proposal_id
+        WHERE p.content_hash = ?
+          AND (c.status = 'live' OR (c.claim_id IS NULL AND p.status IN ('pending', 'promoted')))
+        ORDER BY CASE p.status WHEN 'pending' THEN 0 ELSE 1 END,
+                 p.created_at, p.proposal_id
         LIMIT 1`,
     )
     .get(contentHash) as ProposalRow | null;
@@ -391,6 +401,7 @@ function signatureOf(
     StagedProposal,
     "kind" | "target" | "body" | "frontmatter" | "subjects" | "producer" | "confidence"
   >,
+  claimKey: string | null = null,
 ): string {
   return contentSignature({
     kind: input.kind,
@@ -400,6 +411,7 @@ function signatureOf(
     subjects: input.subjects,
     producer: canonicalizeProducer(input.producer),
     confidence: input.confidence,
+    claim_key: claimKey,
   });
 }
 
@@ -426,6 +438,7 @@ function insertCompatClaim(
   db: Database,
   proposal: StagedProposal,
   status: StagingStatus,
+  claimKey: string | null,
 ): void {
   if (!tableExists(db, "claims")) return;
   const subject = proposal.subjects[0] ?? null;
@@ -437,7 +450,7 @@ function insertCompatClaim(
         subject, predicate, object, polarity, claim_key, authority,
         sensitivity, taint, model_ref, valid_from, valid_to, asserted_at,
         retracted_at, superseded_by, receipt_id, corroboration, last_confirmed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'positive', NULL,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'positive', ?,
              ?, ?, ?, NULL, ?, NULL, ?,
              ?, NULL, NULL, 1, ?)`,
   ).run(
@@ -455,6 +468,7 @@ function insertCompatClaim(
     proposal.body_hash,
     proposal.content_hash,
     subject,
+    claimKey,
     proposal.authority,
     proposal.sensitivity,
     proposal.taint,
@@ -573,6 +587,17 @@ export function fileProposal(
   resolveProvenance(db, provenance);
   const subjects = [...(input.subjects ?? [])];
   const labels = resolveLabels(db, input, provenance);
+  let claimKey = input.claim_key ?? null;
+  const connector = input.frontmatter["x-connector"];
+  const record = input.frontmatter["x-source-record-id"];
+  if (typeof connector === "string" && typeof record === "string" &&
+      claimKey === pageClaimKey(connector, record)) {
+    const bindings = provenance.map(id => db.query<{ source_key: string }, [string]>(
+      "SELECT source_key FROM source_event_bindings WHERE event_id = ?",
+    ).get(id)?.source_key ?? null);
+    if (new Set(bindings).size !== 1) throw new StagingError("page provenance must belong to one source");
+    claimKey = pageClaimKey(connector, record, bindings[0] ?? undefined);
+  }
   const contentHash = signatureOf({
     kind: input.kind,
     target,
@@ -581,7 +606,7 @@ export function fileProposal(
     subjects,
     producer: input.producer,
     confidence: input.confidence,
-  });
+  }, claimKey);
 
   const file = db.transaction((): FileProposalResult => {
     const sourceDeletion = requiresSourceTombstoneBinding(db, input);
@@ -590,7 +615,14 @@ export function fileProposal(
     const existing = lookupSignatureRow(db, contentHash);
     if (existing !== null) {
       const current = rowToProposal(db, existing);
-      if (signatureOf(current) === contentHash) {
+      const storedKey = getClaim(db, current.proposal_id)?.claim_key ?? null;
+      if (signatureOf(current, storedKey) === contentHash) {
+        // An identical page delivery is still captured in the ledger, but
+        // cannot amend a claim guarded by an unfinished receipted write.
+        if (claimKey !== null && tableExists(db, "canon_write_intents") &&
+            db.query("SELECT 1 FROM canon_write_intents LIMIT 1").get() !== null) {
+          return { outcome: "duplicate", proposal: current };
+        }
         if (sourceDeletion) requireSourceTombstoneProposal(db, current, context);
         const merged = uniqueStrings([...current.provenance, ...provenance]);
         const grew = merged.length !== current.provenance.length;
@@ -616,7 +648,7 @@ export function fileProposal(
       }
       // The unique slot is the live signature. A pending row whose stored
       // fields no longer hash to this content_hash does not occupy it.
-      vacateSignature(db, current.proposal_id, signatureOf(current));
+      vacateSignature(db, current.proposal_id, signatureOf(current, storedKey));
     }
 
     const proposal: StagedProposal = {
@@ -656,7 +688,8 @@ export function fileProposal(
       proposal.body_hash,
       proposal.content_hash,
     );
-    insertCompatClaim(db, proposal, "pending");
+    insertCompatClaim(db, proposal, "pending", claimKey);
+    if (claimKey !== null) supersedePageRevisions(db, proposal.proposal_id, proposal.created_at);
 
     return { outcome: "stored", proposal };
   });

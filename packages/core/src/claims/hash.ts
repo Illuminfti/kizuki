@@ -9,6 +9,19 @@ export function claimKey(subject: string, predicate: string): string {
     .digest("hex");
 }
 
+/**
+ * The conflict key of a source page: every revision of one record from one
+ * enrolled source shares it, so the claims store can tell a newer revision from an
+ * unrelated page. Derived from `page:<connector>:<source record>`; the
+ * connector and enrollment form the subject so a record id cannot bleed into it.
+ */
+export function pageClaimKey(connectorId: string, sourceRecordId: string, sourceKey?: string): string {
+  return claimKey(
+    sourceKey === undefined ? `page:${connectorId}` : JSON.stringify(["page", connectorId, sourceKey]),
+    sourceRecordId,
+  );
+}
+
 export function hashBody(body: string): string {
   return new Bun.CryptoHasher("sha256").update(body).digest("hex");
 }
@@ -33,6 +46,7 @@ export function contentSignature(parts: {
   subjects: readonly string[];
   producer: string;
   confidence: number;
+  claim_key?: string | null;
 }): string {
   const frontmatter = Object.fromEntries(
     Object.entries(parts.frontmatter)
@@ -48,6 +62,7 @@ export function contentSignature(parts: {
       [...parts.subjects].sort(),
       parts.producer,
       parts.confidence,
+      ...(parts.claim_key == null ? [] : [parts.claim_key]),
     ]),
   );
 }

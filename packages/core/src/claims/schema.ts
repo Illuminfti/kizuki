@@ -348,10 +348,14 @@ function backfillProposalContentHash(db: Database): void {
     producer: string;
     confidence: number;
     content_hash: string;
+    claim_key: string | null;
   };
+  const keySql = tableExists(db, "claims") && columnNames(db, "claims").has("claim_key")
+    ? "(SELECT claim_key FROM claims WHERE claims.claim_id = proposals.proposal_id)"
+    : "NULL";
   const select = db.prepare<ProposalHashRow, []>(
     `SELECT proposal_id, kind, target, body, frontmatter, subjects,
-            producer, confidence, content_hash
+            producer, confidence, content_hash, ${keySql} AS claim_key
        FROM proposals`,
   );
   const update = db.prepare(
@@ -388,6 +392,7 @@ function backfillProposalContentHash(db: Database): void {
             ? canonicalizeProducer(row.producer)
             : row.producer,
           confidence: row.confidence,
+          claim_key: row.claim_key,
         }),
         row.proposal_id,
       );

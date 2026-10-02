@@ -203,6 +203,7 @@ async function runSyncRail(
     claims_deduped: written.claims_deduped,
     claims_superseded: written.claims_superseded,
     claims_rejected: written.claims_rejected,
+    ...(Object.keys(written.claims_skipped).length === 0 ? {} : { claims_skipped: written.claims_skipped }),
     records_skipped: written.records_skipped,
     canon_writes: written.canon_writes,
     model: { ...written.model, model_ref: hooks?.model_ref ?? null },

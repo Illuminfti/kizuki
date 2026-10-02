@@ -15,6 +15,7 @@ import {
   type TargetDecision,
 } from "../canon";
 import type { CanonIo } from "../canon";
+import { CanonWriteError } from "../canon/errors";
 import { applyCanonWriteOwned } from "../canon/apply";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
@@ -31,6 +32,8 @@ import {
   retryRetrievalOps,
   listUnwrittenLiveClaims,
   reviveUncontestedSkipped,
+  skipUnwrittenClaim,
+  supersedePageRevisions,
 } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
 import {
@@ -75,6 +78,8 @@ export interface WritePassResult {
   readonly claims_written_extracted: number;
   readonly claims_deduped: number;
   readonly claims_superseded: number;
+  /** Claims the writer ended without a page write, by reason. Each is a stable snake_case reason; the run receipt keeps it. */
+  readonly claims_skipped: Readonly<Record<string, number>>;
   /** Records extraction passed over for good without claims; each has its reason in `errors`. */
   readonly records_skipped: number;
   readonly canon_writes: number;
@@ -88,13 +93,13 @@ export interface WritePassResult {
 
 /** A pass's totals, kept across its short writer holds. */
 type PassTally = {
-  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "model" | "oversized" | "errors">]: WritePassResult[K];
-} & { readonly oversized: { segments: number; skipped: number }; readonly errors: string[] };
+  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "claims_skipped" | "model" | "oversized" | "errors">]: WritePassResult[K];
+} & { readonly oversized: { segments: number; skipped: number }; readonly claims_skipped: Record<string, number>; readonly errors: string[] };
 
 function emptyTally(): PassTally {
   return {
     revived: 0, claims_extracted: 0, claims_written: 0, claims_written_extracted: 0, claims_deduped: 0,
-    claims_superseded: 0, records_skipped: 0, canon_writes: 0, oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
+    claims_superseded: 0, claims_skipped: {}, records_skipped: 0, canon_writes: 0, oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
   };
 }
 
@@ -354,7 +359,7 @@ export async function runWritePass(
   });
   const tally = emptyTally();
   const metrics = emptyMetrics();
-  const result = (): WritePassResult => ({ ...tally, oversized: { ...tally.oversized }, ...metricResult(metrics) });
+  const result = (): WritePassResult => ({ ...tally, claims_skipped: { ...tally.claims_skipped }, oversized: { ...tally.oversized }, ...metricResult(metrics) });
 
   const opened = await holdWriter(io, (_scope, owned) => { tally.revived = reviveUncontestedSkipped(owned.db); });
   if (!opened.held) { tally.stopped = opened.stopped; return result(); }
@@ -401,6 +406,11 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
     }
   }
 
+  db.transaction(() => {
+    for (const claim of listUnwrittenLiveClaims(db, WRITE_PASS_SCAN).reverse()) {
+      supersedePageRevisions(db, claim.claim_id, claim.created_at);
+    }
+  })();
   const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN);
   for (const claim of pending) {
     if (tally.canon_writes >= WRITE_PASS_LIMIT) break;
@@ -429,6 +439,14 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
       }
     } catch (error) {
       if (error instanceof SelfOriginError) continue;
+      // The writer validates provenance before refusing a create over an existing file.
+      // This terminal outcome consumes no canon write and must not retry forever.
+      if (error instanceof CanonWriteError && error.code === "page_exists") {
+        if (skipUnwrittenClaim(db, claim.claim_id, io.now?.() ?? new Date().toISOString())) {
+          tally.claims_skipped["page_exists"] = (tally.claims_skipped["page_exists"] ?? 0) + 1;
+        }
+        continue;
+      }
       if (error instanceof BudgetExhausted) {
         tally.stopped = error.stopped;
         break;

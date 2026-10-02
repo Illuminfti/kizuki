@@ -215,6 +215,12 @@ export interface RunReceipt {
   readonly claims_superseded: number;
   readonly claims_rejected: Readonly<Record<string, number>>;
   /**
+   * Claims the writer ended without a page write, by reason (`page_exists`: a
+   * file already sat where the page would be created and could not be bound).
+   * Absent when none.
+   */
+  readonly claims_skipped?: Readonly<Record<string, number>>;
+  /**
    * Records extraction passed over without claims: too large for one request,
    * or rejected on their own twice in a row. Absent on older receipts.
    */

@@ -260,6 +260,12 @@ short period only while an embedding port is configured. Telegram / email /
 webhook notifiers are accepted
 design behind `kizuki.notifier/v1`; the shipped notifier is the file writer.
 
+The write pass writes each unwritten live claim once. A claim whose create
+lands on a file the arbiter could not bind to a page (no readable page id) is
+ended as `skipped` and counted under its reason in `claims_skipped` on the run
+receipt (`page_exists`), so it is not retried on every pass; the file is left
+as it is. A skip is an outcome, not an error, and does not degrade the run.
+
 ## Security
 
 Status: designed

@@ -14,7 +14,7 @@ import { BudgetExhausted, createBudgetTracker } from "../canon/budget";
 import { CanonWriteError } from "../canon/errors";
 import type { CanonIo } from "../canon";
 import { getCanonReceipt } from "../canon/receipts";
-import { getClaim, insertClaim, prepareClaimInsert, retryRetrievalOps, listClaims, supersedeLiveGroup, supersedeExactWorldClaim } from "../claims/store";
+import { getClaim, isSourcePageClaim, insertClaim, prepareClaimInsert, retryRetrievalOps, listClaims, supersedeLiveGroup, supersedeExactWorldClaim } from "../claims/store";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { CLAIM_MEANING_SCHEMA, type ClaimMeaning } from "../contracts/claim-v2";
 import type { Claim, FrontmatterValue, Producer } from "../contracts/proposal";
@@ -153,7 +153,7 @@ function inScope(claim: Claim, scope: CorrectInput["scope"]): boolean {
 
 function portableFrontmatter(live: Claim): Record<string, FrontmatterValue> {
   const out: Record<string, FrontmatterValue> = {};
-  for (const key of ["type", "title", "x-subject-id"] as const) {
+  for (const key of ["type", "title", "x-subject-id", "x-connector", "x-source-record-id"] as const) {
     const value = live.frontmatter[key];
     if (value !== undefined) out[key] = value;
   }
@@ -207,7 +207,7 @@ function loadExactGroup(io: CorrectIo, target: CorrectTarget, scope: CorrectInpu
     if (named.status !== "live") {
       throw new CorrectError("claim_not_live", `target claim is ${named.status}`);
     }
-    if (named.claim_key === null) {
+    if (named.claim_key === null || isSourcePageClaim(io.db, named)) {
       return inScope(named, scope) ? [named] : [];
     }
     return listClaims(io.db, { status: "live", claim_key: named.claim_key }).filter((claim) =>
@@ -320,11 +320,22 @@ function reconstruct(
   };
 }
 
-function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectResult | null {
-  const eventId = recordedOwnerEvent(io.db, sourceRecordId(input.statement, input.target, input.world));
+/** The shared native recording identity also lets scoped clients acknowledge retries. */
+export function getRecordedCorrection(
+  db: Database,
+  input: Pick<CorrectInput, "statement" | "target" | "world">,
+): { event_id: string; claim: Claim } | null {
+  const eventId = recordedOwnerEvent(db, sourceRecordId(input.statement, input.target, input.world));
   if (eventId === null) return null;
-  const prior = recordedCorrection(io.db, eventId);
+  const prior = recordedCorrection(db, eventId);
   if (prior === null) return null;
+  return { event_id: eventId, claim: prior };
+}
+
+function replayRecordedCorrection(io: CorrectIo, input: CorrectInput): CorrectResult | null {
+  const recorded = getRecordedCorrection(io.db, input);
+  if (recorded === null) return null;
+  const { event_id: eventId, claim: prior } = recorded;
   if (prior.status === "skipped") {
     throw new CorrectError("below_authority", "correction was below the live claim's authority");
   }
@@ -412,6 +423,8 @@ function correctionMeaning(io: CorrectIo, live: Claim): ClaimMeaning | null {
 function planCorrection(io: CorrectIo, input: CorrectInput, live: Claim, at: string): WorldPlan | null {
   const prior = correctionMeaning(io, live);
   if (prior === null) {
+    if (isSourcePageClaim(io.db, live) && io.relay_owner_corrections === false && live.authority === "owner_correction")
+      throw new CorrectError("below_authority", "this grant cannot overturn an owner correction");
     if (input.world !== undefined) throw new CorrectError("correction_refused", "modes apply to typed world claims");
     return null;
   }
@@ -466,7 +479,8 @@ async function insertCorrection(
   const parsed = plan === null ? objectFromStatement(input.statement, live) : null;
   const producer: Producer = io.producer ?? "owner";
   const relay = io.relay_owner_corrections !== false;
-  const intent = relay ? ("correct" as const) : ("propose" as const);
+  const pageCorrection = isSourcePageClaim(io.db, live);
+  const intent = relay || pageCorrection ? ("correct" as const) : ("propose" as const);
   const typedSemantic = plan?.build(eventId);
   const prepared = await prepareClaimInsert(
     { db: io.db, now: () => at, ...(io.retrieval === undefined ? {} : { retrieval: io.retrieval }) },
@@ -475,6 +489,8 @@ async function insertCorrection(
       target: live.target,
       subject: live.subject,
       predicate: live.predicate,
+      ...(pageCorrection ? { page_correction_target: live.claim_id,
+        ...(!relay ? { relay_ceiling: "owner_authored" as const } : {}) } : {}),
       ...(parsed === null ? {} : { object: parsed.object, polarity: parsed.polarity }),
       body: input.statement,
       frontmatter: portableFrontmatter(live),
@@ -512,6 +528,9 @@ async function insertCorrection(
   try {
     result=io.db.transaction(()=>{
       const inserted=prepared.apply();
+      if (isSourcePageClaim(io.db, live) && (inserted.outcome === "stored" || inserted.outcome === "duplicate")) {
+        supersedeLiveGroup(io.db, inserted.claim, at, live);
+      }
       if(typedSemantic!==undefined && (inserted.outcome==="stored" || inserted.outcome==="duplicate")) {
         supersedeExactWorldClaim(io, inserted.claim, live.claim_id, at);
       }

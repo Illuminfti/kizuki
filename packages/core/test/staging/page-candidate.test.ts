@@ -217,7 +217,7 @@ describe("a page candidate on an event", () => {
   test("refiling the same page is a duplicate, not a second staged item", () => {
     const db = memoryDb([
       event({ metadata: candidateMetadata() }),
-      event({ event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0", source_record_id: "second", metadata: candidateMetadata() }),
+      event({ event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0", metadata: { ...candidateMetadata(), delivery: "again" } }),
     ]);
     const [, first] = granted(
       event({ metadata: candidateMetadata() }),
@@ -225,8 +225,7 @@ describe("a page candidate on an event", () => {
     const [, second] = granted(
       event({
         event_id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
-        source_record_id: "second",
-        metadata: candidateMetadata(),
+        metadata: { ...candidateMetadata(), delivery: "again" },
       }),
     );
     if (first === undefined || second === undefined) {

@@ -83,8 +83,18 @@ function restoreClaimLifecycle(io: CanonIo, original: CanonReceipt, at: string):
     }
   } else {
     for (const id of original.claim_ids) markClaimReverted(io.db, id, at);
-    const prior = new Map(supersessionsForReceipt(io.db, original.receipt_id).map(row => [row.loser, row.prior_valid_to]));
-    for (const ref of original.superseded) reinstateClaim(io.db, ref.claim_id, prior.get(ref.claim_id) ?? null);
+    const prior = new Map(supersessionsForReceipt(io.db, original.receipt_id).map(row => [row.loser, row]));
+    for (const ref of original.superseded) {
+      const loser = getClaim(io.db, ref.claim_id);
+      const supersession = prior.get(ref.claim_id);
+      // The receipt retains every retirement, but only materialized source
+      // revisions belong to its before image. Queued edits stay retired.
+      if (supersession?.rule === "R3" && loser?.receipt_id === null &&
+          loser.producer === "deterministic" &&
+          typeof loser.frontmatter["x-connector"] === "string" &&
+          typeof loser.frontmatter["x-source-record-id"] === "string") continue;
+      reinstateClaim(io.db, ref.claim_id, supersession?.prior_valid_to ?? null);
+    }
   }
 }
 function completeRows(io: CanonIo, intent: CanonWriteIntent): void {

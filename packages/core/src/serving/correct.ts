@@ -12,7 +12,7 @@ import {
   resolveConflict,
   type ConflictClaim,
 } from "../claims/conflict";
-import { insertClaim, getClaim, listClaims } from "../claims/store";
+import { insertClaim, getClaim, listClaims, isSourcePageClaim } from "../claims/store";
 import type { RawSubjectRef } from "../contracts/claim-v2";
 import type { AuthorityTier, Claim } from "../contracts/proposal";
 import { recordNativeCorrection } from "../correction/evidence";
@@ -30,7 +30,7 @@ import { resolveWorldClaim, worldNamespace } from "../world/references";
 import { readableWorldNode } from "../world/endpoint-access";
 import { isWorldWireToken, readWorldView, WorldViewError } from "./world-view";
 import type { WorldReadResult } from "./world-view";
-import { correctWithinMutation } from "../correction/correct";
+import { correctWithinMutation, getRecordedCorrection } from "../correction/correct";
 import { CorrectError } from "../correction/errors";
 import type { CorrectionMode, WorldCorrection } from "../correction/types";
 import { parseIntent } from "./correct-args";
@@ -364,6 +364,27 @@ function recordStatement(
   }, requestDigest).event_id;
 }
 
+/** A readable recording is acknowledged without returning current page bytes. */
+function replayResponse(ctx: ServeContext, prior: Claim, eventId: string): Served<CorrectData> {
+  requireSourceEvents(ctx.db, prior.provenance, {
+    owner: ctx.principal.kind === "owner", purpose: "correction",
+  });
+  ctx.db.query("UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?").run(eventId);
+  const pending = pendingCanonRewrite(ctx, prior);
+  return {
+    canon: [], quoted: [],
+    withheld: pending !== undefined ? [{ id: "tool:correct", reason: "error" as const }] : [],
+    data: {
+      ...(pending === undefined ? {} : { recovery_pending: pending }),
+      receipt_id: null, event_id: eventId, claim_id: prior.claim_id,
+      superseded: [], rewritten: [], ambiguous: [],
+      answer: pending !== undefined
+        ? "That correction is recorded; canon recovery remains pending. Run kizuki recover --json before another change."
+        : "That correction was already recorded; nothing changed.",
+    },
+  };
+}
+
 function ambiguousAnswer(groups: Map<string, Claim[]>): CorrectData {
   return {
     receipt_id: null,
@@ -553,35 +574,19 @@ export async function serveCorrect(
           // A recording the caller could not have read is treated as absent and
           // falls through to resolve, so a replay is no tier oracle.
           if (prior !== null && claimVisibleTo(ctx, prior)) {
-            requireSourceEvents(ctx.db, prior.provenance, {
-              owner: ctx.principal.kind === "owner",
-              purpose: "correction",
-            });
-            ctx.db
-              .query(
-                "UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?",
-              )
-              .run(recorded.event_id);
-            const pending = pendingCanonRewrite(ctx, prior);
-            return {
-              canon: [],
-              quoted: [],
-              withheld: pending !== undefined ? [{ id: 'tool:correct', reason: 'error' as const }] : [],
-              data: {
-                ...(pending === undefined ? {} : { recovery_pending: pending }),
-                receipt_id: null,
-                event_id: recorded.event_id,
-                claim_id: prior.claim_id,
-                superseded: [],
-                rewritten: [],
-                ambiguous: [],
-                answer: pending !== undefined
-                  ? "That correction is recorded; canon recovery remains pending. Run kizuki recover --json before another change."
-                  : "That correction was already recorded; nothing changed.",
-              },
-            };
+            return replayResponse(ctx, prior, recorded.event_id);
           }
         }
+      }
+      const exactPageTarget = args.target !== undefined && args.target.subject === undefined &&
+        [args.target.claim_id, args.target.claim_key].filter(value => value !== undefined).length === 1
+        ? args.target : undefined;
+      const recordedPage = args.dry_run !== true && exactPageTarget !== undefined
+        ? getRecordedCorrection(ctx.db, { statement, target: exactPageTarget }) : null;
+      if (recordedPage !== null && recordedPage.claim.status !== "skipped" &&
+          isSourcePageClaim(ctx.db, recordedPage.claim) && claimVisibleTo(ctx, recordedPage.claim)) {
+        if (replacement !== undefined) throw refuse("object", "source page correction uses statement as its body");
+        return replayResponse(ctx, recordedPage.claim, recordedPage.event_id);
       }
       const resolved = resolve(ctx, args.target);
       const sourceReader = claimReader(ctx.db, grant, {
@@ -597,6 +602,38 @@ export async function serveCorrect(
           "source authorization does not permit this correction",
         );
       readable(grant, resolved.claims);
+
+      if (resolved.claims.length === 1 && isSourcePageClaim(ctx.db, resolved.claims[0]!)) {
+        if (replacement !== undefined)
+          throw refuse("object", "source page correction uses statement as its body");
+        const owned = extendOwnedCanonIo(scope, canon, {
+          producer: ctx.principal.kind === "owner" ? "owner" as const : `agent:${ctx.principal.agent.name}` as const,
+          relay_owner_corrections: ctx.principal.kind === "owner" || grant.relay_owner_corrections,
+          grant,
+        });
+        const result = await correctWithinMutation(scope, owned, {
+          statement,
+          target: exactPageTarget ?? { claim_key: resolved.claims[0]!.claim_key! },
+          ...(args.dry_run === true ? { dry_run: true } : {}),
+        }).catch((error: unknown) => { throw servableRefusal(error); });
+        return {
+          canon: [], quoted: [],
+          withheld: result.recovery_pending === undefined ? [] : [{ id: "tool:correct", reason: "error" as const }],
+          data: {
+            receipt_id: result.receipt_id, event_id: result.event_id,
+            claim_id: result.claim_ids[0] ?? null,
+            superseded: result.superseded.map(({ claim_id, claim_key }) => ({ claim_id, claim_key })),
+            rewritten: result.rewritten.flatMap(rewrite => {
+              if (rewrite.receipt_id === null) return [];
+              const receipt = getCanonReceipt(ctx.db, rewrite.receipt_id);
+              return receipt === null ? [] : [{ page_path: rewrite.page_path, page_action: receipt.page_action,
+                before_hash: rewrite.before_hash, after_hash: rewrite.after_hash, receipt_id: rewrite.receipt_id, diff: rewrite.diff }];
+            }),
+            ambiguous: result.ambiguous, answer: result.answer,
+            ...(result.recovery_pending === undefined ? {} : { recovery_pending: result.recovery_pending }),
+          },
+        };
+      }
 
       const groups = groupByKey(resolved.claims);
       if (groups.size > 1) {
