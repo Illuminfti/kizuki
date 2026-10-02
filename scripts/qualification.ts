@@ -12,7 +12,8 @@ import { loadServeConfig } from "../packages/core/src/serve/config";
 import { readProducerDiagnostic } from "../packages/core/src/producer/diagnostics";
 import { readServeProcessMarker, servePidPath } from "../packages/core/src/serve/daemon";
 import { parseRunExecution, canonicalReceiptContent, readModelReferenceDigest } from "../packages/core/src/serve/receipts";
-import { RAIL_IDS, RUN_STATUSES } from "../packages/core/src/serve/types";
+import { RUN_STATUSES } from "../packages/core/src/serve/types";
+import { RAIL_IDS, railDefinition } from "../packages/core/src/serve/rail-registry";
 
 // Exact native producer spellings, not arbitrary labels carrying source content.
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
@@ -146,7 +147,7 @@ function schedules(vault: string) {
   const db = openObservationDb(vault);
   try {
     const rows = db.query("SELECT rail, period_s, jitter_s, enabled, last_run_at, next_run_at FROM schedules ORDER BY rail LIMIT 101").all() as {rail:string;period_s:number;jitter_s:number;enabled:number;last_run_at:string|null;next_run_at:string|null}[];
-    if (rows.length !== RAIL_IDS.length || rows.some((r) => r.enabled !== 1 || !r.next_run_at) || rows.map((r) => r.rail).sort().join() !== [...RAIL_IDS].sort().join()) throw new Error("all seven initialized enabled rails are required");
+    if (rows.length !== RAIL_IDS.length || rows.some((r) => r.enabled !== 1 || !r.next_run_at) || rows.map((r) => r.rail).sort().join() !== [...RAIL_IDS].sort().join()) throw new Error("all registered initialized enabled rails are required");
     return rows.map((r) => ({ rail: r.rail, period_s: r.period_s, jitter_s: r.jitter_s, last_run_at: r.last_run_at, next_run_at: r.next_run_at! }));
   } finally { db.close(); }
 }
@@ -237,8 +238,8 @@ function collect(manifest: Manifest, known: Map<string,string>): QualificationSa
     return !old && qualificationDate(r.finished_at) >= qualificationDate(manifest.profile.start_at);
   });
   if (loadServeConfig(manifest.vault).brief_hour !== manifest.profile.brief_hour) issues.push("schedule-profile-changed");
-  // The embed rail's period follows its port configuration; the evaluator accepts either supported period.
-  const fixedPolicy = ({rail, period_s, jitter_s}: {rail: string; period_s: number; jitter_s: number}) => ({rail, jitter_s, period_s: rail === "embed-backfill" ? 0 : period_s});
+  // A rail with an idle cadence follows its configuration; the evaluator checks each supported period.
+  const fixedPolicy = ({rail, period_s, jitter_s}: {rail: string; period_s: number; jitter_s: number}) => ({rail, jitter_s, period_s: railDefinition(rail)?.idle_period_s === undefined ? period_s : 0});
   if (canonical(current.map(fixedPolicy)) !== canonical(manifest.profile.rails.map(fixedPolicy))) issues.push("schedule-profile-changed");
   let processBinding: QualificationSample["process"] = null;
   const db = openObservationDb(manifest.vault);
@@ -330,7 +331,7 @@ const QUALIFICATION_CLI_DIAGNOSTICS = new Set([
   "qualification currently requires Linux boot and process anchors","artifact checksum mismatch",
   "unsafe manifest identity","invalid qualification manifest","invalid manifest source identity",
   "invalid manifest digest","invalid manifest rails","manifest policy digest mismatch",
-  "unsafe observation database","unsafe database sidecar","all seven initialized enabled rails are required",
+  "unsafe observation database","unsafe database sidecar","all registered initialized enabled rails are required",
   "only explicit UTC fixture scope {scope,vault,brief_hour,timezone,supervisor:none} is supported",
   "scope brief_hour does not match configured morning hour","qualification manifest genesis mismatch",
   "torn qualification journal","qualification journal row limit","qualification hash chain mismatch",

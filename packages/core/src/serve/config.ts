@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { isPlainObject } from "../util/validate";
 import {
   DEFAULT_EXTRACTION_CONFIG,
-  DEFAULT_RAILS,
   DEFAULT_SERVE_CONFIG,
   EMBED_BACKFILL_IDLE_PERIOD_S,
   EXTRACTION_BOUNDS,
@@ -11,6 +10,7 @@ import {
   type ExtractionConfig,
   type ServeConfig,
 } from "./types";
+import { DEFAULT_RAILS } from "./rail-registry";
 
 export function serveConfigPath(vaultPath: string): string {
   return join(vaultPath, ".kizuki", "serve.toml");

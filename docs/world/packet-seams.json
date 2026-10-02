@@ -44,5 +44,28 @@
       "packages/cli/test/world-ops.test.ts",
       "packages/mcp/test/world-ops.test.ts"
     ]
+  },
+  {
+    "packet": "F5",
+    "kind": "operator",
+    "core": [
+      "runRail",
+      "runServeOnce",
+      "inspectServeDoctor"
+    ],
+    "cli": [
+      "kizuki serve --once",
+      "kizuki serve run <rail>",
+      "kizuki doctor --json"
+    ],
+    "implementation": [
+      "packages/core/src/serve/rail-registry.ts",
+      "packages/core/src/serve/rails.ts"
+    ],
+    "tests": [
+      "packages/core/test/serve/rail-registry.test.ts",
+      "packages/cli/test/serve/rail-registry.test.ts"
+    ],
+    "docs": "docs/world/f5.md"
   }
 ]

@@ -17,6 +17,7 @@ import { inspectServeDoctor } from "../../src/serve/doctor";
 import { readExtractCursor } from "../../src/serve/extract";
 import { worldProduceInput } from "../../src/serve/extract-v2";
 import { runRail } from "../../src/serve/rails";
+import { readLease } from "../../src/serve/leases";
 import { writeServeIntent } from "../../src/serve/intent";
 import { listRunReceipts, persistRunReceipt } from "../../src/serve/receipts";
 import { initServe, listSchedules } from "../../src/serve/schema";
@@ -24,11 +25,14 @@ import { requestServeStop } from "../../src/serve/stop-control";
 import type { SupervisorHost } from "../../src/serve/supervisor";
 import {
   DEFAULT_EXTRACTION_CONFIG,
-  DEFAULT_RAILS,
   DEFAULT_SERVE_CONFIG,
+  HEARTBEAT_SECONDS,
+  LEASE_RECLAIM_HEARTBEATS,
+  WRITER_LEASE,
   emptyRunTotals,
   type ExtractionConfig,
 } from "../../src/serve/types";
+import { DEFAULT_RAILS } from "../../src/serve/rail-registry";
 import { runWritePass } from "../../src/serve/write-pass";
 import { withVaultMutationSync } from "../../src/vault/mutation-scope";
 import {
@@ -727,7 +731,16 @@ test("a kill during a request loses only that request and the next pass resumes 
 
   return (async () => {
     const { producer, calls } = fixtureProducer(() => db);
+    const lease = readLease(db, WRITER_LEASE)!;
+    const denied = await runRail(db, f.vault, "sync", {
+      now: () => lease.heartbeat_at,
+      hooks: { producer, claims: { db }, model_ref: MODEL },
+    });
+    expect(denied.status).toBe("failed");
+    expect(calls).toEqual([]);
+    const retryAt = new Date(Date.parse(lease.heartbeat_at) + HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS * 1000).toISOString();
     const next = await runRail(db, f.vault, "sync", {
+      now: () => retryAt,
       hooks: { producer, claims: { db }, model_ref: MODEL },
     });
     expect(calls[0]!.event_ids).toEqual([e2]);
@@ -739,7 +752,7 @@ test("a kill during a request loses only that request and the next pass resumes 
     });
     expect(modelClaims(db)).toBe(5);
     const killed = listRunReceipts(db).filter(
-      (receipt) => receipt.run_id !== next.run_id && receipt.rail === "sync",
+      (receipt) => receipt.run_id !== next.run_id && receipt.run_id !== denied.run_id && receipt.rail === "sync",
     );
     expect(
       killed.map((receipt) => [

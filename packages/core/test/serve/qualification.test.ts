@@ -24,7 +24,8 @@ test("uncaptured intervals and backward time interrupt", () => {
   expect(evaluateQualification(profile, [sample(0), sample(61_000)]).issues).toContain("collection-gap");
   expect(evaluateQualification(profile, [sample(1000), sample(0)]).issues).toContain("clock-discontinuity");
 });
-import { DEFAULT_RAILS, RAIL_IDS } from "../../src/serve/types";
+
+import { DEFAULT_RAILS, RAIL_IDS } from "../../src/serve/rail-registry";
 function trace(duration: number, firstAfterPeriod = false) {
   const p: QualificationProfile = {...profile, rails:DEFAULT_RAILS.map(spec=>({...spec,next_run_at:new Date(start + (firstAfterPeriod ? spec.period_s * 1000 : 0)).toISOString()}))};
   const due = new Map<string,number>(DEFAULT_RAILS.map(spec=>[spec.rail,firstAfterPeriod ? spec.period_s*1000 : 0]));
@@ -98,7 +99,7 @@ test("UTC fixture timing does not claim local morning or supervisor qualificatio
 });
 
 test("seven days with no runs cannot qualify from future initial due dates or unsupported cadence", async () => {
-  const { DEFAULT_RAILS } = await import("../../src/serve/types");
+  const { DEFAULT_RAILS } = await import("../../src/serve/rail-registry");
   const { samples } = trace(604_800_000);
   for (const s of samples) s.receipts = [];
   const rails = DEFAULT_RAILS.map(r => ({ ...r, next_run_at: new Date(start + 8 * 86_400_000).toISOString() }));

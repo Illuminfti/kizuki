@@ -17,7 +17,6 @@ import {
 } from "../../src/serve/receipts";
 import { writeServeIntent } from "../../src/serve/intent";
 import {
-  DEFAULT_RAILS,
   DOCTOR_RAIL_RECEIPTS,
   DOCTOR_SKIPPED_PAGES,
   emptyRunTotals,
@@ -25,6 +24,7 @@ import {
   type RunReceipt,
   type SupervisorStatus,
 } from "../../src/serve/types";
+import { DEFAULT_RAILS } from "../../src/serve/rail-registry";
 import type { SupervisorHost } from "../../src/serve/supervisor";
 import { initVault } from "../../src/vault/init";
 import { validEvent } from "../fixtures";

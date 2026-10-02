@@ -2,13 +2,11 @@ export {
   CALIBRATION_BAND,
   CONFIDENCE_SPREAD_MIN,
   CRASH_POINTS,
-  DEFAULT_RAILS,
   DEFAULT_SERVE_CONFIG,
   EMPTY_STREAK,
   HEARTBEAT_SECONDS,
   InjectedCrash,
   LEASE_RECLAIM_HEARTBEATS,
-  RAIL_IDS,
   RETRIEVAL_SLA_SECONDS,
   RUN_RECEIPTS_PATH,
   RUN_RECEIPT_RETENTION_DAYS,
@@ -22,9 +20,9 @@ export {
   WRITER_LEASE,
   emptyRunTotals,
   isCrashPoint,
-  isRailId,
   isServeIntent,
 } from "./types";
+export { DEFAULT_RAILS, RAIL_IDS } from "./rail-registry";
 export type {
   CalibrationDoctor,
   CrashPoint,
@@ -50,6 +48,7 @@ export type {
 } from "./types";
 
 export { applyServeV7, initServe, listSchedules, seedSchedules } from "./schema";
+export { isRailId } from "./rail-registry";
 export {
   acquireLease,
   heartbeatLease,

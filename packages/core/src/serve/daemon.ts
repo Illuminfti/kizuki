@@ -5,7 +5,7 @@ import { canonRecoveryNextStep, readCanonRecoveryHold } from "../canon/stage-rec
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import nodeProcess from "node:process";
-import { embedBackfillPeriod, loadServeConfig } from "./config";
+import { loadServeConfig } from "./config";
 import { clearServeEndpoint, writeServeEndpoint } from "./endpoint";
 import { startServeHttp } from "./http";
 import type { ServeHttpHandle } from "./http";
@@ -21,8 +21,9 @@ import {
 import { getRunReceipt, recoverRunJournal } from "./receipts";
 import { dueRails, runRail, type RailHooks, type RailHooksV2, type RailRuntime, type RailRuntimeV2 } from "./rails";
 import type { RetrievalPort } from "../contracts/retrieval";
+import { isRailId, listRails } from "./rail-registry";
 import { applyRailPeriod, initServe, listSchedules } from "./schema";
-import { SERVE_PID_PATH, ServeDaemonError, isRailId, type CrashPoint, type RailId } from "./types";
+import { SERVE_PID_PATH, ServeDaemonError, type CrashPoint, type RailId } from "./types";
 import { clearServeStopRequest, serveStopRequested } from "./stop-control";
 
 interface ServeDaemonOptionsBase {
@@ -167,8 +168,9 @@ export async function runServeDaemon(
   const config = loadServeConfig(vaultPath);
   // The journal is replayed and the lease held, so no pending receipt still
   // expects the old period.
-  applyRailPeriod(db, "sync", config.sync_period_s, process.now());
-  applyRailPeriod(db, "embed-backfill", embedBackfillPeriod(vaultPath), process.now());
+  for (const rail of listRails()) {
+    if (rail.configured_period_s !== undefined) applyRailPeriod(db, rail.id, rail.configured_period_s(vaultPath), process.now());
+  }
   const httpEnabled = options.http ?? config.http;
   if (httpEnabled) {
     const retrieval = options.retrieval ?? options.hooks?.claims?.retrieval;
@@ -194,15 +196,8 @@ export async function runServeDaemon(
         (dueRails(db, process.now()).length > 0
           ? dueRails(db, process.now())
           : undefined);
-      const listed = rails ?? [
-        "sync",
-        "retrieval-sweep",
-        "purge-sweep",
-        "embed-backfill",
-        "brief",
-        "doctor-sweep",
-        "journal-prune",
-      ];
+      const enabled = new Set(listSchedules(db).filter((row) => row.enabled).map((row) => row.rail));
+      const listed = rails ?? listRails().map((rail) => rail.id).filter((id) => enabled.has(id));
       for (const rail of listed) {
         if (stopRequested()) break;
         if (!isRailId(rail)) continue;
@@ -217,9 +212,13 @@ export async function runServeDaemon(
       return { receipts, http };
     }
 
+    // Refusals have no slot transition: retain ownership but bound retries and
+    // let later rails run. This is runtime state, rebuilt on daemon restart.
+    const retryAfter = new Map<RailId, number>();
     while (!stopRequested() && (options.shouldContinue?.() ?? true)) {
       heartbeatLease(db, process);
-      const due = dueRails(db, process.now());
+      const at = process.now();
+      const due = dueRails(db, at).filter(rail => (retryAfter.get(rail) ?? -Infinity) <= Date.parse(at));
       const rail = due[0];
       if (rail !== undefined) {
         const receipt = await runRail(db, vaultPath, rail, {
@@ -231,6 +230,9 @@ export async function runServeDaemon(
         });
         // A coalesced idle run advances the schedule and persists no receipt.
         if (getRunReceipt(db, receipt.run_id) !== null) receipts += 1;
+        if (receipt.status === "failed" && receipt.schedule_transition === undefined) {
+          retryAfter.set(rail, Date.parse(process.now()) + 60_000);
+        } else retryAfter.delete(rail);
         continue;
       }
       await sleep(1_000);
