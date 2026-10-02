@@ -40,3 +40,60 @@ is missing. Standalone factory calls keep the packed identity cursor, and old
 packed tokens remain readable. Protected connection state and portable restore
 stay path-only; restored capture reconstructs identities from the restored
 ledger. Emitted pages clamp to Core's 1000-event batch bound.
+
+## Following the folder
+
+The folder is identified by its configured path and by its files' content, not
+by the device and inode it sits on. A host-backed resume token names no files
+and no device, so a disk migration, a restore from backup or a recreated folder
+at the same path keeps its checkpoint: the next sync compares the files with
+the ledger's committed identities and emits only real differences. A token
+that carries its own file snapshot (a standalone factory call) still belongs
+to the real path it was taken from and is refused for another; tokens minted
+by earlier releases, which also pinned the device and inode, are still read.
+Moving the folder to a new path is a different source: enroll the new path.
+
+Each sync brings the ledger to where the folder is:
+
+- A file deleted and later restored with the same bytes, or edited and later
+  reverted, is emitted again with `revision_epoch` (the number of events the
+  record already has), because the ledger would otherwise drop the returning
+  text as a duplicate. Once the ledger holds the file unchanged, the next sync
+  emits nothing.
+- A file that vanishes while exactly one new file with the same bytes appears
+  is a rename: one event at the new path with `moved_from`, and no tombstone
+  for the old path. Empty files and ambiguous pairs are never treated as
+  renames. The folder retains the original subject digest in
+  `subject_sha256`; later moves, edits and ledger-backed restores retain that
+  document identity. Older snapshots without this optional digest remain readable.
+- A pass that would withdraw more than the larger of 20 files and 20 percent
+  of the source's files emits no tombstones and ends `unavailable` with
+  `mass_withdrawal_held: N of M`. `kizuki connect status` and `kizuki doctor`
+  show the hold, and restoring the folder clears it. To accept the deletion
+  release it once with
+  `kizuki sync markdown-folder --source KEY --confirm-withdrawals N`.
+- A batch emits up to `page_size` files (default 1,000, the largest batch Core
+  accepts). A resume token taken at another
+  `page_size` still resumes; a changed `exclude` list does not.
+- A successful capture drain walks the tree once and keeps its bounded file
+  identities for the next page. Later pages reopen only the files they emit
+  through the descriptor-bound reader. A file whose bytes changed is retried
+  from a fresh scan; an interrupted drain, replaced root or later sync also
+  walks anew. New files added during a drain are discovered by the next sync.
+  A fresh scan hashes the current bytes: restored metadata never stands in for
+  content identity.
+
+Automatic reversal of a source archive requires a configured model and spends
+the loop's canon write budget. The archive scan checkpoints progress in the
+existing rail cursor table, including past pages edited since deletion. It
+cycles through those pages on later passes; an edited page becomes eligible
+again only when its bytes match the archive receipt. Owner undo retains its
+model-free path.
+
+These guarantees describe capture and archive reversal. Source revision body
+replacement is incomplete in the current compatibility writer: revisions can
+retain earlier source prose. Restored and rebuilt page indexes recover the
+connector-scoped subject key from a matching receipted claim rather than the
+displayed source-local label. Event-level identity and a quiet next sync do not
+prove canon body replacement. The canon lifecycle regression tests track that
+remaining work.

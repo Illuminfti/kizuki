@@ -81,6 +81,7 @@ export {
   createMarkdownFolderConnector,
 } from "./markdown-folder";
 export type { MarkdownFolderConfig, MarkdownFolderDeps, MarkdownFileIdentity } from "./markdown-folder";
+export type { RecordHistory, RecordHistoryReader } from "./mirror";
 export {
   CHATGPT_IMPORT_CONNECTOR_ID,
   ChatGptImportConnector,

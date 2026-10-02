@@ -1,5 +1,6 @@
 import { pendingWorldCanonClaims, worldCanonTarget } from "../canon/world-materialization";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
+import { restoreReturnedSources } from "../canon/source-restore";
 import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
 import { addDailyBudget, budgetDay, readDailyBudget, settleWriteReservations } from "./budget-ledger";
@@ -371,6 +372,22 @@ export async function runWritePass(
   if (jobs.stopped) { tally.stopped = STOP_REQUESTED; return result(); }
   // No model configured: claims stay live and unwritten; doctor says so.
   if (!modelConfigured(options)) return result();
+  // Source truth first: a record the source has back is live in canon before
+  // any new claim is written about it.
+  const restored = await holdWriter(io, async (scope, owned) => {
+    settleWriteReservations(owned.db, owned.vault_path);
+    try {
+      const outcome = await restoreReturnedSources(scope, owned, WRITE_PASS_LIMIT, options.budget);
+      tally.canon_writes += outcome.restored;
+      if (outcome.stopped !== undefined) tally.stopped = outcome.stopped;
+    } catch (error) {
+      tally.errors.push(redactReceiptError(error));
+    } finally {
+      settleWriteReservations(owned.db, owned.vault_path);
+    }
+  });
+  if (!restored.held) { tally.stopped = restored.stopped; return result(); }
+  if (tally.stopped?.startsWith("budget:")) return result();
   const written = await holdWriter(io, (scope, owned) => {
     try {
       settleWriteReservations(owned.db, owned.vault_path);

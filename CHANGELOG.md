@@ -40,6 +40,38 @@
   claims, names `kizuki serve run doctor-sweep` while any are pending, and no
   longer lists them among leftover skipped rows.
 
+### Source mirrors follow source truth
+
+- A markdown-folder or wiki sync that would withdraw more than the larger of 20
+  records and 20 percent of the source no longer tombstones the vault. It emits
+  no tombstones, ends `unavailable` with `mass_withdrawal_held: N of M`, and shows
+  that typed state as `hold` in `connect status` and `doctor` (which fails).
+  Restoring the source clears it; `kizuki sync CONNECTOR --source KEY
+  --confirm-withdrawals N` releases it once.
+- A record deleted and later restored, or edited and later reverted, is a new
+  revision (`revision_epoch`) instead of a swallowed duplicate, and the next
+  sync emits nothing. A staged wiki page carries `x-source-revision`, and the
+  sync pass reverts the archive receipt of a page whose source record came back,
+  while the page still holds the bytes the archive left.
+- A rename is one event with `moved_from` and no tombstone for the old path;
+  wiki pages retain their planned target. A wiki mapping edit, and its revert, re-emit only
+  pages whose planned output changed (`plan_sha256`); the mapping hash no longer
+  makes every page a new event.
+- The markdown-folder cursor no longer pins device and inode, so a disk
+  migration, a restore or a recreated folder resumes from the ledger's committed
+  files. A successful capture drain walks the tree once, revalidates emitted
+  folder files, and defaults to 1,000 files per page. Wiki drains reuse their
+  bounded plan until exhaustion; a later sync scans again.
+  Folder scans hash current bytes even when restored file metadata is unchanged.
+- Filing a proposal no longer reads the whole proposals and claims tables: two
+  content-hash indexes (created on open for existing ledgers) make a
+  5,000-file backfill cost work proportional to its size, not to its square.
+- Folder moves retain their original subject digest across further moves, edits
+  and ledger-backed restores. Automatic archive reversal respects the loop's
+  canon budgets and resumes past edited archives after a ledger restart.
+  Canon body replacement remains incomplete in the compatibility writer; these
+  mirror changes establish capture state and archive reversal.
+
 ### Operator safety
 
 - `serve status`, `serve --install`, `serve --uninstall` and doctor no longer

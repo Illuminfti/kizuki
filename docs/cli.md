@@ -331,6 +331,7 @@ destination alone. The judge the reflex path uses is not scrubbed.
 ```text
 usage: kizuki backfill <connector> [--source PATH|KEY]
 usage: kizuki sync [connector] [--source PATH|KEY]
+usage: kizuki sync CONNECTOR --source KEY --confirm-withdrawals N
 ```
 
 Historical capture vs source refresh. Each selected connection is drained
@@ -342,8 +343,28 @@ retrieval engine, so an existing MCP retrieval session cannot block ingestion or
 source-consent checks. These commands still refresh the local SQLite search
 floor. `sync --once` runs the automation tick and retains its configured
 retrieval requirements.
+Markdown-folder and wiki sources follow their source: a record that returns
+after a deletion, or reverts to earlier text, is a new revision and not a
+duplicate; a rename is one event; and a source that is migrated to another
+device keeps its checkpoint (see [markdown sources](markdown-sources.md)).
 The Beeper connector conservatively rescans available history on each completed
 sync cycle to observe edits and explicit tombstones; unchanged records deduplicate.
+
+### Held mass withdrawals
+
+A markdown-folder or wiki source that would lose more than the larger of 20
+records and 20 percent of its records in one pass is a likely unmounted, emptied
+or half-restored root, not a decision. That pass emits no tombstones, prints
+`error: mass_withdrawal_held: N of M`, and exits `1`. The same typed state shows
+as `hold` (`{state, withdrawn, total}`, otherwise `null`) on the source in
+`connect status [--source KEY] --json` and `doctor --json` (`connections[].hold`),
+and as a `source-hold` line in `doctor`, which then reports `status=failed`.
+Restoring the source clears it on the next sync. To accept the loss, run
+`kizuki sync CONNECTOR --source KEY --confirm-withdrawals N` with the reported
+count: it releases that run only, and a pass that would withdraw more than N
+stays held. `--confirm-withdrawals` is refused without `--source` or with
+anything but a positive whole number. See [markdown sources](markdown-sources.md)
+and [legacy import](legacy-import.md).
 
 ### Running commands while the daemon writes
 

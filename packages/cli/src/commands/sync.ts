@@ -1,5 +1,6 @@
 import { closeHostConnector } from "../connections";
-import { asLeaseHeld, runRail, runToCompletion } from "@kizuki/core";
+import { LEGACY_WIKI_CONNECTOR_ID, MARKDOWN_FOLDER_CONNECTOR_ID } from "@kizuki/connectors";
+import { asLeaseHeld, parseMassWithdrawalDetail, runRail, runToCompletion } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import {
   ConnectionError,
@@ -12,16 +13,17 @@ import { withVault } from "../context";
 import { refreshAndPublishDerived } from "../derived";
 import { formatRunCounts } from "../output";
 import { createServeRuntime } from "../serve-runtime";
+import { withdrawalHoldLine } from "../withdrawal-hold";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 export const SYNC_SCHEMA = {
-  options: ["--source"],
+  options: ["--source", "--confirm-withdrawals"],
   flags: ["--once"],
 } as const satisfies CommandHelpSchema;
 
 export const syncCommand: Command = {
   name: "sync",
-  usage: "sync [connector] [--source PATH|KEY] | sync --once",
+  usage: "sync [connector] [--source PATH|KEY] [--confirm-withdrawals N] | sync --once",
   summary: "refresh selected sources until each connector reports exhaustion",
   schema: SYNC_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -37,6 +39,13 @@ export const syncCommand: Command = {
     }
     if (parsed.flags.has("--once") && (rawId !== undefined || source !== undefined)) {
       throw new UsageError("sync --once runs all enrolled sources and takes no connector selection");
+    }
+    const confirmRaw = parsed.options.get("--confirm-withdrawals");
+    const confirm = confirmRaw === undefined ? undefined : Number(confirmRaw);
+    if (confirm !== undefined) {
+      if (source === undefined || !Number.isSafeInteger(confirm) || confirm < 1 || !/^\d+$/.test(confirmRaw ?? "")) {
+        throw new UsageError("--confirm-withdrawals N releases one held mass withdrawal of at most N records: sync CONNECTOR --source KEY --confirm-withdrawals N");
+      }
     }
 
     return withVault(io, async (ctx) => {
@@ -55,6 +64,13 @@ export const syncCommand: Command = {
       }
       const connectorId =
         rawId === undefined ? undefined : resolveConnectorId(rawId);
+      if (
+        confirm !== undefined &&
+        connectorId !== MARKDOWN_FOLDER_CONNECTOR_ID &&
+        connectorId !== LEGACY_WIKI_CONNECTOR_ID
+      ) {
+        throw new UsageError("--confirm-withdrawals applies to markdown-folder and import-legacy-wiki sources only");
+      }
       const targets =
         connectorId !== undefined && source !== undefined
           ? [selectConnection(ctx.db, ctx.store, connectorId, source)]
@@ -78,7 +94,7 @@ export const syncCommand: Command = {
             failed = true;
             continue;
           }
-          const connector = await loadConnector(selected, ctx.store, ctx.db, io.env);
+          const connector = await loadConnector(selected, ctx.store, ctx.db, io.env, undefined, confirm);
           try {
             const result = await runToCompletion(
               ctx.db,
@@ -97,6 +113,10 @@ export const syncCommand: Command = {
             }
             for (const text of result.errors) {
               io.err(`error: ${text}`);
+              const hold = parseMassWithdrawalDetail(text);
+              if (hold !== null) {
+                io.err(withdrawalHoldLine(selected.connection.connector_id, selected.connection.source_key, hold));
+              }
               failed = true;
             }
             for (const warning of derived.degraded) io.err(`degraded: ${warning}`);

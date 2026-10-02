@@ -797,6 +797,16 @@ export {
   runToCompletion,
 } from "./ingest/run";
 export {
+  MASS_WITHDRAWAL_FLOOR,
+  MASS_WITHDRAWAL_SHARE,
+  MASS_WITHDRAWAL_STATE,
+  massWithdrawalDetail,
+  massWithdrawalHeld,
+  massWithdrawalHoldOf,
+  parseMassWithdrawalDetail,
+} from "./ingest/withdrawal-hold";
+export type { MassWithdrawalHold } from "./ingest/withdrawal-hold";
+export {
   DETERMINISTIC_PRODUCER_BUDGET,
   produceForEvent,
   proposalsForEvent,
