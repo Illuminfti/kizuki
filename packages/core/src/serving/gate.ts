@@ -58,6 +58,8 @@ export interface Served<T> {
   audit_ids?: Record<string, string[]>;
   /** Authorized claim metadata actually included in the text projection. */
   audit_served?: AuditItem[];
+  /** Audited denials that deliberately stay out of the response projection. */
+  audit_denials?: AuditDenial[];
 }
 
 export interface ServeCall {
@@ -330,7 +332,7 @@ function envelopeOf<T>(
     auditId,
     boundedArguments({ ...args, ...served.audit_ids }),
     [...servedItems(served.canon, served.quoted), ...(served.audit_served ?? [])],
-    boundedForAudit(served.withheld),
+    boundedForAudit(served.audit_denials ?? served.withheld),
   );
 
   // The one serving-output seam: sources redact before they truncate or pack,

@@ -19,15 +19,16 @@ afterAll(async () => {
   fixture.dispose();
 });
 
-async function post(token: string, tool: string, args: Record<string, unknown>): Promise<{ text: string; value: Record<string, unknown> }> {
+async function post(token: string, tool: string, args: Record<string, unknown>, expectedStatus = 200): Promise<{ text: string; value: Record<string, unknown> }> {
   const response = await fetch(`${handle.url}/v1/mcp/${tool}`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify(args),
   });
-  expect(response.status).toBe(200);
+  expect(response.status).toBe(expectedStatus);
   const text = await response.text();
-  return { text, value: (JSON.parse(text) as { value: Record<string, unknown> }).value };
+  const body = JSON.parse(text) as { value?: Record<string, unknown> };
+  return { text, value: body.value ?? body };
 }
 
 const CALLS: [string, Record<string, unknown>][] = [
@@ -57,4 +58,24 @@ test("loopback HTTP system_health for an agent omits vault-wide state", async ()
   expect(JSON.stringify(agent)).not.toContain("hidden-connector");
   const owner = (await post(OWNER_TOKEN, "system_health", {})).value["data"] as Record<string, unknown>;
   expect(JSON.stringify(owner)).toContain("hidden-connector");
+});
+
+test("loopback HTTP refuses unknown history-tree arguments before reading capture", async () => {
+  const { value } = await post(OWNER_TOKEN, "timeline", { view: "tree", conversation_id: "foreign-history" }, 400);
+  const error = value["error"] as { code?: string; message?: string };
+  expect(error.code).toBe("invalid_arguments");
+  expect(error.message).not.toContain("foreign-history");
+});
+
+test("loopback HTTP serves a bounded tainted history node with credentials redacted", async () => {
+  const { text, value } = await post(fixture.tokens["reader-private"]!, "timeline", {
+    view: "tree", since: "2026-02-28T10:00:00Z", until: "2026-02-28T11:00:00Z", budget_bytes: 128,
+  });
+  const data = value["data"] as { view: string; node: { text: string; tainted: boolean } };
+  expect(data.view).toBe("tree");
+  expect(data.node.tainted).toBe(true);
+  expect(new TextEncoder().encode(data.node.text).byteLength).toBeLessThanOrEqual(128);
+  expect(value["quoted"]).toEqual([]);
+  expect(value["redacted"]).toBeDefined();
+  for (const fragment of SECRET_FRAGMENTS) expect(text).not.toContain(fragment);
 });
