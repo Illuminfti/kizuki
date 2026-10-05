@@ -6,7 +6,7 @@
 
 Local-first · source-linked · reversible · harness-neutral
 
-[Start here](#quick-start) · [How it works](#how-it-works) · [Use with agents](#use-with-agents) · [Data and safety](#your-data-and-boundaries) · [Roadmap](#roadmap)
+[Start here](#quick-start) · [How it works](#how-it-works) · [Use with agents](#use-with-agents) · [Data and safety](#your-data-and-boundaries) · [Roadmap](#the-vision)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2563eb)](LICENSE)
 [![Bun: 1.3.14](https://img.shields.io/badge/Bun-1.3.14-fbf0df?logo=bun)](https://bun.sh)
@@ -141,6 +141,8 @@ Start with `kizuki connect --list` for the live catalog and `kizuki connect stat
 
 Kizuki supports local Markdown, selected exports, offline Screenpipe ingestion, coding-session transcripts, and several account connectors. Provider setup, what is retained, and qualification limits vary: use [connection setup and limits](docs/connect.md) before enrolling an account.
 
+Use the [legacy importers guide](docs/legacy-import.md) for local archives, field mappings, resumable imports, and migration reports.
+
 ## Your data and boundaries
 
 - **Local custody:** authoritative state and readable canon live in your vault.
@@ -151,7 +153,9 @@ Kizuki supports local Markdown, selected exports, offline Screenpipe ingestion, 
 
 Kizuki does not encrypt your vault or canon. Anyone who can read the host files can read the data. See the [security model](SECURITY.md) and [source-consent contract](docs/cli.md#source-consent).
 
-## Roadmap
+## The vision
+
+Status: direction
 
 Kizuki’s direction is a richer personal world model: broader typed understanding, task-bounded World Slices, world revisions and diffs, outcome learning, and incremental Atlas views. These are design and roadmap items, not claims about today’s release.
 
