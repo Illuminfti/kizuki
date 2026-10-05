@@ -24,6 +24,7 @@ import { tellCommand } from "./tell";
 import { undoCommand } from "./undo";
 import { versionCommand } from "./version";
 import { worldCommand } from "./world";
+import { historyCommand } from "./history";
 
 export interface CliIo {
   env: Record<string, string | undefined>;
@@ -68,6 +69,7 @@ export const COMMANDS: readonly Command[] = [
   undoCommand,
   queryCommand,
   contextCommand,
+  historyCommand,
   hookCommand,
   worldCommand,
   doctorCommand,

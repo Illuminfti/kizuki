@@ -70,6 +70,7 @@ describe("the advertised output schema describes what the server sends", () => {
       ["query_entities", { type: "person" }],
       ["context_packet", { query: "kettle" }],
       ["timeline", { day: "2026-02-28" }],
+      ["timeline", { view: "tree", day: "2026-02-28", budget_bytes: 128 }],
       ["graph_neighbors", { id: "person:ada" }],
       ["system_health", {}],
       [

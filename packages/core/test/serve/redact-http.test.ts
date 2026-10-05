@@ -58,3 +58,15 @@ test("loopback HTTP system_health for an agent omits vault-wide state", async ()
   const owner = (await post(OWNER_TOKEN, "system_health", {})).value["data"] as Record<string, unknown>;
   expect(JSON.stringify(owner)).toContain("hidden-connector");
 });
+
+test("loopback HTTP refuses unknown history-tree arguments before reading capture", async () => {
+  const response = await fetch(`${handle.url}/v1/mcp/timeline`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${OWNER_TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify({ view: "tree", conversation_id: "foreign-history" }),
+  });
+  expect(response.status).toBe(400);
+  const value = await response.json() as { error?: { code?: string; message?: string } };
+  expect(value.error?.code).toBe("invalid_arguments");
+  expect(value.error?.message).not.toContain("foreign-history");
+});

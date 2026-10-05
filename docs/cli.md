@@ -560,6 +560,20 @@ Canon excerpts and captured text in the packet are quoted line by line so a
 body line cannot imitate a stamp, and an agent's packet is redacted as described
 in [what an agent is served](agent-enrollment.md#what-an-agent-is-served).
 
+## history
+
+```text
+usage: kizuki history [--day YYYY-MM-DD | --since RFC3339 --until RFC3339] [--subject ID] [--connector ID] [--kind ID] [--budget 128..8192] [--snapshot SHA256 --node SHA256] [--json]
+```
+
+Opt-in, model-free navigation over the first 200 authorized events matching a
+request. The binary tree contains sampled capture, not semantic summaries.
+`--budget` bounds extractive text in UTF-8 bytes; JSON metadata is separate.
+Zoom with the returned snapshot and a child node, repeating the same filters.
+Every read rechecks authorization, source consent and purge state. A leaf names
+the original event for integrity-checked expansion through MCP `timeline`.
+See the [history guide](history.md) for traversal examples and coverage limits.
+
 ## hook
 
 Status: shipped
