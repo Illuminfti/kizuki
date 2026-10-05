@@ -2,192 +2,57 @@
 
 # Kizuki
 
-### The world model for your AI.
+### Durable, evidence-backed memory for the agents you choose.
 
-**Every AI starts from zero. Kizuki gives each authorized agent its permitted view of a continuously updated model of you and your world.**
+Local-first · source-linked · reversible · harness-neutral
 
-Local-first. Source-linked. Reversible. Harness-neutral.<br />
-Your context should outlive the tool that learned it.
-
-[Vision](#the-vision) · [Quick start](#quick-start) · [Architecture](#architecture) · [Agents](#bring-your-agents) · [Roadmap](#roadmap) · [Status](#status)
+[Start here](#quick-start) · [How it works](#how-it-works) · [Use with agents](#use-with-agents) · [Data and safety](#your-data-and-boundaries) · [Roadmap](#roadmap)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2563eb)](LICENSE)
-[![Release: 1.0.2](https://img.shields.io/badge/release-1.0.2-64748b)](#status)
 [![Bun: 1.3.14](https://img.shields.io/badge/Bun-1.3.14-fbf0df?logo=bun)](https://bun.sh)
 
 </div>
 
 ---
 
-The decision is in an old chat. The reasoning is in a note. Someone promised something in Telegram. A project changed direction in a coding session. You learned a concept in one model, rejected an approach in another, and discovered what actually worked somewhere else.
+Every new agent begins with a partial picture: decisions live in old chats, commitments in messages, and the reason behind a choice in a document no one remembered to attach.
 
-Then you open a new agent and explain your world again.
+Kizuki keeps selected evidence on your machine and gives each authorized client a bounded, attributable view of it. It is the durable memory layer beneath agents—not another agent harness, chat interface, or cloud memory service.
 
-**Kizuki exists to end that reset.**
+## What you can do today
 
-## The vision
+- Import selected local files and supported exports; connect approved sources with explicit consent.
+- Search retained evidence and compile bounded context packets without a model.
+- Keep source-linked claims with provenance, confidence, sensitivity, validity, and correction history.
+- Let a configured model write readable Markdown canon through one receipted writer; inspect and undo every write.
+- Explore source-anchored **Concept** and **Situation** cards through the CLI, local app, MCP, or loopback HTTP when a model and extraction consent are configured.
 
-Status: direction
-
-Models are increasingly interchangeable intelligence. Agent harnesses are increasingly interchangeable execution. What does not automatically move between them is **a durable, high-fidelity model of reality**: who you are, who is around you, what you know, what you are learning, what is happening, what matters, what has changed, what remains uncertain, and why any of it is believed.
-
-Kizuki is building that layer.
-
-The end state is not a searchable book of conversations. It is a **personal world model** that continuously converts the sources you choose into an evidence-backed representation of your world and your place inside it.
-
-```text
-source reality
-    ↓
-events and evidence
-    ↓
-observations
-    ↓
-atomic claims
-    ↓
-people · organisations · projects · concepts · ideas · frameworks
-    ↓
-relationships · state · perspective · trajectories
-    ↓
-knowledge · skills · curiosity · goals · situations · commitments
-    ↓
-procedures · outcomes · uncertainty · hypotheses
-    ↓
-task-bounded World Slices for authorized agents
-```
-
-Every higher-level understanding must retain a path back to evidence. A model inference is not silently promoted into fact. A correction can supersede what Kizuki believed. A purge remains computable. Canon remains readable on your disk.
-
-The existing receipted writer independently materializes eligible claims as Markdown canon. World Slices are rebuildable reads of permitted evidence, claims, canon and derived views; they do not write canon.
-
-### What a fresh agent should be able to understand
-
-A new authorized agent should not need your autobiography. It should be able to ask Kizuki for the minimum sufficient world state for a task:
-
-```text
-Who is this person?
-Who and what are around them?
-What is happening now?
-What matters to them?
-What do they know?
-What are they learning?
-What are they good at?
-What are they uncertain about?
-What changed recently?
-Which decisions and frameworks matter here?
-What is blocked?
-What evidence supports this?
-What must not be assumed?
-```
-
-Kizuki should answer compactly, with provenance, freshness, uncertainty, sensitivity and authority intact.
-
-### World Slices
-
-The long-term signature primitive is a **World Slice**: a task-bounded compilation of the part of the owner's current world an authorized client needs.
-
-A coding agent should receive different context from a meeting assistant. A design agent should receive relevant taste exemplars and prior decisions. A research agent should receive the owner's knowledge frontier and unresolved questions. A larger token budget must never grant broader permission.
-
-The v2 [Adaptive Domain World Models and Collaboration Model checklist](docs/v2-adaptive-collaboration.md) tracks [#552](https://github.com/Illuminfti/kizuki/issues/552): deeper domain knowledge and task-aware collaboration through World Slices. These are future requirements, not shipped capabilities or evidence of 1.0 stranger-readiness; [#403](https://github.com/Illuminfti/kizuki/issues/403) remains that bar.
-
-### World revisions and diffs
-
-World state changes. Kizuki's direction includes coherent world revisions and task-aware diffs so an agent can discover whether assumptions became stale without re-reading the entire vault.
-
-Conceptually:
-
-```text
-WORLD DIFF
-previous revision → current revision
-
-people
-  commitment added
-
-projects
-  status changed: active → blocked
-
-knowledge
-  concept evidence added: independent application
-
-decisions
-  prior choice superseded
-
-questions
-  one reopened after contradictory evidence
-```
-
-This is roadmap direction, not a claim that the current release already exposes a `world.diff` API.
-
-### The owner is part of the world model
-
-Kizuki should gradually build evidence-backed understanding of:
-
-- concepts the owner has encountered, understood, connected, applied or demonstrated;
-- questions and curiosities that survive individual conversations;
-- knowledge gaps, misconceptions and stale understanding;
-- skills demonstrated by outcomes rather than self-description alone;
-- frameworks that were encountered, adopted, modified, rejected or superseded;
-- preferences and taste scoped to the situations where they were observed;
-- goals, constraints, commitments, decisions and active situations;
-- procedures that repeatedly worked and failure modes that repeatedly did not;
-- competing hypotheses and uncertainty without forcing premature certainty.
-
-The goal is not to manufacture a personality profile. It is to preserve attributable, revisable state that helps future work start closer to where the owner actually is.
-
-### Perspective matters
-
-A real world model cannot flatten different viewpoints into one truth edge.
-
-Kizuki's world-model direction distinguishes direct observation, Kizuki's current belief, the owner's stated belief, another person's stated belief, and an inference about what another person may believe. Inferred internal states must never masquerade as facts.
-
-### Outcomes close the loop
-
-The strongest long-term memory is not what somebody said. It is what happened.
-
-```text
-situation → decision → intended action → execution evidence → observed outcome → updated understanding
-```
-
-Execution remains outside Kizuki. External harnesses act. Kizuki supplies permitted world state and can record attributable evidence about what was attempted and what happened afterward.
-
-That is how one successful task can improve the next agent's starting point without turning Kizuki into an unrestricted action harness.
-
-## What runs today
-
-Kizuki 1.0.0 brings selected sources into an append-only ledger, extracts source-linked claims, searches them, compiles bounded context packets, writes model-produced canon through one receipted autonomous writer, corrects live claims, audits writes and undoes them.
-
-On top of that substrate, 1.0.0 ships the first world-model layer. With a configured model and a source grant that permits extraction, the sync rail runs typed extraction and admits source-anchored claims about **Concepts** and **Situations**. `kizuki world`, the MCP `world_view` tool, loopback HTTP `/v1/world_view` and the World views in `kizuki app` read the same cards, each with evidence, confidence, uncertainty and coverage. `kizuki tell --world-claim` and MCP `correct` correct a world claim with a receipt that undo reverses, and a second authorized client sees the correction on its next read.
-
-The rest of the architecture above is still direction. **No roadmap concept becomes a public feature until its implementation exists.** Owner decision D23 (2026-09-23) set the 1.0.0 launch bar at the world model as built and Telegram native sign-in.
-
-> **1.0.0.** Autonomous canon writing and the world model require a usable model bound by the running host. Capture, search, context, audit and undo remain useful without one. The release package is an unsigned Linux x64 build; nothing is published to npm.
+The current source revision is 1.0.2. Some connection paths are implemented but have not received live-account qualification; the [connection guide](docs/connect.md) names their coverage and limits.
 
 ## Quick start
 
-Use a Linux x86_64 or macOS Apple Silicon desktop with **Bun 1.3.14**, the version pinned by CI, Git, and a working default browser. The app opens that browser through `/usr/bin/xdg-open` on Linux or `/usr/bin/open` on macOS. On a headless machine, use the command-line example below.
+**Requirements:** Git and Bun 1.3.14. Kizuki runs from a source checkout on macOS and Linux; its release package is an unsigned Linux x64 build and it is not published to npm.
 
-Clone this repository using GitHub’s Code button, then open the guided app from the checkout root:
+Clone the repository, install dependencies, and open the private local app:
 
 ```bash
+git clone https://github.com/Illuminfti/kizuki.git
+cd kizuki
 bun install --frozen-lockfile
 bun packages/cli/src/main.ts app
 ```
 
-Create your workspace, connect a local notes folder, and review its permissions before importing. Search works without a model. Settings lets you configure a model, test the connection with a synthetic prompt, and separately permit each source to use that exact model destination. It also lets you give an assistant scoped read access. [Local app guide →](docs/local-app.md)
-
-For a temporary command-line example with background activity turned off:
+Or try a complete local, model-free flow. This creates a temporary vault, explicitly grants capture of a folder you own, then searches it and builds a session packet:
 
 ```bash
 demo="$(mktemp -d)"
+demo="$(cd "$demo" && pwd -P)"
 mkdir "$demo/notes"
-cat > "$demo/notes/atlas.md" <<'NOTE'
-# Project Atlas
-Mira leads Project Atlas.
-We chose keyboard-first navigation for the accessibility prototype.
-NOTE
+printf '%s\n' '# Project Atlas' 'Mira leads Project Atlas.' > "$demo/notes/atlas.md"
 
-cat > "$demo/policy.json" <<'POLICY'
+cat > "$demo/policy.json" <<'JSON'
 {"purposes":["capture","recall","session","derive"],"allowed_fields":["text","subjects","attachments","metadata"],"retention":"persistent_owned_until_revoked","egress":"local_only","sensitivity_floor":"private"}
-POLICY
+JSON
 chmod 600 "$demo/policy.json"
 
 bun packages/cli/src/main.ts init "$demo/vault" --no-default --no-service
@@ -197,174 +62,119 @@ bun packages/cli/src/main.ts context --purpose session --query "Atlas" --vault "
 bun packages/cli/src/main.ts doctor --vault "$demo/vault"
 ```
 
-Importing does **not** itself write canon. Without a model, expect `canon writing: off`; the demo does not invent generated pages or model answers.
+Importing records evidence; it does not write canon. Without a configured model, `doctor` reports that canon writing is off. That is expected—the search, context, audit, and undo paths remain usable.
 
-[Full CLI reference →](docs/cli.md)
+For every command and its machine-readable output, see the [CLI reference](docs/cli.md). For the guided local workflow, see the [local app guide](docs/local-app.md).
+
+## How it works
+
+Kizuki separates what happened from what it currently believes, what it writes for people, and what it serves to clients.
+
+```mermaid
+flowchart LR
+  sources["Sources you choose"] --> ledger["Append-only evidence ledger"]
+  ledger --> claims["Source-linked claims"]
+  claims --> writer["Receipted canon writer"]
+  writer --> canon["Readable Markdown canon"]
+  ledger --> derived["Rebuildable search and views"]
+  canon --> derived
+  derived --> clients["CLI · local app · authorized agents"]
+  correction["Owner correction"] --> claims
+  writer --> audit["Audit and undo"]
+```
+
+**Evidence stays attributable.** Connectors provide a frozen event envelope; source identity, times, subjects, and content hashes remain attached to the owned ledger.
+
+**Understanding can change.** Claims retain support, authority, confidence, sensitivity, validity, and lifecycle. An owner correction outranks an inference, and corrections are receipted and reversible.
+
+**Canon stays yours.** Kizuki writes ordinary Markdown in your vault through one writer. Capture never writes pages directly. You can inspect a receipt with `kizuki audit` and reverse it with `kizuki undo`.
+
+**Derived layers are disposable.** Search, retrieval, and projections can be rebuilt from authoritative state. A model is never required for the deterministic floor.
+
+Read the [architecture](docs/architecture.md), [binding autonomous-canon RFC](rfcs/0002-autonomous-canon.md), and [current direction](docs/CURRENT.md) for the full contract.
+
+## Use with agents
+
+Kizuki owns memory and policy; your preferred client owns its agent loop. The stdio MCP adapter gives an enrolled identity only the data its grant permits:
+
+```bash
+bun packages/mcp/src/bin.ts \
+  --vault /absolute/path/to/vault \
+  --token-ref file:/absolute/path/to/agent.credential
+```
+
+For local owner use, replace the credential flag with `--owner`. For an environment-held credential, use `--token-env VARIABLE_NAME`; tokens never belong on the command line.
+
+The adapter exposes reads such as `search`, `get_page`, `timeline`, `context_packet`, `graph_neighbors`, `system_health`, and `world_view`, plus `propose` and `correct`. It does not expose unrestricted page writes. The core enforces identity, grants, scopes, sensitivity ceilings, allowlists, rate limits, and audit below the prompt layer.
+
+To give Codex, Claude Code, or another command-running harness a compact session packet, use the shipped hook:
+
+```bash
+bun packages/cli/src/main.ts hook session-start --harness codex --direct
+```
+
+The hook is bounded and silent on failure, so a missing vault or denied credential cannot break the host session. [Integration recipes →](docs/integrations.md)
+
+### World views
+
+When extraction is configured and permitted for a source, discover Concepts and Situations with `kizuki world`:
+
+```bash
+bun packages/cli/src/main.ts world --operation find_concepts --label "Atlas" --vault /absolute/path/to/vault
+```
+
+Each result carries evidence, confidence, uncertainty, and coverage. Empty or partial results are explicit; they are not evidence that the underlying world is complete. World Slice, World Diff, revision resume, outcomes, attention, forecasts, and Atlas remain roadmap work.
+
+### Optional history tree
+
+Kizuki can also present authorized conversation history as a bounded, read-only tree. It is a deterministic extractive view for navigating retained evidence—no model, agent reset, or automatic client-history compression is involved.
+
+```bash
+bun packages/cli/src/main.ts history --connector kizuki.import-chatgpt --budget 1024 --vault /absolute/path/to/vault
+```
+
+The result names a `snapshot` and child `node` references. Pass both back with the same filters to zoom into one branch; a leaf points to the existing timeline expansion for the original event. The view covers the first 200 authorized matching events, so use time filters to navigate later history. It is rebuilt and re-authorized on every read, so an old or foreign snapshot fails after a purge, revocation, policy change, or scope change. It needs captured evidence and the existing timeline grant; it never exposes a semantic summary as if it were source text.
 
 ## Connect sources
 
-Start with `kizuki connect` to see the catalog and `kizuki connect status` to inspect enrolled sources and their last run. New enrollment requires an explicit [source consent policy](docs/cli.md#source-consent) before capture.
+Start with `kizuki connect --list` for the live catalog and `kizuki connect status` for enrollment and sync state. Capture begins only after an explicit source-consent grant.
 
-Current entry points include local Markdown, ChatGPT/Claude exports, WhatsApp/Pocket/Omnivore exports, Beeper Desktop, read-only IMAP, native Telegram sign-in, Gmail, Google Calendar and X own-post browser sign-in, ICS files, offline Screenpipe ingestion, and one-shot [estate importers](docs/legacy-import.md) with owner-written mapping files. Telegram, Gmail and Google Calendar require operator-supplied app configuration. X requires a public Native App client ID, an exact registered loopback callback and eligible API access with usage credits. The 1.0.0 release package compiles in the project's Telegram app credentials; a source checkout reads them from the environment. None of those account paths are live-account qualified on this revision. WHOOP remains a component without CLI enrollment. The connection guide lists provider setup and coverage limits.
+Kizuki supports local Markdown, selected exports, offline Screenpipe ingestion, coding-session transcripts, and several account connectors. Provider setup, what is retained, and qualification limits vary: use [connection setup and limits](docs/connect.md) before enrolling an account.
 
-[Connection setup and limits →](docs/connect.md)
+## Your data and boundaries
 
-## Architecture
+- **Local custody:** authoritative state and readable canon live in your vault.
+- **Explicit egress:** runtime network access is limited to configured connectors and model endpoints; Kizuki has no required hosted service or telemetry.
+- **Consent before capture:** credentials do not authorize use of data. Sources need separate, revisable grants with a declared policy.
+- **Fail closed:** missing identity, grant, scope, sensitivity, or provenance never becomes access. Captured content is data, never trusted instruction.
+- **Readable exit:** audit, undo, export, restore, and purge support ownership and recovery.
 
-Kizuki deliberately separates **what happened**, **what it currently believes**, **what it writes for humans**, and **what it serves to clients**.
-
-```mermaid
-flowchart TD
-  sources["Sources you choose"] --> ledger["Append-only event ledger"]
-  ledger --> claims["Claims: provenance · authority · confidence · validity"]
-  claims --> writer["One receipted canon writer"]
-  correction["Owner correction"] --> claims
-  correction -->|"same-pass rewrite"| writer
-  writer --> canon["Markdown canon + receipts"]
-  ledger --> retrieval["Rebuildable retrieval"]
-  canon --> retrieval
-  retrieval --> context["Search · timeline · graph · context packets"]
-  context --> clients["CLI + authorized MCP clients"]
-  canon --> audit["Audit + undo"]
-```
-
-The world-model roadmap extends the middle of this pipeline. It does **not** replace the frozen ingress, claim authority, single writer, local custody, purge or permission model.
-
-### Evidence remembers the source
-
-Connectors emit the frozen `kizuki.event/v1` envelope. Source identity, occurrence time, observation time, subjects and content hashes travel into the owned ledger.
-
-### Claims remember that understanding can change
-
-Claims carry supporting event IDs, authority, confidence, sensitivity, validity and lifecycle state.
-
-```text
-owner_correction > owner_authored > connector_evidence > model_inference
-```
-
-A model's interpretation cannot outrank the owner's correction.
-
-### Canon keeps ownership readable
-
-Canon is ordinary Markdown on the owner's disk. Capture never writes pages directly. Every canon write goes through the receipted writer with provenance and before/after hashes so it can be audited and reversed.
-
-### Derived intelligence stays rebuildable
-
-Lexical search works without a model. Optional retrieval implementations sit behind versioned ports and own disposable stores. Future graph projections, semantic indexes, embeddings and Atlas views must remain rebuildable from authoritative state.
-
-[Architecture →](docs/architecture.md) · [Autonomous canon →](rfcs/0002-autonomous-canon.md) · [Current direction →](docs/CURRENT.md)
-
-## Bring your agents
-
-Kizuki owns the memory and world state. Your chosen client owns its agent loop.
-
-For an already-provisioned identity and grant:
-
-```bash
-bun packages/mcp/src/bin.ts --vault /absolute/path/to/vault --token-env KIZUKI_AGENT_TOKEN
-```
-
-The current stdio MCP adapter exposes:
-
-| Read tools | Write tools |
-| --- | --- |
-| `search`, `get_page`, `query_entities`, `timeline`, `context_packet`, `graph_neighbors`, `system_health`, `world_view` | `propose`, `correct` |
-
-`propose` files a claim. `correct` relays an authorized correction. There is no unrestricted `put_page` tool. Permission is enforced below the prompt layer through identity, grants, sensitivity ceilings, scopes, allowlists, rate limits and audit.
-
-`world_view` reads Concept and Situation cards through this same authorization boundary. References it returns are bound to the calling principal and grant; later world-model projections follow the same rule rather than creating an agent-only backdoor.
-
-## Product law: UX + DX + AX together
-
-Every meaningful Kizuki capability should have **one canonical core implementation and one versioned semantic contract**.
-
-Human, developer and agent surfaces are projections of that capability, not independent implementations.
-
-- **UX:** useful answer first, with provenance, uncertainty, receipts and correction through progressive disclosure.
-- **DX:** typed contracts, validators, migrations, deterministic errors, fixtures and conformance tests.
-- **AX:** compact structured state with stable IDs, evidence refs, freshness, uncertainty and machine-readable failures instead of prose scraping.
-
-A capability is not finished if one surface is excellent and the other two are afterthoughts.
+Kizuki does not encrypt your vault or canon. Anyone who can read the host files can read the data. See the [security model](SECURITY.md) and [source-consent contract](docs/cli.md#source-consent).
 
 ## Roadmap
 
-The [world-model program guide](docs/world-model-program.md) connects the accepted contracts, staged delivery and proof requirements. GitHub **#497** is the single authority for live packet dependencies, ownership and progress; **#480** holds the architecture direction and **#476** the Situation and UX/DX/AX direction. The program includes **#481–#496**, **#502** two-client continuity and **#503** bounded consolidation.
+Kizuki’s direction is a richer personal world model: broader typed understanding, task-bounded World Slices, world revisions and diffs, outcome learning, and incremental Atlas views. These are design and roadmap items, not claims about today’s release.
 
-Prove a small Concept with useful human and agent views, then expand through shared contracts. Grow Knowledge Atlas views incrementally. Present-day **#502 Stage A** uses existing capture, context, correction and MCP seams; later semantic views and scoped diffs have their own proof.
+The [world-model program guide](docs/world-model-program.md) connects accepted contracts and proof requirements. [Issue #497](https://github.com/Illuminfti/kizuki/issues/497) is the historical execution map for the 1.0 program; [CURRENT.md](docs/CURRENT.md) is the binding statement of what this revision runs.
 
-**#496 verification starts with the first slice** and grows with every packet. Each slice preserves provenance, temporal correctness, purge, sensitivity, correction and reversibility.
+## Contribute
 
-## Your data, your boundaries
+Kizuki is a TypeScript/Bun modular monolith. Before opening a change, read [AGENTS.md](AGENTS.md), the [contribution guide](CONTRIBUTING.md), and the relevant architecture or RFC.
 
-**Local custody.** Authoritative state lives under the owner's vault; canon is ordinary Markdown.
-
-**Zero phone-home.** Runtime network access is limited to explicitly configured connectors and model endpoints. There is no required hosted Kizuki memory service or telemetry.
-
-**Fail closed.** Missing identity, grants, sensitivity or required provenance do not become permission. Captured text is data, never instruction.
-
-**Readable exit.** Export, restore, audit, undo and purge are first-class ownership mechanisms.
-
-**Honest threat model.** The current vault and canon are not encrypted by Kizuki. Someone who can read the host files can read the data. [Security model →](SECURITY.md)
-
-## Status
-
-**Version 1.0.0.** The distinction between working capability and the complete world-model product matters.
-
-| Layer | What this revision supports |
-| --- | --- |
-| Capture | Local sources, exports and selected connector paths. |
-| Recall | Model-free lexical search, context packets and MCP read tools. Advanced retrieval depends on configured ports and data. |
-| Claims | Source-linked working claims with authority, confidence, validity, sensitivity and supersession. |
-| Canon | Model-configured autonomous writer; correction, receipts, audit and undo. |
-| Operations | Local serve loop, doctor reporting and rebuildable retrieval. |
-| Packaging | Source execution and an unsigned Linux x64 release package. No npm package and no signed installer. |
-| World model | Typed extraction, Concept and Situation cards, `kizuki world`, MCP and HTTP `world_view`, the app World views, and world-claim correction. World Slice, World Diff, revision resume, outcomes, attention, forecasts and Atlas are still roadmap. |
-
-## What Kizuki is not
-
-Kizuki is not another chat UI, CRM, task manager, note-taking app or general-purpose agent harness.
-
-Those systems can become sensors, consumers and actuators around the world model.
-
-Kizuki owns the durable layer beneath them:
-
-> **the continuously improving, evidence-backed model of the human's world.**
-
-## Build on Kizuki
-
-The architecture is a modular monolith with versioned ports. Connectors, models, embedding, retrieval and other replaceable components have explicit boundaries. Authoritative storage remains local and owned.
-
-To add a source, implement `kizuki.connector/v1`, emit `kizuki.event/v1`, and pass the shared conformance suite. Unsupported provider behavior must be declared rather than imitated.
-
-From a full-history checkout:
+Run the full repository verification gate from the checkout root:
 
 ```bash
 bun run verify
 ```
 
-[Contributing](CONTRIBUTING.md) · [Agent instructions](AGENTS.md) · [Architecture](docs/architecture.md) · [Binding decisions](docs/decision-log.md)
+For a source connector, implement `kizuki.connector/v1`, emit `kizuki.event/v1`, and pass the shared conformance suite. Do not claim a provider path works until its public contract and tests exist.
 
-## Retrieval credit
+## Credits
 
-[Beacon](https://github.com/Asymptote-Labs/agent-beacon) informed the agent-run
-evidence capture seam. Kizuki's [local Beacon importer](docs/beacon-import.md)
-reads selected snapshots; Beacon is not installed or bundled.
+[Beacon](https://github.com/Asymptote-Labs/agent-beacon) informed the agent-run evidence-capture seam. Kizuki's [local Beacon importer](docs/beacon-import.md) reads selected snapshots; Beacon is not installed or bundled.
 
-The hybrid retrieval recipe and entity-graph walk are a permitted fork of
-[GBrain](https://github.com/garrytan/gbrain) at public commit
-`8c70f6255047a7647adb30b1d6333a48068d9fa5`, vendored under
-`packages/retrieval-pg/vendor/`. It is not a registry dependency. Rerank and
-local GGUF remain Kizuki's own work.
-[Upstream policy and attribution →](docs/upstream-policy.md)
+The hybrid retrieval recipe and entity-graph walk are a permitted fork of [GBrain](https://github.com/garrytan/gbrain) at public commit `8c70f6255047a7647adb30b1d6333a48068d9fa5`, vendored under `packages/retrieval-pg/vendor/`. It is not a registry dependency. Rerank and local GGUF remain Kizuki's own work. [Upstream policy and attribution →](docs/upstream-policy.md)
 
 ## License
 
-[MIT](LICENSE). **Free local forever. Recall is never metered.**
-
----
-
-<div align="center">
-
-**Your AI should not forget the world it is entering.**
-
-</div>
+[MIT](LICENSE). Free local forever; recall is never metered.
