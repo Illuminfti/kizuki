@@ -36,7 +36,7 @@ The current source revision is 1.0.2. Some connection paths are implemented but 
 Clone the repository, install dependencies, and open the private local app:
 
 ```bash
-git clone https://github.com/Illuminfti/kizuki.git
+git clone https://github.com/Illuminfti/kizuki
 cd kizuki
 bun install --frozen-lockfile
 bun packages/cli/src/main.ts app
