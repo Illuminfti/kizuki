@@ -60,10 +60,10 @@ export interface TimelineArgs {
 
 export type TimelineHistoryArgs = TimelineArgs & { view: "tree" };
 export type TimelineListArgs = Omit<TimelineArgs, "view" | "budget_bytes" | "snapshot" | "node"> & {
-  view?: undefined;
-  budget_bytes?: undefined;
-  snapshot?: undefined;
-  node?: undefined;
+  view?: never;
+  budget_bytes?: never;
+  snapshot?: never;
+  node?: never;
 };
 
 export type { TimelineExpandData } from "./expand";
