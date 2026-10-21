@@ -12,8 +12,8 @@ import {
 } from "../../src/contracts/world-vocabulary";
 
 describe("the shipped kinds", () => {
-  test("concept and situation are registered with their page types, labels and cards", () => {
-    expect(WORLD_REGISTRY.kinds.map(kind => kind.id)).toEqual(["situation", "concept"]);
+  test("Concept, Situation and Question register their own labels and card contracts", () => {
+    expect(WORLD_REGISTRY.kinds.map(kind => kind.id)).toEqual(["situation", "concept", "question"]);
     expect(WORLD_REGISTRY.kind("concept")).toMatchObject({
       vocabularyId: "world/concept", labelPredicate: "concept.label", pageType: "topic", endpointKind: "concept",
       cardSchema: "kizuki.concept-card/v1", offeredToProducer: true, population: ["extraction"],
@@ -23,15 +23,26 @@ describe("the shipped kinds", () => {
       cardSchema: "kizuki.situation-card/v1", offeredToProducer: true,
     });
     expect(WORLD_REGISTRY.kindByVocabularyId("world/person")).toBeUndefined();
+    expect(WORLD_REGISTRY.kind("question")).toMatchObject({
+      vocabularyId: "world/question", labelPredicate: "question.text", pageType: "topic", endpointKind: "question",
+      cardSchema: "kizuki.question-card/v1", offeredToProducer: false, population: ["extraction"],
+    });
+    expect(WORLD_REGISTRY.offered.refs).not.toContain("world/question");
+    expect(WORLD_REGISTRY.offered.vocabulary.some(row => row.predicate.startsWith("question.") || row.predicate.startsWith("gap."))).toBe(false);
   });
 
   test("every kind names a page type from the closed set, and every offered row is a registered row", () => {
     for (const kind of WORLD_REGISTRY.kinds) expect(PAGE_TYPES as readonly string[]).toContain(kind.pageType);
-    for (const row of WORLD_REGISTRY.offered.vocabulary) expect(WORLD_REGISTRY.spec(row.predicate)).toEqual(row);
+    for (const row of WORLD_REGISTRY.offered.vocabulary) {
+      if (row.predicate === "world.kind") {
+        expect(row.vocabulary_values).toEqual(["world/concept", "world/situation"]);
+        for (const value of row.vocabulary_values ?? []) expect(WORLD_REGISTRY.spec(row.predicate)?.vocabulary_values).toContain(value);
+      } else expect(WORLD_REGISTRY.spec(row.predicate)).toEqual(row);
+    }
   });
 
   test("world.kind is derived from the kinds, so a kind cannot exist without its classification value", () => {
-    expect(getWorldVocabularySpec("world.kind")?.vocabulary_values).toEqual(["world/concept", "world/situation"]);
+    expect(getWorldVocabularySpec("world.kind")?.vocabulary_values).toEqual(["world/concept", "world/question", "world/situation"]);
   });
 
   test("every registration slot appears exactly once in the module list", () => {
@@ -39,7 +50,7 @@ describe("the shipped kinds", () => {
     for (const key of ["quest", "people", "skill", "sit2", "art", "ident"]) {
       expect(source.match(new RegExp(`// slot: ${key}$`, "gm"))).toHaveLength(1);
     }
-    expect(WORLD_VOCABULARY_MODULES).toHaveLength(3);
+    expect(WORLD_VOCABULARY_MODULES).toHaveLength(4);
   });
 });
 

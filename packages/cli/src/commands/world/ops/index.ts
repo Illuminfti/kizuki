@@ -5,6 +5,7 @@ import { discoverCli } from "./discover";
 import { situationCli } from "./situation";
 import { shareCli, resumeCli } from "./resume";
 import { evidenceCli } from "./evidence";
+import { questionCli, findQuestionsCli, frontierCli } from "./question";
 import type { WorldCliEntry } from "./types";
 
 export type { WorldCliEntry, WorldCliOp } from "./types";
@@ -23,6 +24,7 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   // slot: VIEW
   { name: "share", cli: shareCli }, { name: "resume", cli: resumeCli },
   // slot: QUEST
+  { name: "question", cli: questionCli }, { name: "find_questions", cli: findQuestionsCli }, { name: "frontier", cli: frontierCli },
   // slot: PEOPLE
   // slot: SKILL
   // slot: ART

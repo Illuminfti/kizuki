@@ -193,6 +193,12 @@ export interface MatchScan {
   readonly visibleHandles: number;
 }
 
+/** A currently authorized relation to a named endpoint, applied before paging. */
+export interface MatchFilter {
+  readonly predicate: string;
+  readonly object: RawSubjectRef;
+}
+
 /**
  * Handles of `kind` in id order after `after`, each with its currently
  * authorized label texts. Folding happens here, in one place, because SQL has
@@ -205,6 +211,7 @@ export function scanMatches(
   after: string | null,
   scanBudget: number,
   groupers: readonly Grouper[] = [],
+  filter?: MatchFilter,
 ): MatchScan {
   const { ctx, valid } = frame;
   const found: { handle: string; labels: string[] }[] = [];
@@ -221,6 +228,19 @@ export function scanMatches(
     claim = authorizedClaimSql(ctx),
     time = knownValidSql(valid, frame.cutoff.kind === "current" ? undefined : frame.cutoff);
   const held = knownHeldSql(frame.ctx, "base", frame.cutoff.kind === "current" ? undefined : frame.cutoff);
+  const related = filter === undefined ? null : {
+    sql: `c.subject_kind=b.raw_kind AND c.subject_id=b.raw_id
+      AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=b.raw_namespace
+      AND c.discriminator='assertion' AND c.predicate=? AND c.polarity='positive'
+      AND json_extract(c.payload,'$.perspective.mode')='asserted'
+      AND json_extract(c.payload,'$.object.kind')='subject'
+      AND json_extract(c.payload,'$.object.ref.kind')=? AND json_extract(c.payload,'$.object.ref.id')=?
+      AND coalesce(json_extract(c.payload,'$.object.ref.namespace'),'')=?
+      AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
+      AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}`,
+    bindings: [filter.predicate, filter.object.kind, filter.object.id, rawSubjectNamespace(filter.object),
+      ...claim.bindings, ...time.bindings, ...permitted.bindings, ...held.bindings],
+  };
   const joins = `FROM semantic_bindings b JOIN claim_v2_semantics c
     ON c.subject_kind=b.raw_kind AND c.subject_id=b.raw_id AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=b.raw_namespace
     JOIN claims base ON base.claim_id=c.claim_id`;
@@ -228,8 +248,9 @@ export function scanMatches(
     AND c.polarity='positive' AND json_extract(c.payload,'$.perspective.mode')='asserted'
     AND json_extract(c.payload,'$.object.kind')='vocabulary' AND json_extract(c.payload,'$.object.ref.id')=?
     AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
-    AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}`;
-  const policyBindings = [kind.vocabularyId, ...claim.bindings, ...time.bindings, ...permitted.bindings, ...held.bindings];
+    AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}
+    ${related === null ? "" : `AND EXISTS(SELECT c.claim_id FROM claim_v2_semantics c JOIN claims base USING(claim_id) WHERE ${related.sql})`}`;
+  const policyBindings = [kind.vocabularyId, ...claim.bindings, ...time.bindings, ...permitted.bindings, ...held.bindings, ...(related?.bindings ?? [])];
   const scan = ctx.db.query<
     { handle_id: string },
     (string | number)[]
@@ -259,6 +280,15 @@ export function scanMatches(
         classified = true;
       if (semantic.predicate === kind.labelPredicate && semantic.object.kind === "literal")
         labels.push(semantic.object.value);
+    }
+    if (classified && related !== null) {
+      const links = ctx.db.query<{ claim_id: string }, (string | number)[]>(
+        `SELECT c.claim_id FROM semantic_bindings b JOIN claim_v2_semantics c JOIN claims base USING(claim_id)
+          WHERE b.handle_id=? AND ${related.sql} ORDER BY c.claim_id LIMIT ?`,
+      ).all(handle, ...related.bindings, MAX_RELATIONS + 1);
+      frame.stats.rowsExamined += links.length;
+      if (links.length > MAX_RELATIONS) throw new WorldProjectionBudgetError();
+      classified = links.some(link => verifyClaim(frame, link.claim_id) !== null);
     }
     const match = classified ? { labels, overflow: rows.length > MAX_RELATIONS } : null;
     cache.set(handle, match);

@@ -9,8 +9,9 @@ import { verifyPacketSeams, verifyWorldSurfaceParity } from "./verify-packet-sea
 const root = resolve(import.meta.dir, "..");
 const rows = JSON.parse(readFileSync(resolve(root, "docs/world/packet-seams.json"), "utf8")) as Record<string, unknown>[];
 
-test("F1B registers both packets with real seams and executable acceptance tests", () => {
-  expect(rows.filter((row) => row.workstream === "F1B").map((row) => row.packet)).toEqual([482, 484]);
+test("F1B and CARD register their packet scopes with real seams and executable acceptance tests", () => {
+  expect(rows.filter((row) => row.workstream === "F1B").map((row) => row.packet)).toEqual([482]);
+  expect(rows.filter((row) => row.workstream === "CARD").map((row) => row.packet)).toEqual([484]);
   expect(verifyPacketSeams(root, rows)).toBe(rows.length);
   expect(() => verifyWorldSurfaceParity()).not.toThrow();
 });

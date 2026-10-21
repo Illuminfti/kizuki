@@ -19,11 +19,11 @@ import {
 } from "../../src/contracts/world-card-kit";
 import { sealCard, type KindAssembler } from "../../src/world/kinds/kit";
 
-export const QUESTION_CARD_SCHEMA = "kizuki.question-card/v1" as const;
+export const PROBE_CARD_SCHEMA = "kizuki.probe-card/v1" as const;
 
-export type QuestionCard = {
-  readonly schema: typeof QUESTION_CARD_SCHEMA;
-  readonly question: KnowledgeNode<"question">;
+export type ProbeCard = {
+  readonly schema: typeof PROBE_CARD_SCHEMA;
+  readonly probe: KnowledgeNode<"probe">;
   readonly summary: CardSummary | null;
   readonly text: Relation | null;
   readonly answers: readonly Relation[];
@@ -31,11 +31,11 @@ export type QuestionCard = {
   readonly coverage: Coverage;
 };
 
-export const validateQuestionCard = cardCodec<QuestionCard, "question-card">({
-  schema: QUESTION_CARD_SCHEMA,
-  label: "question-card",
+export const validateProbeCard = cardCodec<ProbeCard, "probe-card">({
+  schema: PROBE_CARD_SCHEMA,
+  label: "probe-card",
   fields: {
-    question: (value) => knowledgeNode(value, "question"),
+    probe: (value) => knowledgeNode(value, "probe"),
     summary,
     text: optionalRelation,
     answers: relationList,
@@ -44,19 +44,19 @@ export const validateQuestionCard = cardCodec<QuestionCard, "question-card">({
   },
 });
 
-export const questionAssembler: KindAssembler = {
-  kind: "question",
+export const probeAssembler: KindAssembler = {
+  kind: "probe",
   assemble({ node, own, summary, coverage }) {
-    const texts = own.filter((item) => item.predicate === "question.text");
-    const card: QuestionCard = {
-      schema: QUESTION_CARD_SCHEMA,
-      question: { ...node, kind: "question" },
+    const texts = own.filter((item) => item.predicate === "probe.text");
+    const card: ProbeCard = {
+      schema: PROBE_CARD_SCHEMA,
+      probe: { ...node, kind: "probe" },
       summary,
       text: texts.length === 1 ? texts[0]! : null,
-      answers: own.filter((item) => item.predicate === "question.candidate_answer"),
+      answers: own.filter((item) => item.predicate === "probe.candidate_answer"),
       knownAt: { kind: "current" },
       coverage,
     };
-    return sealCard(card, validateQuestionCard, "question");
+    return sealCard(card, validateProbeCard, "probe");
   },
 };

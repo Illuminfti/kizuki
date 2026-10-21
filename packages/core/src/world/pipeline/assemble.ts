@@ -94,7 +94,7 @@ export function assembleCard(
   });
 }
 
-export interface WorldMatches<Schema extends string = string> {
+export type WorldMatches<Schema extends string = string> = {
   readonly schema: Schema;
   readonly matches: readonly {
     ref: WireRef<"object">;
@@ -102,7 +102,7 @@ export interface WorldMatches<Schema extends string = string> {
   }[];
   readonly cursor: string | null;
   readonly coverage: ConceptCoverage;
-}
+};
 
 /**
  * One page of discovery. An empty first page for a kind no build path can

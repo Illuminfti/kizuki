@@ -1,6 +1,7 @@
 import { conceptAssembler } from "./concept";
 import type { KindAssembler } from "./kit";
 import { situationAssembler } from "./situation";
+import { questionAssembler } from "./question";
 
 /**
  * One assembler per kind that has a card. A kind file adds its assembler on
@@ -11,6 +12,7 @@ export const KIND_ASSEMBLERS: readonly KindAssembler[] = [
   conceptAssembler,
   situationAssembler,
   // slot: quest
+  questionAssembler,
   // slot: people
   // slot: skill
   // slot: sit2

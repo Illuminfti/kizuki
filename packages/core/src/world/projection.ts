@@ -3,6 +3,7 @@ import type {
   ConceptCoverage,
 } from "../contracts/concept-card";
 import type { SituationCard } from "../contracts/situation-card";
+import type { QuestionCard } from "../contracts/question-card";
 import type { WorldValidQuery } from "../serving/world-view";
 import type { ServeContext } from "../serving/types";
 import type { WorldDependencies } from "./dependencies";
@@ -34,15 +35,16 @@ export function projectWorldCard(
   ctx: ServeContext,
   ns: WorldNamespace,
   handle: string,
-  kind: "concept" | "situation",
+  kind: "concept" | "situation" | "question",
   valid: WorldValidQuery,
   dependencies?: WorldDependencies,
   cutoff?: RecordedCutoff,
-): ConceptCard | SituationCard | null {
-  // The two shipped assemblers build exactly these cards.
+): ConceptCard | SituationCard | QuestionCard | null {
+  // Each shipped assembler builds its declared card.
   return readWorldCard(newReadFrame(ctx, ns, valid, dependencies, cutoff), handle, kind) as
     | ConceptCard
     | SituationCard
+    | QuestionCard
     | null;
 }
 

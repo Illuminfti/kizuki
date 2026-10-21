@@ -148,5 +148,45 @@
       "packages/cli/test/world-views.test.ts",
       "packages/mcp/test/world.test.ts"
     ]
+  },
+  {
+    "packet": 485,
+    "workstream": "QUEST",
+    "scope": "Question cards, lifecycle, scoped discovery and grouped frontier through all consumer routes; typed model population remains disabled pending held-out qualification",
+    "core": "@kizuki/core/world: question, find_questions, frontier",
+    "cli": "kizuki world: question, find_questions, frontier, share and resume (text and --json)",
+    "mcp": "world_view: question, find_questions, frontier, share and resume",
+    "http": "/v1/world_view",
+    "app": "/app/v1/world_view",
+    "seams": {
+      "core": [
+        "packages/core/src/contracts/question-card.ts",
+        "packages/core/src/world/kinds/question.ts",
+        "packages/core/src/world/ops/frontier.ts"
+      ],
+      "cli": [
+        "packages/cli/src/commands/world/ops/question.ts"
+      ],
+      "mcp": [
+        "packages/mcp/src/world/ops/question.ts"
+      ],
+      "http": [
+        "packages/core/src/serve/http.ts"
+      ],
+      "app": [
+        "packages/cli/src/app/host.ts"
+      ]
+    },
+    "tests": [
+      "packages/core/test/world/questions.test.ts",
+      "packages/core/test/world/questions-oracles.test.ts",
+      "packages/core/test/world/questions-security.test.ts",
+      "packages/core/test/world/questions-history.test.ts",
+      "packages/cli/test/questions.test.ts",
+      "packages/mcp/test/questions.test.ts"
+    ],
+    "open_items": [
+      "VERIFY V6 held-out extraction qualification before offeredToProducer is enabled."
+    ]
   }
 ]
