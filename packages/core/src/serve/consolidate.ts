@@ -1,3 +1,4 @@
+import { KIND_ASSEMBLERS } from "../world/kinds";
 import { setImmediate as yieldToHost } from "node:timers/promises";
 import { OWNER } from "../agents";
 import type { LlmResponse } from "../contracts/llm";
@@ -137,7 +138,8 @@ export const consolidationJob: WorldJob = { id: "consolidation", async run(ctx) 
     const now = clock(ctx);
     ctx.db.query("DELETE FROM world_consolidation WHERE expires_at<=?").run(now.at);
     if (!ctx.modelConfigured || ctx.llm === undefined || config.max_calls_per_pass === 0) return;
-    const kinds = activeWorldRegistry().kinds, cursor = cursorOf(ctx);
+    const kinds = activeWorldRegistry().kinds.filter(kind => KIND_ASSEMBLERS.some(assembler => assembler.kind === kind.id && assembler.consolidation !== false)), cursor = cursorOf(ctx);
+    if (kinds.length === 0) return;
     cursor.kind %= kinds.length;
     let handles = 0, calls = 0, kindsVisited = 0, steps = 0;
     while (handles < config.max_handles_per_pass && steps < config.max_handles_per_pass + kinds.length && kindsVisited < kinds.length) {

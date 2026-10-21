@@ -977,6 +977,29 @@ test('World ignores stale responses and clears its private projection on privacy
     expect(f.evaluate('state.world')).toBeNull();
 });
 const worldMatches = (label: string) => ({ schema: 'kizuki.world-view/v1', operation: 'find_concepts', result: { status: 'current', view: { status: 'not_issued' }, data: { schema: 'kizuki.concept-matches/v1', matches: [{ ref: { kind: 'object', token: 'A'.repeat(43) }, labels: [label] }], coverage: { status: 'complete_for_query' } } } });
+test('World changes reuse the exact object baseline and do not redisplay an old diff as a new change', async () => {
+    const f = fixture();
+    const object = { kind: 'object', token: 'A'.repeat(43) }, view = { kind: 'view', token: 'B'.repeat(43) };
+    f.evaluate(`state.view='world'; loadWorld(${JSON.stringify(object)});`);
+    f.reply('world_view', { schema: 'kizuki.world-view/v1', operation: 'concept', result: { status: 'current', view, validUntil: '2030-01-01T00:00:00Z', data: {
+        schema: 'kizuki.concept-card/v1', concept: { ref: object, labels: [{ text: 'Diff concept' }] }, definitions: [], relations: [], summary: null, coverage: { status: 'complete_for_query' },
+    } } }); await tick();
+    f.evaluate(`globalThis.findButton=(node,text)=>node.tag==='button'&&node.textContent===text?node:node.children.map(child=>findButton(child,text)).find(Boolean); findButton(main,'Check for changes').fire('click');`);
+    const of = { operation: 'concept', concept: object };
+    expect(f.requests.at(-1)?.payload).toMatchObject({ operation: 'diff', of, priorView: view });
+    const replacement = { kind: 'view', token: 'C'.repeat(43) };
+    f.reply('world_view', { schema: 'kizuki.world-view/v1', operation: 'diff', result: { status: 'current', view: replacement, data: { schema: 'kizuki.world-diff/v1', added: [{ kind: 'claim', token: 'D'.repeat(43) }], removed: [], changed: [], truncated: false } } }); await tick();
+    expect(f.main.textContent).toContain('1 added statements');
+    f.evaluate(`findButton(main,'Check for more changes').fire('click');`);
+    expect(f.requests.at(-1)?.payload).toMatchObject({ operation: 'diff', of, priorView: replacement });
+    f.reply('world_view', { schema: 'kizuki.world-view/v1', operation: 'diff', result: { status: 'unchanged', view: replacement, validUntil: '2030-01-01T00:00:00Z' } }); await tick();
+    expect(f.main.textContent).toContain('No visible change'); expect(f.main.textContent).not.toContain('1 added statements');
+    f.evaluate(`findButton(main,'Read current item').fire('click');`);
+    expect(f.requests.at(-1)?.payload).toEqual({ ...of, valid: { kind: 'all' }, knownAt: { kind: 'current' } });
+    f.evaluate('invalidatePrivateView()');
+    f.reply('world_view', { status: 'not_found' }); await tick();
+    expect(f.evaluate('state.world')).toBeNull();
+});
 test('World navigation shows loading until the real result arrives', async () => {
     const f = fixture(); f.evaluate(`navigate('world')`);
     expect(f.main.textContent).toContain('Loading concepts');
@@ -1463,3 +1486,41 @@ test('World resumes framework nesting and displays outcome stages without implyi
     for(const text of ['Provider acknowledged','Goal achievement is not established.','Confounded evidence','Outcome unknown','does not establish independent mastery']) expect(f.main.textContent).toContain(text);
     expect(f.storageWrites).toHaveLength(0);
 });
+
+test('World artifacts expose exact metadata and quoted feedback without promising original inspection', async () => {
+    const f=fixture(); f.evaluate(`state.view='world'; render();`);
+    const ref={kind:'object',token:'A'.repeat(43)};
+    const browse=findAction(f.main,'Artifacts').fire('click'); await tick();
+    expect(f.requests[0]!.payload).toMatchObject({operation:'find_artifacts',label:''});
+    f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'find_artifacts',result:{status:'current',data:{schema:'kizuki.artifact_version-matches/v1',matches:[{ref,labels:['Exact artifact']}],coverage:{status:'complete_for_query'}}}});await browse;await tick();
+    const detail=findAction(f.main,'View details').fire('click');await tick();
+    expect(f.requests[0]!.payload).toMatchObject({operation:'artifact_version',artifact:ref});
+    f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'artifact_version',result:{status:'current',data:{schema:'kizuki.artifact-card/v1',artifact:{ref,labels:[{text:'Exact artifact'}]},content:{sha256:'a'.repeat(64),mediaType:'text/markdown',byteLength:123},original:{status:'unavailable'},versionOf:null,inspections:[{predicate:'artifact.feedback',object:{kind:'literal',value:'<script>execute hostile feedback</script>'},assessments:[]}],coverage:{status:'complete_for_query'}}}});await detail;await tick();
+    for(const text of ['Exact artifact version','a'.repeat(64),'text/markdown','bytes: 123','Original unavailable','does not provide or visually inspect','Attributed feedback','<script>execute hostile feedback</script>'])expect(f.main.textContent).toContain(text);
+    expect(f.main.querySelector('script')).toBeNull();
+    const shared=findAction(f.main,'Share a resume handle').fire('click');await tick();
+    expect(f.requests[0]!.payload).toMatchObject({operation:'share',of:{operation:'artifact_version',artifact:ref}});
+    f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'share',result:{status:'unavailable',reason:'storage'}});await shared;
+    f.evaluate('invalidatePrivateView()');expect(f.main.textContent).not.toContain('Exact artifact');expect(f.storageWrites).toHaveLength(0);
+});
+
+for (const kind of ["procedure", "artifact_version"] as const) {
+  test(`World ${kind} change actions retain the correct object selector`, async () => {
+    const f = fixture(), ref = {kind:"object",token:"A".repeat(43)}, view = {kind:"view",token:"B".repeat(43)};
+    const field = kind === "artifact_version" ? "artifact" : kind;
+    const of = {operation:kind,[field]:ref};
+    const data = kind === "procedure" ? {...procedureUiCard,procedure:{...procedureUiCard.procedure,ref}} : {
+      schema:"kizuki.artifact-card/v1",artifact:{ref,labels:[{text:"Diff artifact"}]},content:{sha256:"a".repeat(64),mediaType:"text/markdown",byteLength:42},original:{status:"unavailable"},versionOf:null,inspections:[],coverage:{status:"complete_for_query"},
+    };
+    f.evaluate(`state.view='world'; loadWorld(null,${JSON.stringify(of)});`);
+    f.reply("world_view",{schema:"kizuki.world-view/v1",operation:kind,result:{status:"current",view,data}}); await tick();
+    findAction(f.main,"Check for changes").fire("click"); await tick();
+    expect(f.requests.at(-1)?.payload).toMatchObject({operation:"diff",of,priorView:view});
+    f.reply("world_view",{schema:"kizuki.world-view/v1",operation:"diff",result:{status:"unchanged",view,validUntil:"2030-01-01T00:00:00Z"}}); await tick();
+    expect(f.main.textContent).toContain("No visible change");
+    findAction(f.main,"Read current item").fire("click"); await tick();
+    expect(f.requests.at(-1)?.payload).toMatchObject(of);
+    f.reply("world_view",{status:"not_found"}); await tick();
+    f.evaluate("invalidatePrivateView()"); expect(f.storageWrites).toHaveLength(0);
+  });
+}

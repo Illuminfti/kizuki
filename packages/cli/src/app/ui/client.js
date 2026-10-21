@@ -808,8 +808,15 @@ function worldRelation(relation) {
   return el('div', { class: 'belief-details' }, el('h3', {}, labels[relation.predicate] || 'Supporting statement'), qualifiers.length ? el('p', {}, qualifiers.join(' · ')) : null, el('p', { class: 'result-text' }, worldObjectText(relation)), el('p', {}, worldAssessmentText(relation)), relation.object?.kind === 'node' ? el('details', {}, el('summary', {}, 'Open linked knowledge'), ...['concept', 'situation', 'procedure', 'skill', 'framework'].map(kind => button(`Open as ${kind}`, () => loadWorld(relation.object.ref, { operation: kind, [kind]: relation.object.ref }), 'quiet'))) : null);
 }
 function worldKnowledgeNode(data) {
+  if (data?.artifact?.ref) return { kind: 'artifact_version', node: data.artifact };
   for (const kind of ['concept', 'situation', 'procedure', 'skill', 'framework']) if (data?.[kind]?.ref) return { kind, node: data[kind] };
   return null;
+}
+function worldViewActions(section, result, knowledge) {
+  if (!knowledge?.node.ref) return;
+  const ref = knowledge.node.ref, of = { operation: knowledge.kind, [knowledge.kind === 'artifact_version' ? 'artifact' : knowledge.kind]: ref };
+  section.append(button('Share a resume handle', () => loadWorld(ref, { operation: 'share', of }), 'secondary'));
+  if (result.view?.kind === 'view') section.append(button('Check for changes', () => loadWorld(ref, { operation: 'diff', of, priorView: result.view }), 'secondary'));
 }
 function worldUseful(data) {
   const usefulness = data?.taskUsefulness;
@@ -844,7 +851,7 @@ function renderWorld() {
   const kind = state.worldKind, field = el('input', { id: 'world-query', type: 'search', placeholder: `Find ${kind}…`, 'aria-label': `Find ${kind}`, autocomplete: 'off' }); field.value = state.worldQuery; if (kind === 'outcomes') { field.setAttribute('placeholder', 'Outcome subject'); field.setAttribute('aria-label', 'Outcome subject'); }
   const choose = value => { state.worldKind = value; state.worldDetailKind = null; loadWorld(null); };
   const form = el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); state.worldQuery = field.value; loadWorld(null); } }, icon('search'), field, el('button', { class: 'button button-primary', type: 'submit' }, 'Find'));
-  const section = el('section', { 'aria-busy': state.worldLoading ? 'true' : 'false' }, heading('Your world.', 'Ideas, situations and practical knowledge connected to the information you save.'), el('div', { class: 'world-tabs', role: 'group', 'aria-label': 'World type' }, button('Concepts', () => choose('concepts'), state.worldKind === 'concepts' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'concepts' }), button('Situations', () => choose('situations'), state.worldKind === 'situations' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'situations' }), button('Procedures', () => choose('procedures'), state.worldKind === 'procedures' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'procedures' }), button('Outcomes', () => choose('outcomes'), state.worldKind === 'outcomes' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'outcomes' })), form, el('p', { class: 'search-hint' }, 'Kizuki uses your configured model to organise sources you allow it to read. You can always search saved sources without a model.'));
+  const section = el('section', { 'aria-busy': state.worldLoading ? 'true' : 'false' }, heading('Your world.', 'Ideas, situations and practical knowledge connected to the information you save.'), el('div', { class: 'world-tabs', role: 'group', 'aria-label': 'World type' }, button('Concepts', () => choose('concepts'), state.worldKind === 'concepts' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'concepts' }), button('Situations', () => choose('situations'), state.worldKind === 'situations' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'situations' }), button('Procedures', () => choose('procedures'), state.worldKind === 'procedures' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'procedures' }), button('Artifacts', () => choose('artifacts'), state.worldKind === 'artifacts' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'artifacts' }), button('Outcomes', () => choose('outcomes'), state.worldKind === 'outcomes' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'outcomes' })), form, el('p', { class: 'search-hint' }, 'Kizuki uses your configured model to organise sources you allow it to read. You can always search saved sources without a model.'));
   const resumeField = el('input', { type: 'text', placeholder: 'Resume handle', 'aria-label': 'Resume handle', maxlength: '43', autocomplete: 'off' });
   section.append(el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); loadWorld(null, { operation: 'resume', handle: resumeField.value.trim() }); } }, resumeField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Resume')));
   const taskField = el('input', { id: 'world-task', type: 'text', placeholder: 'What are you working on?', 'aria-label': 'Task for world slice', maxlength: '512', autocomplete: 'off' });
@@ -870,6 +877,15 @@ function renderWorld() {
         button('Refresh task view', () => loadWorld(null, { operation: 'slice', task: slice.task, budgetTokens: slice.budgetTokens, kinds: slice.providers.map(provider => provider.kind), ...(result.view?.kind === 'view' ? { priorView: result.view } : {}) }))));
     }
     else if (result.data?.schema === 'kizuki.resume-handle/v1') section.append(el('article', { class: 'result-item' }, el('h2', {}, 'Resume in another client'), el('code', {}, result.data.handle), el('p', {}, `Expires ${result.data.expiresAt}. The other client reads under its own access.`), button('Back to item', retry, 'quiet')));
+    else if (result.data?.schema === 'kizuki.world-diff/v1' || (state.world.operation === 'diff' && result.status === 'unchanged')) {
+      const changes = result.data;
+      section.append(el('article', { class: 'result-item' }, el('h2', {}, 'Changes since your previous read'),
+        result.status === 'unchanged' ? el('p', { role: 'status' }, 'No visible change since your previous read.') : el('p', {}, `${changes.added.length} added statements · ${changes.removed.length} removed statements · ${changes.changed.length} changed statements`),
+        changes?.truncated ? el('p', { class: 'search-hint' }, 'This comparison is partial. Read the current item for the available information.') : null,
+        ...(changes?.changed || []).map(change => el('p', {}, `Statement changed: ${change.fields.join(', ')}.`)),
+        button('Read current item', () => loadWorld(state.worldRef, state.world.diffOf), 'primary'),
+        result.view?.kind === 'view' && state.world.diffOf ? button('Check for more changes', () => loadWorld(state.worldRef, { operation: 'diff', of: state.world.diffOf, priorView: result.view }), 'secondary') : null));
+    }
     else {
       if (result.status === 'unchanged') section.append(el('p', { role: 'status' }, 'No visible change since your previous read.'));
       const data = result.data, matches = Array.isArray(data?.matches) ? data.matches : null;
@@ -880,15 +896,16 @@ function renderWorld() {
         const knowledge = worldKnowledgeNode(data);
         if (['kizuki.procedure-card/v1', 'kizuki.skill-card/v1', 'kizuki.framework-card/v1', 'kizuki.outcome-card/v1'].includes(data.schema)) {
           section.append(worldKnowledgeCard(data));
-          if (knowledge) section.append(button('Share a resume handle', () => loadWorld(knowledge.node.ref, { operation: 'share', of: { operation: knowledge.kind, [knowledge.kind]: knowledge.node.ref } }), 'secondary'));
+          worldViewActions(section, result, knowledge);
           if (result.validUntil) section.append(el('p', { class: 'search-hint' }, `View valid until ${result.validUntil}. Access is checked on every read.`));
           return section;
         }
-        const node = data.concept || data.situation;
-        const primary = data.concept ? (data.definitions || []) : [data.objective, ...(data.commitments || []), data.blocker, data.recentChange, ...(data.uncertainty || [])].filter(Boolean);
+        const node = data.concept || data.situation || data.artifact;
+        const primary = data.artifact ? (data.inspections || []) : data.concept ? (data.definitions || []) : [data.objective, ...(data.commitments || []), data.blocker, data.recentChange, ...(data.uncertainty || [])].filter(Boolean);
         const related = data.concept ? (data.relations || []) : [];
         section.append(el('article', { class: 'result-item' },
           el('h2', {}, worldTitle(node)),
+          data.artifact ? el('div', {}, el('h3', {}, 'Exact artifact version'), el('p', {}, `SHA-256: ${data.content.sha256 || 'unknown'}`), el('p', {}, `Media type: ${data.content.mediaType || 'unknown'}; bytes: ${data.content.byteLength ?? 'unknown'}`), el('p', {}, `Original ${data.original.status}. Kizuki does not provide or visually inspect the original.`), data.versionOf ? worldRelation(data.versionOf) : null, el('h3', {}, 'Attributed feedback')) : null,
           data.summary?.text ? el('p', { class: 'result-text' }, data.summary.text) : null,
           worldCoverage(data.coverage),
           ...primary.map(worldRelation),
@@ -896,7 +913,7 @@ function renderWorld() {
           related.length ? el('details', { class: 'result-details' }, el('summary', {}, 'Related statements'),
             el('p', {}, 'These statements explain the current view. Confidence reflects the assessment of each statement. Original source text is not included here.'),
             ...related.map(worldRelation)) : null));
-        if (node?.ref) section.append(button('Share a resume handle', () => loadWorld(node.ref, { operation: 'share', of: { operation: data.concept ? 'concept' : 'situation', [data.concept ? 'concept' : 'situation']: node.ref } }), 'secondary'));
+        worldViewActions(section, result, knowledge);
         if (result.validUntil) section.append(el('p', { class: 'search-hint' }, `View valid until ${result.validUntil}. Access is checked on every read.`));
       }
     }
@@ -906,24 +923,25 @@ function renderWorld() {
 async function loadWorld(ref = state.worldRef, request = null) {
   const sequence = ++worldSequence, session = bearer, generation = privacyGeneration, epoch = state.status?.visibility_epoch;
   const current = () => sequence === worldSequence && session === bearer && generation === privacyGeneration && epoch === state.status?.visibility_epoch && privateViewValid;
-  const browseKind = ({ concepts: 'concept', situations: 'situation', procedures: 'procedure', outcomes: 'outcome' })[state.worldKind] || 'concept';
+  const browseKind = ({ concepts: 'concept', situations: 'situation', procedures: 'procedure', outcomes: 'outcome', artifacts: 'artifact_version' })[state.worldKind] || 'concept';
   const operation = ref ? state.worldDetailKind || browseKind : browseKind === 'outcome' ? 'outcome' : `find_${state.worldKind}`;
   if (!request && operation === 'outcome' && !state.worldQuery.trim()) { state.world = null; state.worldRef = null; state.worldLoading = false; if (state.view === 'world') render(); return; }
   const previous = state.world;
   const prior = !request && previous?.operation === operation && ref && state.worldRef?.token === ref.token && previous?.result?.data && previous?.result?.view?.kind === 'view' ? previous.result.view : null;
-  const payload = { ...(request || { operation, ...(ref ? { [operation]: ref } : operation === 'outcome' ? { subject: state.worldQuery.trim() } : { label: state.worldQuery }) }), ...(prior ? { priorView: prior } : {}), valid: { kind: 'all' }, knownAt: { kind: 'current' } };
+  const payload = { ...(request || { operation, ...(ref ? { [operation === 'artifact_version' ? 'artifact' : operation]: ref } : operation === 'outcome' ? { subject: state.worldQuery.trim() } : { label: state.worldQuery }) }), ...(prior ? { priorView: prior } : {}), valid: { kind: 'all' }, knownAt: { kind: 'current' } };
   state.worldRef = ref; if (!ref) state.worldDetailKind = null;
-  if (['concept', 'situation', 'procedure', 'skill', 'framework'].includes(request?.operation)) state.worldDetailKind = request.operation;
+  if (['concept', 'situation', 'procedure', 'skill', 'framework', 'artifact_version'].includes(request?.operation)) state.worldDetailKind = request.operation;
   state.world = null; state.worldError = false; state.worldLoading = true;
   if (state.view === 'world') render();
   try {
     const world = await api('world_view', payload); if (!current()) return;
-    if (world.result?.status === 'unchanged' && previous?.result?.data) world.result.data = previous.result.data;
+    if (world.result?.status === 'unchanged' && request?.operation !== 'diff' && previous?.result?.data) world.result.data = previous.result.data;
+    if (request?.operation === 'diff') world.diffOf = request.of;
     const knowledge = worldKnowledgeNode(world.result?.data);
     if (knowledge) state.worldDetailKind = knowledge.kind;
     if (request?.operation === 'resume') {
       state.worldRef = knowledge?.node.ref || null;
-      if (knowledge) state.worldKind = ({ concept: 'concepts', situation: 'situations' })[knowledge.kind] || 'procedures';
+      if (knowledge) state.worldKind = ({ concept: 'concepts', situation: 'situations', artifact_version: 'artifacts' })[knowledge.kind] || 'procedures';
     }
     state.world = world;
   }

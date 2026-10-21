@@ -9,7 +9,9 @@ import { discoverCli } from "./discover";
 import { situationCli } from "./situation";
 import { shareCli, resumeCli } from "./resume";
 import { evidenceCli } from "./evidence";
+import { artifactCli, findArtifactsCli } from "./artifact";
 import { questionCli, findQuestionsCli, frontierCli } from "./question";
+import { diffCli } from "./diff";
 import type { WorldCliEntry } from "./types";
 
 export type { WorldCliEntry, WorldCliOp } from "./types";
@@ -37,9 +39,11 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   { name: "skill", cli: skillCli },
   { name: "framework", cli: frameworkCli },
   // slot: ART
+  { name: "artifact_version", cli: artifactCli }, { name: "find_artifacts", cli: findArtifactsCli },
   // slot: OUTCOME
   { name: "outcome", cli: outcomeCli },
   // slot: DIFF
+  { name: "diff", cli: diffCli },
   // slot: SLICE
   { name: "slice", cli: sliceCli },
   // slot: ATTN

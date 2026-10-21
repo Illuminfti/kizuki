@@ -40,6 +40,8 @@ function clamp(value: unknown): unknown {
     } else if (["subjectRef", "task", "attempt", "criterion", "artifactVersion", "environment"].includes(name) &&
         typeof item === "string" && typeof value["confounded"] === "boolean") {
       out[name] = cut(item, 128);
+    } else if (name === "content" && value["schema"] === "kizuki.artifact-card/v1" && isRecord(item)) {
+      out[name] = { ...item, sha256: typeof item["sha256"] === "string" && /^[0-9a-f]{64}$/.test(item["sha256"]) ? item["sha256"] : null, mediaType: typeof item["mediaType"] === "string" ? cut(item["mediaType"],128) : null };
     } else {
       out[name] = clamp(item);
     }

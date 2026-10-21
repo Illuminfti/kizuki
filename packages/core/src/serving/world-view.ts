@@ -1,6 +1,8 @@
 import type { Atlas, AtlasPanelName, AtlasObjectOperation } from "../contracts/atlas";
 import type { WorldSlice } from "../contracts/world-slice";
 import type { PersonCard } from "../contracts/person-card";
+import type { WorldDiff } from "../contracts/world-diff";
+import { compareWorldViews } from "../world/views/diff";
 import { resolvePrincipal, toolAllowed, type Principal } from "../agents";
 import { tableExists } from "../ledger/schema";
 import type { HistoryPage } from "../contracts/world-history";
@@ -8,6 +10,7 @@ import type { ProcedureCard } from "../contracts/procedure-card";
 import type { FrameworkCard } from "../contracts/framework-card";
 import type { SkillCard } from "../contracts/skill-card";
 import type { OutcomeCard } from "../contracts/outcome-card";
+import type { ArtifactCard } from "../contracts/artifact-card";
 import type { QuestionCard } from "../contracts/question-card";
 import type { Frontier } from "../world/ops/frontier";
 import type { WorldMatches } from "../world/pipeline/assemble";
@@ -28,6 +31,7 @@ import type {
   WorldOp,
   WorldOpOutcome,
   WorldOpRegistry,
+  WorldRecord,
   WorldSnapshotRef,
   WorldUnavailableReason,
   WorldValidQuery,
@@ -66,8 +70,11 @@ export type {
 export type WorldReadInput =
   | { readonly operation: "atlas"; readonly panel?: AtlasPanelName; readonly focus?: { readonly operation: AtlasObjectOperation; readonly ref: WorldObjectRef }; readonly baselineView?: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "slice"; readonly task: string; readonly kinds?: readonly string[]; readonly budgetTokens: number; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "diff"; readonly of: WorldRecord; readonly priorView: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "person"; readonly person: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "find_people"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "artifact_version"; readonly artifact: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "find_artifacts"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | {
       readonly operation: "find_concepts" | "find_situations";
       readonly label: string;
@@ -116,7 +123,8 @@ export type WorldReadInput =
         | { readonly operation: "situation"; readonly situation: WorldObjectRef }
         | { readonly operation: "procedure"; readonly procedure: WorldObjectRef }
         | { readonly operation: "skill"; readonly skill: WorldObjectRef }
-        | { readonly operation: "framework"; readonly framework: WorldObjectRef };
+        | { readonly operation: "framework"; readonly framework: WorldObjectRef }
+        | { readonly operation: "artifact_version"; readonly artifact: WorldObjectRef };
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
     }
@@ -132,8 +140,11 @@ export type WorldReadInput =
 export type WorldData =
   | Atlas
   | WorldSlice
+  | WorldDiff
   | ConceptCard
   | PersonCard
+  | ArtifactCard
+  | WorldMatches<"kizuki.artifact_version-matches/v1">
   | QuestionCard
   | ProcedureCard | FrameworkCard | SkillCard | OutcomeCard
   | WorldMatches<"kizuki.procedure-matches/v1">
@@ -240,8 +251,22 @@ function present(op: WorldOp, outcome: WorldOpOutcome, view: ViewSession | null,
   // Compare and retain the final served projection. The gate redacts the raw
   // body once for output and counts, including after a bounded reprojection.
   const projection = worldViewProjection(ctx, data);
-  const result = settleView(ctx.db, view, op.name, projection, dependencies);
-  return { quoted: outcome.quoted ?? [], data: answer(op.name, "data" in result ? { ...result, data } : result) };
+  let responseData: WorldData = data;
+  if (op.name === "diff") {
+    if (view.baseline === null) return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+    let retained: unknown;
+    try { retained = JSON.parse(Buffer.from(view.baseline.projection).toString("utf8")); }
+    catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+    }
+    if (!isPlainObject(retained) || retained.operation !== view.operation || !isPlainObject(retained.data))
+      return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+    responseData = compareWorldViews(retained.data, projection);
+    if (responseData.truncated) return withoutQuotes(answer(op.name, { status: "incomplete", data: responseData, reasons: ["traversal_limit"] }));
+  }
+  const result = settleView(ctx.db, view, view.operation, projection, dependencies);
+  return { quoted: outcome.quoted ?? [], data: answer(op.name, "data" in result ? { ...result, data: responseData } : result) };
 }
 
 /**
@@ -298,8 +323,12 @@ function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, depe
         const live = { ...ctx, principal: current };
         const ns = worldNamespace(ctx.db, current);
         // The baseline is judged before any projection work, so an unusable one costs the same for every cause.
-        const view = op.views === true && retain ? openView(live, ns, input, prior) : null;
+        const viewInput = op.name === "diff" ? { ...(query as WorldRecord), valid, knownAt } : input;
+        const view = op.views === true && retain ? openView(live, ns, viewInput, prior) : null;
         if (view?.stale === true) return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+        if (view !== null && prior !== null) dependencies.priorView = {
+          current: reader => !openView(reader, worldNamespace(reader.db, reader.principal), viewInput, prior).stale,
+        };
         const compose = (input: import("../world/ops/types").WorldRecord, options: { readonly retain: boolean } = { retain: false }): WorldResponse => {
           if (!options.retain && Object.hasOwn(input, "priorView")) throw new WorldViewError();
           if (depth >= 2 || dependencies.children.length >= 32) throw new WorldProjectionBudgetError();

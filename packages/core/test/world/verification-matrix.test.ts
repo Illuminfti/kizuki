@@ -40,7 +40,7 @@ test("all world operations close over purge and retained capabilities lose evide
       else if (name.startsWith("find_")) expect(after.data).toMatchObject({ result: { data: { matches: [] } } });
       else if (name === "slice") expect(after.data).toMatchObject({ result: { data: { constraints: [], detail: [] } } });
       else if (name === "frontier") expect(after.data).toMatchObject({ result: { data: { groups: [] } } });
-      else if (name === "resume") expect(after.data).toEqual({ schema: "kizuki.world-view/v1", operation: "resume", result: { status: "new_view_required" } });
+      else if (name === "resume" || name === "diff") expect(after.data).toEqual({ schema: "kizuki.world-view/v1", operation: name, result: { status: "new_view_required" } });
       else expect(after.data, name).toEqual({ status: "not_found" });
     }
   } finally { scene.dispose(); }
