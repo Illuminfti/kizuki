@@ -14,6 +14,7 @@ import { openLedger } from "../../src/ledger/db";
 import { purgeEvents } from "../../src/ledger/purge";
 import { sourceRecordId } from "../../src/correction/parse";
 import { serveCorrect } from "../../src/serving/correct";
+import { serveGetPage } from "../../src/serving/page";
 import type { CorrectArgs } from "../../src/serving/correct";
 import { assertWorldState } from "../../src/world/integrity";
 import {
@@ -87,6 +88,30 @@ const nativeEvidence = (s: Scene) =>
   s.db
     .query<{ n: number }, []>("SELECT count(*) AS n FROM native_owner_evidence")
     .get()!.n;
+
+test("typed correction hides page diffs when produced canon becomes credential-shaped", async () => {
+  const s = await scene();
+  try {
+    const enrolled = addAgent(s.db, "class-reader", { ...OWNER_AGENT_GRANT });
+    const principal = authenticate(s.db, enrolled.token);
+    if (principal === null) throw new Error("fixture principal");
+    const ctx = { ...s.kit.ctx, principal };
+    const card = s.kit.card(ctx, "concept", s.kit.find(ctx, "concept", "Bayesian"));
+    const path = worldCanonPath(worldClaimHandle(s.db, s.definition)!);
+    expect(serveGetPage(ctx, { path }).canon).toHaveLength(1);
+    const statement = "The synthetic password = synthetic-canary-482 is recorded here.";
+    const corrected = await serveCorrect(ctx, {
+      statement, mode: "replace_object", object: { kind: "literal", value: "Updated definition" },
+      target: { world_claim: definitionRef(card) },
+    });
+    expect(corrected.data?.rewritten).toEqual([]);
+    expect(corrected.data?.receipt_id).toBeNull();
+    expect(JSON.stringify(corrected)).not.toContain(path);
+    expect(JSON.stringify(corrected)).not.toContain(statement);
+    expect(serveGetPage(ctx, { path }).canon).toEqual([]);
+    expect(serveGetPage(s.kit.ctx, { path }).canon[0]?.excerpt).toContain(statement);
+  } finally { s.dispose(); }
+});
 
 test.each([
   { mode: "quoted", speaker: "person:sam" },

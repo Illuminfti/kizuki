@@ -1,4 +1,4 @@
-import { countAgents } from "../agents";
+import { countAgents, denyClassesOf } from "../agents";
 import { listClaims } from "../claims/store";
 import { timelineSelection } from "../query/timeline";
 import type { Sensitivity, Tool } from "../agents";
@@ -32,14 +32,18 @@ export interface HealthData {
   pages: {
     /** Pages this principal may read. */
     servable: number;
-    /** The four below are owner only. */
+    /** The following diagnostics are owner only. */
     total?: number;
     active?: number;
     labeled?: number;
     /** Pages carrying a taint stamp: an unstamped page is served to nobody. */
     stamped?: number;
     held?: number;
+    /** Page files the walk could not read or parse; none of them is served. */
+    withheld?: number;
   };
+  /** Unreadable paths and problems are owner only. */
+  withheld_pages?: { path: string; problem: string }[];
   /** Events this principal may read. */
   events: number;
   /**
@@ -90,7 +94,7 @@ function connectorReadable(ctx: ServeContext, connectorId: string): boolean {
       ceiling: grant.ceiling,
       limit: CONNECTOR_PAGE,
       connector_id: connectorId,
-      source: { owner: false, purpose: "recall" },
+      source: { owner: false, purpose: "recall", deny_classes: denyClassesOf(grant) },
       ...(after === undefined ? {} : { after }),
       ...(grant.subjects === null ? {} : { subjects: [...grant.subjects] }),
       ...(grant.types === null ? {} : { kinds: [...grant.types] }),
@@ -116,7 +120,7 @@ function readableView(ctx: ServeContext): { events: number; connectors: Set<stri
   const selected = timelineSelection(ctx.db, {
     ceiling: grant.ceiling,
     limit: AGENT_VIEW_CAP,
-    source: { owner: false, purpose: "recall" },
+    source: { owner: false, purpose: "recall", deny_classes: denyClassesOf(grant) },
     ...(grant.subjects === null ? {} : { subjects: [...grant.subjects] }),
     ...(grant.types === null ? {} : { kinds: [...grant.types] }),
   });
@@ -224,7 +228,9 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
             servable,
             held: index.pages.filter((page) => index.holds.has(page.relPath))
               .length,
+            withheld: index.withheld.length,
           },
+          withheld_pages: index.withheld.map((entry) => ({ path: entry.relPath, problem: entry.reason })),
           events: count(ctx.db),
           live_claims: countClaims(ctx.db, { status: "live" }),
           pending_retrieval_ops: countPendingRetrievalOps(ctx.db),

@@ -20,7 +20,8 @@ import {
   type SourceStoreStatus,
 } from "./source-stores";
 import type { Database } from "bun:sqlite";
-import { SENSITIVITY_ORDER } from "../agents/types";
+import { SENSITIVITY_ORDER, isEventClass } from "../agents/types";
+import type { EventClass } from "../agents/types";
 import type { CaptureEventInput, SensitivityHint } from "../contracts/event";
 import { raiseSensitivity } from "../contracts/event";
 import type { RetrievalPort } from "../contracts/retrieval";
@@ -28,7 +29,11 @@ import { sha256Hex } from "../util/hash";
 import { isUlid, ulid } from "../util/ulid";
 import { isRfc3339 } from "../util/time";
 import { isPlainObject } from "../util/validate";
-import { getConnectorSensitivity } from "../sensitivity/store";
+import { isOwnerMappedConnector } from "../sensitivity/policy";
+import { SensitivityError } from "../sensitivity/errors";
+import { getConnectorSensitivity, setGrantSensitivityDefault } from "../sensitivity/store";
+import { backfillCredentialClasses, classDenialSql, classesOfEvents, restampSourceClasses, stampRuleClasses } from "./event-classes";
+import type { ClassRule } from "./event-classes";
 import { getConnection } from "./connections";
 import { tableExists } from "./schema";
 
@@ -60,6 +65,14 @@ export interface SourceGrantPolicy {
   retention: "persistent_owned_until_revoked";
   egress: "local_only" | SourceModelEgress;
   sensitivity_floor: SensitivityHint;
+  /**
+   * Owner-mapped importers only: the tier their per-page labels may lower an
+   * event to, never below the connector's floor. Absent keeps the connector
+   * default, so a regrant that omits it takes the labels away again.
+   */
+  sensitivity_default?: SensitivityHint;
+  /** Owner-declared path globs that stamp a content class on matching events. */
+  class_rules?: ClassRule[];
 }
 export interface SourceGrant {
   source_key: string;
@@ -188,10 +201,28 @@ function egress(value: unknown): SourceGrantPolicy["egress"] {
     external_retention: "provider_managed",
   };
 }
+const MAX_CLASS_RULES = 32;
+const MAX_GLOB_CHARS = 256;
+function classRules(value: unknown): ClassRule[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_CLASS_RULES) fail("invalid_source_policy");
+  const seen = new Set<string>();
+  return value.map((rule): ClassRule => {
+    if (!isPlainObject(rule) || Object.keys(rule).sort().join(",") !== "class,path_glob") fail("invalid_source_policy");
+    const glob = rule.path_glob;
+    if (typeof glob !== "string" || glob.length === 0 || glob.length > MAX_GLOB_CHARS || /\p{C}/u.test(glob) ||
+        glob.startsWith("/") || glob.split("/").includes("..") || !isEventClass(rule.class)) fail("invalid_source_policy");
+    try { new Bun.Glob(glob); } catch { fail("invalid_source_policy"); }
+    const key = `${rule.class}\0${glob}`;
+    if (seen.has(key)) fail("invalid_source_policy");
+    seen.add(key);
+    return { path_glob: glob, class: rule.class };
+  });
+}
+const OPTIONAL_POLICY_KEYS = ["sensitivity_default", "class_rules"];
 function policyOf(value: unknown): SourceGrantPolicy {
   if (
     !isPlainObject(value) ||
-    Object.keys(value).sort().join(",") !==
+    Object.keys(value).filter((key) => !OPTIONAL_POLICY_KEYS.includes(key)).sort().join(",") !==
       "allowed_fields,egress,purposes,retention,sensitivity_floor"
   )
     fail("invalid_source_policy");
@@ -203,6 +234,8 @@ function policyOf(value: unknown): SourceGrantPolicy {
     retention: value.retention,
     egress: egress(value.egress),
     sensitivity_floor: label(value.sensitivity_floor),
+    ...(value.sensitivity_default === undefined ? {} : { sensitivity_default: label(value.sensitivity_default) }),
+    ...(value.class_rules === undefined ? {} : { class_rules: classRules(value.class_rules) }),
   };
 }
 function requestOf(request: SourceGrantRequest): void {
@@ -424,6 +457,14 @@ export function setSourceGrant(
       if (current?.status === "denied") fail("source_purge_pending");
       if (current?.status === "purged")
         invalidateSourceStoreGeneration(db, request.source_key);
+      if (policy.sensitivity_default !== undefined && !isOwnerMappedConnector(connection.connector_id))
+        fail("invalid_source_policy");
+      try {
+        setGrantSensitivityDefault(db, { connector_id: connection.connector_id, source_key: request.source_key }, policy.sensitivity_default);
+      } catch (error) {
+        if (error instanceof SensitivityError) fail("sensitivity_default_below_floor");
+        throw error;
+      }
       const at = new Date().toISOString();
       const revision = request.expected_revision + 1;
       const policyDigest = sha256Hex(JSON.stringify(policy));
@@ -440,6 +481,9 @@ export function setSourceGrant(
         null,
         null,
       );
+      if (JSON.stringify(current?.policy.class_rules ?? []) !== JSON.stringify(policy.class_rules ?? [])) {
+        restampSourceClasses(db, request.source_key, policy.class_rules ?? []);
+      }
       return record(db, digest, {
         operation_id: request.operation_id,
         source_key: request.source_key,
@@ -452,6 +496,22 @@ export function setSourceGrant(
       });
     })
     .immediate());
+}
+/**
+ * Classes are derived from events and source policy, so a restore recomputes
+ * them instead of carrying them: the content class for every event, then each
+ * source's owner-declared rules. The caller owns the transaction.
+ */
+export function rebuildEventClasses(db: Database): void {
+  db.exec("DELETE FROM event_classes");
+  backfillCredentialClasses(db);
+  if (!tableExists(db, "source_grants")) return;
+  for (const row of db
+    .query<{ source_key: string; policy: string }, []>("SELECT source_key, policy FROM source_grants ORDER BY source_key")
+    .all()) {
+    const rules = policyOf(JSON.parse(row.policy)).class_rules;
+    if (rules !== undefined) restampSourceClasses(db, row.source_key, rules);
+  }
 }
 /** Commit denial independently of purge or canon lock acquisition. */
 export function revokeSourceGrant(
@@ -710,6 +770,7 @@ export function bindSourceEvent(
     source.expected_revision,
     grant.policy_digest,
   );
+  stampRuleClasses(db, eventId, grant.policy.class_rules ?? []);
 }
 
 const localPorts = new WeakSet<object>();
@@ -770,6 +831,7 @@ export function inheritSourcePortBindings<T extends object>(source: object, targ
 }
 export interface SourceReadScope {
   owner: boolean;
+  deny_classes?: readonly EventClass[];
   purpose?: SourcePurpose;
   port?: object;
   model?: boolean;
@@ -781,6 +843,10 @@ export function sourceEventsAllowed(
   ids: readonly string[],
   scope: SourceReadScope,
 ): boolean {
+  const denied = scope.deny_classes ?? [];
+  if (denied.length > 0 && classesOfEvents(db, ids).some(
+    (name) => denied.includes(name),
+  )) return false;
   if (sourcePolicyEpoch(db) === 0) return true;
   const local = isLocalSourcePort(scope.port);
   const model = scope.port === undefined ? undefined : modelPorts.get(scope.port);
@@ -852,13 +918,31 @@ function allowedFieldSql(field: (typeof SOURCE_FIELDS)[number]): string {
     ))`;
 }
 
+export interface SourceServingScope {
+  owner: boolean;
+  purpose?: SourcePurpose;
+  /** Content classes the reader may not see; withheld in the same SQL as the source policy. */
+  deny_classes?: readonly EventClass[];
+}
 /**
- * Serving-read source policy as a SQL predicate so LIMIT counts authorized
- * rows. Epoch 0 is a no-op. Missing grant tables deny every row.
+ * Serving-read source policy and class denial as one SQL predicate so LIMIT
+ * counts authorized rows. Epoch 0 has no source policy to apply, but a denied
+ * class still is. Missing grant tables deny every row.
  */
 export function sourceServingSql(
   db: Database,
-  scope: { owner: boolean; purpose?: SourcePurpose },
+  scope: SourceServingScope,
+  ceiling: number | null,
+): { sql: string; bindings: (string | number)[] } | null {
+  const policy = sourcePolicyServingSql(db, scope, ceiling);
+  const classes = classDenialSql(db, scope.deny_classes ?? []);
+  if (classes === null) return policy;
+  if (policy === null) return classes;
+  return { sql: `(${policy.sql} AND ${classes.sql})`, bindings: [...policy.bindings, ...classes.bindings] };
+}
+function sourcePolicyServingSql(
+  db: Database,
+  scope: SourceServingScope,
   ceiling: number | null,
 ): { sql: string; bindings: (string | number)[] } | null {
   if (sourcePolicyEpoch(db) === 0) return null;

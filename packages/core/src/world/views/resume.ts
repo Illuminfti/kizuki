@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
-import { SENSITIVITY_ORDER, type Grant } from "../../agents/types";
+import { SENSITIVITY_ORDER, denyClassesOf, type Grant } from "../../agents/types";
 import { OWNER_AGENT_GRANT } from "../../agents/types";
 import { validateAgentGrant } from "../../agents/identity";
 import { compareRfc3339 } from "../../agents/time";
@@ -21,11 +21,11 @@ export type ShareData = {
   readonly handle: string;
   readonly expiresAt: string;
 };
-type Scope = Pick<Grant, "ceiling" | "types" | "subjects" | "since" | "until">;
+type Scope = Pick<Grant, "ceiling" | "types" | "subjects" | "since" | "until" | "deny_classes">;
 
 function scopeOf(grant: Grant): Scope {
   const sorted = (values: readonly string[] | null) => values === null ? null : [...new Set(values)].sort();
-  return { ceiling: grant.ceiling, types: sorted(grant.types), subjects: sorted(grant.subjects), since: grant.since, until: grant.until };
+  return { ceiling: grant.ceiling, types: sorted(grant.types), subjects: sorted(grant.subjects), since: grant.since, until: grant.until, deny_classes: [...denyClassesOf(grant)].sort() };
 }
 
 /** Does the reader's grant omit any part of the issuer's grant? No evidence is inspected for this bit. */
@@ -34,6 +34,7 @@ export function scopeClipped(reader: Grant, issuer: Scope): boolean {
     wide === null || (narrow !== null && narrow.every((item) => wide.includes(item)));
   return SENSITIVITY_ORDER[reader.ceiling] < SENSITIVITY_ORDER[issuer.ceiling] ||
     !covers(reader.types, issuer.types) || !covers(reader.subjects, issuer.subjects) ||
+    denyClassesOf(reader).some((name) => !denyClassesOf(issuer).includes(name)) ||
     (reader.since !== null && (issuer.since === null || compareRfc3339(reader.since, "since", issuer.since, "since") > 0)) ||
     (reader.until !== null && (issuer.until === null || compareRfc3339(reader.until, "until", issuer.until, "until") < 0));
 }
@@ -85,8 +86,10 @@ function decodeResume(row: ResumeRow | null): ResumeRead | null {
   if (row?.handle_id == null || fingerprintOf(Buffer.from(row.scope)) !== row.scope_digest) return null;
   try {
     const valid = parseWorldValid(JSON.parse(row.valid)), scope: unknown = JSON.parse(row.scope);
-    if (valid === null || !isPlainObject(scope) || !hasWorldKeys(scope, ["ceiling", "types", "subjects", "since", "until"], [])) return null;
-    const grant = validateAgentGrant({ ...OWNER_AGENT_GRANT, ...scope } as Grant);
+    if (valid === null || !isPlainObject(scope) || !hasWorldKeys(scope, ["ceiling", "types", "subjects", "since", "until"], ["deny_classes"])) return null;
+    // A pre-class handle was issued without any class restriction. Preserve
+    // that saved scope so newly restricted readers report partial coverage.
+    const grant = validateAgentGrant({ ...OWNER_AGENT_GRANT, ...scope, deny_classes: scope.deny_classes === undefined ? [] : scope.deny_classes } as Grant);
     return { handle_id: row.handle_id, operation: row.operation, valid, scope: scopeOf(grant) };
   } catch (error) {
     if (error instanceof SyntaxError || error instanceof TypeError || error instanceof RangeError) return null;

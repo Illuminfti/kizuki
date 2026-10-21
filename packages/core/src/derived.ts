@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { initPageClasses, stampPageClasses, removePageClasses } from "./canon/page-classes";
 import {
   derivedMetaNeedsRebuild,
   readDerivedMeta,
@@ -94,6 +95,9 @@ export function rebuildDerived(
   initSearch(db);
   initGraph(db);
   return db.transaction(() => {
+    initPageClasses(db);
+    db.exec("DELETE FROM canon_page_classes");
+    for (const page of report.pages) stampPageClasses(db, page);
     const search = rebuildSearchLayer(db, input);
     // Held inactive pages still provide aliases needed to exclude relations.
     const graph = rebuildGraphLayer(db, { ...input, pages: report.pages });
@@ -119,6 +123,7 @@ export function refreshDerivedPage(
   initGraph(db);
   const report = listCanonPagesReport(vaultPath);
   db.transaction(() => {
+    stampPageClasses(db, page);
     replacePage(db, page);
     refreshPageEdges(db, page, report.pages, report.skipped.length);
   }).immediate();
@@ -133,6 +138,7 @@ export function removeDerivedPage(
   initGraph(db);
   const report = listCanonPagesReport(vaultPath);
   db.transaction(() => {
+    removePageClasses(db, pageId);
     removeDoc(db, "canon", pageId);
     removePageEdges(db, pageId, report.pages, report.skipped.length);
   }).immediate();

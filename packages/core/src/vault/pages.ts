@@ -335,6 +335,26 @@ export function fatalCanonSkips(
   );
 }
 
+/**
+ * Serving splits the fatal skips in two. One page file that cannot be read, a
+ * symlink included, is withheld on its own and named, because it says nothing
+ * about the rest of the vault. Everything else (a page that will not parse, a
+ * directory that cannot be listed, a duplicate id, a truncated walk) may hide
+ * pages or their meaning and stays fatal.
+ */
+export function splitServingSkips(skipped: readonly SkippedPage[]): {
+  fatal: SkippedPage[];
+  withheld: SkippedPage[];
+} {
+  const fatal: SkippedPage[] = [];
+  const withheld: SkippedPage[] = [];
+  for (const entry of fatalCanonSkips(skipped)) {
+    const singlePage = entry.code === "unreadable" && isCanonPagePath(entry.relPath);
+    (singlePage ? withheld : fatal).push(entry);
+  }
+  return { fatal, withheld };
+}
+
 /** Stable hash of live page identity and path. Shared by search and graph stamps. */
 export function canonPagesHash(pages: readonly CanonPage[]): string {
   const material = pages

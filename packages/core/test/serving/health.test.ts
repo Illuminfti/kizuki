@@ -33,7 +33,9 @@ describe("serveHealth", () => {
       stamped: 9,
       servable: 6,
       held: 1,
+      withheld: 0,
     });
+    expect(data?.withheld_pages).toEqual([]);
     expect(data?.events).toBe(6);
     // Seven recorded page claims remain; the held page claim was purged.
     expect(data?.live_claims).toBe(7);

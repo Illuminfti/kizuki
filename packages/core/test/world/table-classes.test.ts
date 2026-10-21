@@ -28,7 +28,6 @@ import {
   type WorldTableSpec,
 } from "../../src/world/tables/registry";
 import { rebuildWorldLayer } from "../../src/derived";
-import { WORLD_MIGRATION_BASE } from "../../src/world/tables/versions";
 import { validEvent } from "../fixtures";
 
 // Export and restore each open a real vault; bound them for a loaded host.

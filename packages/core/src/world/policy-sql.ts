@@ -1,4 +1,4 @@
-import { SENSITIVITY_ORDER } from "../agents";
+import { SENSITIVITY_ORDER, denyClassesOf } from "../agents";
 import { LIVE_PREDICATE } from "../ledger/ledger";
 import { sourceServingSql } from "../ledger/source-grants";
 import { ceilingSql, instantBoundPair, instantPairSql } from "../query/sql";
@@ -16,7 +16,11 @@ export function authorizedEventSql(ctx: ServeContext): {
   bindings.push(SENSITIVITY_ORDER[grant.ceiling]);
   const source = sourceServingSql(
     ctx.db,
-    { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" },
+    {
+      owner: ctx.principal.kind === "owner",
+      purpose: ctx.sourcePurpose ?? "recall",
+      deny_classes: denyClassesOf(grant),
+    },
     SENSITIVITY_ORDER[grant.ceiling],
   );
   if (source !== null) {

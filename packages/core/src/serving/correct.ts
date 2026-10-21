@@ -3,6 +3,7 @@ import { extendOwnedCanonIo, snapshotCanonIo, withCanonMutationAsync } from "../
 import { VaultMutationError } from "../vault/mutation-scope";
 import {
   sourcePolicyEpoch,
+  sourceEventsAllowed,
   requireSourceEvents,
 } from "../ledger/source-grants";
 import { claimReader } from "./claims";
@@ -19,7 +20,8 @@ import { recordNativeCorrection } from "../correction/evidence";
 import { text } from "./arguments";
 import { auditArguments, claimsIo, gateAsync, principalName } from "./gate";
 import type { Served } from "./gate";
-import { pendingCanonRewrite, rewriteCanon } from "./rewrite";
+import { pageSnapshot, pendingCanonRewrite, rewriteCanon } from "./rewrite";
+import { worldCanonPath, worldClaimHandle } from "../canon/world-materialization";
 import type { RewrittenPage, CanonRewrite } from "./rewrite";
 import type { CanonRecoveryPending } from "../correction/types";
 import { claimVisibleTo, groupByKey, readable, resolve } from "./target";
@@ -37,7 +39,7 @@ import { parseIntent } from "./correct-args";
 import type { CorrectionIntent, CorrectObject, CorrectRefresh, CorrectionChange } from "./correct-args";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { getCanonReceipt } from "../canon/receipts";
-import { resolvePrincipal } from "../agents";
+import { denyClassesOf, resolvePrincipal } from "../agents";
 import type { VaultMutationScope } from "../vault/mutation-scope";
 import type { CorrectIo } from "../correction/types";
 
@@ -261,6 +263,9 @@ async function correctWorldClaim(
         ctx.principal.kind === "owner" || ctx.principal.grant.relay_owner_corrections,
       grant: ctx.principal.grant,
     });
+  const handle = worldClaimHandle(ctx.db, claim.claim_id);
+  const pagePath = handle === null ? null : worldCanonPath(handle);
+  const beforeReadable = pagePath !== null && pageSnapshot(owned, ctx, pagePath).readable;
   const result = await correctWithinMutation(
     scope,
     owned,
@@ -273,6 +278,7 @@ async function correctWorldClaim(
   ).catch((error: unknown) => {
     throw servableRefusal(error);
   });
+  const disclosePage = beforeReadable && pagePath !== null && pageSnapshot(owned, ctx, pagePath).readable;
   return {
     canon: [],
     quoted: [],
@@ -283,9 +289,9 @@ async function correctWorldClaim(
     data: {
       ...(result.recovery_pending === undefined
         ? {}
-        : { recovery_pending: result.recovery_pending }),
+        : { recovery_pending: ctx.principal.kind === "owner" || disclosePage ? result.recovery_pending : [] }),
       mode: intent.change.mode,
-      receipt_id: result.receipt_id,
+      receipt_id: disclosePage ? result.receipt_id : null,
       event_id: result.event_id,
       claim_id: result.claim_ids[0] ?? null,
       superseded: result.superseded.map(({ claim_id, claim_key }) => ({
@@ -293,6 +299,7 @@ async function correctWorldClaim(
         claim_key,
       })),
       rewritten: result.rewritten.flatMap((rewrite) => {
+        if (!disclosePage || rewrite.page_path !== pagePath) return [];
         if (rewrite.receipt_id === null) return [];
         const receipt = getCanonReceipt(ctx.db, rewrite.receipt_id);
         if (receipt === null) return [];
@@ -309,7 +316,7 @@ async function correctWorldClaim(
         claim_key,
         claim_ids,
       })),
-      answer: result.answer,
+      answer: disclosePage ? result.answer : args.dry_run === true ? "Correction preview complete." : "Recorded the correction.",
       refreshedWorld: null,
     },
     audit_ids: {
@@ -401,7 +408,15 @@ function assertSufficientAuthority(
   replacement: string | undefined,
   at: string,
 ): void {
-  const rivals = listClaims(ctx.db, { claim_key: claimKey, status: "live" });
+  const rivals = listClaims(ctx.db, {
+    claim_key: claimKey,
+    status: "live",
+    filter: (claim) => sourceEventsAllowed(ctx.db, claim.provenance, {
+      owner: ctx.principal.kind === "owner",
+      purpose: "correction",
+      deny_classes: denyClassesOf(ctx.principal.grant),
+    }),
+  });
   const live = rivals.length > 0 ? rivals : group;
   const incoming: ConflictClaim = {
     claim_id: "",
@@ -596,7 +611,7 @@ export async function serveCorrect(
           "held",
           "source authorization does not permit this correction",
         );
-      readable(grant, resolved.claims);
+      readable(ctx.db, grant, resolved.claims);
 
       const groups = groupByKey(resolved.claims);
       if (groups.size > 1) {

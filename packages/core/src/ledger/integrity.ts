@@ -358,7 +358,8 @@ export function assertServableLedger(db: Database, expectedVersion: number): voi
   // initServe and initCanon. Reads require them, without creating any object.
   for (const query of [
     "SELECT agent_id, quarantined_at, quarantine_reason FROM agents LIMIT 0",
-    "SELECT relay_owner_corrections, grant_epoch FROM agent_grants LIMIT 0",
+    "SELECT relay_owner_corrections, grant_epoch, deny_classes FROM agent_grants LIMIT 0",
+    "SELECT event_id, class FROM event_classes LIMIT 0",
     "SELECT audit_id, served_count, denied_count, grant_epoch FROM agent_audit LIMIT 0",
     "SELECT * FROM canon_receipts LIMIT 0", "SELECT * FROM page_index LIMIT 0",
     "SELECT * FROM canon_source_erasure_intents LIMIT 0", "SELECT * FROM claims LIMIT 0",
