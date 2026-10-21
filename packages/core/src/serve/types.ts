@@ -1,3 +1,4 @@
+import type { AttentionDoctor } from "./doctor-attention";
 import { DEFAULT_CONSOLIDATION_CONFIG, type ConsolidationConfig, type ConsolidationRunReport } from "../contracts/consolidation";
 import type { ConsolidationDoctor } from "./doctor-consolidation";
 import type { ProducerDiagnostic } from "../contracts/producer";
@@ -571,6 +572,7 @@ export interface ServeDoctorReport {
   readonly model: ModelDoctor;
   readonly extraction: ExtractionDoctor;
   readonly consolidation: ConsolidationDoctor;
+  readonly attention: AttentionDoctor;
   readonly egress: EgressDoctor[];
   readonly throughput: ThroughputDoctor;
   readonly oversized: OversizedDoctor;

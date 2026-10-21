@@ -1,3 +1,4 @@
+import { attentionDoctor } from "./doctor-attention";
 import { consolidationDoctor } from "./doctor-consolidation";
 import type { Database } from "bun:sqlite";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
@@ -332,12 +333,13 @@ export function composeBrief(
   db: Database,
   now: string,
   modelRef: string | null,
+  vaultPath = "",
 ): string {
   const day = now.slice(0, 10);
   const facts = gatherFacts(db, now);
   return serializePage({
     data: briefData(day, facts.sensitivity),
-    body: briefBody(day, facts, modelRef),
+    body: briefBody(day, facts, modelRef) + `\n## Attention\n\n${attentionDoctor(db, vaultPath, now).detail}\n`,
   });
 }
 

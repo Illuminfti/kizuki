@@ -620,6 +620,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(report.serve.model.detail);
   io.out(report.serve.extraction.detail);
   io.out(report.serve.consolidation.detail);
+  io.out(report.serve.attention.detail);
   for (const source of report.serve.egress) {
     io.out(`egress source=${source.source_key} connector=${source.connector_id} host=${clean(source.endpoint_host)} model=${clean(source.model)} retention=${source.retention} (${RETENTION_MEANING[source.retention]})`);
     if (source.judge !== null) {

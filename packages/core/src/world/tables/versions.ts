@@ -33,6 +33,7 @@ export const WORLD_MIGRATION_VERSIONS = {
   consol: 42,
   // slot: ident
   // slot: attn
+  attn: 43,
   // slot: refs
   refs: 41,
   // slot: fcst

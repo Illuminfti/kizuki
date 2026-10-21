@@ -84,3 +84,5 @@ export type { ScanCoverage, PassCoverage } from "../contracts/source-coverage";
 export { WORLD_SLICE_SCHEMA, validateWorldSlice, type WorldSlice, type SliceItem, type ProviderCoverage } from "../contracts/world-slice";
 
 export { ATLAS_SCHEMA, ATLAS_PANELS, ATLAS_OBJECT_OPERATIONS, validateAtlas, type Atlas, type AtlasPanel, type AtlasEntry, type AtlasPanelName, type AtlasObjectOperation } from "../contracts/atlas";
+export * from "../contracts/attention";
+export { setAttentionDisposition } from "./attention/state";

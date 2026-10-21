@@ -1,3 +1,5 @@
+import { deliverPendingAttention } from "../world/attention/deliver";
+import { OWNER } from "../agents";
 import type { LlmPort } from "../contracts/llm";
 import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-scope";
 import { recoverCanonWrites } from "../canon/recovery";
@@ -379,9 +381,10 @@ async function runBrief(
   now: string,
   modelRef: string | null,
 ): Promise<Partial<RunReceipt>> {
+  await deliverPendingAttention({ db, vaultPath, principal: OWNER });
   const notifier = createFileNotifier(vaultPath);
   const day = dayOf(now);
-  const body = composeBrief(db, now, modelRef);
+  const body = composeBrief(db, now, modelRef, vaultPath);
   await notifier.notify({
     notification_id: day,
     title: `brief:${day}`,

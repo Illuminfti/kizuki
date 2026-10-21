@@ -16,6 +16,9 @@ export const ORACLE_COVERAGE_FLOOR = [
 
 export const WORLD_GATE_TESTS = [
   "packages/core/test/world/verification-matrix.test.ts",
+  "packages/core/test/world/attention.test.ts", "packages/core/test/world/attention-security.test.ts", "packages/core/test/world/attention-commitment.test.ts",
+  "packages/core/test/world/atlas.test.ts", "packages/core/test/world/atlas-security.test.ts",
+  "packages/core/test/world/slice-artifact.test.ts",
   "packages/core/test/world/slice.test.ts", "packages/core/test/world/slice-session.test.ts",
   "packages/core/test/world/verification-resources.test.ts",
   "packages/core/test/world/diff.test.ts",

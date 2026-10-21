@@ -208,10 +208,16 @@ describe("the stage lists", () => {
     expect(conceptCard().status).toBe("current");
   });
 
-  test("each shipped assembler serves one registered kind, once", () => {
-    const ids = KIND_ASSEMBLERS.map((assembler) => assembler.kind);
-    expect(new Set(ids).size).toBe(ids.length);
-    for (const id of ids) expect(WORLD_REGISTRY.kind(id)).toBeDefined();
+  test("each shipped assembler serves one registered kind and card variant, once", () => {
+    const variants = KIND_ASSEMBLERS.map(({ kind, cardSchema }) =>
+      JSON.stringify([kind, cardSchema ?? null]));
+    expect(new Set(variants).size).toBe(variants.length);
+    for (const assembler of KIND_ASSEMBLERS)
+      expect(WORLD_REGISTRY.kind(assembler.kind)).toBeDefined();
+    const defaults = KIND_ASSEMBLERS.filter(({ cardSchema }) => cardSchema === undefined);
+    expect(new Set(defaults.map(({ kind }) => kind)).size).toBe(defaults.length);
+    expect(new Set(defaults.map(({ kind }) => kind))).toEqual(
+      new Set(KIND_ASSEMBLERS.map(({ kind }) => kind)));
   });
 
   test("every slot marker appears exactly once in the file that owns its list", () => {

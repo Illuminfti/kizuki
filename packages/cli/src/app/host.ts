@@ -1,3 +1,4 @@
+import { setAttentionDisposition } from "@kizuki/core/world";
 import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -39,6 +40,7 @@ class AppOperationFailure extends AppFailure {
     constructor(code: string, readonly result: AppOperation['result']) { super(code); }
 }
 const ROUTES: Record<Exclude<AppRoute, 'world_view'>, readonly string[]> = {
+    attention_disposition: ['cue', 'action', 'until'],
     status: [], catalog: [], initialize: ['path', 'no_service'], service_status: [], install_service: [], sources: [], enroll: ['provider', 'path', 'fields', 'calendar_id', 'source_key', 'new_source'],
     consent: ['source_key', 'expected_revision', 'operation_id', 'policy'], capture: ['source_key', 'mode'], query: ['text', 'limit'], activity: ['limit'], undo: ['receipt_id', 'cascade'], operation: ['id'],
     revoke: ['source_key', 'expected_revision', 'operation_id'], resume_revocation: ['source_key', 'operation_id'],
@@ -161,6 +163,11 @@ export function createAppHost(baseIo: CliIo, deps: AppHostDeps = {}, options: { 
         if (route === 'world_view') return context(async ctx => {
             const envelope = serveWorldView({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }, input);
             return input.operation === 'evidence' ? envelope : envelope.data;
+        });
+        if (route === 'attention_disposition') return context(async ctx => {
+            const action = string(input.action, 10);
+            if (action !== 'dismiss' && action !== 'snooze') throw new AppFailure('invalid_request');
+            return setAttentionDisposition({ db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER }, string(input.cue, 43), action, input.until);
         });
         if (route === 'catalog')
             return { sources: catalog() };

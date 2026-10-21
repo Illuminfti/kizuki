@@ -13,7 +13,7 @@ import type { ShareData } from "../../src/world/views/resume";
 
 export const WORLD_VERIFICATION_OPERATIONS = [
   "find_concepts", "find_situations", "concept", "situation", "describe",
-  "evidence", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people", "find_procedures", "procedure", "skill", "framework", "outcome", "artifact_version", "find_artifacts", "diff", "slice", "atlas",
+  "evidence", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people", "find_procedures", "procedure", "skill", "framework", "outcome", "artifact_version", "find_artifacts", "diff", "slice", "atlas", "attention",
 ] as const;
 export type VerificationOperation = typeof WORLD_VERIFICATION_OPERATIONS[number];
 const PERSON = "person:verification-ada";
@@ -96,6 +96,7 @@ export function verificationInputs(scene: NoninterferenceScene): Record<Verifica
     history: input("history", { concept: scene.refs.concept }), share: input("share", { of }),
     resume: input("resume", { handle }), question: input("question", { question }),
     find_questions: input("find_questions", { label: "update" }), frontier: input("frontier"),
+    attention: input("attention"),
     atlas: input("atlas", { panel: "people" }),
     slice: input("slice", { task: "Resume the launch", kinds: ["concept", "situation"], budgetTokens: 2000 }),
     person: input("person", { person }), find_people: input("find_people", { label: "Ada" }),
