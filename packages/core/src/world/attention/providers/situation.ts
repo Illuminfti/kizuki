@@ -5,6 +5,7 @@ import type { SituationCard } from "../../../contracts/situation-card";
 export interface SituationCue {
   readonly source: AttentionSource;
   readonly grounds: readonly Relation[];
+  readonly detail?: { readonly commitment: string; readonly status: string };
 }
 /** Explicit goals supply relevance. Repetition and retrieval are never inputs. */
 export function situationCues(card: SituationCard): SituationCue[] {

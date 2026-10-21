@@ -14,7 +14,8 @@ import { revokeSourceGrant } from "../../src/ledger/source-grants";
 import { attentionDoctor } from "../../src/serve/doctor-attention";
 import { serveWorldView } from "../../src/serving/world-view";
 import { deliverAttention, deliverPendingAttention } from "../../src/world/attention/deliver";
-import { setAttentionDisposition } from "../../src/world/attention/state";
+import { currentAttention, setAttentionDisposition } from "../../src/world/attention/state";
+import { resolveWorldObject, withUnissuedWorldReferences } from "../../src/world/references";
 import { collectReadFrames } from "../../src/world/pipeline/frame";
 import { ATTENTION_TABLE_SPECS } from "../../src/world/tables/attention";
 import { attentionFixture, ATTENTION_WHEN } from "../helpers/attention-fixture";
@@ -139,5 +140,28 @@ test("read-only doctor computes pending cues without issuing persistent referenc
       expect(readonly.query<{ n: number }, []>("SELECT count(*) n FROM world_wire_refs").get()!.n).toBe(0);
     } finally { readonly.close(); }
     expect(f.db.query("SELECT claim_id,confidence,status FROM claims ORDER BY claim_id").all()).toEqual(before);
+  } finally { f.dispose(); }
+}, 120_000);
+
+test("diagnostic reference tokens cannot resolve or be shared after their synchronous scope", async () => {
+  const f = await attentionFixture();
+  try {
+    f.db.exec("DELETE FROM world_authorization_namespaces");
+    const agent = addAgent(f.db, "diagnostic-ref-reader", { ...OWNER_AGENT_GRANT, ceiling: "public", subjects: ["situation:attention"] });
+    const ctx = { ...f.ctx, principal: authenticate(f.db, agent.token)! };
+    const preview = withUnissuedWorldReferences(f.db, () => f.db.transaction(() => {
+      const owner = currentAttention(f.ctx, new Date().toISOString()), scoped = currentAttention(ctx, new Date().toISOString());
+      const ref = owner.read.entries[0]!.candidate.subject;
+      expect(resolveWorldObject(f.db, owner.ns, ref.token)).not.toBeNull();
+      expect(resolveWorldObject(f.db, scoped.ns, ref.token)).toBeNull();
+      return { ns: owner.ns, ref };
+    }).deferred());
+    expect(resolveWorldObject(f.db, preview.ns, preview.ref.token)).toBeNull();
+    for (const reader of [f.ctx, ctx]) {
+      expect(serveWorldView(reader, { operation: "situation", situation: preview.ref, ...ATTENTION_WHEN }).data).toEqual({ status: "not_found" });
+      expect(serveWorldView(reader, { operation: "share", of: { operation: "situation", situation: preview.ref }, ...ATTENTION_WHEN }).data).toEqual({ status: "not_found" });
+    }
+    const current = f.candidates()[0]!.subject;
+    expect(current.token).not.toBe(preview.ref.token);
   } finally { f.dispose(); }
 }, 120_000);

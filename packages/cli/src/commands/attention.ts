@@ -22,6 +22,8 @@ export const attentionCommand: Command = {
         if (parsed.flags.has("--json")) io.out(jsonEnvelope("attention", "ok", envelope));
         else if ("result" in envelope.data && "data" in envelope.data.result && envelope.data.result.data.schema === "kizuki.attention/v1")
           for (const line of attentionCli.render(envelope.data.result.data)) io.out(line);
+        else io.out("result" in envelope.data && envelope.data.result.status === "unavailable"
+          ? `Attention unavailable: ${envelope.data.result.reason}` : "Attention is unavailable.");
       } else {
         const result = setAttentionDisposition(owner, cue, action as "dismiss" | "snooze", parsed.options.get("--until"));
         io.out(parsed.flags.has("--json") ? jsonEnvelope("attention", "ok", result) : `${result.cue}: ${result.disposition}`);

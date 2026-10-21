@@ -828,7 +828,9 @@ describe("the streak walk is bounded", () => {
     const spied = new Proxy(db, {
       get(target, property) {
         const value = Reflect.get(target, property, target) as unknown;
-        if (property !== "query" || typeof value !== "function") return value;
+        // Native SQLite methods require the actual Database receiver. Keep
+        // query observation while allowing the read-only attention transaction.
+        if (property !== "query" || typeof value !== "function") return typeof value === "function" ? value.bind(target) : value;
         return (sql: string) => {
           seen.push(sql);
           return (value as (text: string) => unknown).call(target, sql);

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { ATTENTION_SCHEMA, validateAttention, type Attention, type AttentionCandidate, type AttentionSource } from "../../contracts/attention";
 import type { SituationCard } from "../../contracts/situation-card";
+import { SITUATION_CARD_V2_SCHEMA, type SituationCardV2 } from "../../contracts/situation-card-v2";
 import type { Relation, ViewGap } from "../../contracts/world-card-kit";
 import { canonicalJson } from "../../util/hash";
 import { issuedOpaqueFields } from "../../util/issued-opaque";
@@ -12,7 +13,8 @@ import { readWorldCard, readWorldMatches } from "../pipeline/read";
 import { resolveWorldObject } from "../references";
 import { worldDependencies, type WorldDependencies } from "../dependencies";
 import type { WorldFrame, WorldValidQuery } from "../ops/types";
-import { situationCues } from "./providers/situation";
+import { situationCues, type SituationCue } from "./providers/situation";
+import { commitmentCues } from "./providers/commitment";
 import { attentionCoverageStates } from "./providers/coverage";
 
 export const ATTENTION_CANDIDATE_LIMIT = 16;
@@ -32,9 +34,9 @@ function visibleMeaning(row: Relation) {
   return { subject: row.subject, predicate: row.predicate, object: row.object, perspective: row.perspective,
     polarity: row.polarity, valid: row.valid };
 }
-function key(frame: WorldFrame, source: AttentionSource, subject: string, grounds: readonly Relation[]): string {
-  const basis = grounds.map(visibleMeaning).sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b)));
-  return createHash("sha256").update(canonicalJson({ namespace: frame.ns.id, provider: source, subject, basis })).digest("base64url");
+function key(frame: WorldFrame, cue: SituationCue, subject: string): string {
+  const basis = cue.grounds.map(visibleMeaning).sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b)));
+  return createHash("sha256").update(canonicalJson({ namespace: frame.ns.id, provider: cue.source, subject, basis, ...(cue.detail === undefined ? {} : { detail: cue.detail }) })).digest("base64url");
 }
 function mergeDependencies(target: WorldDependencies | undefined, source: WorldDependencies): void {
   if (target === undefined) return;
@@ -60,6 +62,11 @@ export function readAttention(frame: WorldFrame, valid: WorldValidQuery, now = n
     const card = readWorldCard(work, handle, "situation") as SituationCard | null;
     if (card === null) continue;
     for (const gap of card.coverage.gaps) gaps.add(gap);
+    const detailed = readWorldCard(work, handle, "situation", SITUATION_CARD_V2_SCHEMA) as SituationCardV2 | null;
+    // V2 reports absence of optional commitment/decision records as coverage.
+    // That absence does not make an otherwise complete goal/blocker unreadable.
+    if (detailed !== null && detailed.commitments.length > 0)
+      for (const gap of detailed.coverage.gaps) gaps.add(gap);
     // A failure is visible only for the exact permitted evidence basis.
     const basis = collectConsolidationBasis(work, handle, "situation");
     if (basis !== null && (card.coverage.gaps.includes("pending_consolidation") || card.coverage.gaps.includes("stale_dependencies"))) {
@@ -68,8 +75,8 @@ export function readAttention(frame: WorldFrame, valid: WorldValidQuery, now = n
       else if (loadConfiguredModelRef(frame.ctx.vaultPath) === null) failures.add("model_unavailable");
     }
     mergeDependencies(frame.dependencies, dependencies);
-    for (const cue of situationCues(card)) {
-      const cueKey = key(frame, cue.source, card.situation.ref.token, cue.grounds);
+    for (const cue of [...situationCues(card), ...(detailed === null ? [] : commitmentCues(detailed))]) {
+      const cueKey = key(frame, cue, card.situation.ref.token);
       const stored = frame.ctx.db.query<{ disposition: AttentionCandidate["disposition"]; snoozed_until: string | null; delivered_at: string | null }, [string, string]>(
         "SELECT disposition,snoozed_until,delivered_at FROM world_attention_state WHERE namespace_id=? AND cue_key=?",
       ).get(frame.ns.id, cueKey);

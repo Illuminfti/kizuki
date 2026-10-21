@@ -6,5 +6,5 @@ export const attentionOp: ClaimsOp<true> = {
   source: "claims", name: "attention", keys: { required: [], optional: [] },
   dataSchemas: ["kizuki.attention/v1"],
   parse: () => true,
-  run: (frame, _query, when) => coveredOutcome(readAttention(frame, when.valid).data),
+  run: (frame, _query, when) => when.valid.kind === "all" ? coveredOutcome(readAttention(frame, when.valid).data) : { status: "unavailable", reason: "history" },
 };

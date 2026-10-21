@@ -113,3 +113,16 @@ test("missing coverage, stale consolidation, provider failure and quiet stay dis
     expect(await deliverPendingAttention(stale.ctx)).toMatchObject({ delivered: 0 });
   } finally { missing.dispose(); stale.dispose(); }
 }, 120_000);
+
+test("new visible evidence makes an old goal summary stale and holds delivery", async () => {
+  const f = await attentionFixture();
+  try {
+    expect(f.read().coverage.status).toBe("complete_for_query");
+    await f.seed("situation:attention", { sourceKey: f.situation.sourceKey, predicates: [
+      { predicate: "situation.change", object: { kind: "literal", value: "An independent review was requested" } },
+    ] });
+    expect(f.read().states).toContainEqual({ state: "stale_consolidation", reason: "summary_older_than_ledger" });
+    expect(f.candidates().some(cue => cue.source === "stale_summary")).toBe(true);
+    expect(await deliverPendingAttention(f.ctx)).toMatchObject({ delivered: 0 });
+  } finally { f.dispose(); }
+}, 120_000);
