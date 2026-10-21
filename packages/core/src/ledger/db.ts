@@ -1,4 +1,6 @@
 import { applyTypedRefs } from "../world/tables/refs";
+import { applyObservationHistoryErasure } from "../world/tables/observations";
+import { OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION } from "../world/tables/versions";
 import { applyForecasts } from "../world/tables/forecasts";
 import { applyAttention } from "../world/tables/attention";
 import { applyConsolidation } from "../world/tables/consolidation";
@@ -253,6 +255,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: WORLD_MIGRATION_VERSIONS.fcst, apply: applyForecasts },
   { version: WORLD_MIGRATION_VERSIONS.typed_refs, apply: applyTypedRefs },
   { version: CANON_CLAIM_RETRY_MIGRATION_VERSION, apply: applyCanonClaimRetries },
+  { version: OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION, apply: applyObservationHistoryErasure },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

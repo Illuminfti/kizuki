@@ -629,6 +629,7 @@ test("source revocation physically erases one contribution while independent mea
   try {
     const first = await worldFixture(db, { completeSummary: true });
     const nativeEvents = await addNativeSupport(db, first.claims);
+    assertWorldState(db);
     const second = first;
     initSearch(db);
     initGraph(db);
@@ -905,6 +906,7 @@ test("erasing one event preserves independently supported meaning within the sam
     const first = await worldFixture(db, { completeSummary: true }),
       second = await worldFixture(db, { completeSummary: true, sourceKey: first.sourceKey });
     expect(first.claims).toEqual(second.claims);
+    assertWorldState(db);
     initSearch(db);
     initGraph(db);
     purgeEvents(db, vault.path, { event_id: first.eventId }, "one-event-purge");

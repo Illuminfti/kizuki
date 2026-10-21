@@ -4,6 +4,8 @@ import { beginClaimHistoryRestore, prepareClaimHistoryImport, finishClaimHistory
 import { applyCanonClaimRetries } from "./ledger/canon-claim-retry-schema";
 import { createWorldTables, exportedWorldTables, resetWorldTables } from "./world/tables/registry";
 import { assertWorldState } from "./world/integrity";
+import { removeObservationsWithoutHistory } from "./world/tables/observations";
+import { OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION } from "./world/tables/versions";
 import { capturePortableAdapter, capturePortableLocal, hashPortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
 export type { PortableLocalAdapter } from "./portable-local";
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
@@ -3053,6 +3055,11 @@ export function restoreVault(
           installEventIdentityGuards(db);
         }
         validateRestoredEventOrigins(db);
+        // Older ledgers could retain an observation after a legitimate history
+        // coverage reset. Migrations ran before import, so reconcile that legacy
+        // dependency here; current archives must satisfy integrity unchanged.
+        if (manifest.schema_versions.ledger < OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION)
+          removeObservationsWithoutHistory(db);
         if (manifest.schema_versions.ledger >= 32) {
           // Agent enrollment is local and nonportable; its old namespaces cannot
           // survive without the matching current identity/grant after restore.
