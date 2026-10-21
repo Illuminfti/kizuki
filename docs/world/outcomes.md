@@ -37,7 +37,13 @@ subject, or the literal `none` when no knowledge object is being evaluated.
 A retained token is lookup identity only: the referenced object must still have
 currently readable evidence. This check repeats inside the claim transaction
 after asynchronous preparation; source or principal revocation cannot authorize
-a new bound report.
+a new bound report. Scoped proposals bind the complete source-qualified identity,
+including when `subject` defaults to the first `subjects` entry; an equal raw ID
+from another source is a different subject. For an exactly bound outcome,
+independent provenance need not itself mention the evaluated object. Each event
+must still pass the caller's current grants, consent and any preexisting evidence
+selection. Unbound outcomes and ordinary proposals retain subject occurrence
+selection. All checks repeat at the mutation boundary.
 Other identifier fields are nonempty and at most 128 characters; the entire
 JSON string is at most 1,024 characters. `assistance` is `assisted`, `unassisted`
 or `unknown`. Invalid inputs, missing provenance, missing propose grants and

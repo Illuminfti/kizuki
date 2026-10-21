@@ -29,7 +29,7 @@ export type CorrectArgsV2 = Omit<CorrectArgs, "target" | "object" | "refresh_wor
 const PROPOSE = ["kind", "target", "subject", "subjects", "provenance", "object", "body", "frontmatter", "predicate", "polarity", "confidence"];
 const CORRECT = ["statement", "target", "object", "dry_run", "mode", "perspective_mode", "refreshWorld"];
 function invalid(): never { throw new ServeError("invalid_arguments", "invalid arguments: invalid scoped mutation"); }
-type Normalized<A> = { args: A; ctx: ServeContext; assertCurrent?: () => void; refresh?: Record<string, unknown> };
+type Normalized<A> = { args: A; ctx: ServeContext; subjectIdentity?: RawSubjectRef; assertCurrent?: () => void; refresh?: Record<string, unknown> };
 export function normalizeMutationArgs(ctx: ServeContext, tool: "propose", input: ProposeArgs | ProposeArgsV2, contract: ResponseContract): Normalized<ProposeArgs>;
 export function normalizeMutationArgs(ctx: ServeContext, tool: "correct", input: CorrectArgs | CorrectArgsV2, contract: ResponseContract): Normalized<CorrectArgs>;
 export function normalizeMutationArgs(ctx: ServeContext, tool: "propose" | "correct", input: object, contract: ResponseContract): Normalized<ProposeArgs | CorrectArgs> {
@@ -54,6 +54,7 @@ export function normalizeMutationArgs(ctx: ServeContext, tool: "propose" | "corr
     const scope = referenceScope(ctx), args: Record<string, unknown> = { ...data };
     delete args.refreshWorld;
     let selection: EvidenceSelection | undefined;
+    let subjectIdentity: RawSubjectRef | undefined;
     const raw = (value: ScopedRef): RawSubjectRef => {
       const result = value.kind === "object" && tool === "propose" ? readableWorldNode(scope.ctx, scope.ns, value.token) : resolveRawSubjectRef(scope, value);
       if (result === null) throw missingReference();
@@ -65,6 +66,9 @@ export function normalizeMutationArgs(ctx: ServeContext, tool: "propose" | "corr
         if (key === "subjects" && values.some(value => value.kind !== "raw_subject")) throw missingReference();
         const subjects = values.map(raw); args[key] = key === "subjects" ? subjects.map(value => value.id) : subjects[0]!.id;
         selection = { subjects: [...(selection?.subjects ?? []), ...subjects] };
+        // Match subjectOf: an explicit subject wins; otherwise the first
+        // subjects entry supplies the claim's qualified identity.
+        if (key === "subject" || !refs.has("subject")) subjectIdentity = subjects[0];
       } else if (tool === "propose") {
         const page = resolvePageRef(scope, values[0]!); if (page === null) throw missingReference(); args.target = page.id;
       } else {
@@ -89,14 +93,14 @@ export function normalizeMutationArgs(ctx: ServeContext, tool: "propose" | "corr
       if (object.kind !== "literal" && !typedTarget) invalid();
       args.object = tool === "propose" || !typedTarget ? object.kind === "literal" ? object.value : invalid() : object;
     }
-    return { args: args as unknown as ProposeArgs | CorrectArgs, ctx: { ...scope.ctx, scopedResponse: true as const, ...(selection === undefined ? {} : { selection }) }, ns: scope.ns.id };
+    return { args: args as unknown as ProposeArgs | CorrectArgs, ctx: { ...scope.ctx, scopedResponse: true as const, ...(selection === undefined ? {} : { selection }) }, ns: scope.ns.id, subjectIdentity };
   }
   const initial = ctx.db.transaction(resolve).immediate();
-  const baseline = canonicalJson({ args: initial.args, selection: initial.ctx.selection ?? null, ns: initial.ns });
+  const baseline = canonicalJson({ args: initial.args, selection: initial.ctx.selection ?? null, subjectIdentity: initial.subjectIdentity ?? null, ns: initial.ns });
   const assertCurrent = (): void => {
     assertScopedWriterAvailable(ctx.db);
     const current = resolve();
-    if (canonicalJson({ args: current.args, selection: current.ctx.selection ?? null, ns: current.ns }) !== baseline) throw missingReference();
+    if (canonicalJson({ args: current.args, selection: current.ctx.selection ?? null, subjectIdentity: current.subjectIdentity ?? null, ns: current.ns }) !== baseline) throw missingReference();
   };
-  return { args: initial.args, ctx: initial.ctx, assertCurrent, ...(refresh === undefined ? {} : { refresh }) };
+  return { args: initial.args, ctx: initial.ctx, ...(initial.subjectIdentity === undefined ? {} : { subjectIdentity: initial.subjectIdentity }), assertCurrent, ...(refresh === undefined ? {} : { refresh }) };
 }
