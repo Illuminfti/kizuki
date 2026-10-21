@@ -15,6 +15,14 @@ BEGIN
   UPDATE claim_history_clock SET last_sequence=last_sequence+1,last_recorded_at=max(last_recorded_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=1;
   INSERT INTO world_forecast_outcome_admissions(claim_id,sequence) SELECT NEW.claim_id,last_sequence FROM claim_history_clock WHERE id=1;
 END;
+CREATE TRIGGER IF NOT EXISTS world_forecast_outcome_readmitted AFTER UPDATE OF status ON claims
+WHEN NEW.is_world_typed=0 AND NEW.status='live' AND OLD.status<>'live'
+  AND NEW.predicate IN ('outcome.self_report','outcome.provider_ack','outcome.observation','outcome.review')
+BEGIN
+  UPDATE claim_history_clock SET last_sequence=last_sequence+1,last_recorded_at=max(last_recorded_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=1;
+  DELETE FROM world_forecast_outcome_admissions WHERE claim_id=NEW.claim_id;
+  INSERT INTO world_forecast_outcome_admissions(claim_id,sequence) SELECT NEW.claim_id,last_sequence FROM claim_history_clock WHERE id=1;
+END;
 CREATE TRIGGER IF NOT EXISTS world_forecast_outcome_position_immutable BEFORE UPDATE ON world_forecast_outcome_admissions
 BEGIN SELECT RAISE(ABORT,'outcome admission position is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS world_forecast_outcome_purged AFTER UPDATE OF status ON claims WHEN NEW.status='purged'
@@ -66,6 +74,24 @@ WHEN NOT (OLD.status<>'invalidated' AND NEW.status='invalidated' AND NEW.forecas
   AND NEW.recorded_sequence=(SELECT frozen_sequence FROM world_forecasts WHERE forecast_id=OLD.forecast_id))
 BEGIN SELECT RAISE(ABORT,'forecast resolution is append only'); END;
 `);
+  // A renewed source purpose is a new eligibility admission, just like revival.
+  // Otherwise a previously denied earlier observation could enter old replay.
+  // Positions are assigned to this actual transaction; no old order is inferred.
+  const sourceOutcomes = `SELECT DISTINCT c.claim_id FROM claims c,
+    json_each(CASE WHEN json_valid(c.provenance) THEN c.provenance ELSE '[]' END) e
+    JOIN source_event_bindings b ON b.event_id=e.value
+    WHERE c.is_world_typed=0 AND c.status='live' AND b.source_key=NEW.source_key
+      AND c.predicate IN ('outcome.self_report','outcome.provider_ack','outcome.observation','outcome.review')`;
+  db.exec(`CREATE TRIGGER IF NOT EXISTS world_forecast_source_readmitted AFTER UPDATE ON source_grants
+    WHEN NEW.status='active' AND (NEW.revision<>OLD.revision OR NEW.policy<>OLD.policy OR NEW.status<>OLD.status)
+    BEGIN
+      UPDATE claim_history_clock SET last_sequence=last_sequence+(SELECT count(*) FROM (${sourceOutcomes})),
+        last_recorded_at=max(last_recorded_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=1;
+      DELETE FROM world_forecast_outcome_admissions WHERE claim_id IN (${sourceOutcomes});
+      INSERT INTO world_forecast_outcome_admissions(claim_id,sequence)
+        SELECT claim_id,k.last_sequence-(SELECT count(*) FROM (${sourceOutcomes}))+row_number() OVER (ORDER BY claim_id)
+        FROM (${sourceOutcomes}),claim_history_clock k WHERE k.id=1;
+    END;`);
   // Input loss removes the prediction. Resolution-only loss erases its private
   // evidence and times while retaining a terminal marker: later observations
   // cannot replace the first resolution, and other principals keep seeing the
@@ -92,7 +118,8 @@ BEGIN SELECT RAISE(ABORT,'forecast resolution is append only'); END;
  * original admission positions from timestamps or claim insertion order. */
 export function beginForecastRestore(db:Database):void {
   if(!db.inTransaction)throw new Error("forecast restore requires a transaction");
-  db.exec("DROP TRIGGER IF EXISTS world_forecast_outcome_admitted");
+  for (const trigger of ["world_forecast_outcome_admitted", "world_forecast_outcome_readmitted", "world_forecast_source_readmitted"])
+    db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
 }
 export const FORECAST_TABLE_SPECS: readonly WorldTableSpec[] = [
   {name:"world_forecast_outcome_admissions",class:"authority",since:WORLD_MIGRATION_VERSIONS.fcst,columns:["claim_id","sequence"],erasure:{via:"cascade",parent:"claims"},create:applyForecasts},

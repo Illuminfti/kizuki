@@ -43,12 +43,7 @@ export function insertResolution(db:Database,id:string,status:Exclude<Resolution
   if(proofs.length===0||proofs.length>256||proofs.some(p=>parseForecastProof(p)===null))throw new Error("invalid forecast resolution");
   db.query("INSERT OR IGNORE INTO world_forecast_resolutions(forecast_id,status,resolved_at,recorded_at,recorded_sequence,proof) VALUES (?,?,?,?,(SELECT last_sequence FROM claim_history_clock WHERE id=1),?)").run(id,status,observedAt,at,canonicalJson([...proofs].sort((a,b)=>a.claim.localeCompare(b.claim))));
 }
-export function forecastFingerprint(db:Database,id:string,includeResolution=true):string|null {
-  const row=db.query<ForecastRow,[string]>("SELECT * FROM world_forecasts WHERE forecast_id=?").get(id);
-  if(row===null)return null;
-  const resolution=includeResolution?db.query<ResolutionRow,[string]>("SELECT status,resolved_at,recorded_at,recorded_sequence,proof FROM world_forecast_resolutions WHERE forecast_id=?").get(id):null;
-  return sha256Hex(canonicalJson([row,resolution]));
-}
+export { forecastFingerprint } from "./fingerprint";
 /** Check the declared frozen prefix and replay the fixed rule from only its saved inputs. */
 export function validForecastRecord(db:Database,row:ForecastRow,proofs:readonly ForecastProof[]):boolean {
   const {forecast_id:_id,basis_digest:digest,...record}=row;

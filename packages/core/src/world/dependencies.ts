@@ -1,4 +1,4 @@
-import { forecastFingerprint } from "./forecast/store";
+import { forecastFingerprint } from "./forecast/fingerprint";
 import { claimReader, claimPublicationFingerprint } from "../serving/claims";
 import { getClaim } from "../claims/store";
 import { identityReceiptCurrent } from "./identity-receipt";

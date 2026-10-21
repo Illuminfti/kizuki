@@ -37,7 +37,7 @@ export function chooseResolution(frame:ReadFrame,row:ForecastRow,at:string,admit
     const first=row.question==="next_independent_inspection_meets_criterion"?matching[0]:matching.find(entry=>{
       if(row.due_at===null)return false;
       const status=verdict(entry),observed=Date.parse(entry.observedAt!),due=Date.parse(row.due_at);
-      return status==="resolved_met"&&observed<=due||status==="resolved_not_met"&&observed>=due;
+      return status==="resolved_met"&&observed<=due;
     });
     if(first?.value){
       const value=first.value,wrongVersion=canonicalJson(value.artifactVersion)!==canonicalJson(expected.expected.artifactVersion);
@@ -48,9 +48,10 @@ export function chooseResolution(frame:ReadFrame,row:ForecastRow,at:string,admit
       }
       if(proof!==null && row.question==="commitment_met_by_due" && row.due_at!==null){
         // The question's deadline is fixed. Late success cannot establish timely
-        // completion; lack of an inspection never establishes failure.
+        // completion. A later failed inspection cannot establish that the target
+        // was never met before its deadline either.
         const observed=Date.parse(first.observedAt!),due=Date.parse(row.due_at);
-        if(status==="censored"||status==="resolved_met"&&observed<=due||status==="resolved_not_met"&&observed>=due){
+        if(status==="resolved_met"&&observed<=due){
           proposed={status,observedAt:first.observedAt!,proofs:[proof]};
         }
       }
@@ -67,7 +68,7 @@ export function chooseResolution(frame:ReadFrame,row:ForecastRow,at:string,admit
   for(const item of statements){
     const receipt=db.query<{receipt_id:string|null;asserted_at:string;producer:string},[string]>("SELECT receipt_id,asserted_at,producer FROM claims WHERE claim_id=?").get(item.claimId);
     if(receipt?.receipt_id==null||receipt.producer!=="owner"||Date.parse(receipt.asserted_at)<Date.parse(row.frozen_at)||Date.parse(receipt.asserted_at)>Date.parse(at)||!identityReceiptCurrent(db,item.claimId,receipt.receipt_id))continue;
-    if(admittedThrough!==undefined&&db.query("SELECT 1 FROM claim_lifecycle_history WHERE claim_id=? AND receipt_id=? AND sequence<=?").get(item.claimId,receipt.receipt_id,admittedThrough)===null)continue;
+    if(admittedThrough!==undefined&&db.query("SELECT 1 FROM (SELECT after_status,receipt_id FROM claim_lifecycle_history WHERE claim_id=? AND sequence<=? ORDER BY sequence DESC LIMIT 1) WHERE after_status='live' AND receipt_id=?").get(item.claimId,admittedThrough,receipt.receipt_id)===null)continue;
     if(item.semantic.object.kind!=="vocabulary")continue;
     const status=item.semantic.object.ref.id==="commitment/dropped"?"censored":item.semantic.temporal_basis!=="unknown"&&item.semantic.valid_from!==null&&Date.parse(item.semantic.valid_from)<=Date.parse(receipt.asserted_at)
       ?Date.parse(item.semantic.valid_from)<=Date.parse(row.due_at)?"resolved_met":"resolved_not_met":null;
