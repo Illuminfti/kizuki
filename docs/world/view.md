@@ -50,13 +50,21 @@ roll back issuance and degrade to `not_issued` without losing the fresh body.
 Hidden sources, claims and identity changes cannot alter another principal's
 baseline comparison, reservation or eviction order.
 
-The audited serving gate revalidates the projection's live claims, authorized support,
-source coverage and current principal grant in the final output transaction.
+Each body and its token describe one coherent projection transaction during the
+request. `current` does not promise to include every write committed before
+serialization: an authorized sibling added after projection appears on the
+next read, whose complete bytes are compared with the retained baseline.
+
+The audited serving gate revalidates the projection's live, unheld claims,
+authorized support, source coverage and current principal grant in the final
+output transaction. Sensitivity and policy changes that withdraw access take
+effect before publication even when the underlying claim remains live.
 Coverage includes authorized sources outside the card's support, their import
 checkpoints and readable extraction backlog. Hidden checkpoints are filtered
 before loading. An unrelated source revocation or purge leaves the answer,
-errors and read work unchanged. Withdrawn or changed dependencies
-discard the pending view and reproject once under current authority. A
+errors and read work unchanged. Withdrawn consent, retired or held claims,
+changed coverage or a changed principal grant discard the pending view and
+reproject once under current authority. A
 conditional target denied by current source consent returns
 `new_view_required`; a fresh read of that target remains `not_found`.
 Baseline lookup also checks its retained support dependencies before returning

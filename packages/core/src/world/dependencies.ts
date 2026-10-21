@@ -4,6 +4,7 @@ import type { Eligible } from "./pipeline/eligible";
 import { authorizedClaimSql, authorizedSupportSql } from "./policy-sql";
 import { issueWorldRef, type WorldNamespace } from "./references";
 import { sourceCoverage, type SourceCoverageGap } from "./coverage";
+import { heldClaimSql } from "./corroboration";
 
 /** Complete authorized evidence used by a projection, including evidence omitted from its wire body. */
 export interface WorldDependencies {
@@ -35,15 +36,16 @@ export function dependencyRefs(db: Database, ns: WorldNamespace, deps: WorldDepe
   ];
 }
 
-/** Revalidate claim liveness, support consent and coverage; hidden state contributes no returned rows. */
+/** Revalidate live, unheld claims, support consent and coverage; hidden state contributes no returned rows. */
 export function worldDependenciesCurrent(ctx: ServeContext, deps: WorldDependencies): boolean {
   const claims = authorizedClaimSql(ctx);
+  const permitted = authorizedSupportSql(ctx);
+  const held = heldClaimSql("base", permitted);
   const live = ctx.db.query<{ n: number }, (string | number)[]>(`
     SELECT count(*) AS n FROM claims base
-    WHERE base.claim_id IN (SELECT value FROM json_each(?)) AND base.status='live' AND ${claims.sql}
-  `).get(JSON.stringify([...deps.claims]), ...claims.bindings);
+    WHERE base.claim_id IN (SELECT value FROM json_each(?)) AND base.status='live' AND ${claims.sql} AND NOT ${held.sql}
+  `).get(JSON.stringify([...deps.claims]), ...claims.bindings, ...held.bindings);
   if (live?.n !== deps.claims.size) return false;
-  const permitted = authorizedSupportSql(ctx);
   const row = ctx.db.query<{ n: number }, (string | number)[]>(`
     SELECT count(*) AS n FROM claim_v2_support s
     WHERE s.support_key IN (SELECT value FROM json_each(?)) AND ${permitted.sql}

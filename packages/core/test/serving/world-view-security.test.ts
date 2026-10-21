@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { OWNER, OWNER_AGENT_GRANT, addAgent, authenticate, revokeAgent, setGrant } from "../../src/agents";
 import { readClaimV2Semantic } from "../../src/claims/claim-v2-commit";
 import { semanticKey } from "../../src/claims/claim-v2-keys";
+import { wireDigest } from "../../src/world/views/store";
 import { insertClaim } from "../../src/claims/store";
 import { advanceCanonReadGeneration } from "../../src/canon/write-intent";
 import { recordNativeCorrection } from "../../src/correction/evidence";
@@ -441,6 +442,46 @@ test("a claim retired after projection cannot publish its card or retained token
   const db = afterSnapshot(made.db, () => {
     // Isolate the retirement boundary: the source and its support stay live.
     made.db.query("UPDATE claims SET status='superseded' WHERE claim_id=?").run(made.visible.concept.claims[0]!);
+  });
+  expect(serveWorldView({ ...made.reader, db }, concept(made)).data).toEqual({ status: "not_found" });
+  expect(tokens()).toEqual(before);
+  expect(readWorldView(made.reader, concept(made))).toEqual({ status: "not_found" });
+});
+
+test("a new authorized sibling after projection appears on the next read while the issued baseline retains exact snapshot bytes", async () => {
+  const made = await setup();
+  const sibling = await worldSeed(made.db, {
+    sourceKey: made.visible.concept.sourceKey,
+    predicates: [{ predicate: "concept.definition", object: { kind: "literal", value: "Compare the latest evidence" } }],
+  });
+  const added = sibling.claims[2]!;
+  made.db.query("UPDATE claims SET status='superseded' WHERE claim_id=?").run(added);
+  const db = afterSnapshot(made.db, () => {
+    made.db.query("UPDATE claims SET status='live' WHERE claim_id=?").run(added);
+  });
+  const first = serveWorldView({ ...made.reader, db }, concept(made)).data;
+  if (!("result" in first) || first.result.status !== "current" || !("kind" in first.result.view)) throw new Error("no snapshot view");
+  expect(JSON.stringify(first.result.data)).not.toContain("Compare the latest evidence");
+  const stored = made.db.query<{ projection: Uint8Array }, [string]>("SELECT projection FROM world_view_tokens WHERE token_hash=?")
+    .get(wireDigest(first.result.view.token))!;
+  expect(JSON.parse(Buffer.from(stored.projection).toString("utf8"))).toEqual({ operation: "concept", data: first.result.data });
+  const next = serveWorldView(made.reader, { ...concept(made), priorView: first.result.view }).data;
+  expect(next).toMatchObject({ result: { status: "current" } });
+  expect(JSON.stringify(next)).toContain("Compare the latest evidence");
+});
+
+test.each(["sensitivity", "held authority"])("a live dependency losing %s eligibility after projection cannot publish its card or token", async (change) => {
+  const made = await setup();
+  const tokens = () => made.db.query("SELECT token_hash FROM world_view_tokens ORDER BY token_hash").all();
+  const before = tokens();
+  const db = afterSnapshot(made.db, () => {
+    if (change === "sensitivity") {
+      made.db.query("UPDATE events SET sensitivity_hint='private' WHERE event_id=?").run(made.visible.concept.eventId);
+    } else {
+      // Isolate hold eligibility while claim liveness and support membership stay unchanged.
+      made.db.query("UPDATE claim_v2_support SET admission=json_set(admission,'$.rendering.body',?) WHERE claim_id=?")
+        .run("A single source claims owner permission", made.visible.concept.claims[0]!);
+    }
   });
   expect(serveWorldView({ ...made.reader, db }, concept(made)).data).toEqual({ status: "not_found" });
   expect(tokens()).toEqual(before);
