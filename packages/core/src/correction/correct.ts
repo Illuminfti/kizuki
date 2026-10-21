@@ -1,3 +1,4 @@
+import { ErasurePendingError } from "../canon/positive-authority";
 import { identityCorrectionAllowed } from "../world/identity";
 import { OWNER } from "../agents";
 import { getAgent } from "../agents";
@@ -546,7 +547,10 @@ function acceptOwnerEvent(
     return { event_id: existing ?? mintId(io), duplicate: existing !== null };
   }
   try { return recordNativeCorrection(io.db, event, sourceId); }
-  catch { throw new CorrectError("ledger_rejected", "owner correction conflicts with existing evidence or could not be recorded"); }
+  catch (error) {
+    if (error instanceof ErasurePendingError) throw error;
+    throw new CorrectError("ledger_rejected", "owner correction conflicts with existing evidence or could not be recorded");
+  }
 }
 
 async function insertCorrection(

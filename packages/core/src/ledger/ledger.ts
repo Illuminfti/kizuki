@@ -224,7 +224,7 @@ function insertBoundEvent(db: Database, input: CaptureEventInput, eventId: strin
 }
 
 /** Internal Core native operation. Public capture has no exemption parameter. */
-export function recordNativeCorrectionEvent(db: Database, input: CaptureEventInput, requestDigest: string): {
+export function recordNativeCorrectionEvent(db: Database, input: CaptureEventInput, requestDigest: string, beforeRecord?: () => void): {
   event_id: string; duplicate: boolean;
 } {
   const checked = validateEventInput(input);
@@ -244,6 +244,9 @@ export function recordNativeCorrectionEvent(db: Database, input: CaptureEventInp
       }
       return { event_id: stored.event_id, duplicate: true };
     }
+    // Exact replay is read-only. New native evidence shares the caller's
+    // current authority check inside this existing capture transaction.
+    beforeRecord?.();
     const eventId = ulid();
     insertBoundEvent(db, event, eventId, "external", "native", requestDigest);
     using proof = db.prepare(`INSERT INTO native_owner_evidence

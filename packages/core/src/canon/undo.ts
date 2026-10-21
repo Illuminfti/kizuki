@@ -1,3 +1,4 @@
+import { assertPositiveAuthorityMutationAllowed } from "./positive-authority";
 import { isSensitivity } from "../agents/types";
 import { isWorldCanonReceipt } from "./world-receipt";
 import { assertWorldReceiptBasis, worldBasisMetadata } from "./world-materialization";
@@ -141,6 +142,7 @@ export async function undoReceiptOwned(
     if (readCanonWriteIntent(io.db) !== null) recoveryFailure("authority_changed", pending.receipt.receipt_id);
     return finishUndoProjection(scope, io, pending.receipt);
   }
+  io.db.transaction(() => assertPositiveAuthorityMutationAllowed(io.db)).immediate();
   const record = getCanonReceiptRecord(io.db, receiptId);
   if (record !== null && isErasedReceipt(record)) throw new UndoError("erased", "undo: receipt was erased with its source evidence");
   const original = getCanonReceipt(io.db, receiptId);
@@ -236,7 +238,10 @@ async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: Canon
     completion: { mode: "revert", claim_kind: "revert", page_id: pageId,
       subject_key: page === null ? null : pageSubjectKey(io.db, original.page_path, revert.after_hash, page.data, original),
       original_receipt_id: original.receipt_id },
-  }, () => requireSourceEvents(io.db, page === null ? original.provenance : stringArray(page.data["sources"]), { owner: true, purpose: "derive" }));
+  }, () => {
+    assertPositiveAuthorityMutationAllowed(io.db);
+    requireSourceEvents(io.db, page === null ? original.provenance : stringArray(page.data["sources"]), { owner: true, purpose: "derive" });
+  });
   return finishUndoProjection(scope, io, revert);
 }
 

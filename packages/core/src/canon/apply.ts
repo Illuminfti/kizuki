@@ -1,3 +1,4 @@
+import { assertPositiveAuthorityMutationAllowed } from "./positive-authority";
 import { ATTENTION_SOURCES, attentionDeliveryBody, attentionDeliveryLine } from "../contracts/attention";
 import { completedEventPurgeProofs } from "../ledger/purge";
 import { canonicalJson, sha256Hex } from "../util/hash";
@@ -514,6 +515,7 @@ export function applyCanonWriteOwned(
 
   const expectedAfter = hashBytes(Buffer.from(serializePage(prepared.page)));
   const admit = (): void => {
+    assertPositiveAuthorityMutationAllowed(io.db);
     persistedClaims(io, persisted, typed);
     if (worldBasis !== null) {
       const current = latestWorldReceiptRecord(io.db, target.rel_path);
@@ -997,7 +999,7 @@ function applySourcePurgeWrite(scope: VaultMutationScope, io: CanonIo, input: So
         provenance: next === null ? [...input.purged_event_ids] : existingSources(next),
         superseded: [], candidates: [], retrieval_ops: [], reverts: null, reverted_by: null, at: nowOf(io),
     };
-    const intent = stageSourceErasureIntent(io, input.source_erasure.source_key, input.purged_event_ids, receipt, pageId);
+    const intent = io.db.transaction(() => stageSourceErasureIntent(scope, io, input.source_erasure.source_key, input.purged_event_ids, receipt, pageId)).immediate();
     commitMachineByteIntent(io.db, intent.receipt, () => {
       if (input.purged_event_ids.some(id => io.db.query(
         "SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'",

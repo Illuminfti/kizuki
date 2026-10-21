@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { assertPositiveAuthorityMutationAllowed } from "../canon/positive-authority";
 import type { Sensitivity } from "../agents/types";
 import { contentSignature, pageClaimKey } from "../claims/hash";
 import { initClaims } from "../claims/init";
@@ -629,6 +630,7 @@ export function fileProposal(
         const merged = uniqueStrings([...current.provenance, ...provenance]);
         const grew = merged.length !== current.provenance.length;
         const sensitivity = stricter(current.sensitivity, labels.sensitivity);
+        if (grew || sensitivity !== current.sensitivity) assertPositiveAuthorityMutationAllowed(db);
         if (grew) {
           db.query(
             "UPDATE proposals SET provenance = ? WHERE proposal_id = ?",
@@ -650,9 +652,11 @@ export function fileProposal(
       }
       // The unique slot is the live signature. A pending row whose stored
       // fields no longer hash to this content_hash does not occupy it.
+      assertPositiveAuthorityMutationAllowed(db);
       vacateSignature(db, current.proposal_id, signatureOf(current, storedKey));
     }
 
+    assertPositiveAuthorityMutationAllowed(db);
     const proposal: StagedProposal = {
       proposal_id: ulid(),
       kind: input.kind,
@@ -696,7 +700,7 @@ export function fileProposal(
     return { outcome: "stored", proposal };
   });
 
-  return file();
+  return file.immediate();
 }
 
 export function getProposal(
@@ -766,6 +770,7 @@ export function setProposalStatus(
         `status: cannot withdraw a ${existing.status} proposal`,
       );
     }
+    assertPositiveAuthorityMutationAllowed(db);
     db.query("UPDATE proposals SET status = ? WHERE proposal_id = ?").run(
       status,
       proposalId,
@@ -774,5 +779,5 @@ export function setProposalStatus(
     return { ...existing, status };
   });
 
-  return apply();
+  return apply.immediate();
 }

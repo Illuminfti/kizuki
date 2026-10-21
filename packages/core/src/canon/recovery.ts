@@ -1,3 +1,4 @@
+import { assertPositiveAuthorityMutationAllowed } from "./positive-authority";
 import { isErasedReceipt } from "./receipts";
 import { stampPageClasses, removePageClasses } from "./page-classes";
 import { eraseReceiptRow, insertErasedReceiptRow } from "./store";
@@ -188,6 +189,7 @@ function completeErasureRows(scope:VaultMutationScope,io:CanonIo,intent:WorldCan
 
 function finish(scope: VaultMutationScope, io: CanonIo, intent: CanonWriteIntent, stream: OrdinaryRecoveryReceiptStream | WorldErasureReceiptStream, recovered?: CanonStageRecoveryRecord[]): CanonReceipt {
   io.db.transaction(() => {
+    if (intent.receipt.kind !== "purge_rewrite") assertPositiveAuthorityMutationAllowed(io.db);
     assertCanonAdmission(io.db, intent);
     stream.verifyBinding();
     if (recovered !== undefined) {

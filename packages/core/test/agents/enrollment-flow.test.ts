@@ -1,6 +1,6 @@
 import { credentialCustodyQualified, initializeEnrollmentLedger } from "./custody-fixture";
 import { describe, expect, test, setDefaultTimeout } from "bun:test";
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AgentEnrollmentError, authenticateAgentCredential, enrollAgent, previewAgentEnrollment, revokeAgentEnrollment } from "../../src/agents/enrollment";
@@ -38,6 +38,26 @@ function fixture() {
   return { vault, dbPath, request, clean: () => { rmSync(vault, { recursive: true, force: true }); rmSync(credentials, { recursive: true, force: true }); } };
 }
 describe.if(credentialCustodyQualified)("agent enrollment flow", () => {
+  test("pending erasure refuses new enrollment before credential creation, while completed replay and revoke work", () => {
+    const f = fixture(); try {
+      const first = enrollAgent(f.vault, f.request);
+      const db = openLedger(f.dbPath);
+      try {
+        db.query("INSERT INTO canon_source_erasure_intents(page_path,source_key,intent,digest) VALUES (?,?,?,?)")
+          .run("unrelated-private-path", "unrelated-source", "{}", "unreadable");
+      } finally { db.close(true); }
+      const next = { ...f.request, operation_id: "enroll-flow-0002", name: "next-agent", token_ref: f.request.token_ref + ".next" };
+      expect(() => enrollAgent(f.vault, next)).toThrow("erasure_pending");
+      expect(existsSync(next.token_ref.slice(5))).toBe(false);
+      const inspect = openLedger(f.dbPath);
+      try {
+        expect(inspect.query("SELECT 1 FROM agent_enrollments WHERE operation_id=?").get(next.operation_id)).toBeNull();
+        expect(inspect.query("SELECT 1 FROM agents WHERE name=?").get(next.name)).toBeNull();
+      } finally { inspect.close(true); }
+      expect(enrollAgent(f.vault, f.request)).toMatchObject({ agent_id: first.agent_id, status: "completed", credential: "ready", replayed: true });
+      expect(revokeAgentEnrollment(f.vault, f.request.name).authority).toBe("revoked");
+    } finally { f.clean(); }
+  });
   test("creates one durable credential and replays the completed operation", () => {
     const f = fixture(); try {
       expect(previewWithObservation(f.vault, f.request).status).toBe("preview");
