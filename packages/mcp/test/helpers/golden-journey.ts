@@ -80,9 +80,19 @@ export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.
     expect((await exactArtifact(owner, rich ? RICH : ORIGINAL)).content).toEqual(artifactBefore.content);
     const beforeCorrection = (await world(owner, { operation: "history", concept: ref, knownAt: { kind: "time", at: new Date().toISOString() } })).result.data.snapshot;
     const correctedText = "Equal-priority requests preserve their original sequence.";
-    const corrected = await owner.call("correct", { target: { world_claim: correctionTarget.claim }, statement: correctedText, mode: "replace_object", object: { kind: "literal", value: correctedText }, response_contract: contract });
+    const corrected = await owner.call("correct", { target: contract === "kizuki.envelope/v2" ? correctionTarget.claim : { world_claim: correctionTarget.claim }, statement: correctedText, mode: "replace_object", object: { kind: "literal", value: correctedText }, response_contract: contract });
     expect(corrected.isError ?? false, JSON.stringify(corrected)).toBe(false);
-    const correction = envelopeOf(corrected).data as any; expect(typeof correction.receipt_id).toBe("string");
+    let correction = envelopeOf(corrected).data as any;
+    if (contract === "kizuki.envelope/v2") {
+      expect(correction.receipt.kind).toBe("receipt"); expect(correction).not.toHaveProperty("receipt_id");
+      // The owner operational undo accepts a raw receipt ID. An exact legacy
+      // replay obtains it without a second write and proves contract parity.
+      const replay = await owner.call("correct", { target: { world_claim: correctionTarget.claim }, statement: correctedText,
+        mode: "replace_object", object: { kind: "literal", value: correctedText }, response_contract: "kizuki.envelope/v1" });
+      expect(replay.isError ?? false).toBe(false);
+      correction = envelopeOf(replay).data as any;
+    }
+    expect(typeof correction.receipt_id).toBe("string");
     const correcting = (await world(owner, { operation: "diff", of: { operation: "concept", concept: ref }, priorView: changed.view })).result;
     expect(correcting.status).toBe("incomplete"); expect(correcting.data.schema).toBe("kizuki.concept-card/v1");
     expect(correcting.data.definitions.some((row: any) => row.object.value === correctedText)).toBe(true);

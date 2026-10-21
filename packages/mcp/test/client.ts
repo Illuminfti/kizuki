@@ -1,3 +1,10 @@
+import { expect } from "bun:test";
+import type { CanonChunkV2, QuotedChunkV2 } from "../../core/src/contracts/scoped-tools";
+import type { ScopedRef } from "../../core/src/contracts/scoped-refs";
+import { referenceScope } from "../../core/src/world/ref-kinds/common";
+import { resolvePageRef } from "../../core/src/world/ref-kinds/page";
+import { resolveEventVersionRef } from "../../core/src/world/ref-kinds/evidence";
+import { resolveClaimRef } from "../../core/src/world/ref-kinds/claim";
 import type { ServeContext } from "@kizuki/core";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -71,4 +78,58 @@ export function pageIds(envelope: Record<string, unknown>): string[] {
   return (envelope["canon"] as { page_id: string }[]).map(
     (chunk) => chunk.page_id,
   );
+}
+
+/** Fixture oracle only: resolve actual public capabilities under the same current
+ * principal. Never mint refs or use raw identifiers as scoped wire arguments. */
+export function resolvedCanon(ctx: ServeContext, envelope: Record<string, unknown>) {
+  expect(envelope.schema).toBe("kizuki.envelope/v2");
+  return ctx.db.transaction(() => {
+    const scope = referenceScope(ctx);
+    return (envelope.canon as CanonChunkV2[]).map(chunk => {
+      expect(chunk).not.toHaveProperty("page_id");
+      const page = resolvePageRef(scope, chunk.page);
+      expect(page).not.toBeNull();
+      const sources = chunk.sources.map(ref => {
+        const id = resolveEventVersionRef(scope, ref);
+        expect(id).not.toBeNull();
+        return id!;
+      });
+      return { ...chunk, page_id: page!.id, sources };
+    });
+  }).immediate();
+}
+
+export function eventIds(ctx: ServeContext, envelope: Record<string, unknown>): string[] {
+  if (ctx.principal.kind === "owner") {
+    expect(envelope.schema).toBe("kizuki.envelope/v1");
+    return (envelope.quoted as { event_id: string }[]).map(chunk => chunk.event_id);
+  }
+  expect(envelope.schema).toBe("kizuki.envelope/v2");
+  return ctx.db.transaction(() => {
+    const scope = referenceScope(ctx);
+    return (envelope.quoted as QuotedChunkV2[]).map(chunk => {
+      expect(chunk).not.toHaveProperty("event_id");
+      const id = resolveEventVersionRef(scope, chunk.eventVersion);
+      expect(id).not.toBeNull();
+      return id!;
+    });
+  }).immediate();
+}
+
+export function claimId(ctx: ServeContext, value: ScopedRef): string {
+  return ctx.db.transaction(() => {
+    const claim = resolveClaimRef(referenceScope(ctx), value);
+    expect(claim).not.toBeNull();
+    return claim!.claim_id;
+  }).immediate();
+}
+
+export async function captured(client: Client): Promise<QuotedChunkV2> {
+  const result = await call(client, "timeline", { day: "2026-02-28" });
+  expect(result.isError).toBeUndefined();
+  expect(envelopeOf(result).schema).toBe("kizuki.envelope/v2");
+  const chunk = (envelopeOf(result).quoted as QuotedChunkV2[])[0];
+  expect(chunk).toBeDefined();
+  return chunk!;
 }

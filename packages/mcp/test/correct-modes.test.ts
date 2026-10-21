@@ -112,6 +112,7 @@ describe("the correct tool", () => {
       "mode",
       "object",
       "perspective_mode",
+      "refreshWorld",
       "refresh_world",
       "response_contract",
       "statement",

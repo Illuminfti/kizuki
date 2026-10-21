@@ -32,7 +32,7 @@ export async function contextStage(owner: StdioClient, peer: StdioClient, rich: 
     const small = await owner.call("context_packet", { purpose: "session", budget_tokens: 450, response_contract: "kizuki.envelope/v2" });
     expect(small.isError ?? false).toBe(false);
     const limited = (envelopeOf(small).data as any).result;
-    expect(limited.status).toBe("incomplete"); expect(limited.data.retrievalDegraded).toContain("required_context_overflow");
+    expect(limited.status).toBe("incomplete"); expect(limited.reasons).toContain("required_context_overflow"); expect(limited.data.coverage.gaps).toContain("required_context_overflow");
     expect(limited.data.packetMd).not.toContain(" :: slice "); expect(limited).not.toHaveProperty("view");
   }
   return peerSlice.view;

@@ -2,8 +2,9 @@ import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { enrollAgent, revokeAgentEnrollment, setGrant, type CanonChunk, type Grant } from "@kizuki/core";
+import { authenticate, enrollAgent, revokeAgentEnrollment, setGrant, type Grant } from "@kizuki/core";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
+import { resolvedCanon } from "./client";
 import { mcpFixture, type McpFixture } from "./helpers";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
@@ -170,7 +171,9 @@ test.if(qualified)("two live file-credential processes and reconnects use curren
     expect(outcome).toBe("allowed");
     expect(JSON.stringify(reply)).toContain("Ada keeps the kettle warm");
     expect(JSON.stringify(reply).includes("private kettle protocol")).toBe(false);
-    const chunk = (reply.result?.structuredContent as { canon?: CanonChunk[] })?.canon?.find(page => page.page_id === "person:credential-ada");
+    const ctx = { ...fixture.owner(), principal: authenticate(fixture.db, token)! };
+    const chunk = resolvedCanon(ctx, reply.result?.structuredContent as Record<string, unknown>)
+      .find(page => page.page_id === "person:credential-ada");
     expect(chunk?.sources).toEqual(recorded.sourceIds);
     expect(chunk?.authority).toBe(recorded.receipt.authority);
     expect(chunk?.taint).toBe("clean");
