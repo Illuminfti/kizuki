@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
 import type { Principal } from "../agents";
 import { canonicalJson } from "../util/hash";
+import { issuedOpaqueFields } from "../util/issued-opaque";
 
 export type WireKind =
   | "object"
@@ -97,7 +98,7 @@ export function issueWorldRef<K extends WireKind>(
       [string, string]
     >(`SELECT wire_ref FROM ${table} WHERE namespace_id=? AND ${column}=?`)
     .get(ns.id, target);
-  if (existing !== null) return { kind, token: existing.wire_ref };
+  if (existing !== null) return issuedOpaqueFields({ kind, token: existing.wire_ref }, ["token"]);
   let token: string;
   do {
     token = randomBytes(32).toString("base64url");
@@ -144,7 +145,7 @@ export function issueWorldRef<K extends WireKind>(
       `INSERT INTO ${table}(namespace_id,wire_ref,${column}) VALUES (?,?,?)`,
     ).run(ns.id, token, target);
   }
-  return { kind, token };
+  return issuedOpaqueFields({ kind, token }, ["token"]);
 }
 
 export function resolveWorldObject(

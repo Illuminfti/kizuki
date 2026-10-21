@@ -1,3 +1,4 @@
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 import { afterEach, beforeEach, expect, setDefaultTimeout, setSystemTime, test } from "bun:test";
 import { readWorldView, serveWorldView } from "@kizuki/core/world";
 import { collectReadFrames, withWorldPipeline } from "@kizuki/core/testing";
@@ -71,7 +72,8 @@ test("a saturated alias cannot crowd the requested anchor out of its grouped car
         object: { kind: "literal" as const, value: `Example ${index}` },
       })),
     });
-    const requested = await worldSeed(db, { subject: "topic:requested", label: "Requested concept" });
+    const requested = await worldSeed(db, { subject: "topic:requested", label: "Requested concept", model: EMPTY_SUMMARY_MODEL });
+    await completeEmptyWorldSummaries(db);
     const members = [handleOf(db, "topic:full-alias"), handleOf(db, "topic:requested")];
     const read = () => readWorldView(requested.ctx, {
       operation: "concept", concept: requested.ref,
@@ -80,7 +82,7 @@ test("a saturated alias cannot crowd the requested anchor out of its grouped car
     expect(read()).toMatchObject({ result: { status: "current" } });
     const grouped = withWorldPipeline({ groupers: [joinHandles(members)] }, read);
     expect(grouped).toMatchObject({
-      result: { status: "incomplete", reasons: ["traversal_limit"] },
+      result: { status: "incomplete", reasons: ["traversal_limit", "pending_consolidation"] },
     });
     if (!("result" in grouped) || grouped.result.status === "unavailable")
       throw new Error("grouped card unavailable");
@@ -89,7 +91,7 @@ test("a saturated alias cannot crowd the requested anchor out of its grouped car
     expect(card.concept.ref).toEqual(requested.ref!);
     expect(card.concept.classificationClaims).toHaveLength(1);
     expect(card.concept.labels.map((label) => label.text)).toContain("Requested concept");
-    expect(card.coverage).toMatchObject({ status: "partial", gaps: ["traversal_limit"] });
+    expect(card.coverage).toMatchObject({ status: "partial", gaps: ["traversal_limit", "pending_consolidation"] });
     const reversed = withWorldPipeline({ groupers: [joinHandles([...members].reverse())] }, read);
     expect(reversed).toEqual(grouped);
   } finally {
@@ -167,7 +169,7 @@ test("group size is bounded after authorization and an oversized visible group r
   try {
     const first = await worldSeed(db, { subject: "topic:first", label: "First label" });
     const anchor = handleOf(db, "topic:first");
-    const invisible = Array.from({ length: 140 }, (_, index) => `unallocated-${index}`);
+    const invisible = Array.from({ length: 280 }, (_, index) => `unallocated-${index}`);
     const read = (members: readonly string[]) => withWorldPipeline({ groupers: [joinHandles(members)] }, () =>
       collectReadFrames(() => readWorldView(first.ctx, view(""))),
     );
@@ -175,7 +177,7 @@ test("group size is bounded after authorization and an oversized visible group r
     const hidden = read([anchor, ...invisible]);
     expect(canonicalBytes(hidden.result)).toEqual(canonicalBytes(before.result));
     expect(hidden.frames[0]!.stats).toEqual(before.frames[0]!.stats);
-    for (let i = 0; i < 128; i += 1)
+    for (let i = 0; i < 256; i += 1)
       await worldSeed(db, { subject: `topic:bounded-${i}`, label: `Bounded ${i}`, discover: false });
     const members = db.query<{ handle_id: string }, []>("SELECT handle_id FROM semantic_bindings").all()
       .map((row) => row.handle_id);

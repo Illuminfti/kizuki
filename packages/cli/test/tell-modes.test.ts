@@ -75,6 +75,21 @@ function card(env: Env, ref: string): Card {
 }
 
 describe("kizuki tell with a world claim", () => {
+  test("identity correction and concept union work through CLI processes", async () => {
+    const { env, ref, logic } = await world();
+    const before = card(env, ref) as Card & { concept: { classificationClaims: { token: string }[] } };
+    const told = runCli(env, "tell", "These names refer to one concept.", "--world-claim", before.concept.classificationClaims[0]!.token,
+      "--mode", "merge_identity", "--object-ref", logic, "--json");
+    expect(told.exitCode, told.stderr).toBe(0);
+    const merged = card(env, logic) as Card & { concept: { resolution: string; labels: { text: string }[] } };
+    expect(merged.concept.ref.token).toBe(logic);
+    expect(merged.concept.resolution).toBe("resolved");
+    expect(merged.concept.labels.map(x => x.text).sort()).toEqual(["Bayesian updating", "Formal logic"]);
+    const found = runCli(env, "world", "--operation", "find_concepts", "--json");
+    expect(found.exitCode).toBe(0);
+    expect(JSON.parse(found.stdout).data.data.result.data.matches).toHaveLength(2);
+  });
+
   test("--mode retract records a denial and --refresh-concept-ref prints the corrected concept", async () => {
     const { env, ref } = await world();
     const claim = card(env, ref).definitions[0]!["claim"].token;

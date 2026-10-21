@@ -6,7 +6,18 @@ import type { WorldValidQuery } from "../ops/types";
 import { authorizedSupportSql, validMeaningSql } from "../policy-sql";
 
 /** Private committed position. Never include it in wire bodies or fingerprints. */
-export type KnownCutoff = { readonly at: string; readonly sequence: number };
+export interface KnownConsolidationPin {
+  readonly basisDigest: string;
+  readonly responseHash: string;
+  readonly completedAt: string;
+  readonly expiresAt: string;
+}
+export type KnownCutoff = {
+  readonly at: string;
+  readonly sequence: number;
+  /** Exact derived records already visible when a saved snapshot was issued. */
+  readonly consolidations?: readonly KnownConsolidationPin[];
+};
 export class WorldHistoryUnavailable extends Error {}
 
 export function resolveKnownTime(db: Database, at: string): KnownCutoff {

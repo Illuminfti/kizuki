@@ -16,7 +16,7 @@ export interface CorrectTarget {
   claim_key?: string;
 }
 
-export const CORRECTION_MODES = ["replace_object", "retract", "reclassify_mode"] as const;
+export const CORRECTION_MODES = ["replace_object", "retract", "reclassify_mode", "merge_identity", "separate_identity"] as const;
 export type CorrectionMode = (typeof CORRECTION_MODES)[number];
 /** The perspective modes a claim can be reclassified to: what the owner calls an idea rather than a fact. */
 export const RECLASSIFIED_MODES = ["suggested", "hypothetical", "questioned"] as const;
@@ -30,7 +30,8 @@ export type ReclassifiedMode = (typeof RECLASSIFIED_MODES)[number];
 export type WorldCorrection =
   | { readonly mode: "replace_object"; readonly object?: ClaimV2Object }
   | { readonly mode: "retract" }
-  | { readonly mode: "reclassify_mode"; readonly to: ReclassifiedMode };
+  | { readonly mode: "reclassify_mode"; readonly to: ReclassifiedMode }
+  | { readonly mode: "merge_identity" | "separate_identity"; readonly object: Extract<ClaimV2Object, {kind: "subject"}> };
 
 export interface CorrectInput {
   /** 1..2000 chars; the owner's words, stored verbatim. */

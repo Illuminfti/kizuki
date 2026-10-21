@@ -3,7 +3,7 @@
 Status: implemented on this branch; awaiting integration. Evidence date: 2026-09-30.
 
 This page describes how an owner, or an agent relaying the owner, corrects a
-world claim: the three modes, the claim shapes the writer takes, what each
+world claim: the correction and identity modes, the claim shapes the writer takes, what each
 surface accepts, and what comes back. It adds no MCP tool, no table and no
 second write path. `propose` and `correct` stay the only write tools (D14).
 
@@ -23,6 +23,10 @@ both its evidence and its rendering on the page.
 | `replace_object` (default) | `object`: a literal, a vocabulary value or a node token. Absent, the statement is the literal. | The same claim with the named object. Polarity and perspective are kept. |
 | `retract` | none | The owner's denial: the same claim with negative polarity. Only a claim that is not already a denial can be retracted. |
 | `reclassify_mode` | `perspective_mode`: `suggested`, `hypothetical` or `questioned` | The same claim held differently, for what was an idea and not a fact. The Situation card moves it to uncertainty. |
+| `merge_identity` | `object`: a second Concept node token | A receipted positive `concept.same_as`, targeting a Concept classification without retiring it. |
+| `separate_identity` | `object`: a second Concept node token | A receipted negative `concept.same_as` that blocks the disputed component. |
+
+The identity modes have a separate [scoped identity contract](identity.md): both endpoints must be currently authorized Concepts, the owner or an authorized owner relay supplies the statement, and identity cannot take effect before its canon receipt. Existing correction modes keep their original behavior.
 
 A literal `object` no longer has to equal the statement. The statement is the
 owner's words and the claim's rendering on the page; the object is the value the
@@ -45,7 +49,7 @@ stays live with its original evidence and attribution. A claim is refused as
 
 | Reason code | Meaning |
 | --- | --- |
-| `classification_claim` | A `world.kind` claim classifies its subject. A second classification contradicts the first while it is live, so a classification is not corrected in place. |
+| `classification_claim` | A `world.kind` claim classifies its subject and is not corrected in place. The explicit identity modes accept a Concept classification as an endpoint anchor and leave it live. |
 | `not_an_assertion` | The claim's stored meaning is not a plain world assertion. |
 | `quoted_attribution` | The claim is quoted or reported, or names a holder, speaker or addressee. The owner's statement cannot replace another perspective's words or attribution. |
 
@@ -132,17 +136,17 @@ read was unavailable.
 | --- | --- |
 | Refresh cannot be read after the commit | `refreshedWorld` unavailable with reason `storage`; the correction stands. |
 | Dry run | The same answer as a real call, prefixed "Would", and nothing written in any mode. |
-| Classification claim | `unsupported_assertion: classification_claim`, no native evidence. |
+| Classification claim in a replacement, retraction or reclassification | `unsupported_assertion: classification_claim`, no native evidence. |
 | Quoted, reported or attributed claim | `unsupported_assertion: quoted_attribution`, no native evidence; original claim stays live. |
 | Caller cannot relay the owner | Held before mutation: `correction relay is not granted`. |
 
 ## Known limits
 
-- A correction of a claim whose world page has not been written yet is recorded
+- An ordinary correction of a claim whose world page has not been written yet is recorded
   and retires the old claim, but there is no canon receipt to undo until the
   canon loop writes the page. The corrected claim is then part of that page.
   Canon writing needs a configured model (D12), and a typed claim exists only
-  once extraction has run, so in practice the page exists first.
+  once extraction has run, so in practice the page exists first. Identity modes instead materialize an ordinary source baseline first, then obtain a separate identity receipt so undo preserves the original classification.
 - `retract` on a claim that already denies its object is refused. The way to
   take back an owner's own denial is `kizuki undo`.
 - A dry run of a typed correction lists the pages it would rewrite but shows no

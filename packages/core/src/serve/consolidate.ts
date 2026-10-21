@@ -7,7 +7,7 @@ import { sourceEventsAllowed, sourcePortBindingDigest } from "../ledger/source-g
 import { classifyLlmError } from "../producer/model";
 import { sha256Hex } from "../util/hash";
 import { scanMatches } from "../world/pipeline/collect";
-import { newReadFrame } from "../world/pipeline/frame";
+import { newReadFrame, WorldProjectionBudgetError } from "../world/pipeline/frame";
 import { collectConsolidationBasis, type ConsolidationBasis } from "../world/consolidation/basis";
 import { consolidationPrompt } from "../world/consolidation/prompt";
 import { addDailyBudget, budgetDay, readDailyBudget } from "./budget-ledger";
@@ -72,7 +72,7 @@ function reserve(ctx: WorldJobContext, basis: ConsolidationBasis, nonce: string)
     ctx.db.query(`INSERT OR IGNORE INTO world_consolidation(basis_digest,handle_id,kind,members,status,created_at,expires_at)
       VALUES (?,?,?,?,'pending',?,?)`).run(basis.digest, basis.anchor, basis.kind, JSON.stringify(basis.members), now.at, new Date(now.ms + CONSOLIDATION_RETENTION_MS).toISOString());
     const insert = ctx.db.query("INSERT OR IGNORE INTO world_consolidation_basis(basis_digest,support_key,claim_id,source_key) VALUES (?,?,?,?)");
-    for (const item of basis.items) for (const support of item.supports) insert.run(basis.digest, support.row.support_key, item.claimId, support.row.source_key);
+    for (const pin of basis.pins) insert.run(basis.digest, pin.key, pin.claim, pin.source);
     ctx.db.query(`INSERT INTO world_consolidation_jobs(job_key,basis_digest,nonce,attempts,next_at,outcome,updated_at) VALUES (?,?,?,1,?,'running',?)
       ON CONFLICT(job_key) DO UPDATE SET nonce=excluded.nonce,attempts=attempts+1,next_at=excluded.next_at,outcome='running',updated_at=excluded.updated_at`)
       .run(basis.digest, basis.digest, nonce, new Date(now.ms + config.max_pass_seconds * 1_000 + BACKOFF_MS).toISOString(), now.at);
@@ -152,7 +152,13 @@ export const consolidationJob: WorldJob = { id: "consolidation", async run(ctx) 
       for (const candidate of scan.found) {
         if (ctx.stopRequested() || performance.now() - start >= config.max_pass_seconds * 1_000 || calls >= config.max_calls_per_pass) return;
         handles += 1; report.handles = handles;
-        const work = frame(ctx), basis = collectConsolidationBasis(work, candidate.handle, kind.id);
+        const work = frame(ctx);
+        let basis: ConsolidationBasis | null;
+        try { basis = collectConsolidationBasis(work, candidate.handle, kind.id); }
+        catch (error) {
+          if (!(error instanceof WorldProjectionBudgetError)) throw error;
+          basis = null;
+        }
         // Consent is checked before building a prompt or reading lineage text.
         if (basis !== null && allowed(ctx, basis) && ready(ctx, basis)) {
           const prompt = consolidationPrompt(work, basis);

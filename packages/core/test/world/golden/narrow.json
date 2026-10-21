@@ -143,10 +143,7 @@
     "schema": "kizuki.world-view/v1",
     "operation": "concept",
     "result": {
-      "status": "current",
-      "view": {
-        "status": "not_issued"
-      },
+      "status": "incomplete",
       "data": {
         "schema": "kizuki.concept-card/v1",
         "concept": {
@@ -698,24 +695,26 @@
           "kind": "current"
         },
         "coverage": {
-          "status": "complete_for_query",
-          "gaps": [],
+          "status": "partial",
+          "gaps": [
+            "pending_consolidation"
+          ],
           "validWindow": {
             "kind": "all"
           },
           "history": "unavailable"
         }
-      }
+      },
+      "reasons": [
+        "pending_consolidation"
+      ]
     }
   },
   "concept (bayes, valid at)": {
     "schema": "kizuki.world-view/v1",
     "operation": "concept",
     "result": {
-      "status": "current",
-      "view": {
-        "status": "not_issued"
-      },
+      "status": "incomplete",
       "data": {
         "schema": "kizuki.concept-card/v1",
         "concept": {
@@ -1267,15 +1266,20 @@
           "kind": "current"
         },
         "coverage": {
-          "status": "complete_for_query",
-          "gaps": [],
+          "status": "partial",
+          "gaps": [
+            "pending_consolidation"
+          ],
           "validWindow": {
             "kind": "at",
             "at": "2026-06-01T00:00:00.000Z"
           },
           "history": "unavailable"
         }
-      }
+      },
+      "reasons": [
+        "pending_consolidation"
+      ]
     }
   },
   "concept (bayes, valid before)": {
@@ -1285,10 +1289,7 @@
     "schema": "kizuki.world-view/v1",
     "operation": "concept",
     "result": {
-      "status": "current",
-      "view": {
-        "status": "not_issued"
-      },
+      "status": "incomplete",
       "data": {
         "schema": "kizuki.concept-card/v1",
         "concept": {
@@ -1840,8 +1841,10 @@
           "kind": "current"
         },
         "coverage": {
-          "status": "complete_for_query",
-          "gaps": [],
+          "status": "partial",
+          "gaps": [
+            "pending_consolidation"
+          ],
           "validWindow": {
             "kind": "overlap",
             "from": "2026-02-01T00:00:00.000Z",
@@ -1849,19 +1852,17 @@
           },
           "history": "unavailable"
         }
-      }
+      },
+      "reasons": [
+        "pending_consolidation"
+      ]
     }
   },
   "concept (bayes, unknown time only)": {
     "status": "not_found"
   },
   "concept (bayes, known at a time)": {
-    "schema": "kizuki.world-view/v1",
-    "operation": "concept",
-    "result": {
-      "status": "unavailable",
-      "reason": "history"
-    }
+    "status": "not_found"
   },
   "situation (a concept ref)": {
     "status": "not_found"
@@ -1870,10 +1871,7 @@
     "schema": "kizuki.world-view/v1",
     "operation": "concept",
     "result": {
-      "status": "current",
-      "view": {
-        "status": "not_issued"
-      },
+      "status": "incomplete",
       "data": {
         "schema": "kizuki.concept-card/v1",
         "concept": {
@@ -1974,24 +1972,26 @@
           "kind": "current"
         },
         "coverage": {
-          "status": "complete_for_query",
-          "gaps": [],
+          "status": "partial",
+          "gaps": [
+            "pending_consolidation"
+          ],
           "validWindow": {
             "kind": "all"
           },
           "history": "unavailable"
         }
-      }
+      },
+      "reasons": [
+        "pending_consolidation"
+      ]
     }
   },
   "situation (launch)": {
     "schema": "kizuki.world-view/v1",
     "operation": "situation",
     "result": {
-      "status": "current",
-      "view": {
-        "status": "not_issued"
-      },
+      "status": "incomplete",
       "data": {
         "schema": "kizuki.situation-card/v1",
         "situation": {
@@ -2357,32 +2357,29 @@
           "kind": "current"
         },
         "coverage": {
-          "status": "complete_for_query",
-          "gaps": [],
+          "status": "partial",
+          "gaps": [
+            "pending_consolidation"
+          ],
           "validWindow": {
             "kind": "all"
           },
           "history": "unavailable"
         }
-      }
+      },
+      "reasons": [
+        "pending_consolidation"
+      ]
     }
   },
   "situation (launch, known at a time)": {
-    "schema": "kizuki.world-view/v1",
-    "operation": "situation",
-    "result": {
-      "status": "unavailable",
-      "reason": "history"
-    }
+    "status": "not_found"
   },
   "situation (archive)": {
     "schema": "kizuki.world-view/v1",
     "operation": "situation",
     "result": {
-      "status": "current",
-      "view": {
-        "status": "not_issued"
-      },
+      "status": "incomplete",
       "data": {
         "schema": "kizuki.situation-card/v1",
         "situation": {
@@ -2616,14 +2613,19 @@
           "kind": "current"
         },
         "coverage": {
-          "status": "complete_for_query",
-          "gaps": [],
+          "status": "partial",
+          "gaps": [
+            "pending_consolidation"
+          ],
           "validWindow": {
             "kind": "all"
           },
           "history": "unavailable"
         }
-      }
+      },
+      "reasons": [
+        "pending_consolidation"
+      ]
     }
   },
   "find_situations (known at a time)": {

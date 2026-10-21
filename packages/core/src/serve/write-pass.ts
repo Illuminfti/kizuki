@@ -2,6 +2,7 @@ import type { LlmPort } from "../contracts/llm";
 import type { ConsolidationConfig, ConsolidationRunReport } from "../contracts/consolidation";
 import { pendingWorldCanonClaims, worldCanonPath, worldCanonTarget } from "../canon/world-materialization";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
+import { restoreReturnedSources, returnedSourceArchives } from "../canon/source-restore";
 import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
 import { addDailyBudget, budgetDay, readDailyBudget, settleWriteReservations } from "./budget-ledger";
@@ -407,8 +408,43 @@ export async function runWritePass(
   if (jobs.stopped) { tally.stopped = jobs.reason ?? STOP_REQUESTED; return result(); }
   // No model configured: claims stay live and unwritten; doctor says so.
   if (!modelConfigured(options)) return result();
+  const errorsBeforeRestore = tally.errors.length;
+  const stoppedBeforeRestore = tally.stopped;
+  await restoreSourcePages(io, options, tally);
+  if (tally.stopped !== stoppedBeforeRestore || tally.errors.length > errorsBeforeRestore) return result();
   await writeCanon(io, options, tally);
   return result();
+}
+
+/** Returned source pages use the same short writer holds as newly written pages. */
+async function restoreSourcePages(io: CanonIo, options: WritePassOptions, tally: PassTally): Promise<void> {
+  const limit = Math.max(WRITE_PASS_LIMIT, options.budget.usage().canon_writes_per_run.limit);
+  // Bound work to the inventory observed for this pass. The durable cursor
+  // advances past edited archives; a short inventory is not scanned repeatedly.
+  const attempts = returnedSourceArchives(io.db, Math.max(WRITE_PASS_SCAN, limit)).length;
+  const errorsBeforeRestore = tally.errors.length;
+  const stoppedBeforeRestore = tally.stopped;
+  for (let attempt = 0; attempt < attempts && tally.canon_writes < limit; attempt++) {
+    if (options.stopRequested?.() === true) { tally.stopped = STOP_REQUESTED; return; }
+    const step = await holdWriter(io, async (scope, owned) => {
+      try {
+        settleWriteReservations(owned.db, owned.vault_path);
+        const outcome = await restoreReturnedSources(scope, owned, 1, options.budget, 1);
+        tally.canon_writes += outcome.restored;
+        if (outcome.stopped !== undefined) tally.stopped = outcome.stopped;
+        return outcome.restored + outcome.kept;
+      } catch (error) {
+        tally.errors.push(redactReceiptError(error));
+        return 0;
+      } finally {
+        settleWriteReservations(owned.db, owned.vault_path);
+      }
+    }, SETTLE_WAIT_MS);
+    if (!step.held) { tally.stopped = step.stopped; return; }
+    if (tally.stopped !== stoppedBeforeRestore || tally.errors.length > errorsBeforeRestore || step.value === 0) return;
+    if (inspectCanonRecovery(io.db).pending) { tally.stopped = "recovery:held"; return; }
+    await new Promise(resolve => setTimeout(resolve, PAGE_GAP_MS));
+  }
 }
 
 type Page = "wrote" | "failed" | "done";

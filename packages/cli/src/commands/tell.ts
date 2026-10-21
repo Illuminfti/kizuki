@@ -9,7 +9,7 @@ import { clean, jsonEnvelope } from "../output";
 import { RESPONSE_CONTRACT_BOUND, RESPONSE_CONTRACT_OPTION, cliResultV2, contractFailure, responseContract, serveV2 } from "../response-contract";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
-const MODES = ["replace_object", "retract", "reclassify_mode"] as const;
+const MODES = ["replace_object", "retract", "reclassify_mode", "merge_identity", "separate_identity"] as const;
 const PERSPECTIVE_MODES = ["suggested", "hypothetical", "questioned"] as const;
 
 export const TELL_SCHEMA = {
@@ -67,7 +67,7 @@ function renderRefreshed(view: WorldReadResult): string[] {
 export const tellCommand: Command = {
   name: "tell",
   usage:
-    `tell "<statement>" [--claim CLAIM_ID|--world-claim TOKEN] [--mode replace_object|retract|reclassify_mode] [--object TEXT|--object-ref TOKEN|--object-vocabulary ID] [--perspective-mode suggested|hypothetical|questioned] [--refresh-concept-ref TOKEN] [--since TIME] [--until TIME] [--dry-run] [${RESPONSE_CONTRACT_OPTION} ${RESPONSE_CONTRACT_BOUND}] [--json] [--verbose]`,
+    `tell "<statement>" [--claim CLAIM_ID|--world-claim TOKEN] [--mode replace_object|retract|reclassify_mode|merge_identity|separate_identity] [--object TEXT|--object-ref TOKEN|--object-vocabulary ID] [--perspective-mode suggested|hypothetical|questioned] [--refresh-concept-ref TOKEN] [--since TIME] [--until TIME] [--dry-run] [${RESPONSE_CONTRACT_OPTION} ${RESPONSE_CONTRACT_BOUND}] [--json] [--verbose]`,
   summary: "correct a claim; rewrite affected canon in the same pass",
   schema: TELL_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -102,7 +102,7 @@ export const tellCommand: Command = {
       (perspective !== undefined && !(PERSPECTIVE_MODES as readonly string[]).includes(perspective)) ||
       (mode === "reclassify_mode") !== (perspective !== undefined) ||
       [objectText, objectRef, objectVocabulary].filter((value) => value !== undefined).length > 1 ||
-      ((objectText !== undefined || objectRef !== undefined || objectVocabulary !== undefined) && mode !== undefined && mode !== "replace_object") ||
+      ((objectText !== undefined || objectRef !== undefined || objectVocabulary !== undefined) && mode !== undefined && mode !== "replace_object" && mode !== "merge_identity" && mode !== "separate_identity") ||
       (objectRef !== undefined && !isWorldWireToken(objectRef)) ||
       (refresh !== undefined && !isWorldWireToken(refresh))
     )

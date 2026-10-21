@@ -1,3 +1,4 @@
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 import { expect, test } from "bun:test";
 import { reinstateClaim } from "../../src/claims/store";
 import { openLedger } from "../../src/ledger/db";
@@ -28,7 +29,7 @@ function application(read: ReturnType<typeof historical>) {
 test("historical assistance ignores held prefixes before the cap and performs the same work as the unheld control", async () => {
   let baseline: ReturnType<typeof historical>["frames"][number]["stats"] | undefined;
   for (const heldCount of [0, 260]) {
-    const db = openLedger(":memory:"), f = await cardFixture(db);
+    const db = openLedger(":memory:"), f = await cardFixture(db, { model: EMPTY_SUMMARY_MODEL });
     try {
       db.query("UPDATE claim_history_clock SET last_recorded_at=?").run(LEARNED);
       await f.write("learning.application", { kind: "subject", ref: f.ref("topic:bayes") }, { subject: "person:ada", context: ["task:one"] });
@@ -39,6 +40,7 @@ test("historical assistance ignores held prefixes before the cap and performs th
           .run(held.stored.claim.claim_id);
       }
       await f.write("learning.assistance", assisted, { subject: "task:one", context: ["person:ada"] });
+      await completeEmptyWorldSummaries(db, f.ctx.vaultPath);
       const read = historical(f), item = application(read);
       expect(item.assistance).toBe("assisted");
       expect(item.assistanceEvidence).toHaveLength(1);
@@ -50,7 +52,7 @@ test("historical assistance ignores held prefixes before the cap and performs th
 }, 120_000);
 
 test("historical assistance uses the retained lifecycle valid window before selecting candidates", async () => {
-  const db = openLedger(":memory:"), f = await cardFixture(db);
+  const db = openLedger(":memory:"), f = await cardFixture(db, { model: EMPTY_SUMMARY_MODEL });
   try {
     db.query("UPDATE claim_history_clock SET last_recorded_at=?").run(LEARNED);
     await f.write("learning.application", { kind: "subject", ref: f.ref("topic:bayes") }, { subject: "person:ada", context: ["task:one"] });
@@ -61,6 +63,7 @@ test("historical assistance uses the retained lifecycle valid window before sele
     // Undo/reinstatement records a new effective bound without rewriting the
     // original admitted semantic. Temporal reads use that retained state.
     reinstateClaim(db, evidence.stored.claim.claim_id, null);
+    await completeEmptyWorldSummaries(db, f.ctx.vaultPath);
     const item = application(historical(f, { kind: "at", at: "2026-01-03T00:00:00.000Z" }));
     expect(item.assistance).toBe("assisted");
     expect(item.assistanceEvidence).toHaveLength(1);

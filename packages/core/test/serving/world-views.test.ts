@@ -1,3 +1,4 @@
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 import { afterEach, describe, expect, setDefaultTimeout, setSystemTime, test } from "bun:test";
 import { OWNER, addAgent, authenticate, OWNER_AGENT_GRANT, setGrant } from "../../src/agents";
 import { readWorldView } from "@kizuki/core/world";
@@ -19,11 +20,17 @@ afterEach(() => {
   for (const scene of scenes.splice(0)) scene.dispose();
 });
 
+async function summarizedScene(): Promise<NoninterferenceScene> {
+  const made = await hiddenScene({ model: EMPTY_SUMMARY_MODEL });
+  await completeEmptyWorldSummaries(made.db, made.vaultPath);
+  return made;
+}
+
 async function scene(): Promise<{
   scene: NoninterferenceScene;
   owner: ServeContext;
 }> {
-  const made = await hiddenScene();
+  const made = await summarizedScene();
   scenes.push(made);
   return {
     scene: made,
@@ -164,6 +171,7 @@ describe("view tokens on world_view", () => {
       ],
       discover: false,
     });
+    await completeEmptyWorldSummaries(made.db, made.vaultPath);
     const second = resultOf(
       readWorldView(
         owner,
@@ -281,11 +289,10 @@ describe("view lifecycle at the read seam", () => {
     if (first.status !== "current" || !("validUntil" in first)) throw new Error("no baseline");
     await correct({ db: made.db, vault_path: made.vaultPath }, { statement: "A corrected definition", target: { claim_id: made.visible.concept.claims[2]! } });
     const changed = resultOf(readWorldView(owner, concept(made.visible.concept.ref!, { priorView: first.view })));
-    expect(changed).toMatchObject({ status: "current", view: { kind: "view" } });
+    expect(changed).toMatchObject({ status: "incomplete", reasons: ["pending_consolidation"], data: { summary: null } });
     expect(JSON.stringify(changed)).toContain("A corrected definition");
-    if (changed.status !== "current" || !("validUntil" in changed)) throw new Error("no revised baseline");
     made.db.query("INSERT INTO checkpoints(connector_id,source_key,cursor,mode,updated_at,last_run_at,last_result,backfill_complete) VALUES ('world.fixture',?,NULL,'backfill','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z','{}',0) ON CONFLICT(connector_id,source_key) DO UPDATE SET backfill_complete=0").run(made.visible.concept.sourceKey);
-    expect(resultOf(readWorldView(owner, concept(made.visible.concept.ref!, { priorView: changed.view })))).toMatchObject({ status: "incomplete", reasons: ["coverage"] });
+    expect(resultOf(readWorldView(owner, concept(made.visible.concept.ref!)))).toMatchObject({ status: "incomplete", reasons: ["coverage", "pending_consolidation"] });
   });
 
   test("token issuance failure rolls eviction back and keeps the authorized body", async () => {
@@ -300,6 +307,7 @@ describe("view lifecycle at the read seam", () => {
   // Oracle binding: world-concept-design#a_hidden_mutation (authorized equality and work).
   test("hidden changes preserve unchanged bytes, validity, errors and read work", async () => {
     await assertNoninterference({
+      scene: summarizedScene,
       mutations: HIDDEN_MUTATIONS,
       cases: (made) => {
         const first = resultOf(readWorldView(made.reader, concept(made.refs.concept)));

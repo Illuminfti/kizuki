@@ -9,6 +9,7 @@ import { createHelpers } from "../helpers";
 import { worldSeed } from "../../../core/test/helpers/world-seed";
 import { inspectSourceGrant, setSourceGrant, sourceEventsAllowed } from "../../../core/src/ledger/source-grants";
 import { writeRailCursor } from "../../../core/src/ledger/checkpoints";
+import { getRunReceipt } from "../../../core/src/serve/receipts";
 import { runRail } from "../../../core/src/serve/rails";
 import { readWorldView } from "../../../core/src/serving/world-view";
 
@@ -43,6 +44,7 @@ test("native runtime forwards its exact consent-bound model to the scheduled con
     const receipt = await runRail(db, setup.vault, "sync", { hooks });
     expect(receipt.errors).toEqual([]); expect(endpoint.requests).toHaveLength(1);
     expect(receipt.consolidation).toMatchObject({ calls: 1, completed: 1, input_tokens: 40, output_tokens: 16, output_tokens_charged: 1024, usage_unknown: false, outcomes: { complete: 1 } });
+    expect(getRunReceipt(db, receipt.run_id)?.consolidation).toEqual(receipt.consolidation);
     const view = readWorldView({ ...seed.ctx, vaultPath: setup.vault }, { operation: "concept", concept: seed.ref,
       valid: { kind: "all" }, knownAt: { kind: "current" } });
     if (!("result" in view) || view.result.status === "unavailable" || view.result.data.schema !== "kizuki.concept-card/v1") throw new Error("runtime Concept unavailable");

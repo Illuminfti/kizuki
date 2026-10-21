@@ -109,3 +109,10 @@ packages/core/test/serve/redact-http.test.ts:post.fetch#1:loopback request to th
 packages/cli/test/hook-security.test.ts:daemon.Bun.serve#1:synthetic daemon endpoint bound to 127.0.0.1 for hook safety tests
 packages/cli/test/hook-security.test.ts:(toplevel).Bun.serve#1:synthetic proxy bound to 127.0.0.1 proving loopback bearer bypass
 packages/cli/test/hook-security.test.ts:(toplevel).Bun.serve#2:synthetic redirect destination bound to 127.0.0.1 proving the bearer is not forwarded
+scripts/fuzz/worker.ts:(toplevel).originalFetch#1:offline fuzz worker permits only its synthetic HTTP loopback server; all other fetch destinations are refused
+scripts/fuzz/surfaces.ts:httpPost.fetch#1:synthetic owner and agent requests to the worker-owned loopback HTTP listener
+scripts/fuzz/surfaces.ts:run.fetch#1:synthetic inert-principal requests to the worker-owned loopback HTTP listener
+scripts/fuzz/surfaces.ts:run.fetch#2:synthetic captured-text separation check against the worker-owned loopback HTTP listener
+packages/core/test/serve/http-hostile.test.ts:withHttp.fetch#1:synthetic malformed-body requests to the test-owned loopback HTTP listener
+packages/core/test/serve/http-hostile.test.ts:(toplevel).fetch#1:synthetic oversized chunked body sent to the test-owned loopback HTTP listener
+scripts/fuzz/app.ts:post.fetch#1:synthetic app requests to the worker-owned loopback HTTP listener; bearer and origin refusal are checked before dispatch

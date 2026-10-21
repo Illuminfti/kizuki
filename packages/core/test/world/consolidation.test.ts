@@ -377,6 +377,32 @@ test("historical reads never borrow a summary produced after their exact retaine
   } finally { db.close(); }
 });
 
+test("saved snapshots cannot gain a summary completed later at the identical recorded timestamp", async () => {
+  const db = openLedger(":memory:"), instant = "2030-01-09T00:00:00.000Z";
+  try {
+    db.query("UPDATE claim_history_clock SET last_recorded_at=?").run(instant);
+    const seed = await worldSeed(db), bound = model(db); authorizeModel(seed);
+    const input = { operation: "concept", concept: seed.ref, valid: { kind: "all" }, knownAt: { kind: "time", at: instant } };
+    const read = (knownAt = input.knownAt as unknown) => {
+      const result = readWorldView(seed.ctx, { ...input, knownAt });
+      if (!("result" in result) || !("data" in result.result) || result.result.data.schema !== "kizuki.concept-card/v1") throw new Error("historical card missing");
+      return result.result.data;
+    };
+    const before = read();
+    expect(before.knownAt.kind).toBe("snapshot"); expect(before.summary).toBeNull();
+    expect(before.coverage.gaps).toContain("pending_consolidation");
+    await runWorldJobs({ ...job(seed, bound.llm), now: () => instant });
+    expect(bound.requests).toHaveLength(1);
+    expect(card(seed).summary?.text).toBe(SUMMARY);
+    const retained = read(before.knownAt);
+    expect(retained.summary).toBeNull(); expect(retained.coverage.gaps).toContain("pending_consolidation");
+    const fresh = read();
+    expect(fresh.summary?.text).toBe(SUMMARY);
+    expect(read(fresh.knownAt).summary).toEqual(fresh.summary);
+    expect(read(before.knownAt).summary).toBeNull();
+  } finally { db.close(); }
+});
+
 test("loss of derive consent and an unbound destination both prevent model egress", async () => {
   const db = openLedger(":memory:");
   try {

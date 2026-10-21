@@ -80,7 +80,9 @@ test("forged spans, mismatched admissions, version tampering and malformed refs 
 test("UTF-16 anchors map to code-point expansion; credentials are redacted and a cut through one is refused", async () => {
   const f = await cardFixture();
   try {
-    const agent = addAgent(f.db, "span-reader", { ...OWNER_AGENT_GRANT });
+    // This synthetic reader explicitly permits credential-classed evidence so
+    // the separate output-scrubbing boundary is exercised after authorization.
+    const agent = addAgent(f.db, "span-reader", { ...OWNER_AGENT_GRANT, deny_classes: [] });
     const reader = { ...f.ctx, principal: authenticate(f.db, agent.token)! };
     const text = "A 😀 prefix. The selected span. suffix";
     const start = text.indexOf("The"), end = text.indexOf(" suffix");
@@ -88,6 +90,9 @@ test("UTF-16 anchors map to code-point expansion; credentials are redacted and a
     const evidence = f.card(reader).relations[0]!.assessments[0]!.evidence[0]!;
     expect(serveWorldView(reader, f.input("evidence", { evidence })).quoted[0]!).toMatchObject({ text: text.slice(start, end), truncated: false });
     await f.write("concept.counterexample", { kind: "literal", value: "Redacted capture" }, { text: "A record with secret=syntheticCredentialValue and a suffix." });
+    const defaultAgent = addAgent(f.db, "default-span-reader", { ...OWNER_AGENT_GRANT });
+    const defaultReader = { ...f.ctx, principal: authenticate(f.db, defaultAgent.token)! };
+    expect(f.card(defaultReader).relations.some((r) => r.predicate === "concept.counterexample")).toBe(false);
     const secret = f.card(reader).relations.find((r) => r.predicate === "concept.counterexample")!.assessments[0]!.evidence[0]!;
     const quote = serveWorldView(reader, f.input("evidence", { evidence: secret })).quoted[0]!;
     expect(quote.text).not.toContain("syntheticCredentialValue");

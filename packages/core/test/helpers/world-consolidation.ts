@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { bindSourceModelPort } from "../../src/ledger/source-grants";
+import { bindSourceModelPort, inspectSourceGrant } from "../../src/ledger/source-grants";
 import type { LlmPort } from "../../src/contracts/llm";
 import { writeRailCursor } from "../../src/ledger/checkpoints";
 import { runWorldJobs } from "../../src/serve/world-jobs";
@@ -14,6 +14,11 @@ export const EMPTY_SUMMARY_MODEL = { model_endpoint: "https://fixture.invalid/v1
  */
 export async function completeEmptyWorldSummaries(db: Database, vaultPath = "", now = () => new Date().toISOString()): Promise<void> {
   const { model_endpoint: endpoint, model } = EMPTY_SUMMARY_MODEL;
+  const optedIn = db.query<{ source_key: string }, []>("SELECT source_key FROM source_grants WHERE status='active'").all().some(({ source_key }) => {
+    const grant = inspectSourceGrant(db, source_key)!;
+    return grant.policy.egress !== "local_only" && grant.policy.egress.model_endpoint === endpoint && grant.policy.egress.model === model && grant.policy.purposes.includes("extract");
+  });
+  if (!optedIn) throw new Error("complete-null prerequisite requires explicit initial fixture model consent");
   const last = db.query<{ accepted_at: string; event_id: string }, []>("SELECT accepted_at,event_id FROM events ORDER BY accepted_at DESC,event_id DESC LIMIT 1").get();
   if (last !== null) writeRailCursor(db, "kizuki.producer.model", "extract", `${last.accepted_at}\t${last.event_id}`);
   const llm: LlmPort = bindSourceModelPort({
@@ -26,7 +31,8 @@ export async function completeEmptyWorldSummaries(db: Database, vaultPath = "", 
   for (let pass = 0; pass < 32; pass++) {
     const result = await runWorldJobs({ db, vaultPath, now, stopRequested: () => false, modelConfigured: true, llm, consolidation: config });
     if (result.errors.length || result.stopped) throw new Error(`synthetic consolidation prerequisite failed: ${result.reason ?? result.errors.join(",")}`);
-    if ((result.consolidation?.calls ?? 0) === 0) return;
+    const cursor = db.query<{ cursor: string }, []>("SELECT cursor FROM world_consolidation_jobs WHERE job_key='cursor'").get();
+    if ((result.consolidation?.calls ?? 0) === 0 && cursor?.cursor === JSON.stringify({ kind: 0, after: null })) return;
   }
   throw new Error("synthetic consolidation prerequisite exceeded its bounded passes");
 }

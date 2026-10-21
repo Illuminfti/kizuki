@@ -1,6 +1,7 @@
 import { relPath, text } from "./arguments";
 import {
   canonChunk,
+  deniedPageAudit,
   eligible,
   excerptOf,
   loadCanon,
@@ -44,7 +45,7 @@ export function serveGetPage<C extends ResponseContract = typeof ENVELOPE_SCHEMA
     // Absent or retracted answers the same way: existence is neither
     // confirmed nor denied to a caller who guessed an id.
     if (page === undefined || !eligible(page)) {
-      return { canon: [], quoted: [], withheld: [] };
+      return { canon: [], quoted: [], withheld: page === undefined ? deniedPageAudit(index, wantsId ? { id: selector } : { path: selector }) : [] };
     }
 
     const decision = pageDecision(index, ctx.principal.grant, page);

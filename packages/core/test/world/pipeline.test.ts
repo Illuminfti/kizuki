@@ -1,3 +1,4 @@
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 /**
  * The seams of the staged projection: a new enricher, collector, grouper or
  * kind is a registration, and none of them can widen what a reader may see.
@@ -29,7 +30,8 @@ setDefaultTimeout(120_000);
 let scene: GoldenScene;
 beforeAll(async () => {
   setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
-  scene = await goldenScene();
+  scene = await goldenScene({ model: EMPTY_SUMMARY_MODEL });
+  await completeEmptyWorldSummaries(scene.db, scene.vaultPath);
 });
 afterAll(() => { scene.dispose(); setSystemTime(); });
 
@@ -175,7 +177,7 @@ describe("groupers", () => {
 });
 
 describe("the recorded cutoff", () => {
-  test("a known-at time or snapshot is still unavailable(history) on every operation", () => {
+  test("pre-evidence card times are not found and unsupported discovery history remains unavailable", () => {
     const reader = goldenReader(scene.owner);
     const concept = reader.find("concepts", "find_concepts", "Bayesian updating")[0]!.ref;
     const situation = reader.find("situations", "find_situations", "Launch")[0]!.ref;
@@ -188,11 +190,12 @@ describe("the recorded cutoff", () => {
     ];
     for (const knownAt of [{ kind: "time", at: "2026-06-01T00:00:00.000Z" }, { kind: "snapshot", ref: snapshot }]) {
       for (const input of operations) {
-        expect(readWorldView(scene.owner, { ...input, valid: { kind: "all" }, knownAt })).toEqual({
+        const expected: ReturnType<typeof readWorldView> = knownAt.kind === "time" && (input.operation === "concept" || input.operation === "situation") ? { status: "not_found" } : {
           schema: "kizuki.world-view/v1",
           operation: input.operation,
-          result: { status: "unavailable", reason: "history" },
-        });
+          result: input.operation === "concept" || input.operation === "situation" ? { status: "new_view_required" } : { status: "unavailable", reason: "history" },
+        };
+        expect(readWorldView(scene.owner, { ...input, valid: { kind: "all" }, knownAt })).toEqual(expected);
       }
     }
   });

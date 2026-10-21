@@ -79,3 +79,8 @@ rebuild, crash/reopen, exact authorization matching, usage across midnight, and 
 model port, scheduled sync rail, and consumer read against a synthetic loopback
 endpoint. These are offline integration evidence, not proof that a particular
 live provider is configured or currently operational.
+
+Saved known-at snapshots privately pin the exact completed summary records they
+admitted, including an explicit empty set. A summary completed later at the same
+recorded timestamp cannot enter an earlier snapshot. Expiry, erasure and current
+authority still win; an absent historical summary stays pending.

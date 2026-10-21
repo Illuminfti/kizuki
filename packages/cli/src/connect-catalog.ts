@@ -3,13 +3,14 @@ import { sourceCoverageLines } from "./source-coverage";
 import { xApiClient } from "./x-api";
 import { appCredentials } from "@kizuki/connector-telegram";
 import { REGISTRY } from "@kizuki/connectors";
-import { inspectSourceGrant, getCheckpoint, getConnectorSensitivity } from "@kizuki/core";
+import { inspectSourceGrant, getCheckpoint, getConnectorSensitivity, massWithdrawalHoldOf } from "@kizuki/core";
 import { listEnrollableConnectorIds, listHostConnections } from "./connections";
 import { withReadVault } from "./context";
 import { clean, jsonEnvelope, table } from "./output";
 import type { CliIo } from "./commands";
 import { INVOCATION } from "./runtime";
 import { egressDestination, egressRetention, egressView } from "./egress-view";
+import { withdrawalHoldLine } from "./withdrawal-hold";
 
 const TITLES: Record<string, string> = {
   "kizuki.beeper": "Beeper Desktop",
@@ -117,6 +118,7 @@ export async function printConnectionStatus(io: CliIo, json: boolean): Promise<n
         last_run: checkpoint?.last_run_at ?? null,
         stored: checkpoint?.last_result.stored ?? 0,
         errors: checkpoint?.last_result.errors.length ?? 0,
+        hold: row.disconnected_at === null ? massWithdrawalHoldOf(ctx.db, row.connector_id, row.source_key) : null,
       };
     });
     ctx.assertCurrent();
@@ -131,6 +133,9 @@ export async function printConnectionStatus(io: CliIo, json: boolean): Promise<n
           row.last_run === null ? "not synced yet" : clean(row.last_run), `${row.stored}`, `${row.errors}`]),
       ])) io.out(line);
       for (const row of connections) for (const line of sourceCoverageLines(row.coverage)) io.out(line);
+      for (const row of connections) {
+        if (row.hold !== null) io.out(`${clean(row.connector_id)} source=${row.source_key} ${withdrawalHoldLine(row.connector_id, row.source_key, row.hold)}`);
+      }
       io.out(`Refresh: ${INVOCATION} sync`);
     }
     return 0;

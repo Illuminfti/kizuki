@@ -1,4 +1,5 @@
 import { createRedactor } from "../../serving/redact";
+import { issuedOpaqueFields } from "../../util/issued-opaque";
 import type {
   ConceptCoverage,
   ViewGap,
@@ -39,7 +40,7 @@ export function coverageOf(
     status: gaps.length === 0 ? "complete_for_query" : "partial",
     gaps,
     validWindow: frame.valid,
-    history: frame.cutoff.kind === "current" ? "unavailable" : "retained_for_query",
+    history: frame.cutoff.kind === "current" ? "unavailable" : frame.historyBaseline ? "baseline_only" : "retained_for_query",
   };
 }
 
@@ -89,7 +90,7 @@ export function assembleCard(
     relations,
     summary: body.summary,
     learning: body.learning ?? [],
-    coverage: coverageOf(frame, collection.overflow, body.gaps),
+    coverage: coverageOf(frame, collection.overflow || cluster.overflow === true, body.gaps),
   });
 }
 
@@ -128,7 +129,7 @@ export function assembleMatches<Schema extends string>(
       a.ref.token.localeCompare(b.ref.token),
   );
   const dark = first && scan.visibleHandles === 0 && !populationEnabled(kind);
-  return {
+  const result = {
     schema,
     matches,
     cursor:
@@ -137,4 +138,5 @@ export function assembleMatches<Schema extends string>(
         : issueWorldRef(db, frame.ns, "object", scan.resumeAfter).token,
     coverage: coverageOf(frame, scan.cut, dark ? ["coverage"] : []),
   };
+  return result.cursor === null ? result : issuedOpaqueFields(result, ["cursor"]);
 }
