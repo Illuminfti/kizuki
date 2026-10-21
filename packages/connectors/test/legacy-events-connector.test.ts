@@ -255,6 +255,7 @@ describe("paging and resume", () => {
           ids.push(...batch.events.map(event => event.source_record_id));
           cursor = batch.cursor;
           done = connector.lastReport()?.run.done === true;
+          expect(batch.has_more).toBe(!done);
           if (page === 0) {
             expect(batch.events).toHaveLength(6);
             expect(connector.lastReport()?.counts).toMatchObject({ rows: 7, events: 6, skipped: 1 });
@@ -431,6 +432,25 @@ describe("paging and resume", () => {
 });
 
 describe("the run through a real ledger", () => {
+  test("a complete finite import records backfill completion and repeated capture stays idempotent", async () => {
+    seedJsonl();
+    const vault = join(root, "vault"); initVault(vault);
+    const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
+    const source = "01JJ0000000000000000000004";
+    try {
+      registerConnection(db, LEGACY_EVENTS_CONNECTOR_ID, source);
+      setSourceGrant(db, { source_key: source, expected_revision: 0, operation_id: "finite-import",
+        policy: { purposes: ["capture", "recall", "derive"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+          retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" } });
+      const first = await runBackfill(db, createLegacyEventsConnector({ path: jsonlPath }), LEGACY_EVENTS_CONNECTOR_ID, source);
+      expect(first.errors).toEqual([]); expect(first.stored).toBe(9);
+      expect(getCheckpoint(db, LEGACY_EVENTS_CONNECTOR_ID, source)?.backfill_complete).toBe(true);
+      const repeat = await runBackfill(db, createLegacyEventsConnector({ path: jsonlPath }), LEGACY_EVENTS_CONNECTOR_ID, source);
+      expect(repeat.stored).toBe(0); expect(repeat.errors).toEqual([]);
+      expect(getCheckpoint(db, LEGACY_EVENTS_CONNECTOR_ID, source)?.backfill_complete).toBe(true);
+    } finally { db.close(); }
+  });
+
   test("a deleted row withdraws the pending proposal it created", async () => {
     seedJsonl();
     const vault = join(root, "vault");

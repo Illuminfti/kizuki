@@ -290,7 +290,7 @@ export class LegacyEventsConnector implements Connector {
         () => renderLegacyEventsReport(report),
       );
     }
-    return { events, cursor: JSON.stringify(cursor) };
+    return { events, cursor: JSON.stringify(cursor), has_more: !done };
   }
 
   #unknownColumns(source: LegacyRowSource): string[] {
