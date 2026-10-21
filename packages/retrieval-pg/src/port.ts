@@ -21,10 +21,8 @@ const CORPUS_LIMITS = { text_bytes: EMBEDDED_ENGINE_MAX_TEXT_BYTES, payload_byte
 type CorpusSize = Record<keyof typeof CORPUS_LIMITS, number>;
 const MIN_TEXT_BYTES = 1024 * 1024;
 const MAX_TEXT_BYTES = 1024 * 1024 * 1024;
-/** Local CPU embedding latency rises sharply above eight inputs; keep rebuild calls bounded. */
-const EMBEDDING_BATCH_SIZE = 8;
-// Persist useful progress before Core's 30s deadline on bounded CPU embedders.
-const REBUILD_EMBEDDING_BATCH_SIZE = 2;
+/** Persist useful progress within a bounded CPU embedder's 30s request deadline. */
+const EMBEDDING_BATCH_SIZE = 2;
 interface PendingEmbedding {
   readonly key: string;
   readonly chunks: Chunk[];
@@ -666,7 +664,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
                 const duplicate = batch.find(entry => entry.key === key);
                 if (duplicate !== undefined) duplicate.chunks.push(staged);
                 else batch.push({ key, chunks: [staged] });
-                if (batch.length === REBUILD_EMBEDDING_BATCH_SIZE) await flush();
+                if (batch.length === EMBEDDING_BATCH_SIZE) await flush();
               }
             }
             last = doc.doc_id;

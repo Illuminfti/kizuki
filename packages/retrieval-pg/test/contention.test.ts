@@ -307,7 +307,7 @@ describe("embedded retrieval contention", () => {
     const temporary = temporaryPortContext();
     disposers.push(temporary.cleanup);
     const embedder = new FixtureEmbeddingPort();
-    embedder.failAfter = 8;
+    embedder.failAfter = 2;
     const first = await createEmbeddedRetrievalPort(temporary.ctx, {
       embedding: embedder,
       chunk_tokens: 3,
@@ -324,7 +324,7 @@ describe("embedded retrieval contention", () => {
     const checkpoint = first.embedCheckpoint();
     expect(checkpoint).not.toBeNull();
     expect(checkpoint?.doc_id).toBe("page:long");
-    expect(checkpoint?.chunk_index).toBe(8);
+    expect(checkpoint?.chunk_index).toBe(2);
     await first.close();
 
     const resumeEmbedder = new FixtureEmbeddingPort();
@@ -337,7 +337,7 @@ describe("embedded retrieval contention", () => {
     disposers.push(async () => {
       await second.close();
     });
-    expect(second.embedCheckpoint()?.chunk_index).toBe(8);
+    expect(second.embedCheckpoint()?.chunk_index).toBe(2);
     expect(second.embedCheckpoint()?.doc_id).toBe("page:long");
     await second.embedPending();
     const health = await second.health();
@@ -345,7 +345,7 @@ describe("embedded retrieval contention", () => {
     if (health.status === "ready") {
       expect(Number(health.detail["backlog_depth"])).toBe(0);
     }
-    expect(resumeEmbedder.calls).toBe(2);
+    expect(resumeEmbedder.calls).toBe(8);
   });
 });
 
