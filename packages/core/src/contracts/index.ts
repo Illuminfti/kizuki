@@ -22,3 +22,7 @@ export * from "./connector";
 export * from "./event";
 export * from "./proposal";
 export * from "./secret-ref";
+
+export * from "./observation";
+export * from "./scoped-refs";
+export * from "./scoped-tools";

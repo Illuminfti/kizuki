@@ -1,3 +1,4 @@
+import { selectedEvent } from "../query/selection";
 import type { Database } from "bun:sqlite";
 import { liveEventIds } from "../ledger/ledger";
 import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
@@ -117,6 +118,7 @@ export function eventDecision(
   const scope = authorize(grant, eventServable(facts));
   if (!scope.allow) return scope;
   if (ctx !== undefined && !sourceEventsAllowed(ctx.db, [facts.event_id], { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall", deny_classes: denyClassesOf(grant) })) return { allow: false, reason: "held" };
+  if (ctx !== undefined && !selectedEvent(ctx.db, ctx.selection, facts.event_id)) return { allow: false, reason: "held" };
   const original = asSensitivity(facts.sensitivity);
   const label = original === null || ctx === undefined ? original : sourceSensitivity(ctx.db, [facts.event_id], original);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
@@ -199,6 +201,7 @@ export function collectAuthorizedTimeline(
   for (let page = 0; page < TIMELINE_AUTH_PAGES && quoted.length < limit; page += 1) {
     const entries = timeline(ctx.db, {
       ...opts,
+      ...(ctx.selection === undefined ? {} : { selection: ctx.selection }),
       ceiling: grant.ceiling,
       limit,
       source: {

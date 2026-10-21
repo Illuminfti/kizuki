@@ -1,3 +1,4 @@
+import { assertObservations } from "../claims/observations";
 import { groundingDigest, validateWorldAdmissionProofs, witnessEventIds } from "../claims/world-grounding";
 import { isUtf16TextBoundary } from "../contracts/producer-v2";
 import { rawSubjectNamespace } from "../contracts/claim-v2";
@@ -20,6 +21,7 @@ import { tableExists } from "../ledger/schema";
 
 /** Restore/open validation: mappings are retained bookkeeping, never trusted imported authority. */
 export function assertWorldState(db: Database): void {
+  assertObservations(db);
   for (const table of WORLD_TABLES)
     if (!tableExists(db, table))
       throw new Error("world storage migration required");

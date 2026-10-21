@@ -19,13 +19,7 @@ const LEGACY_KEYS = [
   "epoch",
 ] as const;
 
-export type ContextPacketArgsV2 = Omit<
-  ContextPacketArgs,
-  (typeof LEGACY_KEYS)[number]
-> & {
-  /** The view of the packet the caller still holds; an unchanged answer carries no body. */
-  priorView?: ViewToken;
-};
+export type ContextPacketArgsV2 = import("./read-input").PacketArgsV2;
 
 /** Everything a reader needs from a packet, with no global counter and no digest to compare. */
 export interface PacketContentV2 {

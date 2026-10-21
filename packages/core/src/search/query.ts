@@ -1,3 +1,4 @@
+import { selectedEventSql, type EvidenceSelection } from "../query/selection";
 import type { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
 import { machineOriginSql } from "../canon/origin";
@@ -15,6 +16,7 @@ import type { RelaxedQuery } from "./relax";
 import { currentVersionSql } from "./versions";
 
 export interface SearchOptions {
+  selection?: EvidenceSelection;
   scope?: DocScope | "all";
   limit?: number;
   ceiling: Sensitivity;
@@ -244,6 +246,11 @@ function searchPlan(
 
   const clauses: string[] = [];
   const bindings: (string | number)[] = [];
+  if (opts.selection !== undefined) {
+    const selected = selectedEventSql(opts.selection);
+    clauses.push(`(search_docs.scope<>'ledger' OR EXISTS(SELECT 1 FROM events WHERE events.event_id=CASE WHEN search_docs.doc_id LIKE 'event:%' THEN substr(search_docs.doc_id,7) ELSE search_docs.doc_id END AND ${selected.sql}))`);
+    bindings.push(...selected.bindings);
+  }
   const heldPaths = canonIds === undefined && canonPaths === undefined ? [...readDerivedHolds(db).paths] : [];
   if (heldPaths.length > 0) {
     clauses.push(

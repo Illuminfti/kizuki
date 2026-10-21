@@ -1,3 +1,4 @@
+import { canonBlockV2 } from "./v2/packet-render";
 import { denyClassesOf } from "../agents";
 import { searchableText, servedTextMatcher } from "./search-match";
 import type { AuditDenial, AuditItem } from "../agents";
@@ -115,7 +116,7 @@ export function boundCanonAtom(
       excerptLen < excerptPoints.length ||
       titleLen < titlePoints.length;
     const canon = { ...source, excerpt, title, truncated };
-    return { ...piece, canon, block: canonBlock(canon, redactor) };
+    return { ...piece, canon, block: piece.scopedCanon === undefined ? canonBlock(canon, redactor) : canonBlockV2({ ...piece.scopedCanon, title, excerpt, truncated }, redactor) };
   };
   const can = (excerptLen: number, titleLen: number): boolean =>
     fits(at(excerptLen, titleLen).block);
@@ -163,6 +164,7 @@ export interface Piece {
   heading: string;
   block: string;
   canon?: CanonChunk;
+  scopedCanon?: import("../contracts/scoped-tools").CanonChunkV2;
   canonHash?: string;
   quoted?: QuotedChunk;
   audit?: AuditItem[];
@@ -249,6 +251,7 @@ export async function collectPieces(
   const nominated = request.query === undefined || !request.include.includes("canon")
     ? { ids: [], degraded: ctx.retrievalUnavailable ? ["retrieval-unavailable", ...(typeof ctx.retrievalUnavailable === "string" ? [ctx.retrievalUnavailable] : [])] : [] }
     : await retrievalCandidates(ctx, request.query, {
+      ...(ctx.selection === undefined ? {} : { selection: ctx.selection }),
       scope: "canon", limit: CANDIDATE_LIMIT, ceiling: grant.ceiling,
       ...(request.subjects === undefined ? {} : { subjects: request.subjects }),
       ...(request.types === undefined ? {} : { types: request.types }),
@@ -276,7 +279,8 @@ export async function collectPieces(
     const candidates: CanonPage[] = [];
     if (request.query !== undefined) {
       const opts = {
-        scope: "canon",
+        ...(ctx.selection === undefined ? {} : { selection: ctx.selection }),
+      scope: "canon",
         limit: CANDIDATE_LIMIT,
         excludePaths: [...index.holds],
         source: {
@@ -490,7 +494,7 @@ export async function collectPieces(
 
   if (request.include.includes("claims")) {
     const wanted = request.subjects;
-    const reader = claimReader(ctx.db, grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
+    const reader = claimReader(ctx.db, grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" }, ctx.selection);
     const live = loadWorkingClaims(ctx.db, wanted, reader, request.query);
     for (const claim of live) {
       pieces.push({

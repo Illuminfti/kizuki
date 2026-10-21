@@ -22,6 +22,10 @@ export interface ServeContext {
   db: Database;
   vaultPath: string;
   principal: Principal;
+  /** Internal resolved filter; it never widens source or agent authority. */
+  /** Internal response projection selected by Core; never an authority signal. */
+  scopedResponse?: true;
+  selection?: import("../query/selection").EvidenceSelection;
   sourcePurpose?: import("../ledger/source-grants").SourcePurpose;
   /** One host-owned engine nominates IDs; core rechecks current evidence and grants. */
   retrieval?: RetrievalPort;

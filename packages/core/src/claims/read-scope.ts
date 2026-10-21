@@ -1,3 +1,4 @@
+import { selectedClaimSql, type EvidenceSelection } from "../query/selection";
 import type { Database } from "bun:sqlite";
 import { SENSITIVITY_ORDER, denyClassesOf, type Grant } from "../agents";
 import { AUTHORITY_TIERS } from "../contracts/proposal";
@@ -6,6 +7,7 @@ import { sourceServingSql, type SourceReadScope } from "../ledger/source-grants"
 import { ceilingSql, instantBoundPair, instantPairSql } from "../query/sql";
 
 export interface ClaimReadScope {
+  selection?: EvidenceSelection;
   grant: Grant;
   source: SourceReadScope;
 }
@@ -68,6 +70,8 @@ export function claimReadSql(
         AND ${LIVE_PREDICATE}${source === null ? "" : ` AND ${source.sql}`}
     ))`);
   if (source !== null) bindings.push(...source.bindings);
+  const selected = selectedClaimSql(scope.selection);
+  clauses.push(selected.sql); bindings.push(...selected.bindings);
   return {
     sql: clauses.map(clause => `(${clause})`).join(" AND ").replaceAll("claims.", `${alias}.`),
     bindings,

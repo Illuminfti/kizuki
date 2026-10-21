@@ -224,6 +224,7 @@ const OUT_OF_SCOPE: Record<DenyReason, string> = {
   rate_limited: "the target is outside the grant",
   busy: "the target is outside the grant",
   invalid_arguments: "the target is outside the grant",
+  not_found: "not found",
   unsupported_contract: "the target is outside the grant",
   error: "the target is outside the grant",
 };

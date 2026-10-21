@@ -1,3 +1,4 @@
+import { observationFragment } from "./observation";
 import { attentionFragment } from "./attention";
 import { personFragment, findPeopleFragment } from "./person";
 import { procedureFragment, findProceduresFragment, skillFragment, frameworkFragment, outcomeFragment } from "./skills";
@@ -22,6 +23,8 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   describeFragment,
   // slot: CARD
   evidenceFragment,
+  // slot: REFS
+  observationFragment,
   // slot: KNOWN
   historyFragment,
   // slot: VIEW

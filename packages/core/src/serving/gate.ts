@@ -396,10 +396,13 @@ function envelopeOf<T, C extends ResponseContract>(
   // The one serving-output seam: sources redact before they truncate or pack,
   // and this pass covers every string that reaches the caller, whatever built it.
   const redactor = live.redactor ?? createRedactor(live.principal, live.servingSecrets);
-  const { canon, quoted, data } = redactValue(redactor, { canon: served.canon, quoted: served.quoted, data: served.data });
   if (contract === ENVELOPE_V2_SCHEMA) {
-    return sealEnvelope(live, tool, at, canon, quoted, data ?? null) as unknown as ResponseEnvelope<T, C>;
+    // Resolve internal identities before redaction; credential-shaped raw IDs
+    // must not become different lookup keys. Only the closed scoped DTO is
+    // redacted and published, preserving literal source text as quoted text.
+    return redactValue(redactor, sealEnvelope(live, tool, at, served.canon, served.quoted, served.data ?? null)) as unknown as ResponseEnvelope<T, C>;
   }
+  const { canon, quoted, data } = redactValue(redactor, { canon: served.canon, quoted: served.quoted, data: served.data });
   // Read once: conditional extra queries would expose the first hidden source
   // through work counters even when the v2 projector omits policy metadata.
   const policyEpoch = sourcePolicyEpoch(live.db);

@@ -1,3 +1,4 @@
+import { normalizeReadArgs, type TimelineArgsV2 } from "./v2/read-input";
 import { timelineAuditCandidates } from "../query/timeline";
 import type { TimelineOptions } from "../query/timeline";
 import {
@@ -46,36 +47,39 @@ export type { TimelineExpandData } from "./expand";
 
 export function serveTimeline<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
-  args: TimelineArgs,
+  args: TimelineArgs | TimelineArgsV2,
   contract: C = ENVELOPE_SCHEMA as C,
 ): ResponseEnvelope<TimelineExpandData | undefined, C> {
   return gate(ctx, "timeline", auditArguments(args), ({ ctx }): Served<TimelineExpandData | undefined> => {
-    if (wantsTimelineExpansion(args)) return expandTimelineDetail(ctx, args);
+    const normalized = normalizeReadArgs(ctx, "timeline", args, contract);
+    ctx = normalized.ctx;
+    const request = normalized.args as unknown as TimelineArgs;
+    if (wantsTimelineExpansion(request)) return expandTimelineDetail(ctx, request);
     const grant = ctx.principal.grant;
     const window = scopedWindow(
       grant,
-      args.since === undefined ? undefined : rfc3339("since", args.since),
-      args.until === undefined ? undefined : rfc3339("until", args.until),
+      request.since === undefined ? undefined : rfc3339("since", request.since),
+      request.until === undefined ? undefined : rfc3339("until", request.until),
     );
     const subject =
-      args.subject === undefined
+      request.subject === undefined
         ? undefined
-        : identifier("subject", args.subject);
+        : identifier("subject", request.subject);
     const kind =
-      args.kind === undefined ? undefined : identifier("kind", args.kind);
+      request.kind === undefined ? undefined : identifier("kind", request.kind);
     // `timeline` takes a single subject and kind, so these calls only check
     // membership; a scoped grant with neither argument is enforced in SQL.
     if (subject !== undefined) scopedSubjects(grant, [subject]);
     if (kind !== undefined) scopedTypes(grant, [kind]);
 
-    const rows = limit("limit", args.limit, MAX_LIMIT, DEFAULT_LIMIT);
+    const rows = limit("limit", request.limit, MAX_LIMIT, DEFAULT_LIMIT);
     const base: Omit<TimelineOptions, "ceiling"> = {
-      ...(args.day === undefined ? {} : { day: day("day", args.day) }),
+      ...(request.day === undefined ? {} : { day: day("day", request.day) }),
       ...window,
       ...(subject === undefined ? {} : { subject }),
-      ...(args.connector_id === undefined
+      ...(request.connector_id === undefined
         ? {}
-        : { connector_id: identifier("connector_id", args.connector_id) }),
+        : { connector_id: identifier("connector_id", request.connector_id) }),
       ...(kind === undefined ? {} : { kind }),
     };
 

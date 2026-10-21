@@ -1,3 +1,4 @@
+import { selectedClaimSql, type EvidenceSelection } from "../query/selection";
 import type { Database } from "bun:sqlite";
 import { sourceEventsAllowed, sourceSensitivity, sourcePolicyEpoch, type SourceReadScope } from "../ledger/source-grants";
 import { OWNER } from "../agents";
@@ -36,7 +37,7 @@ export function claimPublicationFingerprint(claim: Claim): string {
 export interface ClaimPublication { id: string; fingerprint: string; sensitivity: Sensitivity }
 
 /** One call's policy snapshot. Neither source text nor denied names escape. */
-export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadScope = { owner: grant === OWNER.grant, purpose: "recall" }) {
+export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadScope = { owner: grant === OWNER.grant, purpose: "recall" }, selection?: EvidenceSelection) {
   const decisions = new Map<string, boolean>();
   const events = new Map<string, ServableEvent | null>();
   const denied = new Map<string, AuditDenial>();
@@ -56,6 +57,10 @@ export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadS
 
   let decisionEpoch = sourcePolicyEpoch(db);
   function canRead(claim: Claim): boolean {
+    if (selection !== undefined) {
+      const selected = selectedClaimSql(selection);
+      if (db.query(`SELECT 1 FROM claims WHERE claim_id=? AND ${selected.sql}`).get(claim.claim_id, ...selected.bindings) === null) return false;
+    }
     if (decisionEpoch !== sourcePolicyEpoch(db)) { decisions.clear(); readableClaims.clear(); decisionEpoch = sourcePolicyEpoch(db); }
     if (!sourceEventsAllowed(db, claim.provenance, sourceScope)) return false;
     const cached = decisions.get(claim.claim_id);
@@ -167,7 +172,7 @@ export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadS
     return item === undefined ? [] : [item];
   }
 
-  const scope = { grant, source: sourceScope };
+  const scope = { grant, source: sourceScope, ...(selection === undefined ? {} : { selection }) };
   return { scope, publication, canRead, canReadAlias, invalidAlias, denied, auditClaim, auditGroup, auditAlias,
     visibility: { ...claimReadSql(db, scope), canRead } };
 }

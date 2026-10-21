@@ -1,3 +1,4 @@
+import { recordSupportObservation } from "./observations";
 import { assertSituationAcyclic } from "../world/situation-cycle";
 import type { ClaimVisibility } from "./visibility";
 import { groundingDigest, validateWorldAdmissionProofs, witnessEventIds } from "./world-grounding";
@@ -476,6 +477,7 @@ export function commitClaimV2(
   );
   if (suppliedWorld !== null) {
     if (suppliedWorld.schema === "kizuki.world-admission/v1") ensureClaimOccurrences(db, suppliedWorld.semantic, supportOrigin === "native_owner" ? null : input.support.source_key);
+    recordSupportObservation(db, supportKeyValue);
     allocateWorldEndpoints(db, suppliedWorld.semantic, supportKeyValue, input.support.admitted_at);
   }
 

@@ -1,3 +1,4 @@
+import { observationOp } from "./observation";
 import { attentionOp } from "./attention";
 import { personOp } from "./person";
 import { findPeopleOp } from "./find-people";
@@ -80,6 +81,8 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   describeOp,
   // slot: CARD
   evidenceOp,
+  // slot: REFS
+  observationOp,
   // slot: KNOWN
   historyOp,
   // slot: VIEW

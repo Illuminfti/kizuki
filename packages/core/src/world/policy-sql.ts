@@ -1,3 +1,4 @@
+import { selectedClaimSql, selectedEventSql } from "../query/selection";
 import { SENSITIVITY_ORDER, denyClassesOf } from "../agents";
 import { LIVE_PREDICATE } from "../ledger/ledger";
 import { sourceServingSql } from "../ledger/source-grants";
@@ -45,6 +46,8 @@ export function authorizedEventSql(ctx: ServeContext): {
     event.push(`${instantPairSql("events.occurred_at")} <= (?,?)`);
     bindings.push(...instantBoundPair(grant.until, "until"));
   }
+  const selected = selectedEventSql(ctx.selection);
+  event.push(selected.sql); bindings.push(...selected.bindings);
   return { clauses: event, bindings };
 }
 
@@ -100,6 +103,8 @@ export function authorizedClaimSql(
     clauses.push(`${instantPairSql(`${alias}.asserted_at`)} <= (?,?)`);
     bindings.push(...instantBoundPair(grant.until, "until"));
   }
+  const selected = selectedClaimSql(ctx.selection, alias);
+  clauses.push(selected.sql); bindings.push(...selected.bindings);
   return { sql: clauses.join(" AND "), bindings };
 }
 export function validMeaningSql(

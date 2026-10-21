@@ -79,3 +79,7 @@ export type { ScanCoverage, PassCoverage } from "../contracts/source-coverage";
 
 export * from "../contracts/attention";
 export { setAttentionDisposition } from "./attention/state";
+
+export * from "../contracts/observation";
+export * from "../contracts/scoped-refs";
+export * from "../contracts/scoped-tools";

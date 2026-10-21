@@ -1,3 +1,4 @@
+import { normalizeReadArgs } from "./v2/read-input";
 import { createRedactor } from "./redact";
 import type { Redactor } from "./redact";
 import type { AuditDenial, AuditItem } from "../agents";
@@ -53,6 +54,7 @@ export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEM
     "query_entities",
     auditArguments(args),
     ({ ctx, at }): Served<EntitiesData> => {
+      normalizeReadArgs(ctx, "query_entities", args, contract);
       const type =
         args.type === undefined
           ? undefined

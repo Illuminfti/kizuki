@@ -63,6 +63,7 @@ export type {
 
 /** The typed request of the shipped operations; the reader itself takes `unknown` and the registry decides. */
 export type WorldReadInput =
+  | { readonly operation: "observation"; readonly ref: import("../contracts/scoped-refs").ScopedRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "attention"; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "person"; readonly person: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "find_people"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
