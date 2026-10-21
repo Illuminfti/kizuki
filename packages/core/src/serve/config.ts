@@ -1,6 +1,6 @@
 import { consolidationConfig } from "../contracts/consolidation";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { isPlainObject } from "../util/validate";
 import {
   DEFAULT_EXTRACTION_CONFIG,
@@ -16,6 +16,31 @@ import { DEFAULT_RAILS } from "./rail-registry";
 
 export function serveConfigPath(vaultPath: string): string {
   return join(vaultPath, ".kizuki", "serve.toml");
+}
+
+export type BackupSelection =
+  | { readonly state: "off" }
+  | { readonly state: "invalid" }
+  | { readonly state: "configured"; readonly dir: string; readonly retain: number };
+
+/** An explicit local destination enables scheduled exports. Invalid intent never becomes success. */
+export function loadBackupSelection(vaultPath: string): BackupSelection {
+  const path = serveConfigPath(vaultPath);
+  if (!existsSync(path)) return { state: "off" };
+  try {
+    if (statSync(path).size > 65_536) return { state: "invalid" };
+    const config: unknown = Bun.TOML.parse(readFileSync(path, "utf8"));
+    if (!isPlainObject(config)) return { state: "invalid" };
+    const backup = config["backup"];
+    if (backup === undefined) return { state: "off" };
+    if (!isPlainObject(backup)) return { state: "invalid" };
+    const dir = backup["dir"], retain = backup["retain"] ?? 7;
+    if (dir === undefined && Object.keys(backup).length === 0) return { state: "off" };
+    if (typeof dir !== "string" || !isAbsolute(dir) || dir.length > 4096 || /[\0\r\n]/.test(dir)
+      || !Number.isSafeInteger(retain) || (retain as number) < 1 || (retain as number) > 365
+      || Object.keys(backup).some(key => key !== "dir" && key !== "retain")) return { state: "invalid" };
+    return { state: "configured", dir, retain: retain as number };
+  } catch { return { state: "invalid" }; }
 }
 
 function integer(value: unknown, fallback: number, min: number, max: number): number {

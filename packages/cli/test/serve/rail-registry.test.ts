@@ -64,10 +64,10 @@ describe("a rail registered only in a test", () => {
     const vault = session();
     const first = await vault.run("--once", "--no-http", "--json");
     expect(first.code).toBe(0);
-    expect(first.out).toEqual(['{"schema":"kizuki.cli.serve/v1","status":"ok","data":{"receipts":8,"http":null},"degraded":[],"warnings":[]}']);
+    expect(first.out).toEqual(['{"schema":"kizuki.cli.serve/v1","status":"ok","data":{"receipts":9,"http":null},"degraded":[],"warnings":[]}']);
     const second = await vault.run("--once", "--no-http");
     expect(second.code).toBe(0);
-    expect(second.out).toEqual(["receipts=8"]);
+    expect(second.out).toEqual(["receipts=9"]);
   });
 
   test("public defaults and serve init include an extension without a second schedule table", () => {
@@ -156,7 +156,7 @@ describe("a rail registered only in a test", () => {
       ).all();
       expect(schedule).toEqual([{ rail: "fixture-tick", period_s: 300, enabled: 1 }]);
       expect(listRunReceipts(db).filter((receipt) => receipt.rail === "fixture-tick").map((receipt) => receipt.status)).toEqual(["ok"]);
-      expect(JSON.parse(once.out[0]!).data.receipts).toBe(9);
+      expect(JSON.parse(once.out[0]!).data.receipts).toBe(10);
     } finally { db.close(); }
   });
 
@@ -180,7 +180,7 @@ describe("a rail registered only in a test", () => {
     const report = await vault.doctor("--json");
     const rails = JSON.parse(report.out.join("\n")).data.serve.rails as { rail: string; status: string; period_s: number }[];
     expect(rails.map((rail) => rail.rail)).toEqual([
-      "sync", "retrieval-sweep", "purge-sweep", "embed-backfill", "brief", "doctor-sweep", "journal-prune", "verify-world", "fixture-tick",
+      "sync", "retrieval-sweep", "purge-sweep", "embed-backfill", "brief", "doctor-sweep", "journal-prune", "backup", "verify-world", "fixture-tick",
     ]);
     expect(rails.find((rail) => rail.rail === "fixture-tick")).toMatchObject({ status: "ok", period_s: 300 });
     const text = await vault.doctor();
@@ -197,6 +197,6 @@ describe("a rail registered only in a test", () => {
     const once = await vault.run("--once", "--no-http", "--json");
     expect(once.code).toBe(0);
     expect(calls).toBe(1);
-    expect(JSON.parse(once.out[0]!).data.receipts).toBe(8);
+    expect(JSON.parse(once.out[0]!).data.receipts).toBe(9);
   });
 });

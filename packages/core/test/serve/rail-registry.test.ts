@@ -71,6 +71,7 @@ describe("the registry", () => {
       { rail: "brief", period_s: 86_400, jitter_s: 0, enabled: true },
       { rail: "doctor-sweep", period_s: 3_600, jitter_s: 0, enabled: true },
       { rail: "journal-prune", period_s: 86_400, jitter_s: 0, enabled: true },
+      { rail: "backup", period_s: 86_400, jitter_s: 0, enabled: true },
       { rail: "verify-world", period_s: 604_800, jitter_s: 0, enabled: true },
     ]);
     expect([...RAIL_IDS]).toEqual(DEFAULT_RAILS.map((spec) => spec.rail));
@@ -245,7 +246,7 @@ describe("running a registered rail", () => {
     register();
     const receipts = await runServeOnce(db, path, { now: () => "2026-10-01T00:00:00Z" });
     expect(receipts.map((receipt) => receipt.rail)).toContain("fixture-rail");
-    expect(receipts).toHaveLength(9);
+    expect(receipts).toHaveLength(10);
   });
 
   test("a one-shot pass skips a disabled rail", async () => {
@@ -255,7 +256,7 @@ describe("running a registered rail", () => {
     db.query("UPDATE schedules SET enabled = 0 WHERE rail = 'fixture-rail'").run();
     const receipts = await runServeOnce(db, path, { now: () => "2026-10-01T00:00:00Z" });
     expect(receipts.map((receipt) => receipt.rail)).not.toContain("fixture-rail");
-    expect(receipts).toHaveLength(8);
+    expect(receipts).toHaveLength(9);
   });
 
   test("runs under the daemon's writer lease and leaves it released", async () => {
