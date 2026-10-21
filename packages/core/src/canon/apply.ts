@@ -1,3 +1,4 @@
+import { ATTENTION_SOURCES, attentionDeliveryBody, attentionDeliveryLine } from "../contracts/attention";
 import { completedEventPurgeProofs } from "../ledger/purge";
 import { canonicalJson, sha256Hex } from "../util/hash";
 import { worldBasisMetadata, selectWorldMaterialization, worldClaimHandle, worldCanonPath, assertWorldBasis } from "./world-materialization";
@@ -740,7 +741,13 @@ export function applyPurgeRewrite(
   );
   const body =
     input.source_erasure === undefined
-      ? eraseAttention ? "" : redactBody(existing.page.body, input.purged_claim_bodies)
+      ? redactBody(existing.page.body, eraseAttention ? [
+        // Remove only the generated block. Owner additions survive, including
+        // notes inserted between its heading and bullet; the cue key cannot.
+        ...ATTENTION_SOURCES.map(source => attentionDeliveryBody(source, attentionKey)),
+        ...ATTENTION_SOURCES.map(source => attentionDeliveryLine(source, attentionKey)),
+        ...input.purged_claim_bodies, attentionKey,
+      ] : input.purged_claim_bodies)
       : (input.source_erasure.page?.body ?? "");
   const nothingRemains =
     input.source_erasure === undefined

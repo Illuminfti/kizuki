@@ -25,7 +25,11 @@ uncertainty, stale summaries and exact overdue commitments from the shared
 Situation v2 projection. Conflicting or missing due evidence stays unknown.
 Reported completion remains `claimed_done`; owner-confirmed or independently
 verified completion follows the Situation reader. Mention counts and retrieval
-frequency never enter candidate identity or priority.
+frequency never enter candidate identity or priority. The App opens typed Situation
+v2 for due cues, preserving each date assertion and perspective holder and
+displaying unverified reported completion separately from done. Ordinary
+Situation browsing keeps its v1 default. The explicitly labeled “Share base
+situation” action also uses the existing v1 resume-handle contract.
 
 ## Delivery and recovery
 
@@ -46,8 +50,9 @@ an invalid page.
 `world_attention_state` is schema slot 43 bookkeeping. Export/restore and world
 rebuild preserve it; source revocation, relevant claim changes and purge erase
 affected rows. Delivered cue files retain source-event provenance. Purge erases
-their whole derived message through the existing canonical erasure writer;
-the normal archived tombstone remains. Doctor reports pending cues and last
+the deterministic message and cue markers through the existing canonical
+erasure writer while preserving independent owner additions. An unchanged
+generated page becomes the normal archived tombstone. Doctor reports pending cues and last
 delivery. Its read-only probe reuses existing refs and keeps missing refs only
 in a synchronous diagnostic scope, returning counts rather than capabilities.
 

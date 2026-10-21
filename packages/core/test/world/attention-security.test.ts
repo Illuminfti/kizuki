@@ -1,6 +1,6 @@
 import { expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addAgent, authenticate, OWNER, OWNER_AGENT_GRANT } from "../../src/agents";
@@ -69,9 +69,31 @@ test("purge erases a delivered cue file and bookkeeping while doctor reports cur
     const erased = parseFrontmatter(readFileSync(path, "utf8"));
     expect(erased.data.status).toBe("archived");
     expect(erased.data.sources).toEqual([]);
-    expect(erased.body).not.toContain(cue);
+    expect(erased.body.trim()).toBe("");
+    expect(erased.data["x-attention-cue"]).toBeUndefined();
+    expect(erased.data["x-attention-producer"]).toBeUndefined();
     expect(f.db.query<{ n: number }, []>("SELECT count(*) n FROM world_attention_state").get()!.n).toBe(0);
     expect(attentionDoctor(f.db, f.vault.path, new Date().toISOString())).toMatchObject({ pending: 0, last_delivery_at: null });
+  } finally { f.dispose(); }
+}, 120_000);
+
+test.each(["appended", "between heading and cue"])("purge preserves owner prose %s while removing the generated cue", async placement => {
+  const f = await attentionFixture();
+  try {
+    const cue = f.candidates()[0]!.cue, path = join(f.vault.path, "dashboards", `attention-${cue}.md`);
+    expect(await deliverAttention(f.ctx, cue)).toMatchObject({ status: "delivered" });
+    const ownerNote = "Owner note: take a walk after lunch.", before = readFileSync(path, "utf8");
+    writeFileSync(path, placement === "appended" ? `${before}\n${ownerNote}\n` : before.replace("# Attention\n", `# Attention\n\n${ownerNote}\n`));
+    await runPurge(f.db, f.vault.path, { event_id: f.situation.eventId }, "erase cue while preserving owner prose");
+    const erased = parseFrontmatter(readFileSync(path, "utf8"));
+    expect(erased.body).toContain(ownerNote);
+    expect(erased.body).not.toContain("for an explicit objective");
+    expect(erased.body).not.toContain(cue);
+    expect(erased.data["x-attention-cue"]).toBeUndefined();
+    expect(erased.data["x-attention-producer"]).toBeUndefined();
+    expect(erased.data.sources).toEqual([]);
+    expect(erased.data.status).toBe("active");
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) n FROM world_attention_state").get()!.n).toBe(0);
   } finally { f.dispose(); }
 }, 120_000);
 

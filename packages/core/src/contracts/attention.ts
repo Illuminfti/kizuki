@@ -4,6 +4,14 @@ import { cardCodec, coverage, exact, type Coverage, type WorldWireRef } from "./
 export const ATTENTION_SCHEMA = "kizuki.attention/v1" as const;
 export const ATTENTION_SOURCES = ["blocker", "uncertainty", "commitment_due", "stale_summary"] as const;
 export type AttentionSource = typeof ATTENTION_SOURCES[number];
+/** Exact deterministic notification text, also used by canonical purge redaction. */
+export function attentionDeliveryLine(source: AttentionSource, cue: string): string {
+  return `- ${source.replaceAll("_", " ")} for an explicit objective. Inspect evidence with \`kizuki attention\`. Cue: ${cue}`;
+}
+export function attentionDeliveryBody(source: AttentionSource, cue: string): string {
+  return `# Attention\n\n${attentionDeliveryLine(source, cue)}\n`;
+}
+
 export type AttentionCandidate = {
   readonly state: "candidate";
   readonly cue: string;

@@ -105,6 +105,73 @@ test('real Attention response renders shipped buttons and writes only owner disp
     } finally { await host.close(); memory.dispose(); helpers.cleanup(); }
 }, 120_000);
 
+import { cardFixture } from '../../core/test/world/card-fixture';
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from '../../core/test/helpers/world-consolidation';
+import { runBackfill } from '../../core/src/ingest/run';
+import { connector } from '../../core/test/connections-helpers';
+test('real due cue opens typed commitments with separate dates, holders and honest completion', async () => {
+    const memory = await cardFixture(undefined, { model: EMPTY_SUMMARY_MODEL }), helpers = createHelpers();
+    const env = helpers.isolatedEnv({ KIZUKI_VAULT: memory.ctx.vaultPath });
+    const initialized = helpers.runCli(env, 'init', memory.ctx.vaultPath, '--no-service');
+    expect(initialized.exitCode, initialized.stderr).toBe(0);
+    const host = createAppHost({ env, vaultOverride: memory.ctx.vaultPath, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => '' });
+    const client = fixture(), all = (node: Element): Element[] => [node, ...node.children.flatMap(all)];
+    async function respond() {
+        const request = client.requests.find(item => item.route === 'world_view')!;
+        const response = await host.handle(new Request('http://127.0.0.1/app/v1/world_view', { method: 'POST', body: JSON.stringify(request.payload) }));
+        const value = await response.json() as { ok: boolean; data: unknown };
+        expect(value.ok).toBe(true); client.reply('world_view', value.data); await tick();
+        return request.payload;
+    }
+    const vocabulary = (id: string) => ({ kind: 'vocabulary' as const, ref: { kind: 'vocabulary' as const, id } });
+    const literal = (value: string) => ({ kind: 'literal' as const, value });
+    try {
+        for (const name of ['reported', 'conflicting']) {
+            const subject = `commitment:${name}`;
+            await memory.write('world.kind', vocabulary('world/commitment'), { subject });
+            await memory.write('commitment.label', literal(name), { subject });
+            await memory.write('commitment.status', vocabulary(name === 'reported' ? 'commitment/done' : 'commitment/open'), { subject });
+            await memory.write('commitment.due', literal('2000-01-01'), { subject, ...(name === 'conflicting' ? { holder: 'person:first' } : {}) });
+            if (name === 'conflicting') await memory.write('commitment.due', literal('2000-01-02'), { subject, holder: 'person:second', mode: 'reported' });
+        }
+        const subject = 'situation:due-app';
+        await memory.write('world.kind', vocabulary('world/situation'), { subject });
+        await memory.write('situation.label', literal('Due follow-up'), { subject });
+        await memory.write('situation.objective', literal('Finish the deliverable'), { subject });
+        for (const name of ['reported', 'conflicting']) await memory.write('situation.has_commitment', { kind: 'subject', ref: memory.ref(`commitment:${name}`) }, { subject });
+        const capture = connector(async () => ({ display: 'synthetic' })), manifest = capture.manifest();
+        capture.manifest = () => ({ ...manifest, connector_id: 'card.fixture', capabilities: { ...manifest.capabilities, backfill: true } });
+        capture.backfill = async () => ({ events: [], cursor: 'complete', has_more: false });
+        expect((await runBackfill(memory.db, capture, 'card.fixture', memory.sourceKey)).errors).toEqual([]);
+        await completeEmptyWorldSummaries(memory.db, memory.ctx.vaultPath);
+        const loaded = client.evaluate<Promise<void>>(`state.view='world'; state.worldKind='attention'; loadWorld(null);`);
+        await respond(); await loaded;
+        expect(client.main.textContent).toContain('A commitment is due');
+        const details = all(client.main).find(node => node.tag === 'button' && node.textContent === 'View supporting situation')!;
+        await details.fire('click');
+        expect((await respond()).card).toBe('kizuki.situation-card/v2');
+        expect(client.main.textContent).toContain('Reported done; completion is unverified.');
+        expect(client.main.textContent).toContain('Overdue');
+        expect(client.main.textContent).toContain('Whether this is overdue is unknown.');
+        expect(client.main.textContent).toContain('2000-01-01');
+        expect(client.main.textContent).toContain('2000-01-02');
+        expect(client.main.textContent).toContain('Perspective: holder 1');
+        expect(client.main.textContent).toContain('Perspective: holder 2');
+        expect(client.main.textContent).toContain('Reported statement');
+        const share = all(client.main).find(node => node.tag === 'button' && node.textContent === 'Share base situation')!;
+        const sharing = share.fire('click'); expect((await respond()).of.card).toBeUndefined(); await sharing;
+        expect(client.main.textContent).toContain('This handle opens the base situation view, without typed commitments.');
+        const again = client.evaluate<Promise<void>>('loadWorld()'); expect((await respond()).card).toBe('kizuki.situation-card/v2'); await again;
+        const ref = client.evaluate('state.worldRef');
+        const defaultRead = client.evaluate<Promise<void>>(`loadWorld(null).then(() => loadWorld(${JSON.stringify(ref)}))`);
+        await respond(); expect((await respond()).card).toBeUndefined(); await defaultRead;
+        expect(client.main.textContent).not.toContain('Due date assertions');
+        expect(client.storageWrites).toHaveLength(0);
+        client.evaluate('invalidatePrivateView()');
+        expect(client.main.textContent).not.toContain('2000-01-01');
+    } finally { await host.close(); memory.dispose(); helpers.cleanup(); }
+}, 120_000);
+
 test('dialog initial focus skips hidden controls and hidden containers', () => {
     for (const nested of [false, true]) {
         const f = fixture();

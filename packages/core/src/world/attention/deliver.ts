@@ -1,6 +1,6 @@
 import type { NotificationReceipt } from "../../contracts/notifier";
 import type { ServeContext } from "../../serving/types";
-import { validCueKey } from "../../contracts/attention";
+import { attentionDeliveryBody, validCueKey } from "../../contracts/attention";
 import { createFileNotifier } from "../../serve/notifier-file";
 import { serializePage } from "../../vault/frontmatter";
 import { MAX_FRONTMATTER_ARRAY_ITEMS } from "../../vault/schema";
@@ -30,7 +30,7 @@ export async function deliverAttention(ctx: ServeContext, cue: string): Promise<
     if (sources.length === 0 || sources.length > MAX_FRONTMATTER_ARRAY_ITEMS) return { status: "unavailable" as const };
     const body = serializePage({ data: { id: `rollup:attention-${cue}`, title: "Attention cue", type: "rollup", status: "active", sensitivity: "private", taint: "clean", sources,
       "x-attention-producer": "deterministic", "x-attention-cue": cue },
-      body: `# Attention\n\n- ${entry.candidate.source.replaceAll("_", " ")} for an explicit objective. Inspect evidence with \`kizuki attention\`. Cue: ${cue}\n` });
+      body: attentionDeliveryBody(entry.candidate.source, cue) });
     return notifier.notify({ notification_id: `attention-${cue}`, title: `attention:${entry.candidate.source}`, body, sensitivity: "private", provenance: sources });
   }).immediate();
   const result = await pending;
