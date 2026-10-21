@@ -13,7 +13,7 @@ describe("world vocabulary v1", () => {
     expect(WORLD_VOCABULARY.map((entry) => entry.predicate)).toEqual([
       ...WORLD_VOCABULARY_PREDICATES,
     ]);
-    expect(new Set(WORLD_VOCABULARY_PREDICATES).size).toBe(51);
+    expect(new Set(WORLD_VOCABULARY_PREDICATES).size).toBe(52);
   });
 
   test("locks endpoint shapes and trusted vocabulary values", () => {

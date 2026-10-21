@@ -20,6 +20,7 @@ const PINNED_ROWS = [
   ["concept.requires", "concept", "concept", "positive,negative", null, null],
   ["concept.example", "concept", "literal,raw_subject", "positive,negative", 400, null],
   ["concept.counterexample", "concept", "literal,raw_subject", "positive,negative", 400, null],
+  ["concept.same_as", "concept", "concept", "positive,negative", null, null],
   ["concept.distinguished_from", "concept", "concept", "positive,negative", null, null],
   ["learning.exposure", "person", "concept", "positive,negative", null, null],
   ["learning.explanation", "person", "concept", "positive,negative", null, null],

@@ -62,7 +62,11 @@ observed usefulness, failures, copies, exact replay, confounding, hostile steps,
 cycles, correction, known-time, hidden evidence, denial audit, purge, rebuild and
 export/restore. CLI/App and MCP/HTTP parity are exercised in the corresponding
 `packages/cli/test/skills.test.ts` and `packages/mcp/test/skills.test.ts` files.
-These are synthetic fixtures, not model-quality or production evidence.
+The shipped App client also exposes procedure discovery, linked skill/framework
+cards, outcome stages and resume handling. Its DOM interactions, quoted-step
+rendering and privacy invalidation are exercised by
+`packages/cli/test/app-client.test.ts`. These are synthetic fixtures and DOM
+checks, not native-browser, model-quality or production evidence.
 
 ## Contract refinement
 
