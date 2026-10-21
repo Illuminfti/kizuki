@@ -76,7 +76,7 @@ const PINNED_ROWS = [
   ["situation.requires", "situation", "raw_subject", "positive,negative", null, null],
   ["situation.enables", "situation", "raw_subject", "positive,negative", null, null],
   ["situation.blocks", "situation", "raw_subject", "positive,negative", null, null],
-  ["situation.invalidated_by", "situation", "raw_subject", "positive,negative", null, null],
+  ["situation.invalidated_by", "situation", "raw_subject,literal", "positive,negative", 400, null],
   ["artifact.label", "artifact_version", "literal", "positive,negative", 400, null],
   ["artifact.content_sha256", "artifact_version", "literal", "positive,negative", 400, null],
   ["artifact.media_type", "artifact_version", "literal", "positive,negative", 400, null],
