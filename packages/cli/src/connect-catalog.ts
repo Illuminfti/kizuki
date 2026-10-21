@@ -1,3 +1,5 @@
+import { inspectSourceCoverage } from "@kizuki/core/world";
+import { sourceCoverageLines } from "./source-coverage";
 import { xApiClient } from "./x-api";
 import { appCredentials } from "@kizuki/connector-telegram";
 import { REGISTRY } from "@kizuki/connectors";
@@ -96,12 +98,14 @@ export function printConnectorCatalog(io: CliIo, json: boolean): number {
 
 export async function printConnectionStatus(io: CliIo, json: boolean): Promise<number> {
   return withReadVault(io, async (ctx) => {
+    const coverage = new Map(inspectSourceCoverage(ctx.db).map(report => [report.source_key, report]));
     const connections = listHostConnections(ctx.db, ctx.store, undefined, { includeDisconnected: true }).map((host) => {
       const row = host.connection;
       const checkpoint = getCheckpoint(ctx.db, row.connector_id, row.source_key);
       const grant = inspectSourceGrant(ctx.db, row.source_key);
       const policy = getConnectorSensitivity(ctx.db, row.connector_id, row.source_key);
       return {
+        coverage: coverage.get(row.source_key)!,
         connector_id: row.connector_id,
         source_key: row.source_key,
         state: row.disconnected_at !== null ? "disconnected" : host.state === null ? "needs attention" : "enrolled",
@@ -126,6 +130,7 @@ export async function printConnectionStatus(io: CliIo, json: boolean): Promise<n
         ...connections.map((row) => [clean(row.connector_id), row.source_key, row.state, row.consent, row.sensitivity, clean(egressDestination(row.egress)), clean(egressRetention(row.egress)),
           row.last_run === null ? "not synced yet" : clean(row.last_run), `${row.stored}`, `${row.errors}`]),
       ])) io.out(line);
+      for (const row of connections) for (const line of sourceCoverageLines(row.coverage)) io.out(line);
       io.out(`Refresh: ${INVOCATION} sync`);
     }
     return 0;

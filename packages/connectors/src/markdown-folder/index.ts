@@ -1,3 +1,5 @@
+import type { ScanCoverage } from "@kizuki/core/world";
+import { coverageRules } from "../source-coverage";
 import { closeSync, constants, fstatSync } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
@@ -122,6 +124,8 @@ export interface MarkdownCursor {
 }
 
 interface ScanResult {
+  directories: Array<RootIdentity & { mtimeMs: number; ctimeMs: number }>;
+  coverage: ScanCoverage;
   files: MarkdownFile[];
   errors: ImportRecordError[];
   truncated: boolean;
@@ -143,6 +147,7 @@ const MANIFEST: Manifest = freezeManifest({
     purge: false,
     fixture: true,
     sync_from_backfill_before_first_success: true,
+    sync_covers_backfill: true,
   },
   required_secrets: [],
   emits_sensitivity_hint: false,
@@ -155,6 +160,7 @@ export class MarkdownFolderConnector implements Connector {
   readonly pageSize: number;
   readonly exclude: readonly string[];
   private readonly committedFiles: MarkdownFolderDeps["committedFiles"];
+  private continuation: { cursor: Cursor; root: RootIdentity; scan: ScanResult } | null = null;
 
   constructor(config: MarkdownFolderConfig, deps: MarkdownFolderDeps = {}) {
     this.path = requirePathConfig(config, MARKDOWN_FOLDER_CONNECTOR_ID);
@@ -213,12 +219,23 @@ export class MarkdownFolderConnector implements Connector {
     const previous =
       cursor === null ? undefined : parseCursor(cursor, root, this, this.committedFiles !== undefined);
     const previousFiles = await this.snapshotIdentities(previous);
-    const scan = await scanMarkdownFiles(root, this.exclude);
+    const pending = this.continuation;
+    this.continuation = null;
+    const continuing = pending !== null && pending.cursor === cursor &&
+      pending.root.realpath === root.realpath && pending.root.dev === root.dev && pending.root.ino === root.ino &&
+      await inventoryDirectoriesUnchanged(root, pending.scan);
+    const scan = continuing ? pending.scan : await scanMarkdownFiles(root, this.exclude);
     const observedAt = new Date().toISOString();
     const current = new Map(
       scan.files.map((file) => [file.relpath, file] as const),
     );
     const scanErrors = [...scan.errors];
+    const finish = (batch: SyncBatch): SyncBatch => {
+      if (batch.has_more === true && batch.cursor !== null) {
+        this.continuation = { cursor: batch.cursor, root, scan };
+      }
+      return batch;
+    };
     const hostBacked = this.committedFiles !== undefined;
     const emitPageSize = Math.min(this.pageSize, MAX_SYNC_BATCH_EVENTS);
 
@@ -264,6 +281,22 @@ export class MarkdownFolderConnector implements Connector {
       emitPageSize,
     );
     const filesDone = fileRest.length === 0;
+    if (continuing) {
+      for (const event of filePage) {
+        const file = current.get(event.source_record_id)!;
+        const directory = await pinnedDescent(root.realpath, path.dirname(path.join(root.realpath, file.relpath)));
+        if (directory.kind !== "directory") {
+          return { events: [], cursor, status: "unavailable", detail: "source_changed_during_pass", coverage: { ...scan.coverage, failed: 1, pending: fileEvents.length } };
+        }
+        const parent = await openPinnedDirectory(directory);
+        try {
+          const read = await readStableMarkdown(parent.fd, path.basename(file.relpath), file.relpath);
+          if ("error" in read || read.file.sha256 !== file.sha256 || read.file.size !== file.size) {
+            return { events: [], cursor, status: "unavailable", detail: "source_changed_during_pass", coverage: { ...scan.coverage, failed: 1, pending: fileEvents.length } };
+          }
+        } finally { await parent.close(); }
+      }
+    }
     const pendingRefusal = scanErrors.length > 0 || scan.truncated;
 
     const processed = new Map(previousFiles);
@@ -305,7 +338,10 @@ export class MarkdownFolderConnector implements Connector {
       return utf8Bytes(encoded) > MAX_CURSOR_BYTES ? undefined : encoded;
     };
 
+    const coverage = (pending: number): ScanCoverage => ({ ...scan.coverage, failed: scanErrors.length, pending });
+
     const overflow = (): SyncBatch => ({
+      coverage: coverage(fileEvents.length + tombstones.length),
       events: [],
       cursor,
       status: "unavailable",
@@ -323,7 +359,7 @@ export class MarkdownFolderConnector implements Connector {
       const last = filePage[filePage.length - 1];
       const next = mint(false, "files", last?.source_record_id ?? null);
       if (next === undefined) return overflow();
-      return { events: filePage, cursor: next, has_more: true };
+      return finish({ events: filePage, cursor: next, has_more: true, coverage: coverage(fileRest.length + tombstones.length) });
     }
 
     if (filePage.length > 0) {
@@ -334,11 +370,12 @@ export class MarkdownFolderConnector implements Connector {
         null,
       );
       if (next === undefined) return overflow();
-      return {
+      return finish({
         events: filePage,
         cursor: next,
         has_more: !noTombstones || pendingRefusal,
-      };
+        coverage: coverage(tombstones.length),
+      });
     }
 
     if (tombstones.length === 0) {
@@ -349,12 +386,13 @@ export class MarkdownFolderConnector implements Connector {
           events: [],
           cursor,
           status: "unavailable",
+          coverage: coverage(0),
           detail: `partial_import: ${summarizeImportErrors(scanErrors)}${scan.truncated ? "; scan truncated" : ""}`,
         };
       }
       const next = mint(!scan.truncated, "files", null);
       if (next === undefined) return overflow();
-      return { events: [], cursor: next, has_more: false };
+      return { events: [], cursor: next, has_more: false, coverage: coverage(0) };
     }
 
     const { page: tombstonePage, rest: tombstoneRest } = takePage(
@@ -378,11 +416,12 @@ export class MarkdownFolderConnector implements Connector {
       exhausted ? null : (lastTombstone?.source_record_id ?? null),
     );
     if (next === undefined) return overflow();
-    return {
+    return finish({
       events: tombstonePage,
       cursor: next,
       has_more: !exhausted || pendingRefusal,
-    };
+      coverage: coverage(tombstoneRest.length),
+    });
   }
 
   private async snapshotIdentities(
@@ -516,7 +555,7 @@ async function pinnedDescent(
   root: string,
   directory: string,
 ): Promise<
-  | { kind: "directory"; realpath: string; dev: number; ino: number }
+  | { kind: "directory"; realpath: string; dev: number; ino: number; mtimeMs: number; ctimeMs: number }
   | { kind: "symlink" }
   | { kind: "unreadable"; reason: string }
 > {
@@ -549,7 +588,17 @@ async function pinnedDescent(
     await assertOutsideVault(resolved);
     return { kind: "symlink" };
   }
-  return { kind: "directory", realpath: resolved, dev: info.dev, ino: info.ino };
+  return { kind: "directory", realpath: resolved, dev: info.dev, ino: info.ino, mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs };
+}
+
+/** A changed listing starts a new inventory, so pagination never hides new identities. */
+async function inventoryDirectoriesUnchanged(root: RootIdentity, scan: ScanResult): Promise<boolean> {
+  for (const previous of scan.directories) {
+    const current = await pinnedDescent(root.realpath, previous.realpath);
+    if (current.kind !== "directory" || current.dev !== previous.dev || current.ino !== previous.ino ||
+        current.mtimeMs !== previous.mtimeMs || current.ctimeMs !== previous.ctimeMs) return false;
+  }
+  return true;
 }
 
 async function scanMarkdownFiles(
@@ -557,9 +606,12 @@ async function scanMarkdownFiles(
   exclude: readonly string[],
 ): Promise<ScanResult> {
   const files: MarkdownFile[] = [];
+  const directories: ScanResult["directories"] = [];
   const errors: ImportRecordError[] = [];
   let truncated = false;
   let considered = 0;
+  let scanned = 0;
+  const exclusions: string[] = [];
 
   const walk = async (directory: string, depth: number): Promise<void> => {
     if (truncated) return;
@@ -604,6 +656,7 @@ async function scanMarkdownFiles(
       });
       return;
     }
+    directories.push(descent);
     let parent: FileHandle;
     try {
       parent = await openPinnedDirectory(descent);
@@ -630,7 +683,10 @@ async function scanMarkdownFiles(
           });
           return;
         }
-        if (shouldSkipName(entry.name, exclude)) continue;
+        if (shouldSkipName(entry.name, exclude)) {
+          exclusions.push(entry.name.startsWith(".") ? "dot_entries" : SKIP_DIRECTORIES.has(entry.name) ? `default:${entry.name}` : `exclude:${entry.name}`);
+          continue;
+        }
         const absolute = path.join(descent.realpath, entry.name);
         let info;
         try {
@@ -666,6 +722,7 @@ async function scanMarkdownFiles(
           });
           return;
         }
+        scanned += 1;
         const read = await readStableMarkdown(parent.fd, entry.name, relpath);
         if ("error" in read) {
           errors.push(read.error);
@@ -681,7 +738,13 @@ async function scanMarkdownFiles(
   await walk(root.realpath, 0);
   await assertOutsideVault(root.realpath);
   files.sort((left, right) => compareStrings(left.relpath, right.relpath));
-  return { files, errors, truncated };
+  const excluded = coverageRules(exclusions);
+  // Configured omissions remain visible even when this particular walk matched none.
+  for (const rule of coverageRules([...exclude.map(name => `exclude:${name}`), "dot_entries", ...[...SKIP_DIRECTORIES].map(name => `default:${name}`)])) {
+    if (!excluded.some(entry => entry.rule === rule.rule) && excluded.length < 512) excluded.push({ rule: rule.rule, count: 0 });
+  }
+  excluded.sort((a, b) => compareStrings(a.rule, b.rule));
+  return { directories, files, errors, truncated, coverage: { scanned, excluded, failed: errors.length, pending: 0, truncated, content_exclusions: ["attachments and non-Markdown content are not captured"] } };
 }
 
 async function readStableMarkdown(

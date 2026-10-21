@@ -161,6 +161,7 @@ describe("construction", () => {
       capabilities: {
         backfill: true,
         sync: true,
+        sync_covers_backfill: true,
         tombstones: true,
         purge: false,
         fixture: true,

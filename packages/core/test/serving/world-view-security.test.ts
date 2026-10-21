@@ -357,9 +357,13 @@ test("coverage-only source revocation after projection removes its gap before th
   expect(value).toEqual(readWorldView(made.reader, input));
 });
 
-test("coverage becomes partial after projection and cannot return unchanged", async () => {
+test.each(["unfinished", "malformed coverage"])("%s checkpoint after projection cannot return unchanged", async (state) => {
   const made = await setup(), priorView = baseline(made);
-  const db = afterSnapshot(made.db, () => incompleteSource(made, made.visible.situation.sourceKey));
+  const db = afterSnapshot(made.db, () => {
+    incompleteSource(made, made.visible.situation.sourceKey);
+    if (state === "malformed coverage") made.db.query("UPDATE checkpoints SET last_result=json_set(last_result,'$.coverage','invalid') WHERE source_key=?")
+      .run(made.visible.situation.sourceKey);
+  });
   const input = { ...concept(made), priorView };
   const value = serveWorldView({ ...made.reader, db }, input).data;
   expect(value).toMatchObject({ result: { status: "incomplete", reasons: ["coverage"] } });

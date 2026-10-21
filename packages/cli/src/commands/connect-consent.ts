@@ -1,3 +1,5 @@
+import { inspectSourceCoverage } from "@kizuki/core/world";
+import { sourceCoverageLines } from "../source-coverage";
 import { inspectSourceGrant, listConnections, resumeSourceRevocation, revokeSourceGrant, setSourceGrant } from "@kizuki/core";
 import { createOwnedRetrievalInventory, OwnedRetrievalInventoryError } from "../owned-retrieval-inventory";
 import { parseArguments, UsageError } from "../args";
@@ -43,11 +45,13 @@ export async function runConnectConsent(io: CliIo, args: string[]): Promise<numb
         maintenanceError = inventory.diagnostic() ?? maintenanceError;
       }
     }
+    const coverage = action === "status" ? inspectSourceCoverage(ctx.db).find(report => report.source_key === source) : undefined;
     const egress = egressView(ctx.vaultPath, grant);
     const purge = maintenanceError !== null ? "pending" : grant?.status === "purged" && grant.purge_blockers.length === 0 ? "complete" : grant?.status === "denied" ? "pending" : "not_requested";
     const pending = action === "resume-revocation" && (purge !== "complete" || maintenanceError !== null);
-    if (parsed.flags.has("--json")) io.out(jsonEnvelope("connect", pending ? "degraded" : "ok", { source_key: source, receipt: receipt ?? null, grant, egress, purge, maintenance_error: maintenanceError }));
+    if (parsed.flags.has("--json")) io.out(jsonEnvelope("connect", pending ? "degraded" : "ok", { ...(coverage === undefined ? {} : { coverage }), source_key: source, receipt: receipt ?? null, grant, egress, purge, maintenance_error: maintenanceError }));
     else {
+      if (coverage !== undefined) for (const line of sourceCoverageLines(coverage)) io.out(line);
       io.out(`source=${source} consent=${grant?.status ?? "required"} revision=${grant?.revision ?? 0} purge=${purge}`);
       io.out(`egress=${clean(egressDestination(egress))} retention=${clean(egressRetention(egress))}`);
       if (maintenanceError !== null) io.out(maintenanceError);

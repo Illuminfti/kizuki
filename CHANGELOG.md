@@ -11,6 +11,8 @@
   Neutralize harness tags for every principal and remove transcript scaffolding
   while keeping owner words. Bound serving scans, prevent envelope recounts,
   and bind agent evidence integrity to the scrubbed projection.
+- Disclose per-source coverage and blind spots in doctor and connection status;
+  persist complete folder sync passes and their last successful pass time.
 
 ### Fixed
 

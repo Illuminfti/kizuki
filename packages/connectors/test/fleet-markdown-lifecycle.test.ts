@@ -440,7 +440,7 @@ markdownTest("a symlink inside the folder is skipped without capturing its targe
   expect(terminal).toEqual({
     events: [],
     cursor: first.cursor,
-    status: "unavailable",
+    status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
     detail: "partial_import: 1 record errors (symlink=1)",
   });
 });

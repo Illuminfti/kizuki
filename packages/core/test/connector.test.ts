@@ -180,4 +180,13 @@ describe("Connector shape", () => {
       }),
     ).toThrow(/sync_from_backfill_before_first_success must be a boolean/);
   });
+
+  test("freezeManifest validates the history-covering sync declaration", () => {
+    expect(() => freezeManifest({ ...manifest, capabilities: {
+      ...manifest.capabilities, sync_covers_backfill: "true" as unknown as boolean,
+    } })).toThrow(/sync_covers_backfill must be a boolean/);
+    const frozen = freezeManifest({ ...manifest, capabilities: { ...manifest.capabilities, sync_covers_backfill: true } });
+    expect(frozen.capabilities.sync_covers_backfill).toBe(true);
+    expect(Object.isFrozen(frozen.capabilities)).toBe(true);
+  });
 });

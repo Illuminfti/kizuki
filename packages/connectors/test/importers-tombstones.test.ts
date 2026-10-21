@@ -207,6 +207,7 @@ for (const { name, build } of scenarios) {
         SOURCE_KEY,
       );
       expect(smaller).toEqual({
+        coverage: { scan: null, last_successful_pass_at: null, last_error_class: null },
         stored: 0,
         duplicates: scenario.subsetCount,
         errors: [],

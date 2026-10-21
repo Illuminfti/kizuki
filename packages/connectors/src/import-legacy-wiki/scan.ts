@@ -46,6 +46,8 @@ export interface ScanResult {
   skipped: Skipped[];
   /** MAX_FILES was reached; the import is a prefix of the wiki. */
   truncated: boolean;
+  /** Entries skipped before reading; descendants of omitted directories are unknown. */
+  omitted?: { dot_entries: number; mapping_file: number };
 }
 
 /**
@@ -73,6 +75,7 @@ interface Walk {
   hidden: number;
   maxHidden: number;
   truncated: boolean;
+  omitted: { dot_entries: number; mapping_file: number };
 }
 
 function relative(root: string, absolute: string): string {
@@ -211,8 +214,14 @@ async function walkDirectory(
   for (const entry of entries) {
     if (walk.truncated) return;
     // Dot entries hold tool state, not pages, and the mapping file is input.
-    if (entry.name.startsWith(".") || entry.name === MAPPING_FILE_NAME)
+    if (entry.name.startsWith(".")) {
+      walk.omitted.dot_entries += 1;
       continue;
+    }
+    if (entry.name === MAPPING_FILE_NAME) {
+      walk.omitted.mapping_file += 1;
+      continue;
+    }
     if (!collect) {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       // An unvisited remainder could hold a nested vault, so an exhausted
@@ -271,6 +280,7 @@ export async function scanLegacyWiki(
     hidden: 0,
     maxHidden,
     truncated: false,
+    omitted: { dot_entries: 0, mapping_file: 0 },
   };
   try {
     const info = await stat(root);
@@ -297,5 +307,6 @@ export async function scanLegacyWiki(
     files: walk.files,
     skipped: walk.skipped,
     truncated: walk.truncated,
+    omitted: walk.omitted,
   };
 }

@@ -1,3 +1,4 @@
+import { parsePassCoverage } from "../contracts/source-coverage";
 import type { Database } from "bun:sqlite";
 import { MAX_CURSOR_BYTES } from "../contracts/connector";
 import type { RunResult } from "../ingest/run";
@@ -27,7 +28,7 @@ export interface Checkpoint {
   updated_at: string;
   last_run_at: string;
   last_result: RunResult;
-  /** True once a backfill batch reports has_more=false. Sync cannot clear it. */
+  /** True once backfill, or a history-covering sync, reports has_more=false. Never cleared by sync. */
   backfill_complete: boolean;
   backfill_cursor: string | null;
   sync_cursor: string | null;
@@ -165,7 +166,7 @@ function runResultFromUnknown(value: unknown): RunResult {
   if (!isPlainObject(value)) {
     throw new LedgerError("checkpoint last_result is not an object");
   }
-  const keys = Object.keys(value).sort();
+  const keys = Object.keys(value).filter(key => key !== "coverage").sort();
   const expected = [
     "cursor",
     "duplicates",
@@ -182,6 +183,7 @@ function runResultFromUnknown(value: unknown): RunResult {
     throw new LedgerError("checkpoint last_result.errors is not a string array");
   }
   return {
+    ...(value.coverage === undefined ? {} : { coverage: parsePassCoverage(value.coverage) }),
     stored: finiteCount(value.stored, "stored"),
     duplicates: finiteCount(value.duplicates, "duplicates"),
     errors: value.errors,
@@ -250,15 +252,19 @@ export function getConnection(
 
 export function inspectConnections(
   db: Database,
-  opts: { includeDisconnected?: boolean } = {},
+  opts: { includeDisconnected?: boolean; sourceKeys?: readonly string[] } = {},
 ): Inspected<Connection>[] {
-  const rows = opts.includeDisconnected === true
-    ? db.query<ConnectionRow, []>("SELECT * FROM connections ORDER BY connector_id, source_key").all()
-    : db
-        .query<ConnectionRow, []>(
-          "SELECT * FROM connections WHERE disconnected_at IS NULL ORDER BY connector_id, source_key",
-        )
-        .all();
+  const conditions: string[] = [];
+  const bindings: string[] = [];
+  if (opts.includeDisconnected !== true) conditions.push("disconnected_at IS NULL");
+  if (opts.sourceKeys !== undefined) {
+    conditions.push("source_key IN (SELECT value FROM json_each(?))");
+    bindings.push(JSON.stringify(opts.sourceKeys));
+  }
+  const rows = db.query<ConnectionRow, string[]>(
+    `SELECT * FROM connections ${conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`}
+      ORDER BY connector_id, source_key`,
+  ).all(...bindings);
   return rows.map((row) =>
     inspectRow(row.connector_id, row.source_key, () => connectionFromRow(row)),
   );

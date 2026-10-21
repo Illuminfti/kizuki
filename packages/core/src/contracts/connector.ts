@@ -1,3 +1,4 @@
+import type { ScanCoverage } from "./source-coverage";
 import type { CaptureEventInput, SensitivityHint } from "./event";
 import { isRfc3339 } from "../util/time";
 
@@ -91,6 +92,8 @@ export interface ManifestCapabilities {
    * the connector keeps everything in its cursor.
    */
   cursor_store?: "host";
+  /** A completed sync sweeps the same history as backfill (folder sources). */
+  sync_covers_backfill?: boolean;
 }
 
 export interface Manifest {
@@ -147,6 +150,9 @@ export function freezeManifest(manifest: Manifest): Manifest {
     throw new TypeError(
       "manifest.capabilities.sync_from_backfill_before_first_success must be a boolean when present",
     );
+  }
+  if (capabilities.sync_covers_backfill !== undefined && typeof capabilities.sync_covers_backfill !== "boolean") {
+    throw new TypeError("manifest.capabilities.sync_covers_backfill must be a boolean when present");
   }
   const allowed_egress =
     manifest.allowed_egress === undefined
@@ -267,6 +273,8 @@ export interface RunContext {
 
 export interface SyncBatch {
   events: CaptureEventInput[];
+  /** Optional inventory from the walk that produced this page. */
+  coverage?: ScanCoverage;
   /** Durable resume checkpoint; null may also mark an exhausted source. */
   cursor: Cursor | null;
   /** Side-map changes that commit with `cursor`; needs `capabilities.cursor_store`. */
