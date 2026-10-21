@@ -15,6 +15,7 @@ import { inspectConnectionStateRecovery } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
 import { tableExists } from "../ledger/schema";
 import { inspectPurgeHealth } from "../ledger/purge";
+import { canonCapacity, loadCanonLimits } from "../vault/canon-limits";
 import { listCanonPagesReport, type CanonPageReport } from "../vault/pages";
 import { loadConfiguredModelRef, loadEmbeddingSelection, loadServeConfig, type EmbeddingSelection } from "./config";
 import { ageSeconds, railDoctor, syncPassWait } from "./doctor-rails";
@@ -568,9 +569,10 @@ export function inspectServeDoctor(
   const oversized = oversizedDoctor(db);
   const pages: CanonPageReport =
     options.page_walk === false
-      ? { pages: [], skipped: [], truncated: false, signatures: new Map() }
+      ? { pages: [], skipped: [], truncated: false, signatures: new Map(), scanned_files: 0, scanned_bytes: 0 }
       : listCanonPagesReport(vaultPath);
   const quarantined = quarantineDoctor(db, now);
+  const canon = options.page_walk === false ? null : canonCapacity(pages.pages, pages.truncated, loadCanonLimits(vaultPath), pages);
   const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
   const cal = calibration(db, syncReceipts, now);
   const extraction = extractionDoctor(db, syncReceipts, model.canon_writing !== "off");
@@ -598,6 +600,9 @@ export function inspectServeDoctor(
     if (supervisor.state !== "active" && supervisor.unit !== null && options.supervisor?.lastExit !== undefined) {
       try { supervisorExit = options.supervisor.lastExit(ensureVaultId(vaultPath)); } catch { supervisorExit = null; }
     }
+  }
+  if (canon !== null && canon.state !== "ok") {
+    fail(`canon ${canon.state}: ${canon.live} live pages of ${canon.ceiling}, ${canon.archived} archived; ${canon.state === "scan_limited" ? (pages.truncated ? "counts are incomplete; scan resource budget reached" : "scan resource budget reached; new pages are held, reads continue") : canon.state === "full" ? "new pages are held, reads continue" : "approaching the ceiling"}; next: ${canon.next}`);
   }
   for (const rail of rails) {
     if (rail.status === "down" && rail.reason !== null) {
@@ -650,6 +655,7 @@ export function inspectServeDoctor(
     oversized,
     quarantined,
     stores,
+    canon,
     calibration: cal,
     ok: failures.length === 0,
     failures,
