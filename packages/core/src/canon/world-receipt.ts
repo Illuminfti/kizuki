@@ -8,6 +8,8 @@ import { isRfc3339 } from "../util/time";
 export const WORLD_CANON_RECEIPT_SCHEMA="kizuki.canon-receipt/v2" as const;
 export interface WorldClaimBasis {
  readonly claim_id:string;readonly semantic_key:string;readonly supports:readonly {readonly support_key:string;readonly admission_hash:string}[];
+ /** Absent on historical receipts, whose exact support prose remains authoritative for reconstruction. */
+ readonly rendering?:"semantic/v1";
 }
 export interface WorldCanonBasis {
  readonly schema:"kizuki.world-canon-basis/v1";
@@ -31,7 +33,7 @@ function validClaims(input:unknown):input is WorldClaimBasis[]|null {
  if(!Array.isArray(input)||input.length===0||input.length>256)return false;
  let last="";
  for(const claim of input) {
-  if(!isPlainObject(claim)||!exact(claim,["claim_id","semantic_key","supports"])||!isUlid(claim.claim_id)||typeof claim.semantic_key!=="string"||!HASH.test(claim.semantic_key)||!Array.isArray(claim.supports)||claim.supports.length===0||claim.supports.length>32||claim.claim_id<=last)return false;
+  if(!isPlainObject(claim)||!exact(claim,["claim_id","semantic_key","supports",...(Object.hasOwn(claim,"rendering")?["rendering"]:[])])||(Object.hasOwn(claim,"rendering")&&claim.rendering!=="semantic/v1")||!isUlid(claim.claim_id)||typeof claim.semantic_key!=="string"||!HASH.test(claim.semantic_key)||!Array.isArray(claim.supports)||claim.supports.length===0||claim.supports.length>32||claim.claim_id<=last)return false;
   let prior="";for(const support of claim.supports){if(!isPlainObject(support)||!exact(support,["support_key","admission_hash"])||typeof support.support_key!=="string"||!HASH.test(support.support_key)||support.support_key<=prior||typeof support.admission_hash!=="string"||!HASH.test(support.admission_hash))return false;prior=support.support_key;}last=claim.claim_id;
  }
  return true;

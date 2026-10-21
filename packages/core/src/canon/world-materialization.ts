@@ -23,6 +23,7 @@ import { heldClaimSql } from "../world/corroboration";
 import type { ServeContext } from "../serving/types";
 import type { WorldClaimBasis } from "./world-receipt";
 import { CanonWriteError } from "./errors";
+import { renderWorldAssertion } from "./world-rendering";
 
 const MAX_PAGE_CLAIMS=64;
 /** Groups one scan reads; a queue longer than this is read a window at a time. */
@@ -52,8 +53,15 @@ function titleOf(semantic:ClaimV2Assertion,current:string):string {
  return activeWorldRegistry().isLabelPredicate(semantic.predicate)&&semantic.object.kind==="literal"?semantic.object.value:current;
 }
 function context(db:Database):ServeContext {return {db,vaultPath:"",principal:OWNER,sourcePurpose:"derive"};}
-function render(claim:Claim,support:EligibleSupport):Claim {
- return {...claim,body:support.admission.rendering.body,frontmatter:{},taint:support.row.support_origin==="native_owner"?claim.taint:"quoted",authority:support.admission.authority,confidence:support.admission.confidence,provenance:support.events.map(event=>event.event_id)};
+function semanticBody(semantic:ClaimV2Assertion,support:EligibleSupport):string {
+ const body=renderWorldAssertion(semantic);
+ // A native correction's explicit statement belongs to this current assertion.
+ // Connector/model prose may mention unrelated facts and remains evidence only.
+ return support.row.support_origin==="native_owner" && support.admission.rendering.body.trim().length>0
+  ? `${body}\nOwner statement: ${support.admission.rendering.body.trim()}` : body;
+}
+function render(claim:Claim,support:EligibleSupport,semantic:ClaimV2Assertion):Claim {
+ return {...claim,body:semanticBody(semantic,support),frontmatter:{},taint:support.row.support_origin==="native_owner"?claim.taint:"quoted",authority:support.admission.authority,confidence:support.admission.confidence,provenance:support.events.map(event=>event.event_id)};
 }
 export interface WorldMaterialization {
  readonly handle:string; readonly claims:readonly Claim[];readonly basis:readonly WorldClaimBasis[];
@@ -65,7 +73,7 @@ export interface WorldMaterializationScope {
   /** This pass's native statement is caller-owned input, even when recorded private. */
   readonly correction?: { readonly claim_id: string; readonly event_id: string };
 }
-/** Select one complete admitted rendering per assertion; never pool partial or denied support. */
+/** Select one complete admitted support per assertion; never pool partial or denied support. */
 export function selectWorldMaterialization(
   db: Database,
   handle: string,
@@ -121,8 +129,8 @@ export function selectWorldMaterialization(
     const semantic = eligible.semantic;
     pageType = pageTypeOf(semantic, pageType);
     title = titleOf(semantic, title);
-    claims.push(render(claim, support));
-    basis.push({ claim_id: claim.claim_id, semantic_key: semanticKey(semantic), supports: [{
+    claims.push(render(claim, support, semantic));
+    basis.push({ claim_id: claim.claim_id, semantic_key: semanticKey(semantic), rendering:"semantic/v1", supports: [{
       support_key: support.row.support_key, admission_hash: worldAdmissionHash(support.admission),
     }] });
   }
@@ -251,7 +259,7 @@ export function assertWorldReceiptBasis(db:Database,receipt:RetainedWorldCanonRe
   }
  }
 }
-/** Reconstruct exact attributed prose rather than accepting rehashed backup text as evidence. */
+/** Reconstruct the exact receipt-versioned text; rehashed backup prose is not evidence. */
 export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonReceipt,bytes:Uint8Array|null,image:"before"|"after"):void {
  assertWorldReceiptMetadata(db,receipt);
  const basis=receipt.basis[image],expected=image==="before"?receipt.before_hash:receipt.after_hash;
@@ -270,7 +278,7 @@ export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonRecei
   const support=eligible.supports.find(support=>support.row.support_key===item.supports[0]!.support_key)!;
   const claim=getClaim(db,item.claim_id)!;
   minimumSensitivity=Math.max(minimumSensitivity,SENSITIVITY_ORDER[claim.sensitivity]);quoted ||= claim.taint==="quoted";
-  const body=support.admission.rendering.body.trim();if(body.length)bodies.push(body);
+  const body=(item.rendering==="semantic/v1"?semanticBody(eligible.semantic,support):support.admission.rendering.body).trim();if(body.length)bodies.push(body);
   for(const event of support.events)if(!sources.includes(event.event_id))sources.push(event.event_id);
   const semantic=eligible.semantic;
   type=pageTypeOf(semantic,type);title=titleOf(semantic,title);

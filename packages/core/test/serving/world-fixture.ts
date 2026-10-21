@@ -31,6 +31,7 @@ export async function worldFixture(
     purposes?: SourcePurpose[];
     /** Explicit synthetic model consent and a completed-null summary prerequisite. */
     completeSummary?: true;
+    renderingBody?: string;
   } = {},
 ) {
   const sourceKey = options.sourceKey ?? ulid(),
@@ -142,7 +143,7 @@ export async function worldFixture(
           schema: WORLD_ADMISSION_SCHEMA,
           semantic,
           rendering: {
-            body: `${predicate}: ${JSON.stringify(object)}`,
+            body: options.renderingBody ?? `${predicate}: ${JSON.stringify(object)}`,
             frontmatter: {},
           },
           authority: "model_inference",
