@@ -11,13 +11,16 @@ import { qualificationCorpus } from "./corpus";
 import { candidateRegistry, registryDigest } from "./registry";
 import { caseInput, scoreRun, type Observation } from "./score";
 import { runnerDigest, sourceProvenance } from "./fingerprint";
+import { responsePacer, RESPONSE_GAP_MS } from "./pacing";
+import { validateResume, type ResumeEvidence, type Trace } from "./resume";
 
 export interface RunOptions {
   kinds: readonly string[]; base_url?: string; model?: string; token_file?: string;
   allow_remote?: boolean; output?: string; case_ids?: readonly string[];
   extensions?: readonly string[];
+  resume_from?: string; resume_sha256?: string; stopped?: () => boolean;
 }
-interface Trace { case_id: string; prompt_sha256: string; started_at: string; completed_at: string | null; request_sha256: string; response_sha256: string | null; transport: "pending" | "ok" | "failed" }
+
 
 /** Header-only credential. Never copy the file path, value or request headers into a receipt. */
 function credential(path: string | undefined): string | null {
@@ -29,6 +32,15 @@ function credential(path: string | undefined): string | null {
     const token = readFileSync(fd, "utf8").trim();
     if (token.length === 0 || /[\r\n\0]/.test(token)) throw new Error("token shape rejected");
     return token;
+  } finally { closeSync(fd); }
+}
+
+function readResume(path: string, sha256: string): ResumeEvidence {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size < 1 || stat.size > 32 * 1024 * 1024 || (stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.()) throw new Error("resume custody rejected");
+    return { sha256, bytes: readFileSync(fd, "utf8") };
   } finally { closeSync(fd); }
 }
 
@@ -51,16 +63,28 @@ export async function runQualification(options: RunOptions) {
   const first = selected[0];
   const prompt = first === undefined ? null : sha256(extractionV2SystemContent(caseInput(first, registry)));
   const promptByCase = Object.fromEntries(selected.map(item => [item.id, sha256(extractionV2SystemContent(caseInput(item, registry)))]));
-  const report = () => ({ schema: "kizuki.world-qualification-run/v1" as const,
+  const tuple = { selected_kinds: options.kinds, selected_extensions: options.extensions ?? [], model: options.model ?? null,
+    endpoint_host: options.base_url === undefined ? null : new URL(options.base_url).host, registry_sha256: registryDigest(registry),
+    prompt_sha256_by_case: promptByCase, selected_cases: selected.map(item => item.id) };
+  if ((options.resume_from === undefined) !== (options.resume_sha256 === undefined)) throw new Error("resume requires exact artifact pin");
+  const resumedFrom = options.resume_from === undefined ? null : readResume(options.resume_from, options.resume_sha256!);
+  const resumed = resumedFrom === null ? null : validateResume(resumedFrom, tuple, registry);
+  if (resumed !== null) { observations.push(...resumed.observations); traces.push(...resumed.traces); }
+  let haltReason: "requested_stop" | "transport_refused" | null = null;
+  const report = () => ({ schema: "kizuki.world-qualification-run/v2" as const,
     evidence: "runner_observed_transport" as const, synthetic: true, selected_kinds: [...options.kinds], selected_extensions: [...(options.extensions ?? [])],
     model: options.model ?? null, endpoint_host: options.base_url === undefined ? null : new URL(options.base_url).host,
     ...sourceProvenance(),
     runner_sha256: runnerDigest(), registry_sha256: registryDigest(registry), prompt_sha256: prompt, prompt_sha256_by_case: promptByCase,
-    corpus: qualificationCorpus, observations, traces, missing,
+    corpus: qualificationCorpus, observations, traces, missing, selected_cases: tuple.selected_cases,
+    resumed_from: resumedFrom, halt_reason: haltReason, response_gap_ms: RESPONSE_GAP_MS,
+    attempts: (resumed?.attempts ?? 0) + traces.filter(row => row.origin === "observed_v2").length,
+    case_states: selected.map(item => { const trace = traces.find(row => row.case_id === item.id); return { case_id: item.id,
+      status: trace === undefined ? "not_run" : trace.transport === "pending" ? "in_flight" : trace.transport === "failed" ? "transport_failed" : "observed" }; }),
     limitations: ["Typed semantic extraction only; free-text rendering, durable filing and consumer behavior require their separate gates.",
       "Transport observation alone does not establish provider identity. Reviewed endpoint/service evidence must accompany an approved report hash.",
       "This fixed authored split must not be used to tune prompts or select responses; changes require a fresh unseen split."],
-    score: scoreRun(qualificationCorpus, observations) });
+    score: scoreRun(qualificationCorpus, observations.filter(row => traces.some(trace => trace.case_id === row.case_id && trace.transport === "ok"))) });
   let fd: number | undefined;
   const save = () => {
     const value = report();
@@ -82,16 +106,19 @@ export async function runQualification(options: RunOptions) {
     if ((!isLoopbackHost(url.hostname) && options.allow_remote !== true) || !["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error("endpoint rejected");
     if (selected.length > 100) throw new Error("qualification exceeds daily attempt ceiling");
     const token = credential(options.token_file);
-    let activeCase = "", lastStart = 0;
+    let activeCase = "";
+    const pacer = responsePacer({ now: () => performance.now(), sleep: ms => Bun.sleep(ms) },
+      resumed === null ? 0 : Math.max(0, resumed.completed + RESPONSE_GAP_MS - Date.now()));
     const transport: ChatTransport = async request => {
-      lastStart = Date.now();
       const started_at = new Date().toISOString();
       const first = (request.body as { messages: { role: string; content: string }[] }).messages[0];
       if (first?.role !== "system" || sha256(first.content) !== promptByCase[activeCase]) throw new Error("qualification prompt changed");
-      const trace: Trace = { case_id: activeCase, prompt_sha256: promptByCase[activeCase]!, started_at, completed_at: null, request_sha256: sha256(canonicalJson(request.body)), response_sha256: null, transport: "pending" };
+      const trace: Trace = { case_id: activeCase, prompt_sha256: promptByCase[activeCase]!, started_at, completed_at: null, request_sha256: sha256(canonicalJson(request.body)), response_sha256: null, transport: "pending", http_status: null, origin: "observed_v2" };
       traces.push(trace); save();
       const response = await fetchTransport(request);
+      pacer.completed();
       trace.completed_at = new Date().toISOString();
+      trace.http_status = response.status === 0 ? null : response.status;
       trace.response_sha256 = sha256(response.ok ? canonicalJson(response.body) : `${response.kind}:${response.status}`);
       trace.transport = response.ok ? "ok" : "failed";
       save();
@@ -104,10 +131,10 @@ export async function runQualification(options: RunOptions) {
     const producer = createModelProducerV2Port(context({ deadline_ms: 180_000 }), { llm });
     try {
       for (const item of selected) {
-        // Installed bridge enforces the cross-process/day cap as well. This runner never retries a refusal.
-        const pause = Math.max(0, 60_000 - (Date.now() - lastStart));
-        if (pause > 0) await Bun.sleep(pause);
-        activeCase = item.id; lastStart = Date.now();
+        if (observations.some(row => row.case_id === item.id)) continue;
+        // Installed bridge still enforces its shared cap. Never automatically retry a new refusal.
+        if (!await pacer.ready(options.stopped)) { haltReason = "requested_stop"; break; }
+        activeCase = item.id;
         const input = caseInput(item, registry), result = await producer.produce(input);
         observations.push({ case_id: item.id, input, status: result.status === "ok" ? "ok" : result.status === "unavailable" ? "unavailable" : "rejected",
           response: result.status === "ok" ? result.response : null, dropped: result.status === "ok" ? result.dropped?.length ?? 0 : 0,
@@ -115,6 +142,7 @@ export async function runQualification(options: RunOptions) {
         console.error(`qualification ${item.id}: ${result.status}`);
         // Preserve all attempts. A refusal is not silently resampled or replaced with a scripted answer.
         save();
+        if (traces.at(-1)?.transport === "failed") { haltReason = "transport_refused"; break; }
       }
       return save();
     } finally { await producer.close(); await llm.close(); }
@@ -122,17 +150,23 @@ export async function runQualification(options: RunOptions) {
 }
 
 if (import.meta.main) {
+  let stopped = false;
+  const stop = () => { stopped = true; };
+  process.on("SIGINT", stop); process.on("SIGTERM", stop);
   try {
     const args = process.argv.slice(2), value = (flag: string) => { const at = args.indexOf(flag); return at < 0 ? undefined : args[at + 1]; };
     const kinds = value("--kinds"), output = value("--out");
-    const allowed = ["--kinds", "--out", "--base-url", "--model", "--token-file", "--allow-remote", "--cases", "--extensions"];
+    const allowed = ["--kinds", "--out", "--base-url", "--model", "--token-file", "--allow-remote", "--cases", "--extensions", "--resume-from", "--resume-sha256"];
     for (let index = 0; index < args.length; index++) { const flag = args[index]!; if (!allowed.includes(flag) || args.indexOf(flag) !== index) throw new Error("invalid arguments"); if (flag !== "--allow-remote" && (args[++index] === undefined || args[index]!.startsWith("--"))) throw new Error("missing argument"); }
     if (kinds === undefined || output === undefined) throw new Error("required arguments missing");
-    const result = await runQualification({ kinds: kinds.split(","), output,
+    const result = await runQualification({ kinds: kinds.split(","), output, stopped: () => stopped,
+      ...(value("--resume-from") === undefined ? {} : { resume_from: value("--resume-from")! }),
+      ...(value("--resume-sha256") === undefined ? {} : { resume_sha256: value("--resume-sha256")! }),
       ...(value("--base-url") === undefined ? {} : { base_url: value("--base-url")! }), ...(value("--model") === undefined ? {} : { model: value("--model")! }),
       ...(value("--token-file") === undefined ? {} : { token_file: value("--token-file")! }), ...(value("--cases") === undefined ? {} : { case_ids: value("--cases")!.split(",") }),
       ...(value("--extensions") === undefined ? {} : { extensions: value("--extensions")!.split(",") }), allow_remote: args.includes("--allow-remote") });
     console.log(JSON.stringify({ status: result.score.status, kinds: result.score.kinds.map(({ kind, status }) => ({ kind, status })), missing: result.missing, prompt_sha256: result.prompt_sha256 }));
     process.exitCode = result.selected_kinds.every(kind => result.score.kinds.some(row => row.kind === kind && row.status === "passed")) ? 0 : 1;
   } catch { console.error("qualification failed; no kind was enabled (check arguments, endpoint, credential custody and output path)"); process.exitCode = 2; }
+  finally { process.off("SIGINT", stop); process.off("SIGTERM", stop); }
 }

@@ -163,6 +163,15 @@ test("the receipt verifier binds reviewed bytes, full cases, prompt, source and 
   const verify = (value: unknown, pinned?: string) => { const bytes = JSON.stringify(value); return verifyQualificationReceipt(bytes,
     { file: "synthetic-control.json", sha256: pinned ?? sha256(bytes), endpoint_evidence: "c".repeat(64) }, registry); };
   expect(() => checkOfferedQualification(registry, [verify(control)])).not.toThrow();
+  const v2 = { ...control, schema: "kizuki.world-qualification-run/v2", resumed_from: null, halt_reason: null, response_gap_ms: 61_000,
+    selected_cases: observations.map(row => row.case_id), case_states: observations.map(row => ({ case_id: row.case_id, status: "observed" })), attempts: observations.length,
+    traces: control.traces.map((row, index) => ({ ...row, origin: "observed_v2", http_status: 200,
+      started_at: new Date(Date.UTC(2026, 0, 1) + index * 62_000).toISOString(), completed_at: new Date(Date.UTC(2026, 0, 1) + index * 62_000 + 1000).toISOString() })) };
+  expect(() => checkOfferedQualification(registry, [verify(v2)])).not.toThrow();
+  for (const mutation of [{ ...v2, halt_reason: "transport_refused" }, { ...v2, response_gap_ms: 60_000 },
+    { ...v2, attempts: observations.length - 1 }, { ...v2, traces: v2.traces.map(row => ({ ...row, origin: "inherited_v1" })) },
+    { ...v2, traces: v2.traces.map(row => ({ ...row, http_status: null })) },
+    { ...v2, traces: v2.traces.map((row, index) => index === 1 ? { ...row, started_at: new Date(Date.parse(row.started_at) - 1).toISOString() } : row) }]) expect(() => verify(mutation)).toThrow();
   expect(() => verify(control, "d".repeat(64))).toThrow("review pin");
   for (const mutation of [
     { ...control, source_clean: false }, { ...control, prompt_sha256_by_case: {} },

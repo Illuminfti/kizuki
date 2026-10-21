@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { qualificationCorpus } from "./corpus";
 import { caseInput, responseMeanings, scoreRun } from "./score";
 import { runnerDigest } from "./fingerprint";
+import { validateResume } from "./resume";
+import { RESPONSE_GAP_MS } from "./pacing";
 import { extractionV2SystemContent } from "../../packages/core/src/producer/prompt-v2";
 import type { runQualification } from "./run";
 import { REVIEWED_QUALIFICATIONS, type QualificationApproval } from "./approvals";
@@ -30,12 +32,12 @@ export interface CheckedQualification { registry_sha256: string; report_sha256: 
 
 export function verifyQualificationReceipt(bytes: string, approval: QualificationApproval, registry: WorldRegistry, root?: string): CheckedQualification {
   if (!/^[a-f0-9]{64}$/.test(approval.sha256) || sha256(bytes) !== approval.sha256 || !/^[a-f0-9]{64}$/.test(approval.endpoint_evidence)) throw new Error("qualification review pin mismatch");
-  const report = JSON.parse(bytes) as Awaited<ReturnType<typeof runQualification>>;
-  if (report.schema !== "kizuki.world-qualification-run/v1" || report.evidence !== "runner_observed_transport" || report.synthetic !== true ||
+  const report = JSON.parse(bytes) as Omit<Awaited<ReturnType<typeof runQualification>>, "schema"> & { schema: string };
+  if (!["kizuki.world-qualification-run/v1", "kizuki.world-qualification-run/v2"].includes(report.schema) || report.evidence !== "runner_observed_transport" || report.synthetic !== true ||
       report.source_clean !== true || !/^[a-f0-9]{40}$/.test(report.source_commit) || report.runner_sha256 !== runnerDigest(root) ||
       report.registry_sha256 !== registryDigest(registry) || report.missing.length !== 0 || !report.model || !report.endpoint_host ||
       canonicalJson(report.corpus) !== canonicalJson(qualificationCorpus)) throw new Error("qualification source or corpus mismatch");
-  const score = scoreRun(qualificationCorpus, report.observations);
+  const score = scoreRun(qualificationCorpus, report.schema === "kizuki.world-qualification-run/v2" ? report.observations.filter(row => report.traces.some(trace => trace.case_id === row.case_id && trace.transport === "ok")) : report.observations);
   if (canonicalJson(score) !== canonicalJson(report.score) || report.selected_kinds.length === 0 || new Set(report.selected_kinds).size !== report.selected_kinds.length ||
       report.selected_kinds.some(kind => !score.kinds.some(row => row.kind === kind && row.status === "passed"))) throw new Error("qualification score failed");
   if (report.traces.length !== report.observations.length || report.traces.length > 100) throw new Error("qualification trace count mismatch");
@@ -49,7 +51,22 @@ export function verifyQualificationReceipt(bytes: string, approval: Qualificatio
     if (traces.length !== 1 || trace === undefined || trace.transport !== "ok" || trace.prompt_sha256 !== report.prompt_sha256_by_case[item.id] || !/^[a-f0-9]{64}$/.test(trace.request_sha256) || trace.response_sha256 === null || !/^[a-f0-9]{64}$/.test(trace.response_sha256) ||
       !Number.isFinite(Date.parse(trace.started_at)) || trace.completed_at === null || !Number.isFinite(Date.parse(trace.completed_at)) || Date.parse(trace.completed_at) < Date.parse(trace.started_at)) throw new Error("qualification transport evidence missing");
   }
-  for (let index = 1; index < report.traces.length; index++) if (Date.parse(report.traces[index]!.started_at) - Date.parse(report.traces[index - 1]!.started_at) < 60_000) throw new Error("qualification pacing violated");
+  if (report.schema === "kizuki.world-qualification-run/v2") {
+    if (report.response_gap_ms !== RESPONSE_GAP_MS || report.halt_reason !== null ||
+        report.case_states.some(row => row.status !== "observed") || canonicalJson(report.case_states.map(row => row.case_id)) !== canonicalJson(report.selected_cases)) throw new Error("qualification continuation incomplete");
+    const inherited = report.resumed_from === null ? null : validateResume(report.resumed_from, report, registry);
+    const inheritedIds = new Set(inherited?.observations.map(row => row.case_id) ?? []);
+    if (canonicalJson(report.observations.filter(row => inheritedIds.has(row.case_id))) !== canonicalJson(inherited?.observations ?? []) ||
+        canonicalJson(report.traces.filter(row => row.origin === "inherited_v1")) !== canonicalJson(inherited?.traces ?? [])) throw new Error("qualification inherited evidence changed");
+    let previousCompletion = inherited?.completed ?? null;
+    const current = report.traces.filter(row => row.origin === "observed_v2");
+    if (current.length + inheritedIds.size !== report.traces.length || report.attempts !== (inherited?.attempts ?? 0) + current.length || report.attempts > 100) throw new Error("qualification attempts mismatch");
+    for (const trace of current) {
+      if (inheritedIds.has(trace.case_id) || trace.http_status === null || trace.http_status < 200 || trace.http_status >= 300 ||
+          (previousCompletion !== null && Date.parse(trace.started_at) - previousCompletion < RESPONSE_GAP_MS)) throw new Error("qualification response pacing violated");
+      previousCompletion = Date.parse(trace.completed_at!);
+    }
+  } else for (let index = 1; index < report.traces.length; index++) if (Date.parse(report.traces[index]!.started_at) - Date.parse(report.traces[index - 1]!.started_at) < 60_000) throw new Error("qualification pacing violated");
   // Positive observed tuples, not optional oracles, establish which changed predicates were exercised.
   const predicates = [...new Set(report.observations.flatMap(observed => {
     const item = qualificationCorpus.cases.find(row => row.id === observed.case_id)!;
