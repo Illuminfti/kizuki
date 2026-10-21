@@ -1,3 +1,4 @@
+import type { PersonCard } from "../contracts/person-card";
 import type {
   ConceptCard,
   ConceptCoverage,
@@ -36,18 +37,19 @@ export function projectWorldCard(
   ctx: ServeContext,
   ns: WorldNamespace,
   handle: string,
-  kind: "concept" | "situation" | "question",
+  kind: "concept" | "situation" | "question" | "person",
   valid: WorldValidQuery,
   dependencies?: WorldDependencies,
   cutoff?: RecordedCutoff,
   cardSchema?: string,
-): ConceptCard | SituationCard | SituationCardV2 | QuestionCard | null {
+): ConceptCard | SituationCard | SituationCardV2 | QuestionCard | PersonCard | null {
   // Each shipped assembler builds its declared card.
   return readWorldCard(newReadFrame(ctx, ns, valid, dependencies, cutoff), handle, kind, cardSchema) as
     | ConceptCard
     | SituationCard
     | SituationCardV2
     | QuestionCard
+    | PersonCard
     | null;
 }
 

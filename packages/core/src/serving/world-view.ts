@@ -1,3 +1,4 @@
+import type { PersonCard } from "../contracts/person-card";
 import { resolvePrincipal, toolAllowed, type Principal } from "../agents";
 import { tableExists } from "../ledger/schema";
 import type { HistoryPage } from "../contracts/world-history";
@@ -57,6 +58,8 @@ export type {
 
 /** The typed request of the shipped operations; the reader itself takes `unknown` and the registry decides. */
 export type WorldReadInput =
+  | { readonly operation: "person"; readonly person: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "find_people"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | {
       readonly operation: "find_concepts" | "find_situations";
       readonly label: string;
@@ -108,8 +111,10 @@ export type WorldReadInput =
 /** The bodies the shipped operations return; each operation's `dataSchemas` say which one it is. */
 export type WorldData =
   | ConceptCard
+  | PersonCard
   | QuestionCard
   | Frontier
+  | WorldMatches<"kizuki.person-matches/v1">
   | WorldMatches<"kizuki.question-matches/v1">
   | HistoryPage
   | SituationCard

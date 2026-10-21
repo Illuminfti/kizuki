@@ -9,12 +9,12 @@ import { readWorldView, serveWorldView } from "@kizuki/core/world";
 import type { ServeContext } from "../../src/serving/types";
 import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
-import { enrollSource } from "../helpers/world-seed";
+import { enrollSource, type WorldSeedOptions } from "../helpers/world-seed";
 import { tempVault } from "../helpers/vault";
 
-export async function cardFixture(database?: Database) {
+export async function cardFixture(database?: Database, options: Pick<WorldSeedOptions, "model" | "purposes"> = {}) {
   const vault = tempVault("kizuki-card-"), db = database ?? openLedger(`${vault.path}/.kizuki/kizuki.db`);
-  const connector = "card.fixture", sourceKey = enrollSource(db, connector, "public");
+  const connector = "card.fixture", sourceKey = enrollSource(db, connector, "public", undefined, options.model, options.purposes);
   const namespace = { connector_id: connector, source_key: sourceKey };
   const ref = (id: string) => ({ kind: "supplied" as const, id, namespace });
   const ctx: ServeContext = { db, vaultPath: vault.path, principal: OWNER };
@@ -22,11 +22,11 @@ export async function cardFixture(database?: Database) {
     subject?: string; polarity?: "positive" | "negative"; context?: string[];
     from?: string | null; until?: string | null; text?: string; metadata?: Record<string, unknown>;
     floor?: "public" | "private"; mode?: ClaimV2Assertion["perspective"]["mode"];
-    speaker?: string; holder?: string;
+    holder?: string; speaker?: string; addressee?: string;
     span?: { start: number; end: number };
   } = {}) {
     const subject = options.subject ?? "topic:bayes";
-    const ids = [subject, ...(object.kind === "subject" ? [object.ref.id] : []), ...(options.context ?? []), ...(options.speaker ? [options.speaker] : []), ...(options.holder ? [options.holder] : [])];
+    const ids = [subject, ...(object.kind === "subject" ? [object.ref.id] : []), ...(options.context ?? []), ...[options.holder, options.speaker, options.addressee].filter((id): id is string => id !== undefined)];
     const result = accept(db, {
       ...validEvent(), connector_id: connector, source_record_id: ulid(), kind: "note",
       text: options.text ?? `Evidence for ${predicate}: ${JSON.stringify(object)}.`,
@@ -36,8 +36,8 @@ export async function cardFixture(database?: Database) {
     if (result.status !== "stored") throw new Error("card evidence was not stored");
     const semantic: ClaimV2Assertion = {
       schema: "kizuki.claim/v2", discriminator: "assertion", subject: ref(subject), predicate, object,
-      perspective: { holder: options.holder ? ref(options.holder) : null, speaker: options.speaker ? ref(options.speaker) : null, addressee: null,
-        mode: options.mode ?? "asserted", interpretation: "explicit", anchors: options.speaker || options.holder ? [{ event_id: result.event.event_id, start_utf16: 0, end_utf16: result.event.text.length }] : [] },
+      perspective: { holder: options.holder ? ref(options.holder) : null, speaker: options.speaker ? ref(options.speaker) : null, addressee: options.addressee ? ref(options.addressee) : null,
+        mode: options.mode ?? "asserted", interpretation: "explicit", anchors: options.holder || options.speaker || options.addressee ? [{ event_id: result.event.event_id, start_utf16: 0, end_utf16: result.event.text.length }] : [] },
       context: (options.context ?? []).map(ref), polarity: options.polarity ?? "positive",
       valid_from: options.from === undefined ? "2026-01-01T00:00:00.000Z" : options.from,
       valid_to: options.until ?? null, temporal_basis: options.from === null ? "unknown" : "explicit",

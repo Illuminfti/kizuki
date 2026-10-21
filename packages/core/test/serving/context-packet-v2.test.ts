@@ -16,7 +16,9 @@ import type { NoninterferenceScene } from "../helpers/noninterference";
 setDefaultTimeout(120_000);
 
 const V2 = "kizuki.envelope/v2";
-const PACKET = { query: "Bayesian", budget_tokens: 1_000 };
+// This fixture has captures, not indexed canon. Current/unchanged checks do
+// not ask retrieval to establish an unsupported query-completeness promise.
+const PACKET = { budget_tokens: 1_000 };
 /** Recall of the timeline, over a window that holds the fixtures' capture times. */
 const WIDE = { ...PACKET, purpose: "recall", include: ["timeline"], since: "2026-01-01T00:00:00Z", until: "2100-01-01T00:00:00Z" };
 
@@ -256,4 +258,16 @@ test("a v2 packet served back in as capture is machine output, like a v1 packet"
   } finally {
     scene.dispose();
   }
+});
+
+
+test("a query without indexed canon reports its incomplete retrieval coverage", async () => {
+  const scene = await hiddenScene();
+  try {
+    const first = (await read(scene, { ...WIDE, query: "Bayesian" })).packet.result;
+    expect(first.status).toBe("incomplete");
+    if (first.status !== "incomplete") throw new Error("expected query coverage gap");
+    expect(first.data.retrievalDegraded).toContain("query-no-match");
+    expect(first).not.toHaveProperty("view");
+  } finally { scene.dispose(); }
 });

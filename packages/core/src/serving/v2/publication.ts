@@ -1,3 +1,4 @@
+import { worldDependenciesCurrent } from "../../world/dependencies";
 import type { Tool } from "../../agents";
 import { sensitivity, SENSITIVITY_ORDER } from "../../agents";
 import { getClaim } from "../../claims/store";
@@ -17,6 +18,7 @@ export function validatePublication(ctx: ServeContext, tool: Tool, served: Serve
   if (tool === "propose" || tool === "correct") return;
   if (served.authorization?.purpose !== undefined) ctx = { ...ctx, sourcePurpose: served.authorization.purpose };
   function refuse(): never { throw new ServeError("error", "authorized evidence changed during request; retry"); }
+  for (const deps of served.authorization?.world ?? []) if (!worldDependenciesCurrent(ctx, deps)) refuse();
   const eventIds = new Set(served.quoted.map((chunk) => chunk.event_id));
   const eventLabels = new Map(served.quoted.map((chunk) => [chunk.event_id, chunk.sensitivity]));
   // Attached identity evidence can raise a chunk's label above its source.
