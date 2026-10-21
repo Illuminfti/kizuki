@@ -39,12 +39,14 @@ describe("the operation registry", () => {
       "situation",
       "describe",
       "evidence",
+      "observation",
       "history",
       "share",
       "resume",
       "question", "find_questions", "frontier",
       "person", "find_people", "procedure", "find_procedures", "skill", "framework",
       "artifact_version", "find_artifacts", "outcome",
+      "diff", "slice", "attention", "forecast", "forecast_scores", "atlas",
     ]);
   });
 
