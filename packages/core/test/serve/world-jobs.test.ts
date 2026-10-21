@@ -28,8 +28,8 @@ function job(id: string, run: WorldJob["run"]): WorldJob {
 }
 
 describe("world jobs in the sync pass", () => {
-  test("the shipped registry includes bounded artifact admission and consolidation", () => {
-    expect(WORLD_JOBS.map(job => job.id)).toEqual(["artifact-metadata", "consolidation"]);
+  test("the shipped registry includes bounded artifact admission, consolidation and forecasts", () => {
+    expect(WORLD_JOBS.map(job => job.id)).toEqual(["artifact-metadata", "consolidation", "forecast"]);
   });
 
   test("a registered job runs once per pass, in order, after extraction and with the pass context", async () => {

@@ -60,7 +60,7 @@ test("manual, once, legacy and degraded receipts cannot fill automatic due slots
 });
 test("duplicate hashes dedupe, conflicting run ids and unbound processes interrupt",()=>{
   const {p,samples}=trace(0); const first=samples[0]!.receipts[0]!;
-  samples[0]!.receipts.push({...first});expect(evaluateQualification(p,samples).automatic_runs).toBe(7);
+  samples[0]!.receipts.push({...first});expect(evaluateQualification(p,samples).automatic_runs).toBe(9);
   samples[0]!.receipts.push({...first,sha256:"c".repeat(64)});expect(evaluateQualification(p,samples).issues).toContain("conflicting-run-id");
   first.execution={...first.execution!,pid:99};expect(evaluateQualification(p,samples).issues).toContain("run-process-unbound");
 });
@@ -116,7 +116,7 @@ test("seven-day completion waits for genuine receipts for slots due exactly at t
   const end = 604_800_000;
   const { p, samples } = trace(end, true);
   const boundaryRuns = samples.at(-1)!.receipts.splice(0);
-  expect(boundaryRuns).toHaveLength(6);
+  expect(boundaryRuns).toHaveLength(8);
   expect(samples.flatMap(s => s.receipts).filter(r => r.rail === "journal-prune")).toHaveLength(6);
   const waiting = evaluateQualification(p, samples);
   expect(waiting.status).toBe("awaiting-observation");
