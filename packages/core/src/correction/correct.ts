@@ -3,7 +3,8 @@ import { OWNER } from "../agents";
 import { getAgent } from "../agents";
 import { principalForAgentId } from "../agents/identity";
 import type { ClaimVisibility } from "../claims/visibility";
-import { claimReader } from "../serving/claims";
+import { correctionVisibility } from "./visibility";
+import { assertSituationAcyclic } from "../world/situation-cycle";
 import { loadCanon, pageDecision } from "../serving/canon";
 import type { ServeContext } from "../serving/types";
 import { worldClaimHandle, worldCanonPath, worldCanonTarget } from "../canon/world-materialization";
@@ -185,14 +186,13 @@ function scopeCorrection(scope: VaultMutationScope, io: CorrectIo): ScopedCorrec
     (agent === null ? null : principalForAgentId(io.db, agent.agent_id));
   if (resolved === null) throw new CorrectError("tool_not_granted", "correction principal is unavailable");
   const ctx: ServeContext = { db: io.db, vaultPath: io.vault_path, principal: resolved };
-  const reader = claimReader(io.db, ctx.principal.grant,
-    { owner: false, purpose: "recall" });
+  const visibility = correctionVisibility({ ...ctx, sourcePurpose: "recall" });
   const pages = new Map<string, { hash: string; generation: number; epoch: number; allow: boolean }>();
   return extendOwnedCanonIo(scope, io, { grant: ctx.principal.grant,
     relay_owner_corrections: ctx.principal.grant.relay_owner_corrections,
     readScope: {
       context: ctx,
-      claims: reader.visibility,
+      claims: visibility,
       page(path: string) {
         const index = loadCanon({ ...ctx, sourcePurpose: "recall" });
         const page = index.byPath.get(path);
@@ -493,6 +493,17 @@ function planCorrection(io: ScopedCorrectIo, input: CorrectInput, live: Claim, a
     return null;
   }
   const plan = planWorldCorrection(io.db, prior, input.world ?? { mode: "replace_object" }, input.statement, at);
+  // The shared insertion guard runs again atomically. Refuse an already known
+  // cycle before recording native owner evidence, as for other invalid drafts.
+  try {
+    assertSituationAcyclic(io.db, plan.draft, {
+      owner: io.readScope === undefined,
+      purpose: "correction",
+    }, io.readScope?.claims);
+  } catch (error) {
+    if (error instanceof ClaimError) throw new CorrectError("correction_refused", error.message, { cause: error });
+    throw error;
+  }
   if (plan.world.mode === "merge_identity" || plan.world.mode === "separate_identity") {
     const ctx: ServeContext = { ...(io.readScope?.context ?? { db: io.db, vaultPath: io.vault_path, principal: { ...OWNER, grant: io.grant ?? OWNER.grant } }), sourcePurpose: "correction" };
     if (!identityCorrectionAllowed(ctx, prior.subject, plan.world.object.ref))

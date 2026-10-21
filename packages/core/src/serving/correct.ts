@@ -7,6 +7,7 @@ import {
   requireSourceEvents,
 } from "../ledger/source-grants";
 import { claimReader } from "./claims";
+import { correctionVisibility } from "../correction/visibility";
 import type { Sensitivity } from "../agents";
 import {
   claimsConflict,
@@ -252,10 +253,7 @@ async function correctWorldClaim(
   // A typed correction is filed at the owner's authority; a grant that cannot relay the owner cannot file one.
   if (ctx.principal.kind !== "owner" && !ctx.principal.grant.relay_owner_corrections)
     throw new ServeError("held", "correction relay is not granted");
-  const reader = claimReader(ctx.db, ctx.principal.grant, {
-    owner: ctx.principal.kind === "owner",
-    purpose: "correction",
-  });
+  const reader = correctionVisibility({ ...ctx, sourcePurpose: "correction" });
   if (!reader.canRead(claim))
     throw new ServeError("held", "source authorization does not permit this correction");
   const owned = extendOwnedCanonIo(scope, io, {
