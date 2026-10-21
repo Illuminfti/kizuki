@@ -27,7 +27,7 @@ export const observationOp: ClaimsOp<ScopedRef> = {
     // Existing snapshots are bound to their originating semantic query. An
     // Observation never borrows a different query's historical capability.
     if (knownAt.kind === "snapshot") return { status: "unavailable", reason: "history" };
-    const cutoff = knownAt.kind === "time" ? resolveKnownTime(ctx.db, knownAt.at) : undefined;
+    const cutoff = knownAt.kind === "time" ? dependencies?.cutoff ?? resolveKnownTime(ctx.db, knownAt.at) : undefined;
     const scope = { ctx, ns }, found = resolveObservationRef(scope, value, cutoff);
     if (found === null || !matches(found.record.occurred, valid)) return NOT_FOUND;
     const admission = issueWorldRef(ctx.db, ns, "admission", found.supportKey), evidence = new Map<string, EvidenceRef>();

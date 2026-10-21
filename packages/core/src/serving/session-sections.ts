@@ -235,7 +235,7 @@ const marks = (values: readonly string[]) => values.map(() => "?").join(",");
  */
 export function collectSessionPieces(
   ctx: ServeContext,
-  request: { at: string; since: string; subjects?: readonly string[] },
+  request: { at: string; since: string; subjects?: readonly string[]; typed?: boolean },
 ): SessionPieces {
   const grant = ctx.principal.grant;
   const reader = claimReader(ctx.db, grant, {
@@ -272,7 +272,7 @@ export function collectSessionPieces(
     }
   };
   const situations = (): SituationState[] => {
-    if (!worldGranted) return [];
+    if (!worldGranted || request.typed === false) return [];
     return readCurrentSituations(ctx, {
       limit: SITUATIONS,
       ...(request.subjects === undefined || request.subjects.length === 0
@@ -298,7 +298,7 @@ export function collectSessionPieces(
     for (const claim of facts) shown.add(claim.claim_id);
     const seenPeople = new Set<string>();
     return facts.flatMap((claim) => {
-      const person = worldGranted ? sessionPerson(ctx, claim, request.at) : null;
+      const person = worldGranted && request.typed !== false ? sessionPerson(ctx, claim, request.at) : null;
       if (person !== null) {
         const ids = [claim.claim_id, ...person.deps.claims];
         if (ids.every(id => { const row = getClaim(ctx.db, id); return row !== null && reader.canRead(row); })) {
@@ -376,7 +376,7 @@ export function collectSessionPieces(
       ctx,
       reader,
       request.at,
-      `polarity='positive' AND predicate IN (${marks(COMMITMENT_PREDICATES)})`,
+      `polarity='positive' ${request.typed === false ? 'AND is_world_typed=0' : ''} AND predicate IN (${marks(COMMITMENT_PREDICATES)})`,
       [...COMMITMENT_PREDICATES],
       inSubjects,
       request.subjects,

@@ -107,6 +107,7 @@ function knownEndpoint(db: Database, ref: RawSubjectRef): boolean {
 }
 
 export interface WorldPlan {
+  readonly draft: ClaimV2Assertion;
   readonly world: WorldCorrection;
   readonly prior: ClaimMeaning;
   /** The endpoints beyond the subject that the native evidence attests. */
@@ -145,5 +146,5 @@ export function planWorldCorrection(
   for (const ref of endpoints) {
     if (!held.has(rawSubjectRefKey(ref)) && !knownEndpoint(db, ref)) throw refused("object: names no known node");
   }
-  return { world, prior, endpoints, build };
+  return { world, prior, endpoints, draft, build };
 }

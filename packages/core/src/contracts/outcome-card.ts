@@ -30,6 +30,19 @@ export function parseOutcomeEvidence(predicate: string, input: unknown): Outcome
     typeof value.assistance !== "string" || !["assisted", "unassisted", "unknown"].includes(value.assistance) || typeof value.confounded !== "boolean") return null;
   return value as unknown as OutcomeEvidence;
 }
+/** Submission-only extension. Stored binding tags are never accepted from callers. */
+export type OutcomeSubmission = Omit<OutcomeEvidence, "artifactVersion"> & {
+  readonly artifactVersion: string | WorldWireRef<"object">;
+};
+export function parseOutcomeSubmission(predicate: string, input: unknown): OutcomeSubmission | null {
+  const legacy = parseOutcomeEvidence(predicate, input);
+  if (legacy !== null) return legacy;
+  if (typeof input !== "string" || input.length > 1024) return null;
+  let value: unknown; try { value = JSON.parse(input); } catch { return null; }
+  if (!isPlainObject(value) || !wireRef(value.artifactVersion, "object")) return null;
+  const checked = parseOutcomeEvidence(predicate, JSON.stringify({ ...value, artifactVersion: "bound" }));
+  return checked === null ? null : { ...checked, artifactVersion: value.artifactVersion as WorldWireRef<"object"> };
+}
 export interface OutcomeStage {
   readonly claim: WorldWireRef<"claim">;
   readonly stage: "agent_reported" | "provider_acknowledged" | "observed" | "reviewed";

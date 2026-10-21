@@ -2,6 +2,7 @@ import { normalizeReadArgs } from "./v2/read-input";
 import { packetPrincipal, scopePacketPieces } from "./v2/packet-pieces";
 import { projectCanonChunk, projectQuotedChunk } from "./v2/chunks";
 import { referenceScope } from "../world/ref-kinds/common";
+import { compileSessionSlice } from "../world/slice/session";
 import { redactorOf } from "./redact";
 import type { Redactor } from "./redact";
 import { MAX_AUDIT_ITEMS } from "../agents/types";
@@ -476,6 +477,7 @@ async function servePacket(
       // An explicit `include` asks for exactly those sections.
       const gatherState = profile.session_state && request.include === undefined;
       const stateReasons: Partial<Record<SessionSection, SessionEmptyReason>> = {};
+      let stateTruncated = false;
       const worldPublications: import("../world/dependencies").WorldDependencies[] = [];
       try {
         ({ pieces, withheld, degraded } = await collectPieces(ctx, {
@@ -486,11 +488,13 @@ async function servePacket(
           ...window,
         }));
         if (gatherState) {
-          const state = collectSessionPieces(ctx, {
+          const state = (v2 ? compileSessionSlice : collectSessionPieces)(ctx, {
+            header, budgetTokens: budget,
             at,
             since: window.since,
             ...(subjects === undefined ? {} : { subjects }),
           });
+          stateTruncated = "truncated" in state && state.truncated === true;
           pieces = [...state.pieces, ...pieces];
           withheld.push(...state.withheld);
           degraded.push(...state.degraded);
@@ -516,7 +520,7 @@ async function servePacket(
       let stateBody = "";
       let heading = "";
       let noted = false;
-      let truncated = false;
+      let truncated = stateTruncated;
       for (const piece of pieces) {
         if (
           types !== undefined &&
@@ -539,7 +543,7 @@ async function servePacket(
             skipped.add(piece.section as SessionSection);
             continue;
           }
-        } else if (isState && tokens(`${stateBody}${prefix}${piece.block}`) > stateRoom) {
+        } else if (isState && !v2 && tokens(`${stateBody}${prefix}${piece.block}`) > stateRoom) {
           // The session sections yield to canon and capture instead of ending the packet.
           truncated = true;
           skipped.add(piece.section as SessionSection);
@@ -644,7 +648,7 @@ async function servePacket(
             schema: PACKET_V2_SCHEMA,
             result:
               degraded.length > 0
-                ? { status: "incomplete", data: content, reasons: ["coverage"] }
+                ? { status: "incomplete", data: content, reasons: [...new Set(degraded.map(gap => gap === "required_context_overflow" ? "required_context_overflow" as const : "coverage" as const))] }
                 : same
                   ? { status: "unchanged", view, validUntil }
                   : { status: "current", view, data: content, validUntil },

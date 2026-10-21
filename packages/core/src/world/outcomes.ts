@@ -1,6 +1,7 @@
+import { parseStoredOutcomeEvidence, type StoredOutcomeEvidence } from "./outcome-binding";
 import { getClaim } from "../claims/store";
 import type { Claim } from "../contracts/proposal";
-import { parseOutcomeEvidence, validateOutcomeCard, type OutcomeCard, type OutcomeEvidence, type OutcomeStage } from "../contracts/outcome-card";
+import { validateOutcomeCard, type OutcomeCard, type OutcomeEvidence, type OutcomeStage } from "../contracts/outcome-card";
 import { claimReader, claimPublicationFingerprint } from "../serving/claims";
 import { authorizedEventSql } from "./policy-sql";
 import { issueWorldRef } from "./references";
@@ -10,9 +11,9 @@ import { eventDerivation } from "./lineage";
 import { canonicalJson, sha256Hex } from "../util/hash";
 import { sealCard } from "./kinds/kit";
 
-type Entry = { claim: Claim; value: OutcomeEvidence | null; stage: OutcomeStage; sources: Set<string>; texts: Set<string>; rooted: boolean };
-function same(a: OutcomeEvidence, b: OutcomeEvidence): boolean {
-  return a.subjectRef === b.subjectRef && a.task === b.task && a.attempt === b.attempt && a.criterion === b.criterion && a.artifactVersion === b.artifactVersion && a.environment === b.environment && a.assistance === b.assistance;
+type Entry = { claim: Claim; value: StoredOutcomeEvidence | null; stage: OutcomeStage; sources: Set<string>; texts: Set<string>; rooted: boolean };
+function same(a: StoredOutcomeEvidence, b: StoredOutcomeEvidence): boolean {
+  return a.subjectRef === b.subjectRef && a.task === b.task && a.attempt === b.attempt && a.criterion === b.criterion && canonicalJson(a.artifactVersion) === canonicalJson(b.artifactVersion) && a.environment === b.environment && a.assistance === b.assistance;
 }
 function independent(report: Entry, other: Entry): boolean {
   return report.value !== null && other.value !== null && same(report.value, other.value) &&
@@ -20,18 +21,22 @@ function independent(report: Entry, other: Entry): boolean {
     report.rooted && other.rooted && ![...report.sources].some(key => other.sources.has(key)) && ![...report.texts].some(key => other.texts.has(key));
 }
 /** Storage binding hashes are never exposed as cross-principal identifiers. */
-function publicEvidence(value: OutcomeEvidence | null): OutcomeEvidence | null {
-  return value === null ? null : { ...value, subjectRef: value.subjectRef === "none" ? "none" : "bound" };
+function publicEvidence(value: StoredOutcomeEvidence | null): OutcomeEvidence | null {
+  return value === null ? null : { ...value, subjectRef: value.subjectRef === "none" ? "none" : "bound", artifactVersion: typeof value.artifactVersion === "string" ? value.artifactVersion : "bound" };
 }
-/** Legacy claims remain the authoritative outcome record. No outcome cache or additional writer. */
-export function readOutcomes(frame: ReadFrame, subject: string, subjectRef?: string): OutcomeCard {
+/** Legacy claims remain the authoritative outcome record. No outcome cache or additional writer.
+ * A node-deliverable consumer first projects that exact ArtifactVersion with this
+ * frame, retaining its authority dependencies, then supplies its stable binding.
+ * An unqualified standalone read never upgrades an opaque binding to completion. */
+export function readOutcomes(frame: ReadFrame, subject: string, subjectRef?: string, artifactBinding?: string): OutcomeCard {
   const { ctx } = frame;
   const reader = claimReader(ctx.db, ctx.principal.grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
   const policy = reader.visibility;
   const rows = ctx.db.query<{ claim_id: string }, (string | number)[]>(`SELECT claim_id FROM claims WHERE subject=? AND is_world_typed=0 AND status='live'
     AND predicate IN ('outcome.self_report','outcome.provider_ack','outcome.observation','outcome.review','outcome.reached','outcome.missed')
     AND ${policy.sql}${subjectRef === undefined ? "" : " AND json_extract(CASE WHEN json_valid(object) THEN object ELSE '{}' END,'$.subjectRef')=?"}
-    ORDER BY claim_id LIMIT 129`).all(subject, ...policy.bindings, ...(subjectRef === undefined ? [] : [subjectRef]));
+    ${artifactBinding === undefined ? "" : "AND json_extract(CASE WHEN json_valid(object) THEN object ELSE '{}' END,'$.artifactVersion.kind')='artifact_binding' AND json_extract(CASE WHEN json_valid(object) THEN object ELSE '{}' END,'$.artifactVersion.digest')=?"}
+    ORDER BY claim_id LIMIT 129`).all(subject, ...policy.bindings, ...(subjectRef === undefined ? [] : [subjectRef]), ...(artifactBinding === undefined ? [] : [artifactBinding]));
   frame.stats.rowsExamined += rows.length;
   const eventsPolicy = authorizedEventSql(ctx);
   const entries: Entry[] = [];
@@ -40,8 +45,9 @@ export function readOutcomes(frame: ReadFrame, subject: string, subjectRef?: str
     if (claim === null || !reader.canRead(claim) || claim.polarity !== "positive") continue;
     charge(frame.budget, claim.body); charge(frame.budget, claim.object ?? "");
     const legacy = claim.predicate === "outcome.reached" || claim.predicate === "outcome.missed";
-    const value = parseOutcomeEvidence(claim.predicate!, claim.object);
-    if ((!legacy && value === null) || (subjectRef !== undefined && value?.subjectRef !== subjectRef)) continue;
+    const value = parseStoredOutcomeEvidence(claim.predicate!, claim.object);
+    if ((!legacy && value === null) || (subjectRef !== undefined && value?.subjectRef !== subjectRef) ||
+        (artifactBinding !== undefined && (value === null || typeof value.artifactVersion === "string" || value.artifactVersion.digest !== artifactBinding))) continue;
     const events = ctx.db.query<{ source_key: string | null; text_hash: string; text: string; metadata: string; origin: string }, (string | number)[]>(
       `SELECT b.source_key,events.text_hash,events.text,events.metadata,events.origin FROM events LEFT JOIN source_event_bindings b USING(event_id)
        WHERE event_id IN (SELECT value FROM json_each(?)) AND ${eventsPolicy.clauses.join(" AND ")}`,
@@ -72,7 +78,8 @@ export function readOutcomes(frame: ReadFrame, subject: string, subjectRef?: str
     const report = group[0]!;
     const observations = entries.filter(e => e.stage.stage === "observed" && group.every(r => independent(r, e)));
     const reviews = entries.filter(e => e.stage.stage === "reviewed" && group.every(r => independent(r, e)));
-    const unconfounded = rows.length <= 128 && report.value !== null && group.every(r => r.value !== null && !r.value.confounded) && [...observations, ...reviews].every(e => !e.value!.confounded);
+    const artifactQualified = report.value !== null && (typeof report.value.artifactVersion === "string" || artifactBinding === report.value.artifactVersion.digest);
+    const unconfounded = artifactQualified && rows.length <= 128 && report.value !== null && group.every(r => r.value !== null && !r.value.confounded) && [...observations, ...reviews].every(e => !e.value!.confounded);
     const negative = observations.some(e => e.value!.result === "not_met") || reviews.some(e => e.value!.result === "rejected");
     const latestReview = reviews.at(-1)?.value?.result, latestObservation = observations.at(-1)?.value?.result;
     const accepted = latestReview === "accepted";

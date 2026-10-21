@@ -16,7 +16,9 @@ export const ORACLE_COVERAGE_FLOOR = [
 
 export const WORLD_GATE_TESTS = [
   "packages/core/test/world/verification-matrix.test.ts",
+  "packages/core/test/world/slice.test.ts", "packages/core/test/world/slice-session.test.ts",
   "packages/core/test/world/verification-resources.test.ts",
+  "packages/core/test/world/diff.test.ts",
   "packages/cli/test/world-verification-parity.test.ts",
   "packages/core/test/world/pipeline-noninterference.test.ts",
   "packages/core/test/world/known-history.test.ts",
@@ -26,6 +28,9 @@ export const WORLD_GATE_TESTS = [
   "packages/core/test/world/skills-security.test.ts",
   "packages/core/test/world/skills-recovery.test.ts",
   "packages/core/test/world/skills.test.ts",
+  "packages/core/test/world/artifacts.test.ts",
+  "packages/core/test/world/artifacts-security.test.ts",
+  "packages/core/test/world/artifact-outcomes.test.ts",
   "packages/core/test/world/people-security.test.ts",
   "packages/core/test/world/people-history.test.ts",
   "packages/core/test/world/people-grouping.test.ts",

@@ -1008,6 +1008,28 @@ function openPinnedWorld(f: ReturnType<typeof fixture>) {
     f.evaluate(`state.view='world'; state.worldKind='concepts'; state.worldRef={kind:'object',token:'A'.repeat(43)};
       state.world={schema:'kizuki.world-view/v1',operation:'concept',result:{status:'current',view:{kind:'view',token:'V'.repeat(42)+'A'},validUntil:'2030-01-01T00:15:00.000Z',data:{schema:'kizuki.concept-card/v1',concept:{ref:state.worldRef,labels:[{text:'Synthetic concept'}]},definitions:[],relations:[],coverage:{status:'complete_for_query',gaps:[]}}}}; render();`);
 }
+test('World prepares a task slice, refreshes its retained view and clears it on privacy invalidation', async () => {
+    const f = fixture(); openPinnedWorld(f);
+    const field = f.main.querySelector('#world-task')!;
+    field.value = 'Prepare a synthetic review';
+    const form = f.main.querySelector('#world-slice-form')!;
+    const work = form.fire('submit', { preventDefault() {} }); await tick();
+    expect(f.requests[0]!.payload).toMatchObject({ operation: 'slice', task: 'Prepare a synthetic review', budgetTokens: 2000 });
+    const slice = { schema: 'kizuki.world-slice/v1', task: 'Prepare a synthetic review', budgetTokens: 2000, tokens: 500,
+      tokenizer: 'js-tiktoken@1.0.21/cl100k_base', constraints: [{ relation: { predicate: 'concept.counterexample', polarity: 'negative', perspective: { mode: 'reported' }, object: { kind: 'literal', value: 'Synthetic qualification preserved' }, assessments: [] } }],
+      detail: [], providers: [{ kind: 'concept', status: 'included' }], complete: true, truncated: false, coverage: { status: 'complete_for_query', gaps: [] } };
+    f.reply('world_view', { schema: 'kizuki.world-view/v1', operation: 'slice', result: { status: 'current', view: { kind: 'view', token: 'V'.repeat(42) + 'A' }, data: slice } });
+    await work; await tick();
+    expect(f.main.textContent).toContain('Synthetic qualification preserved');
+    expect(f.main.textContent).toContain('Reported statement');
+    const refresh = findAction(f.main, 'Refresh task view').fire('click'); await tick();
+    expect(f.requests[0]!.payload).toMatchObject({ operation: 'slice', task: slice.task, priorView: { kind: 'view', token: 'V'.repeat(42) + 'A' } });
+    f.reply('world_view', { schema: 'kizuki.world-view/v1', operation: 'slice', result: { status: 'unchanged', view: { kind: 'view', token: 'V'.repeat(42) + 'A' } } });
+    await refresh; expect(f.main.textContent).toContain('Synthetic qualification preserved');
+    f.evaluate('invalidatePrivateView()');
+    expect(f.main.textContent).not.toContain('Synthetic qualification preserved');
+    expect(f.storageWrites).toHaveLength(0);
+});
 test('World keeps cached data only after unchanged and drops it when the baseline is invalid', async () => {
     const f = fixture(); openPinnedWorld(f);
     const checked = f.evaluate<Promise<void>>('loadWorld()');
@@ -1057,6 +1079,29 @@ test('World ignores stale responses and clears its private projection on privacy
     expect(f.evaluate('state.world')).toBeNull();
 });
 const worldMatches = (label: string) => ({ schema: 'kizuki.world-view/v1', operation: 'find_concepts', result: { status: 'current', view: { status: 'not_issued' }, data: { schema: 'kizuki.concept-matches/v1', matches: [{ ref: { kind: 'object', token: 'A'.repeat(43) }, labels: [label] }], coverage: { status: 'complete_for_query' } } } });
+test('World changes reuse the exact object baseline and do not redisplay an old diff as a new change', async () => {
+    const f = fixture();
+    const object = { kind: 'object', token: 'A'.repeat(43) }, view = { kind: 'view', token: 'B'.repeat(43) };
+    f.evaluate(`state.view='world'; loadWorld(${JSON.stringify(object)});`);
+    f.reply('world_view', { schema: 'kizuki.world-view/v1', operation: 'concept', result: { status: 'current', view, validUntil: '2030-01-01T00:00:00Z', data: {
+        schema: 'kizuki.concept-card/v1', concept: { ref: object, labels: [{ text: 'Diff concept' }] }, definitions: [], relations: [], summary: null, coverage: { status: 'complete_for_query' },
+    } } }); await tick();
+    f.evaluate(`globalThis.findButton=(node,text)=>node.tag==='button'&&node.textContent===text?node:node.children.map(child=>findButton(child,text)).find(Boolean); findButton(main,'Check for changes').fire('click');`);
+    const of = { operation: 'concept', concept: object };
+    expect(f.requests.at(-1)?.payload).toMatchObject({ operation: 'diff', of, priorView: view });
+    const replacement = { kind: 'view', token: 'C'.repeat(43) };
+    f.reply('world_view', { schema: 'kizuki.world-view/v1', operation: 'diff', result: { status: 'current', view: replacement, data: { schema: 'kizuki.world-diff/v1', added: [{ kind: 'claim', token: 'D'.repeat(43) }], removed: [], changed: [], truncated: false } } }); await tick();
+    expect(f.main.textContent).toContain('1 added statements');
+    f.evaluate(`findButton(main,'Check for more changes').fire('click');`);
+    expect(f.requests.at(-1)?.payload).toMatchObject({ operation: 'diff', of, priorView: replacement });
+    f.reply('world_view', { schema: 'kizuki.world-view/v1', operation: 'diff', result: { status: 'unchanged', view: replacement, validUntil: '2030-01-01T00:00:00Z' } }); await tick();
+    expect(f.main.textContent).toContain('No visible change'); expect(f.main.textContent).not.toContain('1 added statements');
+    f.evaluate(`findButton(main,'Read current item').fire('click');`);
+    expect(f.requests.at(-1)?.payload).toEqual({ ...of, valid: { kind: 'all' }, knownAt: { kind: 'current' } });
+    f.evaluate('invalidatePrivateView()');
+    f.reply('world_view', { status: 'not_found' }); await tick();
+    expect(f.evaluate('state.world')).toBeNull();
+});
 test('World navigation shows loading until the real result arrives', async () => {
     const f = fixture(); f.evaluate(`navigate('world')`);
     expect(f.main.textContent).toContain('Loading concepts');
@@ -1542,4 +1587,80 @@ test('World resumes framework nesting and displays outcome stages without implyi
     f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'outcome',result:{status:'current',data:{schema:'kizuki.outcome-card/v1',goalAchieved:false,stages:[{stage:'provider_acknowledged',quoted:'Provider accepted the request',independent:false}],evaluations:[{result:'unknown',conditions:{task:'inspect',attempt:'attempt-1',criterion:'required fields',artifactVersion:'artifact-1',environment:'test',assistance:'assisted',confounded:true}}],coverage:{status:'complete_for_query'}}}}); await outcomes; await tick();
     for(const text of ['Provider acknowledged','Goal achievement is not established.','Confounded evidence','Outcome unknown','does not establish independent mastery']) expect(f.main.textContent).toContain(text);
     expect(f.storageWrites).toHaveLength(0);
+});
+
+test('World artifacts expose exact metadata and quoted feedback without promising original inspection', async () => {
+    const f=fixture(); f.evaluate(`state.view='world'; render();`);
+    const ref={kind:'object',token:'A'.repeat(43)};
+    const browse=findAction(f.main,'Artifacts').fire('click'); await tick();
+    expect(f.requests[0]!.payload).toMatchObject({operation:'find_artifacts',label:''});
+    f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'find_artifacts',result:{status:'current',data:{schema:'kizuki.artifact_version-matches/v1',matches:[{ref,labels:['Exact artifact']}],coverage:{status:'complete_for_query'}}}});await browse;await tick();
+    const detail=findAction(f.main,'View details').fire('click');await tick();
+    expect(f.requests[0]!.payload).toMatchObject({operation:'artifact_version',artifact:ref});
+    f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'artifact_version',result:{status:'current',data:{schema:'kizuki.artifact-card/v1',artifact:{ref,labels:[{text:'Exact artifact'}]},content:{sha256:'a'.repeat(64),mediaType:'text/markdown',byteLength:123},original:{status:'unavailable'},versionOf:null,inspections:[{predicate:'artifact.feedback',object:{kind:'literal',value:'<script>execute hostile feedback</script>'},assessments:[]}],coverage:{status:'complete_for_query'}}}});await detail;await tick();
+    for(const text of ['Exact artifact version','a'.repeat(64),'text/markdown','bytes: 123','Original unavailable','does not provide or visually inspect','Attributed feedback','<script>execute hostile feedback</script>'])expect(f.main.textContent).toContain(text);
+    expect(f.main.querySelector('script')).toBeNull();
+    const shared=findAction(f.main,'Share a resume handle').fire('click');await tick();
+    expect(f.requests[0]!.payload).toMatchObject({operation:'share',of:{operation:'artifact_version',artifact:ref}});
+    f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'share',result:{status:'unavailable',reason:'storage'}});await shared;
+    f.evaluate('invalidatePrivateView()');expect(f.main.textContent).not.toContain('Exact artifact');expect(f.storageWrites).toHaveLength(0);
+});
+
+for (const kind of ["procedure", "artifact_version"] as const) {
+  test(`World ${kind} change actions retain the correct object selector`, async () => {
+    const f = fixture(), ref = {kind:"object",token:"A".repeat(43)}, view = {kind:"view",token:"B".repeat(43)};
+    const field = kind === "artifact_version" ? "artifact" : kind;
+    const of = {operation:kind,[field]:ref};
+    const data = kind === "procedure" ? {...procedureUiCard,procedure:{...procedureUiCard.procedure,ref}} : {
+      schema:"kizuki.artifact-card/v1",artifact:{ref,labels:[{text:"Diff artifact"}]},content:{sha256:"a".repeat(64),mediaType:"text/markdown",byteLength:42},original:{status:"unavailable"},versionOf:null,inspections:[],coverage:{status:"complete_for_query"},
+    };
+    f.evaluate(`state.view='world'; loadWorld(null,${JSON.stringify(of)});`);
+    f.reply("world_view",{schema:"kizuki.world-view/v1",operation:kind,result:{status:"current",view,data}}); await tick();
+    findAction(f.main,"Check for changes").fire("click"); await tick();
+    expect(f.requests.at(-1)?.payload).toMatchObject({operation:"diff",of,priorView:view});
+    f.reply("world_view",{schema:"kizuki.world-view/v1",operation:"diff",result:{status:"unchanged",view,validUntil:"2030-01-01T00:00:00Z"}}); await tick();
+    expect(f.main.textContent).toContain("No visible change");
+    findAction(f.main,"Read current item").fire("click"); await tick();
+    expect(f.requests.at(-1)?.payload).toMatchObject(of);
+    f.reply("world_view",{status:"not_found"}); await tick();
+    f.evaluate("invalidatePrivateView()"); expect(f.storageWrites).toHaveLength(0);
+  });
+}
+
+test('Atlas panels use keyboard-native controls and announce loading, incomplete, empty, unavailable and error states', async () => {
+  const f = fixture(); f.evaluate(`state.view='world'; render();`);
+  const nav = f.main.querySelector('nav')!;
+  expect(nav.getAttribute('aria-label')).toBe('Atlas views');
+  const buttons = nav.children.filter(one => one.tag === 'button');
+  expect(buttons.map(one => one.textContent)).toEqual(['Overview','Resume my work','What changed','People','Questions','Commitments','Stale evidence','Corrections and impact']);
+  for (const button of buttons) { expect(button.getAttribute('type')).toBe('button'); expect(button.getAttribute('tabindex')).not.toBe('-1'); }
+  const loading = f.evaluate<Promise<void>>(`loadAtlas('people')`);
+  expect(f.requests[0]!.payload).toMatchObject({operation:'atlas',panel:'people'});
+  expect(f.main.textContent).toContain('Loading');
+  expect(f.main.querySelector('section')!.getAttribute('aria-busy')).toBe('true');
+  const coverage={status:'partial',gaps:['coverage'],validWindow:{kind:'all'},history:'baseline_only'};
+  const panel={panel:'people',title:'People',status:'partial',reason:null,entries:[],change:null,nextView:null,coverage};
+  f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'atlas',result:{status:'incomplete',data:{schema:'kizuki.atlas/v1',panel:'people',panels:[panel],coverage},reasons:['coverage']}});await loading;
+  expect(f.main.textContent).toContain('This view is incomplete.');
+  for (const state of ['empty','unavailable']) {
+    f.evaluate(`state.world.result.data.panels[0].status=${JSON.stringify(state)};state.world.result.data.panels[0].reason='baseline_required';render();`);
+    expect(f.main.textContent).toContain(state==='empty'?'No matching information in this view.':'Open an item first');
+  }
+  const failed=f.evaluate<Promise<void>>(`loadAtlas('questions')`);
+  f.requests.splice(0,1)[0]!.result.resolve({status:500,json:async()=>({ok:false,error:{code:'internal'}})});await failed;
+  expect(f.main.textContent).toContain('World view is unavailable.');
+  const alerts=(node:Element):Element[] => [...(node.getAttribute('role')==='alert'?[node]:[]),...node.children.flatMap(alerts)];
+  expect(alerts(f.main).length).toBeGreaterThan(0);
+  const retry = f.evaluate<Promise<void>>(`loadAtlas()`); expect(f.requests[0]!.payload.panel).toBe('questions');
+  f.reply('world_view',{status:'not_found'});await retry;
+});
+
+test('Atlas comparison baselines are cleared with privacy state and cannot survive logout', async () => {
+  const f=fixture();f.evaluate(`state.worldAtlasFocus={focus:{operation:'concept',ref:{kind:'object',token:'a'.repeat(43)}},baselineView:{kind:'view',token:'b'.repeat(43)}}; state.worldAtlasPanel='changed';`);
+  const pending=f.evaluate<Promise<void>>(`state.view='world';loadAtlas('changed')`);
+  expect(f.requests[0]!.payload).toHaveProperty('baselineView.token','b'.repeat(43));
+  f.evaluate(`invalidatePrivateView();`);
+  expect(f.evaluate('state.worldAtlasFocus')).toBeNull();
+  f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'atlas',result:{status:'current',data:{schema:'kizuki.atlas/v1',panels:[]}}});await pending;
+  expect(f.main.textContent).not.toContain('b'.repeat(43));
 });

@@ -24,5 +24,5 @@ export const conceptFragment: McpWorldOp = {
     },
   },
   summary:
-    "concept reads one Concept by the object token find_concepts returned, passed in the field named concept.",
+    "concept reads a Concept ObjectRef.",
 };

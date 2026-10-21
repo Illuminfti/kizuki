@@ -73,6 +73,13 @@ Other refusals are about the request, not the claim, and use the stable code
 All of these are decided before the owner's statement is recorded, so a
 refusal leaves no native evidence behind.
 
+Scoped relays authorize typed targets through their semantic endpoints, current
+supports and time limits, rather than the deliberately empty legacy parent
+subject fields. The same policy filters dependency traversal before its bound.
+An already visible dependency cycle is refused before native evidence is
+recorded; insertion rechecks the cycle atomically. Retired predecessors in a
+successful response remain subject to current source permission and holds.
+
 ## Node objects
 
 `object: { kind: "node", ref: { kind: "object", token } }` names a node by an

@@ -10,11 +10,11 @@ export const personFragment: McpWorldOp = {
       mode: z.enum(["asserted", "quoted", "reported", "hypothetical", "suggested", "questioned", "uncertain"]), relations })).max(256),
     agreedDeadline: z.null(),
   } },
-  summary: "person reads a structured Person, preserving holder, speaker, mode and evidence; separate statements never imply agreement.",
+  summary: "person: attributed statements need not agree.",
 };
 export const findPeopleFragment: McpWorldOp = {
   name: "find_people", fields: { label: LABEL, cursor: CURSOR },
   data: { "kizuki.person-matches/v1": { matches: z.array(z.strictObject({ ref: WORLD_OBJECT_REF,
     labels: z.array(z.string().max(400)).max(256) })).max(32), cursor: WIRE_TOKEN.nullable(), coverage: worldCoverage } },
-  summary: "find_people lists structured supplied People in the current grant, optionally matching a label.",
+  summary: "find_people: scoped label pages.",
 };

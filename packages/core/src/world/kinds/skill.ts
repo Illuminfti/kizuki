@@ -1,7 +1,9 @@
 import { validateSkillCard, type SkillCard } from "../../contracts/skill-card";
 import { sealCard, type KindAssembler } from "./kit";
 export const skillAssembler: KindAssembler = {
-  kind: "skill", assemble({ node, own, summary, coverage, outcomeUsefulness, independentSkillClaims }) {
+  kind: "skill",
+  sliceConstraint: relation => ["skill.evidence", "skill.outcome", "skill.last_validated"].includes(relation.predicate),
+  assemble({ node, own, summary, coverage, outcomeUsefulness, independentSkillClaims }) {
     const by = (name: string) => own.filter(r => r.predicate === `skill.${name}`);
     const evidence = (kind: string) => by("evidence").filter(r => r.object.kind === "vocabulary" && r.object.id === `skill/${kind}`);
     const independent = new Set(independentSkillClaims);

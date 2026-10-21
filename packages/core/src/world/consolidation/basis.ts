@@ -1,3 +1,4 @@
+import { KIND_ASSEMBLERS } from "../kinds";
 import { canonicalJson, sha256Hex } from "../../util/hash";
 import type { Eligible, EligibleSupport } from "../pipeline/eligible";
 import type { Cluster } from "../pipeline/group";
@@ -72,7 +73,7 @@ export function consolidationBasis(frame: ReadFrame, cluster: Cluster, kind: str
 }
 export function collectConsolidationBasis(frame: ReadFrame, handle: string, kindId: string): ConsolidationBasis | null {
   const kind = activeWorldRegistry().kind(kindId);
-  if (kind === undefined) return null;
+  if (kind === undefined || !KIND_ASSEMBLERS.some(assembler => assembler.kind === kindId && assembler.consolidation !== false)) return null;
   const cluster = group(frame, handle, GROUPERS);
   const collection = collectCard(frame, cluster, kind, COLLECTORS);
   return collection === null ? null : consolidationBasis(frame, cluster, kindId, collection.items, collection.overflow);

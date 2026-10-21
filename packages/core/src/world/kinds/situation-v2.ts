@@ -3,6 +3,7 @@ import { SITUATION_CARD_V2_SCHEMA, validateSituationCardV2, type SituationCardV2
 import { sealCard, type KindAssembler } from "./kit";
 import { situationAssembler } from "./situation";
 export const situationV2Assembler: KindAssembler = {
+  sliceConstraint: relation => /^(commitment\.|situation\.(blocker|commitment|requires|blocks|invalidated_by)$)/.test(relation.predicate),
   kind: "situation", cardSchema: SITUATION_CARD_V2_SCHEMA,
   assemble(input) {
     const base = situationAssembler.assemble(input) as SituationCard;

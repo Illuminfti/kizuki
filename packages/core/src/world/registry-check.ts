@@ -59,7 +59,11 @@ function knownEndpointKinds(
 }
 
 /** The endpoint kinds a subject-valued object may have, or null when the row places no constraint. */
-function objectEndpointKinds(spec: WorldVocabularySpec): ReadonlySet<WorldEndpointKind> | null {
+function objectEndpointKinds(spec: WorldVocabularySpec, registry: WorldRegistry): ReadonlySet<WorldEndpointKind> | null {
+  if (spec.predicate === "commitment.deliverable") {
+    const artifact = registry.kind("artifact_version");
+    return new Set<WorldEndpointKind>(artifact === undefined ? [] : [artifact.endpointKind]);
+  }
   const required: Readonly<Record<string, readonly WorldEndpointKind[]>> = {
     "commitment.debtor": ["person"], "commitment.creditor": ["person"],
     "situation.has_commitment": ["commitment"], "situation.has_decision": ["decision"],
@@ -121,7 +125,7 @@ export function worldAssertionViolation(
   }
   const endpoints = [
     { role: "subject", ref: semantic.subject, allowed: spec.subject === "raw" ? null : new Set<WorldEndpointKind>([spec.subject]) },
-    ...semantic.object.kind === "subject" ? [{ role: "object", ref: semantic.object.ref, allowed: objectEndpointKinds(spec) }] : [],
+    ...semantic.object.kind === "subject" ? [{ role: "object", ref: semantic.object.ref, allowed: objectEndpointKinds(spec, registry) }] : [],
   ];
   for (const { role, ref, allowed } of endpoints) {
     if (allowed === null) continue;

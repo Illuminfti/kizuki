@@ -26,6 +26,8 @@ export interface ServeContext {
   /** Internal response projection selected by Core; never an authority signal. */
   scopedResponse?: true;
   selection?: import("../query/selection").EvidenceSelection;
+  /** Internal shared byte budget for one composed world read; never a wire argument. */
+  worldReadBudget?: import("../world/pipeline/frame").ReadBudget;
   sourcePurpose?: import("../ledger/source-grants").SourcePurpose;
   /** One host-owned engine nominates IDs; core rechecks current evidence and grants. */
   retrieval?: RetrievalPort;

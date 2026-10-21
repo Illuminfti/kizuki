@@ -1,5 +1,7 @@
 import { observationOp } from "./observation";
 import { attentionOp } from "./attention";
+import { atlasOp } from "./atlas";
+import { sliceOp } from "./slice";
 import { personOp } from "./person";
 import { findPeopleOp } from "./find-people";
 import { skillOp } from "./skill";
@@ -7,6 +9,7 @@ import { procedureOp } from "./procedure";
 import { frameworkOp } from "./framework";
 import { findProceduresOp } from "./find-procedures";
 import { outcomeOp } from "./outcome-read";
+import { artifactVersionOp, findArtifactsOp } from "./artifact";
 import { historyOp } from "./history";
 import { conceptOp } from "./concept";
 import { describeOp } from "./describe";
@@ -18,6 +21,7 @@ import { evidenceOp } from "./evidence";
 import { questionOp } from "./question";
 import { findQuestionsOp } from "./find-questions";
 import { frontierOp } from "./frontier";
+import { diffOp } from "./diff";
 import type { WorldOp, WorldOpRegistry } from "./types";
 
 const COMMON_KEYS = ["operation", "valid", "knownAt", "priorView"];
@@ -94,14 +98,18 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   // slot: SKILL
   procedureOp, findProceduresOp, skillOp, frameworkOp,
   // slot: ART
+  artifactVersionOp, findArtifactsOp,
   // slot: OUTCOME
   outcomeOp,
   // slot: DIFF
+  diffOp,
   // slot: SLICE
+  sliceOp,
   // slot: ATTN
   attentionOp,
   // slot: FCST
   // slot: ATLAS
+  atlasOp,
 ];
 
 export const WORLD_OPS: WorldOpRegistry = worldOpRegistry(WORLD_OP_SOURCES);

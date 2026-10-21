@@ -1,9 +1,14 @@
-import { worldNamespace } from "../world/references";
+import type { ArtifactCard } from "../contracts/artifact-card";
+import { outcomeArtifactBinding } from "../world/outcome-binding";
+import { readWorldCard } from "../world/pipeline/read";
+import { newReadFrame } from "../world/pipeline/frame";
+import { anchorOf } from "../world/pipeline/collect";
+import { worldNamespace, resolveWorldObject } from "../world/references";
 import { readableWorldNode } from "../world/endpoint-access";
 import { resolvePrincipal } from "../agents";
 import { rawSubjectRefKey } from "../contracts/claim-v2";
 import { canonicalJson, sha256Hex } from "../util/hash";
-import { OUTCOME_PREDICATES, parseOutcomeEvidence } from "../contracts/outcome-card";
+import { OUTCOME_PREDICATES, parseOutcomeSubmission } from "../contracts/outcome-card";
 import type { AuditDenial, Grant } from "../agents";
 import { isRegisteredPredicate } from "../claims/predicates";
 import { prepareClaimInsert, retryRetrievalOps } from "../claims/store";
@@ -339,10 +344,10 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
     const subject = subjectOf(grant, args.subject, requested);
     const predicate = predicateOf(args.predicate, subject);
 
-    let checkOutcomeBinding: (() => string) | undefined;
+    let checkOutcomeBinding: (() => { subjectRef: string; artifactVersion: unknown }) | undefined;
     let object = args.object === undefined ? undefined : text("object", args.object, MAX_OBJECT_CHARS);
     if (predicate !== undefined && OUTCOME_PREDICATES.includes(predicate as typeof OUTCOME_PREDICATES[number])) {
-      const evidence = parseOutcomeEvidence(predicate, object);
+      const evidence = parseOutcomeSubmission(predicate, object);
       if (kind !== "claim" || evidence === null) throw refuse("object", "must contain bounded outcome evidence");
       // Lookup identity is not authority. Check current readable evidence both
       // before preparation and in the transaction that files the claim.
@@ -350,15 +355,30 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
         const current = resolvePrincipal(ctx.db, principal);
         if (current === null || current.kind !== "agent" || current.grant_epoch !== principal.grant_epoch)
           throw refuse("object", "authority changed during outcome filing; retry");
-        if (evidence.subjectRef === "none") return "none";
-        const live = { ...ctx, principal: current };
-        const anchor = readableWorldNode(live, worldNamespace(ctx.db, current), evidence.subjectRef);
-        if (anchor === null || anchor.id !== subject) throw refuse("object", "subjectRef must be a current object token for the subject, or none");
-        return sha256Hex(rawSubjectRefKey(anchor));
+        const live = { ...ctx, principal: current }, ns = worldNamespace(ctx.db, current);
+        let subjectRef = "none";
+        if (evidence.subjectRef !== "none") {
+          const anchor = readableWorldNode(live, ns, evidence.subjectRef);
+          if (anchor === null || anchor.id !== subject) throw refuse("object", "subjectRef must be a current object token for the subject, or none");
+          subjectRef = sha256Hex(rawSubjectRefKey(anchor));
+        }
+        let artifactVersion: unknown = evidence.artifactVersion;
+        if (typeof evidence.artifactVersion !== "string") {
+          const handle = resolveWorldObject(ctx.db, ns, evidence.artifactVersion.token);
+          const frame = newReadFrame(live, ns, { kind: "all" });
+          const card = handle === null ? null : readWorldCard(frame, handle, "artifact_version");
+          const artifact = card?.schema === "kizuki.artifact-card/v1" ? card as ArtifactCard : null;
+          const anchor = handle === null ? null : anchorOf(ctx.db, handle);
+          if (artifact === null || anchor === null ||
+              artifact.content.sha256 === null || anchor.id !== `artifact:sha256:${artifact.content.sha256}`)
+            throw refuse("object", "artifactVersion must name a current readable ArtifactVersion");
+          artifactVersion = { kind: "artifact_binding", digest: outcomeArtifactBinding(anchor) };
+        }
+        return { subjectRef, artifactVersion };
       };
       // Persist a stable digest, never a principal-local capability or raw namespace.
       const binding = ctx.db.transaction(checkOutcomeBinding).immediate();
-      object = canonicalJson({ ...evidence, subjectRef: binding });
+      object = canonicalJson({ ...evidence, ...binding });
       if (object.length > MAX_OBJECT_CHARS) throw refuse("object", "normalized outcome evidence is too large");
     }
     validateProvenance(ctx, provenance, contract);
