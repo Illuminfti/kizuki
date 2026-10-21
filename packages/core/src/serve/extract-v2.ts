@@ -17,6 +17,7 @@ import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig } from "./types";
 import { canonicalJson } from "../util/hash";
 import { isPlainObject } from "../util/validate";
 import { isUlid } from "../util/ulid";
+import { PortError } from "../contracts/ports";
 
 export type ExtractionProducerPort = ProducerPort | ProducerV2Port;
 
@@ -31,13 +32,22 @@ const objectKinds = (objects: readonly string[]): ProduceInputV2["predicates"][n
 
 /** The legacy registry, then the world rows of every kind offered to the producer. */
 function worldPredicates(): ProduceInputV2["predicates"] {
-  return [...PREDICATE_REGISTRY.map(spec => ({
+  const rows = [...PREDICATE_REGISTRY.map(spec => ({
     id: spec.id,
     object_kinds: ["literal"] as const,
   })), ...activeWorldRegistry().offered.vocabulary.map(spec => ({
     id: spec.predicate,
     object_kinds: objectKinds(spec.objects),
   }))];
+  const byId = new Map<string, ProduceInputV2["predicates"][number]>();
+  for (const row of rows) {
+    const existing = byId.get(row.id);
+    if (existing !== undefined && canonicalJson(existing.object_kinds) !== canonicalJson(row.object_kinds)) {
+      throw new PortError("config_invalid", `incompatible producer predicate: ${row.id}`, false);
+    }
+    if (existing === undefined) byId.set(row.id, row);
+  }
+  return [...byId.values()];
 }
 
 /**
