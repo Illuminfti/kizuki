@@ -19,7 +19,11 @@ Requested providers appear explicitly, including `not_landed` and
 `extraction_off`. Existing readable claims from a dark kind can still be shown,
 with partial coverage. Visible unfinished extraction or consolidation remains
 partial. Each request shares the existing 2 MiB projection budget and examines
-at most four discovered objects per requested kind. A further discovery page
+at most four discovered objects per requested kind within one shared limit of
+128 candidate verifications plus an overflow sentinel. Discovery, cards and
+composed reads consume that same request allowance. If it is exhausted, the
+unfinished card is withheld whole and the slice reports incomplete traversal;
+qualifiers are never shortened. A further discovery page
 or object is reported as incomplete traversal, never as complete absence.
 
 The budget is 50–2,000 tokens under the bundled packet tokenizer. `tokens` counts

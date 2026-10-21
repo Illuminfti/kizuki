@@ -18,6 +18,8 @@ import type { Frontier } from "../world/ops/frontier";
 import type { WorldMatches } from "../world/pipeline/assemble";
 import { WorldHistoryUnavailable } from "../world/known/cutoff";
 import { WorldProjectionBudgetError } from "../world/projection";
+import { beginWorldClaimProjection } from "../world/pipeline/eligible";
+import type { ReadBudget } from "../world/pipeline/frame";
 import type { discoverWorld } from "../world/projection";
 import type { WorldDescribe } from "../world/ops/describe";
 import type { ConceptCard } from "../contracts/concept-card";
@@ -298,7 +300,10 @@ function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, depe
     throw new ServeError("unknown_agent", "unknown agent");
   if (!toolAllowed(principal.grant, "world_view"))
     throw new ServeError("tool_not_granted", "tool not granted");
-  ctx = { ...ctx, principal, sourcePurpose: ctx.sourcePurpose ?? "recall", worldReadBudget: ctx.worldReadBudget ?? { bytes: 0 } };
+  const budget: ReadBudget = ctx.worldReadBudget ?? { bytes: 0 };
+  // Reprojection after a publication-fence change must prove the new snapshot.
+  if (depth === 0) beginWorldClaimProjection(budget);
+  ctx = { ...ctx, principal, sourcePurpose: ctx.sourcePurpose ?? "recall", worldReadBudget: budget };
   if (!isPlainObject(input)) throw new WorldViewError();
   const op = findWorldOp(registry, input.operation);
   if (op === undefined) throw new WorldViewError();
@@ -379,6 +384,7 @@ export function serveWorldView(
   // projection still issues no references.
   let readPrincipal: Principal | undefined;
   let dependencies = worldDependencies();
+  const budget: ReadBudget = ctx.worldReadBudget ?? { bytes: 0 };
   const project = (live: ServeContext): Served<WorldReadResult> => {
     // A gate recheck may reproject authority; it must not resolve the requested
     // recorded timestamp again and admit a later clock-clamped transaction.
@@ -387,7 +393,7 @@ export function serveWorldView(
     if (cutoff !== undefined) dependencies.cutoff = cutoff;
     try {
       return ctx.db.transaction(() => {
-        const response = read(live, args, registry, dependencies);
+        const response = read({ ...live, worldReadBudget: budget }, args, registry, dependencies);
         const principal = resolvePrincipal(ctx.db, live.principal);
         if (principal === null) throw new ServeError("unknown_agent", "unknown agent");
         readPrincipal = principal;

@@ -22,10 +22,17 @@ import { assertionEndpoints } from "../allocation";
 import { heldUntilCorroborated } from "../corroboration";
 import { knownState, knownSupportSql, type KnownCutoff } from "../known/cutoff";
 import { handleFor } from "../relation";
-import { charge, WorldProjectionBudgetError, type ReadBudget } from "./frame";
+import { charge, WORLD_CLAIM_VERIFICATION_LIMIT, WorldClaimBudgetError, WorldProjectionBudgetError, type ReadBudget } from "./frame";
 
 const MAX_SUPPORTS = 32;
 const groundingReads = new WeakMap<ReadBudget, GroundingReadCache>();
+
+/** A new projection proves a new snapshot while retaining the request allowance. */
+export function beginWorldClaimProjection(budget: ReadBudget): void {
+  budget.claimVerifications ??= 0;
+  budget.verifiedClaims = new WeakMap();
+  groundingReads.delete(budget);
+}
 
 type Support = {
   support_origin: "source" | "native_owner";
@@ -70,13 +77,43 @@ function validFor(
   );
 }
 
+type EligibilityOptions = { historical?: true; supportKeys?: readonly string[]; cutoff?: KnownCutoff; includeInactive?: true };
+
 /** Every candidate support proves its own complete rendering, events and endpoint memberships. */
 export function eligibleWorldClaim(
   ctx: ServeContext,
   claimId: string,
   valid: WorldValidQuery,
   budget: ReadBudget,
-  options: { historical?: true; supportKeys?: readonly string[]; cutoff?: KnownCutoff; includeInactive?: true } = {},
+  options: EligibilityOptions = {},
+): Eligible | null {
+  // A composed child can reuse proof only inside the same database transaction,
+  // with identical authority, filters and time. The caller records its own
+  // dependency closure even when proof is reused.
+  const caches = ctx.db.inTransaction ? budget.verifiedClaims : undefined;
+  let cache = caches?.get(ctx.db);
+  if (caches !== undefined && cache === undefined) {
+    cache = new Map(); caches.set(ctx.db, cache);
+  }
+  const key = cache === undefined ? "" : canonicalJson([claimId, ctx.principal,
+    ctx.sourcePurpose ?? "recall", ctx.selection ?? null, valid, options]);
+  if (cache?.has(key)) return cache.get(key)!;
+  if (budget.claimVerifications !== undefined) {
+    if (budget.claimVerifications >= WORLD_CLAIM_VERIFICATION_LIMIT) throw new WorldClaimBudgetError();
+    budget.claimVerifications += 1;
+  }
+  const item = readEligibleWorldClaim(ctx, claimId, valid, budget, options);
+  // An exhausted budget never becomes a cached proof or a false absence.
+  cache?.set(key, item);
+  return item;
+}
+
+function readEligibleWorldClaim(
+  ctx: ServeContext,
+  claimId: string,
+  valid: WorldValidQuery,
+  budget: ReadBudget,
+  options: EligibilityOptions,
 ): Eligible | null {
   const claim = getClaim(ctx.db, claimId);
   if (claim === null || (options.cutoff !== undefined ? claim.status === "purged" : options.historical ? !["live", "superseded", "reverted"].includes(claim.status) : claim.status !== "live")) return null;

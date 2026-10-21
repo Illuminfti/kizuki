@@ -36,8 +36,17 @@ The scale fixture admits at least 5,000 real claims through the shared writer.
 It checks response bytes, verified candidates, examined rows and parsed support
 bytes. An overflow must be qualified, not presented as a complete card. These
 are work and allocation limits, not latency promises. The existing projection
-allows 128 candidates plus an overflow sentinel, 256 KiB output and a separate
-2 MiB parsed-support limit. Edge-walk limits have their own identity tests.
+allows 128 candidate verifications plus an overflow sentinel per public request,
+shared by discovery, cards and composed child reads, 256 KiB output and a separate
+2 MiB parsed-support limit. Repeated checks with identical authority, filters and
+time reuse a proof only inside that projection's transaction; each child retains
+its own dependency closure. Publication rechecks refresh both eligibility and
+grounding proofs without resetting the allowance. Direct history and forecast
+eligibility checks also consume it. These counters bound candidate verification,
+not every authorization SQL statement.
+A slice withholds an unfinished card whole and marks
+incomplete traversal; other exhausted projections return unavailable/budget.
+Edge-walk limits have their own identity tests.
 
 ## Adding a capability
 
