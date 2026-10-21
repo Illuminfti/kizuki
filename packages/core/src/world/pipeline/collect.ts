@@ -219,6 +219,7 @@ export function scanMatches(
   scanBudget: number,
   groupers: readonly Grouper[] = [],
   filter?: MatchFilter,
+  subjects?: readonly string[],
 ): MatchScan {
   const { ctx, valid } = frame;
   const found: { handle: string; labels: string[] }[] = [];
@@ -256,8 +257,9 @@ export function scanMatches(
     AND json_extract(c.payload,'$.object.kind')='vocabulary' AND json_extract(c.payload,'$.object.ref.id')=?
     AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
     AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}
+    ${subjects === undefined ? "" : "AND b.raw_id IN (SELECT value FROM json_each(?))"}
     ${related === null ? "" : `AND EXISTS(SELECT c.claim_id FROM claim_v2_semantics c JOIN claims base USING(claim_id) WHERE ${related.sql})`}`;
-  const policyBindings = [kind.vocabularyId, ...claim.bindings, ...time.bindings, ...permitted.bindings, ...held.bindings, ...(related?.bindings ?? [])];
+  const policyBindings = [kind.vocabularyId, ...claim.bindings, ...time.bindings, ...permitted.bindings, ...held.bindings, ...(subjects === undefined ? [] : [JSON.stringify(subjects)]), ...(related?.bindings ?? [])];
   const scan = ctx.db.query<
     { handle_id: string },
     (string | number)[]

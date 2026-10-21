@@ -108,3 +108,35 @@ The App client test exercises the task form, retained refresh and privacy clear.
 constraint and evidence in the public slice and session packet, and verifies
 pending extraction, mandatory overflow and source revocation. Existing Person
 and Situation outcome tests exercise final-publication revocation races.
+
+## Recall compilation
+
+Default `context_packet` recall now consumes the same whole Concept and Situation
+relations before canon excerpts and source capture. It projects recorded meaning
+valid at the current instant without requiring a generated summary. Label words
+select matching cards before the four-card limit; a nonmatching nonempty query
+adds no typed cards. Request subjects narrow discovery before its scan and card
+limits. Existing principal, source-purpose, sensitivity and evidence checks still
+apply; scoped clients also need `world_view`. An explicit `include` keeps exactly
+its requested legacy sections. An explicit `since` or `until` also keeps the
+existing windowed canon/capture behavior; current typed relations are added only
+for the implicit current recall window.
+
+Each served atom retains its perspective, polarity, valid time, context and full
+evidence references. Required atoms precede optional detail. When all required
+atoms cannot fit, recall keeps a whole prefix and reports
+`required_context_overflow`; it never clips qualifications to make a fact fit.
+The existing 2 MiB, 129-verification and 2,000-token ceilings remain. Complete
+publication dependencies include authorized discovery candidates and omitted
+relations. Revocation between projection and publication refuses the response.
+
+This fixes current meaning being lost beyond a 600-character canon excerpt.
+It does not restore withdrawn source labels or make a source-only query discover
+an independently worded native correction. Captured history keeps its own time
+window and quoted status.
+
+Verification:
+
+```sh
+bun test packages/core/test/world/slice-recall.test.ts scripts/eval/fresh-agent/baselines.test.ts scripts/eval/fresh-agent/read-state.test.ts
+```
