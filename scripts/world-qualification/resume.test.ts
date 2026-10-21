@@ -73,6 +73,22 @@ test("even freshly pinned malformed predecessor provenance, pending turns or unr
   }
 });
 
+test("a diagnostic case subset preserves the offered registry without qualifying omitted kinds", async () => {
+  const server = startFakeEndpoint(() => new Response("synthetic rate refusal", { status: 429 }));
+  try {
+    const kinds = ["concept", "person", "procedure"];
+    const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, kinds);
+    const result = await runQualification({ kinds, base_url: server.base_url, model: "synthetic", case_ids: ["concept-positive-v2"] });
+    expect(result.missing).toEqual([]);
+    expect(result.registry_sha256).toBe(registryDigest(registry));
+    expect(result.selected_kinds).toEqual(kinds);
+    expect(result.selected_cases).toEqual(["concept-positive-v2"]);
+    expect(server.requests).toHaveLength(1);
+    expect(result.halt_reason).toBe("transport_refused");
+    for (const kind of ["person", "procedure"]) expect(result.score.kinds.find(row => row.kind === kind)?.status).toBe("not_run");
+  } finally { server.stop(); }
+});
+
 test("HTTP429 records explicit transport failure, halts without retries, and leaves remaining cases not_run", async () => {
   const server = startFakeEndpoint(() => new Response("synthetic rate refusal", { status: 429 }));
   try {

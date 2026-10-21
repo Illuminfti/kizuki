@@ -54,7 +54,9 @@ export async function runQualification(options: RunOptions) {
   const selected = qualificationCorpus.cases.filter(item => existing.includes(item.kind) && (options.case_ids === undefined || options.case_ids.includes(item.id)));
   if (options.case_ids !== undefined && (new Set(options.case_ids).size !== options.case_ids.length || options.case_ids.some(id => !selected.some(item => item.id === id)))) throw new Error("unknown or unavailable case selection");
   // Missing model/corpus/module is an inspectable not_run result, never an empty successful measurement.
-  const missing = options.kinds.flatMap(kind => !existing.includes(kind) ? [`${kind}:module_missing`] : !selected.some(item => item.kind === kind) ? [`${kind}:corpus_missing`] : []);
+  // A diagnostic subset keeps the offered registry fixed. Omitted cases still
+  // score not_run; they are not missing from the authored corpus.
+  const missing = options.kinds.flatMap(kind => !existing.includes(kind) ? [`${kind}:module_missing`] : !qualificationCorpus.cases.some(item => item.kind === kind) ? [`${kind}:corpus_missing`] : []);
   for (const item of selected) for (const alternatives of item.required) {
     if (!alternatives.some(row => registry.offered.vocabulary.some(predicate => predicate.predicate === row.predicate) &&
       (row.object.kind !== "vocabulary" || registry.offered.refs.includes(row.object.value)))) {
