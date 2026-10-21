@@ -380,8 +380,8 @@ function replayResponse(ctx: ServeContext, prior: Claim, eventId: string): Serve
   requireSourceEvents(ctx.db, prior.provenance, {
     owner: ctx.principal.kind === "owner", purpose: "correction", deny_classes: denyClassesOf(ctx.principal.grant),
   });
-  ctx.db.query("UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?").run(eventId);
   const pending = pendingCanonRewrite(ctx, prior);
+  if (pending === undefined) ctx.db.query("UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?").run(eventId);
   return {
     canon: [], quoted: [],
     withheld: pending !== undefined ? [{ id: "tool:correct", reason: "error" as const }] : [],
@@ -557,6 +557,19 @@ export async function serveCorrect<C extends ResponseContract = typeof ENVELOPE_
         args.object === undefined
           ? undefined
           : text("object", args.object, MAX_OBJECT_CHARS);
+      // Core records exact legacy corrections with its own stable source id.
+      // Once that exact target is superseded, it cannot pass live-target
+      // resolution again, so replay must precede resolution while preserving
+      // the same visibility checks that prevent it becoming a tier oracle.
+      if (args.target?.claim_id !== undefined && args.dry_run !== true && replacement === undefined) {
+        const recorded = getRecordedCorrection(ctx.db, { statement, target: args.target });
+        const loser = recorded === null ? null : getClaim(ctx.db, args.target.claim_id);
+        const matchesExactLegacy = recorded !== null && loser !== null && loser.claim_key === null &&
+          ctx.db.query("SELECT 1 FROM claim_supersessions WHERE winner=? AND loser=?").get(recorded.claim.claim_id, loser.claim_id) !== null;
+        if (matchesExactLegacy && claimVisibleTo(ctx, loser!) && claimVisibleTo(ctx, recorded!.claim)) {
+          return replayResponse(ctx, recorded!.claim, recorded!.event_id);
+        }
+      }
       // A filed native recording remains replayable after its target was retired.
       if (args.target !== undefined && args.dry_run !== true) {
         const recorded = ctx.db
@@ -570,7 +583,7 @@ export async function serveCorrect<C extends ResponseContract = typeof ENVELOPE_
         if (recorded !== null) {
           const filedRow = ctx.db
             .query<{ claim_id: string }, [string]>(
-              "SELECT claim_id FROM claims WHERE EXISTS (SELECT 1 FROM json_each(claims.provenance) WHERE value=?) AND target LIKE 'correction:%' AND status != 'skipped' ORDER BY created_at LIMIT 1",
+              "SELECT claim_id FROM claims WHERE EXISTS (SELECT 1 FROM json_each(claims.provenance) WHERE value=?) AND status != 'skipped' ORDER BY created_at LIMIT 1",
             )
             .get(recorded.event_id);
           const prior =
@@ -629,7 +642,7 @@ export async function serveCorrect<C extends ResponseContract = typeof ENVELOPE_
           data: {
             receipt_id: result.receipt_id, event_id: result.event_id,
             claim_id: result.claim_ids[0] ?? null,
-            superseded: result.superseded.map(({ claim_id, claim_key }) => ({ claim_id, claim_key })),
+            superseded: result.superseded.map(({ claim_id, claim_key }) => ({ claim_id, claim_key: claim_key ?? "" })),
             rewritten: result.rewritten.flatMap(rewrite => {
               if (rewrite.receipt_id === null) return [];
               const receipt = getCanonReceipt(ctx.db, rewrite.receipt_id);
@@ -639,6 +652,70 @@ export async function serveCorrect<C extends ResponseContract = typeof ENVELOPE_
             }),
             ambiguous: result.ambiguous, answer: result.answer,
             ...(result.recovery_pending === undefined ? {} : { recovery_pending: result.recovery_pending }),
+          },
+        };
+      }
+
+      // Legacy importer claims do not have a predicate or group key.  The
+      // Core writer already treats their claim id as an exact correction
+      // target, preserving its native evidence, authority, replay and undo
+      // semantics.  Serving only supplies the scoped caller identity and
+      // redacts page metadata after the write has changed its authorization.
+      if (resolved.claims.length === 1 && resolved.claims[0]!.claim_key === null) {
+        if (replacement !== undefined)
+          throw refuse("object", "names a claim with no predicate, which is retracted and not replaced");
+        const claim = resolved.claims[0]!;
+        const owned = extendOwnedCanonIo(scope, canon, {
+          producer: ctx.principal.kind === "owner" ? "owner" as const : `agent:${ctx.principal.agent.name}` as const,
+          relay_owner_corrections: ctx.principal.kind === "owner" || grant.relay_owner_corrections,
+          grant,
+        });
+        const result = await correctWithinMutation(scope, owned, {
+          statement,
+          target: { claim_id: claim.claim_id },
+          ...(args.dry_run === true ? { dry_run: true } : {}),
+        }).catch((error: unknown) => { throw servableRefusal(error); });
+        const visible = result.rewritten.filter((rewrite) =>
+          pageSnapshot(owned, ctx, rewrite.page_path).readable,
+        );
+        const recovery = ctx.principal.kind === "owner"
+          ? result.recovery_pending
+          : result.recovery_pending?.filter((item) =>
+            pageSnapshot(owned, ctx, item.page_path).readable,
+          );
+        const redacted = visible.length !== result.rewritten.length ||
+          (recovery?.length ?? 0) !== (result.recovery_pending?.length ?? 0);
+        const receiptVisible = result.receipt_id !== null && visible.some(
+          (rewrite) => rewrite.receipt_id === result.receipt_id,
+        );
+        return {
+          canon: [], quoted: [],
+          withheld: result.recovery_pending === undefined ? [] : [{ id: "tool:correct", reason: "error" as const }],
+          data: {
+            ...(result.recovery_pending === undefined ? {} : { recovery_pending: recovery ?? [] }),
+            receipt_id: receiptVisible ? result.receipt_id : null,
+            event_id: result.event_id,
+            claim_id: result.claim_ids[0] ?? null,
+            superseded: result.superseded.map(({ claim_id, claim_key }) => ({ claim_id, claim_key: claim_key ?? "" })),
+            rewritten: visible.flatMap((rewrite) => {
+              if (rewrite.receipt_id === null) return [];
+              const receipt = getCanonReceipt(ctx.db, rewrite.receipt_id);
+              return receipt === null ? [] : [{
+                page_path: rewrite.page_path,
+                page_action: receipt.page_action,
+                before_hash: rewrite.before_hash === "" ? null : servedReceiptHash(ctx.principal, rewrite.before_hash),
+                after_hash: servedReceiptHash(ctx.principal, rewrite.after_hash),
+                receipt_id: rewrite.receipt_id,
+                diff: rewrite.diff,
+              }];
+            }),
+            ambiguous: result.ambiguous.map(({ claim_key, claim_ids }) => ({ claim_key, claim_ids })),
+            answer: redacted
+              ? args.dry_run === true ? "Correction preview complete." : "Recorded the correction."
+              : result.answer,
+          },
+          audit_ids: {
+            claim_ids: [...result.claim_ids, ...result.superseded.map(({ claim_id }) => claim_id)],
           },
         };
       }
