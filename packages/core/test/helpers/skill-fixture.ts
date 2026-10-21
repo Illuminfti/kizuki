@@ -1,7 +1,7 @@
 import { EMPTY_SUMMARY_MODEL, completeEmptyWorldSummaries } from "./world-consolidation";
 import type { Database } from "bun:sqlite";
 import { addAgent, authenticate, OWNER_AGENT_GRANT } from "../../src/agents";
-import type { OutcomeEvidence } from "../../src/contracts/outcome-card";
+import type { OutcomeEvidence, OutcomeSubmission } from "../../src/contracts/outcome-card";
 import type { ProcedureCard } from "../../src/contracts/procedure-card";
 import type { WorldData } from "../../src/serving/world-view";
 import { servePropose } from "../../src/serving/propose";
@@ -58,7 +58,7 @@ export async function skillFixture(database?: Database) {
     return { ctx: { ...f.ctx, principal: authenticate(f.db, agent.token)! }, connector, sourceKey };
   });
   const base: OutcomeEvidence = { subjectRef: "none", task: "verify", attempt: "attempt-1", criterion: "required fields present", artifactVersion: "artifact-1", environment: "synthetic-v1", result: "met", assistance: "assisted", confounded: false };
-  async function file(index: number, predicate: string, patch: Partial<OutcomeEvidence> = {}, options: { metadata?: Record<string, unknown>; text?: string; subject?: string } = {}) {
+  async function file(index: number, predicate: string, patch: Partial<OutcomeSubmission> = {}, options: { metadata?: Record<string, unknown>; text?: string; subject?: string } = {}) {
     const who = agents[index]!;
     const accepted = accept(f.db, { ...validEvent(), connector_id: who.connector, source_record_id: ulid(),
       text: options.text ?? `${who.connector} recorded ${predicate} ${JSON.stringify(patch)} ${ulid()}`, sensitivity_hint: "public", metadata: options.metadata ?? {},

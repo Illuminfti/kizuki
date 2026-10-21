@@ -8,7 +8,7 @@ import { WORLD_VOCABULARY, WORLD_VOCABULARY_SCHEMA } from "../../src/contracts/w
  * and a migration story, not an edit of this table.
  */
 const PINNED_ROWS = [
-  ["world.kind", "raw", "vocabulary", "positive,negative", null, "world/concept,world/framework,world/person,world/procedure,world/question,world/situation,world/skill"],
+  ["world.kind", "raw", "vocabulary", "positive,negative", null, "world/artifact_version,world/concept,world/framework,world/person,world/procedure,world/question,world/situation,world/skill"],
   ["situation.label", "situation", "literal", "positive,negative", 400, null],
   ["situation.objective", "situation", "literal", "positive,negative", 400, null],
   ["situation.commitment", "situation", "literal", "positive,negative", 400, null],
@@ -63,6 +63,12 @@ const PINNED_ROWS = [
   ["procedure.outcome", "procedure", "raw_subject", "positive,negative", null, null],
   ["procedure.standard", "procedure", "literal", "positive,negative", 400, null],
   ["procedure.exemplar", "procedure", "raw_subject", "positive,negative", null, null],
+  ["artifact.label", "artifact_version", "literal", "positive,negative", 400, null],
+  ["artifact.content_sha256", "artifact_version", "literal", "positive,negative", 400, null],
+  ["artifact.media_type", "artifact_version", "literal", "positive,negative", 400, null],
+  ["artifact.byte_length", "artifact_version", "literal", "positive,negative", 400, null],
+  ["artifact.version_of", "artifact_version", "raw_subject", "positive,negative", null, null],
+  ["artifact.feedback", "artifact_version", "literal,raw_subject", "positive,negative", 400, null],
 ] as const;
 
 test("the shipped rows of kizuki.world-vocabulary/v1 keep their meaning", () => {

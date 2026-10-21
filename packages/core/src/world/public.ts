@@ -7,6 +7,8 @@ export type { FrameworkCard } from "../contracts/framework-card";
 export { validateOutcomeCard } from "../contracts/outcome-card";
 export type { OutcomeCard } from "../contracts/outcome-card";
 export type { ProcedureUsefulness, OutcomeEvidence, OutcomeEvaluation } from "../contracts/outcome-card";
+export { ARTIFACT_CARD_SCHEMA, validateArtifactCard } from "../contracts/artifact-card";
+export type { ArtifactCard } from "../contracts/artifact-card";
 /**
  * The world-model API of `@kizuki/core`. New operations and their types are
  * exported here so `src/index.ts` never has to change for them.

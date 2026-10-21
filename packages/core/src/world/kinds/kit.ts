@@ -43,6 +43,8 @@ export interface AssembledCard {
 export interface KindAssembler {
   /** The `WorldKindSpec.id` this assembler serves. */
   readonly kind: string;
+  /** False when this card has no summary field and cannot consume consolidation. */
+  readonly consolidation?: boolean;
   assemble(input: CardInput): AssembledCard;
 }
 

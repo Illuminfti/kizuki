@@ -91,7 +91,7 @@ export function readWorldCard(
   const collection = collectCard(frame, cluster, kind, stages.collectors);
   if (collection === null) return null;
   if (kindId === "framework") assertFrameworkAcyclic(frame, handle);
-  const body = enrich(frame, collection.items, stages.enrichers, collection.overflow, { cluster, kind: kind.id });
+  const body = enrich(frame, collection.items, stages.enrichers, collection.overflow, assembler.consolidation === false ? undefined : { cluster, kind: kind.id });
   return assembleCard(frame, kind, assembler, cluster, collection, body);
 }
 

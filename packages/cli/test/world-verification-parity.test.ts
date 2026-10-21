@@ -37,8 +37,9 @@ function meaning(value: any): any {
 function cliArgs(name: VerificationOperation, input: Record<string, any>): string[] {
   switch (name) {
     case "concept": case "situation": case "question": case "person": case "procedure": case "skill": case "framework": return ["--ref", input[name].token];
+    case "artifact_version": return ["--ref", input.artifact.token];
     case "history": return ["--ref", input.concept.token];
-    case "find_concepts": case "find_situations": case "find_questions": case "find_people": case "find_procedures": return ["--label", input.label];
+    case "find_concepts": case "find_situations": case "find_questions": case "find_people": case "find_procedures": case "find_artifacts": return ["--label", input.label];
     case "share": return ["--of-operation", input.of.operation, "--ref", input.of.concept.token];
     case "resume": return ["--resume", input.handle];
     case "evidence": return ["--admission", input.evidence.admission.token, "--event-version", input.evidence.eventVersion.token,
@@ -62,6 +63,7 @@ const TEXT: Record<VerificationOperation, readonly string[]> = {
   skill: ["skill:inspection", "Independent mastery: unknown", "Coverage:"],
   framework: ["framework:quality", "Nested component", "Coverage:"],
   outcome: ["Outcome evidence", "agent_reported", "independent: false", "Coverage:"],
+  find_artifacts: ["Artifact"], artifact_version: ["Artifact", "text/markdown", "Coverage:"],
 };
 
 test("every world operation agrees through Core, CLI text and JSON, stdio MCP, HTTP and App", async () => {

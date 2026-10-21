@@ -7,6 +7,7 @@ import type { SituationCard } from "../contracts/situation-card";
 import type { ProcedureCard } from "../contracts/procedure-card";
 import type { FrameworkCard } from "../contracts/framework-card";
 import type { SkillCard } from "../contracts/skill-card";
+import type { ArtifactCard } from "../contracts/artifact-card";
 import type { QuestionCard } from "../contracts/question-card";
 import type { WorldValidQuery } from "../serving/world-view";
 import type { ServeContext } from "../serving/types";
@@ -39,15 +40,16 @@ export function projectWorldCard(
   ctx: ServeContext,
   ns: WorldNamespace,
   handle: string,
-  kind: "concept" | "situation" | "question" | "person" | "skill" | "framework" | "procedure",
+  kind: "concept" | "situation" | "question" | "person" | "skill" | "framework" | "procedure" | "artifact_version",
   valid: WorldValidQuery,
   dependencies?: WorldDependencies,
   cutoff?: RecordedCutoff,
-): ConceptCard | SituationCard | QuestionCard | PersonCard | ProcedureCard | FrameworkCard | SkillCard | null {
+): ConceptCard | SituationCard | QuestionCard | PersonCard | ProcedureCard | FrameworkCard | SkillCard | ArtifactCard | null {
   // Each shipped assembler builds its declared card.
   return readWorldCard(newReadFrame(ctx, ns, valid, dependencies, cutoff), handle, kind) as
     | ConceptCard
     | SituationCard
+    | ArtifactCard
     | QuestionCard
     | PersonCard
     | ProcedureCard | FrameworkCard | SkillCard

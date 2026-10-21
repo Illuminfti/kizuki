@@ -100,3 +100,21 @@ B's illustrative stage buckets and claim-reference addressing. Malformed new
 inputs are rejected instead of being silently treated as successful evidence;
 legacy reached/missed strings remain self-reports. There is no retained outcome
 history, so historical requests are explicitly unavailable.
+
+## ArtifactVersion bindings
+
+`artifactVersion` may be a legacy bounded string or an explicit current caller
+ObjectRef (`{"kind":"object","token":"..."}`). Only the ObjectRef form can
+bind a linked ArtifactVersion. Core validates the current classified artifact
+under the caller's source policy, and repeats that check in the claim insertion
+transaction after asynchronous preparation. It stores a private tagged digest of
+the complete source-qualified identity, never the caller token. The submission
+parser refuses internal binding tags. Equal bytes from a different source and
+a different version of the same source do not match.
+
+A consumer evaluating a node deliverable must project that exact ArtifactVersion
+through its shared read frame and supply `outcomeArtifactBinding(rawSubject)` to
+`readOutcomes`. That retains the artifact's full publication dependencies. The
+ordinary standalone Outcome view quotes a bound report as `artifactVersion:
+"bound"` and leaves its completion unknown without that qualified context. Legacy
+strings remain useful quoted conditions but never authenticate a linked artifact.
