@@ -2,8 +2,11 @@ import type { EmbeddingSpace } from "@kizuki/core";
 import type { EmbeddingTable } from "./gguf";
 
 export const GGUF_PROVIDER = "gguf";
-export const RECIPE_PROMPT_QUERY = "task: search result | query: {q}";
-export const RECIPE_PROMPT_DOC = "title: {title} | text: {text}";
+// A table embedder averages the vectors of the words it is handed, so any
+// literal words in a prompt would be averaged into every query and document.
+// The recipe therefore carries slots only.
+export const RECIPE_PROMPT_QUERY = "{q}";
+export const RECIPE_PROMPT_DOC = "{title}\n{text}";
 export const RECIPE_CHUNK_TOKENS = 800;
 export const RECIPE_CHUNK_OVERLAP = 120;
 export const RECIPE_TOKENIZER_ID = "gguf:kizuki-whitespace";
@@ -43,16 +46,13 @@ export function spaceFromTable(table: EmbeddingTable): EmbeddingSpace {
   });
 }
 
-function replaceLiteral(
-  template: string,
-  token: string,
-  value: string,
-): string {
-  return template.split(token).join(value);
+/** One pass, so a slot spelled inside a title or a query is never filled a second time. */
+function fill(template: string, values: Readonly<Record<string, string>>): string {
+  return template.replaceAll(/\{(q|title|text)\}/g, (slot, name: string) => values[name] ?? slot);
 }
 
 export function formatQuery(text: string, space: EmbeddingSpace): string {
-  return replaceLiteral(space.prompt_query, "{q}", text);
+  return fill(space.prompt_query, { q: text });
 }
 
 export function formatDoc(
@@ -60,9 +60,5 @@ export function formatDoc(
   text: string,
   space: EmbeddingSpace,
 ): string {
-  return replaceLiteral(
-    replaceLiteral(space.prompt_doc, "{title}", title),
-    "{text}",
-    text,
-  );
+  return fill(space.prompt_doc, { title, text });
 }

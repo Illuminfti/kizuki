@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  bindConfiguredEmbedding,
   bindLocalSourcePort,
   loadConfiguredRetrieval,
   loadEmbeddingSelection,
@@ -8,6 +9,7 @@ import {
 } from "@kizuki/core";
 import type { EmbeddingPort, RetrievalPort } from "@kizuki/core";
 import { registerGgufEmbedding } from "@kizuki/embed-gguf";
+import { registerLocalHttpEmbedding } from "@kizuki/embed-local-http";
 import {
   createEmbeddedRetrievalPort,
   EMBEDDED_RETRIEVAL_DESCRIPTOR,
@@ -21,7 +23,7 @@ export interface ConfiguredEmbedding {
 
 function hostContext(
   vaultPath: string,
-  kind: "retrieval" | "embedding",
+  kind: "retrieval",
   id: string,
   config: Record<string, unknown>,
 ) {
@@ -59,18 +61,14 @@ export function embeddingConfigured(vaultPath: string): boolean {
   }
 }
 
-export async function openConfiguredEmbedding(vaultPath: string): Promise<EmbeddingPort | undefined> {
-  const configured = loadConfiguredEmbedding(vaultPath);
-  if (configured.id === "kizuki.embedding.none") return undefined;
-  const registry = new PortRegistry();
+/** Every embedding port this build links. */
+export function registerEmbeddings(registry: PortRegistry): void {
   registerGgufEmbedding(registry);
-  const bound = await registry.bindFromConfig<EmbeddingPort>("embedding", { embedding: configured.id }, hostContext(
-    vaultPath,
-    "embedding",
-    configured.id,
-    configured.config,
-  ));
-  return bound.port;
+  registerLocalHttpEmbedding(registry);
+}
+
+export function openConfiguredEmbedding(vaultPath: string): Promise<EmbeddingPort | undefined> {
+  return bindConfiguredEmbedding(vaultPath, registerEmbeddings);
 }
 
 export async function openConfiguredRetrieval(
@@ -82,23 +80,33 @@ export async function openConfiguredRetrieval(
   const id = selected ?? configured.id;
   if (id === "kizuki.retrieval.fts5") return undefined;
   const registry = new PortRegistry();
-  const embedding = options.embedding;
+  // Every process that writes the engine must cut chunks the way the embedder
+  // wants them, so the configured embedding port is bound with it unless the
+  // caller brings its own.
+  const embedding = options.embedding ?? (id === "kizuki.retrieval.embedded-pg" ? await openConfiguredEmbedding(vaultPath) : undefined);
+  const owned = options.embedding === undefined;
   if (embedding !== undefined) {
     registry.registerPort(
       EMBEDDED_RETRIEVAL_DESCRIPTOR,
-      (ctx) => createEmbeddedRetrievalPort(ctx, { embedding }),
+      (ctx) => createEmbeddedRetrievalPort(ctx, { embedding, own_embedding: owned }),
     );
   } else {
     registerEmbeddedRetrieval(registry);
   }
-  const bound = await registry.bindFromConfig<RetrievalPort>("retrieval", { retrieval: id }, hostContext(
-    vaultPath,
-    "retrieval",
-    id,
-    configured.config,
-  ));
-  // Only this host-created embedded implementation receives the local capability.
-  return id === "kizuki.retrieval.embedded-pg" ? bindLocalSourcePort(bound.port, { store_id: `local:${id}` }) : bound.port;
+  try {
+    const bound = await registry.bindFromConfig<RetrievalPort>("retrieval", { retrieval: id }, hostContext(
+      vaultPath,
+      "retrieval",
+      id,
+      configured.config,
+    ));
+    // Only this host-created embedded implementation receives the local capability.
+    return id === "kizuki.retrieval.embedded-pg" ? bindLocalSourcePort(bound.port, { store_id: `local:${id}` }) : bound.port;
+  } catch (error) {
+    // A busy engine leaves the embedding port this call opened with nobody to close it.
+    if (owned) await embedding?.close();
+    throw error;
+  }
 }
 
 /** The embedded factory is a writer. Inspection must not acquire it or repair its files. */
