@@ -7,8 +7,8 @@ export const QUESTION = "question:updating";
 export const QUESTION_WHEN = { valid: { kind: "all" }, knownAt: { kind: "current" } } as const;
 const WHEN = QUESTION_WHEN;
 
-export async function questionFixture(database?: Database) {
-  const f = await cardFixture(database);
+export async function questionFixture(database?: Database, options: Parameters<typeof cardFixture>[1] = {}) {
+  const f = await cardFixture(database, options);
   try {
     const write = (predicate: string, object: Parameters<typeof f.write>[1], options: Parameters<typeof f.write>[2] = {}) =>
       f.write(predicate, object, { subject: QUESTION, ...options });

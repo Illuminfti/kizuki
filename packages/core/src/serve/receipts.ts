@@ -1,3 +1,4 @@
+import { parseConsolidationRunReport } from "../contracts/consolidation";
 import type { Database } from "bun:sqlite";
 import {
   appendFileSync,
@@ -126,6 +127,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
   const totals = emptyRunTotals();
   const model = isPlainObject(value["model"]) ? value["model"] : {};
   const diagnostic = readProducerDiagnostic(model["diagnostic"]);
+  const consolidation = parseConsolidationRunReport(value["consolidation"]);
   const modelRefDigest = readModelReferenceDigest(model["model_ref_sha256"]);
   const retrieval = isPlainObject(value["retrieval"]) ? value["retrieval"] : {};
   const oversized = isPlainObject(value["oversized"]) ? value["oversized"] : null;
@@ -135,6 +137,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
   if (value["schedule_transition"] !== undefined && transition === undefined) throw new Error("invalid receipt schedule transition");
   return {
     ...(execution === undefined ? {} : { execution }),
+    ...(consolidation === undefined ? {} : { consolidation }),
     ...(transition === undefined ? {} : { schedule_transition: transition }),
     run_id: value["run_id"],
     rail: value["rail"],

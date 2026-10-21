@@ -70,10 +70,7 @@
       "schema": "kizuki.world-view/v1",
       "operation": "concept",
       "result": {
-        "status": "current",
-        "view": {
-          "status": "not_issued"
-        },
+        "status": "incomplete",
         "data": {
           "schema": "kizuki.concept-card/v1",
           "concept": {
@@ -625,24 +622,26 @@
             "kind": "current"
           },
           "coverage": {
-            "status": "complete_for_query",
-            "gaps": [],
+            "status": "partial",
+            "gaps": [
+              "pending_consolidation"
+            ],
             "validWindow": {
               "kind": "all"
             },
             "history": "unavailable"
           }
-        }
+        },
+        "reasons": [
+          "pending_consolidation"
+        ]
       }
     },
     "situation": {
       "schema": "kizuki.world-view/v1",
       "operation": "situation",
       "result": {
-        "status": "current",
-        "view": {
-          "status": "not_issued"
-        },
+        "status": "incomplete",
         "data": {
           "schema": "kizuki.situation-card/v1",
           "situation": {
@@ -1008,14 +1007,19 @@
             "kind": "current"
           },
           "coverage": {
-            "status": "complete_for_query",
-            "gaps": [],
+            "status": "partial",
+            "gaps": [
+              "pending_consolidation"
+            ],
             "validWindow": {
               "kind": "all"
             },
             "history": "unavailable"
           }
-        }
+        },
+        "reasons": [
+          "pending_consolidation"
+        ]
       }
     }
   },

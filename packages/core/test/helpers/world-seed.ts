@@ -34,6 +34,8 @@ export interface SeedPredicate {
 }
 
 export interface WorldSeedOptions {
+  /** Explicit synthetic model consent at enrollment; never increments an existing grant. */
+  readonly model?: { model_endpoint: string; model: string; external_retention: "provider_managed" };
   /** Kind id. Concept and Situation are admitted today. */
   readonly kind?: string;
   readonly subject?: string;
@@ -91,6 +93,7 @@ export function enrollSource(
   connector: string,
   floor: "public" | "private",
   sourceKey: string = ulid(),
+  model?: WorldSeedOptions["model"],
 ): string {
   registerConnection(db, connector, sourceKey);
   seedConnectorSensitivity(
@@ -103,10 +106,10 @@ export function enrollSource(
     expected_revision: 0,
     operation_id: `grant-${sourceKey}`,
     policy: {
-      purposes: ["capture", "derive", "recall", "correction", "export"],
+      purposes: ["capture", "derive", "recall", "correction", "export", ...(model === undefined ? [] : ["extract" as const])],
       allowed_fields: ["text", "subjects", "metadata", "attachments"],
       retention: "persistent_owned_until_revoked",
-      egress: "local_only",
+      egress: model ?? "local_only",
       sensitivity_floor: floor,
     },
   });
@@ -120,7 +123,7 @@ export async function worldSeed(db: Database, options: WorldSeedOptions = {}): P
     floor = options.floor ?? "public",
     connector = options.connector ?? "world.fixture",
     sourceKey = options.sourceKey ?? ulid();
-  if (options.sourceKey === undefined) enrollSource(db, connector, floor, sourceKey);
+  if (options.sourceKey === undefined) enrollSource(db, connector, floor, sourceKey, options.model);
   const accepted = accept(
     db,
     {

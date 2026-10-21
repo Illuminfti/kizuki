@@ -30,6 +30,7 @@ export const WORLD_MIGRATION_VERSIONS = {
   // slot: known
   known: CLAIM_HISTORY_MIGRATION_VERSION,
   // slot: consol
+  consol: 42,
   // slot: ident
   // slot: attn
   // slot: refs

@@ -1,3 +1,4 @@
+import { CONSOLIDATION_TABLE_SPECS } from "./consolidation";
 import { MACHINE_BODY_TABLE } from "../../ledger/machine-body-schema";
 import type { Database } from "bun:sqlite";
 import { LedgerStoreError } from "../../ledger/errors";
@@ -99,6 +100,7 @@ export const WORLD_TABLE_SPECS: readonly WorldTableSpec[] = [
   ...KNOWN_TABLE_SPECS,
   ...KNOWN_REF_TABLE_SPECS,
   // slot: consol
+  ...CONSOLIDATION_TABLE_SPECS,
   // slot: ident
   // slot: attn
   // slot: refs

@@ -1,3 +1,4 @@
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 import { expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { fingerprintOf, wireDigest } from "../../src/world/views/store";
@@ -9,6 +10,9 @@ import { collectReadFrames } from "../../src/world/pipeline/frame";
 import { cardFixture } from "./card-fixture";
 
 const LEARNED = "2030-01-09T00:00:00.000Z";
+// The synthetic provider completes at the fixture's committed instant. This
+// preserves an exact historic basis without pretending later model text existed.
+const completionClock = (db: Database) => () => db.query<{ at: string }, []>("SELECT max(recorded_at) AS at FROM claim_lifecycle_history").get()!.at;
 function current(result: WorldReadResult) {
   if (!("result" in result) || result.result.status !== "current" || !("kind" in result.result.view)) throw new Error("current view missing");
   return { ...result.result, view: result.result.view };
@@ -18,8 +22,10 @@ function snapshot(body: WorldData) {
   return body.knownAt;
 }
 async function fixture() {
-  const db = openLedger(":memory:"), f = await cardFixture(db);
+  const db = openLedger(":memory:");
   db.query("UPDATE claim_history_clock SET last_recorded_at=?").run(LEARNED);
+  const f = await cardFixture(db, { model: EMPTY_SUMMARY_MODEL });
+  await completeEmptyWorldSummaries(db, f.ctx.vaultPath, completionClock(db));
   const agent = addAgent(db, "historical-conditional-reader", { ...OWNER_AGENT_GRANT, ceiling: "public" });
   const ctx = { ...f.ctx, principal: authenticate(db, agent.token)! };
   const input = { operation: "concept", concept: f.find(ctx), valid: { kind: "all" }, knownAt: { kind: "time", at: LEARNED } };
@@ -53,6 +59,7 @@ test("a visible historical change issues a new snapshot whose cutoff agrees with
   try {
     const first = current(serveWorldView(f.ctx, f.input).data), oldSnapshot = snapshot(first.data);
     await f.write("concept.example", { kind: "literal", value: "A newly recorded visible example" });
+    await completeEmptyWorldSummaries(f.db, f.ctx.vaultPath, completionClock(f.db));
     const next = current(serveWorldView(f.ctx, { ...f.input, priorView: first.view }).data), nextSnapshot = snapshot(next.data);
     expect(nextSnapshot).not.toEqual(oldSnapshot);
     const oldBody = current(serveWorldView(f.ctx, { ...f.input, knownAt: oldSnapshot }).data).data;

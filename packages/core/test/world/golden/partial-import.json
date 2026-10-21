@@ -627,7 +627,8 @@
         "coverage": {
           "status": "partial",
           "gaps": [
-            "coverage"
+            "coverage",
+            "pending_consolidation"
           ],
           "validWindow": {
             "kind": "all"
@@ -636,7 +637,8 @@
         }
       },
       "reasons": [
-        "coverage"
+        "coverage",
+        "pending_consolidation"
       ]
     }
   },
@@ -1012,7 +1014,8 @@
         "coverage": {
           "status": "partial",
           "gaps": [
-            "coverage"
+            "coverage",
+            "pending_consolidation"
           ],
           "validWindow": {
             "kind": "all"
@@ -1021,7 +1024,8 @@
         }
       },
       "reasons": [
-        "coverage"
+        "coverage",
+        "pending_consolidation"
       ]
     }
   }
