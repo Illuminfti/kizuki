@@ -74,6 +74,10 @@ of the synthetic names it allows (`user`, `ada`, `stranger`, `owner`,
 
 ## Tests
 
+`bun run test` runs the complete suite with two isolated Bun worker processes.
+Tests within each file remain sequential, and the 120-second per-test deadline
+is unchanged. `bun test path/to/file.test.ts` remains useful for a focused run.
+
 **WSL:** use a clone on the distribution's Linux filesystem (for example,
 `~/src/kizuki`) for `bun test` and `bun run verify`. Full-suite verification
 from Windows-mounted paths such as `/mnt/c` or `/mnt/d` is unsupported:
