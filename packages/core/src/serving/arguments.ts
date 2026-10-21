@@ -2,6 +2,9 @@ import { compareRfc3339 } from "../agents/time";
 import type { Grant } from "../agents";
 import { isRfc3339 } from "../util/time";
 import { ServeError } from "./types";
+import { EVENT_LIMITS } from "../contracts/event";
+import { utf8ByteLength } from "../util/validate";
+import { isVisibleIdentifier } from "../util/opaque-identifier";
 
 /**
  * Same shape as the audit layer's short-id rule, so audited id arrays stay
@@ -23,6 +26,15 @@ function refuse(field: string, rule: string): ServeError {
 export function identifier(field: string, value: unknown): string {
   if (typeof value !== "string" || !ID.test(value)) {
     throw refuse(field, "must be an identifier of at most 64 characters");
+  }
+  return value;
+}
+
+/** Only used after scoped references have resolved under current authority. */
+export function resolvedSubjectIdentifier(field: string, value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > EVENT_LIMITS.subjectIdBytes ||
+      utf8ByteLength(value) > EVENT_LIMITS.subjectIdBytes || !isVisibleIdentifier(value)) {
+    throw refuse(field, "must be a valid native subject identifier");
   }
   return value;
 }
@@ -65,12 +77,12 @@ export function limit(
   return range(field, value, 1, max, fallback);
 }
 
-export function idList(field: string, value: unknown, max: number): string[] {
+export function idList(field: string, value: unknown, max: number, parseIdentifier: typeof identifier = identifier): string[] {
   if (!Array.isArray(value)) throw refuse(field, "must be an array");
   if (value.length > max) {
     throw refuse(field, `must hold at most ${max} entries`);
   }
-  const entries = value.map((entry) => identifier(field, entry));
+  const entries = value.map((entry) => parseIdentifier(field, entry));
   if (new Set(entries).size !== entries.length) {
     throw refuse(field, "must not repeat an entry");
   }

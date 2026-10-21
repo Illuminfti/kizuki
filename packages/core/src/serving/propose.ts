@@ -19,7 +19,7 @@ import { CLAIM_POLARITIES } from "../contracts/proposal";
 import type { ClaimPolarity, FrontmatterValue } from "../contracts/proposal";
 import { isPlainObject } from "../util/validate";
 import { PAGE_TYPES } from "../vault/schema";
-import { enumOf, identifier, idList, text } from "./arguments";
+import { enumOf, identifier, idList, resolvedSubjectIdentifier, text } from "./arguments";
 import { auditArguments, claimsIo, gateAsync } from "./gate";
 import type { Served } from "./gate";
 import { eventDecision, readServableEvents } from "./ledger";
@@ -217,9 +217,10 @@ function subjectOf(
   grant: Grant,
   requestedSubject: string | undefined,
   subjects: string[] | undefined,
+  parseIdentifier: typeof identifier,
 ): string | undefined {
   if (requestedSubject === undefined) return subjects?.[0];
-  const subject = identifier("subject", requestedSubject);
+  const subject = parseIdentifier("subject", requestedSubject);
   if (grant.subjects !== null && !grant.subjects.includes(subject)) {
     throw new ServeError("subject_out_of_scope", "subject outside the grant");
   }
@@ -326,10 +327,11 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
       grant,
       request.frontmatter === undefined ? {} : request.frontmatter,
     );
+    const parseSubject = contract === ENVELOPE_V2_SCHEMA ? resolvedSubjectIdentifier : identifier;
     const requested =
       request.subjects === undefined
         ? undefined
-        : idList("subjects", request.subjects, MAX_SUBJECTS);
+        : idList("subjects", request.subjects, MAX_SUBJECTS, parseSubject);
     if (
       grant.subjects !== null &&
       (requested === undefined || requested.length === 0)
@@ -348,7 +350,7 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
       }
     }
     const confidence = confidenceOf(request.confidence);
-    const subject = subjectOf(grant, request.subject, requested);
+    const subject = subjectOf(grant, request.subject, requested, parseSubject);
     const predicate = predicateOf(request.predicate, subject);
 
     let provenanceContext = ctx;

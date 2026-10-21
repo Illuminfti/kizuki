@@ -7,7 +7,7 @@ import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { claimReader } from "./claims";
 import { authorizedClaimSql } from "./claim-policy-sql";
 import type { Claim } from "../contracts/proposal";
-import { identifier } from "./arguments";
+import { identifier, resolvedSubjectIdentifier } from "./arguments";
 import { ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA, ServeError } from "./types";
 import type { ResponseContract, ServeContext } from "./types";
 
@@ -171,7 +171,7 @@ export function resolve(
 
   // Narrowed in SQL. Reading a default page of the table and filtering it in
   // memory stops finding real targets the moment a vault outgrows that page.
-  const subject = identifier("target.subject", target.subject);
+  const subject = (scopedV2 ? resolvedSubjectIdentifier : identifier)("target.subject", target.subject);
   const claims = !scopedV2 ? listClaims(ctx.db, {
     status: "live",
     subject,

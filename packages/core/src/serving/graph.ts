@@ -172,10 +172,10 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
     ctx = normalized.ctx;
     const request = normalized.args as unknown as GraphArgs;
       const grant: Grant = ctx.principal.grant;
-      const id = identifier("id", request.id);
       const depth = depthOf(request.depth);
       const kinds = kindsOf(request.kinds);
       if (normalized.anchor !== undefined) return readScopedGraph(ctx, normalized.anchor, depth, kinds);
+      const id = identifier("id", request.id);
 
       const walked =
         kinds === undefined && !requiresClassScopedGraph(ctx)
