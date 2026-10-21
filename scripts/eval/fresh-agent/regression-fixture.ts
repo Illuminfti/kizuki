@@ -37,17 +37,23 @@ if (mode === "host") {
   try {
     const question = fixture.questions.find(question => question.id === "now")!;
     const ctx = { db: fixture.db, vaultPath: fixture.vaultPath, principal: OWNER };
-    const fallback = await serveContextPacket({ ...ctx, retrievalUnavailable: true }, { query: question.query, purpose: "recall", budget_tokens: 2000 });
+    // An explicit canon request exercises the usable lexical fallback within
+    // budget. Default recall also includes whole qualified world relations;
+    // this persona legitimately overflows that same budget.
+    const fallbackContext = { ...ctx, retrievalUnavailable: true as const };
+    const request = { query: question.query, purpose: "recall" as const, budget_tokens: 2000 };
+    const fallback = await serveContextPacket(fallbackContext, { ...request, include: ["canon"] });
+    const bounded = await serveContextPacket(fallbackContext, request);
     const { data, ...noData } = fallback;
     const statuses = [packetObservation(noData).status,
       packetObservation({ ...fallback, data: { ...data!, packet_md: "", truncated: true } }).status,
       packetObservation(fallback).status,
-      packetObservation({ ...fallback, data: { ...data!, truncated: true } }).status];
+      packetObservation(bounded).status];
     // A broken deterministic floor produces Core's real context-unavailable envelope.
     fixture.db.exec("DROP TABLE search_docs; CREATE TABLE search_docs (broken TEXT)");
     const observation = await observe(fixture, "owner", "context_packet", question, root);
     const summaries = summarize([scoreObservation(fixture.facts, question, "owner", "context_packet", observation)]);
-    writeFileSync(join(root, "regression.json"), JSON.stringify({ statuses, fallback, observation, summaries }));
+    writeFileSync(join(root, "regression.json"), JSON.stringify({ statuses, fallback, bounded, observation, summaries }));
     exitCode = evaluationExitCode({ summaries });
   } finally { fixture.db.close(); }
   process.exit(exitCode);

@@ -143,6 +143,7 @@ const VIEW_TOKEN = z.strictObject({ kind: z.literal("view"), token: WIRE_TOKEN }
 
 const PACKET_CONTENT_V2 = z.strictObject({
   packetMd: z.string(),
+  servedUnits: z.int().min(0),
   tokens: z.int().min(0),
   budgetTokens: z.int().min(50).max(2000),
   tokenizer: z.string(),
@@ -155,7 +156,7 @@ const PACKET_DATA_V2 = z.strictObject({
   result: z.discriminatedUnion("status", [
     z.strictObject({ status: z.literal("current"), view: VIEW_TOKEN, data: PACKET_CONTENT_V2, validUntil: z.string() }),
     z.strictObject({ status: z.literal("unchanged"), view: VIEW_TOKEN, validUntil: z.string() }),
-    z.strictObject({ status: z.literal("incomplete"), data: PACKET_CONTENT_V2, reasons: z.array(worldGaps).max(5) }),
+    z.strictObject({ status: z.literal("incomplete"), data: PACKET_CONTENT_V2, reasons: z.array(worldGaps.or(z.literal("storage"))).max(5) }),
   ]),
 });
 

@@ -151,10 +151,12 @@ pretending that calling a schema validator alone tests the adapter.
 Generic MCP and standing HTTP serving failures fail the campaign, even when
 the adapter encodes them as an error result, HTTP 400, or an internal-error
 denial or context-unavailable degradation inside a successful envelope. An
-owner envelope reports the failure as an `error` denial, and an agent envelope,
-which hides denials, as the degradation; regressions damage synthetic storage
-and cover both, for MCP and standing HTTP. Only trusted envelope fields are
-read, never captured text.
+owner envelope reports the failure as an `error` denial. A scoped v2 packet,
+which hides denials, uses an incomplete result with the packet-specific reason
+`storage`; ordinary incomplete coverage is not a crash. An independently
+authorized task can remain in that partial packet. Regressions damage synthetic
+storage and cover both principals, for MCP and standing HTTP. Only trusted
+envelope fields are read, never captured text or words inside packet content.
 
 The first app campaign did not exercise the app. It created a vault directory
 but no ledger, so nearly every authorized route answered `no_vault`, which a

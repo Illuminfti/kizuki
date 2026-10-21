@@ -98,6 +98,16 @@ test("unavailable packets fail observation, summary and the command exit gate; u
     expect(code).toBe(1);
     expect(data.statuses).toEqual(["skip:unavailable", "skip:unavailable", "ok", "truncated"]);
     expect(data.fallback.data.retrieval_degraded).not.toContain("context-unavailable");
+    expect(data.fallback.data.retrieval_degraded).toContain("retrieval-unavailable");
+    expect(data.fallback.data.truncated).toBe(false);
+    expect(data.fallback.quoted.length).toBeGreaterThan(0);
+    expect(data.fallback.data.tokens_estimate).toBeLessThanOrEqual(2000);
+    // Measure a real overflow instead of relabeling a complete packet. It
+    // remains usable, but must never be reported as complete by the scorer.
+    expect(data.bounded.data.truncated).toBe(true);
+    expect(data.bounded.data.retrieval_degraded).toContain("required_context_overflow");
+    expect(data.bounded.data.retrieval_degraded).not.toContain("context-unavailable");
+    expect(data.bounded.data.tokens_estimate).toBeLessThanOrEqual(2000);
     expect(data.observation.status).toBe("skip:unavailable");
     expect(JSON.parse(data.observation.output).data.retrieval_degraded).toContain("context-unavailable");
     expect(data.summaries.find((row: { principal: string; surface: string }) => row.principal === "owner" && row.surface === "context_packet").failures).toBe(1);
