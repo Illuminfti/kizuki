@@ -48,6 +48,8 @@ export interface KindAssembler {
   /** False when this card has no summary field and cannot consume consolidation. */
   readonly consolidation?: boolean;
   assemble(input: CardInput): AssembledCard;
+  /** Classify complete projected relations for task slices; absent means no provider. */
+  readonly sliceConstraint?: (relation: Relation) => boolean;
 }
 
 /**

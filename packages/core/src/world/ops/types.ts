@@ -97,6 +97,8 @@ export interface WorldOpKeys {
 
 /** What an operation that reads claims runs against: the live principal and its authorization namespace. */
 export interface WorldFrame {
+  /** Core-only nested read sharing the parent gate, byte budget and independent dependency closures. */
+  readonly read?: (input: WorldRecord, options?: { readonly retain: boolean }) => { readonly data: import("../../serving/world-view").WorldReadResult; readonly quoted: readonly WorldEvidenceSource[] };
   readonly ctx: ServeContext;
   readonly ns: WorldNamespace;
   /** The operations the reader dispatches over; `share` and `resume` look their target up here. */

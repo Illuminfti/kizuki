@@ -41,8 +41,15 @@ reports the external original as unavailable. A world diff starts unchanged,
 then names the new assertion after revision. An owner correction with pending
 consolidation returns the incomplete fresh card instead of a complete diff.
 
-Grant narrowing invalidates the scoped client's retained view, resume handle
-and known snapshot. Old evidence resolves without exposing the source. The owner
+Task Slice uses the same public relation and evidence projection, including the
+connector-created ArtifactVersion binding. Atlas starts with an empty change
+panel and names the actual new assertion after revision. Budget refusal is an
+explicit unavailable result, without a retained complete view.
+
+Grant narrowing invalidates the scoped client's retained card and Slice views,
+resume handle and known snapshot. Atlas refuses the old comparison baseline
+without returning its previous contents. Old evidence resolves without exposing
+the source. The owner
 positive control remains readable. Supported world rebuild and backup/restore
 preserve fresh readable assertions while invalidating old capabilities; snapshots
 exclude agent credentials and require fresh enrollment. Finally, source
@@ -59,8 +66,15 @@ bun test packages/mcp/test/golden-rich-journey.test.ts
 
 This variant uses the same vault and full sequence as the common journey, with
 Decision and Procedure enabled only in the existing isolated test registry. The
-model fixture deliberately misreads a tentative idea as decided. An exact owner
-mode correction moves it into uncertainty for both clients; receipt undo restores
+source explicitly gives its rich assertions an ongoing interval. A reported
+blocker reaches both task Slice and session v2 as the same qualified relation
+and evidence; its full-source evidence expands through MCP. The small session
+budget returns mandatory-context overflow without claiming completeness. This
+comparison uses compatible current-time semantics: unknown validity is not
+substituted for a known ongoing interval.
+
+The model fixture deliberately misreads a tentative idea as decided. An exact
+owner mode correction moves it into uncertainty for both clients; receipt undo restores
 the original claim. Three separately enrolled agents capture distinct synthetic
 Outcome sources. A same-source observation cannot establish independence; a new
 observation from the observer's own source can. Procedure usefulness then changes
@@ -72,9 +86,8 @@ in that same journey.
 
 ## Remaining composed coverage
 
-The final composed SLICE and attention stages still require their
-merged product revision. Candidate-registry integration
-may use the existing isolated test seam, with shipped offered flags unchanged;
+The attention stages still require their final composed product revision.
+Candidate-registry integration may use the existing isolated test seam, with shipped offered flags unchanged;
 real held-out qualification is a separate prerequisite for activation.
 
 Do not count a static scenario, a skipped stage or an unexecuted fixture as

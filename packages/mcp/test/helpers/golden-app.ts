@@ -12,7 +12,8 @@ import { envelopeOf } from "../client";
 export const LABEL = "Orchard request queue";
 export const ORIGINAL = `queue.md: ${LABEL} is a queue that stores requests in arrival order.`;
 export const REVISED = `queue.md: ${LABEL} orders equal-priority requests by their arrival sequence.`;
-export const RICH = ORIGINAL + "\nOrchard release is a project to deliver receipts. We might use format X. Verify delivery receipt: 1. Read the receipt. 2. Check required fields.";
+export const RICH = ORIGINAL + "\nFrom 2026-10-01T00:00:00.000Z onwards: Orchard release is a project to deliver receipts. We might use format X. Verify delivery receipt: 1. Read the receipt. 2. Check required fields. The project is reportedly blocked by an unavailable loading bay.";
+export const BLOCKER = "An unavailable loading bay";
 export const WHEN = { valid: { kind: "all" }, knownAt: { kind: "current" } } as const;
 const policy: SourceGrantPolicy = { purposes: ["capture", "recall", "session", "correction", "audit", "derive", "extract", "export"],
   allowed_fields: ["text", "subjects", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" };
@@ -42,11 +43,12 @@ function extraction(request: SeenRequest): Response {
     const event = richEvent[2]!, whole = { event_id: event, start_utf16: 0, end_utf16: RICH.length };
     const mention = (label: string) => { const id = `m${mentions.length}`, start = RICH.indexOf(label); const anchor = { event_id: event, start_utf16: start, end_utf16: start + label.length }; mentions.push({ id, label, anchor, candidate_refs: [] }); return { ref: { kind: "mention", id }, anchor }; };
     const situation = mention("Orchard release"), decision = mention("format X"), procedure = mention("Verify delivery receipt");
-    const add = (node: ReturnType<typeof mention>, predicate: string, object: unknown, related?: ReturnType<typeof mention>) => claims.push({ id: `c${claims.length}`, subject: node.ref, predicate, object,
-      perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] }, context: [], polarity: "positive", body: predicate,
-      valid_from: null, valid_to: null, temporal_basis: "unknown", confidence: .7, sensitivity: "private", anchors: [node.anchor, ...(related ? [related.anchor] : []), whole] });
+    const add = (node: ReturnType<typeof mention>, predicate: string, object: unknown, related?: ReturnType<typeof mention>, mode = "asserted") => claims.push({ id: `c${claims.length}`, subject: node.ref, predicate, object,
+      perspective: { holder: null, speaker: null, addressee: null, mode, interpretation: "explicit", anchors: [] }, context: [], polarity: "positive", body: predicate,
+      valid_from: "2026-10-01T00:00:00.000Z", valid_to: null, temporal_basis: "explicit", confidence: .7, sensitivity: "private", anchors: [node.anchor, ...(related ? [related.anchor] : []), whole] });
     const vocabulary = (id: string) => ({ kind: "vocabulary", ref: { kind: "vocabulary", id } }), literal = (value: string) => ({ kind: "literal", value });
     add(situation, "world.kind", vocabulary("world/situation")); add(situation, "situation.label", literal("Orchard release")); add(situation, "situation.objective", literal("Deliver receipts"));
+    add(situation, "situation.blocker", literal(BLOCKER), undefined, "reported");
     add(situation, "situation.has_decision", { kind: "subject", ref: decision.ref }, decision);
     add(decision, "world.kind", vocabulary("world/decision")); add(decision, "decision.label", literal("Receipt format"));
     // Deliberate model mistake: the source says might. The owner must be able to correct this exact mode.
@@ -118,7 +120,7 @@ export async function goldenApp(options: { rich?: boolean } = {}) {
       const before = endpoint.requests.length, local = await operate("run_pass");
       expect(local.run.model_calls).toBe(0); expect(endpoint.requests.length).toBe(before);
       await call("source_model_consent", { source_key: source, expected_revision: 1, expected_model_revision: model.revision, operation_id: "golden-model-consent", allow: true });
-      const initial = await operate("run_pass"); expect(initial.run.claims_extracted).toBe(options.rich ? 14 : 3); expect(initial.run.canon_writes).toBeGreaterThan(0);
+      const initial = await operate("run_pass"); expect(initial.run.claims_extracted).toBe(options.rich ? 15 : 3); expect(initial.run.canon_writes).toBeGreaterThan(0);
       return { source, initial };
     },
   };

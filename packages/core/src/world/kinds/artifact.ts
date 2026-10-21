@@ -3,6 +3,7 @@ import { sealCard, type KindAssembler } from "./kit";
 
 export const artifactAssembler: KindAssembler = {
   kind: "artifact_version", consolidation: false,
+  sliceConstraint: relation => ["artifact.version_of", "artifact.feedback"].includes(relation.predicate),
   assemble({ node, own, coverage }) {
     const asserted = own.filter(row => row.polarity === "positive" && row.perspective.mode === "asserted");
     const literal = (predicate: string): string | null => {

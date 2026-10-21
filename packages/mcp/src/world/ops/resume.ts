@@ -12,11 +12,11 @@ export const shareFragment: McpWorldOp = {
   name: "share",
   fields: { of: z.record(z.string(), z.unknown()).optional() },
   data: { "kizuki.resume-handle/v1": { handle: WIRE_TOKEN, expiresAt: z.string() } },
-  summary: "share takes of:{operation:concept|situation|question|person, concept|situation|question|person:objectRef} and returns a portable handle with no authority.",
+  summary: "share: of:{operation,objectField:ref}; handle carries no authority.",
 };
 export const resumeFragment: McpWorldOp = {
   name: "resume",
   fields: { handle: WIRE_TOKEN.optional() },
   data: { ...conceptFragment.data, ...situationFragment.data, ...questionFragment.data, ...personFragment.data, ...procedureFragment.data, ...skillFragment.data, ...frameworkFragment.data, ...artifactFragment.data },
-  summary: "resume reads the shared object under your own grant; narrower scope adds the coverage gap. priorView can test a complete baseline without extending its lifetime.",
+  summary: "resume: handle under your grant; priorView never renews expiry.",
 };

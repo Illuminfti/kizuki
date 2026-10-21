@@ -37,6 +37,8 @@ function meaning(value: any): any {
 function cliArgs(name: VerificationOperation, input: Record<string, any>): string[] {
   switch (name) {
     case "concept": case "situation": case "question": case "person": case "procedure": case "skill": case "framework": return ["--ref", input[name].token];
+    case "atlas": return ["--panel", input.panel];
+    case "slice": return ["--task", input.task, "--budget-tokens", String(input.budgetTokens), "--kinds", input.kinds.join(",")];
     case "artifact_version": return ["--ref", input.artifact.token];
     case "history": return ["--ref", input.concept.token];
     case "find_concepts": case "find_situations": case "find_questions": case "find_people": case "find_procedures": case "find_artifacts": return ["--label", input.label];
@@ -64,6 +66,8 @@ const TEXT: Record<VerificationOperation, readonly string[]> = {
   skill: ["skill:inspection", "Independent mastery: unknown", "Coverage:"],
   framework: ["framework:quality", "Nested component", "Coverage:"],
   outcome: ["Outcome evidence", "agent_reported", "independent: false", "Coverage:"],
+  atlas: ["Atlas", "People", "Coverage:"],
+  slice: ["Task: Resume the launch", "Coverage:"],
   find_artifacts: ["Artifact"], artifact_version: ["Artifact", "text/markdown", "Coverage:"],
   diff: ["Unchanged since the prior view."],
 };

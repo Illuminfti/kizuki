@@ -1,3 +1,5 @@
+import { atlasFragment } from "./atlas";
+import { sliceFragment } from "./slice";
 import { personFragment, findPeopleFragment } from "./person";
 import { procedureFragment, findProceduresFragment, skillFragment, frameworkFragment, outcomeFragment } from "./skills";
 import { historyFragment } from "./history";
@@ -40,7 +42,9 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   // slot: DIFF
   diffFragment,
   // slot: SLICE
+  sliceFragment,
   // slot: ATTN
   // slot: FCST
   // slot: ATLAS
+  atlasFragment,
 ];

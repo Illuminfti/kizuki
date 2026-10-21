@@ -7,6 +7,7 @@ import { envelopeOf } from "../client";
 import { goldenApp, LABEL, ORIGINAL, REVISED, RICH, WHEN, world } from "./golden-app";
 import { assertObservedProcedure, decisionStage, outcomeStage } from "./golden-rich-stages";
 import { exactArtifact } from "./golden-artifact";
+import { atlasChange, contextErased, contextRefusal, contextStage } from "./golden-context";
 
 /** One disposable vault, actual App capture/writer, and independent MCP clients throughout. */
 export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.envelope/v2", rich = false) {
@@ -26,6 +27,8 @@ export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.
     const first = (await world(owner, { operation: "concept", concept: ref })).result;
     expect(first.status).toBe("current"); expect(first.data.definitions[0].object.value).toBe(ORIGINAL);
     expect(first.view.kind).toBe("view");
+    await atlasChange(owner, ref, first.view);
+    const peerSlice = await contextStage(owner, peer, rich);
     expect((await world(owner, { operation: "diff", of: { operation: "concept", concept: ref }, priorView: first.view })).result)
       .toEqual({ status: "unchanged", view: first.view, validUntil: first.validUntil });
     const shared = (await world(owner, { operation: "share", of: { operation: "concept", concept: ref } })).result.data.handle;
@@ -67,6 +70,7 @@ export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.
     const changed = (await world(owner, { operation: "diff", of: { operation: "concept", concept: ref }, priorView: first.view })).result;
     expect(changed.status).toBe("current"); expect(changed.data.schema).toBe("kizuki.world-diff/v1");
     expect(changed.data.added).toContainEqual(correctionTarget.claim); expect(changed.data.truncated).toBe(false);
+    await atlasChange(owner, ref, first.view, correctionTarget.claim);
     expect((await world(owner, { operation: "diff", of: { operation: "concept", concept: ref }, priorView: changed.view })).result.status).toBe("unchanged");
     const artifactAfter = await exactArtifact(owner, REVISED);
     expect(artifactAfter.content.sha256).not.toBe(artifactBefore.content.sha256);
@@ -98,6 +102,7 @@ export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.
     expect(narrowed.exitCode, narrowed.stderr).toBe(0);
     const noResume = (await world(peer, { operation: "resume", handle: shared })).result;
     expect(noResume).toEqual({ status: "new_view_required" });
+    await contextRefusal(peer, peerSlice, peerRef, peerBaseline.view);
     for (const input of [{ operation: "concept", concept: peerRef, priorView: peerBaseline.view }, { operation: "concept", concept: peerRef, knownAt: { kind: "snapshot", ref: history.snapshot } }, { operation: "evidence", evidence }]) {
       const response = await peer.call("world_view", { ...WHEN, ...input, response_contract: "kizuki.envelope/v2" });
       const text = JSON.stringify(response); expect(text).not.toContain(ORIGINAL); expect(text).not.toContain(REVISED); expect(text).not.toContain(LABEL);
@@ -140,6 +145,7 @@ export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.
       expect(erasedDb.query("SELECT count(*) AS n FROM world_consolidation").get()).toEqual({ n: 0 });
     } finally { erasedDb.close(); }
     expect((await world(owner, { operation: "find_concepts", label: LABEL })).result.data.matches).toHaveLength(0);
+    await contextErased(owner);
     expect(initial.run.model_calls).toBeGreaterThan(0); expect(f.counts().summaryCalls).toBeGreaterThan(1);
   } finally { hold?.release(); await f.close(); }
 }

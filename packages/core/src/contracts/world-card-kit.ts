@@ -19,6 +19,7 @@ import {
 } from "../util/validate";
 import type { ExactJsonLimits } from "../util/validate";
 import { isAuthorityTier } from "./proposal";
+import { isClaimLiteralText } from "./claim-v2";
 import type { AuthorityTier } from "./proposal";
 
 export const KNOWLEDGE_NODE_SCHEMA = "kizuki.knowledge-node/v1" as const;
@@ -369,7 +370,7 @@ function relationObject(value: unknown): value is RelationObject {
     return exact(value, ["kind", "ref"]) && wireRef(value.ref, "object");
   }
   if (value.kind === "literal") {
-    return exact(value, ["kind", "value"]) && boundedText(value.value, 400);
+    return exact(value, ["kind", "value"]) && isClaimLiteralText(value.value);
   }
   return (
     value.kind === "vocabulary" &&

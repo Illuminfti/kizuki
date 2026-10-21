@@ -13,7 +13,7 @@ export const questionFragment: McpWorldOp = {
     lifecycle: z.strictObject({ status: z.enum(["open", "partial", "resolved", "reopened", "abandoned"]), grounds: z.array(worldRef("claim")).max(256) }),
     understanding: z.literal("unknown"),
   } },
-  summary: "question reads an attributable Question, candidate answers and derived lifecycle; resolution does not imply owner understanding.",
+  summary: "question: attributed answers/lifecycle; resolution is not understanding.",
 };
 export const findQuestionsFragment: McpWorldOp = {
   name: "find_questions", fields: QUERY,
@@ -21,7 +21,7 @@ export const findQuestionsFragment: McpWorldOp = {
     matches: z.array(z.strictObject({ ref: WORLD_OBJECT_REF, labels: z.array(z.string().max(400)).max(256) })).max(32),
     cursor: WIRE_TOKEN.nullable(), coverage: worldCoverage,
   } },
-  summary: "find_questions lists scoped Questions by optional label and about object, with a bounded cursor page.",
+  summary: "find_questions: label/about pages.",
 };
 export const frontierFragment: McpWorldOp = {
   name: "frontier", fields: QUERY,
@@ -31,5 +31,5 @@ export const frontierFragment: McpWorldOp = {
       questions: z.array(WORLD_OBJECT_REF).max(32),
     })).max(7), cursor: WIRE_TOKEN.nullable(), coverage: worldCoverage,
   } },
-  summary: "frontier groups attributable gaps by kind; coverage stays partial while question extraction or source coverage is incomplete.",
+  summary: "frontier: grouped gaps; unfinished extraction stays partial.",
 };
