@@ -22,11 +22,11 @@ export async function cardFixture(database?: Database) {
     subject?: string; polarity?: "positive" | "negative"; context?: string[];
     from?: string | null; until?: string | null; text?: string; metadata?: Record<string, unknown>;
     floor?: "public" | "private"; mode?: ClaimV2Assertion["perspective"]["mode"];
-    speaker?: string;
+    speaker?: string; holder?: string;
     span?: { start: number; end: number };
   } = {}) {
     const subject = options.subject ?? "topic:bayes";
-    const ids = [subject, ...(object.kind === "subject" ? [object.ref.id] : []), ...(options.context ?? []), ...(options.speaker ? [options.speaker] : [])];
+    const ids = [subject, ...(object.kind === "subject" ? [object.ref.id] : []), ...(options.context ?? []), ...(options.speaker ? [options.speaker] : []), ...(options.holder ? [options.holder] : [])];
     const result = accept(db, {
       ...validEvent(), connector_id: connector, source_record_id: ulid(), kind: "note",
       text: options.text ?? `Evidence for ${predicate}: ${JSON.stringify(object)}.`,
@@ -36,8 +36,8 @@ export async function cardFixture(database?: Database) {
     if (result.status !== "stored") throw new Error("card evidence was not stored");
     const semantic: ClaimV2Assertion = {
       schema: "kizuki.claim/v2", discriminator: "assertion", subject: ref(subject), predicate, object,
-      perspective: { holder: null, speaker: options.speaker ? ref(options.speaker) : null, addressee: null,
-        mode: options.mode ?? "asserted", interpretation: "explicit", anchors: options.speaker ? [{ event_id: result.event.event_id, start_utf16: 0, end_utf16: result.event.text.length }] : [] },
+      perspective: { holder: options.holder ? ref(options.holder) : null, speaker: options.speaker ? ref(options.speaker) : null, addressee: null,
+        mode: options.mode ?? "asserted", interpretation: "explicit", anchors: options.speaker || options.holder ? [{ event_id: result.event.event_id, start_utf16: 0, end_utf16: result.event.text.length }] : [] },
       context: (options.context ?? []).map(ref), polarity: options.polarity ?? "positive",
       valid_from: options.from === undefined ? "2026-01-01T00:00:00.000Z" : options.from,
       valid_to: options.until ?? null, temporal_basis: options.from === null ? "unknown" : "explicit",

@@ -40,9 +40,9 @@ function snapshot(
   if (ref !== null) retainKnownSnapshotDependency(frame, ref, handle, when.valid, reused?.cutoff ?? cutoff, reused !== null);
   return ref;
 }
-export function readKnownCard(frame: WorldFrame, handle: string, kind: "concept" | "situation" | "question", when: WorldWhen): WorldOpOutcome {
+export function readKnownCard(frame: WorldFrame, handle: string, kind: "concept" | "situation" | "question", when: WorldWhen, cardSchema?: string): WorldOpOutcome {
   if (when.knownAt.kind === "current") {
-    const card = projectWorldCard(frame.ctx, frame.ns, handle, kind, when.valid, frame.dependencies);
+    const card = projectWorldCard(frame.ctx, frame.ns, handle, kind, when.valid, frame.dependencies, undefined, cardSchema);
     return card === null ? NOT_FOUND : coveredOutcome(card);
   }
   const cutoff = resolve(frame, handle, when);
@@ -53,7 +53,7 @@ export function readKnownCard(frame: WorldFrame, handle: string, kind: "concept"
     throw error;
   }
   if (frame.dependencies !== undefined) frame.dependencies.cutoff = cutoff;
-  const card = projectWorldCard(frame.ctx, frame.ns, handle, kind, when.valid, frame.dependencies, { kind: "recorded", ...cutoff });
+  const card = projectWorldCard(frame.ctx, frame.ns, handle, kind, when.valid, frame.dependencies, { kind: "recorded", ...cutoff }, cardSchema);
   if (card === null) return NOT_FOUND;
   const body = (ref: WorldSnapshotRef) => ({ ...card, knownAt: { kind: "snapshot" as const, ref }, coverage: { ...card.coverage, history: baseline || card.coverage.history === "baseline_only" ? "baseline_only" as const : "retained_for_query" as const } });
   const ref = snapshot(frame, handle, when, cutoff, card.coverage.status === "complete_for_query", kind, body);

@@ -16,6 +16,7 @@ export interface ProjectedClaim {
 
 /** What enrichers refine before a kind assembles its card. */
 export interface CardBody {
+  readonly situationV2?: import("../situation-v2").SituationDetails;
   readonly claims: readonly ProjectedClaim[];
   /** Gaps beyond source coverage and the traversal bound; they make the card partial. */
   readonly gaps: readonly ViewGap[];

@@ -1,3 +1,4 @@
+import { situationV2Assembler } from "./situation-v2";
 import { conceptAssembler } from "./concept";
 import type { KindAssembler } from "./kit";
 import { situationAssembler } from "./situation";
@@ -16,5 +17,6 @@ export const KIND_ASSEMBLERS: readonly KindAssembler[] = [
   // slot: people
   // slot: skill
   // slot: sit2
+  situationV2Assembler,
   // slot: art
 ];

@@ -44,6 +44,7 @@ export function createWorldCommand(entries: readonly WorldCliEntry[]): Command {
         input.priorView = { kind: "view", token: prior };
       }
       if (parsed.flags.has("--share")) {
+        if (built.card !== undefined) throw new UsageError("--card cannot be combined with --share; share the Situation and select the card on a fresh read");
         if ((op.name !== "concept" && op.name !== "situation") || prior !== undefined) throw new UsageError(usage);
         input = { operation: "share", of: { operation: op.name, [op.name]: built[op.name] }, valid: built.valid, knownAt: built.knownAt };
       }

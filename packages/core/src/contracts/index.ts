@@ -10,6 +10,7 @@ export * from "./claim-v2";
 export * from "./durable-observation";
 export * from "./concept-card";
 export * from "./situation-card";
+export * from "./situation-card-v2";
 export * from "./notifier";
 export * from "./storage";
 export * from "./surface";
