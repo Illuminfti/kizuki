@@ -17,7 +17,7 @@ export interface RunOptions {
   allow_remote?: boolean; output?: string; case_ids?: readonly string[];
   extensions?: readonly string[];
 }
-interface Trace { case_id: string; started_at: string; completed_at: string | null; request_sha256: string; response_sha256: string | null; transport: "pending" | "ok" | "failed" }
+interface Trace { case_id: string; prompt_sha256: string; started_at: string; completed_at: string | null; request_sha256: string; response_sha256: string | null; transport: "pending" | "ok" | "failed" }
 
 /** Header-only credential. Never copy the file path, value or request headers into a receipt. */
 function credential(path: string | undefined): string | null {
@@ -50,11 +50,12 @@ export async function runQualification(options: RunOptions) {
   const observations: Observation[] = [], traces: Trace[] = [];
   const first = selected[0];
   const prompt = first === undefined ? null : sha256(extractionV2SystemContent(caseInput(first, registry)));
+  const promptByCase = Object.fromEntries(selected.map(item => [item.id, sha256(extractionV2SystemContent(caseInput(item, registry)))]));
   const report = () => ({ schema: "kizuki.world-qualification-run/v1" as const,
     evidence: "runner_observed_transport" as const, synthetic: true, selected_kinds: [...options.kinds], selected_extensions: [...(options.extensions ?? [])],
     model: options.model ?? null, endpoint_host: options.base_url === undefined ? null : new URL(options.base_url).host,
     ...sourceProvenance(),
-    runner_sha256: runnerDigest(), registry_sha256: registryDigest(registry), prompt_sha256: prompt,
+    runner_sha256: runnerDigest(), registry_sha256: registryDigest(registry), prompt_sha256: prompt, prompt_sha256_by_case: promptByCase,
     corpus: qualificationCorpus, observations, traces, missing,
     limitations: ["Typed semantic extraction only; free-text rendering, durable filing and consumer behavior require their separate gates.",
       "Transport observation alone does not establish provider identity. Reviewed endpoint/service evidence must accompany an approved report hash.",
@@ -86,8 +87,8 @@ export async function runQualification(options: RunOptions) {
       lastStart = Date.now();
       const started_at = new Date().toISOString();
       const first = (request.body as { messages: { role: string; content: string }[] }).messages[0];
-      if (first?.role !== "system" || sha256(first.content) !== prompt) throw new Error("qualification prompt changed");
-      const trace: Trace = { case_id: activeCase, started_at, completed_at: null, request_sha256: sha256(canonicalJson(request.body)), response_sha256: null, transport: "pending" };
+      if (first?.role !== "system" || sha256(first.content) !== promptByCase[activeCase]) throw new Error("qualification prompt changed");
+      const trace: Trace = { case_id: activeCase, prompt_sha256: promptByCase[activeCase]!, started_at, completed_at: null, request_sha256: sha256(canonicalJson(request.body)), response_sha256: null, transport: "pending" };
       traces.push(trace); save();
       const response = await fetchTransport(request);
       trace.completed_at = new Date().toISOString();
