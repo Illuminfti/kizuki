@@ -36,7 +36,7 @@ const NOW = "2026-09-29T12:00:00.000Z";
 export function persona(size: PersonaSize) {
   const facts: Fact[] = [
     { id: "owner-role", value: "municipal bridge engineer", state: "current", access: "shared" },
-    { id: "collaborator", value: "Grace coordinates the survey team", state: "current", access: "shared" },
+    { id: "collaborator", value: "Grace coordinates the Orchard survey team", state: "current", access: "shared" },
     { id: "proposed-relationship", value: "Ada collaborates with Grace", state: "current", access: "owner_only" },
     { id: "objective", value: "restore the orchard footbridge", state: "current", access: "shared" },
     { id: "commitment", value: "deliver the survey by 2026-10-04", state: "current", access: "shared" },

@@ -4,7 +4,7 @@ import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { Database } from "bun:sqlite";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createHelpers } from "./helpers";
+import { createHelpers, fixtureConsent } from "./helpers";
 import { assertBoundVaultId, openLedgerRead } from "@kizuki/core/internal";
 import { doctorVault } from "@kizuki/core";
 
@@ -92,8 +92,20 @@ test("missing authoritative schema is typed migration-required without repair", 
   expect(result.exitCode).toBe(1); expect(result.stderr).toContain("migration_required"); expect(result.stdout).toBe("");
 });
 
-test("missing optional FTS stays absent and configured PG stays unopened with explicit degradation", () => {
+test("missing optional FTS on an empty corpus stays absent without an omission flag", () => {
   const f = h.tempVault(), writer = new Database(join(f.vault, ".kizuki/kizuki.db"));
+  writer.exec("DROP TABLE search_docs"); writer.close();
+  const before = observe(f.vault), tree = files(f.vault);
+  const result = h.runCli(f.env, "query", "synthetic", "--json");
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout).degraded).toEqual([]);
+  expect(observe(f.vault).schema).toEqual(before.schema); expect(files(f.vault)).toEqual(tree);
+});
+
+test("missing optional FTS with readable evidence stays absent and configured PG stays unopened with explicit degradation", () => {
+  const f = h.tempVault();
+  expect(h.runCli(f.env, "import", "markdown-folder", "--source", f.notes, ...fixtureConsent(f.root)).exitCode).toBe(0);
+  const writer = new Database(join(f.vault, ".kizuki/kizuki.db"));
   writer.exec("DROP TABLE search_docs"); writer.close();
   const before = observe(f.vault), tree = files(f.vault);
   const missing = h.runCli(f.env, "query", "synthetic", "--json");

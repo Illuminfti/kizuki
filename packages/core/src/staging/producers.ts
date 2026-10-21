@@ -1,3 +1,4 @@
+import { pageClaimKey } from "../claims/hash";
 import { subjectPageType } from "../vault/subject-type";
 import type { Database } from "bun:sqlite";
 import type { CaptureEvent, SubjectRef } from "../contracts/event";
@@ -106,6 +107,14 @@ function captureNoteProposal(event: CaptureEvent): ProposalInput {
     clipped.length < event.text.length
       ? " Quoted text truncated to the capture-note budget."
       : "";
+  // File records are snapshots of one mutable document. Keep their source
+  // identity in the same scoped revision family as typed page imports, while
+  // retaining quoted text and connector-evidence authority.
+  const fileRecord = event.kind === "file";
+  const revision = event.metadata["revision_epoch"];
+  const sourceRevision = fileRecord && typeof revision === "number" &&
+    Number.isSafeInteger(revision) && revision > 0 && revision <= 1_000_000
+    ? revision : undefined;
   const header = `Captured from \`${event.connector_id}\` (${event.kind}) at ${event.occurred_at}.${truncated}`;
   const subjects = event.subjects
     .slice(0, DETERMINISTIC_PRODUCER_BUDGET.maxSubjectsPerEvent)
@@ -119,7 +128,10 @@ function captureNoteProposal(event: CaptureEvent): ProposalInput {
       title: `Capture from ${event.connector_id} at ${event.occurred_at}`,
       "x-connector": event.connector_id,
       "x-capture-kind": event.kind,
+      ...(fileRecord ? { "x-source-record-id": event.source_record_id } : {}),
+      ...(sourceRevision === undefined ? {} : { "x-source-revision": sourceRevision }),
     },
+    ...(fileRecord ? { claim_key: pageClaimKey(event.connector_id, event.source_record_id) } : {}),
     provenance: [event.event_id],
     subjects,
     producer: "deterministic",

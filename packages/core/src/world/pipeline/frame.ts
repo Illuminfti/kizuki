@@ -27,6 +27,8 @@ export interface ReadFrame {
   readonly cutoff: RecordedCutoff;
   readonly budget: ReadBudget;
   readonly stats: ReadStats;
+  /** A traversed member may have a retained baseline even when the anchor has full history. */
+  historyBaseline: boolean;
   readonly dependencies?: WorldDependencies | undefined;
 }
 
@@ -46,6 +48,7 @@ export function newReadFrame(
     cutoff,
     budget: { bytes: 0 },
     stats: newReadStats(),
+    historyBaseline: false,
     dependencies,
   };
   sink?.push(frame);

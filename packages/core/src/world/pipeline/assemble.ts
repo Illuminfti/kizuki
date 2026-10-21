@@ -40,7 +40,7 @@ export function coverageOf(
     status: gaps.length === 0 ? "complete_for_query" : "partial",
     gaps,
     validWindow: frame.valid,
-    history: frame.cutoff.kind === "current" ? "unavailable" : "retained_for_query",
+    history: frame.cutoff.kind === "current" ? "unavailable" : frame.historyBaseline ? "baseline_only" : "retained_for_query",
   };
 }
 
@@ -90,7 +90,7 @@ export function assembleCard(
     relations,
     summary: body.summary,
     learning: body.learning ?? [],
-    coverage: coverageOf(frame, collection.overflow, body.gaps),
+    coverage: coverageOf(frame, collection.overflow || cluster.overflow === true, body.gaps),
   });
 }
 

@@ -209,7 +209,7 @@ export function correctionKit(db: Database, vaultPath: string, options: Correcti
         },
       },
     );
-    if (stored.outcome !== "stored")
+    if (stored.outcome !== "stored" && stored.outcome !== "duplicate")
       throw new Error(`${spec.predicate} was ${stored.outcome}`);
     bySubject.set(spec.subject, [
       ...(bySubject.get(spec.subject) ?? []),

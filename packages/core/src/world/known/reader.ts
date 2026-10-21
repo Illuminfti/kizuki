@@ -1,13 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { issuedOpaqueFields } from "../../util/issued-opaque";
+import { scopedKnownClaims, checkKnownCoverage } from "./coverage";
 import type { HistoryPage, StateTransition } from "../../contracts/world-history";
 import { validateHistoryPage } from "../../contracts/world-history";
 import { compareRfc3339 } from "../../agents/time";
-import { rawSubjectNamespace } from "../../contracts/claim-v2";
 import { worldDependencies, recordWorldDependencies } from "../dependencies";
 import { heldClaimSql } from "../corroboration";
-import { authorizedClaimSql, validMeaningSql } from "../policy-sql";
-import { anchorOf } from "../pipeline/collect";
+import { validMeaningSql } from "../policy-sql";
 import { eligibleWorldClaim } from "../pipeline/eligible";
 import { coverageOf } from "../pipeline/assemble";
 import { newReadFrame, WorldProjectionBudgetError } from "../pipeline/frame";
@@ -18,28 +17,6 @@ import type { WorldFrame, WorldWhen, WorldOpOutcome, WorldOpData, WorldSnapshotR
 import { issueKnownSnapshot, lookupKnownSnapshot, reuseKnownSnapshot, retainKnownSnapshotDependency } from "./snapshots";
 import { knownSupportSql, resolveKnownTime, WorldHistoryUnavailable, type KnownCutoff } from "./cutoff";
 
-function scopedClaims(frame: WorldFrame, handle: string) {
-  const anchor = anchorOf(frame.ctx.db, handle);
-  if (anchor === null) return null;
-  const claim = authorizedClaimSql(frame.ctx), permitted = knownSupportSql(frame.ctx), held = heldClaimSql("base", permitted);
-  return { sql: `FROM claim_v2_semantics c JOIN claims base USING(claim_id)
-    WHERE base.status<>'purged' AND c.discriminator='assertion' AND ${claim.sql}
-    AND ((c.subject_kind=? AND c.subject_id=? AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=?)
-      OR (json_extract(c.payload,'$.object.ref.kind')=? AND json_extract(c.payload,'$.object.ref.id')=? AND coalesce(json_extract(c.payload,'$.object.ref.namespace'),'')=?))
-    AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}`,
-    bindings: [...claim.bindings, anchor.kind, anchor.id, rawSubjectNamespace(anchor), anchor.kind, anchor.id, rawSubjectNamespace(anchor), ...permitted.bindings, ...held.bindings] };
-}
-/** Complete later admissions prove absence. Baselines cannot prove an earlier past. */
-function checkCoverage(frame: WorldFrame, handle: string, cutoff: KnownCutoff): boolean {
-  const scope = scopedClaims(frame, handle);
-  if (scope === null) return false;
-  const gap = frame.ctx.db.query(`SELECT 1 ${scope.sql} AND (
-    NOT EXISTS(SELECT 1 FROM claim_history_coverage kc WHERE kc.claim_id=c.claim_id)
-    OR EXISTS(SELECT 1 FROM claim_history_coverage kc WHERE kc.claim_id=c.claim_id AND kc.coverage='baseline_only' AND kc.complete_from_sequence>?)) LIMIT 1`)
-    .get(...scope.bindings, cutoff.sequence);
-  if (gap !== null) throw new WorldHistoryUnavailable();
-  return frame.ctx.db.query(`SELECT 1 ${scope.sql} AND EXISTS(SELECT 1 FROM claim_history_coverage kc WHERE kc.claim_id=c.claim_id AND kc.coverage='baseline_only') LIMIT 1`).get(...scope.bindings) !== null;
-}
 function resolve(frame: WorldFrame, handle: string, when: WorldWhen): KnownCutoff | null {
   const cutoff = when.knownAt.kind === "snapshot"
     ? lookupKnownSnapshot(frame.ctx, frame.ns, when.knownAt.ref, handle, when.valid)
@@ -54,7 +31,7 @@ function snapshot(
 ) {
   let reused = when.knownAt.kind === "snapshot" ? null : reuseKnownSnapshot(frame, handle, when.valid, operation, body);
   if (reused !== null) {
-    try { checkCoverage(frame, handle, reused.cutoff); }
+    try { checkKnownCoverage(frame.ctx, handle, reused.cutoff); }
     catch (error) { if (error instanceof WorldHistoryUnavailable) reused = null; else throw error; }
   }
   // resolve() already validated a supplied snapshot in this read transaction.
@@ -71,14 +48,14 @@ export function readKnownCard(frame: WorldFrame, handle: string, kind: "concept"
   const cutoff = resolve(frame, handle, when);
   if (cutoff === null) return { status: "new_view_required" };
   let baseline: boolean;
-  try { baseline = checkCoverage(frame, handle, cutoff); } catch (error) {
+  try { baseline = checkKnownCoverage(frame.ctx, handle, cutoff); } catch (error) {
     if (error instanceof WorldHistoryUnavailable && when.knownAt.kind === "snapshot") return { status: "new_view_required" };
     throw error;
   }
   if (frame.dependencies !== undefined) frame.dependencies.cutoff = cutoff;
   const card = projectWorldCard(frame.ctx, frame.ns, handle, kind, when.valid, frame.dependencies, { kind: "recorded", ...cutoff });
   if (card === null) return NOT_FOUND;
-  const body = (ref: WorldSnapshotRef) => ({ ...card, knownAt: { kind: "snapshot" as const, ref }, coverage: { ...card.coverage, history: baseline ? "baseline_only" as const : "retained_for_query" as const } });
+  const body = (ref: WorldSnapshotRef) => ({ ...card, knownAt: { kind: "snapshot" as const, ref }, coverage: { ...card.coverage, history: baseline || card.coverage.history === "baseline_only" ? "baseline_only" as const : "retained_for_query" as const } });
   const ref = snapshot(frame, handle, when, cutoff, card.coverage.status === "complete_for_query", kind, body);
   if (ref === null) return { status: "unavailable", reason: "history" };
   return coveredOutcome(body(ref));
@@ -103,11 +80,11 @@ export function readKnownHistory(frame: WorldFrame, handle: string, when: WorldW
   const cutoff = resolve(frame, handle, when);
   if (cutoff === null) return { status: "new_view_required" };
   let baseline: boolean;
-  try { baseline = checkCoverage(frame, handle, cutoff); } catch (error) {
+  try { baseline = checkKnownCoverage(frame.ctx, handle, cutoff); } catch (error) {
     if (error instanceof WorldHistoryUnavailable && when.knownAt.kind === "snapshot") return { status: "new_view_required" };
     throw error;
   }
-  const scope = scopedClaims(frame, handle);
+  const scope = scopedKnownClaims(frame.ctx, handle);
   if (scope === null) return NOT_FOUND;
   const deps = frame.dependencies ?? worldDependencies(); deps.cutoff = cutoff;
   const read = newReadFrame(frame.ctx, frame.ns, when.valid, deps, { kind: "recorded", ...cutoff });

@@ -39,3 +39,8 @@ export function hasContextPacketMarker(text: string): boolean {
     text.includes(CONTEXT_PACKET_MARKERS.v2)
   );
 }
+
+/** SQL twin of isMachineOriginPath for a trusted column reference. */
+export function machineOriginSql(column: string): string {
+  return `(${column} = '${AUTO_CANON_PREFIX}' OR ${column} GLOB '${AUTO_CANON_PREFIX}/*' OR ${column} GLOB 'dashboards/brief-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md')`;
+}

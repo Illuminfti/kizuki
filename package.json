@@ -9,6 +9,7 @@
     "typecheck": "bunx tsc --noEmit",
     "verify": "bash scripts/verify.sh",
     "verify:world": "bun scripts/world-verify.ts",
+    "eval:retrieval": "bun scripts/retrieval-quality.ts",
     "build:release": "bun scripts/build-release.ts",
     "smoke:release": "bun scripts/smoke-release.ts",
     "proof:artifact": "bun scripts/stranger-proof.ts",
