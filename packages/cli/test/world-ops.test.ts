@@ -76,6 +76,7 @@ describe("a command-line spec builds only the keys its core operation takes", ()
     ["--task", "Prepare the session"],
     ["--budget-tokens", "2000"],
     ["--kinds", "concept,situation"],
+    ["--subject", "procedure:verify"],
     ["--cursor", SAMPLE_TOKEN],
     ["--about", SAMPLE_TOKEN],
     ["--ref", SAMPLE_TOKEN],

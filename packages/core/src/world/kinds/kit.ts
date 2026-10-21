@@ -1,3 +1,4 @@
+import type { ProcedureUsefulness } from "../../contracts/outcome-card";
 import type { ConceptCoverage, Relation } from "../../contracts/concept-card";
 import type { ConceptLearning } from "../../contracts/concept-card";
 import type { CardSummary } from "../pipeline/enrich";
@@ -19,6 +20,7 @@ export interface CardNode {
 
 /** What the pipeline hands a kind assembler; the assembler decides only how this kind lays it out. */
 export interface CardInput {
+  readonly situationV2?: import("../situation-v2").SituationDetails;
   readonly frame: ReadFrame;
   readonly node: CardNode;
   /** Relations whose subject is the requested endpoint. */
@@ -26,6 +28,8 @@ export interface CardInput {
   /** Every relation the read projected, including those about other endpoints that point here. */
   readonly relations: readonly Relation[];
   readonly summary: CardSummary | null;
+  readonly outcomeUsefulness?: ProcedureUsefulness | undefined;
+  readonly independentSkillClaims?: readonly string[] | undefined;
   readonly coverage: ConceptCoverage;
   readonly learning: readonly ConceptLearning[];
 }
@@ -40,6 +44,7 @@ export interface AssembledCard {
 export interface KindAssembler {
   /** The `WorldKindSpec.id` this assembler serves. */
   readonly kind: string;
+  readonly cardSchema?: string;
   assemble(input: CardInput): AssembledCard;
   /** Classify complete projected relations for task slices; absent means no provider. */
   readonly sliceConstraint?: (relation: Relation) => boolean;

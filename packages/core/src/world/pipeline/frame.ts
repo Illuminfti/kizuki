@@ -25,6 +25,8 @@ export interface ReadFrame {
   readonly ns: WorldNamespace;
   readonly valid: WorldValidQuery;
   readonly cutoff: RecordedCutoff;
+  /** Host-captured current session evaluation; never taken from a world_view argument. */
+  readonly currentOutcomeAt?: string;
   readonly budget: ReadBudget;
   readonly stats: ReadStats;
   /** A traversed member may have a retained baseline even when the anchor has full history. */

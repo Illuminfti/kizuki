@@ -2,7 +2,7 @@ import { z } from "zod";
 import { CURSOR, LABEL, WIRE_TOKEN, WORLD_OBJECT_REF, worldCommon, worldCoverage, worldNode, worldRef, worldRelation } from "./shared";
 import type { McpWorldOp } from "./types";
 
-const ABOUT = WORLD_OBJECT_REF.optional();
+export const ABOUT = WORLD_OBJECT_REF.optional();
 const QUERY = { label: LABEL, cursor: CURSOR, about: ABOUT };
 const relations = z.array(worldRelation).max(256);
 export const questionFragment: McpWorldOp = {

@@ -1,6 +1,6 @@
 import type { PageType } from "../vault/schema";
 
-export type WorldEndpointKind = "raw" | "concept" | "situation" | "person" | "task_context" | "question";
+export type WorldEndpointKind = "raw" | "concept" | "situation" | "person" | "task_context" | "question" | "commitment" | "decision" | "skill" | "framework" | "procedure";
 
 export type WorldObjectKind = "literal" | "concept" | "raw_subject" | "vocabulary";
 

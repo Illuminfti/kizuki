@@ -36,14 +36,15 @@ function meaning(value: any): any {
 
 function cliArgs(name: VerificationOperation, input: Record<string, any>): string[] {
   switch (name) {
-    case "concept": case "situation": case "question": case "person": return ["--ref", input[name].token];
+    case "concept": case "situation": case "question": case "person": case "procedure": case "skill": case "framework": return ["--ref", input[name].token];
     case "slice": return ["--task", input.task, "--budget-tokens", String(input.budgetTokens), "--kinds", input.kinds.join(",")];
     case "history": return ["--ref", input.concept.token];
-    case "find_concepts": case "find_situations": case "find_questions": case "find_people": return ["--label", input.label];
+    case "find_concepts": case "find_situations": case "find_questions": case "find_people": case "find_procedures": return ["--label", input.label];
     case "share": return ["--of-operation", input.of.operation, "--ref", input.of.concept.token];
     case "resume": return ["--resume", input.handle];
     case "evidence": return ["--admission", input.evidence.admission.token, "--event-version", input.evidence.eventVersion.token,
       "--start-utf16", String(input.evidence.span.startUtf16), "--end-utf16", String(input.evidence.span.endUtf16)];
+    case "outcome": return ["--subject", input.subject];
     case "describe": case "frontier": return [];
   }
 }
@@ -57,7 +58,12 @@ const TEXT: Record<VerificationOperation, readonly string[]> = {
   question: ["When should I update a belief?", "Status: open; understanding: unknown", "Coverage:"],
   find_questions: ["When should I update a belief?"], frontier: ["Coverage:"],
   person: ["Ada", "Person:", "Reviewer", "holder=unattributed speaker=unattributed mode=asserted", "Coverage:"],
-  find_people: ["Ada"], slice: ["Task: Resume the launch", "Coverage:"],
+  find_people: ["Ada"], find_procedures: ["procedure:verify"],
+  procedure: ["procedure:verify", "execution authority: none", "Quoted step", "Coverage:"],
+  skill: ["skill:inspection", "Independent mastery: unknown", "Coverage:"],
+  framework: ["framework:quality", "Nested component", "Coverage:"],
+  outcome: ["Outcome evidence", "agent_reported", "independent: false", "Coverage:"],
+  slice: ["Task: Resume the launch", "Coverage:"],
 };
 
 test("every world operation agrees through Core, CLI text and JSON, stdio MCP, HTTP and App", async () => {

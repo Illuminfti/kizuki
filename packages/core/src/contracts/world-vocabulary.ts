@@ -1,8 +1,14 @@
 import { PERSON_VOCABULARY } from "./world-vocab/person";
 import { createWorldRegistry, type WorldRegistry, type WorldVocabularyModule, type WorldVocabularySpec } from "./world-kinds";
+import { COMMITMENT_VOCABULARY } from "./world-vocab/commitment";
+import { DECISION_VOCABULARY } from "./world-vocab/decision";
+import { SITUATION_V2_VOCABULARY } from "./world-vocab/situation-v2";
 import { CONCEPT_VOCABULARY } from "./world-vocab/concept";
 import { LEARNING_VOCABULARY } from "./world-vocab/learning";
 import { SITUATION_VOCABULARY } from "./world-vocab/situation";
+import { SKILL_VOCABULARY } from "./world-vocab/skill";
+import { FRAMEWORK_VOCABULARY } from "./world-vocab/framework";
+import { PROCEDURE_VOCABULARY } from "./world-vocab/procedure";
 import { QUESTION_VOCABULARY } from "./world-vocab/question";
 
 export type { WorldEndpointKind, WorldObjectKind, WorldVocabularySpec } from "./world-kinds";
@@ -25,7 +31,9 @@ export const WORLD_VOCABULARY_MODULES: readonly WorldVocabularyModule[] = [
   // slot: people
   PERSON_VOCABULARY,
   // slot: skill
+  SKILL_VOCABULARY, FRAMEWORK_VOCABULARY, PROCEDURE_VOCABULARY,
   // slot: sit2
+  COMMITMENT_VOCABULARY, DECISION_VOCABULARY, SITUATION_V2_VOCABULARY,
   // slot: art
   // slot: ident
 ];

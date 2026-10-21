@@ -1,3 +1,5 @@
+import { assertSituationAcyclic } from "../world/situation-cycle";
+import type { ClaimVisibility } from "./visibility";
 import { groundingDigest, validateWorldAdmissionProofs, witnessEventIds } from "./world-grounding";
 import type { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
@@ -62,6 +64,7 @@ export interface ClaimV2CommitInput {
   readonly support: ClaimV2SupportAdmission;
   /** The reading scope the caller is authorized for, as `prepareClaimInsert` derives it. */
   readonly scope: SourceReadScope;
+  readonly visibility?: ClaimVisibility;
   /** Present only for the closed world-admission codec, never generic legacy v2. */
   readonly world_admission?: WorldAdmission;
   /** Computed by the shared insertion writer, never accepted from its caller. */
@@ -352,6 +355,7 @@ export function commitClaimV2(
   }
   if (suppliedWorld !== null && mapped.value.discriminator === "assertion") {
     validateWorldAssertionAgainstRegistry(db, suppliedWorld.semantic);
+    assertSituationAcyclic(db, suppliedWorld.semantic, input.scope, input.visibility);
     if (suppliedWorld.schema === "kizuki.world-admission/v2") {
       if (supportOrigin !== "source" || input.accepted_world?.authority !== "model_inference") throw new ClaimError("schema_invalid", "grounded identity requires model inference");
       const grounded = validateWorldAdmissionProofs(db, suppliedWorld, input.support.source_key, { scope: input.scope });

@@ -286,7 +286,7 @@ function eraseArchiveCopies(
 /**
  * Blank the personal payload of every claim and proposal whose whole
  * provenance is purged. Ids, provenance, hashes, status and receipts stay; the
- * body, frontmatter, object, subject, predicate and target go, so a later
+ * body, frontmatter, object, subject, predicate, producer identity and target go, so a later
  * capture of the same text cannot match the purged row. Callers hold the canon
  * writer fence and only call this once no held page still needs the claim text
  * to redact.
@@ -309,7 +309,7 @@ export function erasePurgedPayloads(
   db.transaction(() => {
     const blankClaim = db.query(
       `UPDATE claims SET body='', object=NULL, target=NULL, subject=NULL, predicate=NULL,
-         subjects='[]', frontmatter='{}', model_ref=NULL WHERE claim_id=?`,
+         subjects='[]', frontmatter='{}', model_ref=NULL, claim_key=NULL, producer='deterministic' WHERE claim_id=?`,
     );
     for (const id of claimIds) blankClaim.run(id);
     if (claimV2TablesPresent(db)) {

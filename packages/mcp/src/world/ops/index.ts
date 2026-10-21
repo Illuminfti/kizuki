@@ -1,5 +1,6 @@
 import { sliceFragment } from "./slice";
 import { personFragment, findPeopleFragment } from "./person";
+import { procedureFragment, findProceduresFragment, skillFragment, frameworkFragment, outcomeFragment } from "./skills";
 import { historyFragment } from "./history";
 import { conceptFragment } from "./concept";
 import { describeFragment } from "./describe";
@@ -30,8 +31,10 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   // slot: PEOPLE
   personFragment, findPeopleFragment,
   // slot: SKILL
+  procedureFragment, findProceduresFragment, skillFragment, frameworkFragment,
   // slot: ART
   // slot: OUTCOME
+  outcomeFragment,
   // slot: DIFF
   // slot: SLICE
   sliceFragment,

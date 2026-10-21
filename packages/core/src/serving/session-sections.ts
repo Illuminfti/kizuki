@@ -6,7 +6,7 @@ import { getClaim } from "../claims/store";
 import { claimReadSql } from "../claims/read-scope";
 import { instantSecondSql, instantNanoSql } from "../query/sql";
 import type { Claim } from "../contracts/proposal";
-import { readSituations } from "../world/situations";
+import { readCurrentSituations } from "../world/situations";
 import type { SituationItem, SituationState } from "../world/situations";
 import {
   claimLine,
@@ -101,6 +101,8 @@ export function emptyReasonText(
 
 export interface SessionPieces {
   pieces: Piece[];
+  /** Includes evidence for completed commitments omitted from the open section. */
+  world: import("../world/dependencies").WorldDependencies[];
   /** Empty-section reasons decided while gathering. */
   reasons: Partial<Record<SessionSection, SessionEmptyReason>>;
   withheld: AuditDenial[];
@@ -130,7 +132,7 @@ function situationLine(state: SituationState, item: SituationItem, redactor: Red
   return redactor.join([
     `- [claim:${inline(item.claim.claim_id)}] ${stamps(item.claim)}${hedge} :: situation `,
     say(state.label ?? state.subject), " ",
-    redactor.format(item.predicate.slice(10), inline), " ", say(item.text), "\n",
+    redactor.format(item.predicate.slice(item.predicate.indexOf(".")+1), inline), " ", say(item.text), "\n",
   ]);
 }
 
@@ -140,6 +142,7 @@ function piece(
   block: string,
   ids: string[],
   reader: ReturnType<typeof claimReader>,
+  world?: import("../world/dependencies").WorldDependencies,
 ): Piece {
   return {
     section,
@@ -147,6 +150,7 @@ function piece(
     block,
     audit: ids.flatMap((id) => reader.auditClaim(id)),
     claims: reader.publication(ids),
+    ...(world === undefined ? {} : {world}),
   };
 }
 
@@ -269,9 +273,8 @@ export function collectSessionPieces(
   };
   const situations = (): SituationState[] => {
     if (!worldGranted) return [];
-    return readSituations(ctx, {
+    return readCurrentSituations(ctx, {
       limit: SITUATIONS,
-      at: request.at,
       ...(request.subjects === undefined || request.subjects.length === 0
         ? {}
         : { subjects: request.subjects }),
@@ -324,8 +327,9 @@ export function collectSessionPieces(
             "now",
             "## now (situations)",
             situationLine(state, item, redactor),
-            [item.claim.claim_id],
+            [...(item.claimIds ?? [item.claim.claim_id])],
             reader,
+            state.world,
           ),
         );
       }
@@ -361,8 +365,9 @@ export function collectSessionPieces(
             "commitments",
             "## commitments (open)",
             situationLine(state, item, redactor),
-            [item.claim.claim_id],
+            [...(item.claimIds ?? [item.claim.claim_id])],
             reader,
+            state.world,
           ),
         );
       }
@@ -395,8 +400,9 @@ export function collectSessionPieces(
             "uncertain",
             "## uncertain (contradictions and open questions)",
             situationLine(state, item, redactor),
-            [item.claim.claim_id],
+            [...(item.claimIds ?? [item.claim.claim_id])],
             reader,
+            state.world,
           ),
         );
       }
@@ -474,6 +480,7 @@ export function collectSessionPieces(
   out.push(...explained);
   return {
     pieces: out,
+    world: (situationCache ?? []).map(state => state.world),
     reasons,
     withheld: [...reader.denied.values()],
     degraded,

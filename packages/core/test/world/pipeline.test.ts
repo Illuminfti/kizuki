@@ -218,7 +218,7 @@ describe("the stage lists", () => {
     const root = join(import.meta.dir, "../../src/world");
     const markers = (file: string) =>
       [...readFileSync(join(root, file), "utf8").matchAll(/^\s*\/\/ slot: (\w+)\s*$/gm)].map((match) => match[1]!);
-    expect(markers("pipeline/enrichers.ts")).toEqual(["card", "consol"]);
+    expect(markers("pipeline/enrichers.ts")).toEqual(["card", "skill", "consol"]);
     expect(markers("pipeline/collect.ts")).toEqual(["ident"]);
     expect(markers("pipeline/group.ts")).toEqual(["ident"]);
     expect(markers("kinds/index.ts")).toEqual(["quest", "people", "skill", "sit2", "art"]);
