@@ -685,3 +685,57 @@ test("successive page corrections replace prose even when their parsed objects m
     expect(readFileSync(join(f.vault, PAGE), "utf8")).toBe(before);
   } finally { f.db.close(); }
 });
+
+
+test("a file snapshot replaces keyless legacy quotes without replacing another record on the same page", async () => {
+  const f = fixture();
+  try {
+    const fileEvent = (record: string, text: string) => ({
+      ...validEvent(), kind: "file" as const, source_record_id: record,
+      text, subjects: [], metadata: {},
+    });
+    const ids: string[] = [];
+    for (const [record, text] of [["mutable.md", "Old mutable snapshot."], ["other.md", "Independent snapshot."]]) {
+      const accepted = accept(f.db, fileEvent(record!, text!));
+      if (accepted.status !== "stored") throw new Error("legacy file not admitted");
+      const proposal = proposalsForEvent(accepted.event).find(item => item.kind === "claim")!;
+      const { claim_key: _key, ...legacy } = proposal;
+      delete legacy.frontmatter["x-source-record-id"];
+      ids.push(fileProposal(f.db, legacy).proposal.proposal_id);
+    }
+    expect((await f.pass()).errors).toEqual([]);
+    const path = listCanonReceipts(f.db).find(receipt => receipt.claim_ids.includes(ids[0]!))!.page_path;
+    const before = readFileSync(join(f.vault, path), "utf8");
+    expect(before).toContain("Old mutable snapshot.");
+    expect(before).toContain("Independent snapshot.");
+    expect(runBatch(f.db, { events: [fileEvent("mutable.md", "Newest mutable snapshot.")], cursor: null, has_more: false }, { page_candidates: false }).errors).toEqual([]);
+    expect((await f.pass()).errors).toEqual([]);
+    const after = readFileSync(join(f.vault, path), "utf8");
+    expect(after).not.toContain("Old mutable snapshot.");
+    expect(after).toContain("Newest mutable snapshot.");
+    expect(after).toContain("Independent snapshot.");
+    expect(getClaim(f.db, ids[0]!)?.status).toBe("superseded");
+    expect(getClaim(f.db, ids[1]!)?.status).toBe("live");
+    const edit = listCanonReceipts(f.db, { page_path: path }).find(receipt => receipt.page_action === "edit" && receipt.superseded.some(ref => ref.claim_id === ids[0]));
+    expect(edit).toBeDefined();
+    await undoReceipt({ db: f.db, vault_path: f.vault }, edit!.receipt_id);
+    expect(readFileSync(join(f.vault, path), "utf8")).toBe(before);
+  } finally { f.db.close(); }
+});
+
+
+test("opening an existing ledger rebuilds the source lookup index without changing claims", async () => {
+  const f = fixture();
+  let db = f.db;
+  try {
+    reviseLegacy(f, { text: "Existing source state." });
+    expect((await f.pass()).errors).toEqual([]);
+    const rows = () => db.query("SELECT claim_id,status,body,claim_key,provenance FROM claims ORDER BY claim_id").all();
+    const before = rows();
+    db.exec("DROP INDEX claims_legacy_source_event");
+    db.close();
+    db = openLedger(join(f.vault, ".kizuki", "kizuki.db"));
+    expect(db.query("SELECT name FROM sqlite_master WHERE type='index' AND name='claims_legacy_source_event'").get()).not.toBeNull();
+    expect(rows()).toEqual(before);
+  } finally { db.close(); }
+});

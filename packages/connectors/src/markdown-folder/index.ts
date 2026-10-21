@@ -12,6 +12,8 @@ import {
   MAX_SYNC_BATCH_EVENTS,
   freezeManifest,
   isPlainObject,
+  massWithdrawalDetail,
+  massWithdrawalHeld,
   openSourceChild,
   policyForConnector,
   SourceReadError,
@@ -34,6 +36,8 @@ import {
   summarizeImportErrors,
 } from "../import-report";
 import type { ImportRecordError } from "../import-report";
+import { EpochReader, pairMoves } from "../mirror";
+import type { RecordHistoryReader } from "../mirror";
 import { readBoundedFd, readReason } from "../read";
 import { assertOutsideVault, refuseVaultSource } from "../vault-boundary";
 import {
@@ -46,14 +50,15 @@ import {
 export const MARKDOWN_FOLDER_CONNECTOR_ID = "kizuki.markdown-folder" as const;
 export const MARKDOWN_CURSOR_SCHEMA = "kizuki.markdown-folder.cursor/v1" as const;
 
-export const DEFAULT_PAGE_SIZE = 128;
+/** The default is the largest capture page Core accepts. */
+export const DEFAULT_PAGE_SIZE = MAX_SYNC_BATCH_EVENTS;
 export const MAX_PAGE_SIZE = 10_000;
 export const MAX_DEPTH = 16;
 export const MAX_FILES = 50_000;
 export const MAX_FILE_BYTES = EVENT_LIMITS.textBytes;
 export const MAX_SCAN_ENTRIES = 100_000;
-/** `["",{"sha256":"<64 hex>","size":<max>}],` without the path. */
-const PACK_IDENTITY_JSON_OVERHEAD_BYTES = 98;
+/** Identity JSON, including the optional 64-hex subject digest, without the path. */
+const PACK_IDENTITY_JSON_OVERHEAD_BYTES = 182;
 /** NAME_MAX-class path budget per identity at MAX_FILES. */
 const PACK_PATH_BUDGET_BYTES = 256;
 /** gunzip ceiling for `pack`; scan MAX_FILES is unchanged. */
@@ -83,6 +88,8 @@ export interface MarkdownFolderConfig {
 export interface MarkdownFileIdentity {
   sha256: string;
   size: number;
+  /** The original document identity, retained when a unique byte match moves. */
+  subject_sha256?: string;
 }
 
 type FileIdentity = MarkdownFileIdentity;
@@ -96,10 +103,26 @@ export interface MarkdownFolderDeps {
   committedFiles?: () =>
     | ReadonlyArray<readonly [string, MarkdownFileIdentity]>
     | Promise<ReadonlyArray<readonly [string, MarkdownFileIdentity]>>;
+  /**
+   * What the ledger holds for each of these records. A record whose state
+   * changes (deleted then restored, edited then reverted) is emitted with
+   * `revision_epoch`, so bytes the ledger has seen before are not swallowed as
+   * a duplicate.
+   */
+  recordHistory?: RecordHistoryReader;
+  /**
+   * The owner's release of a held mass withdrawal: a pass that withdraws at
+   * most this many records proceeds. Set by the sync command for one run.
+   */
+  confirmWithdrawals?: number;
 }
 
+/** A file with its bytes in hand. */
+type LoadedFile = MarkdownFile & { content: string };
+
 interface MarkdownFile {
-  content: string;
+  /** Null on a continuation page; read it again before emitting. */
+  content: string | null;
   sha256: string;
   size: number;
   relpath: string;
@@ -112,10 +135,19 @@ interface RootIdentity {
   ino: number;
 }
 
+/**
+ * The folder is identified by its path and its files' content, never by the
+ * device and inode it happens to sit on: a disk migration, a restore or a
+ * recreated folder keeps its checkpoint and emits only real differences.
+ */
+interface CursorRoot {
+  realpath: string;
+}
+
 export interface MarkdownCursor {
   schema: typeof MARKDOWN_CURSOR_SCHEMA;
   connector_id: typeof MARKDOWN_FOLDER_CONNECTOR_ID;
-  root: RootIdentity;
+  root: CursorRoot;
   options: { page_size: number; exclude: string[] };
   exhausted: boolean;
   phase: "files" | "tombstones";
@@ -160,6 +192,9 @@ export class MarkdownFolderConnector implements Connector {
   readonly pageSize: number;
   readonly exclude: readonly string[];
   private readonly committedFiles: MarkdownFolderDeps["committedFiles"];
+  private readonly recordHistory: MarkdownFolderDeps["recordHistory"];
+  private readonly confirmedWithdrawals: number;
+  /** A bounded scan reused only by the next page of this drain, never a later sync. */
   private continuation: { cursor: Cursor; root: RootIdentity; scan: ScanResult } | null = null;
 
   constructor(config: MarkdownFolderConfig, deps: MarkdownFolderDeps = {}) {
@@ -168,6 +203,8 @@ export class MarkdownFolderConnector implements Connector {
     this.pageSize = parsePageSize(config.page_size);
     this.exclude = parseExclude(config.exclude);
     this.committedFiles = deps.committedFiles;
+    this.recordHistory = deps.recordHistory;
+    this.confirmedWithdrawals = deps.confirmWithdrawals ?? 0;
   }
 
   manifest(): Manifest {
@@ -232,6 +269,10 @@ export class MarkdownFolderConnector implements Connector {
     const scanErrors = [...scan.errors];
     const finish = (batch: SyncBatch): SyncBatch => {
       if (batch.has_more === true && batch.cursor !== null) {
+        // Retain identities only. Each later emitted page reopens its files
+        // through the existing descriptor-bound reader. A root replacement
+        // discards this continuation; another sync always walks anew.
+        if (!continuing) for (const file of scan.files) file.content = null;
         this.continuation = { cursor: batch.cursor, root, scan };
       }
       return batch;
@@ -239,18 +280,84 @@ export class MarkdownFolderConnector implements Connector {
     const hostBacked = this.committedFiles !== undefined;
     const emitPageSize = Math.min(this.pageSize, MAX_SYNC_BATCH_EVENTS);
 
-    const fileEvents: CaptureEventInput[] = [];
-    for (const file of scan.files) {
+    // Files whose bytes differ from the last committed identity, relpath order.
+    const changed = scan.files.filter((file) => {
       const prior = previousFiles.get(file.relpath);
-      if (
+      return !(
         prior !== undefined &&
         prior.sha256 === file.sha256 &&
         prior.size === file.size
-      ) {
+      );
+    });
+
+    // Records gone from the source, unless a scan error hides them.
+    let absent: string[] = [];
+    if (previous !== undefined && !scan.truncated) {
+      const failed = scanErrors.map((error) => error.location);
+      absent = [...previousFiles.keys()]
+        .sort(compareStrings)
+        .filter((relpath) => !current.has(relpath) && !hiddenByScanError(relpath, failed));
+    }
+
+    // A file that reappears under a new name with the same bytes is a move:
+    // one event that names its origin, and no tombstone for the old name.
+    const moves = pairMoves(
+      changed
+        .filter((file) => !previousFiles.has(file.relpath))
+        .map((file) => ({ relpath: file.relpath, hash: file.sha256, size: file.size })),
+      absent.flatMap((relpath) => {
+        const identity = previousFiles.get(relpath);
+        return identity === undefined
+          ? []
+          : [{ relpath, hash: identity.sha256 }];
+      }),
+    );
+    const movedAway = new Set(moves.values());
+    const withdrawn = absent.filter((relpath) => !movedAway.has(relpath));
+    const held =
+      previous !== undefined &&
+      massWithdrawalHeld(withdrawn.length, previousFiles.size, this.confirmedWithdrawals);
+    const tombstones = held
+      ? []
+      : withdrawn.map((relpath) => tombstone(relpath, observedAt, previousFiles.get(relpath)?.subject_sha256));
+
+    // Each sweep diffs against the durable identities updated by prior pages.
+    // An interrupted drain walks anew and includes changes below `after`.
+    // Keep phase/after as compatible cursor hints, never as exclusion bounds.
+    // Events are built for the page only: a batch costs its page, not the tree.
+    const epochs = new EpochReader(this.recordHistory);
+    const changedNames = changed.map((file) => file.relpath);
+    const filePage: CaptureEventInput[] = [];
+    const emitted = new Map<string, LoadedFile>();
+    let encoded = 2;
+    let index = 0;
+    for (; index < changed.length && filePage.length < emitPageSize; index += 1) {
+      const file = await this.loadFile(root, changed[index]!, scanErrors);
+      if (file === null) {
+        if (continuing) return { events: [], cursor, status: "unavailable", detail: "source_changed_during_pass",
+          coverage: { ...scan.coverage, failed: scanErrors.length, pending: changed.length } };
         continue;
       }
-      const event = fileEvent(file, observedAt);
-      if (utf8Bytes(JSON.stringify(event)) + 2 > MAX_SYNC_BATCH_BYTES) {
+      if (file.sha256 !== changed[index]!.sha256 || file.size !== changed[index]!.size) {
+        scanErrors.push({ location: file.relpath, code: "unstable", reason: "file changed during the capture drain" });
+        if (continuing) return { events: [], cursor, status: "unavailable", detail: "source_changed_during_pass",
+          coverage: { ...scan.coverage, failed: scanErrors.length, pending: changed.length } };
+        continue;
+      }
+      const movedFrom = moves.get(file.relpath);
+      const prior = previousFiles.get(movedFrom ?? file.relpath);
+      const epoch = await epochs.of(changedNames, index, (relpath) => previousFiles.has(relpath));
+      const subject = prior?.subject_sha256 ??
+        (movedFrom === undefined ? epochs.subjectOf(file.relpath) : subjectDigest(movedFrom));
+      const event = fileEvent(
+        file,
+        observedAt,
+        epoch,
+        movedFrom,
+        subject,
+      );
+      const extra = utf8Bytes(JSON.stringify(event));
+      if (extra + 2 > MAX_SYNC_BATCH_BYTES) {
         scanErrors.push({
           location: file.relpath,
           code: "too_large",
@@ -258,56 +365,27 @@ export class MarkdownFolderConnector implements Connector {
         });
         continue;
       }
-      fileEvents.push(event);
+      if (filePage.length > 0 && encoded + extra + 1 > MAX_SYNC_BATCH_BYTES) break;
+      filePage.push(event);
+      emitted.set(file.relpath, file);
+      encoded += extra + (filePage.length === 1 ? 0 : 1);
     }
-    fileEvents.sort((left, right) =>
-      compareStrings(left.source_record_id, right.source_record_id),
-    );
-
-    const tombstones: CaptureEventInput[] = [];
-    if (previous !== undefined && !scan.truncated) {
-      const failed = scanErrors.map((error) => error.location);
-      for (const relpath of [...previousFiles.keys()].sort(compareStrings)) {
-        if (current.has(relpath) || hiddenByScanError(relpath, failed)) continue;
-        tombstones.push(tombstone(relpath, observedAt));
-      }
-    }
-
-    // Each sweep diffs against the durable identities updated by prior pages.
-    // The remaining diff can change between scans, including below `after`.
-    // Keep phase/after as compatible cursor hints, never as exclusion bounds.
-    const { page: filePage, rest: fileRest } = takePage(
-      fileEvents,
-      emitPageSize,
-    );
-    const filesDone = fileRest.length === 0;
-    if (continuing) {
-      for (const event of filePage) {
-        const file = current.get(event.source_record_id)!;
-        const directory = await pinnedDescent(root.realpath, path.dirname(path.join(root.realpath, file.relpath)));
-        if (directory.kind !== "directory") {
-          return { events: [], cursor, status: "unavailable", detail: "source_changed_during_pass", coverage: { ...scan.coverage, failed: 1, pending: fileEvents.length } };
-        }
-        const parent = await openPinnedDirectory(directory);
-        try {
-          const read = await readStableMarkdown(parent.fd, path.basename(file.relpath), file.relpath);
-          if ("error" in read || read.file.sha256 !== file.sha256 || read.file.size !== file.size) {
-            return { events: [], cursor, status: "unavailable", detail: "source_changed_during_pass", coverage: { ...scan.coverage, failed: 1, pending: fileEvents.length } };
-          }
-        } finally { await parent.close(); }
-      }
-    }
+    const filesDone = index >= changed.length;
     const pendingRefusal = scanErrors.length > 0 || scan.truncated;
 
     const processed = new Map(previousFiles);
     for (const event of filePage) {
-      const file = current.get(event.source_record_id);
+      const file = emitted.get(event.source_record_id);
       if (file !== undefined) {
         processed.set(event.source_record_id, {
           sha256: file.sha256,
           size: file.size,
+          ...(typeof event.metadata["subject_sha256"] === "string"
+            ? { subject_sha256: event.metadata["subject_sha256"] } : {}),
         });
       }
+      const movedFrom = moves.get(event.source_record_id);
+      if (movedFrom !== undefined) processed.delete(movedFrom);
     }
 
     const mint = (
@@ -319,7 +397,7 @@ export class MarkdownFolderConnector implements Connector {
         ? encodeCompactCursor({
             schema: MARKDOWN_CURSOR_SCHEMA,
             connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
-            root,
+            root: { realpath: root.realpath },
             options: { page_size: this.pageSize, exclude: [...this.exclude] },
             exhausted,
             phase,
@@ -328,7 +406,7 @@ export class MarkdownFolderConnector implements Connector {
         : encodeCursor({
             schema: MARKDOWN_CURSOR_SCHEMA,
             connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
-            root,
+            root: { realpath: root.realpath },
             options: { page_size: this.pageSize, exclude: [...this.exclude] },
             exhausted,
             phase,
@@ -341,7 +419,7 @@ export class MarkdownFolderConnector implements Connector {
     const coverage = (pending: number): ScanCoverage => ({ ...scan.coverage, failed: scanErrors.length, pending });
 
     const overflow = (): SyncBatch => ({
-      coverage: coverage(fileEvents.length + tombstones.length),
+      coverage: coverage(changed.length + tombstones.length),
       events: [],
       cursor,
       status: "unavailable",
@@ -359,11 +437,11 @@ export class MarkdownFolderConnector implements Connector {
       const last = filePage[filePage.length - 1];
       const next = mint(false, "files", last?.source_record_id ?? null);
       if (next === undefined) return overflow();
-      return finish({ events: filePage, cursor: next, has_more: true, coverage: coverage(fileRest.length + tombstones.length) });
+      return finish({ events: filePage, cursor: next, has_more: true, coverage: coverage(changed.length - index + tombstones.length) });
     }
 
     if (filePage.length > 0) {
-      const noTombstones = tombstones.length === 0;
+      const noTombstones = tombstones.length === 0 && !held;
       const next = mint(
         noTombstones && !scan.truncated,
         noTombstones ? "files" : "tombstones",
@@ -374,8 +452,20 @@ export class MarkdownFolderConnector implements Connector {
         events: filePage,
         cursor: next,
         has_more: !noTombstones || pendingRefusal,
-        coverage: coverage(tombstones.length),
+        coverage: coverage(tombstones.length + (held ? withdrawn.length : 0)),
       });
+    }
+
+    if (held) {
+      // The hold changes no checkpoint: the next pass measures the source
+      // again, so restoring the tree clears it and a confirmation releases it.
+      return {
+        events: [],
+        cursor,
+        status: "unavailable",
+        detail: massWithdrawalDetail(withdrawn.length, previousFiles.size),
+        coverage: coverage(withdrawn.length),
+      };
     }
 
     if (tombstones.length === 0) {
@@ -406,7 +496,7 @@ export class MarkdownFolderConnector implements Connector {
     const exhausted = tombstonesDone && !scan.truncated;
     if (exhausted) {
       for (const file of scan.files) {
-        processed.set(file.relpath, { sha256: file.sha256, size: file.size });
+        processed.set(file.relpath, { ...processed.get(file.relpath), sha256: file.sha256, size: file.size });
       }
     }
     const lastTombstone = tombstonePage[tombstonePage.length - 1];
@@ -422,6 +512,21 @@ export class MarkdownFolderConnector implements Connector {
       has_more: !exhausted || pendingRefusal,
       coverage: coverage(tombstoneRest.length),
     });
+  }
+
+  /** Reopen a continuation file through the same descriptor-bound reader. */
+  private async loadFile(
+    root: RootIdentity,
+    file: MarkdownFile,
+    errors: ImportRecordError[],
+  ): Promise<LoadedFile | null> {
+    if (file.content !== null) return { ...file, content: file.content };
+    const read = await readMarkdownAt(root, file.relpath);
+    if ("error" in read) {
+      errors.push(read.error);
+      return null;
+    }
+    return { ...read.file, content: read.file.content ?? "" };
   }
 
   private async snapshotIdentities(
@@ -847,6 +952,36 @@ async function readStableMarkdown(
   };
 }
 
+/** Reads one file again through its pinned parent directory, as the scan does. */
+async function readMarkdownAt(
+  root: RootIdentity,
+  relpath: string,
+): Promise<{ file: MarkdownFile } | { error: ImportRecordError }> {
+  const absolute = path.join(root.realpath, ...relpath.split("/"));
+  const descent = await pinnedDescent(root.realpath, path.dirname(absolute));
+  if (descent.kind !== "directory") {
+    return {
+      error: {
+        location: relpath,
+        code: descent.kind === "symlink" ? "symlink" : "unreadable",
+        reason: descent.kind === "symlink" ? "symlink skipped" : descent.reason,
+      },
+    };
+  }
+  let parent: FileHandle;
+  try {
+    parent = await openPinnedDirectory(descent);
+  } catch (error) {
+    await classifyReplacedDirectory(descent.realpath);
+    return { error: { location: relpath, code: "unreadable", reason: readReason(error) } };
+  }
+  try {
+    return await readStableMarkdown(parent.fd, path.basename(absolute), relpath);
+  } finally {
+    await parent.close().catch(() => undefined);
+  }
+}
+
 function shouldSkipName(name: string, exclude: readonly string[]): boolean {
   if (name.startsWith(".")) return true;
   if (SKIP_DIRECTORIES.has(name)) return true;
@@ -874,8 +1009,11 @@ function hiddenByScanError(
 }
 
 /** Source-record identity, bounded without lossy path normalization or mtime dependence. */
-function documentSubject(relpath: string): SubjectRef {
-  const digest = new Bun.CryptoHasher("sha256").update(relpath).digest("hex");
+function subjectDigest(relpath: string): string {
+  return new Bun.CryptoHasher("sha256").update(relpath).digest("hex");
+}
+
+function documentSubject(relpath: string, digest = subjectDigest(relpath)): SubjectRef {
   return {
     subject_id: `markdown-folder:${digest}`,
     role: "about",
@@ -883,7 +1021,13 @@ function documentSubject(relpath: string): SubjectRef {
   };
 }
 
-function fileEvent(file: MarkdownFile, observedAt: string): CaptureEventInput {
+function fileEvent(
+  file: LoadedFile,
+  observedAt: string,
+  epoch: number,
+  movedFrom: string | undefined,
+  subjectSha256?: string,
+): CaptureEventInput {
   return {
     schema: "kizuki.event/v1",
     connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
@@ -892,18 +1036,21 @@ function fileEvent(file: MarkdownFile, observedAt: string): CaptureEventInput {
     occurred_at: new Date(file.mtimeMs).toISOString(),
     observed_at: observedAt,
     text: file.content,
-    subjects: [documentSubject(file.relpath)],
+    subjects: [documentSubject(file.relpath, subjectSha256)],
     deleted: false,
     attachments: [],
     metadata: {
       relpath: file.relpath,
       size: file.size,
       sha256: file.sha256,
+      ...(epoch > 0 ? { revision_epoch: epoch } : {}),
+      ...(movedFrom === undefined ? {} : { moved_from: movedFrom }),
+      ...(subjectSha256 === undefined ? {} : { subject_sha256: subjectSha256 }),
     },
   };
 }
 
-function tombstone(relpath: string, observedAt: string): CaptureEventInput {
+function tombstone(relpath: string, observedAt: string, subjectSha256?: string): CaptureEventInput {
   return {
     schema: "kizuki.event/v1",
     connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
@@ -912,7 +1059,7 @@ function tombstone(relpath: string, observedAt: string): CaptureEventInput {
     occurred_at: observedAt,
     observed_at: observedAt,
     text: "",
-    subjects: [documentSubject(relpath)],
+    subjects: [documentSubject(relpath, subjectSha256)],
     deleted: true,
     attachments: [],
     metadata: { relpath, snapshot: "absent" },
@@ -992,8 +1139,6 @@ function parseCursor(
     !(parsed["after"] === null || typeof parsed["after"] === "string") ||
     !isPlainObject(parsed["root"]) ||
     typeof parsed["root"]["realpath"] !== "string" ||
-    typeof parsed["root"]["dev"] !== "number" ||
-    typeof parsed["root"]["ino"] !== "number" ||
     !isPlainObject(parsed["options"]) ||
     typeof parsed["options"]["page_size"] !== "number" ||
     !Array.isArray(parsed["options"]["exclude"])
@@ -1037,20 +1182,22 @@ function parseCursor(
       `${MARKDOWN_FOLDER_CONNECTOR_ID}: invalid cursor snapshot`,
     );
   }
-  if (
-    parsed["root"]["realpath"] !== root.realpath ||
-    parsed["root"]["dev"] !== root.dev ||
-    parsed["root"]["ino"] !== root.ino
-  ) {
+  // A compact cursor names no files: its baseline is the source's committed
+  // identities, so the same connection resumes on a restored, migrated or
+  // recreated folder and emits only what differs. A cursor that carries its
+  // own snapshot belongs to the folder it was taken from. Tokens minted
+  // before this rule also pinned the device and inode; they are still read.
+  if (!committed && parsed["root"]["realpath"] !== root.realpath) {
     throw new KizukiError(
       "parse_error",
       `${MARKDOWN_FOLDER_CONNECTOR_ID}: cursor does not belong to this root`,
     );
   }
+  // The page size only sets how much one batch emits, so a token taken at
+  // another size resumes at this one. The exclusions decide which files exist.
   if (
-    parsed["options"]["page_size"] !== connector.pageSize ||
     JSON.stringify(parsed["options"]["exclude"]) !==
-      JSON.stringify([...connector.exclude])
+    JSON.stringify([...connector.exclude])
   ) {
     throw new KizukiError(
       "parse_error",
@@ -1065,11 +1212,7 @@ function parseCursor(
   return {
     schema: MARKDOWN_CURSOR_SCHEMA,
     connector_id: MARKDOWN_FOLDER_CONNECTOR_ID,
-    root: {
-      realpath: parsed["root"]["realpath"],
-      dev: parsed["root"]["dev"],
-      ino: parsed["root"]["ino"],
-    },
+    root: { realpath: parsed["root"]["realpath"] },
     options: {
       page_size: parsed["options"]["page_size"],
       exclude: parsed["options"]["exclude"].map(String),
@@ -1167,6 +1310,7 @@ function parseFilePairs(value: unknown): Array<[string, FileIdentity]> {
     const relpath = entry[0];
     const sha256 = entry[1]["sha256"];
     const size = entry[1]["size"];
+    const subject = entry[1]["subject_sha256"];
     if (
       typeof relpath !== "string" ||
       relpath.length === 0 ||
@@ -1177,7 +1321,8 @@ function parseFilePairs(value: unknown): Array<[string, FileIdentity]> {
       typeof size !== "number" ||
       !Number.isInteger(size) ||
       size < 0 ||
-      size > MAX_FILE_BYTES
+      size > MAX_FILE_BYTES ||
+      (subject !== undefined && (typeof subject !== "string" || !SHA256_HEX.test(subject)))
     ) {
       throw new KizukiError(
         "parse_error",
@@ -1185,7 +1330,7 @@ function parseFilePairs(value: unknown): Array<[string, FileIdentity]> {
       );
     }
     seen.add(relpath);
-    files.push([relpath, { sha256, size }]);
+    files.push([relpath, { sha256, size, ...(typeof subject === "string" ? { subject_sha256: subject } : {}) }]);
   }
   return files;
 }

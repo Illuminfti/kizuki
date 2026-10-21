@@ -42,10 +42,18 @@ CREATE TABLE IF NOT EXISTS claims (
 ) STRICT;
 `;
 
+const LEGACY_SOURCE_INDEX = `
+CREATE INDEX IF NOT EXISTS claims_legacy_source_event
+  ON claims(json_extract(provenance, '$[0]'))
+  WHERE claim_key IS NULL AND producer = 'deterministic'
+    AND authority = 'connector_evidence' AND kind IN ('entity', 'claim');
+`;
+
 const CLAIMS_INDEXES = `
 CREATE INDEX IF NOT EXISTS claims_by_key ON claims(claim_key, status, valid_from);
 CREATE INDEX IF NOT EXISTS claims_by_status ON claims(status, created_at);
 CREATE INDEX IF NOT EXISTS claims_by_subject ON claims(subject, status);
+${LEGACY_SOURCE_INDEX}
 `;
 
 const SUPPORTING_TABLES = `
@@ -503,7 +511,17 @@ export function applyLegacyStagingIdempotency(db: Database): void {
        ON proposals (content_hash)
        WHERE status = 'pending'`,
   );
+  // Filing looks a signature up among pending and promoted rows, and every
+  // filing re-checks that no live claim lacks one. The partial indexes serve
+  // neither `IN (...)`, a promoted row nor a blank hash, so without these each
+  // proposal filed reads a whole table and a backfill is quadratic.
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS proposals_by_content_hash ON proposals (content_hash)",
+  );
   if (!tableExists(db, "claims")) return;
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS claims_by_content_hash ON claims (content_hash)",
+  );
   const version = tableExists(db, "schema_version")
     ? db.query<{ version: number }, []>("SELECT version FROM schema_version").get()?.version ?? 0
     : 0;
@@ -528,6 +546,12 @@ function stagingIdempotencyReady(db: Database): boolean {
     return false;
   }
   if (tableExists(db, "claims") && !columnNames(db, "claims").has("content_hash")) {
+    return false;
+  }
+  if (
+    indexSql(db, "proposals_by_content_hash") === null ||
+    (tableExists(db, "claims") && indexSql(db, "claims_by_content_hash") === null)
+  ) {
     return false;
   }
   const proposalsSql = indexSql(db, "proposals_signature") ?? "";
@@ -563,7 +587,9 @@ function emptyLiveSignature(db: Database): boolean {
   // Native claims use the blank-hash uniqueness index. Only a matching
   // legacy proposal can supply a signature through the backfill above.
   const claims = db.prepare<{ ok: number }, []>(
-    `SELECT 1 AS ok FROM claims
+    // Named because, without table statistics, the planner walks every live
+    // claim; readiness has already required this index to exist.
+    `SELECT 1 AS ok FROM claims INDEXED BY claims_by_content_hash
       WHERE content_hash = ''
         AND status = 'live'
         AND kind <> 'purge_review'
@@ -587,11 +613,13 @@ export function repairClaimsCompatibility(
   options: { includeStaging?: boolean } = {},
 ): void {
   if (!claimsSurfaceReady(db)) applyClaimsV3(db);
+  if (indexSql(db, "claims_legacy_source_event") === null) db.exec(LEGACY_SOURCE_INDEX);
   if (options.includeStaging && !stagingIdempotencyReady(db)) {
     applyLegacyStagingIdempotency(db);
   }
 }
 
 export function claimsCompatibilityReady(db: Database): boolean {
-  return claimsSurfaceReady(db) && stagingIdempotencyReady(db);
+  return claimsSurfaceReady(db) && stagingIdempotencyReady(db) &&
+    indexSql(db, "claims_legacy_source_event") !== null;
 }

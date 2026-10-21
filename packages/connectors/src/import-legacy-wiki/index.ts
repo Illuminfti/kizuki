@@ -1,5 +1,5 @@
-import { realpath, stat } from "node:fs/promises";
 import { wikiCoverage } from "../source-coverage";
+import { realpath, stat } from "node:fs/promises";
 import {
   HealthReport,
   MAX_CURSOR_BYTES,
@@ -8,6 +8,8 @@ import {
   PAGE_CANDIDATE_KEY,
   freezeManifest,
   isPlainObject,
+  massWithdrawalDetail,
+  massWithdrawalHeld,
   policyForConnector,
   targetProblem,
 } from "@kizuki/core";
@@ -22,6 +24,8 @@ import type {
 } from "@kizuki/core";
 import { KizukiError, notSupported } from "../errors";
 import { defaultMappingPath, loadMapping } from "../legacy/mapping-file";
+import { EpochReader, pairMoves } from "../mirror";
+import type { RecordHistoryReader } from "../mirror";
 import { resolveReportPath, writeReport } from "../legacy/report-file";
 import { compareStrings, pathHealth, requirePathConfig } from "../util";
 import {
@@ -88,6 +92,12 @@ export interface LegacyWikiIdentity {
   hash: string;
   /** So a page added later cannot take a target this page is already staged at. */
   target: string;
+  /**
+   * What the migration decided about the page (`planDigest`), so a change to
+   * the mapping re-emits the pages it changes and no others. Absent on rows an
+   * earlier build stored: those are trusted until the page itself changes.
+   */
+  plan?: string;
 }
 
 /** Factory-only. Never serialized into connection config or protected state. */
@@ -100,6 +110,17 @@ export interface LegacyWikiDeps {
   committedFiles?: () =>
     | ReadonlyArray<readonly [string, LegacyWikiIdentity]>
     | Promise<ReadonlyArray<readonly [string, LegacyWikiIdentity]>>;
+  /**
+   * What the ledger holds for each of these pages, so a page that returns
+   * after a withdrawal, or to earlier text, is a new revision and not a
+   * duplicate of the one the ledger already stored.
+   */
+  recordHistory?: RecordHistoryReader;
+  /**
+   * The owner's release of a held mass withdrawal: a pass that withdraws at
+   * most this many pages proceeds. Set by the sync command for one run.
+   */
+  confirmWithdrawals?: number;
 }
 
 interface LegacyWikiCursor {
@@ -276,7 +297,8 @@ function isLegacyWikiIdentity(raw: unknown): raw is LegacyWikiIdentity {
     isPlainObject(raw) &&
     typeof raw["hash"] === "string" &&
     typeof raw["target"] === "string" &&
-    targetProblem(raw["target"]) === null
+    targetProblem(raw["target"]) === null &&
+    (raw["plan"] === undefined || typeof raw["plan"] === "string")
   );
 }
 
@@ -383,9 +405,18 @@ export class LegacyWikiConnector implements Connector {
   readonly mappingHash: string;
   readonly reportPath: string | null;
   readonly #committedFiles: LegacyWikiDeps["committedFiles"];
+  readonly #recordHistory: LegacyWikiDeps["recordHistory"];
+  readonly #confirmedWithdrawals: number;
   #report: LegacyWikiReport | null = null;
   #degraded = 0;
-  #continuation: { cursor: Cursor; root: string; run: { scan: ScanResult; events: CaptureEventInput[] } } | null = null;
+  /** Planning is one snapshot per drain, never repeated for every capture page. */
+  #continuation: {
+    cursor: Cursor;
+    root: { realpath: string; dev: number; ino: number };
+    scan: ScanResult;
+    hashes: Map<string, string>;
+    planned: CaptureEventInput[];
+  } | null = null;
 
   constructor(config: LegacyWikiConfig, deps: LegacyWikiDeps = {}) {
     this.path = requirePathConfig(config, LEGACY_WIKI_CONNECTOR_ID);
@@ -402,6 +433,8 @@ export class LegacyWikiConnector implements Connector {
       LEGACY_WIKI_CONNECTOR_ID,
     );
     this.#committedFiles = deps.committedFiles;
+    this.#recordHistory = deps.recordHistory;
+    this.#confirmedWithdrawals = deps.confirmWithdrawals ?? 0;
   }
 
   manifest(): Manifest {
@@ -477,70 +510,129 @@ export class LegacyWikiConnector implements Connector {
     const identities = await this.#identities(previous);
     const mappingChanged =
       previous !== null && previous.mapping_hash !== this.mappingHash;
-    let root: string;
-    try {
-      const info = await stat(this.path);
-      root = JSON.stringify([await realpath(this.path), info.dev, info.ino]);
-    } catch (cause) {
-      this.#continuation = null;
-      throw new KizukiError("misconfigured", "wiki source root is unavailable", { cause });
-    }
-    const continuation = this.#continuation;
+    const pending = this.#continuation;
     this.#continuation = null;
-    const run = continuation !== null && continuation.cursor === cursor && continuation.root === root && !mappingChanged
-      ? continuation.run
-      : await this.#run(
-      mappingChanged ? ["mapping_changed"] : [],
-      mappingChanged ? {} : pinnedTargets(identities),
-    );
-    const { scan, events: planned } = run;
-    const inventory = wikiCoverage(scan, this.#report!, this.mapping);
-    const partial = inventory.failed > 0 || inventory.truncated;
-    const hashes = new Map(
+    let root: { realpath: string; dev: number; ino: number };
+    try {
+      const resolved = await realpath(this.path);
+      const info = await stat(resolved);
+      if (!info.isDirectory()) throw new Error("not a directory");
+      root = { realpath: resolved, dev: info.dev, ino: info.ino };
+    } catch (error) {
+      throw new KizukiError("misconfigured", `${LEGACY_WIKI_CONNECTOR_ID}: cannot access configured root`, { cause: error });
+    }
+    const continuing = pending !== null && pending.cursor === cursor && !mappingChanged &&
+      pending.root.realpath === root.realpath && pending.root.dev === root.dev && pending.root.ino === root.ino;
+    const scan = continuing ? pending.scan : await scanLegacyWiki(this.path, this.mapping.ignore);
+    const hashes = continuing ? pending.hashes : new Map(
       scan.files.map((file) => [file.relpath, contentHash(file.content)]),
     );
-    const after = previous?.after ?? null;
-    const paging = previous !== null && !previous.exhausted && !mappingChanged;
-    const candidates = (
-      previous === null || mappingChanged
-        ? planned
-        : paging
-          ? planned.filter(
-              (event) =>
-                after === null ||
-                compareStrings(event.source_record_id, after) > 0,
-            )
-          : planned.filter(
-              (event) =>
-                hashes.get(event.source_record_id) !==
-                identities[event.source_record_id]?.hash,
-            )
-    ).sort((left, right) =>
-      compareStrings(left.source_record_id, right.source_record_id),
+
+    // What the snapshot lost, before this run's plan says which of it moved.
+    const lost = reconcileSnapshot(identities, scan, new Set());
+    // A page that reappears under a new name with the same bytes is a move.
+    const moves = pairMoves(
+      scan.files
+        .filter((file) => identities[file.relpath] === undefined)
+        .map((file) => ({
+          relpath: file.relpath,
+          hash: hashes.get(file.relpath) ?? "",
+          size: file.size,
+        })),
+      lost.withdrawn
+        .filter((withdrawal) => withdrawal.reason === "absent")
+        .map(({ relpath }) => ({ relpath, hash: identities[relpath]?.hash ?? "" })),
     );
-    const { page, rest } = takePage(candidates);
-    const filesDone = rest.length === 0;
+    // A page keeps the target it was emitted with, and a renamed page keeps
+    // its origin's, so a mapping edit or a rename never mints a second page.
+    const pinned = pinnedTargets(identities);
+    for (const [added, origin] of moves) {
+      const target = identities[origin]?.target;
+      if (target !== undefined) pinned[added] = target;
+    }
+    const planned = continuing ? pending.planned : this.#plan(
+      scan,
+      mappingChanged ? ["mapping_changed"] : [],
+      pinned,
+      Object.fromEntries(moves),
+    );
+
+    const inventory = wikiCoverage(scan, this.#report!, this.mapping);
+    const partial = inventory.failed > 0 || inventory.truncated;
+
+    // A rename onto a page the mapping does not import moves nothing.
+    const plannedIds = new Set(planned.map((event) => event.source_record_id));
+    const movedOrigins = new Set(
+      [...moves].filter(([added]) => plannedIds.has(added)).map(([, origin]) => origin),
+    );
+
+    const after = previous?.after ?? null;
+    const paging = previous !== null && !previous.exhausted;
+    const changed = (event: CaptureEventInput): boolean => {
+      const identity = identities[event.source_record_id];
+      if (identity === undefined) return true;
+      if (identity.hash !== hashes.get(event.source_record_id)) return true;
+      if (identity.target !== targetOf(event)) return true;
+      // Rows an earlier build stored carry no plan digest and are trusted.
+      const plan = event.metadata["plan_sha256"];
+      return identity.plan !== undefined && identity.plan !== "" && identity.plan !== plan;
+    };
+    const candidates = planned
+      .filter(
+        (event) =>
+          !paging ||
+          after === null ||
+          compareStrings(event.source_record_id, after) > 0,
+      )
+      .filter(changed)
+      .sort((left, right) =>
+        compareStrings(left.source_record_id, right.source_record_id),
+      );
+    const head = await this.#stamp(candidates.slice(0, MAX_SYNC_BATCH_EVENTS), identities);
+    const { page, rest } = takePage(head);
+    const filesDone =
+      rest.length === 0 && candidates.length <= MAX_SYNC_BATCH_EVENTS;
     const nextFiles: Record<string, LegacyWikiIdentity> = { ...identities };
 
     let events = [...page];
     let withdrawalsRemain = false;
     let withdrawalsPending = 0;
+    let held: { withdrawn: number; total: number } | null = null;
     if (filesDone && previous !== null && (previous.exhausted || paging)) {
-      const emitted = new Set(planned.map((event) => event.source_record_id));
-      const { withdrawn, carried } = reconcileSnapshot(
-        identities,
-        scan,
-        emitted,
-      );
-      const observedAt = new Date().toISOString();
-      const tombstones = withdrawn.map((withdrawal) =>
-        tombstone(withdrawal, observedAt),
-      );
-      const paged = takePage([...page, ...tombstones]);
-      events = paged.page;
-      withdrawalsRemain = paged.rest.length > 0;
-      withdrawalsPending = paged.rest.length;
+      // A renamed page's new name carries its record: nothing is withdrawn for it.
+      const kept = (relpath: string): boolean =>
+        plannedIds.has(relpath) || movedOrigins.has(relpath);
+      const withdrawn = lost.withdrawn.filter(({ relpath }) => !kept(relpath));
+      const carried = lost.carried.filter((relpath) => !kept(relpath));
+      const total = Object.keys(identities).length;
+      if (
+        massWithdrawalHeld(withdrawn.length, total, this.#confirmedWithdrawals)
+      ) {
+        // An emptied or half-mounted root is not the owner deleting the wiki.
+        // Nothing is withdrawn until the owner confirms this exact count.
+        held = { withdrawn: withdrawn.length, total };
+        withdrawalsRemain = true;
+        withdrawalsPending = withdrawn.length;
+      } else {
+        const observedAt = new Date().toISOString();
+        const tombstones = withdrawn.map((withdrawal) =>
+          tombstone(withdrawal, observedAt),
+        );
+        const paged = takePage([...page, ...tombstones]);
+        events = paged.page;
+        withdrawalsRemain = paged.rest.length > 0;
+        withdrawalsPending = paged.rest.length;
+      }
       Object.assign(nextFiles, carriedEntries(identities, carried));
+    }
+    if (held !== null && events.length === 0) {
+      return {
+        events: [],
+        cursor,
+        status: "unavailable",
+        detail: massWithdrawalDetail(held.withdrawn, held.total),
+        coverage: { ...inventory, pending: held.withdrawn },
+      };
     }
 
     for (const event of events) {
@@ -548,10 +640,17 @@ export class LegacyWikiConnector implements Connector {
         delete nextFiles[event.source_record_id];
         continue;
       }
+      const movedFrom = event.metadata["moved_from"];
+      if (typeof movedFrom === "string") delete nextFiles[movedFrom];
       const hash = hashes.get(event.source_record_id);
       const target = targetOf(event);
       if (hash === undefined || target === null) continue;
-      nextFiles[event.source_record_id] = { hash, target };
+      const plan = event.metadata["plan_sha256"];
+      nextFiles[event.source_record_id] = {
+        hash,
+        target,
+        ...(typeof plan === "string" ? { plan } : {}),
+      };
     }
 
     const last = events[events.length - 1];
@@ -563,24 +662,48 @@ export class LegacyWikiConnector implements Connector {
       ? null
       : (last?.source_record_id ?? after);
     const next = encodeCursor(this.mappingHash, nextFiles, nextAfter, exhausted);
-    if (!exhausted) this.#continuation = { cursor: next, root, run };
-    return {
-      events,
-      cursor: next,
-      has_more: !exhausted,
-      coverage: { ...inventory, pending: rest.length + withdrawalsPending },
-    };
+    if (!filesDone && !scan.truncated && scan.skipped.length === 0) {
+      // The plan owns the bounded emitted text. Raw files are no longer
+      // needed for snapshot reconciliation, so do not retain a second copy.
+      if (!continuing) for (const file of scan.files) file.content = "";
+      this.#continuation = { cursor: next, root, scan, hashes, planned };
+    }
+    return { events, cursor: next, has_more: !exhausted, coverage: { ...inventory, pending: candidates.length - page.length + withdrawalsPending } };
   }
 
-  async #run(
+  /**
+   * Marks each event whose record the ledger has seen change state, so text
+   * the ledger stored before is not swallowed as a duplicate of it.
+   */
+  async #stamp(
+    events: CaptureEventInput[],
+    identities: Record<string, LegacyWikiIdentity>,
+  ): Promise<CaptureEventInput[]> {
+    const epochs = new EpochReader(this.#recordHistory);
+    const ids = events.map((event) => event.source_record_id);
+    const stamped: CaptureEventInput[] = [];
+    for (const [index, event] of events.entries()) {
+      const epoch = await epochs.of(ids, index, (id) => identities[id] !== undefined);
+      stamped.push(
+        epoch === 0
+          ? event
+          : { ...event, metadata: { ...event.metadata, revision_epoch: epoch } },
+      );
+    }
+    return stamped;
+  }
+
+  #plan(
+    scan: ScanResult,
     notes: string[],
     pinned: Record<string, string>,
-  ): Promise<{ scan: ScanResult; events: CaptureEventInput[] }> {
-    const scan = await scanLegacyWiki(this.path, this.mapping.ignore);
+    movedFrom: Record<string, string>,
+  ): CaptureEventInput[] {
     const { events, report } = planLegacyWiki(scan, this.mapping, {
       observedAt: new Date().toISOString(),
       mappingHash: this.mappingHash,
       pinned,
+      movedFrom,
     });
     report.notes.push(...notes);
     this.#report = report;
@@ -598,7 +721,7 @@ export class LegacyWikiConnector implements Connector {
         () => renderLegacyWikiReport(report),
       );
     }
-    return { scan, events };
+    return events;
   }
 }
 
