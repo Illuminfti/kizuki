@@ -234,12 +234,12 @@ function resolveAuthorities(db: Database, memo: AuthorityMemo, pages: readonly C
  * `system_health` reports it. Schema-invalid and oversized files are withheld
  * and reported by doctor.
  */
-export function loadCanon(ctx: ServeContext): CanonIndex {
+export function loadCanon(ctx: ServeContext, options: { readonly include_archived?: boolean } = {}): CanonIndex {
   const generation = canonReadGeneration(ctx.db);
   assertCanonReadAdmission(ctx);
   const memo = vaultMemo(ctx.vaultPath);
   const denied = deniedCanonPaths(ctx);
-  const report = listCanonPagesReport(ctx.vaultPath, memo.pages, denied);
+  const report = listCanonPagesReport(ctx.vaultPath, memo.pages, denied, { include_archived: options.include_archived === true });
   const { fatal, withheld } = splitServingSkips(report.skipped);
   if (fatal.length > 0) {
     throw new CanonUnreadableError(fatal);

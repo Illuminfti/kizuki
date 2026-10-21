@@ -650,6 +650,7 @@ export type {
   ScanFailureCode,
   SkippedPage,
 } from "./vault/pages";
+export type { CanonCapacity, CanonCapacityState } from "./vault/canon-limits";
 export { readDerivedMeta, stampDerived } from "./derived-meta";
 export type {
   DerivedLayer,

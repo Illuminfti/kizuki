@@ -17,7 +17,9 @@ export type CanonWriteErrorCode =
   | "page_type_invalid"
   | "target_invalid"
   | "writer_invalid"
-  | "decision_stale";
+  | "decision_stale"
+  | "canon_ceiling"
+  | "canon_scan_incomplete";
 
 export type UndoErrorCode =
   | "writer_busy"

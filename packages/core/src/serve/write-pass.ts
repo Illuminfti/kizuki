@@ -19,8 +19,8 @@ import {
   type TargetDecision,
 } from "../canon";
 import type { CanonIo } from "../canon";
-import { CanonWriteError } from "../canon/errors";
 import { applyCanonWriteOwned } from "../canon/apply";
+import { CanonWriteError } from "../canon/errors";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { machineOriginPath } from "../canon/origin";
@@ -460,13 +460,14 @@ async function writeCanon(io: CanonIo, options: WritePassOptions, tally: PassTal
   const limit = Math.max(WRITE_PASS_LIMIT, options.budget.usage().canon_writes_per_run.limit);
   const now = options.now ?? (() => new Date().toISOString());
   const attempted = new Set<string>();
+  const capacity = { ceilingHeld: false };
   for (let attempts = 0; attempts < limit && tally.canon_writes < limit; attempts++) {
     if (options.stopRequested?.() === true) { tally.stopped = STOP_REQUESTED; return; }
     reconcileCanonGraph(io.db, io.vault_path);
     const step = await holdWriter(io, (scope, owned) => {
       try {
         settleWriteReservations(owned.db, owned.vault_path);
-        return writeNextPage(scope, owned, options.budget, tally, attempted, now());
+        return writeNextPage(scope, owned, options.budget, tally, attempted, now(), capacity);
       } finally {
         settleWriteReservations(owned.db, owned.vault_path);
       }
@@ -491,9 +492,16 @@ function writeNextPage(
   tally: PassTally,
   attempted: Set<string>,
   now: string,
+  capacity: { ceilingHeld: boolean },
 ): Page {
   const { db } = io;
-  const typed = pendingWorldCanonClaims(db, 1, new Set([...attempted, ...listQuarantinedPages(db, now).map(page => page.handle)]))[0];
+  const holdNewPages = (error: unknown): boolean => {
+    if (!(error instanceof CanonWriteError) || error.code !== "canon_ceiling") return false;
+    if (!capacity.ceilingHeld) tally.errors.push(redactReceiptError(error));
+    capacity.ceilingHeld = true;
+    return true;
+  };
+  const typed = pendingWorldCanonClaims(db, 1, new Set([...attempted, ...listQuarantinedPages(db, now).map(page => page.handle)]), capacity.ceilingHeld)[0];
   if (typed !== undefined) {
     const { handle, claims: typedClaims } = typed;
     attempted.add(handle);
@@ -509,6 +517,7 @@ function writeNextPage(
     } catch (error) {
       if (!(error instanceof BudgetExhausted)) tally.canon_writes += newOccupyingWrites(before, occupyingWriteIds(db, receiptBoundary));
       if (error instanceof BudgetExhausted) { tally.stopped = error.stopped; return "done"; }
+      if (holdNewPages(error)) return "failed";
       const reason = redactReceiptError(error);
       tally.errors.push(`${reason} (page ${handle} at ${path})`);
       // A recovery hold is the writer's state, not this page's fault.
@@ -528,7 +537,7 @@ function writeNextPage(
       supersedePageRevisions(db, claim.claim_id, claim.created_at);
     }
   })();
-  const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN);
+  const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN, true);
   for (const claim of pending) {
     if (attempted.has(claim.claim_id)) continue;
     attempted.add(claim.claim_id);
@@ -536,7 +545,7 @@ function writeNextPage(
       if (requiresSourceTombstoneBinding(db, claim)) requireSourceTombstoneProposal(db, claim, io);
       else requireExternalEvents(db, claim.provenance);
       const decision = segregateLoopDecision(resolveTarget(io, claim));
-      if (decision.action === "skip") continue;
+      if (decision.action === "skip" || (capacity.ceilingHeld && decision.action === "create")) continue;
       const receiptBoundary = lastReceiptRow(db);
       const before = occupyingWriteIds(db, receiptBoundary);
       try {
@@ -555,7 +564,7 @@ function writeNextPage(
         throw error;
       }
     } catch (error) {
-      if (error instanceof SelfOriginError) continue;
+      if (error instanceof SelfOriginError || holdNewPages(error)) continue;
       // The writer validates provenance before refusing a create over an existing file.
       // This terminal outcome consumes no canon write and must not retry forever.
       if (error instanceof CanonWriteError && error.code === "page_exists") {

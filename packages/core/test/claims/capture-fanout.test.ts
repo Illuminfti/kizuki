@@ -173,6 +173,7 @@ describe("closing out capture notes filed for conversational events", () => {
     expect(countCaptureFanout(f.db)).toEqual({ pending: 3, skipped: 1 });
     expect(countUnwrittenLiveClaims(f.db)).toBe(1);
     expect(listUnwrittenLiveClaims(f.db, 1).map(c => c.claim_id)).toEqual([writable.claim_id]);
+    expect(listUnwrittenLiveClaims(f.db, 1, true).map(c => c.claim_id)).toEqual([writable.claim_id]);
   });
 
   test("a repair stops at its limit and the next call takes the rest", async () => {
