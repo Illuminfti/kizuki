@@ -21,8 +21,8 @@ const CORPUS_LIMITS = { text_bytes: EMBEDDED_ENGINE_MAX_TEXT_BYTES, payload_byte
 type CorpusSize = Record<keyof typeof CORPUS_LIMITS, number>;
 const MIN_TEXT_BYTES = 1024 * 1024;
 const MAX_TEXT_BYTES = 1024 * 1024 * 1024;
-/** A bounded request keeps a local embedding server responsive during rebuilds. */
-const EMBEDDING_BATCH_SIZE = 16;
+/** Local CPU embedding latency rises sharply above eight inputs; keep rebuild calls bounded. */
+const EMBEDDING_BATCH_SIZE = 8;
 interface PendingEmbedding {
   readonly key: string;
   readonly chunks: Chunk[];
