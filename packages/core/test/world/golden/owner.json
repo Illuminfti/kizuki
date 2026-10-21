@@ -1874,12 +1874,7 @@
     "status": "not_found"
   },
   "concept (bayes, known at a time)": {
-    "schema": "kizuki.world-view/v1",
-    "operation": "concept",
-    "result": {
-      "status": "unavailable",
-      "reason": "history"
-    }
+    "status": "not_found"
   },
   "situation (a concept ref)": {
     "status": "not_found"
@@ -2504,12 +2499,7 @@
     }
   },
   "situation (launch, known at a time)": {
-    "schema": "kizuki.world-view/v1",
-    "operation": "situation",
-    "result": {
-      "status": "unavailable",
-      "reason": "history"
-    }
+    "status": "not_found"
   },
   "situation (archive)": {
     "schema": "kizuki.world-view/v1",

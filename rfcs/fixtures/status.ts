@@ -66,8 +66,8 @@ export const FIXTURE_STATUS: FixtureRegistry = {
   "world-outcome-usefulness-design": deferred("OUTCOME"),
   "world-perspective-binding-design": deferred("PEOPLE"),
   "world-procedure-evidence-design": deferred("SKILL"),
-  "world-question-copy-design": deferred("QUEST"),
-  "world-question-reopen-design": deferred("QUEST"),
+  "world-question-copy-design": executable("packages/core/test/world/questions-oracles.test.ts"),
+  "world-question-reopen-design": executable("packages/core/test/world/questions-oracles.test.ts"),
   "world-slice-budget-design": deferred("SLICE"),
   "world-slice-partial-design": deferred("SLICE"),
 };

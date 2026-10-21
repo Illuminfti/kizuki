@@ -21,6 +21,7 @@ import {
 } from "../../src/world/views/partitions";
 import { issueWorldRef, worldNamespace } from "../../src/world/references";
 import { WORLD_VIEW_TABLE_SPECS } from "../../src/world/tables/views";
+import { WORLD_TABLE_SPECS } from "../../src/world/tables/registry";
 import { WORLD_MIGRATION_VERSIONS } from "../../src/world/tables/versions";
 
 setDefaultTimeout(60_000);
@@ -178,7 +179,7 @@ describe("the view tables", () => {
       "DELETE FROM world_view_partitions WHERE principal_id='owner'",
     ).run();
     const { tables } = rebuildWorldLayer(db);
-    expect(tables).toEqual(WORLD_VIEW_TABLE_SPECS.map((spec) => spec.name));
+    expect(tables).toEqual(WORLD_TABLE_SPECS.filter(spec => spec.class === "cache" || spec.class === "derived").map(spec => spec.name));
     expect(count(db, "world_view_tokens")).toBe(0);
     expect(viewPartitionOf(db, "owner")).toBe(0);
     expect(viewPartitionOf(db, agent.agent.agent_id)).toBe(1);

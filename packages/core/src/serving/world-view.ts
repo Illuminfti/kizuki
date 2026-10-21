@@ -1,6 +1,9 @@
 import { resolvePrincipal, toolAllowed, type Principal } from "../agents";
 import { tableExists } from "../ledger/schema";
 import type { HistoryPage } from "../contracts/world-history";
+import type { QuestionCard } from "../contracts/question-card";
+import type { Frontier } from "../world/ops/frontier";
+import type { WorldMatches } from "../world/pipeline/assemble";
 import { WorldHistoryUnavailable } from "../world/known/cutoff";
 import { WorldProjectionBudgetError } from "../world/projection";
 import type { discoverWorld } from "../world/projection";
@@ -103,6 +106,9 @@ export type WorldReadInput =
 /** The bodies the shipped operations return; each operation's `dataSchemas` say which one it is. */
 export type WorldData =
   | ConceptCard
+  | QuestionCard
+  | Frontier
+  | WorldMatches<"kizuki.question-matches/v1">
   | HistoryPage
   | SituationCard
   | ReturnType<typeof discoverWorld>
