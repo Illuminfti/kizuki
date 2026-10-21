@@ -10,6 +10,8 @@ packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:343
 packages/core/test/serving/canon-classes.test.ts:generic-api-key:37
 packages/core/test/serving/credential-boundaries.test.ts:generic-api-key:183
 packages/core/test/serving/world-correct-modes.test.ts:generic-api-key:102
+# The same approved synthetic canary moved by the source-grant test import.
+packages/core/test/serving/world-correct-modes.test.ts:generic-api-key:103
 
 # Owner-approved 2026-10-21: the 16 exact historical fixture/prose findings.
 25b841c94987fb121977425c860846f633ec193c:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:93

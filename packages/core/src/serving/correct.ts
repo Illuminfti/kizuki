@@ -247,7 +247,7 @@ async function correctWorldClaim(
   if (!isWorldClaimTarget(ctx, target))
     throw refuse("target", "names no live claim");
   const claim = getClaim(ctx.db, target.claim_id);
-  if (claim === null || claim.status !== "live")
+  if (claim === null)
     throw refuse("target", "names no live claim");
   // A typed correction is filed at the owner's authority; a grant that cannot relay the owner cannot file one.
   if (ctx.principal.kind !== "owner" && !ctx.principal.grant.relay_owner_corrections)
@@ -258,6 +258,19 @@ async function correctWorldClaim(
   });
   if (!reader.canRead(claim))
     throw new ServeError("held", "source authorization does not permit this correction");
+  const world = worldCorrection(intent.change, args.statement, resolved.node);
+  if (claim.status !== "live") {
+    // A retry still names the original opaque claim token. Admit only the
+    // exact recorded intent and its journaled retirement, after rechecking
+    // this principal, the target's evidence and the correction's evidence.
+    const recorded = args.dry_run === true ? null
+      : getRecordedCorrection(ctx.db, { statement: args.statement, target, world });
+    if (claim.status !== "superseded" || recorded === null ||
+        claim.superseded_by !== recorded.claim.claim_id || !reader.canRead(recorded.claim) ||
+        ctx.db.query("SELECT 1 FROM claim_supersessions WHERE winner=? AND loser=?")
+          .get(recorded.claim.claim_id, claim.claim_id) === null)
+      throw refuse("target", "names no live claim");
+  }
   const owned = extendOwnedCanonIo(scope, io, {
       producer:
         ctx.principal.kind === "owner"
@@ -276,7 +289,7 @@ async function correctWorldClaim(
     {
       statement: args.statement,
       target,
-      world: worldCorrection(intent.change, args.statement, resolved.node),
+      world,
       ...(args.dry_run === true ? { dry_run: true } : {}),
     },
   ).catch((error: unknown) => {
