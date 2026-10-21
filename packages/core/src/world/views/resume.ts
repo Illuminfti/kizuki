@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
+import { issuedOpaqueFields } from "../../util/issued-opaque";
 import { SENSITIVITY_ORDER, denyClassesOf, type Grant } from "../../agents/types";
 import { OWNER_AGENT_GRANT } from "../../agents/types";
 import { validateAgentGrant } from "../../agents/identity";
@@ -57,7 +58,7 @@ export function issueResume(db: Database, ns: WorldNamespace, grant: Grant, oper
           ORDER BY created_at DESC, handle_hash DESC LIMIT -1 OFFSET 15)`).run(partition);
         db.query(`INSERT INTO world_resume_handles(handle_hash,partition_id,handle_id,operation,valid,scope,scope_digest,recorded_at,created_at,expires_at)
           VALUES (?,?,?,?,?,?,?,?,?,?)`).run(hash, partition, handleId, operation, canonicalJson(valid), scope, fingerprintOf(Buffer.from(scope)), now, now, expiresAt);
-        return { schema: RESUME_SCHEMA, handle, expiresAt };
+        return issuedOpaqueFields({ schema: RESUME_SCHEMA, handle, expiresAt }, ["handle"]);
       }
       return null;
     })();

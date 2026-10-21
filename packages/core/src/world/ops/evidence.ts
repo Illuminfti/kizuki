@@ -3,6 +3,7 @@ import { evidenceRef } from "../../contracts/world-card-kit";
 import { expandTimelineDetail, EXPAND_OFFSET_MAX, EXPAND_SPAN_MAX } from "../../serving/expand";
 import { currentQuotedSource } from "../../serving/ledger";
 import { createRedactor } from "../../serving/redact";
+import { issuedOpaqueFields } from "../../util/issued-opaque";
 import { authorizedClaimSql, authorizedSupportSql, validMeaningSql } from "../policy-sql";
 import { verifyClaim } from "../pipeline/collect";
 import { newReadFrame, claimVisibleSql } from "../pipeline/frame";
@@ -52,8 +53,15 @@ export const evidenceOp: ClaimsOp<ConceptEvidenceRef> = {
     // truncation relative to this selected span, not the rest of its record.
     const { truncated: _quoteTruncated, ...sourceQuote } = quote;
     const { truncated: _recordTruncated, ...detail } = expanded.data;
-    return { status: "data", data: { schema: "kizuki.world-evidence/v1", evidence }, gaps: null,
-      quoted: [{ ...sourceQuote, ...detail, evidence, ...(detail.returned < length ? { truncated: true as const } : {}) }],
+    // Both identities and this exact anchor have been resolved and authorized.
+    // Parsed caller objects themselves never carry output trust.
+    const validated: ConceptEvidenceRef = {
+      ...evidence,
+      admission: issuedOpaqueFields(evidence.admission, ["token"]),
+      eventVersion: issuedOpaqueFields(evidence.eventVersion, ["token"]),
+    };
+    return { status: "data", data: { schema: "kizuki.world-evidence/v1", evidence: validated }, gaps: null,
+      quoted: [{ ...sourceQuote, ...detail, evidence: validated, ...(detail.returned < length ? { truncated: true as const } : {}) }],
     };
   },
 };

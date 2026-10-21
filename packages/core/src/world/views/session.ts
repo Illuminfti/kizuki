@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { ServeContext } from "../../serving/types";
 import { createHash } from "node:crypto";
 import { canonicalJson } from "../../util/hash";
+import { issuedOpaqueFields } from "../../util/issued-opaque";
 import type { ViewToken, WorldOpData, WorldRecord, WorldViewResult } from "../ops/types";
 import type { WorldNamespace } from "../references";
 import { projectionBytes, wireRefs } from "./bytes";
@@ -72,7 +73,7 @@ export function settleView<T extends WorldOpData>(
   const bytes = projectionBytes(operation, data);
   const { baseline, partition, prior } = session;
   if (baseline !== null && prior !== null && sameBytes(baseline, bytes)) {
-    return { status: "unchanged", view: prior, validUntil: baseline.validUntil };
+    return { status: "unchanged", view: issuedOpaqueFields(prior, ["token"]), validUntil: baseline.validUntil };
   }
   if (partition !== null) {
     try {
@@ -81,7 +82,7 @@ export function settleView<T extends WorldOpData>(
         issueView(db, partition, session.ns, session.digest, bytes, [...new Set([...session.requestRefs, ...wireRefs(data), ...dependencyRefs(db, session.ns, dependencies)])], session.now),
       )();
       if (issued !== null)
-        return { status: "current", view: { kind: "view", token: issued.token }, data, validUntil: issued.validUntil };
+        return { status: "current", view: issuedOpaqueFields({ kind: "view" as const, token: issued.token }, ["token"]), data, validUntil: issued.validUntil };
     } catch (error) {
       if (!isStoreFailure(error)) throw error;
     }
