@@ -2,6 +2,8 @@ import type { ClaimV2Assertion } from "../contracts/claim-v2";
 import { rawSubjectRefKey } from "../contracts/claim-v2";
 import { sha256Hex } from "../util/hash";
 import { readOutcomes } from "./outcomes";
+import { outcomeArtifactBinding } from "./outcome-binding";
+import { readWorldCard } from "./pipeline/read";
 import { dependencyIntersection, dependencyPerspective, isSituationDependency } from "./situation-cycle";
 import { activeWorldRegistry } from "../contracts/world-vocabulary";
 import { SITUATION_DEPENDENCIES, type CommitmentEntry, type DecisionEntry, type SituationCardV2, type SituationDependency } from "../contracts/situation-card-v2";
@@ -49,6 +51,7 @@ export function collectSituationDetails(frame: ReadFrame, cluster: Cluster, body
   const gaps = new Set<ViewGap>();
   const uncertainty: Relation[] = [];
   const cache = new Map<string, CardBody | null>();
+  const artifactCache = new Map<string, boolean>();
   let visited = 0;
   const read = (token: string, kind: string): CardBody | null => {
     const key = `${kind}:${token}`;
@@ -98,24 +101,43 @@ export function collectSituationDetails(frame: ReadFrame, cluster: Cluster, body
     let statusBasis = statuses.map(r => r.claim);
     const deliverables = by("commitment.deliverable").filter(isAsserted);
     const criteria = new Set(deliverables.flatMap(r => r.object.kind === "literal" ? [r.object.value] : []));
-    // Node deliverables need the authenticated ART outcome binding. A matching
-    // arbitrary artifactVersion string cannot identify a captured artifact.
-    const nodeDeliverable = deliverables.some(r => r.object.kind === "node");
-    if (nodeDeliverable) gaps.add("coverage");
+    const nodeDeliverables = items.filter(c => c.relation.predicate === "commitment.deliverable" && isAsserted(c.relation) &&
+      c.eligible.semantic.object.kind === "subject");
     const boundedCriteria = criteria.size > 0 && [...criteria].every(criterion => criterion.length <= 128);
-    if (criteria.size > 0 && !boundedCriteria) gaps.add("coverage");
-    if (!nodeDeliverable && boundedCriteria) {
+    if ((criteria.size > 0 || nodeDeliverables.length > 0) && !boundedCriteria) gaps.add("coverage");
+    if (boundedCriteria) {
       const current = frame.cutoff.kind === "current" && (frame.valid.kind === "all" ||
         (frame.valid.kind === "at" && frame.currentOutcomeAt === frame.valid.at));
       if (!current) gaps.add("coverage");
       else {
+        const bindings = new Set<string>();
+        let artifactsCurrent = true;
+        for (const item of nodeDeliverables) {
+          const object = item.eligible.semantic.object;
+          if (object.kind !== "subject" || item.relation.object.kind !== "node") continue;
+          const binding = outcomeArtifactBinding(object.ref);
+          if (!artifactCache.has(binding)) {
+            const handle = resolveWorldObject(frame.ctx.db,frame.ns,item.relation.object.ref.token);
+            if (++visited > 32) { gaps.add("traversal_limit"); artifactCache.set(binding,false); }
+            else {
+              const card = handle === null ? null : readWorldCard(frame,handle,"artifact_version");
+              const qualified = card !== null && card.schema === "kizuki.artifact-card/v1" && card.coverage.status === "complete_for_query";
+              artifactCache.set(binding,qualified);
+              for (const gap of card?.coverage.gaps ?? []) gaps.add(gap);
+            }
+          }
+          if (!artifactCache.get(binding)) { artifactsCurrent = false; gaps.add("coverage"); }
+          bindings.add(binding);
+        }
         const subject = items[0]!.eligible.semantic.subject;
-        const outcomes = readOutcomes(frame,subject.id,sha256Hex(rawSubjectRefKey(subject)));
-        for (const gap of outcomes.coverage.gaps) gaps.add(gap);
-        const matching = outcomes.evaluations.filter(e => e.conditions !== null && criteria.has(e.conditions.criterion));
-        if (!ownerReopened && !ownerDropped && !values.has("commitment/dropped") && outcomes.coverage.status === "complete_for_query" &&
-            [...criteria].every(criterion => matching.some(e => e.conditions?.criterion === criterion)) && matching.every(e => e.result === "met")) {
-          const basis = [...new Map([...statusBasis,...matching.flatMap(e => [e.report,...e.observations,...e.reviews])].map(ref => [ref.token,ref])).values()];
+        const outcomes = artifactsCurrent ? (bindings.size === 0 ? [undefined] : [...bindings]).map(binding =>
+          readOutcomes(frame,subject.id,sha256Hex(rawSubjectRefKey(subject)),binding)) : [];
+        for (const outcome of outcomes) for (const gap of outcome.coverage.gaps) gaps.add(gap);
+        const matching = outcomes.map(outcome => outcome.evaluations.filter(e => e.conditions !== null && criteria.has(e.conditions.criterion)));
+        if (!ownerReopened && !ownerDropped && !values.has("commitment/dropped") && outcomes.length > 0 &&
+            outcomes.every(outcome => outcome.coverage.status === "complete_for_query") &&
+            matching.every(group => [...criteria].every(criterion => group.some(e => e.conditions?.criterion === criterion)) && group.every(e => e.result === "met"))) {
+          const basis = [...new Map([...statusBasis,...matching.flat().flatMap(e => [e.report,...e.observations,...e.reviews])].map(ref => [ref.token,ref])).values()];
           if (basis.length > 128) gaps.add("traversal_limit");
           else { status = "done"; statusBasis = basis; }
         }

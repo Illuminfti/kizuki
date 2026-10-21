@@ -23,6 +23,7 @@ export const WORLD_KINDS: readonly WorldKindEntry[] = Object.freeze([
   { id: "framework", population: "extraction_off" },
   { id: "procedure", population: "extraction_off" },
   { id: "outcome", population: "propose" },
+  { id: "artifact_version", population: "connector_metadata" },
 ]);
 
 /** Shipped means the build has a way to fill the kind; dark means it has none turned on. */

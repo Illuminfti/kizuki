@@ -6,6 +6,7 @@ import { openLedger } from "@kizuki/core/testing";
 import { envelopeOf } from "../client";
 import { goldenApp, LABEL, ORIGINAL, REVISED, RICH, WHEN, world } from "./golden-app";
 import { assertObservedProcedure, decisionStage, outcomeStage } from "./golden-rich-stages";
+import { exactArtifact } from "./golden-artifact";
 
 /** One disposable vault, actual App capture/writer, and independent MCP clients throughout. */
 export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.envelope/v2", rich = false) {
@@ -15,6 +16,7 @@ export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.
     const { source, initial } = await f.initialize();
     if (rich) await f.operate("run_pass");
     const owner = await f.owner(), peer = await f.peer();
+    const artifactBefore = await exactArtifact(owner, rich ? RICH : ORIGINAL);
     // Existing owner v1 clients retain their legacy tools; world_view explicitly negotiates v2.
     const context = await owner.call("context_packet", { budget_tokens: 1000, response_contract: contract });
     expect(context.isError ?? false).toBe(false); expect(envelopeOf(context).schema).toBe(contract);
@@ -24,6 +26,8 @@ export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.
     const first = (await world(owner, { operation: "concept", concept: ref })).result;
     expect(first.status).toBe("current"); expect(first.data.definitions[0].object.value).toBe(ORIGINAL);
     expect(first.view.kind).toBe("view");
+    expect((await world(owner, { operation: "diff", of: { operation: "concept", concept: ref }, priorView: first.view })).result)
+      .toEqual({ status: "unchanged", view: first.view, validUntil: first.validUntil });
     const shared = (await world(owner, { operation: "share", of: { operation: "concept", concept: ref } })).result.data.handle;
     const resumed = (await world(peer, { operation: "resume", handle: shared })).result;
     expect(resumed.status, JSON.stringify(resumed)).toBe("current"); expect(resumed.data.definitions[0].object.value).toBe(ORIGINAL);
@@ -60,11 +64,22 @@ export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.
     const current = (await world(owner, { operation: "concept", concept: ref })).result.data;
     const correctionTarget = current.definitions.find((row: any) => row.object.value === REVISED);
     expect(correctionTarget).toBeDefined();
+    const changed = (await world(owner, { operation: "diff", of: { operation: "concept", concept: ref }, priorView: first.view })).result;
+    expect(changed.status).toBe("current"); expect(changed.data.schema).toBe("kizuki.world-diff/v1");
+    expect(changed.data.added).toContainEqual(correctionTarget.claim); expect(changed.data.truncated).toBe(false);
+    expect((await world(owner, { operation: "diff", of: { operation: "concept", concept: ref }, priorView: changed.view })).result.status).toBe("unchanged");
+    const artifactAfter = await exactArtifact(owner, REVISED);
+    expect(artifactAfter.content.sha256).not.toBe(artifactBefore.content.sha256);
+    expect(artifactAfter.versionOf).toEqual(artifactBefore.versionOf);
+    expect((await exactArtifact(owner, rich ? RICH : ORIGINAL)).content).toEqual(artifactBefore.content);
     const beforeCorrection = (await world(owner, { operation: "history", concept: ref, knownAt: { kind: "time", at: new Date().toISOString() } })).result.data.snapshot;
     const correctedText = "Equal-priority requests preserve their original sequence.";
     const corrected = await owner.call("correct", { target: { world_claim: correctionTarget.claim }, statement: correctedText, mode: "replace_object", object: { kind: "literal", value: correctedText }, response_contract: contract });
     expect(corrected.isError ?? false, JSON.stringify(corrected)).toBe(false);
     const correction = envelopeOf(corrected).data as any; expect(typeof correction.receipt_id).toBe("string");
+    const correcting = (await world(owner, { operation: "diff", of: { operation: "concept", concept: ref }, priorView: changed.view })).result;
+    expect(correcting.status).toBe("incomplete"); expect(correcting.data.schema).toBe("kizuki.concept-card/v1");
+    expect(correcting.data.definitions.some((row: any) => row.object.value === correctedText)).toBe(true);
     for (const [client, ownRef] of [[owner, ref], [peer, peerRef]] as const) {
       const card = (await world(client, { operation: "concept", concept: ownRef })).result.data;
       expect(card.definitions.some((row: any) => row.object.value === correctedText)).toBe(true);
@@ -92,12 +107,13 @@ export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.
       else expect(data.result).toEqual({ status: "new_view_required" });
     }
     expect((await world(owner, { operation: "concept", concept: ref })).result.data.definitions.some((row: any) => row.object.value === REVISED)).toBe(true);
-    if (rich) await outcomeStage(f, owner);
+    if (rich) await outcomeStage(f, owner, artifactAfter.content.sha256);
     const rebuilt = await f.h.runCliAsync(f.env, "rebuild", "--layer", "world", "--json");
     expect(rebuilt.exitCode, rebuilt.stderr).toBe(0);
     const afterRebuild = (await world(owner, { operation: "find_concepts", label: LABEL })).result.data.matches[0].ref;
     expect((await world(owner, { operation: "concept", concept: afterRebuild })).result.data.definitions.some((row: any) => row.object.value === REVISED)).toBe(true);
     if (rich) await assertObservedProcedure(owner);
+    expect((await exactArtifact(owner, REVISED)).content).toEqual(artifactAfter.content);
     const backup = f.h.tempDir("golden-snapshot-"), restored = join(f.h.tempDir("golden-restored-parent-"), "vault");
     const saved = await f.h.runCliAsync(f.env, "backup", "--out", backup); expect(saved.exitCode, saved.stderr).toBe(0);
     const restoredResult = await f.h.runCliAsync(f.env, "restore", "--from", backup, "--into", restored);
@@ -106,10 +122,13 @@ export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.
     const restoredRef = (await world(restoredOwner, { operation: "find_concepts", label: LABEL })).result.data.matches[0].ref;
     expect((await world(restoredOwner, { operation: "concept", concept: restoredRef })).result.data.definitions.some((row: any) => row.object.value === REVISED)).toBe(true);
     if (rich) await assertObservedProcedure(restoredOwner);
+    expect((await exactArtifact(restoredOwner, REVISED)).content).toEqual(artifactAfter.content);
+    expect((await world(restoredOwner, { operation: "diff", of: { operation: "concept", concept: ref }, priorView: changed.view })).result).toEqual({ status: "new_view_required" });
     expect((await world(restoredOwner, { operation: "resume", handle: shared })).result.status).toBe("new_view_required");
     const sources = await f.call("sources"), revision = sources.sources.find((row: any) => row.source_key === source).revision;
     await f.operate("revoke", { source_key: source, expected_revision: revision, operation_id: "golden-revoke" });
     expect((await world(owner, { operation: "find_concepts", label: LABEL })).result.data.matches).toHaveLength(0);
+    expect((await world(owner, { operation: "find_artifacts", label: artifactAfter.content.sha256.slice(0, 12) })).result.data.matches).toHaveLength(0);
     if (rich) expect((await world(owner, { operation: "find_procedures", label: "Verify delivery" })).result.data.matches).toHaveLength(0);
     await f.operate("resume_revocation", { source_key: source, operation_id: "golden-revoke" });
     const afterPurge = (await f.call("sources")).sources.find((row: any) => row.source_key === source);

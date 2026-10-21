@@ -256,5 +256,42 @@
     "open_items": [
       "VERIFY V6 held-out extraction qualification before offeredToProducer is enabled."
     ]
+  },
+  {
+    "packet": 490,
+    "workstream": "DIFF",
+    "scope": "Bounded qualified assertion changes between an authorized retained object view and a fresh projection",
+    "core": "@kizuki/core/world: diff",
+    "cli": "kizuki world --operation diff --of-operation OBJECT_OPERATION --ref=TOKEN --prior-view=TOKEN",
+    "mcp": "world_view: diff",
+    "http": "/v1/world_view",
+    "app": "/app/v1/world_view and Check for changes in the shipped World detail",
+    "seams": {
+      "core": [
+        "packages/core/src/world/views/diff.ts",
+        "packages/core/src/world/ops/diff.ts"
+      ],
+      "cli": [
+        "packages/cli/src/commands/world/ops/diff.ts"
+      ],
+      "mcp": [
+        "packages/mcp/src/world/ops/diff.ts"
+      ],
+      "http": [
+        "packages/core/src/serve/http.ts"
+      ],
+      "app": [
+        "packages/cli/src/app/ui/client.js"
+      ]
+    },
+    "tests": [
+      "packages/core/test/world/diff.test.ts",
+      "packages/core/test/world/verification-matrix.test.ts",
+      "packages/cli/test/world-verification-parity.test.ts",
+      "packages/cli/test/app-client.test.ts"
+    ],
+    "open_items": [
+      "Complete longitudinal fixture remains a separate integrated acceptance gate."
+    ]
   }
 ]

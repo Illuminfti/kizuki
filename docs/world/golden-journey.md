@@ -34,6 +34,13 @@ separate assertions under `valid: all`; a separate explicit owner correction
 replaces exactly its target, remains visible to both readers, preserves the saved
 historical view, and reverses through its receipt.
 
+Each captured revision also reaches the public ArtifactVersion reader through
+the connector metadata job. The test checks its exact UTF-8 byte digest and
+length, expands the complete source text, preserves the previous version, and
+reports the external original as unavailable. A world diff starts unchanged,
+then names the new assertion after revision. An owner correction with pending
+consolidation returns the incomplete fresh card instead of a complete diff.
+
 Grant narrowing invalidates the scoped client's retained view, resume handle
 and known snapshot. Old evidence resolves without exposing the source. The owner
 positive control remains readable. Supported world rebuild and backup/restore
@@ -58,12 +65,14 @@ the original claim. Three separately enrolled agents capture distinct synthetic
 Outcome sources. A same-source observation cannot establish independence; a new
 observation from the observer's own source can. Procedure usefulness then changes
 to observed without changing its evidence strength or claiming independent
-mastery. The remaining rebuild, restore, revoke and physical erasure stages run
+mastery. The matched Outcome tuple uses the current captured artifact digest as
+its version value; this remains an exact correlation value, not a claim that the
+Outcome subsystem inspected the original file. The remaining rebuild, restore, revoke and physical erasure stages run
 in that same journey.
 
 ## Remaining composed coverage
 
-The final composed ART, DIFF, SLICE and attention stages still require their
+The final composed SLICE and attention stages still require their
 merged product revision. Candidate-registry integration
 may use the existing isolated test seam, with shipped offered flags unchanged;
 real held-out qualification is a separate prerequisite for activation.

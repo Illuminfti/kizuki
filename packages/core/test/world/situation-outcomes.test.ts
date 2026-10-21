@@ -145,3 +145,41 @@ test("all literal deliverable criteria require independent evidence and owner re
   expect(f.entry().status).toBe("done");
  }finally{f.dispose();}
 },120_000);
+
+import { artifactFixture } from "../helpers/artifact-fixture";
+import { MARKDOWN_FOLDER_CONNECTOR_ID } from "../../../connectors/src/markdown-folder";
+import { outcomeArtifactBinding } from "../../src/world/outcome-binding";
+
+for(const loss of ["revoke","purge"] as const)test(`node deliverable completion binds the exact artifact source/version and loses authority on ${loss}`,async()=>{
+ const f=await fixture(),artifacts=await artifactFixture(f.db);try{
+  const source=enrollSource(f.db,MARKDOWN_FOLDER_CONNECTOR_ID,"public",undefined,undefined,["capture","derive","recall","correction","export","session"]);
+  const intended=await artifacts.capture("Exact reviewed deliverable", "public", source);
+  const twin=await artifacts.capture("Exact reviewed deliverable");
+  const later=await artifacts.capture("A different version of this deliverable", "public", source);
+  await f.write("commitment.deliverable",literal("version placeholder"),{subject:"commitment:review"});
+  f.materialize("commitment:review");
+  const placeholder=f.entry().deliverable.find(r=>r.object.kind==="literal"&&r.object.value==="version placeholder")!;
+  await serveCorrect(f.ctx,{statement:"This exact captured artifact is the deliverable.",target:{world_claim:placeholder.claim},mode:"replace_object",object:{kind:"node",ref:intended.ref(f.ctx)}});
+  const legacy:string[]=[];
+  for(const[index,predicate,result]of [[0,"outcome.self_report","met"],[1,"outcome.observation","met"],[2,"outcome.review","accepted"]] as const)
+    legacy.push(await f.file(index,predicate,result,{artifactVersion:outcomeArtifactBinding(intended.subject),attempt:"legacy-digest"}));
+  expect(f.entry().status).toBe("claimed_done");
+  for(const id of legacy)purgeEvents(f.db,f.ctx.vaultPath,{event_id:id},"erase unbound synthetic outcome");
+  for(const wrong of [twin,later]){
+    for(const[index,predicate,result]of [[0,"outcome.self_report","met"],[1,"outcome.observation","met"],[2,"outcome.review","accepted"]] as const)
+      await f.file(index,predicate,result,{artifactVersion:wrong.ref(f.actors[index]!.ctx),attempt:wrong===twin?"wrong-source":"wrong-version"});
+    expect(f.entry().status).toBe("claimed_done");
+  }
+  for(const[index,predicate,result]of [[0,"outcome.self_report","met"],[1,"outcome.observation","met"],[2,"outcome.review","accepted"]] as const)
+    await f.file(index,predicate,result,{artifactVersion:intended.ref(f.actors[index]!.ctx)});
+  expect(f.entry().status).toBe("done");
+  expect((await serveContextPacket(f.ctx,{purpose:"session",budget_tokens:2000})).data?.session?.commitments.served).toBe(1);
+  const retained=f.readSituation(f.ctx,{knownAt:{kind:"time",at:new Date().toISOString()}});
+  expect(f.entry(f.ctx,{knownAt:retained.knownAt}).status).toBe("claimed_done");
+  if(loss==="revoke")revokeSourceGrant(f.db,{source_key:source,expected_revision:1,operation_id:"situation-artifact-revoke"});
+  else purgeEvents(f.db,f.ctx.vaultPath,{event_id:intended.event.event_id},"erase exact commitment artifact");
+  expect(f.entry().status).toBe("claimed_done");
+  rebuildWorldLayer(f.db);
+  expect(f.entry().status).toBe("claimed_done");
+ }finally{artifacts.dispose();f.dispose();}
+},120_000);

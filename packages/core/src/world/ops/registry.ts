@@ -5,6 +5,7 @@ import { procedureOp } from "./procedure";
 import { frameworkOp } from "./framework";
 import { findProceduresOp } from "./find-procedures";
 import { outcomeOp } from "./outcome-read";
+import { artifactVersionOp, findArtifactsOp } from "./artifact";
 import { historyOp } from "./history";
 import { conceptOp } from "./concept";
 import { describeOp } from "./describe";
@@ -16,6 +17,7 @@ import { evidenceOp } from "./evidence";
 import { questionOp } from "./question";
 import { findQuestionsOp } from "./find-questions";
 import { frontierOp } from "./frontier";
+import { diffOp } from "./diff";
 import type { WorldOp, WorldOpRegistry } from "./types";
 
 const COMMON_KEYS = ["operation", "valid", "knownAt", "priorView"];
@@ -90,9 +92,11 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   // slot: SKILL
   procedureOp, findProceduresOp, skillOp, frameworkOp,
   // slot: ART
+  artifactVersionOp, findArtifactsOp,
   // slot: OUTCOME
   outcomeOp,
   // slot: DIFF
+  diffOp,
   // slot: SLICE
   // slot: ATTN
   // slot: FCST

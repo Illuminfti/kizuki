@@ -184,7 +184,7 @@ describe("MarkdownFolderConnector", () => {
           source_record_id: "alpha.md",
           kind: "file",
           text: "# Alpha\n",
-          subjects: [expect.objectContaining({subject_id:expect.stringMatching(/^markdown-folder:[a-f0-9]{64}$/),role:"about"})],
+          subjects: [expect.objectContaining({subject_id:expect.stringMatching(/^markdown-folder:[a-f0-9]{64}$/),role:"about"}), expect.objectContaining({subject_id:expect.stringMatching(/^artifact:sha256:[a-f0-9]{64}$/),role:"about"})],
           deleted: false,
           attachments: [],
           metadata: expect.objectContaining({
@@ -198,7 +198,7 @@ describe("MarkdownFolderConnector", () => {
           source_record_id: "nested/beta.md",
           kind: "file",
           text: "βeta\n",
-          subjects: [expect.objectContaining({subject_id:expect.stringMatching(/^markdown-folder:[a-f0-9]{64}$/),role:"about"})],
+          subjects: [expect.objectContaining({subject_id:expect.stringMatching(/^markdown-folder:[a-f0-9]{64}$/),role:"about"}), expect.objectContaining({subject_id:expect.stringMatching(/^artifact:sha256:[a-f0-9]{64}$/),role:"about"})],
           deleted: false,
           attachments: [],
           metadata: expect.objectContaining({
@@ -283,7 +283,7 @@ describe("MarkdownFolderConnector", () => {
         occurred_at: tombstone.observed_at,
         observed_at: tombstone.observed_at,
         text: "",
-        subjects: initial.events[0]!.subjects,
+        subjects: [initial.events[0]!.subjects[0]!],
         deleted: true,
         attachments: [],
         metadata: { relpath: "removed.md", snapshot: "absent" },
@@ -757,14 +757,15 @@ test("document subjects survive edits and tombstones without collapsing distinct
     const initial = await connector.backfill(null);
     const first = initial.events.find(event => event.source_record_id === "same-name.md")!;
     const second = initial.events.find(event => event.source_record_id === "same_name.md")!;
-    expect(first.subjects).toHaveLength(1);
+    expect(first.subjects).toHaveLength(2);
     expect(first.subjects[0]?.subject_id).not.toBe(second.subjects[0]?.subject_id);
     await writeFile(path.join(root, "same-name.md"), "changed contents");
     const edited = await connector.sync(initial.cursor);
-    expect(edited.events.find(event => event.source_record_id === "same-name.md")?.subjects).toEqual(first.subjects);
+    expect(edited.events.find(event => event.source_record_id === "same-name.md")?.subjects[0]).toEqual(first.subjects[0]);
+    expect(edited.events.find(event => event.source_record_id === "same-name.md")?.subjects[1]?.subject_id).not.toBe(first.subjects[1]?.subject_id);
     await unlink(path.join(root, "same-name.md"));
     const removed = await connector.sync(edited.cursor);
-    expect(removed.events.find(event => event.source_record_id === "same-name.md" && event.deleted)?.subjects).toEqual(first.subjects);
+    expect(removed.events.find(event => event.source_record_id === "same-name.md" && event.deleted)?.subjects).toEqual([first.subjects[0]!]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1520,4 +1521,19 @@ describe("markdown folder committed identities", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+});
+
+test('artifact metadata remains content-bound across a rename and ignores frontmatter identity fields', async () => {
+  const root=await makeTempDir();
+  try {
+    const content='---\nartifact: {sha256: fake, byteLength: 1}\n---\nExact bytes\n';
+    await writeFile(path.join(root,'before.md'),content);
+    const connector=createMarkdownFolderConnector({path:root});
+    const before=await connector.backfill(null), captured=before.events[0]!;
+    await filesystem.rename(path.join(root,'before.md'),path.join(root,'after.md'));
+    const after=await connector.sync(before.cursor), moved=after.events.find(event=>!event.deleted)!;
+    expect(moved.metadata.artifact).toEqual(captured.metadata.artifact);
+    expect(moved.subjects[1]).toEqual(captured.subjects[1]);
+    expect(moved.metadata.artifact).toMatchObject({sha256:identityOf(content).sha256,byteLength:Buffer.byteLength(content),mediaType:'text/markdown'});
+  } finally { await rm(root,{recursive:true,force:true}); }
 });

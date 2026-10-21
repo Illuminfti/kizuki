@@ -1,4 +1,5 @@
 import { PERSON_VOCABULARY } from "./world-vocab/person";
+import { ARTIFACT_VOCABULARY } from "./world-vocab/artifact";
 import { createWorldRegistry, type WorldRegistry, type WorldVocabularyModule, type WorldVocabularySpec } from "./world-kinds";
 import { COMMITMENT_VOCABULARY } from "./world-vocab/commitment";
 import { DECISION_VOCABULARY } from "./world-vocab/decision";
@@ -35,6 +36,7 @@ export const WORLD_VOCABULARY_MODULES: readonly WorldVocabularyModule[] = [
   // slot: sit2
   COMMITMENT_VOCABULARY, DECISION_VOCABULARY, SITUATION_V2_VOCABULARY,
   // slot: art
+  ARTIFACT_VOCABULARY,
   // slot: ident
 ];
 

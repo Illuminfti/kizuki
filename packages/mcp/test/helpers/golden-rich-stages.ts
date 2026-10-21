@@ -32,7 +32,7 @@ export async function decisionStage(f: GoldenApp, owner: StdioClient, peer: Stdi
   expect((await situation(owner)).decisions).toHaveLength(1); expect((await situation(peer)).decisions).toHaveLength(1);
 }
 
-export async function outcomeStage(f: GoldenApp, owner: StdioClient) {
+export async function outcomeStage(f: GoldenApp, owner: StdioClient, artifactVersion: string) {
   const procedureRef = async (client: typeof owner) => (await world(client, { operation: "find_procedures", label: "Verify delivery" })).result.data.matches[0].ref;
   const procedure = async () => (await world(owner, { operation: "procedure", procedure: await procedureRef(owner) })).result.data;
   const first = await procedure(); expect(first.taskUsefulness.status).toBe("unknown");
@@ -56,7 +56,7 @@ export async function outcomeStage(f: GoldenApp, owner: StdioClient) {
   }
   const file = async (index: number, predicate: string, eventIndex = index) => {
     const actor = actors[index]!, ref = await procedureRef(actor.client);
-    const evidence = { subjectRef: ref.token, task: "verify", attempt: "attempt-1", criterion: "required fields present", artifactVersion: "artifact-1", environment: "synthetic-v1", result: predicate === "outcome.review" ? "accepted" : "met", assistance: "assisted", confounded: false };
+    const evidence = { subjectRef: ref.token, task: "verify", attempt: "attempt-1", criterion: "required fields present", artifactVersion, environment: "synthetic-v1", result: predicate === "outcome.review" ? "accepted" : "met", assistance: "assisted", confounded: false };
     const response = await actor.client.call("propose", { kind: "claim", subject, subjects: [subject], predicate, object: JSON.stringify(evidence), body: `Quoted synthetic ${predicate}`, provenance: [actors[eventIndex]!.event], confidence: .7, response_contract: "kizuki.envelope/v2" });
     expect(response.isError ?? false, JSON.stringify(response)).toBe(false);
   };

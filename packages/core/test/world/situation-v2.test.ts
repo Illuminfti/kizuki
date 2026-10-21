@@ -80,6 +80,7 @@ test("the writer refuses inexact calendar dates and wrong typed endpoints", asyn
       await expect(f.write("commitment.due",literal(value),{subject:"commitment:review"})).rejects.toMatchObject({code:"world_object_kind"});
     }
     await expect(f.write("situation.has_commitment",{kind:"subject",ref:f.ref("topic:bayes")},{subject:"project:launch"})).rejects.toMatchObject({code:"world_endpoint_kind"});
+    await expect(f.write("commitment.deliverable",{kind:"subject",ref:f.ref("topic:bayes")},{subject:"commitment:review"})).rejects.toMatchObject({code:"world_endpoint_kind"});
     await expect(f.write("commitment.debtor",{kind:"subject",ref:f.ref("project:launch")},{subject:"commitment:review"})).rejects.toMatchObject({code:"world_endpoint_kind"});
   } finally { f.dispose(); }
 },120_000);
