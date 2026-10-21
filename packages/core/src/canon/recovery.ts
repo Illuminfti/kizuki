@@ -8,7 +8,7 @@ import { isWorldCanonReceipt, type RetainedWorldCanonReceipt } from "./world-rec
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
 import { openWorldErasureReceiptStream, openOrdinaryRecoveryReceiptStream, type WorldErasureReceiptStream, type OrdinaryRecoveryReceiptStream } from "./receipt-stream";
-import { commitMachineByteIntent } from "../ledger/event-origin";
+import { commitMachineByteIntent, recordMachineBodyImages } from "../ledger/event-origin";
 import { getClaim, markClaimReverted, minTimestamp, reinstateClaim, resupersedeClaim, supersessionsForReceipt } from "../claims/store";
 import { tableExists } from "../ledger/schema";
 import { getCanonReceipt, type CanonReceipt } from "./receipts";
@@ -87,12 +87,16 @@ function restoreClaimLifecycle(io: CanonIo, original: CanonReceipt, at: string):
     for (const ref of original.superseded) reinstateClaim(io.db, ref.claim_id, prior.get(ref.claim_id) ?? null);
   }
 }
-function completeRows(io: CanonIo, intent: CanonWriteIntent): void {
-  if(intent.version===3) {completeErasureRows(io,intent);return;}
+function completeRows(scope:VaultMutationScope,io: CanonIo, intent: CanonWriteIntent): void {
+  if(intent.version===3) {completeErasureRows(scope,io,intent);return;}
   const { receipt, completion } = intent;
   // The intent and all effects are deleted/committed together. An existing row
   // with a surviving intent is not a legitimate halfway SQLite transaction.
   if (getCanonReceipt(io.db, receipt.receipt_id) !== null) recoveryFailure("receipt_changed", receipt.receipt_id);
+  if (receipt.writer === "loop") recordMachineBodyImages(io.db, receipt, {
+    before: decodeCanonImage(intent.before_base64)?.toString("utf8") ?? null,
+    after: decodeCanonImage(intent.after_base64)?.toString("utf8") ?? null,
+  });
   insertReceiptRow(io.db, receipt, completion.claim_kind);
   if (completion.mode === "write") {
     const ids = JSON.stringify(receipt.claim_ids);
@@ -123,12 +127,15 @@ function completeRows(io: CanonIo, intent: CanonWriteIntent): void {
   advanceCanonReadGeneration(io.db);
 }
 
-function completeErasureRows(io:CanonIo,intent:WorldCanonErasureIntent):void {
+function completeErasureRows(scope:VaultMutationScope,io:CanonIo,intent:WorldCanonErasureIntent):void {
   const receipt=intent.erasure.final_receipt;
   const machine=io.db.query<{before_hash:string|null;after_hash:string},[string]>("SELECT before_hash,after_hash FROM canon_machine_byte_intents WHERE receipt_id=?").get(receipt.receipt_id);
   if(machine===null||machine.before_hash!==intent.receipt.before_hash||machine.after_hash!==intent.receipt.after_hash)recoveryFailure("intent_invalid",receipt.receipt_id);
   io.db.query("DELETE FROM canon_machine_byte_intents WHERE receipt_id=?").run(receipt.receipt_id);
-  if(isErasedReceipt(receipt))insertErasedReceiptRow(io.db,receipt);else insertReceiptRow(io.db,receipt,"purge_review");
+  if(isErasedReceipt(receipt))insertErasedReceiptRow(io.db,receipt);else {
+    insertReceiptRow(io.db,receipt,"purge_review");
+    recordMachineBodyImages(io.db,receipt,{before:null,after:decodeCanonImage(intent.after_base64)?.toString("utf8")??null});
+  }
   for(const erased of intent.erasure.redactions) {
     eraseReceiptRow(io.db,erased);
     if(tableExists(io.db,"canon_write_reservations"))io.db.query("UPDATE canon_write_reservations SET page_path='',before_hash=NULL WHERE receipt_id=?").run(erased.receipt_id);
@@ -137,14 +144,14 @@ function completeErasureRows(io:CanonIo,intent:WorldCanonErasureIntent):void {
   const after=decodeCanonImage(intent.after_base64),pageId=intent.completion.page_id;
   if(after===null) {
     deletePageIndex(io.db,intent.receipt.page_path);
-    if(pageId!==null)removeDerivedPage(io.db,pageId,io.vault_path);
+    if(pageId!==null)removeDerivedPage(io.db,pageId,io.vault_path,scope);
   }else {
     if(pageId===null||isErasedReceipt(receipt))recoveryFailure("intent_invalid",receipt.receipt_id);
     io.db.query("UPDATE claims SET receipt_id=? WHERE claim_id IN (SELECT value FROM json_each(?))").run(receipt.receipt_id,JSON.stringify(receipt.basis.after?.map(item=>item.claim_id)??[]));
     upsertPageIndex(io.db,{page_id:pageId,rel_path:receipt.page_path,subject_key:null,last_receipt:receipt.receipt_id,last_hash:receipt.after_hash});
     io.db.query("UPDATE page_index SET subject_key=NULL WHERE page_id=?").run(pageId);
     const page=parseFrontmatter(after.toString("utf8"));
-    refreshDerivedPage(io.db,{id:pageId,path:join(io.vault_path,receipt.page_path),relPath:receipt.page_path,data:page.data,body:page.body,contentHash:receipt.after_hash},io.vault_path);
+    refreshDerivedPage(io.db,{id:pageId,path:join(io.vault_path,receipt.page_path),relPath:receipt.page_path,data:page.data,body:page.body,contentHash:receipt.after_hash},io.vault_path,scope);
   }
   io.db.query("DELETE FROM canon_write_intents WHERE singleton=1 AND receipt_id=?").run(receipt.receipt_id);
   advanceCanonReadGeneration(io.db);
@@ -172,7 +179,7 @@ function finish(scope: VaultMutationScope, io: CanonIo, intent: CanonWriteIntent
       stream.reconcile(intent.checkpoint, Buffer.from(`${JSON.stringify(intent.receipt)}\n`));
     }
     stream.sync(); stream.verifyBinding();
-    completeRows(io, intent);
+    completeRows(scope, io, intent);
     stream.verifyBinding();
   }).immediate();
   if(intent.version!==3)refreshCanonProjectionFloor(scope, io, intent.receipt.receipt_id);
@@ -198,7 +205,7 @@ export function commitCanonWrite(scope: VaultMutationScope, io: CanonIo, prepare
       } as CanonWriteIntent);
       stream.verifyBinding();
     };
-    if (prepared.receipt.writer === "loop") commitMachineByteIntent(io.db, prepared.receipt, admit);
+    if (prepared.receipt.writer === "loop") commitMachineByteIntent(io.db, prepared.receipt, admit, { before: prepared.before?.toString("utf8") ?? null, after: prepared.after?.toString("utf8") ?? null });
     else io.db.transaction(admit).immediate();
     return finish(scope, io, intent!, stream);
   } finally { stream.close(); }
@@ -219,7 +226,7 @@ export function commitWorldCanonErasure(scope:VaultMutationScope,io:CanonIo,prep
         erasure:{...prepared.erasure,log_after_hash:plan.after_hash,log_after_length:plan.after_length}};
       assertCanonAdmission(io.db,candidate);
       intent=persistCanonWriteIntent(io.db,candidate) as WorldCanonErasureIntent;stream.verifyBinding();
-    });
+    }, { before: null, after: prepared.after?.toString("utf8") ?? null });
     return finish(scope,io,intent!,stream);
   }finally{stream.close();}
 }

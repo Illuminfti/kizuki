@@ -8,6 +8,7 @@ import {
   DEGRADED_STREAK,
   EMPTY_STREAK,
   EXTRACT_BACKLOG_CAP,
+  LEDGER_LEASE_HELD_STOP,
   type ExtractionConfig,
   type RailDoctor,
   type RailId,
@@ -204,6 +205,7 @@ function produced(receipt: RunReceipt): boolean {
     receipt.claims_extracted > 0 ||
     receipt.claims_deduped > 0 ||
     (receipt.records_skipped ?? 0) > 0 ||
+    receipt.records_prefiltered !== undefined ||
     receipt.claims_written > 0 ||
     receipt.canon_writes > 0 ||
     receipt.retrieval.upserts > 0 ||
@@ -234,7 +236,8 @@ const cap = (text: string): string =>
 /** Why a run ended badly, in the words its receipt already carries. */
 function runErrors(receipt: RunReceipt): string[] {
   const reasons = [
-    ...(receipt.stopped === null ? [] : [`stopped ${receipt.stopped}`]),
+    // A held-ledger stop carries its holder in its error, so the code alone is not the reason.
+    ...(receipt.stopped === null || receipt.stopped === LEDGER_LEASE_HELD_STOP ? [] : [`stopped ${receipt.stopped}`]),
     ...receipt.errors,
     ...receipt.retrieval.degraded,
     ...(receipt.model.diagnostic === undefined
@@ -353,7 +356,7 @@ export function railDoctor(
     const why = runErrors(last)[0];
     reason = cap(`last run failed${why === undefined ? "" : `: ${why}`}`);
   } else if (
-    rail !== "doctor-sweep" &&
+    (rail !== "doctor-sweep" || last?.stopped === LEDGER_LEASE_HELD_STOP) &&
     !stale &&
     badRuns.length >= DEGRADED_STREAK
   ) {

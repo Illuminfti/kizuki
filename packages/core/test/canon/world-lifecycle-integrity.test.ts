@@ -50,6 +50,7 @@ test("migration failure rolls back table rebuild and restores foreign-key enforc
  const db=new Database(":memory:");try {
   ensureLedgerSchema(db);
   db.exec("PRAGMA foreign_keys=OFF");
+  db.exec("DROP TRIGGER canon_body_receipt_changed; DROP TRIGGER canon_body_receipt_deleted; DROP TRIGGER canon_body_intent_deleted; DROP TABLE canon_machine_body_images");
   db.exec("DROP TABLE canon_receipts");applyCanonV4(db);
   db.exec("UPDATE schema_version SET version=32");
   db.exec("CREATE TABLE review_child(receipt_id TEXT REFERENCES canon_receipts(receipt_id) ON DELETE RESTRICT)");

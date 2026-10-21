@@ -6,6 +6,8 @@ import { authorize, sensitivity } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
 import { canonAuthorities } from "../canon/authority";
+import { getCanonReceipt } from "../canon/receipts";
+import { isWorldCanonReceipt } from "../canon/world-receipt";
 import { purgeDiscoveryPending } from "../derived-holds";
 import { eventIdFromReference } from "../retrieval/ids";
 import { isHeld, readHolds } from "../ledger/purge";
@@ -220,8 +222,13 @@ export function pageDecision(
   const original = sensitivity(page.data["sensitivity"]);
   const label = original === null ? null : sourceSensitivity(sourceCtx.db, evidence.sourceIds, original);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
-  const taint = asTaint(page.data["taint"]);
-  if (taint === null) return { allow: false, reason: "missing_taint" };
+  const recordedTaint = asTaint(page.data["taint"]);
+  if (recordedTaint === null) return { allow: false, reason: "missing_taint" };
+  // Earlier typed model pages may have a receipted clean stamp. Tighten their
+  // served trust class without rewriting the immutable receipt or page image.
+  const receipt = evidence.revision.authority === "model_inference"
+    ? getCanonReceipt(sourceCtx.db, evidence.revision.receipt_id) : null;
+  const taint = receipt !== null && isWorldCanonReceipt(receipt) ? "quoted" : recordedTaint;
   const decision = authorize(grant, { ...pageServable(index, page), sensitivity: label });
   return decision.allow
     ? { allow: true, sensitivity: label, taint, evidence }

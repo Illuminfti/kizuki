@@ -4,7 +4,7 @@ import { tableExists } from "./ledger/schema";
 import type { CanonPage } from "./vault/pages";
 
 /** One current hold snapshot for every local projection of the same pages. */
-export function readDerivedHolds(db: Database, pages: readonly CanonPage[] = []): {
+export function readDerivedHolds(db: Database, pages: readonly Pick<CanonPage, "id" | "relPath">[] = []): {
   paths: Set<string>;
   pageIds: Set<string>;
 } {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { CONNECTOR_OPERATION_DEADLINE_MS } from "../../src/contracts/connector";
 import { DEFAULT_SERVE_CONFIG, HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../../src/serve/types";
 import { acquireLease } from "../../src/serve/leases";
 import { openLedger } from "../../src/ledger/db";
@@ -10,6 +11,7 @@ import {
   SERVICE_READY_SECONDS,
   SERVICE_REFUSAL_EXIT,
   SERVICE_START_SECONDS,
+  SERVICE_STOP_MARGIN_SECONDS,
   SERVICE_STOP_SECONDS,
   systemdUnitName,
   unitVaultPath,
@@ -35,6 +37,8 @@ describe("serve units", () => {
     expect(SERVICE_BROKER_REAP_SECONDS).toBe(2);
     expect(SERVICE_START_SECONDS).toBe(SERVICE_READY_SECONDS + SERVICE_BROKER_REAP_SECONDS + 1);
     expect(SERVICE_STOP_SECONDS).toBe(90);
+    // A stop waits for at most one connector call plus a margin: the model request in flight is aborted.
+    expect(SERVICE_STOP_SECONDS * 1_000).toBe(CONNECTOR_OPERATION_DEADLINE_MS + SERVICE_STOP_MARGIN_SECONDS * 1_000);
     expect(unit).toContain(`TimeoutStartSec=${SERVICE_START_SECONDS}s`);
     expect(unit).toContain(`TimeoutStopSec=${SERVICE_STOP_SECONDS}s`);
     expect(unit).toContain(`ExecStart=${spec.execStart} --service-custody ${spec.vaultId}`);

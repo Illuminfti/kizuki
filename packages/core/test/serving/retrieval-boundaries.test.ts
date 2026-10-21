@@ -50,10 +50,10 @@ test("a later capture is different evidence from the version a canon page cites"
     const current = storeEvent(f.db, "gate-revision", "2026-02-02T00:00:00Z", "The orchard gate has a green latch.", "person:ada", "public");
     rebuildDerived(f.db, f.vaultPath);
     const search = await serveSearch(f.owner(), { query: "orchard gate", scope: "all" });
-    expect(search.quoted.map(chunk => chunk.event_id)).toContain(current);
-    expect(search.quoted.map(chunk => chunk.event_id)).not.toContain(prior);
+    expect(search.quoted.filter(chunk => "event_id" in chunk).map(chunk => chunk.event_id)).toContain(current);
+    expect(search.quoted.filter(chunk => "event_id" in chunk).map(chunk => chunk.event_id)).not.toContain(prior);
     const packet = await serveContextPacket(f.owner(), { query: "orchard gate", include: ["canon", "timeline"], ...WINDOW, budget_tokens: 2000 });
-    expect(packet.quoted.map(chunk => chunk.event_id)).toContain(current);
+    expect(packet.quoted.filter(chunk => "event_id" in chunk).map(chunk => chunk.event_id)).toContain(current);
   } finally { f.dispose(); }
 }, 120_000);
 
@@ -113,15 +113,15 @@ test("a hidden revision cannot withdraw a visible source version", async () => {
     const ask = () => serveSearch(f.agent("reader-public"), { query: "orchard gate", scope: "ledger" });
     const packet = () => serveContextPacket(f.agent("reader-public"), { query: "orchard gate", include: ["timeline"], ...WINDOW });
     const answerBefore = await ask();
-    expect(answerBefore.quoted.map(chunk => chunk.event_id)).toEqual([prior]);
+    expect(answerBefore.quoted.filter(chunk => "event_id" in chunk).map(chunk => chunk.event_id)).toEqual([prior]);
     const contextBefore = await packet();
-    expect(contextBefore.quoted.map(chunk => chunk.event_id)).toEqual([prior]);
+    expect(contextBefore.quoted.filter(chunk => "event_id" in chunk).map(chunk => chunk.event_id)).toEqual([prior]);
     const current = storeEvent(f.db, "scoped-revision", "2026-02-02T00:00:00Z", "The orchard gate has a green latch.", "person:ada", "private");
     rebuildDerived(f.db, f.vaultPath);
     expect(stable(await ask())).toBe(stable(answerBefore));
     expect(stable(await packet())).toBe(stable(contextBefore));
     const owner = await serveSearch(f.owner(), { query: "orchard gate", scope: "ledger" });
-    expect(owner.quoted.map(chunk => chunk.event_id)).toEqual([current]);
+    expect(owner.quoted.filter(chunk => "event_id" in chunk).map(chunk => chunk.event_id)).toEqual([current]);
     expect((await serveSearch(f.owner(), { query: "blue latch", scope: "ledger" })).quoted).toEqual([]);
   } finally { f.dispose(); }
 }, 120_000);
@@ -133,7 +133,7 @@ test("a recency packet also folds captures into their canon page", async () => {
       subjects: ["person:ada"], include: ["canon", "timeline"], ...WINDOW, budget_tokens: 2000,
     });
     expect(packet.canon.length).toBeGreaterThan(0);
-    expect(packet.quoted.map(chunk => chunk.event_id)).not.toContain(f.events["public"]!);
+    expect(packet.quoted.filter(chunk => "event_id" in chunk).map(chunk => chunk.event_id)).not.toContain(f.events["public"]!);
   } finally { f.dispose(); }
 }, 120_000);
 

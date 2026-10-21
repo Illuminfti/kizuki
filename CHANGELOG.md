@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Connector drains and prefilter-only extraction yield to the host between
+  durable batches, so signals and timer callbacks can stop an active pass
+  even when its promises resolve immediately. Terminal batches yield before
+  another connection can start.
+- Extraction prefilter counts obey current source permission, including journal
+  replay. Denied text cannot change skip counters or extraction step usage.
+
 - Purge is physically total. After it, the purged text is gone from claim and
   proposal payloads (ids, provenance and receipts stay), from archive copies
   and stage images, from the search index and retrieval store, and from freed
@@ -202,6 +209,36 @@
   `revoke` and `resume-revocation` now work on a disconnected source.
 - A restored vault recreates its receipt journal, so `kizuki doctor` reports
   no orphans and status ok. Restore prints the agents to enroll again.
+- Typed extraction no longer lets model output launder injected text into clean
+  canon. New typed claims read from external text are stored `taint: quoted`
+  and renders into a quoted page; in a context packet such a page sits under the
+  quoted-capture heading as a block quotation, not under canon. A literal must
+  be contained, on whole tokens and after normalization, in the span it cites,
+  or the claim is admitted only as an uncertain inferred interpretation;
+  `health.*` and `preference.*` claims need a quoted basis for every subject; a
+  literal or body, of any object kind, that repeats an instruction-shaped span
+  from its own record is dropped unless the claim reports it as a quotation.
+  `identity.same_as`, `identity.handle_on`, `decision.*` claims that name an
+  owner, agent, grant, permission, policy, access or audit, and claims whose
+  page body uses any of those terms are held, invisible to reads and
+  canon, until two independent enrolled sources support them or the owner does.
+  A selected source support renders quoted even on a retained clean parent, and
+  a parent authority label cannot replace currently permitted native support.
+  See [docs/model-output-trust.md](docs/model-output-trust.md).
+- The legacy wiki and events importers refuse, with
+  `source_contains_kizuki_vault`, a source that is or contains a Kizuki vault,
+  as the Markdown folder connector already did. An ignore pattern cannot hide
+  a nested vault.
+- Machine-origin detection recognizes copied page bodies with stripped or
+  rewritten frontmatter, changed line endings, trailing whitespace or final
+  newlines. Linear normalization bounds hostile whitespace work. The writer
+  records durable body hashes before publication; backup/restore preserves
+  them, and withdrawal and erasure remove them. Historical writes gain body
+  hashes on their next receipted rewrite. See
+  [docs/event-identity-origin.md](docs/event-identity-origin.md).
+- A claim's `corroboration` count rises only for a source record it did not
+  already rest on, on both the typed and the staged path. A re-sync of the same
+  record, whatever its bytes, no longer counts as a second witness.
 - A first Telegram backfill of an account with more than about 125 dialogs
   stored nothing and repeated forever, because the per-dialog cursor passed
   the 8 KiB checkpoint bound. The per-dialog map now lives in the host cursor
@@ -221,6 +258,20 @@
   `| jq` or a hook truncated and unparseable. Every command's stdout and stderr
   now go out with a synchronous write that waits for a slow reader; a reader
   that closes early ends the output quietly.
+- A long `kizuki backfill`, `sync` or `import` can no longer take the always-on
+  daemon down. The daemon treats a ledger held by another writer as a skipped
+  pass: the receipt stops as `ledger:lease_held` and names the holder, the rail
+  stays due, and the daemon backs off from 1 s to 30 s instead of exiting with
+  `lease_held` and spending the supervisor's start limit. The three commands
+  record themselves as the running ingest and, while a daemon runs, leave the
+  ledger free for 150 ms after every 250 ms of writing. A daemon started while a
+  writer holds the ledger waits and starts inside the same process. Doctor names
+  the holder after five skipped passes.
+- A stop no longer waits out a model request. `kizuki serve stop`, SIGTERM and
+  SIGINT abort the request in flight through the model transport, the pass
+  records `serve:stop_requested`, and the aborted request is not counted as a
+  model failure. The unit's `TimeoutStopSec` is derived from the connector
+  deadline plus a margin and no longer depends on the model timeout.
 - The daily brief is stamped private when it names a page that ever received a
   private receipt (a repair never lowers it), says when rail failure groups
   were omitted, and the brief repair also rewrites the run-id
@@ -377,6 +428,23 @@
   loaded machine does not fail tests at Bun's 5-second default. A test's own
   explicit timeout is unchanged. The CLI test helper kills a child process that
   has not exited after 90 seconds and fails that test with a clear message.
+- After graph registry initialization, a canon write assesses only the written
+  page's evidence and refreshes its edges and affected incoming links through
+  indexed page names. Ordinary refresh and rebuild reconcile unrelated disk
+  edits. Synthetic coverage compares writes with 4,000 and 200 live pages,
+  checks a ratio below three, and verifies rebuild equality.
+- The sync pass writes canon one page at a time. It takes and releases the
+  writer for every page and reads a stop request between pages, so a stop ends
+  it after the page in progress. `kizuki tell` and `kizuki undo` wait up to 30
+  seconds for the writer instead of failing `writer_busy` at once.
+- `[budget] canon_writes_per_run` in `serve.toml` above 32 now raises how many
+  canon pages one pass writes (default 32, as before). The pass used to end at
+  32 whatever the value.
+- A typed page group that fails three passes in a row is set aside for 24
+  hours, with its handle and path in the receipt, so groups behind it are
+  written instead of starving once 32 are stuck. `kizuki doctor` and
+  `kizuki serve status` print `quarantined typed pages=N`.
+
 - A refused `kizuki export` now names the sources that block it and the exact
   grant or revocation command that clears each one, instead of a bare
   `source_export_denied`. The consent rule is unchanged: export still needs the
@@ -400,6 +468,29 @@
   run through the same notifier, keeping its body. The run receipt records
   `pages_repaired`. A page that cannot be rewritten degrades the run with
   `brief-repair-failed` and is tried again on the next sweep.
+- The sync rail drains connectors in bounded slices. `[serve]
+  connector_drain_seconds` (1 to 3,600, default 120) is the time one pass
+  spends reading sources, shared equally among the connections left, and
+  `connector_drain_batches` (1 to 10,000, default 100) caps the batches one
+  connection reads per pass. A connection that is not exhausted when either is
+  spent stops at its last committed cursor, the pass still runs the write pass
+  and the derived refresh, its run receipt carries `has_more`, and the next
+  pass resumes from the cursor. A first backfill of a large source therefore
+  no longer holds the retrieval, purge and other rails for hours, and the rail
+  reads a stop request between batches, so `serve stop` and SIGTERM end a
+  pass within one batch and skip the derived refresh until the next start.
+  `kizuki sync [connector]` and `kizuki backfill` still drain to exhaustion;
+  `kizuki sync --once` takes the rail's slice.
+- Extraction skips authorized records with nothing to extract before any model request:
+  explicit service kinds (`service`), no text at all (`empty`), no letter or digit (`no_words`, such as emoji or
+  punctuation) and fewer than 12 letters and digits (`too_short`; each Han,
+  kana or hangul character counts four). The cursor moves past them, they are
+  not deferred, and the run receipt counts them by reason in
+  `records_prefiltered`. Such a step makes no request and no longer uses one of
+  the pass's `max_calls_per_pass` steps, so a chat backfill of short messages
+  passes over thousands per pass, still bounded by `max_pass_seconds`. The
+  records stay in the ledger for search, timeline and context. Older deferred
+  records use the same prefilter under their current extraction grant.
 
 ### Retrieval quality
 

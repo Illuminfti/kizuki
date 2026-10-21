@@ -55,7 +55,7 @@ beforeAll(async () => {
 afterAll(() => fixture.dispose());
 
 const eventIds = (envelope: Awaited<ReturnType<typeof serveSearch>>): string[] =>
-  envelope.quoted.map((chunk) => chunk.event_id).sort();
+  envelope.quoted.filter(chunk => "event_id" in chunk).map((chunk) => chunk.event_id).sort();
 
 describe("question search through serving", () => {
   test("a decision question finds the decision and says the words were matched loosely", async () => {
@@ -119,7 +119,7 @@ describe("the packet is chosen by its query", () => {
       include: ["timeline"],
       ...JANUARY,
     });
-    expect(packet.quoted.map((chunk) => chunk.event_id)).toEqual([ids["decision"] as string]);
+    expect(packet.quoted.filter(chunk => "event_id" in chunk).map((chunk) => chunk.event_id)).toEqual([ids["decision"] as string]);
     expect(packet.data!.packet_md).toContain("onboard two market makers");
     expect(packet.data!.packet_md).not.toContain("Zephyr");
   });
@@ -127,7 +127,7 @@ describe("the packet is chosen by its query", () => {
   test("different queries give different packets", async () => {
     const a = await serveContextPacket(fixture.owner(), { query: "market makers launch", include: ["timeline"], ...JANUARY });
     const b = await serveContextPacket(fixture.owner(), { query: "zephyr reminders friday", include: ["timeline"], ...JANUARY });
-    expect(b.quoted.map((chunk) => chunk.event_id)).toEqual([ids["other"] as string]);
+    expect(b.quoted.filter(chunk => "event_id" in chunk).map((chunk) => chunk.event_id)).toEqual([ids["other"] as string]);
     expect(a.data!.packet_hash).not.toBe(b.data!.packet_hash);
   });
 
@@ -140,7 +140,7 @@ describe("the packet is chosen by its query", () => {
       since: "2026-01-01T00:00:00Z",
       until: "2030-01-01T00:00:00Z",
     });
-    expect(widened.quoted.map((chunk) => chunk.event_id)).toEqual([ids["decision"] as string]);
+    expect(widened.quoted.filter(chunk => "event_id" in chunk).map((chunk) => chunk.event_id)).toEqual([ids["decision"] as string]);
   });
 
   test("an unanswerable query yields empty sections and a no-match label", async () => {
@@ -160,7 +160,7 @@ describe("the packet is chosen by its query", () => {
       ...JANUARY,
     });
     expect(packet.canon.map((chunk) => chunk.page_id)).toContain("fact:zephyr");
-    expect(packet.quoted.map((chunk) => chunk.event_id)).toEqual([ids["other"] as string]);
+    expect(packet.quoted.filter(chunk => "event_id" in chunk).map((chunk) => chunk.event_id)).toEqual([ids["other"] as string]);
   });
 
   test("named subjects scope a queried packet: the matches come first, the subject's other captures follow", async () => {
@@ -170,7 +170,7 @@ describe("the packet is chosen by its query", () => {
       include: ["timeline"],
       ...JANUARY,
     });
-    const order = packet.quoted.map((chunk) => chunk.event_id);
+    const order = packet.quoted.filter(chunk => "event_id" in chunk).map((chunk) => chunk.event_id);
     expect(order[0]).toBe(ids["decision"] as string);
     expect(order).toContain(ids["origin"] as string);
     expect(new Set(order).size).toBe(order.length);
@@ -182,7 +182,7 @@ describe("the packet is chosen by its query", () => {
       since: "2026-01-10T00:00:00Z",
       until: "2026-01-11T12:00:00Z",
     });
-    expect(packet.quoted.map((chunk) => chunk.event_id).sort()).toEqual(
+    expect(packet.quoted.filter(chunk => "event_id" in chunk).map((chunk) => chunk.event_id).sort()).toEqual(
       [ids["decision"] as string, ids["origin"] as string].sort(),
     );
   });

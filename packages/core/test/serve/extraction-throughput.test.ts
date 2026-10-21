@@ -528,6 +528,49 @@ test("a stop request ends the pass at the next step boundary", async () => {
   expect(endsAt(readExtractCursor(f.db), e1)).toBe(true);
 });
 
+test("a request the daemon's stop aborted ends the pass as serve:stop_requested and is not a model failure", async () => {
+  const f = fixture(3);
+  writeServeToml(
+    f.vault,
+    "[extraction]\nmax_calls_per_pass = 3\nrecords_per_request = 1\n",
+  );
+  let stopped = false;
+  const aborting = scriptedModelProducer(f.vault, () => {
+    stopped = true;
+    return "aborted";
+  });
+  const hooks = {
+    producer: aborting.producer,
+    claims: { db: f.db },
+    model_ref: MODEL,
+  };
+  const receipt = await runRail(f.db, f.vault, "sync", {
+    hooks,
+    stopRequested: () => stopped,
+  });
+  expect(receipt).toMatchObject({
+    status: "stopped",
+    stopped: "serve:stop_requested",
+    claims_extracted: 0,
+    errors: [],
+    // The request left, so it is charged; the model did not fail it.
+    model: { calls: 1, unavailable: 0 },
+  });
+  expect(receipt.model.diagnostic).toBeUndefined();
+  expect(receipt.model.last_request).toBeUndefined();
+  expect(aborting.requests).toHaveLength(1);
+  const doctor = inspectServeDoctor(f.db, f.vault, { model_ref: MODEL });
+  expect(doctor.model.current_failure).toBeNull();
+  // Without the stop, the same record is asked for again.
+  stopped = false;
+  const resumed = scriptedModelProducer(f.vault, () => "ok");
+  const next = await runRail(f.db, f.vault, "sync", {
+    hooks: { ...hooks, producer: resumed.producer },
+  });
+  expect(next).toMatchObject({ status: "ok", stopped: null, claims_extracted: 3 });
+  expect(resumed.requests[0]).toEqual(aborting.requests[0]);
+});
+
 test("SIGTERM during a request lets it finish and ends the pass before the next one", () => {
   const f = fixture(20);
   writeServeToml(
