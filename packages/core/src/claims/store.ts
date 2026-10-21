@@ -871,17 +871,19 @@ export function countWrittenLiveClaims(db: Database): number {
 export function listUnwrittenLiveClaims(
   db: Database,
   limit = 32,
+  excluded: readonly string[] = [],
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
   const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 32;
   return db
-    .query<ClaimRow, [number]>(
+    .query<ClaimRow, [string, number]>(
       `SELECT * FROM claims
         WHERE ${unwrittenLiveWhere(db)}
+          AND claim_id NOT IN (SELECT value FROM json_each(?))
         ORDER BY created_at, claim_id
         LIMIT ?`,
     )
-    .all(bound)
+    .all(JSON.stringify(excluded), bound)
     .map(rowToClaim);
 }
 

@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Repeated legacy canon failures wait a day after three failed passes, allowing
+  later writable claims through. Doctor lists the unmaterialized claims and
+  retry times. Their full provenance remains intact; the 100-source page limit
+  is unchanged, and quarantine does not count as a successful write.
+
 - World discovery and cards exclude held claims before their candidate bounds,
   so a held prefix cannot hide an eligible label or definition. Visible
   overflow still reports incomplete coverage.

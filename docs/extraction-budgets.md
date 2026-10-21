@@ -435,6 +435,18 @@ durable completion. A revision change during extraction refuses filing and
 advancement; a permission-preserving revision can replay an existing journal
 under the current authorization checks.
 
+
+Legacy claims that repeatedly fail canon writing use the same three-pass,
+one-day retry delay. Their full evidence and live claim status remain intact;
+they are not silently dropped or counted as written. Delayed claims are filtered
+before the queue limit, so they cannot fill the candidate window. `kizuki doctor`
+lists their identifiers, fixed failure codes and retry times as **unmaterialized**;
+`kizuki serve status` includes the count. A real receipted write clears the retry
+state, and purge erases it with the claim payload. In particular, an entity stub
+with more than 100 source references still cannot fit a canon page. The retry
+delay keeps that limitation visible without making the rest of the queue wait.
+
+
 ## Verification
 
 Use the repository's pinned Bun version:

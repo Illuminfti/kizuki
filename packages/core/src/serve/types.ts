@@ -531,8 +531,14 @@ export interface TopFailure {
   readonly rail: RailId | null;
 }
 
-/** Typed pages the canon writer set aside after repeated failures; not a failure of the service. */
+/** Unmaterialized work set aside after repeated failures; not a failure of the service. */
 export interface QuarantineDoctor {
+  readonly claims?: readonly {
+    readonly claim_id: string;
+    readonly attempts: number;
+    readonly reason: string;
+    readonly until: string;
+  }[];
   readonly pages: readonly {
     readonly handle: string;
     readonly path: string;

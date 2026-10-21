@@ -93,3 +93,68 @@ export function clearStuckPage(db: Database, handle: string): void {
   if (!tableExists(db, "rail_cursors")) return;
   db.query("DELETE FROM rail_cursors WHERE rail = ? AND source_key = ?").run(WRITER_RAIL, KEY_PREFIX + handle);
 }
+
+
+const CLAIM_KEY_PREFIX = "legacy:";
+const MAX_QUARANTINED_CLAIMS = 10_000;
+
+/** Unwritten legacy claims remain live, with their full provenance, while retry is delayed. */
+export interface QuarantinedClaim {
+  readonly claim_id: string;
+  readonly attempts: number;
+  readonly reason: string;
+  readonly last_at: string;
+  readonly until: string;
+}
+
+function parseClaim(claimId: string, raw: string): Omit<QuarantinedClaim, "until"> | null {
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (claimId.length === 0 || !isPlainObject(value) || Object.keys(value).sort().join() !== "attempts,last_at,reason") return null;
+    const { attempts, reason, last_at } = value;
+    if (typeof attempts !== "number" || !Number.isSafeInteger(attempts) || attempts < 1 ||
+      typeof reason !== "string" || typeof last_at !== "string" || !Number.isFinite(Date.parse(last_at)) ||
+      new Date(last_at).toISOString() !== last_at) return null;
+    return { claim_id: claimId, attempts, reason: redactReceiptError(reason).slice(0, MAX_REASON), last_at };
+  } catch { return null; }
+}
+
+function heldClaim(claim: Omit<QuarantinedClaim, "until">, now: string): QuarantinedClaim | null {
+  const at = Date.parse(claim.last_at), current = Date.parse(now), until = at + QUARANTINE_MS;
+  if (claim.attempts < QUARANTINE_FAILURES || !Number.isFinite(current) || at > current ||
+    !Number.isFinite(new Date(until).getTime()) || until <= current) return null;
+  return { ...claim, until: new Date(until).toISOString() };
+}
+
+/** Dead, corrected, written or purged claims cannot hold a queue slot or appear as pending work. */
+export function listQuarantinedClaims(db: Database, now: string): QuarantinedClaim[] {
+  if (!tableExists(db, "rail_cursors") || !tableExists(db, "claims")) return [];
+  const held: QuarantinedClaim[] = [];
+  const rows = db.query<{ claim_id: string; cursor: string }, [string, string, number]>(
+    `SELECT c.claim_id, r.cursor FROM rail_cursors r JOIN claims c ON c.claim_id = substr(r.source_key, ${CLAIM_KEY_PREFIX.length + 1})
+     WHERE r.rail = ? AND r.source_key LIKE ? AND c.status = 'live' AND c.receipt_id IS NULL AND c.is_world_typed = 0
+     ORDER BY r.source_key LIMIT ?`,
+  ).all(WRITER_RAIL, `${CLAIM_KEY_PREFIX}%`, MAX_QUARANTINED_CLAIMS);
+  for (const row of rows) {
+    const claim = parseClaim(row.claim_id, row.cursor);
+    const value = claim === null ? null : heldClaim(claim, now);
+    if (value !== null) held.push(value);
+  }
+  return held;
+}
+
+export function recordStuckClaim(db: Database, claimId: string, reason: string, now: string): QuarantinedClaim | null {
+  if (claimId.length === 0) return null;
+  const raw = readRailCursor(db, WRITER_RAIL, CLAIM_KEY_PREFIX + claimId);
+  const previous = raw === null ? null : parseClaim(claimId, raw);
+  const next = { claim_id: claimId, attempts: Math.min(Number.MAX_SAFE_INTEGER, (previous?.attempts ?? 0) + 1),
+    reason: redactReceiptError(reason).slice(0, MAX_REASON), last_at: now };
+  const { claim_id: _claimId, ...stored } = next;
+  writeRailCursor(db, WRITER_RAIL, CLAIM_KEY_PREFIX + claimId, JSON.stringify(stored));
+  return heldClaim(next, now);
+}
+
+export function clearStuckClaim(db: Database, claimId: string): void {
+  if (tableExists(db, "rail_cursors")) db.query("DELETE FROM rail_cursors WHERE rail = ? AND source_key = ?")
+    .run(WRITER_RAIL, CLAIM_KEY_PREFIX + claimId);
+}

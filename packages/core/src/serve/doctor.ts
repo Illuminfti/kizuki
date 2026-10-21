@@ -23,7 +23,7 @@ import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readE
 import { sha256Hex } from "../util/hash";
 import { listSchedules } from "./schema";
 import { countOversizedRecords, RETRY_SKIPPED_COMMAND } from "./extract-oversized";
-import { listQuarantinedPages } from "./write-quarantine";
+import { listQuarantinedPages, listQuarantinedClaims } from "./write-quarantine";
 import type { SupervisorHost } from "./supervisor";
 import { queryServeService } from "./supervisor";
 import { ensureVaultId } from "./vault-id";
@@ -660,7 +660,9 @@ function oversizedDoctor(db: Database): OversizedDoctor {
 /** A set-aside page is the writer's own decision, retried after a day; it is listed, not a failure. */
 function quarantineDoctor(db: Database, now: string): QuarantineDoctor {
   const pages = listQuarantinedPages(db, now).map(({ handle, path, attempts, reason, until }) => ({ handle, path, attempts, reason, until }));
-  return { pages, detail: `quarantined typed pages=${pages.length}` };
+  const claims = listQuarantinedClaims(db, now).map(({ claim_id, attempts, reason, until }) => ({ claim_id, attempts, reason, until }));
+  return { pages, ...(claims.length === 0 ? {} : { claims }),
+    detail: `quarantined typed pages=${pages.length}${claims.length === 0 ? "" : ` unmaterialized legacy claims=${claims.length}`}` };
 }
 
 function throughputDoctor(config: ServeConfig, syncPeriod: number, recordsSkipped: number): ThroughputDoctor {
