@@ -1,3 +1,5 @@
+import { personOp } from "./person";
+import { findPeopleOp } from "./find-people";
 import { historyOp } from "./history";
 import { conceptOp } from "./concept";
 import { describeOp } from "./describe";
@@ -79,6 +81,7 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   // slot: QUEST
   questionOp, findQuestionsOp, frontierOp,
   // slot: PEOPLE
+  personOp, findPeopleOp,
   // slot: SKILL
   // slot: ART
   // slot: OUTCOME

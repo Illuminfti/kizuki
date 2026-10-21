@@ -1,3 +1,4 @@
+import { sessionPerson } from "../world/person-session";
 import type { AuditDenial } from "../agents";
 import { toolAllowed } from "../agents";
 import { compareRfc3339 } from "../agents/time";
@@ -292,9 +293,25 @@ export function collectSessionPieces(
     );
     if (truncated) reasons.owner = "unavailable";
     for (const claim of facts) shown.add(claim.claim_id);
-    return facts.map((claim) =>
-      claimPiece("owner", "## owner (owner-authority facts)", claim, reader, redactor),
-    );
+    const seenPeople = new Set<string>();
+    return facts.flatMap((claim) => {
+      const person = worldGranted ? sessionPerson(ctx, claim, request.at) : null;
+      if (person !== null) {
+        const ids = [claim.claim_id, ...person.deps.claims];
+        if (ids.every(id => { const row = getClaim(ctx.db, id); return row !== null && reader.canRead(row); })) {
+          if (seenPeople.has(person.card.person.ref.token)) return [];
+          seenPeople.add(person.card.person.ref.token);
+          const labels = person.card.person.labels.map(label => redactor.format(label.text, clamp)).join(" / ");
+          const relations = person.card.perspectives.flatMap(group => group.relations).slice(0, SECTION_ITEMS);
+          const block = redactor.join([
+            `- Person card (quoted data): ${labels || "unlabelled"}; no agreement inferred.\n`,
+            ...relations.map(item => `- taint=quoted :: ${item.predicate} ${redactor.format(item.object.kind === "literal" ? item.object.value : JSON.stringify(item.object), clamp)} holder=${item.perspective.holder?.token ?? "unattributed"} speaker=${item.perspective.speaker?.token ?? "unattributed"} mode=${item.perspective.mode}\n`),
+          ]);
+          return [{ ...piece("owner", "## owner (Person card; quoted data)", block, ids, reader), world: person.deps }];
+        }
+      }
+      return [claimPiece("owner", "## owner (owner-authority facts)", claim, reader, redactor)];
+    });
   });
 
   run("now", () => {

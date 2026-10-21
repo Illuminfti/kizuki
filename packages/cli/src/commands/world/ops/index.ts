@@ -1,3 +1,4 @@
+import { personCli, findPeopleCli } from "./person";
 import { historyCli } from "./history";
 import { conceptCli } from "./concept";
 import { describeCli } from "./describe";
@@ -26,6 +27,7 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   // slot: QUEST
   { name: "question", cli: questionCli }, { name: "find_questions", cli: findQuestionsCli }, { name: "frontier", cli: frontierCli },
   // slot: PEOPLE
+  { name: "person", cli: personCli }, { name: "find_people", cli: findPeopleCli },
   // slot: SKILL
   // slot: ART
   // slot: OUTCOME

@@ -9,11 +9,23 @@
     "http": "/v1/world_view",
     "app": "World cards and discovery through /app/v1/world_view",
     "seams": {
-      "core": ["packages/core/src/world/public.ts", "packages/core/src/world/pipeline/read.ts", "packages/core/src/contracts/world-card-kit.ts"],
-      "cli": ["packages/cli/src/commands/world.ts"],
-      "mcp": ["packages/mcp/src/world/surface.ts"],
-      "http": ["packages/core/src/serve/http.ts"],
-      "app": ["packages/cli/src/app/host.ts"]
+      "core": [
+        "packages/core/src/world/public.ts",
+        "packages/core/src/world/pipeline/read.ts",
+        "packages/core/src/contracts/world-card-kit.ts"
+      ],
+      "cli": [
+        "packages/cli/src/commands/world.ts"
+      ],
+      "mcp": [
+        "packages/mcp/src/world/surface.ts"
+      ],
+      "http": [
+        "packages/core/src/serve/http.ts"
+      ],
+      "app": [
+        "packages/cli/src/app/host.ts"
+      ]
     },
     "tests": [
       "packages/core/test/world/pipeline-golden.test.ts",
@@ -36,16 +48,32 @@
     "http": "/v1/world_view",
     "app": "Concept cards and discovery through /app/v1/world_view",
     "seams": {
-      "core": ["packages/core/src/world/public.ts", "packages/core/src/world/lineage.ts", "packages/core/src/world/ops/evidence.ts"],
-      "cli": ["packages/cli/src/commands/world/ops/evidence.ts", "packages/cli/src/commands/world/ops/relation-render.ts"],
-      "mcp": ["packages/mcp/src/world/ops/evidence.ts"],
-      "http": ["packages/core/src/serve/http.ts"],
-      "app": ["packages/cli/src/app/host.ts"]
+      "core": [
+        "packages/core/src/world/public.ts",
+        "packages/core/src/world/lineage.ts",
+        "packages/core/src/world/ops/evidence.ts"
+      ],
+      "cli": [
+        "packages/cli/src/commands/world/ops/evidence.ts",
+        "packages/cli/src/commands/world/ops/relation-render.ts"
+      ],
+      "mcp": [
+        "packages/mcp/src/world/ops/evidence.ts"
+      ],
+      "http": [
+        "packages/core/src/serve/http.ts"
+      ],
+      "app": [
+        "packages/cli/src/app/host.ts"
+      ]
     },
     "tests": [
-      "packages/core/test/world/card-fields.test.ts", "packages/core/test/world/card-lineage.test.ts",
-      "packages/core/test/world/card-oracles.test.ts", "packages/core/test/world/card-coverage-privacy.test.ts",
-      "packages/core/test/world/evidence.test.ts", "packages/cli/test/world-card.test.ts",
+      "packages/core/test/world/card-fields.test.ts",
+      "packages/core/test/world/card-lineage.test.ts",
+      "packages/core/test/world/card-oracles.test.ts",
+      "packages/core/test/world/card-coverage-privacy.test.ts",
+      "packages/core/test/world/evidence.test.ts",
+      "packages/cli/test/world-card.test.ts",
       "packages/cli/test/world-card-parity.test.ts"
     ]
   },
@@ -184,6 +212,46 @@
       "packages/core/test/world/questions-history.test.ts",
       "packages/cli/test/questions.test.ts",
       "packages/mcp/test/questions.test.ts"
+    ],
+    "open_items": [
+      "VERIFY V6 held-out extraction qualification before offeredToProducer is enabled."
+    ]
+  },
+  {
+    "packet": 486,
+    "workstream": "PEOPLE",
+    "scope": "Structured Person cards, attributed perspectives, time-aware relationships and source-bound session preference; model population stays disabled pending VERIFY V6",
+    "core": "@kizuki/core/world: person and find_people; serveContextPacketV2 session owner section",
+    "cli": "kizuki world: person, find_people, share and resume (text and --json)",
+    "mcp": "world_view: person, find_people, share and resume",
+    "http": "/v1/world_view",
+    "app": "/app/v1/world_view",
+    "seams": {
+      "core": [
+        "packages/core/src/contracts/person-card.ts",
+        "packages/core/src/world/collectors/person.ts",
+        "packages/core/src/world/person-session.ts"
+      ],
+      "cli": [
+        "packages/cli/src/commands/world/ops/person.ts"
+      ],
+      "mcp": [
+        "packages/mcp/src/world/ops/person.ts"
+      ],
+      "http": [
+        "packages/core/src/serve/http.ts"
+      ],
+      "app": [
+        "packages/cli/src/app/host.ts"
+      ]
+    },
+    "tests": [
+      "packages/core/test/world/people.test.ts",
+      "packages/core/test/world/people-security.test.ts",
+      "packages/core/test/world/people-history.test.ts",
+      "packages/core/test/serving/people-session.test.ts",
+      "packages/cli/test/people.test.ts",
+      "packages/mcp/test/people.test.ts"
     ],
     "open_items": [
       "VERIFY V6 held-out extraction qualification before offeredToProducer is enabled."

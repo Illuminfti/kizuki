@@ -57,6 +57,7 @@ function knownEndpointKinds(
 
 /** The endpoint kinds a subject-valued object may have, or null when the row places no constraint. */
 function objectEndpointKinds(spec: WorldVocabularySpec): ReadonlySet<WorldEndpointKind> | null {
+  if (spec.predicate === "relationship.with") return new Set<WorldEndpointKind>(["person"]);
   return spec.objects.includes("raw_subject") || !spec.objects.includes("concept") ? null : new Set<WorldEndpointKind>(["concept"]);
 }
 
@@ -76,6 +77,13 @@ export function worldAssertionViolation(
   const registry = options.registry ?? activeWorldRegistry();
   const spec = registry.spec(semantic.predicate);
   if (spec === undefined) return null;
+  // Person identity originates in structured source subjects, never a text mention.
+  const person = semantic.predicate.startsWith("person.") || semantic.predicate === "relationship.with" || (semantic.predicate === "world.kind" &&
+    semantic.object.kind === "vocabulary" && semantic.object.ref.id === "world/person");
+  if (person && semantic.subject.kind !== "supplied")
+    return { code: "world_endpoint_kind", detail: "person claims require a structured supplied subject" };
+  if (semantic.predicate === "relationship.with" && semantic.object.kind === "subject" && semantic.object.ref.kind !== "supplied")
+    return { code: "world_endpoint_kind", detail: "relationships require a structured supplied person endpoint" };
   const objectKind = semantic.object.kind;
   const allowedObject = objectKind === "literal" ? spec.objects.includes("literal")
     : objectKind === "vocabulary" ? spec.objects.includes("vocabulary")
