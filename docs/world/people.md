@@ -28,6 +28,32 @@ An owner can correct their unattributed belief through the existing correction
 operation. This does not rewrite another speaker's quotation or erase the old
 statement from an authorized historical snapshot.
 
+## Interest hypotheses
+
+The typed `person.interest` relation links a structured Person to a Concept.
+It is served in the existing perspective groups with its source evidence,
+context, polarity and valid-time qualifiers. An unknown valid time stays
+unknown; the captured event's time is not invented as the start of a lasting
+interest. The relation establishes neither competence nor a personality trait.
+
+Source-derived interest is always an inferred, uncertain hypothesis, including
+when a model proposes a confident reading of a question, visit or selection.
+The draft adapter applies this qualification and the shared writer enforces it.
+Reads exclude older source admissions that lack it. Replayed evidence creates
+no new support; copied evidence retains the existing dependence assessment and
+does not increase authority or promote an interest into a fact.
+
+The owner can retract an interpretation through the existing world-claim
+correction. The successor preserves the domain link and records explicit owner
+evidence; it supersedes the old hypothesis. Receipted undo restores the previous
+qualifications. Current consent, purge and grants over both person and domain
+apply to the relation and its evidence. No interest enables sources, network
+access, model spending or another learning loop.
+
+This is the evidence and consumer path for interest hypotheses. It does not
+enable Person extraction, aggregate an interest-depth score, infer a preference,
+or implement the per-domain taste and conditional collaboration checklist.
+
 ## Session use and population
 
 The session owner section prefers a Person card only when an existing readable
@@ -49,3 +75,9 @@ The public acceptance cases are `packages/core/test/world/people*.test.ts`,
 exercise actual claim admission, correction, source revocation, purge, recorded
 snapshots, packet publication races and all consumer routes. No production grants
 are changed by these tests.
+
+`packages/core/test/world/person-interest.test.ts` exercises synthetic extraction
+through the shared admission writer into the public Person and evidence reads,
+replay/copy dependence, writer refusal, correction/undo, source loss and hidden
+domain noninterference. These are synthetic model-adapter checks, not live model
+qualification or production interest-detection accuracy.
