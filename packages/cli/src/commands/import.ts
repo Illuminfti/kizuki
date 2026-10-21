@@ -2,6 +2,7 @@ import { CONSENT_OPTIONS, consentHint, expectedRevision, readSourcePolicy } from
 import { resolve } from "node:path";
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { setSourceGrant, applyConnectionSensitivity, disconnect, runToCompletion, ESTATE_IMPORT_LIMITS, planEstateImport } from "@kizuki/core";
+import { beginIngest } from "@kizuki/core/internal";
 import type { Connection } from "@kizuki/core";
 import type { Database } from "bun:sqlite";
 import { CLAUDE_IMPORT_CONNECTOR_ID, getConnector } from "@kizuki/connectors";
@@ -165,19 +166,21 @@ export const importCommand: Command = {
           );
         }
       }
+      // Between commits the ingest leaves the ledger free for a running daemon.
+      using ingest = beginIngest(ctx.db, ctx.vaultPath);
       const result = await runToCompletion(
         ctx.db,
         connector,
         selected.connection.connector_id,
         selected.connection.source_key,
         "backfill",
-        { vault_path: ctx.vaultPath },
+        { vault_path: ctx.vaultPath, pace: ingest.pace },
       );
       if (enrolledThisRun && result.stored === 0 && result.errors.length > 0) {
         disconnect(ctx.db, selected.connection.connector_id, selected.connection.source_key);
         io.err("error: initial backfill stored no usable events; connection was not left active");
       }
-      const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval);
+      const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval, ingest.pace);
       io.out(formatRunCounts(result));
       if (result.errors.includes("source_capture_denied")) io.err(consentHint(ctx.db, selected.connection.source_key));
       for (const text of result.errors) io.err(`error: ${text}`);

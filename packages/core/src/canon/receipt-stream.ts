@@ -1,5 +1,7 @@
 import { parseWorldCanonReceipt, type ErasedWorldCanonReceipt, type WorldCanonReceiptRecord } from "./world-receipt";
 import { ptr } from "bun:ffi";
+import type { Database } from "bun:sqlite";
+import { createHash, type Hash } from "node:crypto";
 import type { BigIntStats } from "node:fs";
 import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, ftruncateSync, openSync, readSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
@@ -131,9 +133,19 @@ function openFile(parent: number, readable: boolean, exclusive = false): number 
 }
 function sameIdentity(a: BigIntStats, b: BigIntStats): boolean { return a.dev === b.dev && a.ino === b.ino; }
 function sameFile(a: BigIntStats, b: BigIntStats): boolean {
-  return sameIdentity(a, b) && a.size === b.size && a.mode === b.mode && a.uid === b.uid && a.gid === b.gid &&
+  return sameIdentity(a, b) && a.birthtimeNs === b.birthtimeNs && a.size === b.size && a.mode === b.mode && a.uid === b.uid && a.gid === b.gid &&
     a.nlink === b.nlink && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 }
+
+interface ValidatedJournal {
+  readonly stat: BigIntStats;
+  readonly directories: readonly BigIntStats[];
+  readonly hash: Hash;
+  readonly ids: Set<string>;
+}
+// Process-local acceleration only. Restart, replacement or any external file
+// modification forces full validation; no persisted cache can certify custody.
+const validatedJournals = new WeakMap<Database, ValidatedJournal>();
 function directoryStat(fd: number, ancestor = false, vaultPath?: string): BigIntStats {
   const stat = fstatSync(fd, { bigint: true }), uid = BigInt(process.geteuid!());
   if (!stat.isDirectory() || stat.nlink < 1n) fail("unsafe");
@@ -249,9 +261,12 @@ class ReceiptStream {
   readonly #readable: boolean;
   readonly #ordinaryRecovery: boolean;
   readonly #assertOwner: () => void;
-  constructor(path: string, fds: readonly [number, number, number, number], readable: boolean, assertOwner: () => void, ordinaryRecovery = false) {
+  readonly #db: Database;
+  #admitted: { checkpoint: OrdinaryReceiptCheckpoint; prefix: ValidatedJournal; line?: Buffer } | undefined;
+  constructor(path: string, fds: readonly [number, number, number, number], readable: boolean, assertOwner: () => void, db: Database, ordinaryRecovery = false) {
     this.#path = path; this.#fds = [...fds]; this.#readable = readable; this.#assertOwner = assertOwner;
     this.#ordinaryRecovery = ordinaryRecovery;
+    this.#db = db;
     this.#directories = fds.slice(0, 3).map(fd => directoryStat(fd));
     this.#stat = fileStat(fds[3], readable);
   }
@@ -266,12 +281,13 @@ class ReceiptStream {
     verifyFile(this.#fds[2], this.#fds[3], this.#readable, this.#stat);
   }
   verifyBinding(): void { this.#guard(() => this.#verify()); }
-  #readBytes(): Buffer {
+  #readBytes(start = 0, length = Number(this.#stat.size) - start): Buffer {
     if (!this.#readable) fail("unsafe");
     this.#verify();
-    const bytes = Buffer.alloc(Number(this.#stat.size));
+    if (start < 0 || length < 0 || start + length > Number(this.#stat.size)) fail("bounds");
+    const bytes = Buffer.alloc(length);
     for (let offset = 0; offset < bytes.length;) {
-      const count = readSync(this.#fds[3], bytes, offset, bytes.length - offset, offset);
+      const count = readSync(this.#fds[3], bytes, offset, bytes.length - offset, start + offset);
       if (!Number.isSafeInteger(count) || count <= 0 || count > bytes.length - offset) fail("io");
       offset += count;
     }
@@ -284,13 +300,22 @@ class ReceiptStream {
   checkpoint(): OrdinaryReceiptCheckpoint {
     return this.#guard(() => {
       if (!this.#ordinaryRecovery) fail("unsafe");
-      const bytes = this.#readBytes(); receiptIds(bytes);
+      this.#verify();
+      let prefix = validatedJournals.get(this.#db);
+      if (prefix === undefined || !sameFile(prefix.stat, this.#stat) ||
+          !prefix.directories.every((stat, index) => sameIdentity(stat, this.#directories[index]!))) {
+        const bytes = this.#readBytes();
+        prefix = { stat: this.#stat, directories: this.#directories, hash: createHash("sha256").update(bytes), ids: receiptIds(bytes) };
+        validatedJournals.set(this.#db, prefix);
+      }
       // Admission must persist a checkpoint of a durable prefix, including an
       // empty newly created log, before budget, intent or payload mutations.
       this.sync();
-      return validateOrdinaryReceiptCheckpoint({ version: 1, byte_length: bytes.length, prefix_sha256: digest(bytes),
+      const checkpoint = validateOrdinaryReceiptCheckpoint({ version: 1, byte_length: Number(prefix.stat.size), prefix_sha256: prefix.hash.copy().digest("hex"),
         vault: statIdentity(this.#directories[0]!), control: statIdentity(this.#directories[1]!),
         directory: statIdentity(this.#directories[2]!), file: statIdentity(this.#stat) });
+      this.#admitted = { checkpoint, prefix };
+      return checkpoint;
     });
   }
   #admittedTail(input: OrdinaryReceiptCheckpoint, exactReceiptLine: Uint8Array): { prefix: Buffer; line: Buffer; tail: Buffer } {
@@ -322,6 +347,31 @@ class ReceiptStream {
   }
   reconcile(input: OrdinaryReceiptCheckpoint, exactReceiptLine: Uint8Array): void {
     this.#guard(() => {
+      const checkpoint = validateOrdinaryReceiptCheckpoint(input);
+      const admitted = this.#admitted;
+      if (admitted !== undefined && JSON.stringify(checkpoint) === JSON.stringify(admitted.checkpoint)) {
+        if (!(exactReceiptLine instanceof Uint8Array) || exactReceiptLine.byteLength > 8 * 1024 * 1024) fail("bounds");
+        const line = Buffer.from(exactReceiptLine), ids = receiptIds(line);
+        if (ids.size !== 1) fail("receipt_invalid");
+        this.#verify();
+        if (admitted.line === undefined) {
+          if (!sameFile(admitted.prefix.stat, this.#stat)) fail("changed");
+          if (admitted.prefix.ids.has(ids.values().next().value!)) fail("conflict");
+          this.append(line);
+        } else if (!admitted.line.equals(line)) fail("receipt_tail_pending");
+        this.sync();
+        // Only our exact synchronous append can advance this admitted prefix.
+        // Read back the suffix under the same guarded descriptor before caching it.
+        if (Number(this.#stat.size) !== checkpoint.byte_length + line.length ||
+            !this.#readBytes(checkpoint.byte_length, line.length).equals(line)) fail("changed");
+        if (admitted.line === undefined) {
+          admitted.prefix.ids.add(ids.values().next().value!);
+          validatedJournals.set(this.#db, { stat: this.#stat, directories: this.#directories,
+            hash: admitted.prefix.hash.copy().update(line), ids: admitted.prefix.ids });
+          admitted.line = line;
+        }
+        return;
+      }
       const { prefix, line, tail } = this.#admittedTail(input, exactReceiptLine);
       if (prefix.length + line.length > Number(SOURCE_STREAM_LIMIT)) fail("bounds");
       this.#verify();
@@ -457,7 +507,7 @@ function openStream(scope: VaultMutationScope, io: CanonIo, readable: boolean, o
       sync(fd);
     }
     else if ((stat.mode & 0o022n) !== 0n) fail("unsafe");
-    stream = new ReceiptStream(target.vault_path, [root, control, parent, fd], readable, assertOwner, ordinaryRecovery);
+    stream = new ReceiptStream(target.vault_path, [root, control, parent, fd], readable, assertOwner, io.db, ordinaryRecovery);
     stream.verifyBinding();
     return stream;
   } catch (error) {

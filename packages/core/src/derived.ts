@@ -1,14 +1,22 @@
 import type { Database } from "bun:sqlite";
 import { initPageClasses, stampPageClasses, removePageClasses } from "./canon/page-classes";
+import { reconcileCanonGraph } from "./canon/graph-maintenance";
 import {
   derivedMetaNeedsRebuild,
   readDerivedMeta,
   stampDerived,
 } from "./derived-meta";
 import {
+  graphRegistryCurrent,
+  graphRegistryReady,
+  graphEvidenceChanges,
+  checkpointGraphEvidence,
+  deferGraphProjection,
   rebuildGraphLayer,
   refreshPageEdges,
+  refreshRegisteredPage,
   removePageEdges,
+  removeRegisteredPage,
 } from "./graph/graph";
 import type { GraphRebuildResult } from "./graph/graph";
 import { graphSchemaNeedsRebuild, initGraph } from "./graph/schema";
@@ -29,8 +37,10 @@ import {
   fatalCanonSkips,
   isLiveCanonPage,
   listCanonPagesReport,
+  scanCanonSignatures,
 } from "./vault/pages";
 import type { CanonPage } from "./vault/pages";
+import { assertVaultMutationScope, type VaultMutationScope } from "./vault/mutation-scope";
 
 export interface DerivedRebuildResult {
   search: SearchRebuildResult;
@@ -89,6 +99,7 @@ export function rebuildDerived(
     generation,
     pages: live,
     skipped: report.skipped,
+    signatures: report.signatures,
     rebuilt_at: rebuiltAt,
     canon_hash: canonPagesHash(live),
   };
@@ -113,19 +124,43 @@ export function rebuildWorldLayer(db: Database): { layer: "world"; tables: strin
   return db.transaction(() => ({ layer: "world" as const, tables: resetWorldTables(db, readSchemaVersion(db)) })).immediate();
 }
 
-/** One incremental write path: search and graph for a single page. */
+/**
+ * One incremental projection path. A live writer scope uses the reconciled
+ * registry and assesses only this page. Ordinary refresh reconciles external
+ * edits with a stat scan, taking a full walk when another file changed.
+ */
 export function refreshDerivedPage(
   db: Database,
   page: CanonPage,
   vaultPath: string,
+  scope?: VaultMutationScope,
 ): void {
+  if (scope !== undefined) assertVaultMutationScope(scope, { db, vault_path: vaultPath });
   initSearch(db);
   initGraph(db);
-  const report = listCanonPagesReport(vaultPath);
+  // The writer already checked the exact receipted bytes and source admission.
+  // Reconciliation of unrelated disk edits belongs to the normal refresh/rebuild.
+  if (scope !== undefined) {
+    db.transaction(() => {
+      stampPageClasses(db, page);
+      replacePage(db, page);
+      if (graphRegistryReady(db)) {
+        const changed = graphEvidenceChanges(db).length > 0;
+        refreshRegisteredPage(db, page);
+        if (!changed) checkpointGraphEvidence(db);
+      }
+      else deferGraphProjection(db);
+    }).immediate();
+    return;
+  }
+  reconcileCanonGraph(db, vaultPath);
+  const signatures = scanCanonSignatures(vaultPath);
+  const report = graphRegistryCurrent(db, signatures, page) ? null : listCanonPagesReport(vaultPath);
   db.transaction(() => {
     stampPageClasses(db, page);
     replacePage(db, page);
-    refreshPageEdges(db, page, report.pages, report.skipped.length);
+    if (report === null) refreshRegisteredPage(db, page, signatures);
+    else refreshPageEdges(db, page, report.pages, report.skipped.length, report.signatures);
   }).immediate();
 }
 
@@ -133,13 +168,31 @@ export function removeDerivedPage(
   db: Database,
   pageId: string,
   vaultPath: string,
+  scope?: VaultMutationScope,
 ): void {
+  if (scope !== undefined) assertVaultMutationScope(scope, { db, vault_path: vaultPath });
   initSearch(db);
   initGraph(db);
-  const report = listCanonPagesReport(vaultPath);
+  if (scope !== undefined) {
+    db.transaction(() => {
+      removePageClasses(db, pageId);
+      removeDoc(db, "canon", pageId);
+      if (graphRegistryReady(db)) {
+        const changed = graphEvidenceChanges(db).length > 0;
+        removeRegisteredPage(db, pageId);
+        if (!changed) checkpointGraphEvidence(db);
+      }
+      else deferGraphProjection(db);
+    }).immediate();
+    return;
+  }
+  reconcileCanonGraph(db, vaultPath);
+  const signatures = scanCanonSignatures(vaultPath);
+  const report = graphRegistryCurrent(db, signatures, { id: pageId }) ? null : listCanonPagesReport(vaultPath);
   db.transaction(() => {
     removePageClasses(db, pageId);
     removeDoc(db, "canon", pageId);
-    removePageEdges(db, pageId, report.pages, report.skipped.length);
+    if (report === null) removeRegisteredPage(db, pageId);
+    else removePageEdges(db, pageId, report.pages, report.skipped.length, report.signatures);
   }).immediate();
 }

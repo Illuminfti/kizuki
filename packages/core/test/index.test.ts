@@ -633,6 +633,7 @@ describe("public surface", () => {
       "verifyBackup",
       "verifyPurge",
       "verifySnapshot",
+      "withAbortSignal",
       "withDeadline",
       "withLeaseHeldRefusal",
       "writeRailCursor",

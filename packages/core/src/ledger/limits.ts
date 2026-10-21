@@ -29,6 +29,14 @@ export const LEDGER_BUSY_BACKOFF_MS = 50;
  */
 export const LEDGER_CONTROL_BUSY_TIMEOUT_MS = 250;
 
+/**
+ * How long the serve loop's own writer probe waits. It is longer than one
+ * pause-and-slice cycle of a paced long ingest, so a probe always meets a free
+ * moment when the ingest yields, and short enough that the loop, which shares
+ * a thread with loopback HTTP, is never held for a whole ordinary busy wait.
+ */
+export const LEDGER_LOOP_PROBE_TIMEOUT_MS = 1_000;
+
 /** Hard cap for `readSince`. Bulk walks page; they do not raise this. */
 export const MAX_READ_SINCE = 1_000;
 

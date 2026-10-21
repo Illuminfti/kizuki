@@ -6,6 +6,7 @@ import {
   DEFAULT_RAILS,
   DEFAULT_SERVE_CONFIG,
   EMBED_BACKFILL_IDLE_PERIOD_S,
+  CONNECTOR_DRAIN_BOUNDS,
   EXTRACTION_BOUNDS,
   SYNC_PERIOD_BOUNDS,
   type ExtractionConfig,
@@ -160,6 +161,18 @@ export function loadServeConfig(vaultPath: string): ServeConfig {
       DEFAULT_SERVE_CONFIG.sync_period_s,
       SYNC_PERIOD_BOUNDS.min,
       SYNC_PERIOD_BOUNDS.max,
+    ),
+    connector_drain_seconds: integer(
+      serve["connector_drain_seconds"],
+      DEFAULT_SERVE_CONFIG.connector_drain_seconds,
+      CONNECTOR_DRAIN_BOUNDS.connector_drain_seconds.min,
+      CONNECTOR_DRAIN_BOUNDS.connector_drain_seconds.max,
+    ),
+    connector_drain_batches: integer(
+      serve["connector_drain_batches"],
+      DEFAULT_SERVE_CONFIG.connector_drain_batches,
+      CONNECTOR_DRAIN_BOUNDS.connector_drain_batches.min,
+      CONNECTOR_DRAIN_BOUNDS.connector_drain_batches.max,
     ),
     extraction: extraction(extract),
   };
