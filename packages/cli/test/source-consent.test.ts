@@ -55,7 +55,7 @@ test("owner grants explicit policy, retries original intent across processes, an
   expect(JSON.parse(resumed.stdout).data.grant.purge_blockers).toEqual([]);
   expect(command(f, "resume-revocation", "--operation-id", "owner-revoke").exitCode).toBe(0);
   expect(h.runCli(f.env, "export", "--out", join(f.root, "purged-export")).exitCode).toBe(0);
-}, 15_000);
+});
 
 test("the owner backup path: a refused export names the grant change, and the changed grant exports, verifies and restores", () => {
   const f = enrolled();
