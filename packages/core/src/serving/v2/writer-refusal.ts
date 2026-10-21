@@ -1,7 +1,7 @@
 import { assertPositiveAuthorityMutationAllowed, ErasurePendingError } from "../../canon/positive-authority";
 import type { Database } from "bun:sqlite";
 import { withCanonMutationAsync } from "../../canon/io";
-import type { CanonIo } from "../../canon/store";
+import type { CanonIo } from "../../canon";
 import { VaultMutationError, withVaultMutationAsync, type VaultMutationScope } from "../../vault/mutation-scope";
 import { WRITER_REFUSAL_V2 } from "../../contracts/scoped-tools";
 import { ServeError } from "../types";
