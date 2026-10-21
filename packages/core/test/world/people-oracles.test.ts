@@ -15,7 +15,7 @@ test("world-perspective-binding-design preserves C1 speakers, independent C2 and
       await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/situation" } }, { subject: id });
     const actors: Record<string, string> = { "base:actor_ada": ADA, "base:actor_ben": BEN };
     for (const p of design.perspectives) await f.write("situation.commitment", { kind: "literal", value: p.deadline }, {
-      subject: "x_c1", holder: actors[p.holder_ref], speaker: actors[p.speaker_ref], mode: p.confirmed ? "reported" : "uncertain",
+      subject: "x_c1", holder: actors[p.holder_ref]!, speaker: actors[p.speaker_ref]!, mode: p.confirmed ? "reported" : "uncertain",
       context: [ADA], text: `Source ${p.evidence_ref} records ${p.deadline}.`,
     });
     await f.write("situation.commitment", { kind: "literal", value: "Independent C2" }, { subject: "x_c2", context: [ADA] });
