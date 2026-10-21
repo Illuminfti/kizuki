@@ -80,6 +80,7 @@ export const RAIL_IDS = [
   "brief",
   "doctor-sweep",
   "journal-prune",
+  "verify-world",
 ] as const;
 export type RailId = (typeof RAIL_IDS)[number];
 
@@ -123,6 +124,7 @@ export const DEFAULT_RAILS: readonly RailSpec[] = [
   { rail: "brief", period_s: 24 * 60 * 60, jitter_s: 0, enabled: true },
   { rail: "doctor-sweep", period_s: 60 * 60, jitter_s: 0, enabled: true },
   { rail: "journal-prune", period_s: 24 * 60 * 60, jitter_s: 0, enabled: true },
+  { rail: "verify-world", period_s: 7 * 24 * 60 * 60, jitter_s: 0, enabled: true },
 ];
 
 export interface ScheduleRow {
@@ -371,6 +373,7 @@ export interface SupervisorLastExit {
 
 export interface RailDoctor {
   readonly rail: RailId;
+  readonly last_result: RunStatus | null;
   readonly last_receipt_at: string | null;
   readonly age_s: number | null;
   readonly period_s: number;

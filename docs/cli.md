@@ -500,6 +500,20 @@ reporting `configured-engine-unavailable` and `retrieval-unavailable`. They
 preserve the configured engine and do not acquire its writer lease, create its
 files, or claim that hybrid retrieval ran. Unknown engine IDs still refuse.
 
+## verify world
+
+```text
+usage: kizuki verify world --vault /absolute/offline-copy [--json]
+```
+
+Audit an offline, checkpointed copy without writes or model calls. The command
+requires an explicit absolute path and refuses WAL, SHM and rollback-journal
+sidecars. It reports PASS or FAIL for ledger schema/integrity, world provenance
+and historical coverage, with exit 0 for all checks passing and 1 for failure.
+See [World verification](world/verification.md) for the checks and their limits.
+The weekly `verify-world` daemon rail records the same checks; doctor shows its
+last result and age.
+
 ## doctor
 
 ```text

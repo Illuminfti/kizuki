@@ -560,7 +560,7 @@ export function isNoopReceipt(receipt: RunReceipt): boolean {
  * page) and every non-idle run always persist.
  */
 export function coalesceNoopReceipt(db: Database, vaultPath: string, receipt: RunReceipt): boolean {
-  if (receipt.rail === "brief" || receipt.execution?.trigger !== "scheduled" || !isNoopReceipt(receipt)) return false;
+  if (receipt.rail === "brief" || receipt.rail === "verify-world" || receipt.execution?.trigger !== "scheduled" || !isNoopReceipt(receipt)) return false;
   const row = db.query<{ report: string }, [string]>(
     "SELECT report FROM run_receipts WHERE rail = ? ORDER BY finished_at DESC, run_id DESC LIMIT 1",
   ).get(receipt.rail);
@@ -668,7 +668,10 @@ export function recoverRunJournal(db: Database, vaultPath: string, activeRunIds:
 /**
  * Bound the receipt journal by age and size. Receipts older than `cutoff` go,
  * then the oldest survivors go until the journal fits `maxBytes`, but the newest
- * valid in-window receipt always stays. The surviving rows replace the JSONL file
+ * valid in-window receipt always stays. The newest weekly verification also
+ * stays: if the two mandatory receipts cannot fit, those two alone may exceed
+ * the byte cap, just as one oversized newest receipt could before.
+ * The surviving rows replace the JSONL file
  * atomically before the dropped rows are deleted, so a crash between the two
  * leaves at worst rows the journal no longer names, never journal rows the
  * ledger cannot replay.
@@ -680,14 +683,19 @@ export function pruneRunReceipts(
   maxBytes: number = RUN_RECEIPT_JOURNAL_MAX_BYTES,
 ): { deleted: number; rewritten: number } {
   const before = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()?.n ?? 0;
+  // A weekly verification can outlive the journal's seven-day window. Retain
+  // exactly its newest result so doctor can report a stale failure honestly.
+  const latestVerification = listRunReceipts(db, { rail: "verify-world", limit: 1 })[0];
+  const retainedVerification = latestVerification === undefined ? null : JSON.stringify(latestVerification);
   const rows = db
     .query<{ run_id: string; report: string }, [string, string]>(
       "SELECT run_id, report FROM run_receipts WHERE finished_at >= ? AND stopped IS NOT ? ORDER BY finished_at DESC, run_id DESC",
     )
     .all(cutoff, CAPTURE_REPAIR_RECEIPT_PENDING);
   const kept: string[] = [];
-  let bytes = 0;
+  let bytes = retainedVerification === null ? 0 : Buffer.byteLength(retainedVerification) + 1;
   for (const row of rows) {
+    if (row.run_id === latestVerification?.run_id) continue;
     let valid = false;
     try { valid = parseRunReceipt(JSON.parse(row.report)) !== null; } catch { valid = false; }
     if (!valid) continue;
@@ -697,6 +705,14 @@ export function pruneRunReceipts(
   }
   kept.reverse();
   const oldestKept = kept.length === 0 ? null : (JSON.parse(kept[0]!) as { finished_at: string; run_id: string });
+  if (retainedVerification !== null) {
+    const index = kept.findIndex((report) => {
+      const row = JSON.parse(report) as RunReceipt;
+      return row.finished_at > latestVerification!.finished_at ||
+        (row.finished_at === latestVerification!.finished_at && row.run_id > latestVerification!.run_id);
+    });
+    kept.splice(index < 0 ? kept.length : index, 0, retainedVerification);
+  }
   const path = runReceiptsPath(vaultPath);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const staged = `${path}.tmp`;
@@ -711,10 +727,10 @@ export function pruneRunReceipts(
   db.transaction(() => {
     // A staged repair is an outbox record, never a published journal line.
     // Retention cannot erase it before its committed skips are receipted.
-    if (oldestKept === null) db.query("DELETE FROM run_receipts WHERE finished_at < ? AND stopped IS NOT ?")
-      .run(cutoff, CAPTURE_REPAIR_RECEIPT_PENDING);
-    else db.query("DELETE FROM run_receipts WHERE (finished_at < ? OR (finished_at = ? AND run_id < ?)) AND stopped IS NOT ?")
-      .run(oldestKept.finished_at, oldestKept.finished_at, oldestKept.run_id, CAPTURE_REPAIR_RECEIPT_PENDING);
+    if (oldestKept === null) db.query("DELETE FROM run_receipts WHERE finished_at < ? AND stopped IS NOT ? AND run_id IS NOT ?")
+      .run(cutoff, CAPTURE_REPAIR_RECEIPT_PENDING, latestVerification?.run_id ?? null);
+    else db.query("DELETE FROM run_receipts WHERE (finished_at < ? OR (finished_at = ? AND run_id < ?)) AND stopped IS NOT ? AND run_id IS NOT ?")
+      .run(oldestKept.finished_at, oldestKept.finished_at, oldestKept.run_id, CAPTURE_REPAIR_RECEIPT_PENDING, latestVerification?.run_id ?? null);
   }).immediate();
   const after = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM run_receipts").get()?.n ?? 0;
   return { deleted: before - after, rewritten: kept.length };
