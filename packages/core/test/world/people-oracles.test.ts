@@ -88,6 +88,6 @@ test("rich-subject-quoted-disagreement preserves source statements after structu
     const evidence = quotation.assessments.flatMap(a => a.evidence)[0]!;
     const expanded = serveWorldView(f.ctx, { operation: "evidence", evidence, ...PERSON_WHEN });
     expect(expanded.quoted[0]?.text).toBe(quote.event.text.slice(quoted.anchor.start_utf16, quoted.anchor.end_utf16));
-    expect(evidence.span).toEqual({ startUtf16: quoted.anchor.start_utf16, endUtf16: quoted.anchor.end_utf16 });
+    expect(evidence.span).toEqual({ kind: "text", startUtf16: quoted.anchor.start_utf16, endUtf16: quoted.anchor.end_utf16 });
   } finally { f.dispose(); }
 }, 120_000);

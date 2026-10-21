@@ -78,7 +78,7 @@ export function worldAssertionViolation(
   const spec = registry.spec(semantic.predicate);
   if (spec === undefined) return null;
   // Person identity originates in structured source subjects, never a text mention.
-  const person = spec.subject === "person" || (semantic.predicate === "world.kind" &&
+  const person = semantic.predicate.startsWith("person.") || semantic.predicate === "relationship.with" || (semantic.predicate === "world.kind" &&
     semantic.object.kind === "vocabulary" && semantic.object.ref.id === "world/person");
   if (person && semantic.subject.kind !== "supplied")
     return { code: "world_endpoint_kind", detail: "person claims require a structured supplied subject" };
