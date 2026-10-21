@@ -708,8 +708,7 @@ export function claimRetrievalDoc(claim: Claim): RetrievalDoc {
  * about. It cannot roll the claim back: canon and the ledger are the record,
  * and a derived index is disposable.
  */
-function enqueueRetrieval(db: Database, io: ClaimsIo, claim: Claim, at: string): string | null {
-  const store = io.retrieval?.descriptor.id;
+export function enqueueClaimRetrieval(db: Database, store: string | undefined, claim: Claim, at: string): string | null {
   if (store === undefined || !tableExists(db, "retrieval_ops")) return null;
   const opId = ulid();
   db.query<never, [string, string, string, string]>(
@@ -1324,7 +1323,7 @@ export function supersedeExactClaim(
         purpose: "correction",
         port: retrieval,
       }));
-  enqueueRetrieval(db, retrievalAllowed ? io : { db }, superseded, at);
+  enqueueClaimRetrieval(db, retrievalAllowed ? io.retrieval?.descriptor.id : undefined, superseded, at);
 }
 
 /** Typed targeted correction shares the existing supersession journal and retrieval outbox transaction. */
@@ -1379,7 +1378,7 @@ export function supersedeExactWorldClaim(
         purpose: "correction",
         port: retrieval,
       }));
-  enqueueRetrieval(db, retrievalAllowed ? io : { db }, superseded, at);
+  enqueueClaimRetrieval(db, retrievalAllowed ? io.retrieval?.descriptor.id : undefined, superseded, at);
 }
 
 function remainingProvenanceCount(db: Database, claim: Claim): number {
@@ -1704,7 +1703,7 @@ function applyClaimInsert(
       io.db.query("UPDATE claims SET sensitivity = ? WHERE claim_id = ?")
         .run(sensitivity, exact.claim_id);
       const relabeled = { ...exact, sensitivity };
-      enqueueRetrieval(io.db, io, relabeled, at);
+      enqueueClaimRetrieval(io.db, io.retrieval?.descriptor.id, relabeled, at);
       return { outcome: "duplicate", claim: relabeled, dedup: mode };
     }
     return { outcome: "duplicate", claim: exact, dedup: mode };
@@ -1724,7 +1723,7 @@ function applyClaimInsert(
   // conflict/R5 when the object or polarity differs (RFC 0002 §5.2, §6.3).
   if (structural !== undefined) {
     const confirmed = corroborate(io.db, structural, claim, at);
-    if (confirmed !== structural) enqueueRetrieval(io.db, io, confirmed, at);
+    if (confirmed !== structural) enqueueClaimRetrieval(io.db, io.retrieval?.descriptor.id, confirmed, at);
     return { outcome: "duplicate", claim: confirmed, dedup: mode };
   }
 
@@ -1770,7 +1769,7 @@ function applyClaimInsert(
           valid_to: minTimestamp(live.valid_to, claim.valid_from),
         });
         writeSupersession(io.db, claim.claim_id, live.claim_id, resolution.rule, prior, at);
-        enqueueRetrieval(io.db, io, live, at);
+        enqueueClaimRetrieval(io.db, io.retrieval?.descriptor.id, live, at);
         superseded.push({ claim_id: live.claim_id, rule: resolution.rule });
       }
     }
@@ -1779,7 +1778,7 @@ function applyClaimInsert(
   const stored: Claim = { ...claim, status: incomingStatus };
   insertRow(io.db, stored, input.world_admission !== undefined);
   if (incomingStatus !== "skipped") {
-    enqueueRetrieval(io.db, io, stored, at);
+    enqueueClaimRetrieval(io.db, io.retrieval?.descriptor.id, stored, at);
   }
 
   if (incomingStatus === "skipped") {

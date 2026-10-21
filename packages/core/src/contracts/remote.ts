@@ -21,6 +21,7 @@ import type {
 import {
   validateAbsenceProof,
   PROVENANCE_ERASURE_CAPABILITY,
+  MUTATION_FENCE_CAPABILITY,
   validateProvenanceAbsenceProof,
   validateProvenanceEventIds,
   validateGraphResult,
@@ -692,7 +693,8 @@ export async function createRemoteRetrievalPort(
     return { ...proof, store: client.descriptor.id };
   };
   return {
-    descriptor: client.descriptor,
+    // A server's native fence cannot fence delayed requests in this transport.
+    descriptor: { ...client.descriptor, supports: client.descriptor.supports.filter(capability => capability !== MUTATION_FENCE_CAPABILITY) },
     upsert: async (docs: readonly RetrievalDoc[]) => {
       const value = await client.invoke("upsert", [docs]);
       return validateRetrievalMutationReport(value);
