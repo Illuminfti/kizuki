@@ -4,7 +4,18 @@ The `slice` operation collects authorized Concept, Situation, Question, Person, 
 cards through the existing projection pipeline. Each kind's assembler declares
 which whole relations are constraints. Negative, conflicting, attributed or
 inferred statements retain their qualifications. Constraints precede optional
-detail in deterministic kind, object-reference and claim-reference order.
+detail in deterministic kind, task-relevance and claim-reference order.
+
+The task is a lexical selection hint. Before the four-card limit and token
+packing, the reader scores each authorized discovery candidate by the number of
+distinct task words in its permitted labels. Matching ignores case, Unicode
+compatibility forms, punctuation and common connecting words; it does not infer
+synonyms, applicability, identity or relationships. Repeated task words and
+duplicate labels do not boost a score. Matching candidates precede packing;
+ties use object-reference order. If no label in a requested kind matches, or the
+task is empty, that kind keeps the bounded reference-order fallback. This is
+deterministic label relevance, not the conditional collaboration compiler on the
+v2 roadmap.
 
 ```sh
 kizuki world --operation slice --task 'Resume the launch' --kinds concept,situation --budget-tokens 2000 --json
@@ -18,9 +29,14 @@ model calls and writes no canon.
 Requested providers appear explicitly, including `not_landed` and
 `extraction_off`. Existing readable claims from a dark kind can still be shown,
 with partial coverage. Visible unfinished extraction or consolidation remains
-partial. Each request shares the existing 2 MiB projection budget and examines
-at most four discovered objects per requested kind. A further discovery page
-or object is reported as incomplete traversal, never as complete absence.
+partial. Each request shares the existing 2 MiB projection budget. Relevance
+examines one authorized discovery page per kind, at most 32 candidates within
+the existing 4,096-handle scan ceiling, then reads at most four selected cards.
+A further discovery page or more than four selected matches is reported as
+incomplete traversal, never as complete absence. Nonmatching labels are excluded
+only when a matching candidate exists. Every examined authorized label and
+classification remains a dependency of the retained view, including candidates
+not selected. Hidden or redacted label text cannot influence selection.
 
 The budget is 50–2,000 tokens under the bundled packet tokenizer. `tokens` counts
 the exact serialized `WorldSlice` body, including its own count. Packing also
@@ -61,7 +77,11 @@ discarding qualifiers or counting only prose would not meet it.
 
 `packages/core/test/world/slice.test.ts` exercises the public budget, mandatory
 overflow, pending extraction, retained view, foreign principal, revocation and
-history boundaries. The central verification matrix checks seven hidden-source
+history boundaries. `packages/core/test/world/slice-relevance.test.ts` proves
+selection of a relevant fifth card, different task selections under the same
+grant, bounded fallback, incomplete discovery, unselected-support invalidation,
+redacted-label exclusion, and unchanged bytes, work counters and retained baselines for seven hidden-source
+mutations. The central verification matrix checks seven hidden-source
 mutations and purge. `packages/cli/test/world-verification-parity.test.ts`
 exercises Core, CLI text and JSON, actual stdio MCP, HTTP and the App host.
 The App client test exercises the task form, retained refresh and privacy clear.

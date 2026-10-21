@@ -17,7 +17,7 @@ export const sliceOp: ClaimsOp<SliceQuery> = {
     return { task, budgetTokens: budgetTokens as number, kinds };
   },
   run: (frame, query, when) => {
-    const data = compileSlice(collectSlice(frame, query.kinds, when), query.task, query.budgetTokens, when.valid, value => worldViewProjection(frame.ctx, value));
+    const data = compileSlice(collectSlice(frame, query.kinds, when, query.task), query.task, query.budgetTokens, when.valid, value => worldViewProjection(frame.ctx, value));
     return data === null ? { status: "unavailable", reason: "budget" } : coveredOutcome(data);
   },
 };
