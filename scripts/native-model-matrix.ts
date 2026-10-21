@@ -74,6 +74,17 @@ export function readStrictNativeQuery(result: { exit_code: number; stdout: strin
   return body.data.hits;
 }
 
+/** Authority is a confidence ceiling, not producer identity: a single untrusted
+ * connector also receives model_inference authority. Typed canon is rendered by
+ * a deterministic writer, so follow both newly written claims and retained basis. */
+export function countNativeModelCanonReceipts(db: Database): number {
+  return db.query<{ n: number }, []>(`SELECT count(*) AS n FROM canon_receipts r
+    WHERE r.producer='model' OR r.model_ref IS NOT NULL
+      OR EXISTS (SELECT 1 FROM json_each(r.claim_ids) j JOIN claims c ON c.claim_id=j.value WHERE c.producer='model')
+      OR EXISTS (SELECT 1 FROM json_each(r.world_basis,'$.after') j JOIN claims c
+        ON c.claim_id=json_extract(j.value,'$.claim_id') WHERE c.producer='model')`).get()!.n;
+}
+
 /** The observer never migrates the installed daemon's database or retains statements. */
 export function readInstalledModelAttempt(vault: string, expected: NativeModelInstance) {
   const path = join(vault, ".kizuki/kizuki.db");
@@ -90,8 +101,7 @@ export function readInstalledModelAttempt(vault: string, expected: NativeModelIn
       if (receipt!.execution?.pid === expected.pid && receipt!.execution.instance_id === expected.instance_id) {
         const present = db.query<{ n: number }, [string]>("SELECT count(*) AS n FROM events WHERE text=?").get(SOURCE_TEXT);
         const claims = db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE producer='model'").get()!;
-        const canon = db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_receipts WHERE producer='model' OR authority='model_inference'").get()!;
-        return { receipt: receipt!, source_event_present: present?.n === 1, model_claims: claims.n, model_canon_receipts: canon.n };
+        return { receipt: receipt!, source_event_present: present?.n === 1, model_claims: claims.n, model_canon_receipts: countNativeModelCanonReceipts(db) };
       }
     }
     return null;
@@ -114,15 +124,18 @@ export function prepareModelRecoverySchedule(vault: string, stopConfirmed: boole
     binding();
     return db.transaction(() => {
       binding();
-      const schedules = db!.query<Record<string, string | number | null>, []>("SELECT * FROM schedules ORDER BY rail LIMIT 9").all();
-      check(schedules.length === 7, "schedule_inventory");
+      const expectedRails = ["backup", "brief", "doctor-sweep", "embed-backfill", "journal-prune", "purge-sweep", "retrieval-sweep", "sync", "verify-world"];
+      // Include a sentinel row so an unexpected extension cannot be hidden by
+      // the bounded inventory read. The controller may change only sync's due time.
+      const schedules = db!.query<Record<string, string | number | null>, []>("SELECT * FROM schedules ORDER BY rail LIMIT 10").all();
+      check(JSON.stringify(schedules.map(row => row.rail)) === JSON.stringify(expectedRails), "schedule_inventory");
       const sync = schedules.find(row => row.rail === "sync"); check(sync && (sync.next_run_at === null || typeof sync.next_run_at === "string"), "schedule_sync_missing");
       const old = sync!.next_run_at as string | null, next = new Date(Date.now() - 1000).toISOString();
       const receipts = () => { const rows = db!.query("SELECT * FROM run_receipts ORDER BY run_id LIMIT 129").all(); const text = JSON.stringify(rows); check(rows.length <= 128 && text.length <= 1_048_576, "schedule_receipts_bound"); return text; };
       const priorReceipts = receipts();
       const result = db!.query("UPDATE schedules SET next_run_at=? WHERE rail='sync' AND next_run_at IS ?").run(next, old);
       check(result.changes === 1, "schedule_cas_conflict");
-      const after = db!.query<Record<string, string | number | null>, []>("SELECT * FROM schedules ORDER BY rail LIMIT 9").all();
+      const after = db!.query<Record<string, string | number | null>, []>("SELECT * FROM schedules ORDER BY rail LIMIT 10").all();
       const changed = after.find(row => row.rail === "sync"); check(changed?.next_run_at === next, "schedule_due_not_written"); changed!.next_run_at = old;
       check(JSON.stringify(after) === JSON.stringify(schedules) && receipts() === priorReceipts, "schedule_unrelated_mutation"); binding();
       return { rail: "sync" as const, old, next, reason: "synthetic-due-time-for-recovery" as const };

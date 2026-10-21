@@ -9,7 +9,7 @@ test("empty/fixture observations never qualify an estate or human gate", () => {
   expect(result.release_qualified).toBe(false);
   expect(result.estate).toBe("not-observed");
   expect(result.human).toBe("not-observed");
-  expect(result.status).toBe("interrupted"); // all seven rails are mandatory
+  expect(result.status).toBe("interrupted"); // Every registered rail is mandatory.
 });
 test("a wall clock jump cannot supply elapsed days", () => {
   const jumped = sample(604_800_000); jumped.monotonic_ms = 101;

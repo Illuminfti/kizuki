@@ -2,7 +2,8 @@ import { expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MODEL_PHASE_IDS, modelPhasePassed, modelFailureDiagnostic, readStrictNativeQuery, runNativeModelMatrix, startNativeModelEndpoint, type NativeModelEvidence, type NativeModelPhase } from "./native-model-matrix";
+import { Database } from "bun:sqlite";
+import { MODEL_PHASE_IDS, modelPhasePassed, modelFailureDiagnostic, countNativeModelCanonReceipts, readStrictNativeQuery, runNativeModelMatrix, startNativeModelEndpoint, type NativeModelEvidence, type NativeModelPhase } from "./native-model-matrix";
 import { syntheticModelReply } from "./native-model-endpoint";
 
 // These tests spawn real processes; bound them for a loaded host.
@@ -28,6 +29,25 @@ test("negative model phases refuse any model authority or readable model output"
     for (const changed of [{ model_claims: 1 }, { model_canon_receipts: 1 }, { model_output_readable: true }])
       expect(modelPhasePassed(id, { ...negative, ...changed })).toBe(false);
   }
+});
+test("native model attribution follows producer lineage, including retained typed basis, instead of authority ceiling", () => {
+  const db = new Database(":memory:");
+  try {
+    db.exec("CREATE TABLE claims(claim_id TEXT PRIMARY KEY, producer TEXT); CREATE TABLE canon_receipts(producer TEXT, model_ref TEXT, authority TEXT, claim_ids TEXT, world_basis TEXT)");
+    db.query("INSERT INTO claims VALUES (?,?)").run("connector-claim", "deterministic");
+    db.query("INSERT INTO claims VALUES (?,?)").run("model-claim", "model");
+    const insert = db.query("INSERT INTO canon_receipts VALUES (?,?,?,?,?)");
+    insert.run("deterministic", null, "model_inference", '["connector-claim"]', null);
+    expect(countNativeModelCanonReceipts(db)).toBe(0);
+    insert.run("model", null, "connector_evidence", "[]", null);
+    expect(countNativeModelCanonReceipts(db)).toBe(1);
+    insert.run("deterministic", "synthetic-model", "connector_evidence", "[]", null);
+    expect(countNativeModelCanonReceipts(db)).toBe(2);
+    insert.run("deterministic", null, "model_inference", '["model-claim"]', null);
+    expect(countNativeModelCanonReceipts(db)).toBe(3);
+    insert.run("deterministic", null, "model_inference", '["connector-claim"]', JSON.stringify({ after: [{ claim_id: "model-claim" }] }));
+    expect(countNativeModelCanonReceipts(db)).toBe(4);
+  } finally { db.close(); }
 });
 test("offline recovery requires the restored dependency and a distinct installed receipt", () => {
   const recovery = { stop_confirmed: true, receipt_trigger: "scheduled", receipt_due_at: "2026-09-07T00:00:00.000Z", scheduling_override: { rail: "sync" as const, old: "2026-09-07T00:15:00.000Z", next: "2026-09-07T00:00:00.000Z", reason: "synthetic-due-time-for-recovery" as const }, trigger: "service-restart" as const, unit: base.unit, pid: 456, instance_id: "recovered-instance", started_at: "2026-09-07T00:00:01.000Z",
@@ -127,7 +147,7 @@ for (const configuredKeyMissing of [false, true]) test(`the full model matrix ${
       ...{ diagnostic: (value: typeof diagnostics[number]) => diagnostics.push(value) },
     });
     expect(phases.map(p => p.id)).toEqual([...MODEL_PHASE_IDS]);
-    expect(phases.map(p => ({id:p.id,passed:p.passed}))).toEqual(MODEL_PHASE_IDS.map(id => ({id,passed: !(configuredKeyMissing && id === "model-configured")})));
+    expect(phases.map(p => ({id:p.id,passed:p.passed})), JSON.stringify({ phases: phases.filter(p => !p.passed), diagnostics })).toEqual(MODEL_PHASE_IDS.map(id => ({id,passed: !(configuredKeyMissing && id === "model-configured")})));
     if (configuredKeyMissing) {
       expect(diagnostics).toEqual([{ phase_id: "model-configured", unit: "direct-child-model-fixture",
         original: { receipt_run_id: phases.find(p => p.id === "model-configured")!.evidence.receipt_run_id, errors: ["model configuration unavailable"] }, recovery: null }]);
