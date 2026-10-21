@@ -1,5 +1,6 @@
 import { closeHostConnector } from "../connections";
 import { asLeaseHeld, runRail, runToCompletion } from "@kizuki/core";
+import { beginIngest } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
 import {
   ConnectionError,
@@ -43,7 +44,8 @@ export const syncCommand: Command = {
       if (parsed.flags.has("--once")) {
         // Foreground automation deliberately composes the same capability
         // graph as `kizuki serve`; it is not a second ingest-only path.
-        const runtime = await createServeRuntime({ ...ctx, env: io.env, err: io.err });
+        using ingest = beginIngest(ctx.db, ctx.vaultPath);
+        const runtime = await createServeRuntime({ ...ctx, env: io.env, err: io.err, pace: ingest.pace });
         try {
           const receipt = await runRail(ctx.db, ctx.vaultPath, "sync", { hooks: runtime.hooks });
           io.out(`sync events_stored=${receipt.events_stored} duplicates=${receipt.events_duplicate} errors=${receipt.errors.length}`);
@@ -69,6 +71,8 @@ export const syncCommand: Command = {
       }
 
       let failed = false;
+      // Between commits the ingest leaves the ledger free for a running daemon.
+      using ingest = beginIngest(ctx.db, ctx.vaultPath);
       for (const selected of targets) {
         try {
           if (selected.state === null) {
@@ -86,9 +90,9 @@ export const syncCommand: Command = {
               selected.connection.connector_id,
               selected.connection.source_key,
               "sync",
-              { vault_path: ctx.vaultPath },
+              { vault_path: ctx.vaultPath, pace: ingest.pace },
             );
-            const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval);
+            const derived = await refreshAndPublishDerived(ctx.db, ctx.vaultPath, ctx.retrieval, ingest.pace);
             io.out(
               `${selected.connection.connector_id} source=${selected.connection.source_key} ${formatRunCounts(result)}`,
             );
@@ -104,7 +108,7 @@ export const syncCommand: Command = {
         } catch (raw) {
           // One busy source must not be reported as a broken connector, and
           // must not stop the sources after it.
-          const error = asLeaseHeld(ctx.vaultPath, raw) ?? raw;
+          const error = asLeaseHeld(ctx.vaultPath, raw, ctx.db) ?? raw;
           failed = true;
           io.err(
             `error: ${selected.connection.connector_id} source=${selected.connection.source_key}: ${error instanceof Error ? error.message : String(error)}`,

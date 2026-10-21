@@ -133,8 +133,8 @@ export interface GraphQueryOptions {
 }
 
 export interface RetrievalPort extends Port {
-  /** Stage all documents before atomically replacing the active index. */
-  rebuildFromDocuments?(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>): Promise<void>;
+  /** Stage before atomic replacement. Cancellation retains the active generation. */
+  rebuildFromDocuments?(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>, options?: { signal?: AbortSignal }): Promise<void>;
   upsert(docs: readonly RetrievalDoc[]): Promise<RetrievalMutationReport>;
   search(query: RetrievalQuery): Promise<RetrievalResult>;
   /** Remove only the requested document identities and their owned projections. */

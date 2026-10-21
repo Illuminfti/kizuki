@@ -113,6 +113,31 @@ describe("systemone jev port", () => {
     }
   });
 
+  test("an abort ends a judge request in flight as unavailable", async () => {
+    fake = startFakeEndpoint(async () => {
+      await Bun.sleep(5_000);
+      return noulBody();
+    });
+    const temporary = temporaryLlmContext(SYSTEMONE_JEV_DESCRIPTOR, {
+      base_url: fake.origin + "/v1",
+      max_retries: 2,
+      timeout_ms: 60_000,
+    });
+    try {
+      const port = createSystemOneJevPort(temporary.ctx);
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 40);
+      const started = performance.now();
+      await expect(port.evaluate({ ...SAMPLE, deadline_ms: 60_000, signal: controller.signal })).rejects.toEqual(
+        new PortError("unavailable", "systemone request aborted", false),
+      );
+      expect(performance.now() - started).toBeLessThan(2_000);
+      expect(fake.requests).toHaveLength(1);
+    } finally {
+      temporary.cleanup();
+    }
+  });
+
   test("choice criteria must be a dict, not an array", async () => {
     fake = startFakeEndpoint(() => noulBody());
     const temporary = temporaryLlmContext(SYSTEMONE_JEV_DESCRIPTOR, {

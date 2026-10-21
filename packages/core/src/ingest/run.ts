@@ -305,6 +305,7 @@ export function runBatch(
   grants: ProducerGrants,
   source?: SourceAdmission,
   context?: SourceTombstoneContext,
+  pace?: () => void,
 ): RunResult {
   const ingress = ingressBatch(batch);
   if (!ingress.ok) return refusedRun(ingress.error, null);
@@ -340,6 +341,7 @@ export function runBatch(
         return result;
       }
     }
+    pace?.();
   }
 
   // bun:sqlite close() can leave this batch in the WAL; PASSIVE copies idle frames.
@@ -625,6 +627,7 @@ async function runConnector(
   source_key: string,
   mode: "backfill" | "sync",
   context?: SourceTombstoneContext,
+  pace?: () => void,
 ): Promise<ConnectorStep> {
   const checkpoint = getCheckpoint(db, connector_id, source_key);
   const storedPrevious = checkpointModeCursor(checkpoint, mode);
@@ -720,6 +723,7 @@ async function runConnector(
     sourceGrants(manifest),
     admission ?? undefined,
     context,
+    pace,
   );
   const status: ConnectionRunStatus = processed.errors.length === 0 ? "ok" : "failed";
   const persisted = persistRun(
@@ -770,6 +774,8 @@ export interface DrainSlice {
 }
 
 export interface RunToCompletionOptions {
+  /** Finish and checkpoint the current bounded batch, then start no further batch. */
+  signal?: AbortSignal;
   /** Upper bound on batches per call; exceeding it is an error, not a silent stop. */
   maxBatches?: number;
   /** Host-owned vault path, required when a source tombstone targets receipted canon. */
@@ -778,6 +784,8 @@ export interface RunToCompletionOptions {
   slice?: DrainSlice;
   /** Read before every batch; true ends the call with `has_more`. */
   stopRequested?: () => boolean;
+  /** Called after each committed event and batch, outside a transaction. */
+  pace?: () => void;
 }
 
 /** Batches beyond this are treated as a connector that will not settle. */
@@ -833,22 +841,21 @@ export async function runToCompletion(
   const sliceSpent = (batches: number): boolean => slice !== undefined &&
     (batches >= (slice.max_batches ?? Infinity) || performance.now() - started >= (slice.deadline_ms ?? Infinity));
   for (let batch = 0; batch < maxBatches; batch += 1) {
-    if (opts?.stopRequested?.() === true) return { ...total, has_more: true };
+    if (opts?.stopRequested?.() === true || opts?.signal?.aborted) return { ...total, has_more: true };
     // A slice always reads one batch, so a spent deadline cannot starve a source.
-    if (batch > 0 && sliceSpent(batch)) {
-      return { ...total, has_more: true };
-    }
+    if (batch > 0 && sliceSpent(batch)) return { ...total, has_more: true };
     const before = stored();
-    const { result, terminal, continue_empty } = await runConnector(db, connector, connector_id, source_key, mode, context);
+    const { result, terminal, continue_empty } = await runConnector(db, connector, connector_id, source_key, mode, context, opts?.pace);
+    opts?.pace?.();
     absorb(total, result);
     total.cursor = stored();
-    // Even a terminal batch must deliver pending host callbacks before the
-    // caller can start another connection. The batch is already durable.
+    // Deliver host callbacks even after a terminal batch, before another connection starts.
     await yieldToHost();
     if (result.errors.length > 0) return total;
     if (terminal) return total;
     if (total.cursor === null) return total;
     if (drained(result) && !continue_empty) return total;
+    if (opts?.stopRequested?.() === true || opts?.signal?.aborted) return { ...total, has_more: true };
     if (total.cursor === before) {
       total.errors.push("run made no progress");
       return total;

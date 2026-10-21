@@ -129,11 +129,14 @@ A value outside its range, a fraction or a string keeps that key's default.
   another pass changed its inputs or the cursor is discarded, never filed. An
   answer waits up to five seconds for a writer another operation holds; after
   that the pass stops as `lock:busy` and the next one asks again.
-- **Stopping.** `kizuki serve stop`, SIGTERM and SIGINT end a pass before its
-  next step, and before the next canon page. The request in flight finishes and
-  is filed, the page being written finishes, later pages wait for the next
-  start, and the receipt stops as `serve:stop_requested`. The
-  service's stop timeout therefore needs to cover one request, not a pass.
+- **Stopping.** `kizuki serve stop`, SIGTERM and SIGINT end a pass at once. A
+  model request in flight is aborted through the transport, not waited out, so
+  a stop takes seconds whatever `timeout_ms` is set to. The aborted request is
+  charged as a call but is not counted as the model failing: the receipt stops
+  as `serve:stop_requested`, doctor reports no model failure, and the next pass
+  asks for the same records again from the durable cursor. A canon page already
+  being written finishes at its durable boundary; later pages wait for the next start. The service's `TimeoutStopSec` therefore does not depend
+  on the model timeout; see [the service lifecycle](service-lifecycle.md).
 - **Model health.** A pass is judged by how it ended. The receipt's
   `model.answered` counts the requests the model answered, and
   `model.last_request` says whether the final one was answered; its
@@ -173,7 +176,8 @@ when it is empty, so hidden text cannot change skip counts or step usage:
 
 The cursor moves past such an authorized record without a request. A record
 whose source grant does not permit extraction stays deferred regardless of its
-text; it contributes no prefilter count and retains ordinary step accounting.
+text; it contributes no prefilter count. Fresh denied-only frontier steps use
+the bounded request-free accounting described below.
 The pass's run receipt counts authorized skips by reason in
 `records_prefiltered`, only for records its committed cursor passed: a step that reads more records than one
 request takes counts the rest when a later step passes them. The ledger keeps
@@ -211,6 +215,9 @@ it reaches the number and the next pass continues; a value above 32 used to
 change nothing, because the pass ended at 32 whatever the setting. A vault with
 a long queue can raise it, and one with a slow model can lower it.
 `doctor --json` reports it as `serve.model.budget.canon_writes_per_run.limit`.
+The same per-pass ceiling also bounds page attempts, including failed writes,
+so a queue of damaged pages cannot monopolize a pass. Failed attempts do not
+consume the daily successful-write allowance.
 
 After the graph registry has been initialized, a receipted write assesses
 only that page's evidence and refreshes its edges and the incoming links whose
