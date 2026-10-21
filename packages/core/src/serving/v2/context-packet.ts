@@ -24,6 +24,8 @@ export type ContextPacketArgsV2 = import("./read-input").PacketArgsV2;
 /** Everything a reader needs from a packet, with no global counter and no digest to compare. */
 export interface PacketContentV2 {
   packetMd: string;
+  /** Number of packed authorized content units; excludes placeholders and withheld units. */
+  servedUnits: number;
   /** Exact encoded count of `packetMd` under the declared tokenizer. */
   tokens: number;
   budgetTokens: number;

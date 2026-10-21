@@ -81,9 +81,11 @@ export function projectQuery(input: string): string | undefined {
 
 interface PacketLike {
   packetMd?: unknown;
+  servedUnits?: unknown;
   sections?: Record<string, unknown>;
   session?: Record<string, { served?: unknown }>;
   retrievalDegraded?: unknown;
+  coverage?: { status?: unknown; gaps?: unknown };
 }
 
 /**
@@ -93,10 +95,24 @@ interface PacketLike {
 export function usableContext(data: unknown): string | null {
   if (data === null || typeof data !== "object") return null;
   const shaped = data as { schema?: unknown; result?: { status?: unknown; data?: PacketLike } };
-  if (shaped.schema !== PACKET_V2_SCHEMA || shaped.result?.status !== "current") return null;
-  const packet = shaped.result.data;
-  if (packet === undefined || typeof packet.packetMd !== "string" || !packet.packetMd.startsWith("KIZUKI CONTEXT v2\n")) return null;
+  const result = shaped.result;
+  if (shaped.schema !== PACKET_V2_SCHEMA || (result === undefined || result === null || typeof result !== "object") || (result.status !== "current" && result.status !== "incomplete")) return null;
+  const packet = result.data;
+  if (packet === undefined || packet === null || typeof packet.packetMd !== "string" || !packet.packetMd.startsWith("KIZUKI CONTEXT v2\n")) return null;
+  // Older incomplete packets did not carry their coverage into the text. Only
+  // inject partial evidence when Core preserved that warning inside its budget.
+  if ((result.status === "incomplete" || packet.coverage?.status === "partial") && packet.packetMd.split("\n", 4)[3] !==
+      "coverage=incomplete; missing context must not be treated as absent") return null;
   if (Array.isArray(packet.retrievalDegraded) && packet.retrievalDegraded.includes("context-unavailable")) return null;
+  if (packet.servedUnits !== undefined || packet.coverage !== undefined) {
+    if (packet.coverage !== undefined && (packet.coverage === null ||
+        (packet.coverage.status !== "complete_for_query" && packet.coverage.status !== "partial") ||
+        !Array.isArray(packet.coverage.gaps))) return null;
+    // Core counts only packed authorized units. Rendered or quoted evidence
+    // cannot manufacture this witness; older scoped packets without it refuse.
+    return typeof packet.servedUnits === "number" && Number.isSafeInteger(packet.servedUnits) && packet.servedUnits > 0
+      ? packet.packetMd : null;
+  }
   const served = [
     ...Object.values(packet.sections ?? {}),
     ...Object.values(packet.session ?? {}).map((section) => section?.served),

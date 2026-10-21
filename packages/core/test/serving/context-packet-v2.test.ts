@@ -7,6 +7,7 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import { listAudit } from "../../src/agents";
 import { hasContextPacketMarker } from "../../src/canon/origin";
 import { accept } from "../../src/ledger/ledger";
+import { revokeSourceGrant } from "../../src/ledger/source-grants";
 import { dispatchServeTool } from "../../src/serving/dispatch";
 import type { ContextPacketDataV2 } from "../../src/serving/v2/context-packet";
 import { validEvent } from "../fixtures";
@@ -33,13 +34,13 @@ async function read(
   return { envelope, packet: envelope.data as ContextPacketDataV2 };
 }
 
-function visibleCapture(scene: NoninterferenceScene, text: string): void {
+function visibleCapture(scene: NoninterferenceScene, text: string, recordId?: string): string {
   const stored = accept(
     scene.db,
     {
       ...validEvent(),
       connector_id: "world.fixture",
-      source_record_id: `visible-${text}`,
+      source_record_id: recordId ?? `visible-${text}`,
       text,
       sensitivity_hint: "public",
       subjects: [{ subject_id: "topic:bayes", role: "about" }],
@@ -53,6 +54,7 @@ function visibleCapture(scene: NoninterferenceScene, text: string): void {
   );
   if (stored.status !== "stored")
     throw new Error("the visible capture was not stored");
+  return stored.event.event_id;
 }
 
 test("the v2 body leads with its marker and names no epoch, time or digest", async () => {
@@ -77,10 +79,14 @@ test("the v2 body leads with its marker and names no epoch, time or digest", asy
       "coverage",
       "packetMd",
       "purpose",
+      "servedUnits",
       "tokenizer",
       "tokens",
     ]);
     expect(data.tokens).toBeLessThanOrEqual(data.budgetTokens);
+    expect(Number.isSafeInteger(data.servedUnits)).toBe(true);
+    // The scoped DTO exposes the packed-unit witness, never legacy global counters.
+    expect(data.servedUnits).toBeGreaterThanOrEqual(0);
     expect(new Date(packet.result.validUntil).getTime()).toBeGreaterThan(
       Date.parse(envelope.at),
     );
@@ -265,5 +271,61 @@ test("a query without indexed canon reports its incomplete retrieval coverage", 
     if (first.status !== "incomplete") throw new Error("expected query coverage gap");
     expect(first.data.coverage.gaps).toContain("coverage");
     expect(first).not.toHaveProperty("view");
+  } finally { scene.dispose(); }
+});
+
+
+test("optional capture truncation retains the incomplete warning and exact served-unit witness", async () => {
+  const scene = await hiddenScene();
+  try {
+    for (let index = 0; index < 6; index++) visibleCapture(scene, `Observation ${index}: ${"the bounded context is recorded ".repeat(8).trim()}`);
+    const { packet, envelope } = await read(scene, { ...WIDE, budget_tokens: 450 });
+    if (!("data" in packet.result)) throw new Error("packet missing");
+    const data = packet.result.data;
+    expect(data.coverage).toMatchObject({ status: "partial", gaps: expect.arrayContaining(["required_context_overflow"]) });
+    expect(data.servedUnits).toBeGreaterThan(0);
+    expect(data.servedUnits).toBeLessThan(6);
+    expect(data.servedUnits).toBe(envelope.quoted.length);
+    expect(data.packetMd).toContain("coverage=incomplete; missing context must not be treated as absent\n");
+    expect(data.packetMd).not.toContain("coverage=complete_for_query");
+    expect(data.tokens).toBeLessThanOrEqual(450);
+  } finally { scene.dispose(); }
+});
+
+test("task-only packets count an authorized packed capture and exclude unfit or revoked attachments", async () => {
+  const scene = await hiddenScene();
+  try {
+    const eventId = visibleCapture(scene, "kizuki.task/v1\nconstraint: Preserve the existing provenance.\nobjective: Resume the recorded task.", "task-witness");
+    const discovery = await dispatchServeTool(scene.reader, "timeline", { since: WIDE.since, until: WIDE.until, limit: 100 }, { response_contract: V2 });
+    if (discovery.schema !== V2) throw new Error("wrong contract");
+    const task = discovery.quoted.find(chunk => chunk.text.startsWith("kizuki.task/v1"));
+    if (task === undefined || !("eventVersion" in task)) throw new Error("authorized task not discovered");
+    const args = { ...PACKET, purpose: "recall", include: [], taskEventVersion: task.eventVersion };
+    // This source grants recall but not session use. The witness must not
+    // turn a purpose-denied task into usable context.
+    const denied = await read(scene, { ...args, purpose: "session" });
+    if (!("data" in denied.packet.result)) throw new Error("packet missing");
+    expect(denied.packet.result.data.servedUnits).toBe(0);
+    expect(denied.packet.result.data.coverage.status).toBe("partial");
+    expect(denied.envelope.quoted).toEqual([]);
+    const current = await read(scene, args);
+    if (!("data" in current.packet.result)) throw new Error("packet missing");
+    expect(current.packet.result.data.servedUnits).toBe(1);
+    expect(current.packet.result.data.coverage.status).toBe("complete_for_query");
+    expect(current.envelope.quoted).toHaveLength(1);
+    expect(current.packet.result.data.packetMd).toContain("Resume the recorded task.");
+    const small = await read(scene, { ...args, budget_tokens: 100 });
+    if (!("data" in small.packet.result)) throw new Error("packet missing");
+    expect(small.packet.result.data.servedUnits).toBe(0);
+    expect(small.packet.result.data.coverage.status).toBe("partial");
+    expect(small.envelope.quoted).toEqual([]);
+    expect(small.packet.result.data.tokens).toBeLessThanOrEqual(100);
+    revokeSourceGrant(scene.db, { source_key: scene.visible.concept.sourceKey, expected_revision: 1, operation_id: "task-witness-revoke" });
+    await expect(read(scene, args)).rejects.toMatchObject({ code: "not_found" });
+    const revoked = await read(scene, { ...PACKET, purpose: "recall", include: [] });
+    if (!("data" in revoked.packet.result)) throw new Error("packet missing");
+    expect(revoked.packet.result.data.servedUnits).toBe(0);
+    expect(revoked.envelope.quoted).toEqual([]);
+    expect(revoked.packet.result.data.packetMd).not.toContain("Resume the recorded task.");
   } finally { scene.dispose(); }
 });

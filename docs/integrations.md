@@ -205,6 +205,16 @@ A section with nothing to report is listed under `not recorded` with the reason,
 so an empty section is never mistaken for a missing one. Canon pages and recent
 captured records follow, within the same budget.
 
+A useful partial v2 packet can be injected only when its text contains the
+in-budget warning `coverage=incomplete; missing context must not be treated as
+absent`. Whole qualified relations may be omitted to fit, but their qualifiers
+and evidence are never cut apart. The hook refuses older incomplete packets
+that lack this warning. Current v2 packets carry a structured `servedUnits`
+count of packed authorized units; quoted text cannot substitute for that count.
+Scoped coverage-shaped packets without the count are refused. A failed typed projection marks session sections
+unavailable while preserving independently authorized capture. Full world-card
+summary coverage is separate from this session's recorded-relation projection.
+
 The owner, now and commitments sections show current facts: a claim whose
 validity has ended or not yet begun is not listed there. Counterevidence can
 cite historical intervals. A section says `unavailable` rather than

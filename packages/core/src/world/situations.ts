@@ -65,13 +65,13 @@ export function readSituations(
 
 /** Session callers cannot supply an old instant and borrow present outcome evidence. */
 export function readCurrentSituations(ctx: ServeContext, options: {
-  limit: number; subjects?: readonly string[]; canRead: (claim: Claim) => boolean;
+  limit: number; subjects?: readonly string[]; canRead: (claim: Claim) => boolean; projection?: "relations";
 }): SituationState[] {
   const at = new Date().toISOString();
   return ctx.db.transaction(() => readSituationsSnapshot(ctx, { ...options, at, currentOutcomeAt: at }))();
 }
 
-function readSituationsSnapshot(ctx: ServeContext, options: { limit: number; at: string; currentOutcomeAt?: string; subjects?: readonly string[]; canRead: (claim: Claim) => boolean }): SituationState[] {
+function readSituationsSnapshot(ctx: ServeContext, options: { limit: number; at: string; currentOutcomeAt?: string; subjects?: readonly string[]; canRead: (claim: Claim) => boolean; projection?: "relations" }): SituationState[] {
   if (
     !tableExists(ctx.db, "claim_v2_semantics") ||
     !tableExists(ctx.db, "semantic_bindings")
@@ -121,11 +121,12 @@ function readSituationsSnapshot(ctx: ServeContext, options: { limit: number; at:
 function readOne(
   ctx: ServeContext,
   row: SubjectRow,
-  options: { at: string; currentOutcomeAt?: string; canRead: (claim: Claim) => boolean },
+  options: { at: string; currentOutcomeAt?: string; canRead: (claim: Claim) => boolean; projection?: "relations" },
   budget: ReadBudget,
 ): SituationState | null {
   const ns = worldNamespace(ctx.db,ctx.principal), world = worldDependencies();
   const frame = { ...newReadFrame(ctx,ns,{kind:"at",at:options.at},world), budget,
+    ...(options.projection === undefined ? {} : { projection: options.projection }),
     ...(options.currentOutcomeAt === undefined ? {} : { currentOutcomeAt: options.currentOutcomeAt }) };
   const card = readWorldCard(frame,row.handle_id,"situation",SITUATION_CARD_V2_SCHEMA) as SituationCardV2 | null;
   if (card === null) return null;

@@ -187,7 +187,10 @@ export function collectSituationDetails(frame: ReadFrame, cluster: Cluster, body
     }
     if (target) dependencies.push({ predicate: relation.predicate as SituationDependency["predicate"], from: relation.subject, to: relation.object.ref, relation });
   }
-  if (commitments.length === 0 && decisions.length === 0) gaps.add("coverage");
+  // A full v2 card discloses that typed node coverage is unavailable in a v1-only
+  // vault. A session projects only recorded qualified assertions; it neither
+  // returns these empty node lists nor asserts that no such nodes exist.
+  if (frame.projection !== "relations" && commitments.length === 0 && decisions.length === 0) gaps.add("coverage");
   // Optional summary work is unrelated to deadline completeness. Source
   // extraction backlog still contributes its own pending_consolidation gap.
   const complete = coverageOf(frame,body.overflow === true,

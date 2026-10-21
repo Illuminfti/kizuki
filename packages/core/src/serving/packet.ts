@@ -387,11 +387,12 @@ async function servePacket(
       // is verbatim. The v2 header names neither the epoch nor the time, so
       // its bytes depend on the reader's own authorized context alone.
       const redactor = redactorOf(ctx);
-      const header = epoch === undefined
+      const incompleteNotice = "coverage=incomplete; missing context must not be treated as absent\n";
+      let header = epoch === undefined
         ? `${PACKET_V2_MARKER}\n` +
           `principal=${packetPrincipal(ctx)} purpose=${purpose}` +
           ` budget=${budget}\n` +
-          `${PACKET_RULES}\n`
+          `${PACKET_RULES}\n${incompleteNotice}`
         : `${PACKET_MARKER}\n` +
           `principal=${redactor.text(principalName(ctx.principal))} purpose=${purpose}` +
           ` budget=${budget} epoch=${epoch} at=${at}\n` +
@@ -433,6 +434,7 @@ async function servePacket(
                 status: "incomplete",
                 data: {
                   packetMd: taskPacket,
+                  servedUnits: attached?.quoted.length ?? 0,
                   tokens: tokens(taskPacket),
                   budgetTokens: budget,
                   tokenizer: PACKET_TOKENIZER_ID,
@@ -485,18 +487,27 @@ async function servePacket(
           ...window,
         }));
         if (gatherState) {
-          const state = (v2 ? compileSessionSlice : collectSessionPieces)(ctx, {
-            header, budgetTokens: budget,
-            at,
-            since: window.since,
-            ...(subjects === undefined ? {} : { subjects }),
-          });
-          stateTruncated = "truncated" in state && state.truncated === true;
-          pieces = [...state.pieces, ...pieces];
-          withheld.push(...state.withheld);
-          degraded.push(...state.degraded);
-          Object.assign(stateReasons, state.reasons);
-          worldPublications.push(...state.world);
+          try {
+            const state = (v2 ? compileSessionSlice : collectSessionPieces)(ctx, {
+              header, budgetTokens: budget,
+              at,
+              since: window.since,
+              ...(query === undefined ? {} : { query }),
+              ...(subjects === undefined ? {} : { subjects }),
+            });
+            stateTruncated = "truncated" in state && state.truncated === true;
+            pieces = [...state.pieces, ...pieces];
+            withheld.push(...state.withheld);
+            degraded.push(...state.degraded);
+            Object.assign(stateReasons, state.reasons);
+            worldPublications.push(...state.world);
+          } catch (error) {
+            if (!v2) throw error;
+            // Typed session projection is additive. Its failure must not erase
+            // independently authorized canon or quoted-capture context.
+            degraded.push("coverage");
+            for (const section of SESSION_SECTIONS) stateReasons[section] = "unavailable";
+          }
         }
       } catch {
         // The cause stays inside core; the packet degrades instead of failing.
@@ -588,9 +599,12 @@ async function servePacket(
       }
 
       let task: TaskAttachment | undefined;
+      let taskUnits = 0;
       if (taskArgs !== undefined) {
         const attached = readTaskAttachment(ctx, taskArgs, `${header}${body}`, budget);
         task = attached.task;
+        // TaskRead emits a quoted capture only after authorization and packing.
+        taskUnits = attached.quoted.length;
         if (attached.block !== "") body = redactor.join([body, attached.block]);
         quoted.push(...attached.quoted);
         withheld.push(...attached.withheld);
@@ -608,9 +622,16 @@ async function servePacket(
         : undefined;
 
       if (epoch === undefined) {
+        // Keep the longer warning reserved until all packing is final. A text-only
+        // consumer must not interpret dropped optional context as complete coverage.
+        if (degraded.length === 0 && !truncated && task?.status !== "incomplete" && task?.status !== "unavailable") {
+          header = header.replace(incompleteNotice, "coverage=complete_for_query\n");
+        }
         const packetMd = redactor.join([header, body]);
         const content: PacketContentV2 = {
           packetMd,
+          servedUnits: Object.values(sections).reduce((total, count) => total + count, 0) +
+            Object.values(served).reduce((total, count) => total + count, 0) + taskUnits,
           tokens: tokens(packetMd),
           budgetTokens: budget,
           tokenizer: PACKET_TOKENIZER_ID,

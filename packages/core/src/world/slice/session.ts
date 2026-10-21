@@ -17,7 +17,7 @@ import { readCurrentSituations } from "../situations";
 import { compileUnits } from "./compile";
 import { cardSliceItems, sliceAssembler } from "./providers";
 
-interface Unit { readonly piece: Piece; readonly required: boolean }
+interface Unit { readonly piece: Piece; readonly required: boolean; readonly relevance?: number }
 const sectionOrder = (piece: Piece) => SESSION_SECTIONS.indexOf(piece.section as SessionSection);
 function ordered(units: readonly Unit[]): Piece[] {
   return units.map(unit => unit.piece).sort((a, b) => sectionOrder(a) - sectionOrder(b));
@@ -37,7 +37,7 @@ function rendered(pieces: readonly Piece[]): string {
 /** Legacy owner selectors feed the same card providers and mandatory-first compiler as world slices.
  * No second typed claim collector, no model call and no canon write. */
 export function compileSessionSlice(ctx: ServeContext, request: {
-  at: string; since: string; subjects?: readonly string[]; header: string; budgetTokens: number;
+  at: string; since: string; subjects?: readonly string[]; query?: string; header: string; budgetTokens: number;
 }): SessionPieces & { truncated: boolean } {
   // Retain the model-free owner identity/legacy claim floor. Typed reads are disabled here.
   const legacy = collectSessionPieces(ctx, { ...request, typed: false });
@@ -47,6 +47,13 @@ export function compileSessionSlice(ctx: ServeContext, request: {
   const redactor = redactorOf(ctx);
   const granted = ctx.principal.kind === "owner" || toolAllowed(ctx.principal.grant, "world_view");
   const seenPeople = new Set<string>();
+  const terms = [...new Set(request.query?.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])].slice(0, 32);
+  const relevance = (item: SliceItem) => {
+    const value = item.relation.object;
+    const visible = value.kind === "literal" ? redactor.text(value.value) : "";
+    const words = new Set(visible.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []);
+    return terms.filter(term => words.has(term)).length;
+  };
   const qualified = (item: SliceItem, section: SessionSection, deps: WorldDependencies, heading: string, ids: readonly string[], extra = ""): Piece => ({
     section, heading, scopedBlock: true,
     block: redactor.format(JSON.stringify(item), value => `- taint=quoted mode=${item.relation.perspective.mode}${extra} :: slice ${value}\n`),
@@ -71,8 +78,8 @@ export function compileSessionSlice(ctx: ServeContext, request: {
           } });
           for (const gap of person.card.coverage.gaps) degraded.push(gap);
           const items = cardSliceItems("person", person.card.person.ref, person.card, assembler);
-          for (const item of items.constraints) units.push({ piece: qualified(item, "owner", person.deps, "## owner (Person card; quoted data)", ids), required: true });
-          for (const item of items.detail) units.push({ piece: qualified(item, "owner", person.deps, "## owner (Person card; quoted data)", ids), required: false });
+          for (const item of items.constraints) units.push({ piece: qualified(item, "owner", person.deps, "## owner (Person card; quoted data)", ids), required: true, relevance: relevance(item) });
+          for (const item of items.detail) units.push({ piece: qualified(item, "owner", person.deps, "## owner (Person card; quoted data)", ids), required: false, relevance: relevance(item) });
           continue;
         }
       }
@@ -85,7 +92,7 @@ export function compileSessionSlice(ctx: ServeContext, request: {
     const assembler = sliceAssembler("situation");
     if (assembler?.sliceConstraint === undefined) degraded.push("coverage");
     else {
-      const states = readCurrentSituations(ctx, { limit: 5, canRead: reader.canRead,
+      const states = readCurrentSituations(ctx, { limit: 5, canRead: reader.canRead, projection: "relations",
         ...(request.subjects === undefined ? {} : { subjects: request.subjects }) });
       if (states.length > 4) { degraded.push("traversal_limit"); world.push(states[4]!.world); }
       for (const state of states.slice(0, 4)) {
@@ -101,7 +108,9 @@ export function compileSessionSlice(ctx: ServeContext, request: {
             const section = uncertain.has(item.relation.claim.token) || item.relation.polarity === "negative" || item.relation.perspective.mode !== "asserted" ? "uncertain" :
               commitment !== undefined || item.relation.predicate === "situation.commitment" ? "commitments" : "now";
             const extra = commitment === undefined ? "" : ` status=${commitment.status} overdue=${commitment.overdue}`;
-            units.push({ required, piece: qualified(item, section, state.world,
+            // Card-level ambiguity can put an asserted relation in uncertainty
+            // even when its own qualifiers do not declare a conflict.
+            units.push({ required: required || uncertain.has(item.relation.claim.token), relevance: relevance(item), piece: qualified(item, section, state.world,
               `## ${section} (Situation card; quoted data)`, [...state.world.claims], extra) });
           }
         }
@@ -110,10 +119,29 @@ export function compileSessionSlice(ctx: ServeContext, request: {
   }
   const auditFits = (pieces: readonly Piece[]) => new Set(pieces.flatMap(piece => (piece.audit ?? []).map((item: AuditItem) => item.id))).size <= MAX_AUDIT_ITEMS;
   const scopedUnits = units.flatMap(unit => scopePacketPieces(ctx, [unit.piece]).map(piece => ({ ...unit, piece })));
-  const compiled = compileUnits(scopedUnits.filter(unit => unit.required), scopedUnits.filter(unit => !unit.required), (constraints, detail) => {
-    const pieces = ordered([...constraints, ...detail]);
+  // Rank only authorized, complete units. Query relevance affects which whole
+  // required prefix survives overflow, never whether a relation is required.
+  const byRelevance = (a: Unit, b: Unit) => (b.relevance ?? 0) - (a.relevance ?? 0);
+  const required = scopedUnits.filter(unit => unit.required).sort(byRelevance);
+  const detail = scopedUnits.filter(unit => !unit.required).sort(byRelevance);
+  const fits = (constraints: readonly Unit[], details: readonly Unit[]) => {
+    const pieces = ordered([...constraints, ...details]);
     return auditFits(pieces) && packetTokens(redactor.join([request.header, rendered(pieces)])) <= request.budgetTokens;
-  });
+  };
+  let compiled = compileUnits(required, detail, fits);
+  if (compiled.overflow) {
+    // Keep the useful authorized floor when all required relations together do
+    // not fit. Each relation remains whole; the packet header reports that
+    // later required context is missing rather than turning the hook empty.
+    const prefix: Unit[] = [];
+    for (const unit of required) {
+      if (!fits([...prefix, unit], [])) break;
+      prefix.push(unit);
+    }
+    // Fill residual space with whole detail only after the maximal required
+    // prefix is fixed. This never displaces a required unit or claims completeness.
+    compiled = { ...compileUnits(prefix, detail, fits), overflow: true, truncated: true };
+  }
   const pieces = ordered([...compiled.constraints, ...compiled.detail]);
   if (compiled.overflow) degraded.push("required_context_overflow");
   for (const section of SESSION_SECTIONS) {

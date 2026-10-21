@@ -251,13 +251,16 @@ export function stripInvisibleText(text: string): string {
   return text.replace(INVISIBLE, "");
 }
 
-const ANSI = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][\s\S]*?(?:\u0007|\u001b\\|$)|[@-Z\\-_])/g;
+const ANSI = /(?:\u001b\](?:[\s\S]*?)(?:\u0007|\u001b\\|$)|\u009d(?:[\s\S]*?)(?:\u0007|\u001b\\|\u009c|$)|\u001b\[[0-?]*[ -/]*[@-~]|\u009b[0-?]*[ -/]*[@-~]|\u001b[@-Z\\-_])/g;
 const CONTROLS = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
 
-/** Shared capture/serving sanitation. Tabs and newlines remain readable. */
+/** Shared capture/serving sanitation. Preserve logical lines before quoting them. */
 export function sanitizeCapturedText(text: string): string {
-  return stripInvisibleText(text.replace(ANSI, "").replace(CONTROLS, ""))
-    .replace(/[\u2028\u2029]/g, "\n");
+  // Remove complete terminal commands first: their payload and line breaks
+  // must not survive normalization as visible captured text.
+  return stripInvisibleText(text.replace(ANSI, "")
+    .replace(/\r\n|[\r\u000B\u000C\u0085\u2028\u2029]/g, "\n")
+    .replace(CONTROLS, ""));
 }
 
 /** Opening angle brackets are inert, including unfinished or re-flowed tags. */

@@ -64,10 +64,24 @@ This implementation covers SLICE-1 through SLICE-5 for the registered kinds
 listed above. The context-packet v2 session sections use the same mandatory-first compiler and
 card-to-relation providers. The existing source-bound owner identity selector
 chooses a Person; it never substitutes every visible Person. Legacy owner facts
-remain the model-free fallback. Current Situation cards supply now, commitments
-and uncertainty, including all examined dependencies for final publication even
-when completed commitments are omitted. Required context that cannot fit makes
-the packet incomplete; optional detail yields first. The v1 packet retains its
+remain the model-free fallback. Current Situation relations supply now,
+commitments and uncertainty, including all examined dependencies for final
+publication even when completed commitments are omitted. This internal session
+projection does not request card summaries; unfinished summary consolidation
+therefore does not block recorded relations. Visible extraction backlog still
+makes the session incomplete, and full public cards retain their consolidation
+coverage.
+
+Required context that cannot fit makes the packet incomplete; optional detail
+yields first. A session may keep a prefix of whole qualified relations that fit,
+with an in-budget warning that missing context must not be treated as absent.
+Card-level uncertainty remains required even when an individual relation is
+asserted. Within required context, the session query ranks whole authorized,
+redacted relation values with deterministic ties. Residual space may hold whole
+optional detail after the required prefix is fixed.
+The public task slice still withholds every mandatory relation on overflow.
+If typed projection fails, independently authorized capture and canon can still
+be served, with session sections marked unavailable. The v1 packet retains its
 existing compatibility renderer. Additional kind assemblers must declare their
 constraint provider during composition.
 
