@@ -1,4 +1,5 @@
 import type { Principal } from "../agents";
+import { sanitize } from "../terminal-text";
 import { scrubText, tallyRedactions } from "../producer/scrub";
 import type { RedactionCounts } from "../producer/scrub";
 
@@ -15,9 +16,9 @@ const LINE_BREAK = /\r\n|[\n\r\u000B\u000C\u0085\u2028\u2029]/;
 
 /**
  * One call's serving-output redaction. An agent principal's text loses hidden
- * characters and then credential shapes; the owner's text loses hidden
- * characters only. Hidden characters go first so they cannot split a secret
- * across the scrubber's patterns.
+ * characters and terminal controls, then credential shapes; the owner's text
+ * loses hidden characters and terminal controls. Hidden characters go first so
+ * they cannot split a secret across the scrubber's patterns.
  */
 export interface Redactor {
   /** Replaced spans so far, per kind. Values never enter this. */
@@ -35,7 +36,7 @@ export function createRedactor(principal: Pick<Principal, "kind">): Redactor {
   return {
     counts,
     text(value) {
-      const visible = stripInvisible(value);
+      const visible = sanitize(stripInvisible(value));
       if (!scrub) return visible;
       const scrubbed = scrubText(visible);
       tallyRedactions(counts, scrubbed.redactions);
