@@ -1,3 +1,4 @@
+import { scopePacketPieces } from "../../serving/v2/packet-pieces";
 import { toolAllowed, type AuditItem } from "../../agents";
 import { MAX_AUDIT_ITEMS } from "../../agents/types";
 import { getClaim } from "../../claims/store";
@@ -47,7 +48,7 @@ export function compileSessionSlice(ctx: ServeContext, request: {
   const granted = ctx.principal.kind === "owner" || toolAllowed(ctx.principal.grant, "world_view");
   const seenPeople = new Set<string>();
   const qualified = (item: SliceItem, section: SessionSection, deps: WorldDependencies, heading: string, ids: readonly string[], extra = ""): Piece => ({
-    section, heading,
+    section, heading, scopedBlock: true,
     block: redactor.format(JSON.stringify(item), value => `- taint=quoted mode=${item.relation.perspective.mode}${extra} :: slice ${value}\n`),
     audit: ids.flatMap(id => reader.auditClaim(id)), claims: reader.publication(ids), world: deps,
   });
@@ -64,7 +65,7 @@ export function compileSessionSlice(ctx: ServeContext, request: {
           if (seenPeople.has(person.card.person.ref.token)) continue;
           seenPeople.add(person.card.person.ref.token);
           units.push({ required: true, piece: {
-            section: "owner", heading: "## owner (Person card; quoted data)",
+            scopedBlock: true, section: "owner", heading: "## owner (Person card; quoted data)",
             block: redactor.format(JSON.stringify({ person: person.card.person.ref, labels: person.card.person.labels }), value => `- taint=quoted :: Person labels ${value}; no agreement inferred.\n`),
             audit: ids.flatMap(id => reader.auditClaim(id)), claims: reader.publication(ids), world: person.deps,
           } });
@@ -108,7 +109,8 @@ export function compileSessionSlice(ctx: ServeContext, request: {
     }
   }
   const auditFits = (pieces: readonly Piece[]) => new Set(pieces.flatMap(piece => (piece.audit ?? []).map((item: AuditItem) => item.id))).size <= MAX_AUDIT_ITEMS;
-  const compiled = compileUnits(units.filter(unit => unit.required), units.filter(unit => !unit.required), (constraints, detail) => {
+  const scopedUnits = units.flatMap(unit => scopePacketPieces(ctx, [unit.piece]).map(piece => ({ ...unit, piece })));
+  const compiled = compileUnits(scopedUnits.filter(unit => unit.required), scopedUnits.filter(unit => !unit.required), (constraints, detail) => {
     const pieces = ordered([...constraints, ...detail]);
     return auditFits(pieces) && packetTokens(redactor.join([request.header, rendered(pieces)])) <= request.budgetTokens;
   });

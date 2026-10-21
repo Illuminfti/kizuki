@@ -1,3 +1,5 @@
+import { TYPED_REF_KINDS } from "./tables/refs";
+import { assertObservations } from "../claims/observations";
 import { groundingDigest, validateWorldAdmissionProofs, witnessEventIds } from "../claims/world-grounding";
 import { isUtf16TextBoundary } from "../contracts/producer-v2";
 import { rawSubjectNamespace } from "../contracts/claim-v2";
@@ -20,6 +22,7 @@ import { tableExists } from "../ledger/schema";
 
 /** Restore/open validation: mappings are retained bookkeeping, never trusted imported authority. */
 export function assertWorldState(db: Database): void {
+  assertObservations(db);
   for (const table of WORLD_TABLES)
     if (!tableExists(db, table))
       throw new Error("world storage migration required");
@@ -209,7 +212,7 @@ export function assertWorldState(db: Database): void {
     .iterate()) {
     const table = `world_wire_${row.ref_kind}_targets`;
     if (
-      !WORLD_TABLES.includes(table as (typeof WORLD_TABLES)[number]) ||
+      (!WORLD_TABLES.includes(table as (typeof WORLD_TABLES)[number]) && !TYPED_REF_KINDS.some(kind => table === `world_wire_${kind}_targets`)) ||
       db
         .query(`SELECT 1 FROM ${table} WHERE namespace_id=? AND wire_ref=?`)
         .get(row.namespace_id, row.wire_ref) === null

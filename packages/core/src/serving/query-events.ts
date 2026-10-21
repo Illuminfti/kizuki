@@ -42,6 +42,7 @@ export function matchingEvents(
   for (let offset = 0; quoted.length < opts.limit; ) {
     const page = searchAuditCandidates(ctx.db, query, {
       scope: "ledger",
+      ...(ctx.selection === undefined ? {} : { selection: ctx.selection }),
       limit: MAX_RETRIEVAL_LIMIT,
       ceiling: grant.ceiling,
       source: { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" },

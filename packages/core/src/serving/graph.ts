@@ -1,3 +1,5 @@
+import { readScopedGraph } from "./v2/graph";
+import { normalizeReadArgs, type GraphArgsV2 } from "./v2/read-input";
 import { stringArray } from "../vault/pages";
 import { bareRetrievalId } from "../retrieval/ids";
 import { visibleIndexDegraded } from "./index-health";
@@ -31,6 +33,9 @@ export interface GraphArgs {
 }
 
 export interface GraphData {
+  scoped?: import("../contracts/scoped-tools").GraphDataV2;
+  /** Internal typed request anchor, projected explicitly for v2. */
+  anchor?: import("../contracts/scoped-tools").GraphAnchorV2;
   id: string;
   edges: GraphEdge[];
   truncated: boolean;
@@ -155,18 +160,22 @@ function classifyGraph(
 
 export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
-  args: GraphArgs,
+  args: GraphArgs | GraphArgsV2,
   contract: C = ENVELOPE_SCHEMA as C,
-): Promise<ResponseEnvelope<GraphData, C>> {
+): Promise<ResponseEnvelope<GraphData, C, import("../contracts/scoped-tools").GraphDataV2>> {
   return gateAsync(
     ctx,
     "graph_neighbors",
     auditArguments(args),
     async ({ ctx }): Promise<Served<GraphData>> => {
+    const normalized = normalizeReadArgs(ctx, "graph_neighbors", args, contract);
+    ctx = normalized.ctx;
+    const request = normalized.args as unknown as GraphArgs;
       const grant: Grant = ctx.principal.grant;
-      const id = identifier("id", args.id);
-      const depth = depthOf(args.depth);
-      const kinds = kindsOf(args.kinds);
+      const id = identifier("id", request.id);
+      const depth = depthOf(request.depth);
+      const kinds = kindsOf(request.kinds);
+      if (normalized.anchor !== undefined) return readScopedGraph(ctx, normalized.anchor, depth, kinds);
 
       const walked =
         kinds === undefined && !requiresClassScopedGraph(ctx)
@@ -185,7 +194,7 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
             canon: [],
             quoted: [],
             withheld: [],
-            data: { id, edges: [], truncated: false },
+            data: { ...(normalized.anchor === undefined ? {} : { anchor: normalized.anchor }), id, edges: [], truncated: false },
           };
         }
         const decision = pageDecision(index, grant, root);
@@ -194,7 +203,7 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
             canon: [],
             quoted: [],
             withheld: [{ id: root.id, reason: decision.reason }],
-            data: { id, edges: [], truncated: false,
+            data: { ...(normalized.anchor === undefined ? {} : { anchor: normalized.anchor }), id, edges: [], truncated: false,
               ...(visibleIndexDegraded(index, grant, "graph", [root]) ? { degraded: ["index-degraded"] } : {}),
             },
           };
@@ -299,6 +308,7 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
           events: served.kept.filter((edge) => edge.kind === "source").map((edge) => ({ id: edge.dst })),
         },
         data: {
+          ...(normalized.anchor === undefined ? {} : { anchor: normalized.anchor }),
           id,
           edges: served.kept.slice(0, MAX_EDGES),
           truncated: (ctx.principal.kind === "owner" ? found.truncated : scopedTruncated) || served.kept.length > MAX_EDGES,

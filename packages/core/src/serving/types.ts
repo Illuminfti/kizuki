@@ -1,3 +1,4 @@
+import type { CanonChunkV2, QuotedChunkV2 } from "../contracts/scoped-tools";
 import type { Database } from "bun:sqlite";
 import type { AuditDenial, DenyReason, Principal, Sensitivity, Tool } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
@@ -10,8 +11,8 @@ export const ENVELOPE_SCHEMA = "kizuki.envelope/v1" as const;
 export const ENVELOPE_V2_SCHEMA = "kizuki.envelope/v2" as const;
 
 export type ResponseContract = typeof ENVELOPE_SCHEMA | typeof ENVELOPE_V2_SCHEMA;
-export type ResponseEnvelope<T, C extends ResponseContract> = C extends typeof ENVELOPE_V2_SCHEMA
-  ? EnvelopeV2<T | null> : Envelope<T>;
+export type ResponseEnvelope<T, C extends ResponseContract, V = T | null, Q extends readonly unknown[] = readonly QuotedChunkV2[]> = C extends typeof ENVELOPE_V2_SCHEMA
+  ? EnvelopeV2<V, Tool, readonly CanonChunkV2[], Q> : Envelope<T>;
 
 export interface ServeContext {
   /**
@@ -22,6 +23,11 @@ export interface ServeContext {
   db: Database;
   vaultPath: string;
   principal: Principal;
+  /** Internal resolved filter; it never widens source or agent authority. */
+  /** Internal response projection selected by Core; never an authority signal. */
+  scopedResponse?: true;
+  scopedMutationCurrent?: () => void;
+  selection?: import("../query/selection").EvidenceSelection;
   /** Internal shared byte budget for one composed world read; never a wire argument. */
   worldReadBudget?: import("../world/pipeline/frame").ReadBudget;
   sourcePurpose?: import("../ledger/source-grants").SourcePurpose;
@@ -112,8 +118,8 @@ export type Envelope<T = undefined, Q = QuotedChunk> = {
 export type EnvelopeV2<
   T = unknown,
   K extends Tool = Tool,
-  C extends readonly CanonChunk[] = readonly CanonChunk[],
-  Q extends readonly QuotedChunk[] = readonly QuotedChunk[],
+  C extends readonly unknown[] = readonly CanonChunkV2[],
+  Q extends readonly unknown[] = readonly QuotedChunkV2[],
 > = {
   readonly schema: typeof ENVELOPE_V2_SCHEMA;
   readonly tool: K;

@@ -1,7 +1,8 @@
-import { atlasOp } from "./atlas";
-import { sliceOp } from "./slice";
+import { observationOp } from "./observation";
 import { forecastOp, forecastScoresOp } from "./forecast";
 import { attentionOp } from "./attention";
+import { atlasOp } from "./atlas";
+import { sliceOp } from "./slice";
 import { personOp } from "./person";
 import { findPeopleOp } from "./find-people";
 import { skillOp } from "./skill";
@@ -85,6 +86,8 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   describeOp,
   // slot: CARD
   evidenceOp,
+  // slot: REFS
+  observationOp,
   // slot: KNOWN
   historyOp,
   // slot: VIEW

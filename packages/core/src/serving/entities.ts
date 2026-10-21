@@ -1,3 +1,4 @@
+import { normalizeReadArgs } from "./v2/read-input";
 import { createRedactor } from "./redact";
 import type { Redactor } from "./redact";
 import type { AuditDenial, AuditItem } from "../agents";
@@ -47,12 +48,13 @@ function matchesName(page: CanonPage, needle: string, redactor: Redactor): boole
 
 export interface EntitiesData { degraded: SubjectLabelDegradation[] }
 
-export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(ctx: ServeContext, args: EntitiesArgs, contract: C = ENVELOPE_SCHEMA as C): ResponseEnvelope<EntitiesData, C> {
+export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(ctx: ServeContext, args: EntitiesArgs, contract: C = ENVELOPE_SCHEMA as C): ResponseEnvelope<EntitiesData, C, null> {
   return gate(
     ctx,
     "query_entities",
     auditArguments(args),
     ({ ctx, at }): Served<EntitiesData> => {
+      normalizeReadArgs(ctx, "query_entities", args, contract);
       const type =
         args.type === undefined
           ? undefined

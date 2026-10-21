@@ -1,3 +1,4 @@
+import { applyTypedRefs } from "../world/tables/refs";
 import { applyForecasts } from "../world/tables/forecasts";
 import { applyAttention } from "../world/tables/attention";
 import { applyConsolidation } from "../world/tables/consolidation";
@@ -249,6 +250,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: WORLD_MIGRATION_VERSIONS.consol, apply: applyConsolidation },
   { version: WORLD_MIGRATION_VERSIONS.attn, apply: applyAttention },
   { version: WORLD_MIGRATION_VERSIONS.fcst, apply: applyForecasts },
+  { version: WORLD_MIGRATION_VERSIONS.typed_refs, apply: applyTypedRefs },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -324,7 +326,7 @@ function migrate(db: Database, options: { includeStaging?: boolean } = {}): void
 
   // SQLite requires FK enforcement disabled outside a table-rebuild transaction.
   // The full FK oracle runs before commit; observers see either complete schema.
-  const rebuildReceipts = pending.some(migration => migration.version === 33);
+  const rebuildReceipts = pending.some(migration => migration.version === 33 || migration.version === WORLD_MIGRATION_VERSIONS.typed_refs);
   if (rebuildReceipts && db.inTransaction) throw new LedgerStoreError("corrupt", "typed canon migration requires an outer transaction");
   if (rebuildReceipts) db.exec("PRAGMA foreign_keys=OFF");
   try {

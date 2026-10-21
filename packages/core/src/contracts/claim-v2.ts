@@ -112,7 +112,7 @@ function exact(value: Record<string, unknown>, keys: readonly string[]): boolean
   return actual.length === keys.length && keys.every(key => Object.hasOwn(value, key));
 }
 
-function rawRef(value: unknown): value is RawSubjectRef {
+export function rawRef(value: unknown): value is RawSubjectRef {
   return isPlainObject(value) &&
     (exact(value,["kind","id"]) || (value.kind==="supplied" && exact(value,["kind","id","namespace"]) &&
       isPlainObject(value.namespace) && exact(value.namespace,["connector_id","source_key"]) &&

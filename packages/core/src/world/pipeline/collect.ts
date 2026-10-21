@@ -34,8 +34,13 @@ function labelMatches(text: unknown, wanted: string): boolean {
 
 /** One claim through `eligibleWorldClaim`, counted. Every claim a read serves comes through here. */
 export function verifyClaim(frame: ReadFrame, claimId: string): Eligible | null {
-  frame.stats.claimsVerified += 1;
-  const item = eligibleWorldClaim(frame.ctx, claimId, frame.valid, frame.budget, frame.cutoff.kind === "current" ? {} : { cutoff: frame.cutoff });
+  const before = frame.budget.claimVerifications;
+  let item: Eligible | null;
+  try {
+    item = eligibleWorldClaim(frame.ctx, claimId, frame.valid, frame.budget, frame.cutoff.kind === "current" ? {} : { cutoff: frame.cutoff });
+  } finally {
+    frame.stats.claimsVerified += before === undefined ? 1 : frame.budget.claimVerifications! - before;
+  }
   if (item !== null && frame.dependencies !== undefined)
     recordWorldDependencies(frame.dependencies, item);
   return item;

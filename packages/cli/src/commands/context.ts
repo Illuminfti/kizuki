@@ -6,7 +6,7 @@ import {
   serveContextPacket,
 } from "@kizuki/core";
 import type { ContextPacketArgs, PacketPurpose } from "@kizuki/core";
-import { PACKET_V2_SCHEMA } from "@kizuki/core/world";
+import { PACKET_V2_SCHEMA, ENVELOPE_V2_SCHEMA, isWorldWireToken } from "@kizuki/core/world";
 import type { ContextPacketDataV2 } from "@kizuki/core/world";
 import { UsageError, parseArguments } from "../args";
 import { withReadVault, withVault } from "../context";
@@ -78,7 +78,7 @@ function parseContextWindow(options: Map<string, string>): { since?: string; unt
 }
 
 export const CONTEXT_SCHEMA = {
-  options: ["--purpose", "--budget", "--query", "--since", "--until", "--task-event", "--task-integrity", RESPONSE_CONTRACT_OPTION],
+  options: ["--purpose", "--budget", "--query", "--since", "--until", "--task-event", "--task-event-version", "--task-integrity", RESPONSE_CONTRACT_OPTION],
   flags: ["--json"],
   defaults: { "--purpose": "session" },
   bounds: {
@@ -143,7 +143,9 @@ export const contextCommand: Command = {
     const budget = rawBudget === undefined ? undefined : parseBudget(rawBudget);
     const query = parseQuery(parsed.options.get("--query"));
     const taskEvent = parseTaskEvent(parsed.options.get("--task-event"));
-    const taskIntegrity = parseTaskIntegrity(parsed.options.get("--task-integrity"), taskEvent);
+    const taskVersion = parsed.options.get("--task-event-version");
+    if (taskVersion !== undefined && (!isWorldWireToken(taskVersion) || taskEvent !== undefined)) throw new UsageError(this.usage);
+    const taskIntegrity = parseTaskIntegrity(parsed.options.get("--task-integrity"), taskEvent ?? taskVersion);
     const window = parseContextWindow(parsed.options);
 
     const request: ContextPacketArgs = {
@@ -156,21 +158,22 @@ export const contextCommand: Command = {
     };
 
     const contract = responseContract(parsed.options);
+    if (contract === ENVELOPE_V2_SCHEMA && taskEvent !== undefined) throw new UsageError("use --task-event-version TOKEN under v2");
+    if (contract !== ENVELOPE_V2_SCHEMA && taskVersion !== undefined) throw new UsageError("--task-event-version requires kizuki.envelope/v2");
     // The scoped envelope issues its principal reference, which is a ledger write.
     if (contract !== undefined) {
       return withVault(io, async (ctx) => {
         const envelope = await serveV2(
           { db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}) },
           "context_packet",
-          request as Record<string, unknown>,
+          { ...request, ...(taskVersion === undefined ? {} : { taskEventVersion: { kind: "event_version", token: taskVersion } }) },
           contract,
         );
         const packet = envelope.data as ContextPacketDataV2;
         if (packet.schema !== PACKET_V2_SCHEMA) throw new Error("the packet contract is not the one requested");
         const content = packet.result.status === "unchanged" ? undefined : packet.result.data;
-        const retrievalDegraded = content?.retrievalDegraded ?? [];
-        const incomplete = retrievalDegraded.includes("context-unavailable");
-        reportPacket(io, { retrievalDegraded, incomplete, sections: content?.sections, task: content?.task });
+        const incomplete = content?.coverage.status === "partial";
+        if (incomplete) io.err(`Context is incomplete: ${content.coverage.gaps.join(", ")}.`);
         if (parsed.flags.has("--json")) io.out(cliResultV2("context", envelope));
         else if (content !== undefined) io.out(content.packetMd);
         return incomplete ? 1 : 0;

@@ -1,3 +1,4 @@
+import { selectedPage } from "../query/selection";
 import { boundScrubText } from "../producer/scrub";
 import { resolve } from "node:path";
 import type { Database } from "bun:sqlite";
@@ -368,6 +369,7 @@ export function pageDecision(
   grant: Grant,
   page: CanonPage,
 ): ReturnType<typeof pageSnapshotDecision> {
+  if (!selectedPage(index.sourceContext.db, index.sourceContext.selection, stringArray(page.data.sources).map(eventIdFromReference))) return { allow: false, reason: "held" };
   if (index.deniedPaths.has(page.relPath) || index.generation !== canonReadGeneration(index.sourceContext.db) || index.holds.has(page.relPath)) return { allow: false, reason: "held" };
   return pageSnapshotDecision(index.sourceContext, grant, page);
 }

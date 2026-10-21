@@ -4,7 +4,7 @@ import type { Tool } from "@kizuki/core";
 import { z } from "zod";
 import { REDACTED } from "./redaction";
 import { MCP_WORLD_OPS } from "./world/ops";
-import { WIRE_TOKEN, worldGaps, worldRef } from "./world/ops/shared";
+import { SCOPED_INPUT_REF, WIRE_TOKEN, worldGaps, worldRef, worldCoverage, worldRelation } from "./world/ops/shared";
 import { buildWorldSurface } from "./world/surface";
 
 /**
@@ -107,13 +107,35 @@ export function envelopeFor(tool: Tool) {
  * It has no `denied`, no `source_policy` and no epoch, so a field the engine
  * adds to v1 cannot reach a scoped client by way of this shape.
  */
+const CANON_CHUNK_V2 = z.strictObject({
+  page: worldRef("page"), title: z.string(), type: z.string(), sensitivity: SENSITIVITY,
+  taint: z.enum(PAGE_TAINTS), authority: AUTHORITY.nullable(), subjects: z.array(worldRef("raw_subject")),
+  sources: z.array(worldRef("event_version")), excerpt: z.string(), truncated: z.boolean(),
+});
+const QUOTED_CHUNK_V2 = z.strictObject({
+  eventVersion: worldRef("event_version"), source: worldRef("source"), kind: z.string(), occurred: worldRelation.shape.valid,
+  sensitivity: SENSITIVITY, subjects: z.array(worldRef("raw_subject")), text: z.string(), tainted: z.literal(true),
+});
+const PROPOSE_DATA_V2 = z.strictObject({ outcome: z.enum(["stored", "duplicate", "skipped", "contested"]), claim: worldRef("claim"), superseded: z.array(worldRef("claim")) });
+const CORRECT_DATA_V2 = z.strictObject({ receipt: worldRef("receipt").nullable(), eventVersion: worldRef("event_version").nullable(), claim: worldRef("claim").nullable(), superseded: z.array(worldRef("claim")),
+  rewritten: z.array(z.strictObject({ page: worldRef("page"), diff: z.strictObject({ status: z.literal("unavailable") }) })),
+  ambiguous: z.array(z.strictObject({ candidate: worldRef("claim_group"), claims: z.array(worldRef("claim")).min(2).max(16) })),
+  message: z.enum(["correction_recorded", "ambiguous", "dry_run", "no_change"]), refreshedWorld: z.record(z.string(), z.unknown()).nullable(),
+});
+const scopedRefs = <K extends string>(kinds: [K, ...K[]]) => z.strictObject({ kind: z.enum(kinds), token: WIRE_TOKEN });
+const GRAPH_ANCHOR_V2 = scopedRefs(["page", "raw_subject", "event_version"]);
+const GRAPH_DATA_V2 = z.strictObject({ anchor: GRAPH_ANCHOR_V2, edges: z.array(z.union([
+  z.strictObject({ kind: z.literal("wikilink"), from: worldRef("page"), to: z.union([worldRef("page"), z.strictObject({ kind: z.literal("unresolved"), text: z.string(), quoted: z.literal(true) })]) }),
+  z.strictObject({ kind: z.literal("subject"), from: worldRef("page"), to: worldRef("raw_subject") }),
+  z.strictObject({ kind: z.literal("source"), from: worldRef("page"), to: worldRef("event_version") }),
+])).max(100), truncated: z.boolean() });
 export const ENVELOPE_V2_SHAPE = z.strictObject({
   schema: z.literal(ENVELOPE_V2_SCHEMA),
   tool: z.enum(TOOLS),
   principal: worldRef("principal"),
   at: z.string(),
-  canon: z.array(CANON_CHUNK),
-  quoted: z.array(QUOTED_CHUNK),
+  canon: z.array(CANON_CHUNK_V2),
+  quoted: z.array(QUOTED_CHUNK_V2),
   data: z.record(z.string(), z.unknown()).nullable(),
 });
 
@@ -125,12 +147,7 @@ const PACKET_CONTENT_V2 = z.strictObject({
   budgetTokens: z.int().min(50).max(2000),
   tokenizer: z.string(),
   purpose: z.enum(["session", "recall", "correction", "audit"]),
-  sections: z.strictObject({ canon: z.int(), graph: z.int(), timeline: z.int(), claims: z.int() }),
-  truncated: z.boolean(),
-  retrievalDegraded: z.array(z.string()),
-  session: z.record(z.string(), z.unknown()).optional(),
-  lifecycle: z.record(z.string(), z.unknown()).optional(),
-  task: z.record(z.string(), z.unknown()).optional(),
+  coverage: worldCoverage,
 });
 
 const PACKET_DATA_V2 = z.strictObject({
@@ -156,6 +173,11 @@ export function envelopeV2For(tool: Tool) {
     ...(CARRIES_CANON.includes(tool) ? {} : { canon: NO_CHUNKS }),
     ...(CARRIES_QUOTED.includes(tool) ? {} : { quoted: NO_CHUNKS }),
     ...(tool === "context_packet" ? { data: PACKET_DATA_V2 } : {}),
+    ...(["get_page", "query_entities", "timeline"].includes(tool) ? { data: z.null() } : {}),
+    ...(tool === "search" ? { data: z.strictObject({ gaps: z.array(z.enum(["retrieval_unavailable", "coverage", "budget"])) }) } : {}),
+    ...(tool === "graph_neighbors" ? { data: GRAPH_DATA_V2 } : {}),
+    ...(tool === "propose" ? { data: PROPOSE_DATA_V2 } : {}),
+    ...(tool === "correct" ? { data: CORRECT_DATA_V2 } : {}),
   });
 }
 
@@ -183,11 +205,14 @@ export function negotiatedEnvelopeFor(tool: Tool) {
   return v1.extend({
     schema: z.enum([ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA]),
     principal: z.union([z.string(), worldRef("principal")]),
-    denied: z.array(DENIED).optional(),
+    denied: (tool === "get_page" ? z.array(DENIED) : z.array(z.unknown())).optional(),
+    ...(tool === "get_page" ? {} : { source_policy: z.record(z.string(), z.unknown()).optional() }),
+    // As with card bodies, repeated v1 diagnostics are summarized in discovery;
+    // superRefine below checks every returned field against the full grammar.
     // The page reader remains the one full chunk grammar advertisement. The
     // other negotiated tools validate their complete outputs in Core, while
     // this listing stays below the protocol discovery bound.
-    ...(tool === "get_page" ? {} : { canon: z.array(z.unknown()), quoted: z.array(z.unknown()) }),
+    ...(tool === "get_page" ? { canon: z.array(z.union([CANON_CHUNK, CANON_CHUNK_V2])), quoted: NO_CHUNKS } : { canon: z.array(z.unknown()), quoted: z.array(z.unknown()) }),
     data: z.record(z.string(), z.unknown()).nullable().optional(),
   }).superRefine((value, ctx) => {
     const schema = value.schema === ENVELOPE_SCHEMA ? v1 : v2;
@@ -207,13 +232,14 @@ export const SEARCH_INPUT = z.strictObject({
   scope: z.enum(["canon", "ledger", "all"]).optional(),
   limit: z.int().min(1).max(50).optional(),
   types: z.array(ID).max(16).optional(),
-  subjects: z.array(ID).max(16).optional(),
+  subjects: z.array(z.union([ID, SCOPED_INPUT_REF])).max(16).optional(),
   since: RFC3339.optional(),
   until: RFC3339.optional(),
   full_text: z.boolean().optional(),
 });
 
 export const GET_PAGE_INPUT = z.strictObject({
+  page: SCOPED_INPUT_REF.optional(),
   id: z.string().min(1).max(256).optional(),
   path: z.string().min(4).max(256).optional(),
 });
@@ -225,13 +251,14 @@ export const ENTITIES_INPUT = z.strictObject({
 });
 
 export const TIMELINE_INPUT = z.strictObject({
+  source: SCOPED_INPUT_REF.optional(), eventVersion: SCOPED_INPUT_REF.optional(),
   day: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   since: RFC3339.optional(),
   until: RFC3339.optional(),
-  subject: ID.optional(),
+  subject: z.union([ID, SCOPED_INPUT_REF]).optional(),
   connector_id: ID.optional(),
   kind: ID.optional(),
   limit: z.int().min(1).max(200).optional(),
@@ -242,7 +269,7 @@ export const TIMELINE_INPUT = z.strictObject({
 });
 
 export const GRAPH_INPUT = z.strictObject({
-  id: ID,
+  id: ID.optional(), anchor: SCOPED_INPUT_REF.optional(),
   depth: z.int().min(1).max(2).optional(),
   kinds: z
     .array(z.enum(["wikilink", "subject", "source"]))
@@ -253,8 +280,9 @@ export const GRAPH_INPUT = z.strictObject({
 export const HEALTH_INPUT = z.strictObject({});
 
 export const PACKET_INPUT = z.strictObject({
+  taskEventVersion: SCOPED_INPUT_REF.optional(),
   query: z.string().min(1).max(512).optional(),
-  subjects: z.array(ID).max(16).optional(),
+  subjects: z.array(z.union([ID, SCOPED_INPUT_REF])).max(16).optional(),
   since: RFC3339.optional(),
   until: RFC3339.optional(),
   budget_tokens: z.int().min(50).max(2000).optional(),
@@ -324,14 +352,13 @@ const CORRECT_OBJECT_REF = z.strictObject({ kind: z.literal("object"), token: CO
  */
 export const CORRECT_INPUT = z.strictObject({
   statement: z.string().min(1).max(2000),
-  target: z
+  target: z.union([SCOPED_INPUT_REF, z
     .strictObject({
       claim_id: ID.optional(),
       claim_key: z.string().regex(/^[0-9a-f]{64}$/).optional(),
-      subject: ID.optional(),
+      subject: z.union([ID, SCOPED_INPUT_REF]).optional(),
       world_claim: z.strictObject({ kind: z.literal("claim"), token: CORRECT_TOKEN }).optional(),
-    }).refine((target) => [target.claim_id, target.claim_key, target.subject, target.world_claim].filter((value) => value !== undefined).length <= 1, "target names exactly one selector")
-    .optional(),
+    }).refine((target) => [target.claim_id, target.claim_key, target.subject, target.world_claim].filter((value) => value !== undefined).length <= 1, "target names exactly one selector")]).optional(),
   object: z
     .union([
       z.string().min(1).max(1024),
@@ -349,12 +376,13 @@ export const CORRECT_INPUT = z.strictObject({
       situation: CORRECT_OBJECT_REF.optional(),
     })
     .optional(),
+  refreshWorld: z.record(z.string(), z.unknown()).optional(),
   dry_run: z.boolean().optional(),
 });
 
 export const PROPOSE_INPUT = z.strictObject({
   kind: z.enum(["entity", "claim", "edit", "merge", "deletion"]),
-  target: z.string().max(256).nullable().optional(),
+  target: z.union([z.string().max(256), SCOPED_INPUT_REF]).nullable().optional(),
   body: z.string().min(1).max(65536),
   frontmatter: z
     .record(z.string().max(64), FRONTMATTER_VALUE)
@@ -367,12 +395,12 @@ export const PROPOSE_INPUT = z.strictObject({
       `must hold at most ${MAX_FRONTMATTER_CHARS} characters in total`,
     )
     .optional(),
-  subjects: z.array(ID).max(16).optional(),
-  subject: ID.optional(),
+  subjects: z.array(z.union([ID, SCOPED_INPUT_REF])).max(16).optional(),
+  subject: z.union([ID, SCOPED_INPUT_REF]).optional(),
   predicate: ID.optional(),
-  object: z.string().min(1).max(1024).optional(),
+  object: z.union([z.string().min(1).max(1024), worldRelation.shape.object]).optional(),
   polarity: z.enum(["positive", "negative"]).optional(),
-  provenance: z.array(ID).min(1).max(64),
+  provenance: z.array(z.union([ID, SCOPED_INPUT_REF])).min(1).max(64),
   confidence: z.number().min(0).max(1).optional(),
 });
 

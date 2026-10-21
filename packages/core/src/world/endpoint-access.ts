@@ -39,7 +39,7 @@ export function readableWorldNode(ctx: ServeContext, ns: WorldNamespace, token: 
         ORDER BY c.claim_id LIMIT ?`,
     )
     .all(raw.raw_kind, raw.raw_id, raw.raw_namespace, raw.raw_kind, raw.raw_id, raw.raw_namespace, ...permitted.bindings, CANDIDATES);
-  const budget: ReadBudget = { bytes: 0 };
+  const budget: ReadBudget = ctx.worldReadBudget ?? { bytes: 0 };
   const readable = claims.some(({ claim_id }) => eligibleWorldClaim(ctx, claim_id, { kind: "all" }, budget) !== null);
   return readable ? ref : null;
 }

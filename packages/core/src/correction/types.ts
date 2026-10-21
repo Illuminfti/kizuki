@@ -74,6 +74,9 @@ export interface CorrectResult {
 }
 
 export interface CorrectIo {
+  /** Internal scoped adapter guards. They can only narrow the existing writer;
+   * never accepted from a public correction input or persisted. */
+  readonly scoped?: { readonly assertCurrent: () => void; readonly selection?: import("../query/selection").EvidenceSelection };
   readonly db: Database;
   readonly vault_path: string;
   readonly now?: () => string;

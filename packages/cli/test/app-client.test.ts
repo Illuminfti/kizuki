@@ -1673,3 +1673,24 @@ test('Atlas comparison baselines are cleared with privacy state and cannot survi
   f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'atlas',result:{status:'current',data:{schema:'kizuki.atlas/v1',panels:[]}}});await pending;
   expect(f.main.textContent).not.toContain('b'.repeat(43));
 });
+
+test('Observation links render captured roles and quoted passages through the shared App request with stale-response protection', async () => {
+  const f = fixture();
+  const admission = {kind:'admission',token:'A'.repeat(43)}, observation = {kind:'observation',token:'B'.repeat(42)+'A'};
+  const evidence = {admission,eventVersion:{kind:'event_version',token:'C'.repeat(42)+'A'},span:{kind:'text',startUtf16:0,endUtf16:5}};
+  f.evaluate(`state.view='world'; state.world={schema:'kizuki.world-view/v1',operation:'concept',result:{status:'current',view:{status:'not_issued'},data:{schema:'kizuki.concept-card/v1',concept:{labels:[{text:'Observed idea'}]},definitions:[{predicate:'concept.definition',object:{kind:'literal',value:'An idea'},assessments:[{evidence:[${JSON.stringify(evidence)}]}]}],relations:[],coverage:{status:'complete_for_query'}}}}; render();`);
+  const link = findAction(f.main, 'View captured observation'); expect(link).toBeTruthy();
+  const opening = link!.fire('click');
+  expect(f.requests[0]!.payload).toMatchObject({operation:'observation',ref:admission});
+  f.reply('world_view', {schema:'kizuki.world-view/v1',operation:'observation',result:{status:'current',view:{status:'not_issued'},data:{schema:'kizuki.observation/v1',ref:observation,evidence:[evidence],attribution:[{role:'sender',ref:{kind:'captured_subject',token:'D'.repeat(42)+'A'},basis:'source_field',field:'subjects.0',evidence:[]}],fidelity:'verbatim_text',occurred:{kind:'unknown'},sourceObservedAt:null,admittedAt:'2030-01-01T00:00:00Z'}}});
+  await opening; await tick();
+  expect(f.main.textContent).toContain('Captured observation'); expect(f.main.textContent).toContain('Captured sender');
+  expect(f.main.textContent).toContain('They do not establish who believes the statement.');
+  const passage = findAction(f.main, 'Read captured passage 1')!.fire('click');
+  expect(f.requests[0]!.payload).toMatchObject({operation:'evidence',evidence});
+  const hostile = '<img src=x onerror=alert(1)> exact source text';
+  f.reply('world_view', {schema:'kizuki.envelope/v2',tool:'world_view',data:{schema:'kizuki.world-view/v1',operation:'evidence',result:{status:'current',view:{status:'not_issued'},data:{schema:'kizuki.world-evidence/v1',evidence}}},quoted:[{text:hostile,tainted:true}]});
+  await passage; await tick();
+  expect(f.main.textContent).toContain(hostile); expect(f.main.querySelector('img')).toBeNull();
+  f.evaluate('invalidatePrivateView()'); expect(f.main.textContent).not.toContain(hostile); expect(f.storageWrites).toHaveLength(0);
+});

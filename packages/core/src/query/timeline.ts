@@ -1,4 +1,5 @@
 import { currentVersionSql } from "../search/versions";
+import { selectedEventSql, type EvidenceSelection } from "./selection";
 import type { Database } from "bun:sqlite";
 import { MAX_GRANT_SCOPE_ITEMS, type Sensitivity } from "../agents/types";
 import { tableExists } from "../ledger/schema";
@@ -8,6 +9,7 @@ import { placeholders } from "../util/sql";
 import { ceilingSql, instantBoundPair, instantPairSql, instantSecondSql, instantNanoSql, requireCeiling } from "./sql";
 
 export interface TimelineOptions {
+  selection?: EvidenceSelection;
   day?: string;
   since?: string;
   until?: string;
@@ -127,8 +129,9 @@ function timelinePlan(
   if (subjects !== undefined && subjects.length === 0) return { tail: null, bindings: [] };
   if (kinds !== undefined && kinds.length === 0) return { tail: null, bindings: [] };
 
-  const clauses = [LIVE_PREDICATE];
-  const bindings: (string | number)[] = [];
+  const selected = selectedEventSql(opts.selection);
+  const clauses = [LIVE_PREDICATE, selected.sql];
+  const bindings: (string | number)[] = [...selected.bindings];
   if (opts.day !== undefined) {
     const window = dayWindow(opts.day);
     clauses.push(

@@ -1,3 +1,5 @@
+import { canonicalJson, sha256Hex } from "../util/hash";
+import { readDurableObservation } from "../claims/observations";
 import { forecastFingerprint } from "./forecast/fingerprint";
 import { claimReader, claimPublicationFingerprint } from "../serving/claims";
 import { getClaim } from "../claims/store";
@@ -15,6 +17,7 @@ export interface WorldDependencies {
   /** Independent guards for bounded operation composition; never overwrite a sibling baseline. */
   readonly children: WorldDependencies[];
   readonly claims: Set<string>;
+  readonly observations: Map<string, string>;
   readonly forecasts: Map<string,{readonly fingerprint:string;readonly resolution:boolean}>;
   readonly legacyClaims: Map<string, string>;
   cutoff?: KnownCutoff;
@@ -33,7 +36,7 @@ export interface WorldDependencies {
 }
 
 export function worldDependencies(): WorldDependencies {
-  return { forecasts: new Map(), children: [], claims: new Set(), legacyClaims: new Map(), supports: new Set(), events: new Set(), identityReceipts: new Map(), consolidations: new Map(), coverage: null };
+  return { children: [], forecasts: new Map(), observations: new Map(), claims: new Set(), legacyClaims: new Map(), supports: new Set(), events: new Set(), identityReceipts: new Map(), consolidations: new Map(), coverage: null };
 }
 
 export function recordWorldDependencies(deps: WorldDependencies, item: Eligible): void {
@@ -63,6 +66,10 @@ export function dependencyRefs(db: Database, ns: WorldNamespace, deps: WorldDepe
 
 /** Validate one bounded evidence closure at its retained position and current authority. */
 export function worldEvidenceCurrent(ctx: ServeContext, deps: WorldDependencies, cutoff = deps.cutoff): boolean {
+  for (const [id, hash] of deps.observations) {
+    const observation = readDurableObservation(ctx.db, id);
+    if (observation === null || sha256Hex(canonicalJson(observation.record)) !== hash) return false;
+  }
   for (const [id,pin] of deps.forecasts) if (forecastFingerprint(ctx.db,id,pin.resolution)!==pin.fingerprint) return false;
   for (const [basis, summary] of deps.consolidations) {
     const row = ctx.db.query<{ response_hash: string; completed_at: string; expires_at: string }, [string]>(

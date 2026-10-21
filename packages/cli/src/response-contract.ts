@@ -1,4 +1,4 @@
-import { ENVELOPE_SCHEMA, ServeError, dispatchServeTool } from "@kizuki/core";
+import { ENVELOPE_SCHEMA, ServeError, scopedWriterRefusal, dispatchServeTool } from "@kizuki/core";
 import type { ServeContext, Tool } from "@kizuki/core";
 import { ENVELOPE_V2_SCHEMA, unsupportedContract } from "@kizuki/core/world";
 import type { EnvelopeV2 } from "@kizuki/core/world";
@@ -36,6 +36,12 @@ export function cliResultV2(command: "query" | "context" | "tell", result: Envel
 
 /** The contract refusal is identical on every CLI consumer, including machine output. */
 export function contractFailure(io: CliIo, command: "query" | "context" | "tell", json: boolean, error: unknown): number {
+  const writer = scopedWriterRefusal(error);
+  if (writer !== null) {
+    if (json) io.out(JSON.stringify({ schema: "kizuki.cli-result/v2", command, result: writer }));
+    io.err(`error: ${writer.error.message}`);
+    return 1;
+  }
   if (!(error instanceof ServeError) || error.code !== "unsupported_contract") throw error;
   if (json) io.out(JSON.stringify({ schema: "kizuki.cli-result/v2", command,
     result: { ok: false, error: { code: error.code, message: error.message, retryable: false } },

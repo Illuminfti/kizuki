@@ -1,4 +1,5 @@
 import { currentSemanticNomination, type RetrievalDomain } from "./retrieval-domain";
+import { normalizeReadArgs, type SearchArgsV2 } from "./v2/read-input";
 import { createRedactor } from "./redact";
 import { searchableText, servedTextMatcher } from "./search-match";
 import type { Database } from "bun:sqlite";
@@ -212,37 +213,41 @@ export interface SearchData {
 
 export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
-  args: SearchArgs,
+  args: SearchArgs | SearchArgsV2,
   contract: C = ENVELOPE_SCHEMA as C,
-): Promise<ResponseEnvelope<SearchData, C>> {
+): Promise<ResponseEnvelope<SearchData, C, { gaps: readonly import("../contracts/scoped-tools").ReadGap[] }>> {
   return gateAsync(ctx, "search", auditArguments(args), async ({ ctx, at }): Promise<Served<SearchData>> => {
+    const normalized = normalizeReadArgs(ctx, "search", args, contract);
+    ctx = normalized.ctx;
+    const request = normalized.args as unknown as SearchArgs;
     const grant = ctx.principal.grant;
-    const query = text("query", args.query, MAX_QUERY_CHARS);
+    const query = text("query", request.query, MAX_QUERY_CHARS);
     const scope =
-      args.scope === undefined
+      request.scope === undefined
         ? "canon"
-        : enumOf("scope", args.scope, SEARCH_SCOPES);
-    const rows = limit("limit", args.limit, MAX_LIMIT, DEFAULT_LIMIT);
-    const fullText = flag("full_text", args.full_text);
+        : enumOf("scope", request.scope, SEARCH_SCOPES);
+    const rows = limit("limit", request.limit, MAX_LIMIT, DEFAULT_LIMIT);
+    const fullText = flag("full_text", request.full_text);
     const types = scopedTypes(
       grant,
-      args.types === undefined
+      request.types === undefined
         ? undefined
-        : idList("types", args.types, MAX_SCOPE_IDS),
+        : idList("types", request.types, MAX_SCOPE_IDS),
     );
     const subjects = scopedSubjects(
       grant,
-      args.subjects === undefined
+      request.subjects === undefined
         ? undefined
-        : idList("subjects", args.subjects, MAX_SCOPE_IDS),
+        : idList("subjects", request.subjects, MAX_SCOPE_IDS),
     );
     const window = scopedWindow(
       grant,
-      args.since === undefined ? undefined : rfc3339("since", args.since),
-      args.until === undefined ? undefined : rfc3339("until", args.until),
+      request.since === undefined ? undefined : rfc3339("since", request.since),
+      request.until === undefined ? undefined : rfc3339("until", request.until),
     );
 
     const base: Omit<SearchOptions, "ceiling"> = {
+      ...(ctx.selection === undefined ? {} : { selection: ctx.selection }),
       scope,
       limit: rows,
       ...(types === undefined ? {} : { types }),

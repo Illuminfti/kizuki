@@ -241,7 +241,7 @@ export function collectSessionPieces(
   const reader = claimReader(ctx.db, grant, {
     owner: ctx.principal.kind === "owner",
     purpose: ctx.sourcePurpose ?? "session",
-  });
+  }, ctx.selection);
   const inSubjects = (claim: Claim): boolean =>
     request.subjects === undefined ||
     request.subjects.length === 0 ||

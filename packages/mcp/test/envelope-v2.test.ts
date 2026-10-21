@@ -36,9 +36,9 @@ test("a newly enrolled stdio client uses v2 on every tool, and hidden revocation
     const read = await clients.readConcept(clients.agent);
     expect(read.card?.schema).toBe("kizuki.envelope/v2");
     const inputs: Record<string, Record<string, unknown>> = {
-      search: { query: "Bayesian" }, get_page: { id: "absent:page" }, query_entities: { type: "topic" },
+      search: { query: "Bayesian" }, get_page: { page: { kind: "page", token: "A".repeat(43) } }, query_entities: { type: "topic" },
       timeline: { since: "2026-01-01T00:00:00Z", until: "2030-01-01T00:00:00Z" },
-      context_packet: { query: "Bayesian", budget_tokens: 1_000 }, graph_neighbors: { id: "absent:page" },
+      context_packet: { purpose: "session", budget_tokens: 1_000 }, graph_neighbors: { anchor: { kind: "page", token: "A".repeat(43) } },
       system_health: {}, world_view: { operation: "describe" },
       propose: { kind: "claim", body: "An ordinary note", subjects: ["topic:bayes"], provenance: [hidden.eventId] },
       correct: { statement: "Use the current definition.", target: { claim_id: hidden.claims[2] }, dry_run: true },
@@ -49,7 +49,7 @@ test("a newly enrolled stdio client uses v2 on every tool, and hidden revocation
       expect(forbidden(result)).toEqual([]);
       expect(forbidden(JSON.parse(result.content[0]!.text))).toEqual([]);
       if (tool === "propose") {
-        expect(JSON.parse(result.content[0]!.text)).toMatchObject({ message: "invalid arguments: provenance: must name live events this principal can read" });
+        expect(JSON.parse(result.content[0]!.text)).toMatchObject({ error: "invalid_arguments" });
       }
       if (tool === "system_health") {
         expect(JSON.parse(result.content[0]!.text)).toMatchObject({ error: "unsupported_contract", message: "requested contract unavailable" });

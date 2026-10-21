@@ -1,3 +1,7 @@
+import { normalizeReadArgs } from "./v2/read-input";
+import { packetPrincipal, scopePacketPieces } from "./v2/packet-pieces";
+import { projectCanonChunk, projectQuotedChunk } from "./v2/chunks";
+import { referenceScope } from "../world/ref-kinds/common";
 import { compileSessionSlice } from "../world/slice/session";
 import { redactorOf } from "./redact";
 import type { Redactor } from "./redact";
@@ -294,7 +298,7 @@ function servePacket(
 ): Promise<EnvelopeV2<ContextPacketDataV2>>;
 async function servePacket(
   ctx: ServeContext,
-  args: ContextPacketArgs & { priorView?: unknown },
+  args: (ContextPacketArgs | ContextPacketArgsV2) & { priorView?: unknown },
   contract: typeof ENVELOPE_SCHEMA | typeof ENVELOPE_V2_SCHEMA,
 ): Promise<Envelope<ContextPacketData | ContextPacketDataV2, QuotedChunk | QuotedPageChunk> | EnvelopeV2<ContextPacketData | ContextPacketDataV2 | null>> {
   const v2 = contract === ENVELOPE_V2_SCHEMA;
@@ -305,48 +309,51 @@ async function servePacket(
     async ({ ctx, at }): Promise<Served<ContextPacketData | ContextPacketDataV2>> => {
       // A v1 baseline key would be a second version switch, so it is refused before anything is read.
       if (v2) rejectLegacyKeys(args);
+      const normalized = normalizeReadArgs(ctx, "context_packet", args, contract);
+      ctx = normalized.ctx;
+      const request = normalized.args as ContextPacketArgs & { priorView?: unknown };
       const grant = ctx.principal.grant;
       const budget = range(
         "budget_tokens",
-        args.budget_tokens,
+        request.budget_tokens,
         MIN_BUDGET,
         MAX_BUDGET,
         DEFAULT_BUDGET,
       );
-      const purpose = purposeOf(args.purpose);
+      const purpose = purposeOf(request.purpose);
       ctx = { ...ctx, sourcePurpose: purpose };
       const profile = purposeProfile(purpose);
-      const include = sectionList(args.include, profile.include);
-      const advertised = capabilitiesOf(args.capabilities);
-      const lifecycle = negotiateLifecycle(args.hooks);
-      const taskArgs = parseTaskArgs(args);
-      const retainPrefix = args.retain_prefix === true;
-      const priorHash = priorHashOf(args.prior_hash);
-      if (args.retain_prefix !== undefined && args.retain_prefix !== true && args.retain_prefix !== false) {
+      const include = sectionList(request.include, profile.include);
+      const advertised = capabilitiesOf(request.capabilities);
+      const lifecycle = negotiateLifecycle(request.hooks);
+      const taskArgs = parseTaskArgs(request);
+      const retainPrefix = request.retain_prefix === true;
+      const priorHash = priorHashOf(request.prior_hash);
+      if (request.retain_prefix !== undefined && request.retain_prefix !== true && request.retain_prefix !== false) {
         throw new ServeError(
           "invalid_arguments",
           "invalid arguments: retain_prefix: must be a boolean",
         );
       }
       const query =
-        args.query === undefined
+        request.query === undefined
           ? undefined
-          : text("query", args.query, MAX_QUERY_CHARS);
+          : text("query", request.query, MAX_QUERY_CHARS);
       const subjects = scopedSubjects(
         grant,
-        args.subjects === undefined
+        request.subjects === undefined
           ? undefined
-          : idList("subjects", args.subjects, MAX_SUBJECTS),
+          : idList("subjects", request.subjects, MAX_SUBJECTS),
       );
       const requestedSince =
-        args.since === undefined ? undefined : rfc3339("since", args.since);
+        request.since === undefined ? undefined : rfc3339("since", request.since);
       const requestedUntil =
-        args.until === undefined ? undefined : rfc3339("until", args.until);
+        request.until === undefined ? undefined : rfc3339("until", request.until);
       // The default window is a request like any other: it is narrowed by the
       // grant, never substituted for it, so a time-scoped agent still spends
       // its candidate budget on rows it is allowed to read.
       const windowMs =
-        args.since === undefined && args.until === undefined
+        request.since === undefined && request.until === undefined
           ? profile.window_ms
           : DEFAULT_WINDOW_MS;
       const defaultSince = new Date(Date.parse(at) - windowMs).toISOString();
@@ -370,10 +377,10 @@ async function servePacket(
       const validUntil = new Date(
         Date.parse(at) + PACKET_TTL_MS,
       ).toISOString();
-      const cached = epochOf(args.epoch);
+      const cached = epochOf(request.epoch);
       const status =
         epoch !== undefined && cached !== undefined && cached !== epoch ? "superseded" : "current";
-      const priorView = v2 ? priorViewOf(args.priorView) : undefined;
+      const priorView = v2 ? priorViewOf(request.priorView) : undefined;
       // RFC 0002 §10.6 fixes this shape and supersedes the lane spec's
       // prose header: the marker is what identifies this text as a packet
       // when it comes back in as a captured transcript, so it leads and it
@@ -382,7 +389,7 @@ async function servePacket(
       const redactor = redactorOf(ctx);
       const header = epoch === undefined
         ? `${PACKET_V2_MARKER}\n` +
-          `principal=${redactor.text(principalName(ctx.principal))} purpose=${purpose}` +
+          `principal=${packetPrincipal(ctx)} purpose=${purpose}` +
           ` budget=${budget}\n` +
           `${PACKET_RULES}\n`
         : `${PACKET_MARKER}\n` +
@@ -430,11 +437,7 @@ async function servePacket(
                   budgetTokens: budget,
                   tokenizer: PACKET_TOKENIZER_ID,
                   purpose,
-                  sections: emptySections,
-                  truncated: false,
-                  retrievalDegraded: ["context-unavailable"],
-                  ...(lifecycle === undefined ? {} : { lifecycle }),
-                  ...(attached === undefined ? {} : { task: attached.task }),
+                  coverage: { status: "partial", gaps: ["coverage"], validWindow: { kind: "all" }, history: "baseline_only" },
                 },
                 reasons: ["coverage"],
               },
@@ -469,7 +472,7 @@ async function servePacket(
       let degraded: string[];
       let retrieval: readonly import("./retrieval-domain").RetrievalDomain[];
       // An explicit `include` asks for exactly those sections.
-      const gatherState = profile.session_state && args.include === undefined;
+      const gatherState = profile.session_state && request.include === undefined;
       const stateReasons: Partial<Record<SessionSection, SessionEmptyReason>> = {};
       let stateTruncated = false;
       const worldPublications: import("../world/dependencies").WorldDependencies[] = [];
@@ -500,6 +503,7 @@ async function servePacket(
         return empty();
       }
 
+      if (v2) pieces = scopePacketPieces(ctx, pieces);
       let body = "";
       const canon: CanonChunk[] = [];
       const quoted: QuotedChunk[] = [];
@@ -611,17 +615,17 @@ async function servePacket(
           budgetTokens: budget,
           tokenizer: PACKET_TOKENIZER_ID,
           purpose,
-          sections,
-          truncated,
-          retrievalDegraded: degraded,
-          ...(session === undefined ? {} : { session }),
-          ...(lifecycle === undefined ? {} : { lifecycle }),
-          ...(task === undefined ? {} : { task }),
+          coverage: { status: degraded.length > 0 || truncated || task?.status === "incomplete" || task?.status === "unavailable" ? "partial" : "complete_for_query",
+            gaps: [...(degraded.length > 0 || task?.status === "unavailable" ? ["coverage" as const] : []), ...(truncated || task?.status === "incomplete" ? ["required_context_overflow" as const] : [])],
+            validWindow: { kind: "all" }, history: "baseline_only" },
         };
         // Compare the complete authorized response, including its header,
         // metadata and chunks. Neither request time nor a global counter is a basis.
-        const view = packetView(content, canon, quoted);
-        const same = degraded.length === 0 && priorView === view.token;
+        const view = ctx.db.transaction(() => {
+          const scope = referenceScope(ctx);
+          return packetView(content, canon.map(chunk => projectCanonChunk(scope, chunk)), quoted.map(chunk => projectQuotedChunk(scope, chunk)));
+        }).immediate();
+        const same = content.coverage.status === "complete_for_query" && priorView === view.token;
         return {
           canon: same ? [] : canon,
           quoted: same ? [] : quoted,

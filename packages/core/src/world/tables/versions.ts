@@ -6,7 +6,7 @@
  * merge order. Existing numbers stay fixed when a later packet lands.
  * A key that is not built keeps its marker and has no entry.
  */
-export const WORLD_SLOT_KEYS = ["view", "known", "consol", "ident", "attn", "refs", "fcst", "machine_images"] as const;
+export const WORLD_SLOT_KEYS = ["view", "known", "consol", "ident", "attn", "refs", "typed_refs", "fcst", "machine_images"] as const;
 export type WorldSlotKey = (typeof WORLD_SLOT_KEYS)[number];
 
 export const PURGE_REINGEST_MIGRATION_VERSION = 34;
@@ -36,6 +36,8 @@ export const WORLD_MIGRATION_VERSIONS = {
   attn: 43,
   // slot: refs
   refs: 41,
+  // slot: typed_refs
+  typed_refs: 45,
   // slot: fcst
   fcst: 44,
   // slot: machine_images

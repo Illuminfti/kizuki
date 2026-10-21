@@ -1,5 +1,5 @@
 import type { Enricher } from "../pipeline/enrich";
-import { WorldProjectionBudgetError } from "../pipeline/frame";
+import { WorldClaimBudgetError, WorldProjectionBudgetError } from "../pipeline/frame";
 import { consolidationBasis, type ConsolidationBasis } from "../consolidation/basis";
 import { issueWorldRef } from "../references";
 
@@ -11,6 +11,7 @@ export const summaryEnricher: Enricher = (frame, body) => {
   let basis: ConsolidationBasis | null;
   try { basis = consolidationBasis(frame, cluster, kind, body.claims.map((claim) => claim.eligible), body.overflow === true); }
   catch (error) {
+    if (error instanceof WorldClaimBudgetError) throw error;
     if (!(error instanceof WorldProjectionBudgetError)) throw error;
     return pending();
   }

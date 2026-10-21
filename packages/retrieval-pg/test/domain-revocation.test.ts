@@ -38,8 +38,11 @@ test("v2 revoke during query cannot publish backlog diagnostics from the now-den
       .rejects.toMatchObject({code:"error",message:"authorized evidence changed during request; retry"});
     const current=await serveSearch(ctx,{query:"kettle",scope:"ledger"},"kizuki.envelope/v2");
     expect(changed).toBe(true);
-    expect(current.quoted.map(row=>row.event_id)).toContain(healthyId);
-    expect(current.quoted.map(row=>row.event_id)).not.toContain(pendingId);
-    expect(current.data?.degraded??[]).not.toContain("retrieval-vector-partial");
+    expect(current.quoted.map(row=>row.text)).toContain("The healthy kettle keeps water warm.");
+    expect(current.quoted.map(row=>row.text)).not.toContain("The pending kettle keeps water warm.");
+    for (const row of current.quoted) expect(row.eventVersion.kind).toBe("event_version");
+    expect(JSON.stringify(current)).not.toContain(healthyId);
+    expect(JSON.stringify(current)).not.toContain(pendingId);
+    expect(current.data?.gaps??[]).not.toContain("retrieval_unavailable");
   }finally{await engine?.close();f.dispose();}
 },120000);

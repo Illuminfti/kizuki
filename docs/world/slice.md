@@ -38,6 +38,11 @@ only when a matching candidate exists. Every examined authorized label and
 classification remains a dependency of the retained view, including candidates
 not selected. Hidden or redacted label text cannot influence selection.
 
+Discovery, cards and composed reads share a request allowance of 128 candidate
+verifications plus one overflow sentinel. If it is exhausted, the unfinished
+card is withheld whole and coverage reports incomplete traversal. Qualifiers
+are never shortened.
+
 The budget is 50–2,000 tokens under the bundled packet tokenizer. `tokens` counts
 the exact serialized `WorldSlice` body, including its own count. Packing also
 reserves 200 tokens for the closed WorldView wrapper, capability and expiry;

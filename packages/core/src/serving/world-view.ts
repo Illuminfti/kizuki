@@ -1,7 +1,7 @@
-import type { Atlas, AtlasPanelName, AtlasObjectOperation } from "../contracts/atlas";
-import type { WorldSlice } from "../contracts/world-slice";
 import type { Forecast, ForecastScores } from "../contracts/forecast";
 import type { Attention } from "../contracts/attention";
+import type { Atlas, AtlasPanelName, AtlasObjectOperation } from "../contracts/atlas";
+import type { WorldSlice } from "../contracts/world-slice";
 import type { PersonCard } from "../contracts/person-card";
 import type { WorldDiff } from "../contracts/world-diff";
 import { compareWorldViews } from "../world/views/diff";
@@ -18,6 +18,8 @@ import type { Frontier } from "../world/ops/frontier";
 import type { WorldMatches } from "../world/pipeline/assemble";
 import { WorldHistoryUnavailable } from "../world/known/cutoff";
 import { WorldProjectionBudgetError } from "../world/projection";
+import { beginWorldClaimProjection } from "../world/pipeline/eligible";
+import type { ReadBudget } from "../world/pipeline/frame";
 import type { discoverWorld } from "../world/projection";
 import type { WorldDescribe } from "../world/ops/describe";
 import type { ConceptCard } from "../contracts/concept-card";
@@ -70,12 +72,13 @@ export type {
 
 /** The typed request of the shipped operations; the reader itself takes `unknown` and the registry decides. */
 export type WorldReadInput =
-  | { readonly operation: "atlas"; readonly panel?: AtlasPanelName; readonly focus?: { readonly operation: AtlasObjectOperation; readonly ref: WorldObjectRef; readonly card?: "kizuki.situation-card/v2" }; readonly baselineView?: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
-  | { readonly operation: "slice"; readonly task: string; readonly kinds?: readonly string[]; readonly budgetTokens: number; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "observation"; readonly ref: import("../contracts/scoped-refs").ScopedRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation:"forecast"; readonly commitment:WorldObjectRef; readonly valid:WorldValidQuery; readonly knownAt:WorldKnownAt }
   | { readonly operation:"forecast_scores"; readonly valid:WorldValidQuery; readonly knownAt:WorldKnownAt }
   | { readonly operation: "diff"; readonly of: WorldRecord; readonly priorView: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "attention"; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
+  | { readonly operation: "atlas"; readonly panel?: AtlasPanelName; readonly focus?: { readonly operation: AtlasObjectOperation; readonly ref: WorldObjectRef; readonly card?: "kizuki.situation-card/v2" }; readonly baselineView?: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
+  | { readonly operation: "slice"; readonly task: string; readonly kinds?: readonly string[]; readonly budgetTokens: number; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "person"; readonly person: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "find_people"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "artifact_version"; readonly artifact: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
@@ -143,11 +146,12 @@ export type WorldReadInput =
 
 /** The bodies the shipped operations return; each operation's `dataSchemas` say which one it is. */
 export type WorldData =
-  | Atlas
-  | WorldSlice
+  | import("../contracts/observation").Observation
   | Forecast | ForecastScores
   | WorldDiff
   | Attention
+  | Atlas
+  | WorldSlice
   | ConceptCard
   | PersonCard
   | ArtifactCard
@@ -296,7 +300,10 @@ function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, depe
     throw new ServeError("unknown_agent", "unknown agent");
   if (!toolAllowed(principal.grant, "world_view"))
     throw new ServeError("tool_not_granted", "tool not granted");
-  ctx = { ...ctx, principal, sourcePurpose: ctx.sourcePurpose ?? "recall", worldReadBudget: ctx.worldReadBudget ?? { bytes: 0 } };
+  const budget: ReadBudget = ctx.worldReadBudget ?? { bytes: 0 };
+  // Reprojection after a publication-fence change must prove the new snapshot.
+  if (depth === 0) beginWorldClaimProjection(budget);
+  ctx = { ...ctx, principal, sourcePurpose: ctx.sourcePurpose ?? "recall", worldReadBudget: budget };
   if (!isPlainObject(input)) throw new WorldViewError();
   const op = findWorldOp(registry, input.operation);
   if (op === undefined) throw new WorldViewError();
@@ -377,6 +384,7 @@ export function serveWorldView(
   // projection still issues no references.
   let readPrincipal: Principal | undefined;
   let dependencies = worldDependencies();
+  const budget: ReadBudget = ctx.worldReadBudget ?? { bytes: 0 };
   const project = (live: ServeContext): Served<WorldReadResult> => {
     // A gate recheck may reproject authority; it must not resolve the requested
     // recorded timestamp again and admit a later clock-clamped transaction.
@@ -385,7 +393,7 @@ export function serveWorldView(
     if (cutoff !== undefined) dependencies.cutoff = cutoff;
     try {
       return ctx.db.transaction(() => {
-        const response = read(live, args, registry, dependencies);
+        const response = read({ ...live, worldReadBudget: budget }, args, registry, dependencies);
         const principal = resolvePrincipal(ctx.db, live.principal);
         if (principal === null) throw new ServeError("unknown_agent", "unknown agent");
         readPrincipal = principal;
@@ -397,7 +405,8 @@ export function serveWorldView(
       throw error;
     }
   };
-  const envelope = gate(
+  const envelope = gate<WorldReadResult, typeof ENVELOPE_V2_SCHEMA, WorldReadResult, readonly WorldQuotedEvidence[]>(
+
     ctx,
     "world_view",
     auditArguments(args),
@@ -428,7 +437,7 @@ export function serveWorldView(
     quoted: envelope.quoted.map((chunk): WorldQuotedEvidence => {
       // The final gate snapshot already revalidated and redacted these sources.
       // This pure projection removes raw source identities without issuing refs.
-      const source = chunk as WorldEvidenceSource;
+      const source = chunk;
       return { evidence: source.evidence, text: source.text, tainted: true,
         integrity: source.integrity, slice_integrity: source.slice_integrity,
         offset: source.offset, returned: source.returned, total: source.total,

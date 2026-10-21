@@ -1,7 +1,8 @@
-import { atlasCli } from "./atlas";
-import { sliceCli } from "./slice";
+import { observationCli } from "./observation";
 import { forecastCli, forecastScoresCli } from "./forecast";
 import { attentionCli } from "./attention";
+import { atlasCli } from "./atlas";
+import { sliceCli } from "./slice";
 import { personCli, findPeopleCli } from "./person";
 import { procedureCli, findProceduresCli, skillCli, frameworkCli, outcomeCli } from "./skills";
 import { historyCli } from "./history";
@@ -27,6 +28,8 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   { name: "describe", cli: describeCli },
   // slot: CARD
   { name: "evidence", cli: evidenceCli },
+  // slot: REFS
+  { name: "observation", cli: observationCli },
   // slot: KNOWN
   { name: "history", cli: historyCli },
   // slot: VIEW

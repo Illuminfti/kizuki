@@ -5,7 +5,7 @@ import { isPlainObject } from "../../util/validate";
 import { KIND_ASSEMBLERS } from "../kinds";
 import { populationEnabled } from "../pipeline/assemble";
 import { WORLD_DISCOVERY_SCAN_BUDGET } from "../pipeline/collect";
-import { newReadFrame } from "../pipeline/frame";
+import { newReadFrame, WorldClaimBudgetError } from "../pipeline/frame";
 import { readWorldCard, readWorldMatches } from "../pipeline/read";
 import { resolveWorldObject } from "../references";
 import type { WorldFrame, WorldWhen } from "../ops/types";
@@ -63,6 +63,7 @@ export function collectSlice(frame: WorldFrame, kinds: readonly string[], when: 
   const read = newReadFrame(frame.ctx, frame.ns, when.valid, frame.dependencies);
   const preview = createRedactor(frame.ctx.principal, frame.ctx.servingSecrets);
   let truncated = false;
+  let exhausted = false;
   for (const id of [...kinds].sort()) {
     const kind = activeWorldRegistry().kind(id), assembler = sliceAssembler(id);
     if (kind === undefined || assembler?.sliceConstraint === undefined) {
@@ -71,19 +72,26 @@ export function collectSlice(frame: WorldFrame, kinds: readonly string[], when: 
     if (!populationEnabled(kind)) {
       providers.push({ kind: id, status: "unavailable", reason: "extraction_off" }); gaps.add("coverage");
     } else providers.push({ kind: id, status: "included" });
-    const matches = readWorldMatches(read, id, "", null, WORLD_DISCOVERY_SCAN_BUDGET);
-    for (const gap of matches.coverage.gaps) gaps.add(gap);
-    // Discovery records every examined authorized label/classification in the
-    // dependency closure, including candidates that relevance does not select.
-    const selected = relevantMatches(matches.matches, task, preview);
-    if (matches.cursor !== null || selected.length > 4) { truncated = true; gaps.add("traversal_limit"); }
-    for (const match of selected.slice(0, 4)) {
-      const handle = resolveWorldObject(frame.ctx.db, frame.ns, match.ref.token);
-      const card = handle === null ? null : readWorldCard(read, handle, id, assembler.cardSchema);
-      if (card === null) continue;
-      for (const gap of card.coverage.gaps) gaps.add(gap);
-      const items = cardSliceItems(id, match.ref, card, assembler);
-      constraints.push(...items.constraints); detail.push(...items.detail);
+    if (exhausted) continue;
+    try {
+      const matches = readWorldMatches(read, id, "", null, WORLD_DISCOVERY_SCAN_BUDGET);
+      for (const gap of matches.coverage.gaps) gaps.add(gap);
+      // Discovery keeps every examined authorized label/classification in the dependency closure.
+      const selected = relevantMatches(matches.matches, task, preview);
+      if (matches.cursor !== null || selected.length > 4) { truncated = true; gaps.add("traversal_limit"); }
+      for (const match of selected.slice(0, 4)) {
+        const handle = resolveWorldObject(frame.ctx.db, frame.ns, match.ref.token);
+        const card = handle === null ? null : readWorldCard(read, handle, id, assembler.cardSchema);
+        if (card === null) continue;
+        for (const gap of card.coverage.gaps) gaps.add(gap);
+        const items = cardSliceItems(id, match.ref, card, assembler);
+        constraints.push(...items.constraints); detail.push(...items.detail);
+      }
+    } catch (error) {
+      if (!(error instanceof WorldClaimBudgetError)) throw error;
+      // The unfinished card contributes no partial relations or qualifiers.
+      // Keep completed units, disclose the traversal gap, and list later providers.
+      exhausted = true; truncated = true; gaps.add("traversal_limit");
     }
   }
   return { constraints, detail, providers, gaps: [...gaps], truncated };

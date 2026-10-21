@@ -1,5 +1,5 @@
 import { CorrectError, OWNER, correct, isWorldWireToken, serveCorrect } from "@kizuki/core";
-import { ENVELOPE_V2_SCHEMA } from "@kizuki/core/world";
+import { ENVELOPE_V2_SCHEMA, type CorrectDataV2 } from "@kizuki/core/world";
 import type { CorrectArgs, CorrectData, WorldReadResult } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
@@ -16,6 +16,8 @@ export const TELL_SCHEMA = {
   options: [
     "--claim",
     "--world-claim",
+    "--claim-group-ref",
+    "--subject-ref",
     "--since",
     "--until",
     "--mode",
@@ -82,21 +84,25 @@ export const tellCommand: Command = {
 
     const claim = parsed.options.get("--claim");
     const worldClaim = parsed.options.get("--world-claim");
+    const groupRef = parsed.options.get("--claim-group-ref"), subjectRef = parsed.options.get("--subject-ref");
     const since = parsed.options.get("--since");
     const until = parsed.options.get("--until");
-    if (claim !== undefined && worldClaim !== undefined) throw new UsageError(this.usage);
+    if ([claim, worldClaim, groupRef, subjectRef].filter(value => value !== undefined).length > 1) throw new UsageError(this.usage);
+    if ([groupRef, subjectRef].some(value => value !== undefined && !isWorldWireToken(value))) throw new UsageError(this.usage);
     if (worldClaim !== undefined && !isWorldWireToken(worldClaim)) throw new UsageError(this.usage);
     const contract = responseContract(parsed.options);
     if (contract === ENVELOPE_V2_SCHEMA && (since !== undefined || until !== undefined)) {
       throw new UsageError("time scope is unavailable under the v2 correction contract");
     }
+    if (contract === ENVELOPE_V2_SCHEMA && claim !== undefined) throw new UsageError("use --world-claim TOKEN for a scoped claim reference");
+    if (contract !== ENVELOPE_V2_SCHEMA && (groupRef !== undefined || subjectRef !== undefined)) throw new UsageError("scoped references require kizuki.envelope/v2");
     const mode = parsed.options.get("--mode");
     const objectText = parsed.options.get("--object");
     const objectRef = parsed.options.get("--object-ref");
     const objectVocabulary = parsed.options.get("--object-vocabulary");
     const perspective = parsed.options.get("--perspective-mode");
     const refresh = parsed.options.get("--refresh-concept-ref");
-    if (worldClaim === undefined && WORLD_ONLY.some((option) => parsed.options.has(option))) throw new UsageError(this.usage);
+    if (worldClaim === undefined && groupRef === undefined && subjectRef === undefined && WORLD_ONLY.some((option) => parsed.options.has(option))) throw new UsageError(this.usage);
     if (
       (mode !== undefined && !(MODES as readonly string[]).includes(mode)) ||
       (perspective !== undefined && !(PERSPECTIVE_MODES as readonly string[]).includes(perspective)) ||
@@ -128,17 +134,31 @@ export const tellCommand: Command = {
             ...(refresh === undefined ? {} : { refresh_world: { operation: "concept" as const, concept: { kind: "object" as const, token: refresh } } }),
             ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
           };
+          const scopedRequest = { ...request,
+            ...(worldClaim === undefined ? groupRef === undefined ? subjectRef === undefined ? {} : { target: { kind: "raw_subject", token: subjectRef } } : { target: { kind: "claim_group", token: groupRef } } : { target: { kind: "claim", token: worldClaim } }),
+            ...(refresh === undefined ? {} : { refreshWorld: { operation: "concept", concept: { kind: "object", token: refresh }, valid: { kind: "all" }, knownAt: { kind: "current" } } }),
+          };
+          delete (scopedRequest as Record<string, unknown>).refresh_world;
           const served = await whileWriterBusy(async () => contract === undefined
             ? serveCorrect(serve, request)
-            : serveV2(serve, "correct", request, contract));
+            : serveV2(serve, "correct", scopedRequest, contract));
+          if (served.schema === ENVELOPE_V2_SCHEMA) {
+            const data = served.data as CorrectDataV2;
+            if (parsed.flags.has("--json")) io.out(cliResultV2("tell", served));
+            else {
+              io.out({ correction_recorded: "Correction recorded.", ambiguous: "Choose an exact claim group.", dry_run: "Correction preview complete.", no_change: "Nothing changed." }[data.message]);
+              if (data.claim !== null) io.out(`[claim-ref:${data.claim.token}]`);
+              for (const candidate of data.ambiguous) io.out(`[claim-group-ref:${candidate.candidate.token}]`);
+              if (data.refreshedWorld !== null) for (const line of renderRefreshed(data.refreshedWorld)) io.out(line);
+            }
+            return 0;
+          }
           const data = served.data as CorrectData | undefined;
           if (data === undefined) throw new CorrectError("target_required", "world claim correction was not recorded");
           const pending = data.recovery_pending !== undefined;
           const derived = pending ? { degraded: [] as string[] } : tryRefreshDerived(ctx.db, ctx.vaultPath);
           if (parsed.flags.has("--json")) {
-            io.out(served.schema === ENVELOPE_V2_SCHEMA
-              ? cliResultV2("tell", served)
-              : jsonEnvelope("tell", pending ? "error" : derived.degraded.length > 0 ? "degraded" : "ok", served, { degraded: derived.degraded }));
+            io.out(jsonEnvelope("tell", pending ? "error" : derived.degraded.length > 0 ? "degraded" : "ok", served, { degraded: derived.degraded }));
           } else {
             io.out(data.answer);
             if (parsed.flags.has("--verbose")) for (const pageWrite of data.rewritten) io.out(pageWrite.diff.trimEnd());

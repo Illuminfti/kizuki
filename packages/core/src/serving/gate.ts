@@ -54,6 +54,7 @@ const AUDIT_LEAF_CAP = 192;
 const TRUNCATION_KEY = "+truncated";
 
 export interface Served<T> {
+  scopedMessage?: "dry_run";
   canon: CanonChunk[];
   quoted: QuotedChunk[];
   /** Ids and reasons: audited in full, collapsed to counts for the owner. */
@@ -90,8 +91,10 @@ export interface ServeCall {
  */
 export function auditArguments(args: object): Record<string, unknown> {
   const shaped: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(args)) {
-    if (value !== undefined) shaped[key] = value;
+  for (const key of Object.keys(args)) {
+    const property = Object.getOwnPropertyDescriptor(args, key);
+    if (property !== undefined && (!Object.hasOwn(property, "value") || property.value !== undefined))
+      Object.defineProperty(shaped, key, property);
   }
   return shaped;
 }
@@ -182,14 +185,15 @@ function boundedArguments(
  * the host bound one.
  */
 export function claimsIo(ctx: ServeContext): ClaimsIo {
-  if (ctx.principal.kind !== "owner") {
-    const reader = claimReader(ctx.db, ctx.principal.grant, { owner: false, purpose: "recall" });
-    return { db: ctx.db, visibility: reader.visibility, deny_classes: denyClassesOf(ctx.principal.grant),
+  if (ctx.principal.kind !== "owner" || ctx.selection !== undefined) {
+    const reader = claimReader(ctx.db, ctx.principal.grant, { owner: ctx.principal.kind === "owner", purpose: "recall" }, ctx.selection);
+    return { db: ctx.db, ...(ctx.scopedMutationCurrent === undefined ? {} : { beforeCommit: ctx.scopedMutationCurrent }), visibility: reader.visibility, deny_classes: denyClassesOf(ctx.principal.grant),
       ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
     };
   }
   return {
     db: ctx.db,
+    ...(ctx.scopedMutationCurrent === undefined ? {} : { beforeCommit: ctx.scopedMutationCurrent }),
     deny_classes: denyClassesOf(ctx.principal.grant),
     ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
   };
@@ -377,7 +381,7 @@ function failed(
   throw new ServeError("error", "serving failed", { cause: error });
 }
 
-function envelopeOf<T, C extends ResponseContract>(
+function envelopeOf<T, C extends ResponseContract, V = T | null, Q extends readonly unknown[] = readonly import("../contracts/scoped-tools").QuotedChunkV2[]>(
   live: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
@@ -385,7 +389,7 @@ function envelopeOf<T, C extends ResponseContract>(
   auditId: string,
   served: Served<T>,
   contract: C,
-): ResponseEnvelope<T, C> {
+): ResponseEnvelope<T, C, V, Q> {
   updateAudit(
     live.db,
     auditId,
@@ -397,10 +401,13 @@ function envelopeOf<T, C extends ResponseContract>(
   // The one serving-output seam: sources redact before they truncate or pack,
   // and this pass covers every string that reaches the caller, whatever built it.
   const redactor = live.redactor ?? createRedactor(live.principal, live.servingSecrets);
-  const { canon, quoted, data } = redactValue(redactor, { canon: served.canon, quoted: served.quoted, data: served.data });
   if (contract === ENVELOPE_V2_SCHEMA) {
-    return sealEnvelope(live, tool, at, canon, quoted, data ?? null) as unknown as ResponseEnvelope<T, C>;
+    // Resolve internal identities before redaction; credential-shaped raw IDs
+    // must not become different lookup keys. Only the closed scoped DTO is
+    // redacted and published, preserving literal source text as quoted text.
+    return redactValue(redactor, sealEnvelope(live, tool, at, served.canon, served.quoted, served.data ?? null, served.scopedMessage)) as unknown as ResponseEnvelope<T, C, V, Q>;
   }
+  const { canon, quoted, data } = redactValue(redactor, { canon: served.canon, quoted: served.quoted, data: served.data });
   // Read once: conditional extra queries would expose the first hidden source
   // through work counters even when the v2 projector omits policy metadata.
   const policyEpoch = sourcePolicyEpoch(live.db);
@@ -416,10 +423,10 @@ function envelopeOf<T, C extends ResponseContract>(
     ...(policyEpoch === 0 ? {} : { source_policy: { mode: "enforced" as const, epoch: policyEpoch, legacy_unbound: "owner_only" as const } }),
     ...(Object.keys(redactor.counts).length === 0 ? {} : { redacted: { ...redactor.counts } }),
     ...(data === undefined ? {} : { data }),
-  } as ResponseEnvelope<T, C>;
+  } as ResponseEnvelope<T, C, V, Q>;
 }
 
-export function gate<T, C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
+export function gate<T, C extends ResponseContract = typeof ENVELOPE_SCHEMA, V = T | null, Q extends readonly unknown[] = readonly import("../contracts/scoped-tools").QuotedChunkV2[]>(
   ctx: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
@@ -427,7 +434,7 @@ export function gate<T, C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   contract: C = ENVELOPE_SCHEMA as C,
   /** Reproject changed dependencies in the same snapshot that seals final output. */
   recheck?: (call: ServeCall, served: Served<T>) => Served<T>,
-): ResponseEnvelope<T, C> {
+): ResponseEnvelope<T, C, V, Q> {
   try {
     return gated(ctx, tool, args, run, contract, recheck);
   } catch (error) {
@@ -437,14 +444,14 @@ export function gate<T, C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   }
 }
 
-function gated<T, C extends ResponseContract>(
+function gated<T, C extends ResponseContract, V = T | null, Q extends readonly unknown[] = readonly import("../contracts/scoped-tools").QuotedChunkV2[]>(
   ctx: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
   run: (call: ServeCall) => Served<T>,
   contract: C,
   recheck?: (call: ServeCall, served: Served<T>) => Served<T>,
-): ResponseEnvelope<T, C> {
+): ResponseEnvelope<T, C, V, Q> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
   if (recheck !== undefined) {
@@ -457,7 +464,7 @@ function gated<T, C extends ResponseContract>(
         const fresh = { ...current, redactor: createRedactor(current.principal, current.servingSecrets) };
         const final = recheck({ ctx: fresh, at }, served);
         validatePublication(fresh, tool, final);
-        return envelopeOf(fresh, tool, args, at, audit_id, final, contract);
+        return envelopeOf<T, C, V, Q>(fresh, tool, args, at, audit_id, final, contract);
       }).immediate();
     } catch (error) {
       failed(live, tool, args, audit_id, error);
@@ -468,7 +475,7 @@ function gated<T, C extends ResponseContract>(
       return live.db.transaction(() => {
         assertPublicationAuthority(ctx, live);
         const served = run({ ctx: live, at });
-        return envelopeOf(live, tool, args, at, audit_id, served, contract);
+        return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
       }).immediate();
     } catch (error) {
       failed(live, tool, args, audit_id, error);
@@ -494,7 +501,7 @@ function gated<T, C extends ResponseContract>(
   } catch (error) {
     failed(live, tool, args, audit_id, error);
   }
-  return envelopeOf(live, tool, args, at, audit_id, served, contract);
+  return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
 }
 
 /**
@@ -502,13 +509,13 @@ function gated<T, C extends ResponseContract>(
  * async because a retrieval port may be bound to it, so the two write tools
  * come through here; nothing else about the order changes.
  */
-export async function gateAsync<T, C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
+export async function gateAsync<T, C extends ResponseContract = typeof ENVELOPE_SCHEMA, V = T | null, Q extends readonly unknown[] = readonly import("../contracts/scoped-tools").QuotedChunkV2[]>(
   ctx: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
   run: (call: ServeCall) => Promise<Served<T>>,
   contract: C = ENVELOPE_SCHEMA as C,
-): Promise<ResponseEnvelope<T, C>> {
+): Promise<ResponseEnvelope<T, C, V, Q>> {
   try {
     return await gatedAsync(ctx, tool, args, run, contract);
   } catch (error) {
@@ -517,13 +524,13 @@ export async function gateAsync<T, C extends ResponseContract = typeof ENVELOPE_
   }
 }
 
-async function gatedAsync<T, C extends ResponseContract>(
+async function gatedAsync<T, C extends ResponseContract, V = T | null, Q extends readonly unknown[] = readonly import("../contracts/scoped-tools").QuotedChunkV2[]>(
   ctx: ServeContext,
   tool: Tool,
   args: Record<string, unknown>,
   run: (call: ServeCall) => Promise<Served<T>>,
   contract: C,
-): Promise<ResponseEnvelope<T, C>> {
+): Promise<ResponseEnvelope<T, C, V, Q>> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
   if (contract === ENVELOPE_V2_SCHEMA) {
@@ -532,7 +539,7 @@ async function gatedAsync<T, C extends ResponseContract>(
       return live.db.transaction(() => {
         assertPublicationAuthority(ctx, live);
         validatePublication(live, tool, served);
-        return envelopeOf(live, tool, args, at, audit_id, served, contract);
+        return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
       }).immediate();
     } catch (error) {
       failed(live, tool, args, audit_id, error);
@@ -562,5 +569,5 @@ async function gatedAsync<T, C extends ResponseContract>(
   } catch (error) {
     failed(live, tool, args, audit_id, error);
   }
-  return envelopeOf(live, tool, args, at, audit_id, served, contract);
+  return envelopeOf<T, C, V, Q>(live, tool, args, at, audit_id, served, contract);
 }

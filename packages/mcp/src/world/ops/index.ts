@@ -1,7 +1,8 @@
-import { atlasFragment } from "./atlas";
-import { sliceFragment } from "./slice";
+import { observationFragment } from "./observation";
 import { forecastFragment, forecastScoresFragment } from "./forecast";
 import { attentionFragment } from "./attention";
+import { atlasFragment } from "./atlas";
+import { sliceFragment } from "./slice";
 import { personFragment, findPeopleFragment } from "./person";
 import { procedureFragment, findProceduresFragment, skillFragment, frameworkFragment, outcomeFragment } from "./skills";
 import { historyFragment } from "./history";
@@ -27,6 +28,8 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   describeFragment,
   // slot: CARD
   evidenceFragment,
+  // slot: REFS
+  observationFragment,
   // slot: KNOWN
   historyFragment,
   // slot: VIEW

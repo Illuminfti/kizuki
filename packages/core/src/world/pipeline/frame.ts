@@ -4,11 +4,23 @@ import type { WorldValidQuery } from "../../serving/world-view";
 import type { WorldDependencies } from "../dependencies";
 import type { WorldNamespace } from "../references";
 import { newReadStats, type ReadStats } from "./stats";
+import type { Database } from "bun:sqlite";
+import type { Eligible } from "./eligible";
 
 export class WorldProjectionBudgetError extends Error {}
+/** The public request exhausted its shared candidate allowance. */
+export class WorldClaimBudgetError extends WorldProjectionBudgetError {}
 
 /** Bytes of stored support one read may parse. */
-export type ReadBudget = { bytes: number };
+export type ReadBudget = {
+  bytes: number;
+  /** Public world requests share this count across discovery, cards and child reads.
+   * Byte-only internal consumers retain their existing per-card limits. */
+  claimVerifications?: number;
+  /** Reset at the start of each projection. Only reused inside its transaction. */
+  verifiedClaims?: WeakMap<Database, Map<string, Eligible | null>>;
+};
+export const WORLD_CLAIM_VERIFICATION_LIMIT = 129; // 128 candidates plus an overflow sentinel.
 const READ_BYTE_LIMIT = 2 * 1024 * 1024;
 
 export function charge(budget: ReadBudget, value: string): void {

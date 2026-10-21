@@ -1,3 +1,4 @@
+import { TYPED_REF_TABLE_SPECS } from "./refs";
 import { FORECAST_TABLE_SPECS } from "./forecasts";
 import { ATTENTION_TABLE_SPECS } from "./attention";
 import { CONSOLIDATION_TABLE_SPECS } from "./consolidation";
@@ -107,6 +108,8 @@ export const WORLD_TABLE_SPECS: readonly WorldTableSpec[] = [
   // slot: attn
   ...ATTENTION_TABLE_SPECS,
   // slot: refs
+  // slot: typed_refs
+  ...TYPED_REF_TABLE_SPECS,
   // slot: fcst
   ...FORECAST_TABLE_SPECS,
   // slot: machine_images

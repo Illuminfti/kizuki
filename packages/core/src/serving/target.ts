@@ -66,8 +66,8 @@ export interface Resolved {
 function visibleTo(ctx: ServeContext, hidden: AuditDenial[] = []): (claim: Claim) => boolean {
   if (ctx.principal.kind === "owner") return () => true;
   const grant = ctx.principal.grant;
-  const reader = claimReader(ctx.db, grant, { owner: false, purpose: "recall" });
-  const correctionReader = claimReader(ctx.db, grant, { owner: false, purpose: "correction" });
+  const reader = claimReader(ctx.db, grant, { owner: false, purpose: "recall" }, ctx.selection);
+  const correctionReader = claimReader(ctx.db, grant, { owner: false, purpose: "correction" }, ctx.selection);
   return (claim) => {
     // The real reason goes to the owner's audit row, never to the caller.
     const decision = authorize(grant, claimServable(ctx.db, claim));
@@ -124,7 +124,7 @@ export function resolve(
   const hidden: AuditDenial[] = [];
   const visible = visibleTo(ctx, hidden);
   // Only the compatibility path gathers privileged denial diagnostics.
-  const scopedV2 = ctx.principal.kind === "agent" && contract === ENVELOPE_V2_SCHEMA;
+  const scopedV2 = contract === ENVELOPE_V2_SCHEMA;
   const visibility = ctx.principal.kind === "owner" ? undefined
     : claimReader(ctx.db, ctx.principal.grant, { owner: false, purpose: "recall" }).visibility;
   if (target.claim_id !== undefined) {
@@ -224,6 +224,7 @@ const OUT_OF_SCOPE: Record<DenyReason, string> = {
   rate_limited: "the target is outside the grant",
   busy: "the target is outside the grant",
   invalid_arguments: "the target is outside the grant",
+  not_found: "not found",
   unsupported_contract: "the target is outside the grant",
   error: "the target is outside the grant",
 };

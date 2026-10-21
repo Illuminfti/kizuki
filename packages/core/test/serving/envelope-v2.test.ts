@@ -112,7 +112,7 @@ function withoutTime(value: unknown): unknown {
   );
 }
 
-const PACKET = { query: "Bayesian", budget_tokens: 1_000 };
+const PACKET = { purpose: "session", budget_tokens: 1_000 };
 
 test("a hidden source revoke leaves the scoped v2 packet byte-equal, epoch-free and still unchanged", async () => {
   const r = await rig();
@@ -195,11 +195,11 @@ test("every loopback tool uses the closed v2 envelope or a fixed refusal across 
   try {
     const inputs: Record<(typeof TOOLS)[number], Record<string, unknown>> = {
       search: { query: "Bayesian" },
-      get_page: { id: "absent:page" },
+      get_page: { page: { kind: "page", token: "A".repeat(43) } },
       query_entities: { type: "topic" },
       timeline: { since: "2026-01-01T00:00:00Z", until: "2030-01-01T00:00:00Z" },
       context_packet: PACKET,
-      graph_neighbors: { id: "absent:page" },
+      graph_neighbors: { anchor: { kind: "page", token: "A".repeat(43) } },
       system_health: {},
       world_view: { operation: "describe" },
       propose: { kind: "claim", body: "A note", subjects: ["topic:bayes"], provenance: [r.scene.hidden.eventId] },
@@ -209,7 +209,7 @@ test("every loopback tool uses the closed v2 envelope or a fixed refusal across 
     for (const tool of TOOLS) {
       const reply = await r.agent(tool, v2(inputs[tool]));
       expect(forbiddenPaths(reply.body)).toEqual([]);
-      if (["system_health", "propose", "correct"].includes(tool)) {
+      if (["system_health", "propose", "correct", "get_page", "graph_neighbors"].includes(tool)) {
         expect(reply.status).toBe(400);
         expect(reply.body.ok).toBe(false);
       } else {
