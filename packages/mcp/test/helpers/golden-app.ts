@@ -12,6 +12,7 @@ import { envelopeOf } from "../client";
 export const LABEL = "Orchard request queue";
 export const ORIGINAL = `queue.md: ${LABEL} is a queue that stores requests in arrival order.`;
 export const REVISED = `queue.md: ${LABEL} orders equal-priority requests by their arrival sequence.`;
+export const RICH = ORIGINAL + "\nOrchard release is a project to deliver receipts. We might use format X. Verify delivery receipt: 1. Read the receipt. 2. Check required fields.";
 export const WHEN = { valid: { kind: "all" }, knownAt: { kind: "current" } } as const;
 const policy: SourceGrantPolicy = { purposes: ["capture", "recall", "session", "correction", "audit", "derive", "extract", "export"],
   allowed_fields: ["text", "subjects", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" };
@@ -26,22 +27,39 @@ function extraction(request: SeenRequest): Response {
   const refs = JSON.parse(handles ?? "[]") as { id: string; anchors: { event_id: string; start_utf16: number; end_utf16: number }[] }[];
   const claims: unknown[] = [], mentions: unknown[] = [];
   for (const [, , event, text] of events) {
-    if (text !== ORIGINAL && text !== REVISED) throw new Error("unexpected GOLDEN fixture source");
+    if (text !== ORIGINAL && text !== REVISED && text !== RICH) throw new Error("unexpected GOLDEN fixture source");
     const handle = refs.find(row => row.anchors.some(anchor => anchor.event_id === event));
     if (handle === undefined) throw new Error("GOLDEN source lacks its connector-bound document handle");
     const anchors = [...handle.anchors, { event_id: event!, start_utf16: 0, end_utf16: text!.length }];
     const specs = [["world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } }],
-      ["concept.label", { kind: "literal", value: LABEL }], ["concept.definition", { kind: "literal", value: text }]] as const;
+      ["concept.label", { kind: "literal", value: LABEL }], ["concept.definition", { kind: "literal", value: text === RICH ? ORIGINAL : text }]] as const;
     for (const [predicate, object] of specs) claims.push({ id: `c${claims.length}`, subject: { kind: "supplied", id: handle.id }, predicate, object,
       perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] }, context: [], polarity: "positive",
       body: text, valid_from: null, valid_to: null, temporal_basis: "unknown", confidence: 0.7, sensitivity: "private", anchors });
   }
+  const richEvent = events.find(row => row[3] === RICH);
+  if (richEvent) {
+    const event = richEvent[2]!, whole = { event_id: event, start_utf16: 0, end_utf16: RICH.length };
+    const mention = (label: string) => { const id = `m${mentions.length}`, start = RICH.indexOf(label); const anchor = { event_id: event, start_utf16: start, end_utf16: start + label.length }; mentions.push({ id, label, anchor, candidate_refs: [] }); return { ref: { kind: "mention", id }, anchor }; };
+    const situation = mention("Orchard release"), decision = mention("format X"), procedure = mention("Verify delivery receipt");
+    const add = (node: ReturnType<typeof mention>, predicate: string, object: unknown, related?: ReturnType<typeof mention>) => claims.push({ id: `c${claims.length}`, subject: node.ref, predicate, object,
+      perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] }, context: [], polarity: "positive", body: predicate,
+      valid_from: null, valid_to: null, temporal_basis: "unknown", confidence: .7, sensitivity: "private", anchors: [node.anchor, ...(related ? [related.anchor] : []), whole] });
+    const vocabulary = (id: string) => ({ kind: "vocabulary", ref: { kind: "vocabulary", id } }), literal = (value: string) => ({ kind: "literal", value });
+    add(situation, "world.kind", vocabulary("world/situation")); add(situation, "situation.label", literal("Orchard release")); add(situation, "situation.objective", literal("Deliver receipts"));
+    add(situation, "situation.has_decision", { kind: "subject", ref: decision.ref }, decision);
+    add(decision, "world.kind", vocabulary("world/decision")); add(decision, "decision.label", literal("Receipt format"));
+    // Deliberate model mistake: the source says might. The owner must be able to correct this exact mode.
+    add(decision, "decision.status", vocabulary("decision/decided"));
+    add(procedure, "world.kind", vocabulary("world/procedure")); add(procedure, "procedure.label", literal("Verify delivery receipt"));
+    add(procedure, "procedure.step", literal("1. Read the receipt.")); add(procedure, "procedure.step", literal("2. Check required fields."));
+  }
   return defaultChatCompletion(JSON.stringify({ schema: "kizuki.producer-response/v2", mentions, claims }));
 }
 
-export async function goldenApp() {
+export async function goldenApp(options: { rich?: boolean } = {}) {
   const h = createHelpers(), env = h.isolatedEnv(), notes = h.tempDir("golden-notes-"), vault = join(env.HOME!, "Kizuki");
-  const file = join(notes, "queue.md"); writeFileSync(file, ORIGINAL);
+  const file = join(notes, "queue.md"); writeFileSync(file, options.rich ? RICH : ORIGINAL);
   let summaryGate: (() => Promise<void>) | undefined;
   let extractionCalls = 0, summaryCalls = 0;
   const endpoint = startFakeEndpoint(async request => {
@@ -71,15 +89,16 @@ export async function goldenApp() {
   const childEnv = Object.fromEntries(Object.entries(env).filter((row): row is [string, string] => row[1] !== undefined));
   async function owner(targetVault = vault) { const client = await stdioClient(targetVault, ["--owner"], childEnv); clients.push(client); return client; }
   const peerGrant: Grant = { ...OWNER_AGENT_GRANT, ceiling: "private", deny_classes: [], tools: ["world_view"], rate_limit_per_minute: 300, relay_owner_corrections: true };
-  async function peer() {
-    const enrolled = await operate("agent_enroll", { name: "golden-b", grant: peerGrant, operation_id: "golden-b-enroll" });
+  async function agent(name: string, grant = peerGrant) {
+    const enrolled = await operate("agent_enroll", { name, grant, operation_id: `${name}-enroll` });
     const args = enrolled.agent.mcp.args as string[];
     const tokenRef = args[args.indexOf("--token-ref") + 1]!;
     expect(tokenRef.startsWith("file:")).toBe(true);
     const client = await stdioClient(vault, ["--token-ref", tokenRef], childEnv); clients.push(client); return client;
   }
+  const peer = () => agent("golden-b");
   async function close() { for (const client of clients.reverse()) await client.close(); await app.close(); endpoint.stop(); h.cleanup(); }
-  return { h, env, vault, file, notes, endpoint, call, done, operate, owner, peer, peerGrant, close,
+  return { h, env, vault, file, notes, endpoint, call, done, operate, owner, peer, agent, peerGrant, close,
     counts: () => ({ extractionCalls, summaryCalls }),
     holdSummaries() {
       let release!: () => void, entered!: () => void;
@@ -99,7 +118,7 @@ export async function goldenApp() {
       const before = endpoint.requests.length, local = await operate("run_pass");
       expect(local.run.model_calls).toBe(0); expect(endpoint.requests.length).toBe(before);
       await call("source_model_consent", { source_key: source, expected_revision: 1, expected_model_revision: model.revision, operation_id: "golden-model-consent", allow: true });
-      const initial = await operate("run_pass"); expect(initial.run.claims_extracted).toBe(3); expect(initial.run.canon_writes).toBeGreaterThan(0);
+      const initial = await operate("run_pass"); expect(initial.run.claims_extracted).toBe(options.rich ? 14 : 3); expect(initial.run.canon_writes).toBeGreaterThan(0);
       return { source, initial };
     },
   };

@@ -44,12 +44,27 @@ claim-v2 support and derived summaries. Source-binding tombstones remain as audi
 metadata. A separately restored copy or an older external backup is outside the
 original vault's purge operation.
 
-## Remaining longitudinal coverage
+## Candidate vocabulary journey
 
-The common journey is the D21/D22 Concept path. The complete GOLDEN acceptance
-also requires the tentative Decision correction and independent Procedure
-Outcome stages, plus the final composed ART, DIFF, SLICE and attention stages.
-These must run on the composed product revision. Candidate-registry integration
+```bash
+bun test packages/mcp/test/golden-rich-journey.test.ts
+```
+
+This variant uses the same vault and full sequence as the common journey, with
+Decision and Procedure enabled only in the existing isolated test registry. The
+model fixture deliberately misreads a tentative idea as decided. An exact owner
+mode correction moves it into uncertainty for both clients; receipt undo restores
+the original claim. Three separately enrolled agents capture distinct synthetic
+Outcome sources. A same-source observation cannot establish independence; a new
+observation from the observer's own source can. Procedure usefulness then changes
+to observed without changing its evidence strength or claiming independent
+mastery. The remaining rebuild, restore, revoke and physical erasure stages run
+in that same journey.
+
+## Remaining composed coverage
+
+The final composed ART, DIFF, SLICE and attention stages still require their
+merged product revision. Candidate-registry integration
 may use the existing isolated test seam, with shipped offered flags unchanged;
 real held-out qualification is a separate prerequisite for activation.
 
