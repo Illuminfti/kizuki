@@ -21,12 +21,29 @@ CREATE TRIGGER IF NOT EXISTS world_observation_immutable BEFORE UPDATE ON world_
 BEGIN SELECT RAISE(ABORT,'observations are immutable admission children'); END;
 CREATE TRIGGER IF NOT EXISTS world_observation_event_erased AFTER DELETE ON world_observation_events
 BEGIN DELETE FROM world_observations WHERE observation_id=OLD.observation_id; END;
+CREATE TRIGGER IF NOT EXISTS world_observation_history_erased AFTER DELETE ON claim_lifecycle_history
+WHEN OLD.support_key IS NOT NULL
+BEGIN DELETE FROM world_observations WHERE support_key=OLD.support_key; END;
 CREATE TRIGGER IF NOT EXISTS world_observation_source_revoked AFTER UPDATE OF status ON source_grants
 WHEN NEW.status<>'active'
 BEGIN DELETE FROM world_observations WHERE observation_id IN (
   SELECT o.observation_id FROM world_observation_events o JOIN source_event_bindings b USING(event_id) WHERE b.source_key=NEW.source_key
 ); END;
 `);
+}
+
+/** A coverage reset deliberately erases old admission positions, including
+ * those of surviving support. Keep that support, but never invent a replacement
+ * recorded time for its normalized child. Used by upgrade and legacy restore. */
+export function removeObservationsWithoutHistory(db: Database): void {
+  db.exec(`DELETE FROM world_observations WHERE NOT EXISTS (
+    SELECT 1 FROM claim_lifecycle_history h WHERE h.support_key=world_observations.support_key
+  )`);
+}
+
+export function applyObservationHistoryErasure(db: Database): void {
+  createObservationTables(db);
+  removeObservationsWithoutHistory(db);
 }
 export function observationTableSpecs(since: number): readonly WorldTableSpec[] {
   return [

@@ -39,6 +39,13 @@ match and `sequence <= cutoff.sequence`. Per-admission history erased by a later
 coverage reset is unavailable before that reset, even if the current support
 still exists.
 
+Observations retain their original admission position and cannot be reanchored
+to a replacement baseline. Erasing that position also removes the dependent
+observation and its opaque references. Independently surviving support remains
+usable for current meaning; a rebuild does not invent its erased admission time.
+The observation-history migration and legacy archive restore remove previously
+orphaned observations. Current archives must already satisfy this dependency.
+
 Event or support deletion advances the coverage of affected surviving claims and
 replaces their old rows with a present baseline. A surviving history that names an
 erased superseding claim also receives a new baseline; later transitions cannot
