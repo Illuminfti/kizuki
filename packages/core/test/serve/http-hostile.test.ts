@@ -41,14 +41,21 @@ test("HTTP stores and deduplicates raw and escaped Unicode proposals as quoted c
       text: "synthetic evidence", subjects: [], attachments: [], metadata: {}, deleted: false, sensitivity_hint: "private" });
     if (stored.status !== "stored") throw new Error("synthetic fixture ingress failed");
     const { token } = addAgent(db, "synthetic-http-producer", OWNER_AGENT_GRANT);
+    const discovery = await post(JSON.stringify({ since: "2026-01-15T00:00:00Z", until: "2026-01-16T00:00:00Z" }), "timeline", token);
+    expect(discovery.status).toBe(200);
+    const evidence = await discovery.json() as { value: { quoted: { eventVersion: { kind: string; token: string } }[] } };
+    expect(evidence.value.quoted).toHaveLength(1);
     const body = "界".repeat(65_536);
-    const raw = JSON.stringify({ kind: "claim", body, provenance: [stored.event.event_id] });
+    const raw = JSON.stringify({ kind: "claim", body, provenance: [evidence.value.quoted[0]!.eventVersion] });
     for (const [wire, outcome] of [[raw, "stored"], [raw.replace(/界/g, "\\u754c"), "duplicate"]] as const) {
       const response = await post(wire, "propose", token);
       expect(response.status).toBe(200);
-      const result = await response.json() as { value: { data: { outcome: string; claim_id: string } } };
+      const result = await response.json() as { value: { data: { outcome: string; claim: { kind: string; token: string } } } };
       expect(result.value.data.outcome).toBe(outcome);
-      expect(getClaim(db, result.value.data.claim_id)).toMatchObject({ body, taint: "quoted", provenance: [stored.event.event_id] });
+      expect(result.value.data.claim.kind).toBe("claim");
+      const target = db.query<{ claim_id: string }, [string]>("SELECT claim_id FROM world_wire_claim_targets WHERE wire_ref=?").get(result.value.data.claim.token);
+      expect(target).not.toBeNull();
+      expect(getClaim(db, target!.claim_id)).toMatchObject({ body, taint: "quoted", provenance: [stored.event.event_id] });
     }
   });
 });

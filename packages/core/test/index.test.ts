@@ -588,6 +588,7 @@ describe("public surface", () => {
       "runWritePass",
       "saveAppModelConfiguration",
       "scopedSecretResolver",
+      "scopedWriterRefusal",
       "scoreClaimPair",
       "seedConnectorSensitivity",
       "seedSchedules",
