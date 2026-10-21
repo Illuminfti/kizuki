@@ -1,0 +1,39 @@
+{
+  "schema": "kizuki.synthetic-subscription-endpoint-evidence/v1",
+  "prepared_at": "2026-10-21T10:52:10.537489+00:00",
+  "status": "identity_verified_before_confirmation_result",
+  "provider": "openai-codex-subscription",
+  "client_model": "openai-codex-subscription/gpt-6.1-sol-medium",
+  "codex_model": "gpt-6.1-sol",
+  "reasoning_effort": "medium",
+  "codex_cli_version": "0.159.2",
+  "auth_mode": "existing ChatGPT subscription",
+  "api_key_or_paid_fallback": false,
+  "endpoint_host": "127.0.0.1:8787",
+  "base_path": "/v1",
+  "bridge_source_commit": "92d414d631b0d78566ead3688531788cb7abdab2",
+  "bridge_merge_commit": "136f62df9318e483d7c8c538cc895388d9ff5c28",
+  "bridge_sha256": "01470654a2aaaa6add7af3302abea4ab85040ac88a9a0362e14442545eddbcc1",
+  "deployment_receipt_sha256": "445cb8177c4ce1bd57d4a55b82ec0279345969f2d151fa5867d071bcbe0089e4",
+  "deployment_preserved_private_state_and_exact_argv": true,
+  "meter_before_confirmation": 109,
+  "read_only_quota": {
+    "at": "2026-10-21T10:41:24.755968Z",
+    "status": "read_ok",
+    "ordinaryUsageAllowed": true,
+    "protocol": "Codex CLI0.159.2 account/rateLimits/read",
+    "model_turns": 0
+  },
+  "local_controls": {
+    "daily_attempts": 240,
+    "min_start_gap_seconds": 60,
+    "max_inflight": 1,
+    "child_timeout_seconds": 100,
+    "automatic_retries": 0
+  },
+  "limitations": [
+    "Identity and readiness metadata alone do not prove a successful generation or semantic qualification.",
+    "Final observed report and raw response digests remain separate evidence.",
+    "No credentials, account identifiers, runtime paths, private records or environment values are included."
+  ]
+}
