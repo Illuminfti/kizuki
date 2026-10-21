@@ -6,6 +6,18 @@ export class DeadlineError extends Error {
   }
 }
 
+/** End a wait on cancellation; the caller must prevent late work from publishing. */
+export function withAbortSignal<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return work;
+  let abort!: () => void;
+  return new Promise<T>((resolve, reject) => {
+    abort = () => reject(signal.reason ?? new DOMException("Operation aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    work.then(resolve, reject);
+    if (signal.aborted) abort();
+  }).finally(() => signal.removeEventListener("abort", abort));
+}
+
 /**
  * Host-side timer around a connector promise. The connector API has no
  * AbortSignal; this is what stops a hung provider from owning the rail.

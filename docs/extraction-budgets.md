@@ -101,10 +101,14 @@ A value outside its range, a fraction or a string keeps that key's default.
   another pass changed its inputs or the cursor is discarded, never filed. An
   answer waits up to five seconds for a writer another operation holds; after
   that the pass stops as `lock:busy` and the next one asks again.
-- **Stopping.** `kizuki serve stop`, SIGTERM and SIGINT end a pass before its
-  next step. The request in flight finishes and is filed, canon writing waits
-  for the next start, and the receipt stops as `serve:stop_requested`. The
-  service's stop timeout therefore needs to cover one request, not a pass.
+- **Stopping.** `kizuki serve stop`, SIGTERM and SIGINT end a pass at once. A
+  model request in flight is aborted through the transport, not waited out, so
+  a stop takes seconds whatever `timeout_ms` is set to. The aborted request is
+  charged as a call but is not counted as the model failing: the receipt stops
+  as `serve:stop_requested`, doctor reports no model failure, and the next pass
+  asks for the same records again from the durable cursor. Canon writing waits
+  for the next start. The service's `TimeoutStopSec` therefore does not depend
+  on the model timeout; see [the service lifecycle](service-lifecycle.md).
 - **Model health.** A pass is judged by how it ended. The receipt's
   `model.answered` counts the requests the model answered, and
   `model.last_request` says whether the final one was answered; its

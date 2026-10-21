@@ -71,7 +71,10 @@ export function runImmediate<T>(
     return run();
   }
   if (nested) return run();
-  return retryWhileBusy(run, attempts);
+  // A nonblocking connection is also a nonblocking retry policy. In
+  // particular, shutdown must not stack batch waits after a slow connector.
+  const wait = db.query<{ timeout: number }, []>("PRAGMA busy_timeout").get()?.timeout;
+  return retryWhileBusy(run, wait === 0 ? 1 : attempts);
 }
 
 /**
@@ -81,11 +84,15 @@ export function runImmediate<T>(
  * and this caller has to hear it now, not after the ordinary batch wait. The
  * connection's usual wait is restored either way.
  */
-export function withControlWait<T>(db: Database, work: () => T): T {
+export function withControlWait<T>(
+  db: Database,
+  work: () => T,
+  waitMs: number = LEDGER_CONTROL_BUSY_TIMEOUT_MS,
+): T {
   let previous: number | undefined;
   try {
     previous = db.query<{ timeout: number }, []>("PRAGMA busy_timeout").get()?.timeout;
-    db.exec(`PRAGMA busy_timeout=${LEDGER_CONTROL_BUSY_TIMEOUT_MS}`);
+    db.exec(`PRAGMA busy_timeout=${waitMs}`);
   } catch {
     // A handle that cannot report its wait cannot be narrowed or restored.
     return work();

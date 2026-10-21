@@ -137,13 +137,15 @@ function count(metrics: ProduceMetrics, reason: string): void {
 
 type ExtractionProduceResult = ProduceResult | ProduceResultV2;
 
-function observe(metrics: ProduceMetrics, validated: ValidatedProduceResult<ExtractionProduceResult>, wallMs: number): void {
+function observe(metrics: ProduceMetrics, validated: ValidatedProduceResult<ExtractionProduceResult>, wallMs: number, stopped: boolean): void {
   const { result } = validated;
   metrics.wall_ms += wallMs;
   metrics.calls += result.usage.calls;
   metrics.input_tokens += result.usage.input_tokens;
   metrics.output_tokens += result.usage.output_tokens;
   for (const [kind, redacted] of Object.entries(result.usage.redacted ?? {})) metrics.redacted[kind] = (metrics.redacted[kind] ?? 0) + redacted;
+  // A request the daemon's stop aborted is charged, but it is not the model's failure.
+  if (stopped && result.status === "unavailable") return;
   const diagnostic = result.status === "ok" ? undefined : readProducerDiagnostic(result.diagnostic);
   metrics.last = {
     answered: result.status === "ok",
@@ -172,6 +174,8 @@ function observedProducer(
   record: (result?: ExtractionProduceResult) => void,
   /** Why no request may leave now, or null. Read before every request. */
   spent: () => string | null,
+  /** True once the daemon was told to stop, which aborts the request in flight. */
+  stopped: () => boolean,
 ): ExtractionProducerPort {
   if (isProducerV2(producer)) {
     const observed: ProducerV2Port = {
@@ -185,7 +189,7 @@ function observedProducer(
         const started = performance.now();
         record();
         const validated = await invokeProducerV2(producer, input);
-        observe(metrics, validated, Math.max(0, Math.round(performance.now() - started)));
+        observe(metrics, validated, Math.max(0, Math.round(performance.now() - started)), stopped());
         if (validated.usage_known) record(validated.result);
         return validated.result;
       },
@@ -203,7 +207,7 @@ function observedProducer(
       // Commit intent before crossing the asynchronous external-effect boundary.
       record();
       const validated = await invokeProducer(producer, input);
-      observe(metrics, validated, Math.max(0, Math.round(performance.now() - started)));
+      observe(metrics, validated, Math.max(0, Math.round(performance.now() - started)), stopped());
       // Keep the original durable intent: failed validation cannot refund a call.
       if (validated.usage_known) record(validated.result);
       return validated.result;
@@ -484,6 +488,7 @@ interface ExtractionPass {
   readonly model_ref: string | null;
   readonly limits: ExtractionConfig;
   readonly clock: () => string;
+  readonly stopRequested: () => boolean;
   /** Counts claims an answered request carried that journaling declined, in the run's totals. */
   readonly decline: (dropped: readonly DroppedDraftV2[]) => void;
 }
@@ -534,9 +539,10 @@ async function runExtraction(
     recordUsage(result === undefined
       ? metricResult({ ...metrics, calls: metrics.calls + 1, last: { answered: false, usage_unknown: true } })
       : metricResult(metrics));
-  }, spent);
+  }, spent, () => options.stopRequested?.() === true);
   const pass: ExtractionPass = {
     io, db, claims, producer, observed, metrics,
+    stopRequested: () => options.stopRequested?.() === true,
     model_ref: options.model_ref ?? null, limits, clock,
     decline(dropped) {
       if (dropped.length === 0) return;
@@ -649,6 +655,8 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
   const diagnostic = fresh === undefined ? [] : [formatProducerDiagnostic(fresh)];
   switch (mined.mined.status) {
     case "unavailable":
+      // The stop aborted this request; the pass ends as asked, and the next one asks again.
+      if (pass.stopRequested()) return settled("stop", { stopped: STOP_REQUESTED });
       if (metrics.budget_spent !== undefined) return settled("stop", { stopped: BUDGET_DAY, errors: [`model budget: ${metrics.budget_spent}`] });
       return settled("stop", { stopped: modelStop(mined.mined.reason, fresh), errors: diagnostic });
     case "rejected": {

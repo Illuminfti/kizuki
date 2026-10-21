@@ -19,7 +19,7 @@ import { ageSeconds, railDoctor, syncPassWait } from "./doctor-rails";
 import { egressDoctor, extractionDoctor } from "./doctor-extraction";
 import { readServeIntent } from "./intent";
 import { serviceFile } from "./service-files";
-import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readEmbeddingReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
+import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readEmbeddingReceipts, readModelRunHistory, readPendingRunReceipts, redactReceiptText, type ModelRunHistory } from "./receipts";
 import { sha256Hex } from "../util/hash";
 import { listSchedules } from "./schema";
 import { countOversizedRecords, RETRY_SKIPPED_COMMAND } from "./extract-oversized";
@@ -514,10 +514,24 @@ export function inspectServeDoctor(
   // rail. A week of receipts is mostly no-op maintenance runs that judge nothing.
   const syncHistory = readModelRunHistory(db, since, DOCTOR_SYNC_RECEIPTS);
   const syncReceipts = syncHistory.receipts.filter((receipt): receipt is RunReceipt => receipt !== null);
+  // A held writer prevents publication, but its skipped runs are already
+  // durable in the journal. Include them in rail health without replaying or
+  // changing the ledger, and retain the same bounded chronological window.
+  const pendingReceipts = readPendingRunReceipts(db, vaultPath);
+  const railHistory = (rail: RailId): RunReceipt[] => {
+    const limit = rail === "sync" ? DOCTOR_SYNC_RECEIPTS : DOCTOR_RAIL_RECEIPTS;
+    const persisted = rail === "sync" ? syncReceipts : listRunReceipts(db, { rail, since, limit });
+    const runs = new Map(pendingReceipts.filter(receipt => receipt.rail === rail && receipt.finished_at >= since)
+      .map(receipt => [receipt.run_id, receipt]));
+    for (const receipt of persisted) runs.set(receipt.run_id, receipt);
+    return [...runs.values()]
+      .sort((a, b) => a.finished_at.localeCompare(b.finished_at) || a.run_id.localeCompare(b.run_id))
+      .slice(-limit);
+  };
   const work = { db, model_configured: modelConfigured, embedding_configured: options.embedding_configured ?? embedding.state === "configured" };
   const rails = DEFAULT_RAILS.map((spec) => railDoctor(
     spec.rail,
-    spec.rail === "sync" ? syncReceipts : listRunReceipts(db, { rail: spec.rail, since, limit: DOCTOR_RAIL_RECEIPTS }),
+    railHistory(spec.rail),
     schedules.get(spec.rail)?.period_s ?? spec.period_s,
     now,
     expectLive,
