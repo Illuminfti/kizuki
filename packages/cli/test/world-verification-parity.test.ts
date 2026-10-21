@@ -40,6 +40,8 @@ function cliArgs(name: VerificationOperation, input: Record<string, any>): strin
     case "observation": return ["--admission", input.ref.token];
     case "atlas": return ["--panel", input.panel];
     case "slice": return ["--task", input.task, "--budget-tokens", String(input.budgetTokens), "--kinds", input.kinds.join(",")];
+    case "forecast": return ["--ref", input.commitment.token];
+    case "forecast_scores": return [];
     case "artifact_version": return ["--ref", input.artifact.token];
     case "history": return ["--ref", input.concept.token];
     case "find_concepts": case "find_situations": case "find_questions": case "find_people": case "find_procedures": case "find_artifacts": return ["--label", input.label];
@@ -73,6 +75,8 @@ const TEXT: Record<VerificationOperation, readonly string[]> = {
   slice: ["Task: Resume the launch", "Coverage:"],
   find_artifacts: ["Artifact"], artifact_version: ["Artifact", "text/markdown", "Coverage:"],
   diff: ["Unchanged since the prior view."],
+  forecast: ["Uncalibrated, no model", "commitment_met_by_due", "resolved_met"],
+  forecast_scores: ["Resolved 20", "Brier 0.25", "does not establish usefulness"],
 };
 
 test("every world operation agrees through Core, CLI text and JSON, stdio MCP, HTTP and App", async () => {

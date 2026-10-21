@@ -41,6 +41,7 @@ test("all world operations close over purge and retained capabilities lose evide
       else if (name === "attention") expect(after.data).toMatchObject({ result: { data: { states: [{ state: "missing_coverage", reason: "source_unobserved" }] } } });
       else if (name === "atlas") expect(after.data).toMatchObject({ result: { data: { panels: [{ entries: [] }] } } });
       else if (name === "slice") expect(after.data).toMatchObject({ result: { data: { constraints: [], detail: [] } } });
+      else if (name === "forecast_scores") expect(after.data).toMatchObject({ result: { status: "unavailable", reason: "history" } });
       else if (name === "frontier") expect(after.data).toMatchObject({ result: { data: { groups: [] } } });
       else if (name === "resume" || name === "diff") expect(after.data).toEqual({ schema: "kizuki.world-view/v1", operation: name, result: { status: "new_view_required" } });
       else expect(after.data, name).toEqual({ status: "not_found" });
