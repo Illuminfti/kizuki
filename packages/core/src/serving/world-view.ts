@@ -1,6 +1,7 @@
 import { resolvePrincipal, toolAllowed, type Principal } from "../agents";
 import { tableExists } from "../ledger/schema";
 import type { HistoryPage } from "../contracts/world-history";
+import type { ArtifactCard } from "../contracts/artifact-card";
 import type { QuestionCard } from "../contracts/question-card";
 import type { Frontier } from "../world/ops/frontier";
 import type { WorldMatches } from "../world/pipeline/assemble";
@@ -56,6 +57,8 @@ export type {
 
 /** The typed request of the shipped operations; the reader itself takes `unknown` and the registry decides. */
 export type WorldReadInput =
+  | { readonly operation: "artifact_version"; readonly artifact: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "find_artifacts"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | {
       readonly operation: "find_concepts" | "find_situations";
       readonly label: string;
@@ -91,7 +94,8 @@ export type WorldReadInput =
       readonly operation: "share";
       readonly of:
         | { readonly operation: "concept"; readonly concept: WorldObjectRef }
-        | { readonly operation: "situation"; readonly situation: WorldObjectRef };
+        | { readonly operation: "situation"; readonly situation: WorldObjectRef }
+        | { readonly operation: "artifact_version"; readonly artifact: WorldObjectRef };
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
     }
@@ -106,6 +110,8 @@ export type WorldReadInput =
 /** The bodies the shipped operations return; each operation's `dataSchemas` say which one it is. */
 export type WorldData =
   | ConceptCard
+  | ArtifactCard
+  | WorldMatches<"kizuki.artifact_version-matches/v1">
   | QuestionCard
   | Frontier
   | WorldMatches<"kizuki.question-matches/v1">

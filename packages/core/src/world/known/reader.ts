@@ -40,7 +40,7 @@ function snapshot(
   if (ref !== null) retainKnownSnapshotDependency(frame, ref, handle, when.valid, reused?.cutoff ?? cutoff, reused !== null);
   return ref;
 }
-export function readKnownCard(frame: WorldFrame, handle: string, kind: "concept" | "situation" | "question", when: WorldWhen): WorldOpOutcome {
+export function readKnownCard(frame: WorldFrame, handle: string, kind: "concept" | "situation" | "question" | "artifact_version", when: WorldWhen): WorldOpOutcome {
   if (when.knownAt.kind === "current") {
     const card = projectWorldCard(frame.ctx, frame.ns, handle, kind, when.valid, frame.dependencies);
     return card === null ? NOT_FOUND : coveredOutcome(card);

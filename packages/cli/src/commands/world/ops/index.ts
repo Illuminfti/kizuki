@@ -5,6 +5,7 @@ import { discoverCli } from "./discover";
 import { situationCli } from "./situation";
 import { shareCli, resumeCli } from "./resume";
 import { evidenceCli } from "./evidence";
+import { artifactCli, findArtifactsCli } from "./artifact";
 import { questionCli, findQuestionsCli, frontierCli } from "./question";
 import type { WorldCliEntry } from "./types";
 
@@ -28,6 +29,7 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   // slot: PEOPLE
   // slot: SKILL
   // slot: ART
+  { name: "artifact_version", cli: artifactCli }, { name: "find_artifacts", cli: findArtifactsCli },
   // slot: OUTCOME
   // slot: DIFF
   // slot: SLICE

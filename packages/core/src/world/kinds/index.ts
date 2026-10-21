@@ -1,3 +1,4 @@
+import { artifactAssembler } from "./artifact";
 import { conceptAssembler } from "./concept";
 import type { KindAssembler } from "./kit";
 import { situationAssembler } from "./situation";
@@ -17,4 +18,5 @@ export const KIND_ASSEMBLERS: readonly KindAssembler[] = [
   // slot: skill
   // slot: sit2
   // slot: art
+  artifactAssembler,
 ];

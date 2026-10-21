@@ -1,3 +1,4 @@
+import { artifactMetadataJob } from "../world/artifact-import";
 import type { Database } from "bun:sqlite";
 import { redactReceiptError } from "./receipts";
 
@@ -24,6 +25,8 @@ export interface WorldJob {
 
 /** Background jobs run once per sync pass in this order. A workstream adds one line under its marker. */
 export const WORLD_JOBS: readonly WorldJob[] = [
+  // slot: art
+  artifactMetadataJob,
   // slot: consol
   // slot: fcst
 ];

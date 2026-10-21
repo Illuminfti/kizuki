@@ -35,6 +35,8 @@ function clamp(value: unknown): unknown {
       out[name] = cut(item, LABEL_MAX);
     } else if (name === "summary" && isRecord(item) && typeof item["text"] === "string") {
       out[name] = { ...(clamp(item) as Record<string, unknown>), text: cut(item["text"], SUMMARY_MAX) };
+    } else if (name === "content" && value["schema"] === "kizuki.artifact-card/v1" && isRecord(item)) {
+      out[name] = { ...item, sha256: typeof item["sha256"] === "string" && /^[0-9a-f]{64}$/.test(item["sha256"]) ? item["sha256"] : null, mediaType: typeof item["mediaType"] === "string" ? cut(item["mediaType"],128) : null };
     } else {
       out[name] = clamp(item);
     }

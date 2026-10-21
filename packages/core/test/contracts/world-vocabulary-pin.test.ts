@@ -8,7 +8,7 @@ import { WORLD_VOCABULARY, WORLD_VOCABULARY_SCHEMA } from "../../src/contracts/w
  * and a migration story, not an edit of this table.
  */
 const PINNED_ROWS = [
-  ["world.kind", "raw", "vocabulary", "positive,negative", null, "world/concept,world/question,world/situation"],
+  ["world.kind", "raw", "vocabulary", "positive,negative", null, "world/artifact_version,world/concept,world/question,world/situation"],
   ["situation.label", "situation", "literal", "positive,negative", 400, null],
   ["situation.objective", "situation", "literal", "positive,negative", 400, null],
   ["situation.commitment", "situation", "literal", "positive,negative", 400, null],
@@ -20,6 +20,7 @@ const PINNED_ROWS = [
   ["concept.requires", "concept", "concept", "positive,negative", null, null],
   ["concept.example", "concept", "literal,raw_subject", "positive,negative", 400, null],
   ["concept.counterexample", "concept", "literal,raw_subject", "positive,negative", 400, null],
+  ["concept.same_as", "concept", "concept", "positive,negative", null, null],
   ["concept.distinguished_from", "concept", "concept", "positive,negative", null, null],
   ["learning.exposure", "person", "concept", "positive,negative", null, null],
   ["learning.explanation", "person", "concept", "positive,negative", null, null],
@@ -32,6 +33,12 @@ const PINNED_ROWS = [
   ["question.motivates", "question", "raw_subject", "positive,negative", null, null],
   ["gap.kind", "question", "vocabulary", "positive,negative", null, "gap/missing_prerequisite,gap/unresolved_question,gap/contradiction,gap/stale_evidence,gap/misconception,gap/lack_of_practice,gap/missing_information"],
   ["gap.about", "question", "raw_subject", "positive,negative", null, null],
+  ["artifact.label", "artifact_version", "literal", "positive,negative", 400, null],
+  ["artifact.content_sha256", "artifact_version", "literal", "positive,negative", 400, null],
+  ["artifact.media_type", "artifact_version", "literal", "positive,negative", 400, null],
+  ["artifact.byte_length", "artifact_version", "literal", "positive,negative", 400, null],
+  ["artifact.version_of", "artifact_version", "raw_subject", "positive,negative", null, null],
+  ["artifact.feedback", "artifact_version", "literal,raw_subject", "positive,negative", 400, null],
 ] as const;
 
 test("the shipped rows of kizuki.world-vocabulary/v1 keep their meaning", () => {

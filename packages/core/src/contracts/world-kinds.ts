@@ -1,6 +1,6 @@
 import type { PageType } from "../vault/schema";
 
-export type WorldEndpointKind = "raw" | "concept" | "situation" | "person" | "task_context" | "question";
+export type WorldEndpointKind = "raw" | "concept" | "situation" | "person" | "task_context" | "question" | "artifact_version";
 
 export type WorldObjectKind = "literal" | "concept" | "raw_subject" | "vocabulary";
 
@@ -23,7 +23,7 @@ export interface WorldVocabularySpec {
  * `derived` a kind computed from other kinds. A kind whose only path is
  * `extraction` is empty by design while it is not offered to the producer.
  */
-export type WorldKindPopulation = "extraction" | "owner_assertion" | "derived";
+export type WorldKindPopulation = "extraction" | "owner_assertion" | "derived" | "connector_metadata";
 
 /** A kind of thing the world model can hold, as data with one registration site. */
 export interface WorldKindSpec {

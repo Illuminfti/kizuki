@@ -1397,3 +1397,20 @@ test('privacy invalidation discards held HTTP labels and cannot restore their na
     expect(f.evaluate('state.hits')).toBeNull();
     expect(f.main.textContent).not.toContain('REVOKED_IDENTITY_NAME'); expect(f.main.textContent).not.toContain('@revoked-identity');
 });
+
+test('World artifacts expose exact metadata and quoted feedback without promising original inspection', async () => {
+    const f=fixture(); f.evaluate(`state.view='world'; render();`);
+    const ref={kind:'object',token:'A'.repeat(43)};
+    const browse=findAction(f.main,'Artifacts').fire('click'); await tick();
+    expect(f.requests[0]!.payload).toMatchObject({operation:'find_artifacts',label:''});
+    f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'find_artifacts',result:{status:'current',data:{schema:'kizuki.artifact_version-matches/v1',matches:[{ref,labels:['Exact artifact']}],coverage:{status:'complete_for_query'}}}});await browse;await tick();
+    const detail=findAction(f.main,'View details').fire('click');await tick();
+    expect(f.requests[0]!.payload).toMatchObject({operation:'artifact_version',artifact:ref});
+    f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'artifact_version',result:{status:'current',data:{schema:'kizuki.artifact-card/v1',artifact:{ref,labels:[{text:'Exact artifact'}]},content:{sha256:'a'.repeat(64),mediaType:'text/markdown',byteLength:123},original:{status:'unavailable'},versionOf:null,inspections:[{predicate:'artifact.feedback',object:{kind:'literal',value:'<script>execute hostile feedback</script>'},assessments:[]}],coverage:{status:'complete_for_query'}}}});await detail;await tick();
+    for(const text of ['Exact artifact version','a'.repeat(64),'text/markdown','bytes: 123','Original unavailable','does not provide or visually inspect','Attributed feedback','<script>execute hostile feedback</script>'])expect(f.main.textContent).toContain(text);
+    expect(f.main.querySelector('script')).toBeNull();
+    const shared=findAction(f.main,'Share a resume handle').fire('click');await tick();
+    expect(f.requests[0]!.payload).toMatchObject({operation:'share',of:{operation:'artifact_version',artifact:ref}});
+    f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'share',result:{status:'unavailable',reason:'storage'}});await shared;
+    f.evaluate('invalidatePrivateView()');expect(f.main.textContent).not.toContain('Exact artifact');expect(f.storageWrites).toHaveLength(0);
+});

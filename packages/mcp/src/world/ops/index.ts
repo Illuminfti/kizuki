@@ -5,6 +5,7 @@ import { discoverConceptsFragment, discoverSituationsFragment } from "./discover
 import { situationFragment } from "./situation";
 import { shareFragment, resumeFragment } from "./resume";
 import { evidenceFragment } from "./evidence";
+import { artifactFragment, findArtifactsFragment } from "./artifact";
 import { questionFragment, findQuestionsFragment, frontierFragment } from "./question";
 import type { McpWorldOp } from "./types";
 
@@ -28,6 +29,7 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   // slot: PEOPLE
   // slot: SKILL
   // slot: ART
+  artifactFragment, findArtifactsFragment,
   // slot: OUTCOME
   // slot: DIFF
   // slot: SLICE

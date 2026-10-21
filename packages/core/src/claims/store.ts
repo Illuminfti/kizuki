@@ -1,3 +1,4 @@
+import { validateArtifactClaim } from "../world/artifact-binding";
 import type { ClaimVisibility } from "./visibility";
 import { UNWRITTEN_CAPTURE_NOTE_WHERE } from "./capture-fanout";
 import { pageClaimKey } from "./hash";
@@ -322,6 +323,7 @@ function preparedWorldCommit(
   at: string,
 ) {
   if (input.world_admission === undefined || input.semantic === undefined) return null;
+  validateArtifactClaim(db,input);
   const admission = parseWorldAdmission(input.world_admission);
   if (admission === null || canonicalJson(admission.semantic) !== canonicalJson(input.semantic)) {
     throw new ClaimError("schema_invalid", "world admission needs its matching typed semantic");

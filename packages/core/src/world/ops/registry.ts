@@ -1,3 +1,4 @@
+import { artifactVersionOp, findArtifactsOp } from "./artifact";
 import { historyOp } from "./history";
 import { conceptOp } from "./concept";
 import { describeOp } from "./describe";
@@ -81,6 +82,7 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   // slot: PEOPLE
   // slot: SKILL
   // slot: ART
+  artifactVersionOp, findArtifactsOp,
   // slot: OUTCOME
   // slot: DIFF
   // slot: SLICE

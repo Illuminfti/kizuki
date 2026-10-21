@@ -1,3 +1,5 @@
+export { ARTIFACT_CARD_SCHEMA, validateArtifactCard } from "../contracts/artifact-card";
+export type { ArtifactCard } from "../contracts/artifact-card";
 /**
  * The world-model API of `@kizuki/core`. New operations and their types are
  * exported here so `src/index.ts` never has to change for them.

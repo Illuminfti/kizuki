@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { conceptFragment } from "./concept";
 import { situationFragment } from "./situation";
+import { artifactFragment } from "./artifact";
 import { questionFragment } from "./question";
 import { WIRE_TOKEN } from "./shared";
 import type { McpWorldOp } from "./types";
@@ -14,6 +15,6 @@ export const shareFragment: McpWorldOp = {
 export const resumeFragment: McpWorldOp = {
   name: "resume",
   fields: { handle: WIRE_TOKEN.optional() },
-  data: { ...conceptFragment.data, ...situationFragment.data, ...questionFragment.data },
+  data: { ...conceptFragment.data, ...situationFragment.data, ...questionFragment.data, ...artifactFragment.data },
   summary: "resume reads the shared object under your own grant; narrower scope adds the coverage gap. priorView can test a complete baseline without extending its lifetime.",
 };
