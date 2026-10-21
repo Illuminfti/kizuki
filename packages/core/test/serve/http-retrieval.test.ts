@@ -18,16 +18,19 @@ test("the daemon HTTP surface uses its host retrieval instance and current autho
   const handle = startServeHttp({ db: f.db, vaultPath: f.vaultPath, retrieval });
   try {
     for (const tool of ["search", "context_packet"]) {
-      const response = await fetch(`${handle.url}/v1/${tool}`, {
-        method: "POST", headers: { authorization: `Bearer ${f.tokens["reader-public"]}`, "content-type": "application/json" },
-        body: JSON.stringify({ query: "ketle", ...(tool === "context_packet" ? { budget_tokens: 2000, include: ["canon"] } : {}) }),
-      });
-      expect(response.status).toBe(200);
-      const text = await response.text();
-      expect(text).toContain("Ada keeps the kettle warm.");
-      expect(text).not.toContain("STALE_PRIVATE_CACHE_MARKER");
+      for (const query of ["ketle", "kettle"]) {
+        const response = await fetch(`${handle.url}/v1/${tool}`, {
+          method: "POST", headers: { authorization: `Bearer ${f.tokens["reader-public"]}`, "content-type": "application/json" },
+          body: JSON.stringify({ query, ...(tool === "context_packet" ? { budget_tokens: 2000, include: ["canon"] } : {}) }),
+        });
+        expect(response.status).toBe(200);
+        const text = await response.text();
+        if (query === "kettle") expect(text).toContain("Ada keeps the kettle warm.");
+        else expect(text).not.toContain("Ada keeps the kettle warm.");
+        expect(text).not.toContain("STALE_PRIVATE_CACHE_MARKER");
+      }
     }
-    expect(calls).toBe(2);
+    expect(calls).toBe(4);
   } finally {
     await handle.stop();
     await retrieval.close();

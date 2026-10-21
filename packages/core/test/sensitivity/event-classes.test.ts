@@ -9,6 +9,7 @@ import { initVault } from "../../src/vault/init";
 import { commitMachineByteIntent } from "../../src/ledger/event-origin";
 import { sha256Hex } from "../../src/util/hash";
 import { ulid } from "../../src/util/ulid";
+import { LEDGER_MIGRATION_VERSIONS } from "../../src/world/tables/versions";
 import { viewPartitionOf } from "../../src/world/views/partitions";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 import {
@@ -356,7 +357,7 @@ describe("class migration", () => {
     expect(partition).not.toBeNull();
     first.exec("DROP TABLE event_classes");
     first.exec("ALTER TABLE agent_grants DROP COLUMN deny_classes");
-    first.query("UPDATE schema_version SET version = ?").run(LEDGER_SCHEMA_VERSION - 1);
+    first.query("UPDATE schema_version SET version = ?").run(LEDGER_MIGRATION_VERSIONS.eventClasses - 1);
     first.close();
 
     const upgraded = openLedger(path);

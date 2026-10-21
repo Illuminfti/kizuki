@@ -11,11 +11,13 @@ export type WorldSlotKey = (typeof WORLD_SLOT_KEYS)[number];
 
 export const PURGE_REINGEST_MIGRATION_VERSION = 34;
 export const CURSOR_STORE_MIGRATION_VERSION = 35;
+export const SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION = 39;
 
 /** Non-world ledger migrations keep their numbers as later packets land. */
 export const LEDGER_MIGRATION_VERSIONS = {
   purgeReingest: PURGE_REINGEST_MIGRATION_VERSION,
   eventClasses: 38,
+  scopedClaims: SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION,
 } as const;
 
 /** The fixed ledger version before the first world table slot. */

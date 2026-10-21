@@ -1,4 +1,5 @@
 import { denyClassesOf } from "../agents";
+import { searchableText, servedTextMatcher } from "./search-match";
 import type { AuditDenial, AuditItem } from "../agents";
 import { compareRfc3339 } from "../agents/time";
 import type { Claim } from "../contracts/proposal";
@@ -314,19 +315,29 @@ export async function collectPieces(
       }
     }
 
-    for (const page of candidates) {
-      if (packed.has(page.id) || !eligible(page)) continue;
-      const decision = decisionFor(page);
-      if (!decision.allow) continue;
-      packed.add(page.id);
-      const { excerpt, truncated } = excerptOf(page.body, CANON_EXCERPT, ctx);
-      const chunk = canonChunk(index, page, decision, excerpt, truncated);
-      pieces.push({
-        section: "canon",
-        heading: pageHeading(chunk, "## canon"),
-        block: canonBlock(chunk),
-        canon: chunk,
-      });
+    const matcher = request.query === undefined || ctx.principal.kind === "owner"
+      ? undefined : servedTextMatcher(request.query);
+    try {
+      for (const page of candidates) {
+        if (packed.has(page.id) || !eligible(page)) continue;
+        const decision = decisionFor(page);
+        if (!decision.allow) continue;
+        if (matcher !== undefined) {
+          const title = typeof page.data["title"] === "string" ? page.data["title"] : "";
+          if (!matcher.matches(searchableText(title), searchableText(page.body, CANON_EXCERPT))) continue;
+        }
+        packed.add(page.id);
+        const { excerpt, truncated } = excerptOf(page.body, CANON_EXCERPT, ctx);
+        const chunk = canonChunk(index, page, decision, excerpt, truncated);
+        pieces.push({
+          section: "canon",
+          heading: pageHeading(chunk, "## canon"),
+          block: canonBlock(chunk),
+          canon: chunk,
+        });
+      }
+    } finally {
+      matcher?.close();
     }
   }
 

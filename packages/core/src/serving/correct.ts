@@ -408,15 +408,9 @@ function assertSufficientAuthority(
   replacement: string | undefined,
   at: string,
 ): void {
-  const rivals = listClaims(ctx.db, {
-    claim_key: claimKey,
-    status: "live",
-    filter: (claim) => sourceEventsAllowed(ctx.db, claim.provenance, {
-      owner: ctx.principal.kind === "owner",
-      purpose: "correction",
-      deny_classes: denyClassesOf(ctx.principal.grant),
-    }),
-  });
+  const visible = claimsIo(ctx).visibility;
+  const rivals = listClaims(ctx.db, { claim_key: claimKey, status: "live",
+    ...(visible === undefined ? {} : { visibility: visible }) });
   const live = rivals.length > 0 ? rivals : group;
   const incoming: ConflictClaim = {
     claim_id: "",
@@ -548,16 +542,6 @@ export async function serveCorrect(
           )
           .get(CORRECTION_CONNECTOR, recordId(statement, args.target));
         if (recorded !== null) {
-          if (
-            recorded.request_digest !==
-            sha256Hex(
-              JSON.stringify([statement, args.target, replacement ?? null]),
-            )
-          )
-            throw refuse(
-              "object",
-              "conflicts with the recorded correction intent",
-            );
           const filedRow = ctx.db
             .query<{ claim_id: string }, [string]>(
               "SELECT claim_id FROM claims WHERE EXISTS (SELECT 1 FROM json_each(claims.provenance) WHERE value=?) AND target LIKE 'correction:%' AND status != 'skipped' ORDER BY created_at LIMIT 1",
@@ -568,6 +552,9 @@ export async function serveCorrect(
           // A recording the caller could not have read is treated as absent and
           // falls through to resolve, so a replay is no tier oracle.
           if (prior !== null && claimVisibleTo(ctx, prior)) {
+            if (recorded.request_digest !== sha256Hex(
+              JSON.stringify([statement, args.target, replacement ?? null]),
+            )) throw refuse("object", "conflicts with the recorded correction intent");
             requireSourceEvents(ctx.db, prior.provenance, {
               owner: ctx.principal.kind === "owner",
               purpose: "correction",

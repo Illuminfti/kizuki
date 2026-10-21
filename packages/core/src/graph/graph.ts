@@ -55,6 +55,8 @@ export interface NeighborOptions {
   kinds?: GraphEdgeKind[];
   limit?: number;
   ceiling?: Sensitivity;
+  /** Trusted consumer authorization, applied before the result cap and traversal. */
+  filter?: (edge: GraphEdge) => boolean;
 }
 
 export interface NeighborResult {
@@ -578,6 +580,7 @@ function incidentEdges(
   ceiling: Sensitivity | undefined,
   remaining: number,
   serving?: GraphServingScope,
+  filter?: (edge: GraphEdge) => boolean,
 ): GraphEdge[] {
   if (ids.length === 0 || kinds?.length === 0 || remaining <= 0) return [];
   const collected: GraphEdge[] = [];
@@ -623,17 +626,22 @@ function incidentEdges(
       }
     }
     const extraSql = extra.length === 0 ? "" : ` AND ${extra.join(" AND ")}`;
-    bindings.push(remaining - collected.length);
-    collected.push(
-      ...db
-        .query<GraphEdge, (string | number)[]>(
-          `SELECT src, dst, kind FROM graph_edges
-           WHERE (src IN (${idSlots}) OR dst IN (${idSlots}))${extraSql}
-           ORDER BY src, dst, kind
-           LIMIT ?`,
-        )
-        .all(...bindings),
-    );
+    let after: GraphEdge | undefined;
+    for (;;) {
+      const rows = db.query<GraphEdge, (string | number)[]>(
+        `SELECT src, dst, kind FROM graph_edges
+         WHERE (src IN (${idSlots}) OR dst IN (${idSlots}))${extraSql}
+           ${after === undefined ? "" : "AND (src,dst,kind) > (?,?,?)"}
+         ORDER BY src, dst, kind LIMIT ?`,
+      ).all(...bindings, ...(after === undefined ? [] : [after.src, after.dst, after.kind]), remaining);
+      for (const edge of rows) {
+        if (filter !== undefined && !filter(edge)) continue;
+        collected.push(edge);
+        if (collected.length === remaining) return collected;
+      }
+      if (rows.length < remaining) break;
+      after = rows[rows.length - 1]!;
+    }
   }
   return collected;
 }
@@ -705,6 +713,7 @@ function walkNeighbors(
       opts.ceiling,
       limit + 1,
       serving,
+      edge => !seenEdges.has(`${edge.src}\u0000${edge.dst}\u0000${edge.kind}`) && (opts.filter?.(edge) ?? true),
     );
     const next: string[] = [];
     const frontierNodes = new Set(frontier);
