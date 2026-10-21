@@ -1,5 +1,6 @@
 import { groundingDigest, validateWorldAdmissionProofs, witnessEventIds, type GroundingReadCache } from "../../claims/world-grounding";
-import { authorize } from "../../agents";
+import { authorize, OWNER } from "../../agents";
+import type { Database } from "bun:sqlite";
 import { compareRfc3339 } from "../../agents/time";
 import { semanticKey, supportKey } from "../../claims/claim-v2-keys";
 import { readClaimV2Semantic } from "../../claims/claim-v2-commit";
@@ -80,6 +81,15 @@ function validFor(
 
 type EligibilityOptions = { historical?: true; supportKeys?: readonly string[]; cutoff?: KnownCutoff; includeInactive?: true };
 
+/** Receipt integrity only. Never export through the projection/serving facade. */
+export function retainedWorldClaimForReceipt(
+  db: Database, claimId: string, budget: ReadBudget, supportKeys: readonly string[],
+): Eligible | null {
+  if (supportKeys.length === 0 || supportKeys.length > MAX_SUPPORTS) return null;
+  return readEligibleWorldClaim({ db, vaultPath: "", principal: OWNER, sourcePurpose: "derive" },
+    claimId, { kind: "all" }, budget, { historical: true, supportKeys }, "receipt_custody");
+}
+
 /** Every candidate support proves its own complete rendering, events and endpoint memberships. */
 export function eligibleWorldClaim(
   ctx: ServeContext,
@@ -115,6 +125,7 @@ function readEligibleWorldClaim(
   valid: WorldValidQuery,
   budget: ReadBudget,
   options: EligibilityOptions,
+  proof?: "receipt_custody",
 ): Eligible | null {
   const claim = getClaim(ctx.db, claimId);
   if (claim === null || (options.cutoff !== undefined ? claim.status === "purged" : options.historical ? !["live", "superseded", "reverted"].includes(claim.status) : claim.status !== "live")) return null;
@@ -153,7 +164,9 @@ function readEligibleWorldClaim(
     return null;
   const supports: EligibleSupport[] = [];
   let overflow = false;
-  const permitted = knownSupportSql(ctx, options.cutoff);
+  // Custody selects only the receipt's exact bounded keys. The full admission,
+  // immutable event identity and CURRENT source policy are still proved below.
+  const permitted = proof === "receipt_custody" ? { sql: "length(s.admission)<=524288", bindings: [] } : knownSupportSql(ctx, options.cutoff);
   for (const row of ctx.db
     .query<
       Support,
@@ -201,13 +214,12 @@ function readEligibleWorldClaim(
       const expected = new Set([...witnessEventIds(admission), ...grounding.map(e => e.event_id)]);
       if (row.support_origin !== "source" || expected.size !== events.length || events.some(e => !expected.has(e.event_id))) continue;
     }
-    const facts = readServableEvents(
+    const facts = proof === "receipt_custody" ? undefined : readServableEvents(
       ctx.db,
       events.map((e) => e.event_id),
     );
     if (
       !events.every((event) => {
-        const fact = facts.get(event.event_id);
         const stored = ctx.db
           .query<
             {
@@ -230,7 +242,13 @@ function readEligibleWorldClaim(
         } catch {
           return false;
         }
-        if (eventIdentity === null) return false;
+        if (eventIdentity === null || eventIdentity.deleted) return false;
+        const fact = facts?.get(event.event_id) ?? (proof === "receipt_custody" ? {
+          event_id: eventIdentity.event_id, kind: eventIdentity.kind,
+          occurred_at: eventIdentity.occurred_at,
+          sensitivity: eventIdentity.sensitivity_hint ?? "unlabeled",
+          subjects: eventIdentity.subjects.map(subject => subject.subject_id),
+        } : undefined);
         if (
           row.support_origin === "native_owner" &&
           ctx.principal.kind !== "owner" &&

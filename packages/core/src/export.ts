@@ -2588,9 +2588,9 @@ function assertTypedCanonReceipts(db: Database, vaultPath: string, limits: Canon
         continue;
       }
       if (!isWorldCanonReceipt(receipt)) throw new Error("backup typed canon receipt is invalid");
-      assertWorldReceiptBasis(db, receipt, { historical: true });
+      assertWorldReceiptBasis(db, receipt, {proof:"receipt_custody"});
       const before = receipt.archive_path === null ? null : files.read(receipt.archive_path);
-      try { assertWorldCanonPage(db, receipt, before?.bytes ?? null, "before"); }
+      try { assertWorldCanonPage(db, receipt, before?.bytes ?? null, "before", "receipt_custody"); }
       finally { before?.close(); }
       pages.add(receipt.page_path);
       if (pages.size > limits.walk_files) throw new Error("backup typed canon page inventory exceeds its bound; raise max_scan_files under [canon] in .kizuki/serve.toml");
@@ -2603,7 +2603,7 @@ function assertTypedCanonReceipts(db: Database, vaultPath: string, limits: Canon
         const bytes = snapshot?.bytes ?? null;
         if (isErasedReceipt(current)) {
           if (bytes !== null) throw new Error("backup erased canon head retains a live page");
-        } else assertWorldCanonPage(db, current, bytes, "after");
+        } else assertWorldCanonPage(db, current, bytes, "after", "receipt_custody");
       } finally { snapshot?.close(); }
     }
   } finally { files.close(); }

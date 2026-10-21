@@ -1,7 +1,7 @@
 import { completedEventPurgeProofs, type CompletedEventPurgeProof } from "../ledger/purge";
 import { isErasedReceipt, rowToReceiptRecord, type CanonReceiptRow } from "./receipts";
 import { CANON_RECEIPT_V1_KEYS, isWorldCanonReceipt, parseWorldCanonReceipt, type RetainedWorldCanonReceipt, type WorldCanonReceiptRecord, type ErasedWorldCanonReceipt, eraseWorldReceipt } from "./world-receipt";
-import { assertWorldBasis, assertWorldCanonPage, selectWorldMaterialization } from "./world-materialization";
+import { assertRetainedWorldBasis, assertWorldBasis, assertWorldCanonPage, selectWorldMaterialization } from "./world-materialization";
 import { validateRetainedReceipt } from "./receipt-validation";
 import type { Database } from "bun:sqlite";
 import { requireSourceEvents, sourcePolicyEpoch } from "../ledger/source-grants";
@@ -282,9 +282,9 @@ export function assertCanonAdmission(db: Database, intent: CanonWriteIntent): vo
   if (isWorldCanonReceipt(intent.receipt)) {
     if ((latestWorldReceiptRecord(db,intent.receipt.page_path)?.receipt_id??null)!==intent.receipt.prior_receipt_id) recoveryFailure("predecessor_changed",intent.receipt.receipt_id);
     try {
-      if(intent.version!==3)assertWorldBasis(db, intent.receipt.basis.before, true);
+      if(intent.version!==3)assertRetainedWorldBasis(db, intent.receipt.basis.before);
       assertWorldBasis(db, intent.receipt.basis.after, intent.completion.mode === "revert");
-      if(intent.version!==3){assertWorldCanonPage(db,intent.receipt,decodeCanonImage(intent.before_base64),"before");assertWorldCanonPage(db,intent.receipt,decodeCanonImage(intent.after_base64),"after");}
+      if(intent.version!==3){assertWorldCanonPage(db,intent.receipt,decodeCanonImage(intent.before_base64),"before","receipt_custody");assertWorldCanonPage(db,intent.receipt,decodeCanonImage(intent.after_base64),"after");}
     } catch { recoveryFailure("authority_changed", intent.receipt.receipt_id); }
   }
   if(intent.version===3) {
