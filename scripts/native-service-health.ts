@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { parseRunReceipt, redactReceiptError, redactReceiptText } from "../packages/core/src/serve/receipts";
-import { RAIL_IDS } from "../packages/core/src/serve/types";
+
+import { RAIL_IDS } from "../packages/core/src/serve/rail-registry";
 import { isPlainObject } from "../packages/core/src/util/validate";
 import { requireRegularFile } from "./release-artifacts";
 
@@ -78,7 +79,7 @@ export function installedRailsHealth(status: CommandResult, diagnostics: NativeR
       model.canon_writing === "off" && model.model_ref === null && fresh && diagnostics.complete && !diagnostics.truncated && diagnostics.error === null &&
       diagnostics.receipts.filter(row => row.current_instance).every(row => row.status === "ok" && row.errors.length === 0 && row.retrieval_degraded.length === 0);
     return { passed, evidence: { exit_code: status.exit_code, doctor_ok: doctor.ok === true, canon_writing: model.canon_writing === "off" ? "off" : "unexpected",
-      failures: strings(doctor.failures), stores_degraded: strings(stores.degraded), rails: rails.slice(0, 8).map(row => isPlainObject(row) ? {
+      failures: strings(doctor.failures), stores_degraded: strings(stores.degraded), rails: rails.slice(0, RAIL_IDS.length).map(row => isPlainObject(row) ? {
         rail: strings([row.rail])[0], status: strings([row.status])[0], reason: row.reason === null ? null : strings([row.reason])[0],
       } : { invalid: true }), diagnostics } };
   } catch (error) { return { passed: false, evidence: { exit_code: status.exit_code, error: redactReceiptError(error), diagnostics } }; }

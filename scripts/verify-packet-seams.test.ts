@@ -37,3 +37,19 @@ test("ENV registers both packet portions with executable seams and regressions",
   expect(rows.filter((row) => row.workstream === "ENV").map((row) => row.packet)).toEqual([502, 490]);
   expect(verifyPacketSeams(root, rows)).toBe(rows.length);
 });
+
+test("operator rails validate their real Core and CLI seams without claiming world transports", () => {
+  const row = rows.find((entry) => entry.kind === "operator")!;
+  expect(row).toBeDefined();
+  expect(verifyPacketSeams(root, [row])).toBe(1);
+  expect(() => verifyPacketSeams(root, [{ ...row, packet: "" }])).toThrow("operator row needs a packet id");
+  for (const surface of ["core", "cli"])
+    expect(() => verifyPacketSeams(root, [{ ...row, [surface]: [] }])).toThrow(`missing ${surface}`);
+  for (const surface of ["mcp", "http", "app"])
+    expect(() => verifyPacketSeams(root, [{ ...row, [surface]: "unimplemented" }])).toThrow(`cannot declare ${surface}`);
+  expect(() => verifyPacketSeams(root, [{ ...row, implementation: [] }])).toThrow("needs implementation files");
+  expect(() => verifyPacketSeams(root, [{ ...row, implementation: ["../outside.ts"] }])).toThrow("repository-relative");
+  expect(() => verifyPacketSeams(root, [{ ...row, docs: "docs/world/absent.md" }])).toThrow("missing regular file");
+  expect(() => verifyPacketSeams(root, [{ ...row, tests: ["packages/core/src/world/public.ts"] }])).toThrow("non-executable");
+  expect(() => verifyPacketSeams(root, [row, row])).toThrow("duplicate");
+});
