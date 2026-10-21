@@ -142,6 +142,15 @@ export class SqlStore {
   scope(query: RetrievalQuery, args: unknown[], alias = "d"): string {
     const param = (value: unknown) => { args.push(value); return `$${args.length}`; };
     const clauses = [`${alias}.sensitivity IS NOT NULL`, `${alias}.sensitivity <= ${param(SENSITIVITY_ORDER[query.ceiling])}`];
+    if (query.scope.documents !== undefined) {
+      const domain = param(JSON.stringify(query.scope.documents));
+      clauses.push(`EXISTS (SELECT 1 FROM jsonb_to_recordset(${domain}::jsonb)
+        AS permitted(doc_id text,title_sha256 text,text_sha256 text,metadata jsonb)
+        WHERE permitted.doc_id=${alias}.doc_id
+          AND permitted.title_sha256=encode(sha256(convert_to(${alias}.title,'UTF8')),'hex')
+          AND permitted.text_sha256=encode(sha256(convert_to(${alias}.body,'UTF8')),'hex')
+          AND permitted.metadata=(${alias}.doc-'title'-'text'))`);
+    }
     if (query.scope.kinds !== undefined) {
       clauses.push(`${alias}.kind = ANY(${param(query.scope.kinds)}::text[])`);
     }

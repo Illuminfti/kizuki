@@ -1,5 +1,6 @@
+import { collectRetrievalDomain, type RetrievalDomain, type RetrievalReleaseBounds } from "./retrieval-domain";
 import { sourcePolicyEpoch, isLocalSourcePort } from "../ledger/source-grants";
-import { validateGraphResult, validateRetrievalResult } from "../contracts/retrieval";
+import { DOCUMENT_SCOPE_CAPABILITY, validateGraphResult, validateRetrievalResult } from "../contracts/retrieval";
 import type { RetrievalDocKind, RetrievalPort, RetrievalQuery } from "../contracts/retrieval";
 import type { GraphEdge, GraphEdgeKind } from "../graph/graph";
 import { bareRetrievalId } from "../retrieval/ids";
@@ -8,6 +9,7 @@ import type { SearchOptions } from "../search/query";
 import type { ServeContext } from "./types";
 
 export interface RetrievalCandidates {
+  semantic?: RetrievalDomain;
   ids: string[];
   degraded: string[];
 }
@@ -44,6 +46,7 @@ export async function retrievalCandidates(
   ctx: ServeContext,
   query: string,
   options: SearchOptions,
+  bounds: RetrievalReleaseBounds,
 ): Promise<RetrievalCandidates> {
   const vectorUnavailable = vectorExpected(ctx) ? ["retrieval-vector-unavailable"] : [];
   if (ctx.retrieval === undefined) {
@@ -55,14 +58,21 @@ export async function retrievalCandidates(
   if (sourcePolicyEpoch(ctx.db) > 0 && !isLocalSourcePort(ctx.retrieval)) return { ids: [], degraded: ["retrieval-source-egress-denied", ...vectorUnavailable] };
   // The v1 port has no page-type predicate. Keep that request on the scoped
   // deterministic index rather than spending its window on excluded types.
-  if (options.types !== undefined) {
+  const scoped = ctx.retrieval.descriptor.supports.includes(DOCUMENT_SCOPE_CAPABILITY) && isLocalSourcePort(ctx.retrieval);
+  if (options.types !== undefined && !scoped) {
     return { ids: [], degraded: ["retrieval-type-scope-unavailable", ...vectorUnavailable] };
   }
   const kinds: RetrievalDocKind[] = options.scope === "canon" ? ["page"]
     : options.scope === "ledger" ? ["event"] : ["page", "event"];
-  const mode = retrievalMode(ctx.retrieval.descriptor);
+  const wanted = retrievalMode(ctx.retrieval.descriptor);
+  const mode = wanted === "hybrid" && !scoped ? "lexical" : wanted;
+  const domain = scoped ? collectRetrievalDomain(ctx, options, bounds) : undefined;
+  if (domain?.unavailable) return { semantic: domain, ids: [], degraded: ["retrieval-domain-unavailable", ...vectorUnavailable] };
+  const domainLabels = domain?.partial ? ["retrieval-domain-partial"] : [];
+  const unsupported = wanted === "hybrid" && !scoped ? ["retrieval-vector-unavailable"] : [];
   const request: RetrievalQuery = {
     text: query, mode, scope: { kinds,
+      ...(domain === undefined ? {} : { documents: domain.documents }),
       ...(options.subjects === undefined ? {} : { subjects: options.subjects }),
       ...(options.since === undefined ? {} : { since: options.since }),
       ...(options.until === undefined ? {} : { until: options.until }),
@@ -84,19 +94,21 @@ export async function retrievalCandidates(
     } catch {
       // Keep the compatibility marker; distinguish invalid success from an
       // unavailable provider without publishing its payload or error text.
-      return { ids: [], degraded: ["retrieval-unavailable", "retrieval-invalid-response", ...vectorUnavailable] };
+      return { ids: [], ...(domain === undefined ? {} : { semantic: domain }), degraded: ["retrieval-unavailable", "retrieval-invalid-response", ...vectorUnavailable] };
     }
     return {
       ids: validated.hits.map((hit) => hit.doc_id),
+      ...(domain === undefined ? {} : { semantic: domain }),
       // Provider strings are not a public diagnostic channel.
       degraded: [
-        ...publicDegraded(validated.degraded),
+        ...publicDegraded(mode === "lexical" ? validated.degraded.filter(label => !(label in VECTOR_LABELS)) : validated.degraded),
+        ...domainLabels, ...unsupported,
         // A configured embedding port the engine could not bind is not a lexical-only choice.
         ...(mode === "lexical" ? vectorUnavailable : []),
       ],
     };
   } catch {
-    return { ids: [], degraded: ["retrieval-unavailable", ...vectorUnavailable] };
+    return { ids: [], ...(domain === undefined ? {} : { semantic: domain }), degraded: ["retrieval-unavailable", ...vectorUnavailable] };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }

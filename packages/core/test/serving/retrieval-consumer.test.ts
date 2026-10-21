@@ -2,6 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setGrant } from "../../src/agents";
+import { DOCUMENT_SCOPE_CAPABILITY } from "../../src/contracts/retrieval";
+import { bindLocalSourcePort } from "../../src/ledger/source-grants";
 import type {
   EntityRef,
   GraphQueryOptions,
@@ -362,11 +364,12 @@ test("serveGraph drops fabricated unresolved wikilink nominations", async () => 
   expect(JSON.stringify(envelope)).not.toContain("STALE_PRIVATE_CACHE_MARKER");
 });
 
-const HYBRID_DESCRIPTOR = {
+const LEGACY_HYBRID_DESCRIPTOR = {
   ...DIRECT_RETRIEVAL_DESCRIPTOR,
   id: "test.kizuki.retrieval.hybrid",
   supports: ["lexical", "vector", "hybrid"],
 } as const satisfies PortDescriptor;
+const HYBRID_DESCRIPTOR = { ...LEGACY_HYBRID_DESCRIPTOR, supports: ["lexical", "vector", "hybrid", DOCUMENT_SCOPE_CAPABILITY] } as const satisfies PortDescriptor;
 function modePort(descriptor: PortDescriptor, modes: string[], degraded: string[] = []): RetrievalPort {
   const temporary = temporaryPortContext(descriptor);
   cleanups.push(temporary.cleanup);
@@ -375,7 +378,8 @@ function modePort(descriptor: PortDescriptor, modes: string[], degraded: string[
     modes.push(request.mode);
     return { ...result(["page:person:ada"]), degraded };
   };
-  return engine;
+  return descriptor.supports.includes(DOCUMENT_SCOPE_CAPABILITY)
+    ? bindLocalSourcePort(engine, { store_id: "local:test.hybrid" }) : engine;
 }
 function selectEmbedding(vaultPath: string): void {
   writeFileSync(join(vaultPath, ".kizuki", "serve.toml"), '[ports]\nembedding = "kizuki.embedding.gguf"\n');
@@ -438,6 +442,22 @@ test("a configured vector layer is labelled unavailable when the request cannot 
   const failed = port(async () => { throw new Error("provider failure"); });
   const answer = await serveSearch({ ...f.owner(), retrieval: failed }, { query: "kettle" });
   expect(answer.data?.degraded).toContain("retrieval-vector-unavailable");
-  const scoped = await serveSearch({ ...f.owner(), retrieval: modePort(HYBRID_DESCRIPTOR, []) }, { query: "kettle", types: ["person"] });
+  const scoped = await serveSearch({ ...f.owner(), retrieval: modePort(LEGACY_HYBRID_DESCRIPTOR, []) }, { query: "kettle", types: ["person"] });
   expect(scoped.data?.degraded).toContain("retrieval-vector-unavailable");
+});
+
+
+test("legacy vector ports remain lexical until they can restrict exact authorized revisions", async () => {
+  const f = await live(); const modes: string[] = [];
+  const answer = await serveSearch({ ...f.owner(), retrieval: modePort(LEGACY_HYBRID_DESCRIPTOR, modes) }, { query: "kettle" });
+  expect(modes).toEqual(["lexical"]);
+  expect(answer.data?.degraded).toContain("retrieval-vector-unavailable");
+});
+
+test("exact document domains allow type-scoped hybrid reads without weakening the lexical floor", async () => {
+  const f = await live(); const modes: string[] = [];
+  const answer = await serveSearch({ ...f.owner(), retrieval: modePort(HYBRID_DESCRIPTOR, modes) }, { query: "teapot", types: ["person"] });
+  expect(modes).toEqual(["hybrid"]);
+  expect(answer.canon.map(row => row.page_id)).toEqual(["person:ada"]);
+  expect(answer.data?.degraded ?? []).not.toContain("retrieval-vector-unavailable");
 });

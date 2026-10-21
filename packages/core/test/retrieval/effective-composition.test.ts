@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   FTS5_RETRIEVAL_DESCRIPTOR,
+  DOCUMENT_SCOPE_CAPABILITY,
   MUTATION_FENCE_CAPABILITY,
   PortError,
   PROVENANCE_ERASURE_CAPABILITY,
@@ -26,6 +27,7 @@ describe("effective retrieval composition (#528 RI-01)", () => {
       "graph",
       PROVENANCE_ERASURE_CAPABILITY,
       MUTATION_FENCE_CAPABILITY,
+      DOCUMENT_SCOPE_CAPABILITY,
     ]);
     expect(RETRIEVAL_CAPABILITIES).not.toContain("rerank");
     expect(validateRetrievalQuery({ ...LEXICAL_QUERY, mode: "lexical" }).mode).toBe("lexical");

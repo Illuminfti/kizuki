@@ -1,3 +1,4 @@
+import { sha256Hex } from "../util/hash";
 import {
   SENSITIVITY_ORDER,
   isSensitivity,
@@ -19,6 +20,8 @@ export const RETRIEVAL_CONTRACT_MINOR = 0;
 export const MAX_RETRIEVAL_LIMIT = 100;
 /** Additive, opt-in erasure contract. Existing exact-ID methods keep v1 semantics. */
 export const PROVENANCE_ERASURE_CAPABILITY = "provenance-erasure/v1" as const;
+export const DOCUMENT_SCOPE_CAPABILITY = "document-scope/v1" as const;
+export const MAX_RETRIEVAL_DOCUMENT_SCOPE = 5_000;
 export const MUTATION_FENCE_CAPABILITY = "mutation-fence/v1" as const;
 export const RETRIEVAL_CAPABILITIES = [
   "lexical",
@@ -27,6 +30,7 @@ export const RETRIEVAL_CAPABILITIES = [
   "graph",
   PROVENANCE_ERASURE_CAPABILITY,
   MUTATION_FENCE_CAPABILITY,
+  DOCUMENT_SCOPE_CAPABILITY,
 ] as const;
 export type RetrievalCapability =
   (typeof RETRIEVAL_CAPABILITIES)[number];
@@ -60,7 +64,23 @@ export interface RetrievalDoc {
   readonly updated_at: string | null;
 }
 
+/** Exact current content and metadata admitted by Core before any engine ranking. */
+export interface RetrievalDocumentScope {
+  readonly doc_id: string;
+  readonly title_sha256: string;
+  readonly text_sha256: string;
+  readonly metadata: Omit<RetrievalDoc, "title" | "text">;
+}
+
+export function retrievalDocumentScope(doc: RetrievalDoc): RetrievalDocumentScope {
+  const { doc_id, kind, sensitivity, taint, authority, subjects, provenance, occurred_at, updated_at } = doc;
+  return { doc_id, title_sha256: sha256Hex(doc.title), text_sha256: sha256Hex(doc.text),
+    metadata: { doc_id, kind, sensitivity, taint, authority, subjects, provenance, occurred_at, updated_at } };
+}
+
 export interface RetrievalScope {
+  /** Only document-scope/v1 ports may receive this exact authorized domain. Empty means no documents. */
+  readonly documents?: readonly RetrievalDocumentScope[];
   readonly kinds?: readonly RetrievalDocKind[];
   readonly subjects?: readonly string[];
   readonly since?: string;
@@ -301,6 +321,17 @@ export function validateRetrievalQuery(value: unknown): RetrievalQuery {
     !validStrings(scope["subjects"], { max: 1_000 })
   ) {
     invalid("query.scope.subjects");
+  }
+  if (scope["documents"] !== undefined) {
+    const documents = scope["documents"];
+    if (!Array.isArray(documents) || documents.length > MAX_RETRIEVAL_DOCUMENT_SCOPE) invalid("query.scope.documents");
+    if (Buffer.byteLength(JSON.stringify(documents)) > 4 * 1024 * 1024) invalid("query.scope.documents");
+    for (const entry of documents) {
+      if (!isPlainObject(entry) || typeof entry["doc_id"] !== "string" ||
+          !/^[a-f0-9]{64}$/.test(String(entry["title_sha256"])) || !/^[a-f0-9]{64}$/.test(String(entry["text_sha256"])) ||
+          !isPlainObject(entry["metadata"]) || entry["metadata"]["doc_id"] !== entry["doc_id"]) invalid("query.scope.documents");
+      validateRetrievalDoc({ ...entry["metadata"], title: "", text: "" });
+    }
   }
   if (scope["since"] !== undefined && !isRfc3339(scope["since"])) {
     invalid("query.scope.since");
