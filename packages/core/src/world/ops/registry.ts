@@ -1,3 +1,4 @@
+import { sliceOp } from "./slice";
 import { personOp } from "./person";
 import { findPeopleOp } from "./find-people";
 import { historyOp } from "./history";
@@ -87,6 +88,7 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   // slot: OUTCOME
   // slot: DIFF
   // slot: SLICE
+  sliceOp,
   // slot: ATTN
   // slot: FCST
   // slot: ATLAS

@@ -906,6 +906,28 @@ function openPinnedWorld(f: ReturnType<typeof fixture>) {
     f.evaluate(`state.view='world'; state.worldKind='concepts'; state.worldRef={kind:'object',token:'A'.repeat(43)};
       state.world={schema:'kizuki.world-view/v1',operation:'concept',result:{status:'current',view:{kind:'view',token:'V'.repeat(42)+'A'},validUntil:'2030-01-01T00:15:00.000Z',data:{schema:'kizuki.concept-card/v1',concept:{ref:state.worldRef,labels:[{text:'Synthetic concept'}]},definitions:[],relations:[],coverage:{status:'complete_for_query',gaps:[]}}}}; render();`);
 }
+test('World prepares a task slice, refreshes its retained view and clears it on privacy invalidation', async () => {
+    const f = fixture(); openPinnedWorld(f);
+    const field = f.main.querySelector('#world-task')!;
+    field.value = 'Prepare a synthetic review';
+    const form = f.main.querySelector('#world-slice-form')!;
+    const work = form.fire('submit', { preventDefault() {} }); await tick();
+    expect(f.requests[0]!.payload).toMatchObject({ operation: 'slice', task: 'Prepare a synthetic review', budgetTokens: 2000 });
+    const slice = { schema: 'kizuki.world-slice/v1', task: 'Prepare a synthetic review', budgetTokens: 2000, tokens: 500,
+      tokenizer: 'js-tiktoken@1.0.21/cl100k_base', constraints: [{ relation: { predicate: 'concept.counterexample', polarity: 'negative', perspective: { mode: 'reported' }, object: { kind: 'literal', value: 'Synthetic qualification preserved' }, assessments: [] } }],
+      detail: [], providers: [{ kind: 'concept', status: 'included' }], complete: true, truncated: false, coverage: { status: 'complete_for_query', gaps: [] } };
+    f.reply('world_view', { schema: 'kizuki.world-view/v1', operation: 'slice', result: { status: 'current', view: { kind: 'view', token: 'V'.repeat(42) + 'A' }, data: slice } });
+    await work; await tick();
+    expect(f.main.textContent).toContain('Synthetic qualification preserved');
+    expect(f.main.textContent).toContain('Reported statement');
+    const refresh = findAction(f.main, 'Refresh task view').fire('click'); await tick();
+    expect(f.requests[0]!.payload).toMatchObject({ operation: 'slice', task: slice.task, priorView: { kind: 'view', token: 'V'.repeat(42) + 'A' } });
+    f.reply('world_view', { schema: 'kizuki.world-view/v1', operation: 'slice', result: { status: 'unchanged', view: { kind: 'view', token: 'V'.repeat(42) + 'A' } } });
+    await refresh; expect(f.main.textContent).toContain('Synthetic qualification preserved');
+    f.evaluate('invalidatePrivateView()');
+    expect(f.main.textContent).not.toContain('Synthetic qualification preserved');
+    expect(f.storageWrites).toHaveLength(0);
+});
 test('World keeps cached data only after unchanged and drops it when the baseline is invalid', async () => {
     const f = fixture(); openPinnedWorld(f);
     const checked = f.evaluate<Promise<void>>('loadWorld()');

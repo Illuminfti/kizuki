@@ -2,6 +2,7 @@ import { validatePersonCard, type PersonCard, type PersonPerspective } from "../
 import { sealCard, type KindAssembler } from "./kit";
 export const personAssembler: KindAssembler = {
   kind: "person",
+  sliceConstraint: relation => ["person.role"].includes(relation.predicate),
   assemble({ node, own, relations, summary, coverage }) {
     const grouped = new Map<string, PersonPerspective>();
     for (const relation of relations) {

@@ -37,6 +37,7 @@ function meaning(value: any): any {
 function cliArgs(name: VerificationOperation, input: Record<string, any>): string[] {
   switch (name) {
     case "concept": case "situation": case "question": case "person": return ["--ref", input[name].token];
+    case "slice": return ["--task", input.task, "--budget-tokens", String(input.budgetTokens), "--kinds", input.kinds.join(",")];
     case "history": return ["--ref", input.concept.token];
     case "find_concepts": case "find_situations": case "find_questions": case "find_people": return ["--label", input.label];
     case "share": return ["--of-operation", input.of.operation, "--ref", input.of.concept.token];
@@ -56,7 +57,7 @@ const TEXT: Record<VerificationOperation, readonly string[]> = {
   question: ["When should I update a belief?", "Status: open; understanding: unknown", "Coverage:"],
   find_questions: ["When should I update a belief?"], frontier: ["Coverage:"],
   person: ["Ada", "Person:", "Reviewer", "holder=unattributed speaker=unattributed mode=asserted", "Coverage:"],
-  find_people: ["Ada"],
+  find_people: ["Ada"], slice: ["Task: Resume the launch", "Coverage:"],
 };
 
 test("every world operation agrees through Core, CLI text and JSON, stdio MCP, HTTP and App", async () => {
@@ -93,7 +94,8 @@ test("every world operation agrees through Core, CLI text and JSON, stdio MCP, H
         expect(meaning(app.data.data), `${name}: App`).toEqual(meaning(expected.data));
         expect(app.data.quoted, name).toEqual(expected.quoted);
       } else expect(meaning(app.data), `${name}: App`).toEqual(meaning(expected.data));
-      const args = ["--vault", scene.vaultPath, "world", "--operation", name, ...cliArgs(name, input)];
+      const options = cliArgs(name, input);
+      const args = ["--vault", scene.vaultPath, "world", "--operation", name, ...options.filter((_, i) => i % 2 === 0).map((key, i) => `${key}=${options[i * 2 + 1]}`)];
       const json = h.runCli(env, ...args, "--json");
       expect(json.exitCode, `${name}: ${json.stderr}`).toBe(0);
       const envelope = JSON.parse(json.stdout).data;

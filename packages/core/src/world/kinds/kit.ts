@@ -41,6 +41,8 @@ export interface KindAssembler {
   /** The `WorldKindSpec.id` this assembler serves. */
   readonly kind: string;
   assemble(input: CardInput): AssembledCard;
+  /** Classify complete projected relations for task slices; absent means no provider. */
+  readonly sliceConstraint?: (relation: Relation) => boolean;
 }
 
 /**

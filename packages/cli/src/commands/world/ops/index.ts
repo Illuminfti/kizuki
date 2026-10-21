@@ -1,3 +1,4 @@
+import { sliceCli } from "./slice";
 import { personCli, findPeopleCli } from "./person";
 import { historyCli } from "./history";
 import { conceptCli } from "./concept";
@@ -33,6 +34,7 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   // slot: OUTCOME
   // slot: DIFF
   // slot: SLICE
+  { name: "slice", cli: sliceCli },
   // slot: ATTN
   // slot: FCST
   // slot: ATLAS

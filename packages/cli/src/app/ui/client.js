@@ -814,6 +814,8 @@ function renderWorld() {
   const section = el('section', { 'aria-busy': state.worldLoading ? 'true' : 'false' }, heading('Your world.', 'Ideas and ongoing situations, connected to the information you save.'), el('div', { class: 'world-tabs', role: 'group', 'aria-label': 'World type' }, button('Concepts', () => choose('concepts'), state.worldKind === 'concepts' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'concepts' }), button('Situations', () => choose('situations'), state.worldKind === 'situations' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'situations' })), form, el('p', { class: 'search-hint' }, 'Kizuki uses your configured model to organise sources you allow it to read. You can always search saved sources without a model.'));
   const resumeField = el('input', { type: 'text', placeholder: 'Resume handle', 'aria-label': 'Resume handle', maxlength: '43', autocomplete: 'off' });
   section.append(el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); loadWorld(null, { operation: 'resume', handle: resumeField.value.trim() }); } }, resumeField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Resume')));
+  const taskField = el('input', { id: 'world-task', type: 'text', placeholder: 'What are you working on?', 'aria-label': 'Task for world slice', maxlength: '512', autocomplete: 'off' });
+  section.append(el('form', { id: 'world-slice-form', class: 'search-form', onsubmit: event => { event.preventDefault(); loadWorld(null, { operation: 'slice', task: taskField.value, budgetTokens: 2000 }); } }, taskField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Prepare task view')));
   const retry = () => loadWorld();
   const noMatches = () => empty(`No ${kind} found.`, state.worldQuery ? 'Try another name, or search your saved sources.' : 'Connect a source and set up a model to start building your world. If you have already done this, check processing in Activity.', button('Search memory', () => navigate('memory'), 'primary'));
   if (state.worldRef) section.append(button(`Back to ${kind}`, () => loadWorld(null), 'quiet'));
@@ -825,6 +827,15 @@ function renderWorld() {
     const result = state.world.result || state.world;
     if (result.status === 'unavailable') section.append(empty('World view is not available here.', result.reason === 'history' ? 'Historical world snapshots are not available yet.' : 'Kizuki cannot read this world view right now.', button('Try again', retry, 'primary')));
     else if (result.status === 'new_view_required') section.append(empty('Read a fresh view.', 'This view or resume handle can no longer be used.', button('Browse again', () => loadWorld(null), 'primary')));
+    else if (result.data?.schema === 'kizuki.world-slice/v1') {
+      const slice = result.data;
+      section.append(el('article', { class: 'result-item' }, el('h2', {}, slice.task || 'Task view'), worldCoverage(slice.coverage),
+        ...slice.providers.filter(provider => provider.status === 'unavailable').map(provider => el('p', {}, `${provider.kind}: unavailable (${provider.reason === 'extraction_off' ? 'extraction is not enabled' : 'provider is not available'}).`)),
+        el('h3', {}, 'Constraints'), ...slice.constraints.map(item => worldRelation(item.relation)),
+        el('h3', {}, 'Supporting detail'), ...slice.detail.map(item => worldRelation(item.relation)),
+        slice.truncated ? el('p', {}, 'Some context could not fit. Read the underlying items before relying on this view.') : null,
+        button('Refresh task view', () => loadWorld(null, { operation: 'slice', task: slice.task, budgetTokens: slice.budgetTokens, kinds: slice.providers.map(provider => provider.kind), ...(result.view?.kind === 'view' ? { priorView: result.view } : {}) }))));
+    }
     else if (result.data?.schema === 'kizuki.resume-handle/v1') section.append(el('article', { class: 'result-item' }, el('h2', {}, 'Resume in another client'), el('code', {}, result.data.handle), el('p', {}, `Expires ${result.data.expiresAt}. The other client reads under its own access.`), button('Back to item', retry, 'quiet')));
     else {
       if (result.status === 'unchanged') section.append(el('p', { role: 'status' }, 'No visible change since your previous read.'));

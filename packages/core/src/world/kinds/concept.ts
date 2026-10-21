@@ -6,6 +6,7 @@ import { sealCard, type KindAssembler } from "./kit";
 
 export const conceptAssembler: KindAssembler = {
   kind: "concept",
+  sliceConstraint: relation => ["concept.requires", "concept.counterexample", "concept.distinguished_from", "learning.assistance"].includes(relation.predicate),
   assemble({ node, own, learning, summary, coverage }) {
     const card: ConceptCard = {
       schema: "kizuki.concept-card/v1",
