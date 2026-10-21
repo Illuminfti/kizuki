@@ -73,7 +73,9 @@ export function collectSituationDetails(frame: ReadFrame, cluster: Cluster, body
     const items = rows(data,token), relations = items.map(c => c.relation);
     const by = (predicate: string) => relations.filter(r => r.predicate === predicate);
     const parties = (predicate: string) => by(predicate).filter(r => r.object.kind === "node" && read(r.object.ref.token,"person") !== null);
-    const statuses = by("commitment.status").filter(isAsserted);
+    const statuses = by("commitment.status").filter(r => isAsserted(r) ||
+      (r.polarity === "positive" && ["reported","quoted"].includes(r.perspective.mode)
+        && r.object.kind === "vocabulary" && ["commitment/done","commitment/claimed_done"].includes(r.object.id)));
     const authoritativeDone = items.some(c => c.relation.predicate === "commitment.status" && isAsserted(c.relation)
       && c.relation.object.kind === "vocabulary" && c.relation.object.id === "commitment/done"
       && c.eligible.supports.some(s => s.row.support_origin === "native_owner" && s.admission.epistemicKind === "owner_assertion"

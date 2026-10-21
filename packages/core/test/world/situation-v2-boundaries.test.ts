@@ -16,6 +16,15 @@ import { cardFixture } from "./card-fixture";
 const node = (f: Awaited<ReturnType<typeof cardFixture>>, id: string) => ({kind:"subject" as const,ref:f.ref(id)});
 const dueValues = (f: Awaited<ReturnType<typeof situationV2Fixture>>) => f.readSituation().commitments.find(c=>c.label?.object.kind === "literal" && c.label.object.value === "Review draft")!.due.map(r=>r.object);
 
+test("a quoted or reported completion is attributed claimed_done, never verified completion",async()=>{
+ const f=await situationV2Fixture();try{
+  await f.write("commitment.status",vocabulary("commitment/done"),{subject:"commitment:notes",mode:"reported",holder:"person:ada"});
+  const card=f.readSituation();
+  expect(card.commitments.find(c=>c.label?.object.kind==="literal"&&c.label.object.value==="Prepare notes")?.status).toBe("claimed_done");
+  expect(card.uncertainty).toEqual(expect.arrayContaining([expect.objectContaining({predicate:"commitment.status",perspective:expect.objectContaining({mode:"reported"})})]));
+ }finally{f.dispose();}
+},120_000);
+
 test("exact deadlines use complete source evidence without requiring optional summary text",async()=>{
  const f=await situationV2Fixture();try{
   const read=(at:string)=>f.readSituation(f.ctx,{valid:{kind:"at",at}}).commitments.find(c=>c.label?.object.kind==="literal"&&c.label.object.value==="Review draft")!;
