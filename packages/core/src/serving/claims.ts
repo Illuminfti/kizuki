@@ -6,7 +6,7 @@ import type { AuditDenial, AuditItem, Grant, Sensitivity, Servable } from "../ag
 import type { IdentityLink } from "../claims/identity";
 import { getClaim } from "../claims/store";
 import { classesOfEvents } from "../ledger/event-classes";
-import { claimVisibilitySql } from "../claims/visibility";
+import { claimReadSql } from "../claims/read-scope";
 import type { Claim } from "../contracts/proposal";
 import { isAuthorityTier } from "../contracts/proposal";
 import { isRfc3339 } from "../util/time";
@@ -152,6 +152,7 @@ export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadS
     return item === undefined ? [] : [item];
   }
 
-  return { canRead, canReadAlias, invalidAlias, denied, auditClaim, auditGroup, auditAlias,
-    visibility: { ...claimVisibilitySql(db, grant, sourceScope.owner === true), canRead } };
+  const scope = { grant, source: sourceScope };
+  return { scope, canRead, canReadAlias, invalidAlias, denied, auditClaim, auditGroup, auditAlias,
+    visibility: { ...claimReadSql(db, scope), canRead } };
 }

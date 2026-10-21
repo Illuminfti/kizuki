@@ -79,7 +79,11 @@ export function serveTimeline(
 
     const { quoted, withheld, seen } = collectAuthorizedTimeline(ctx, base, rows);
 
-    const auditIds = timelineAuditCandidates(ctx.db, { ...base, limit: rows });
+    // A scoped read never scans hidden identities merely to audit their denial.
+    // The owner retains diagnostics over otherwise unservable ledger rows.
+    const auditIds = ctx.principal.kind === "owner"
+      ? timelineAuditCandidates(ctx.db, { ...base, limit: rows })
+      : [];
     const auditFacts = readServableEvents(ctx.db, auditIds);
     for (const id of auditIds) {
       if (seen.has(id)) continue;

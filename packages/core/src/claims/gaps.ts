@@ -1,9 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { compareRfc3339 } from "../agents/time";
-import type { Claim } from "../contracts/proposal";
 import { tableExists } from "../ledger/schema";
-import { isSingleValuedPredicate } from "./predicates";
-import { listClaims } from "./store";
+import { readClaimGroups, type ClaimGroupOptions } from "./read-groups";
 
 export interface ValidityGap {
   readonly claim_key: string;
@@ -13,44 +11,21 @@ export interface ValidityGap {
 }
 
 /**
- * Holes in a single-valued claim_key's validity coverage. Overlapping
+ * Holes in a single-valued claim_key's readable validity coverage. Overlapping
  * live peers are conflicts (listLiveConflicts); a gap is the inverse.
  */
 export function listValidityGaps(
   db: Database,
-  opts: { subject?: string; limit?: number; canRead?: (claim: Claim) => boolean } = {},
+  opts: ClaimGroupOptions & { limit?: number } = {},
 ): ValidityGap[] {
   if (!tableExists(db, "claims")) return [];
   const bound =
     Number.isSafeInteger(opts.limit) && (opts.limit ?? 0) > 0
       ? (opts.limit as number)
       : 32;
-  const candidates = listClaims(db, {
-    keyed: true,
-    ...(opts.subject === undefined ? {} : { subject: opts.subject }),
-    limit: 401,
-  });
-  // A partial history cannot prove an absence: later rows may fill the hole.
-  if (candidates.length > 400) return [];
-  const rows = candidates.filter(
-    (claim) =>
-      claim.claim_key !== null &&
-      claim.predicate !== null &&
-      isSingleValuedPredicate(claim.predicate) &&
-      (claim.status === "live" || claim.status === "superseded"),
-  );
-  const byKey = new Map<string, typeof rows>();
-  for (const claim of rows) {
-    if (claim.claim_key === null) continue;
-    const group = byKey.get(claim.claim_key) ?? [];
-    group.push(claim);
-    byKey.set(claim.claim_key, group);
-  }
   const gaps: ValidityGap[] = [];
-  for (const [claim_key, group] of byKey) {
-    // Removing hidden intervals would invent a gap. Withhold the whole
-    // derived assertion unless every interval used to compute it is visible.
-    if (opts.canRead !== undefined && !group.every(opts.canRead)) continue;
+  for (const group of readClaimGroups(db, opts, "gaps")) {
+    const claim_key = group[0]!.claim_key!;
     const ordered = [...group].sort((left, right) => {
       const recency = compareRfc3339(
         left.valid_from,
@@ -65,21 +40,26 @@ export function listValidityGaps(
           ? 1
           : 0;
     });
-    for (let index = 0; index < ordered.length - 1; index += 1) {
-      const current = ordered[index];
-      const next = ordered[index + 1];
-      if (current === undefined || next === undefined) continue;
-      if (current.valid_to === null) continue;
-      if (compareRfc3339(current.valid_to, "valid_to", next.valid_from, "valid_from") < 0) {
-        gaps.push({
+    let coveredUntil = ordered[0]!.valid_to;
+    const keyGaps: ValidityGap[] = [];
+    for (const next of ordered.slice(1)) {
+      if (coveredUntil === null) break;
+      if (compareRfc3339(coveredUntil, "valid_to", next.valid_from, "valid_from") < 0) {
+        keyGaps.push({
           claim_key,
-          predicate: current.predicate,
-          after: current.valid_to,
+          predicate: next.predicate,
+          after: coveredUntil,
           before: next.valid_from,
         });
-        if (gaps.length >= bound) return gaps;
       }
+      if (
+        next.valid_to === null ||
+        compareRfc3339(next.valid_to, "valid_to", coveredUntil, "valid_to") > 0
+      )
+        coveredUntil = next.valid_to;
     }
+    gaps.push(...keyGaps.reverse().slice(0, bound - gaps.length));
+    if (gaps.length >= bound) return gaps;
   }
   return gaps;
 }
