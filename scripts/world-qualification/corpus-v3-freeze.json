@@ -1,0 +1,579 @@
+{
+  "schema": "kizuki.world-qualification-corpus-freeze/v1",
+  "frozen_at": "2026-10-21T09:51:35.147Z",
+  "status": "authored_pre_observation_not_execution_approved",
+  "model_observations_at_freeze": 0,
+  "version": "world-kinds-20261021-v3",
+  "corpus_sha256": "2f6dd261c6e14f1ef45764cf4e4bf64496909e83eb3b8b233d0b02686856e084",
+  "corpus_file_sha256": "7cf94958815f75b892652849a4e824cc8e70ff0771e3614d5879f2bb5d7278ba",
+  "semantic_contract_commit": "046268cc9a3db8b5364be30500ea85ccc30b14f6",
+  "runner_base_commit": "89e69818d9b81ce794c6be33d58e2780afd4163c",
+  "authoring_registry_sha256": "9aec3c141363eaad29042928d41102522ab4f7a86363f7d03a47dd8461052803",
+  "authoring_prompt_file_sha256": "fed7fb2fc9d683fabe6870cafe8f1050397390729cf8b7a3011c338ed49a9c4a",
+  "groups": [
+    {
+      "kind": "concept",
+      "count": 10,
+      "families": [
+        "positive",
+        "abstention",
+        "perspective",
+        "time"
+      ]
+    },
+    {
+      "kind": "situation",
+      "count": 6,
+      "families": [
+        "positive",
+        "abstention",
+        "perspective",
+        "time"
+      ]
+    },
+    {
+      "kind": "question",
+      "count": 6,
+      "families": [
+        "positive",
+        "abstention",
+        "perspective",
+        "time"
+      ]
+    },
+    {
+      "kind": "person",
+      "count": 7,
+      "families": [
+        "positive",
+        "abstention",
+        "perspective",
+        "time"
+      ]
+    },
+    {
+      "kind": "skill",
+      "count": 6,
+      "families": [
+        "positive",
+        "abstention",
+        "perspective",
+        "time"
+      ]
+    },
+    {
+      "kind": "framework",
+      "count": 6,
+      "families": [
+        "positive",
+        "abstention",
+        "perspective",
+        "time"
+      ]
+    },
+    {
+      "kind": "procedure",
+      "count": 7,
+      "families": [
+        "positive",
+        "abstention",
+        "perspective",
+        "time"
+      ]
+    },
+    {
+      "kind": "commitment",
+      "count": 8,
+      "families": [
+        "positive",
+        "abstention",
+        "perspective",
+        "time"
+      ]
+    },
+    {
+      "kind": "decision",
+      "count": 6,
+      "families": [
+        "positive",
+        "abstention",
+        "perspective",
+        "time"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "concept-catalogue-detail-v3",
+      "kind": "concept",
+      "family": "positive",
+      "case_sha256": "b906cc6ae2afc256e2f89a3ca12c796d552e63a941a45a6227968895295e5ad2",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "concept-opposed-speakers-v3",
+      "kind": "concept",
+      "family": "perspective",
+      "case_sha256": "e35168309059cb54bfd7983e69b98a50238f634801f7539b59d7279d8abe2833",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "concept-dated-detail-v3",
+      "kind": "concept",
+      "family": "time",
+      "case_sha256": "8f2e9ea861da5914ae212a5d2f4f9c3af3b65bf3241a1da6f79c2bcda2344fd0",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "concept-instruction-without-facts-v3",
+      "kind": "concept",
+      "family": "abstention",
+      "case_sha256": "3464fd11e27084accf09a7e4e77b74c831f8c461c5a711b65438a004c18c1594",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "situation-catalogue-detail-v3",
+      "kind": "situation",
+      "family": "positive",
+      "case_sha256": "9c20c27077dd83f2065719637784dc11f95ad33795653cf14a970f381beacf1e",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "situation-opposed-speakers-v3",
+      "kind": "situation",
+      "family": "perspective",
+      "case_sha256": "2f882e699ba0bc5bf38a8441e818afeb4ee9e6589e224f28c936299de597868b",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "situation-dated-detail-v3",
+      "kind": "situation",
+      "family": "time",
+      "case_sha256": "1fc661d95d5a5073b2b4f4311714419546f8735f05e2ac9d96d442fda9698bbf",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "situation-instruction-without-facts-v3",
+      "kind": "situation",
+      "family": "abstention",
+      "case_sha256": "9dd3ca74ebebbf9ffeb134ca9f80ad3e996702186566180990579a318b2bce1a",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "question-catalogue-detail-v3",
+      "kind": "question",
+      "family": "positive",
+      "case_sha256": "908e02afa1d8a61471a5a03376dec8e2079a95e42fe4c632a66d63d35f9d6b6e",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "question-opposed-speakers-v3",
+      "kind": "question",
+      "family": "perspective",
+      "case_sha256": "8cc74f61a2a8e5acc0084c99ab333f9b22e7496f0c75a2e21a00bfcf57a217a6",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "question-dated-detail-v3",
+      "kind": "question",
+      "family": "time",
+      "case_sha256": "45ce9e5d354e861450501a8c92de8522f1395e5cd8b3329c4d94042f698929dc",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "question-instruction-without-facts-v3",
+      "kind": "question",
+      "family": "abstention",
+      "case_sha256": "31e64cd7952b937b2bb043bae8a36caf96d4429c7b5c30a46040949f428b718c",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "person-catalogue-detail-v3",
+      "kind": "person",
+      "family": "positive",
+      "case_sha256": "ceca36fc3eb1779a59d4529eb0c047735bb10b33e392f3e76599901facdeefc4",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "person-opposed-speakers-v3",
+      "kind": "person",
+      "family": "perspective",
+      "case_sha256": "ce666b324c454d98d8d11db9c957b3197178678fadebe16d36e6727f91c5c670",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "person-instruction-without-facts-v3",
+      "kind": "person",
+      "family": "abstention",
+      "case_sha256": "fffcd95484a7abb8a610bde9474646d310890c05d1c7778696e0c51fe42f458a",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "skill-catalogue-detail-v3",
+      "kind": "skill",
+      "family": "positive",
+      "case_sha256": "d5150c1beb3a1aa75f88d116f05c936ace660e78a65397eb499cf8e53a9263d7",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "skill-opposed-speakers-v3",
+      "kind": "skill",
+      "family": "perspective",
+      "case_sha256": "9d2be57ca9f9c53d2032bea6de63bce1b30d14656a363a5c11050a72d48fc495",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "skill-dated-detail-v3",
+      "kind": "skill",
+      "family": "time",
+      "case_sha256": "9f39f4605078faa2c2be6c7f650bfe40b60e63524fdfee71c415e67ad2ed45c7",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "skill-instruction-without-facts-v3",
+      "kind": "skill",
+      "family": "abstention",
+      "case_sha256": "bb00ecdecd4ef7a96cd8aae6789398df1df7a896a5224305cd8bbc6987e8bed7",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "framework-catalogue-detail-v3",
+      "kind": "framework",
+      "family": "positive",
+      "case_sha256": "8c1da51a19afa3ce207ae27c8696a412020124bb4c8a9c919ad10a26a2eaffe1",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "framework-opposed-speakers-v3",
+      "kind": "framework",
+      "family": "perspective",
+      "case_sha256": "0be3956732746677e539c364e4d32ed2cca8795ac2994aa4271a012beb8f107c",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "framework-dated-detail-v3",
+      "kind": "framework",
+      "family": "time",
+      "case_sha256": "c007dd684618724955bd3b8765e73430b2a6acc291b2608d2cc5d01fd7b15eaa",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "framework-instruction-without-facts-v3",
+      "kind": "framework",
+      "family": "abstention",
+      "case_sha256": "04d90fd19194db883100465d554bcf9200d77663f6725e05f57c87514d91aecb",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "procedure-catalogue-detail-v3",
+      "kind": "procedure",
+      "family": "positive",
+      "case_sha256": "edce1a6847034d25bcb900a8fb4cf670e6c818802eaeff198073c7ac4df3d443",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "procedure-opposed-speakers-v3",
+      "kind": "procedure",
+      "family": "perspective",
+      "case_sha256": "5d18492e9e74462079ab9a445b3dd5da22a4e2e28cf417577a96e6455d9eaed2",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "procedure-dated-detail-v3",
+      "kind": "procedure",
+      "family": "time",
+      "case_sha256": "6f6d5305bb3914c4d7fac2d3fe890379a90bf706f4e4f277838673e24a93bd39",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "procedure-instruction-without-facts-v3",
+      "kind": "procedure",
+      "family": "abstention",
+      "case_sha256": "5930e66644a1e507540832bab03685b2066acb927a23d313369b4ba1e57daa69",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "commitment-catalogue-detail-v3",
+      "kind": "commitment",
+      "family": "positive",
+      "case_sha256": "50a8f8f89a2ff69e70ac0e6231d2e70f474fa73698fbcb28ed86160a4b27a7a0",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "commitment-opposed-speakers-v3",
+      "kind": "commitment",
+      "family": "perspective",
+      "case_sha256": "e1a54890a9ae86c11b072a75acf2cb0bed0bce625212c9e522dc96a2623a8d1a",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "commitment-dated-detail-v3",
+      "kind": "commitment",
+      "family": "time",
+      "case_sha256": "0ad6ccbf7d91ea388f8fd8b0b8413a82ca8df6613064a50f5386c940b9065305",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "commitment-instruction-without-facts-v3",
+      "kind": "commitment",
+      "family": "abstention",
+      "case_sha256": "5c3c1ecf99b96fb204e12c0c406384dc237fc2de42f017840d9f1f401527e0ed",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "decision-catalogue-detail-v3",
+      "kind": "decision",
+      "family": "positive",
+      "case_sha256": "8de8824e25ea523bb60d9a58ef451889801ff45851a9688f23ef2530c42c6311",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "decision-opposed-speakers-v3",
+      "kind": "decision",
+      "family": "perspective",
+      "case_sha256": "68f50eb1b8be6fac5eddc78763506a8becc5b997ddc2f677cf0949234521f9b5",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "decision-dated-detail-v3",
+      "kind": "decision",
+      "family": "time",
+      "case_sha256": "3d110637cab959939065faba65d0273c369fbf4e53f16aa9408e2a5f5a5a8016",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "decision-instruction-without-facts-v3",
+      "kind": "decision",
+      "family": "abstention",
+      "case_sha256": "9f6b6f9eacc4ccca9a7db067a0fca8a28b8585a69094c1cd965a2fb127d1e898",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "concept-identity-independent-witness-v3",
+      "kind": "concept",
+      "family": "positive",
+      "case_sha256": "72fcba1d296f8697f51af0c0a2c96d328bd2ae349d23eec2494e95a64e03dc24",
+      "prompt_sha256": "2d3fad1d88300caac21273c8c50d4be2fadee3d5bae660b26476c7a6d9f2563d"
+    },
+    {
+      "id": "concept-identity-retired-label-v3",
+      "kind": "concept",
+      "family": "positive",
+      "case_sha256": "005f4676d376e5dd6694ab6e936e16c1f75725d9cf024894ec66f769b64425d2",
+      "prompt_sha256": "2d3fad1d88300caac21273c8c50d4be2fadee3d5bae660b26476c7a6d9f2563d"
+    },
+    {
+      "id": "concept-identity-explicit-distinction-v3",
+      "kind": "concept",
+      "family": "positive",
+      "case_sha256": "6d78c753ba67eed9c057223da44c8266a1b4c67ff57e09b95b6db35b3ab86297",
+      "prompt_sha256": "2d3fad1d88300caac21273c8c50d4be2fadee3d5bae660b26476c7a6d9f2563d"
+    },
+    {
+      "id": "concept-identity-homonym-without-link-v3",
+      "kind": "concept",
+      "family": "abstention",
+      "case_sha256": "c324fcaa6262aeacd3df8443588e68263befdf39daa30d56d6e3a02e865c0c49",
+      "prompt_sha256": "2d3fad1d88300caac21273c8c50d4be2fadee3d5bae660b26476c7a6d9f2563d"
+    },
+    {
+      "id": "concept-identity-missing-counterpart-proof-v3",
+      "kind": "concept",
+      "family": "abstention",
+      "case_sha256": "c67fc82882d303fa664a08f46f0b6ecae073433a641b3933f84c89368abfc6d8",
+      "prompt_sha256": "2d3fad1d88300caac21273c8c50d4be2fadee3d5bae660b26476c7a6d9f2563d"
+    },
+    {
+      "id": "concept-identity-list-not-witness-v3",
+      "kind": "concept",
+      "family": "abstention",
+      "case_sha256": "7722c7fad5fa5c2fa4e68bb7de78f4236cd2646e756c9703b3e55098ad7c7623",
+      "prompt_sha256": "2d3fad1d88300caac21273c8c50d4be2fadee3d5bae660b26476c7a6d9f2563d"
+    },
+    {
+      "id": "person-separate-structured-homonyms-v3",
+      "kind": "person",
+      "family": "positive",
+      "case_sha256": "9bd79c90255b479788935c9f781bab62e13a933029a8869e5d12e1e9fd29f662",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "person-unstructured-attribution-no-person-v3",
+      "kind": "person",
+      "family": "abstention",
+      "case_sha256": "7e0304ce9933a1fab33cd5c7829e1f0ccf1abf740d803889c40291f45f9da22b",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "person-isolated-attention-hypothesis-v3",
+      "kind": "person",
+      "family": "positive",
+      "case_sha256": "89b3f5e328b15c5a6a882ef4e9a4dddaed908df2e31c1ffb6e59661309b3574a",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "person-dated-structured-relationship-v3",
+      "kind": "person",
+      "family": "time",
+      "case_sha256": "32dcc733d6d8800fe37f38705ba5996785ce6a0d6ecbf8e9ff3fa85897f76bf0",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "situation-typed-dependency-network-v3",
+      "kind": "situation",
+      "family": "positive",
+      "case_sha256": "f09107d5ef6645bb47acc5f05476e2806981e1820f847a57734a976b7e33f459",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "situation-unsupported-dependency-refusal-v3",
+      "kind": "situation",
+      "family": "abstention",
+      "case_sha256": "b7cc1d784d61cf5ae594c546c28e0fc82f58d69c8395e3ac90739e2bdf1496a9",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "question-frontier-and-prerequisite-v3",
+      "kind": "question",
+      "family": "positive",
+      "case_sha256": "51710ac76ac8631262d2d8b3558905cf5c2461053ab4e5dde44a0d549d6c5ab7",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "question-candidate-not-resolution-v3",
+      "kind": "question",
+      "family": "positive",
+      "case_sha256": "93b18664b6dd0babb47adcacb0fb0081ab63de9d5a4d291dd6125db481d27e75",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "skill-observed-evidence-chain-v3",
+      "kind": "skill",
+      "family": "positive",
+      "case_sha256": "2733cf6340023f0fc264b3220ef4f4f9a9fded21f732d5f535405db7cee7dbb1",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "skill-exposure-not-performance-v3",
+      "kind": "skill",
+      "family": "abstention",
+      "case_sha256": "a75aed202d1c41e31a23221420290b52675b9f568243ff4d23a97bc3832b817b",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "framework-structured-method-v3",
+      "kind": "framework",
+      "family": "positive",
+      "case_sha256": "6470e7539f1b8c86f8d52fe04f9c5b2c69aa8fdcd34dc608e68e98d67339bc49",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "framework-trial-not-adoption-v3",
+      "kind": "framework",
+      "family": "abstention",
+      "case_sha256": "b2385398e204e3098b102adefa0dfb1d465a5247af4a7a68e6fe82ae911a1708",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "procedure-conditions-and-counterexample-v3",
+      "kind": "procedure",
+      "family": "positive",
+      "case_sha256": "9fc8210d9eba613910472acc6e5fa54bb3f12fcc76b495e4e026144d0d47239c",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "procedure-validation-standard-example-v3",
+      "kind": "procedure",
+      "family": "positive",
+      "case_sha256": "23f58d6d4e6d65fa76a45b071153282e02c6a673c18798e4b4ec77910b63e5e4",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "procedure-relative-validation-no-date-v3",
+      "kind": "procedure",
+      "family": "abstention",
+      "case_sha256": "1cb1f083f07581486307a5b1930c3d3bd00ec18cb8297c895beaa0177217986b",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "commitment-structured-parties-and-output-v3",
+      "kind": "commitment",
+      "family": "positive",
+      "case_sha256": "ef69ccd547c5d2ad57d7613935f9b7b69f3eeb3fcfddf00ff99226972ede0586",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "commitment-relative-due-no-invention-v3",
+      "kind": "commitment",
+      "family": "abstention",
+      "case_sha256": "0da32e228aba549c8167862091b5edbe70ecab38722fa3d4cba8fcc0e050d6a0",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "commitment-disputed-deadlines-v3",
+      "kind": "commitment",
+      "family": "perspective",
+      "case_sha256": "decc7d958704ff911d50a01995b476008e97dcc107fb94b4f1445d49986411d7",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "commitment-claimed-not-observed-done-v3",
+      "kind": "commitment",
+      "family": "abstention",
+      "case_sha256": "7d4eb4daedda28a741e43beb5948a5b951e3e976dc488eddae9953c3678ee3c8",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "decision-suggestion-not-choice-v3",
+      "kind": "decision",
+      "family": "abstention",
+      "case_sha256": "dae74d01845ccde2f45dcfbfaa118d053acb9f27ade032f13792d64450d4ef74",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    },
+    {
+      "id": "decision-reversal-validity-boundary-v3",
+      "kind": "decision",
+      "family": "time",
+      "case_sha256": "25ce62f518584a92061dc48d22d3046debb0a50c4ef70b0473d79c19f977d158",
+      "prompt_sha256": "962c0d9af8e18a4b881ab58b0d18569cd980da8c978994b1163eb071312d643e"
+    }
+  ],
+  "first_tranche": {
+    "kinds": [
+      "concept",
+      "person"
+    ],
+    "case_ids": [
+      "concept-catalogue-detail-v3",
+      "concept-opposed-speakers-v3",
+      "concept-dated-detail-v3",
+      "concept-instruction-without-facts-v3",
+      "person-catalogue-detail-v3",
+      "person-opposed-speakers-v3",
+      "person-instruction-without-facts-v3",
+      "concept-identity-independent-witness-v3",
+      "concept-identity-retired-label-v3",
+      "concept-identity-explicit-distinction-v3",
+      "concept-identity-homonym-without-link-v3",
+      "concept-identity-missing-counterpart-proof-v3",
+      "concept-identity-list-not-witness-v3",
+      "person-separate-structured-homonyms-v3",
+      "person-unstructured-attribution-no-person-v3",
+      "person-isolated-attention-hypothesis-v3",
+      "person-dated-structured-relationship-v3"
+    ],
+    "calls": 17,
+    "remaining_not_run": 45,
+    "retries": 0,
+    "max_new_calls_today": 20,
+    "production_calls_reserved": 8,
+    "unused_tranche_capacity": 3
+  },
+  "rules": [
+    "No oracle or case alteration after any model response. Any substantive correction requires a new unseen split.",
+    "Scripted oracle controls establish satisfiability only and cannot qualify a model.",
+    "The final execution commit, runner, prompt, registry and reviewed bridge admission must be pinned separately before calls.",
+    "All required tuples and zero unsupported or dropped meanings are required; complete kind groups only.",
+    "Native writer, privacy, provenance, correction and consumer gates remain independently required."
+  ]
+}
