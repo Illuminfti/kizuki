@@ -1,3 +1,5 @@
+import { deniedFrontier, queueDeniedFrontier, extractionSourceLookup, type DeniedFrontierProof, type SourceLookup } from "./extract-denied";
+import { sourceExtractionDenied } from "../ledger/source-grants";
 import { sourcePolicyEpoch, sourceEventsAllowed, isEpochZeroProducerPort, isLocalSourcePort, sourcePortBindingDigest } from "../ledger/source-grants";
 import { createHash } from "node:crypto";
 import { parseExtractResponse } from "../producer/schema";
@@ -88,6 +90,8 @@ export function shouldAdvanceExtractCursor(result: ExtractMine): boolean {
 }
 
 export interface MineResult {
+  /** Ephemeral, never journaled: proof for a metadata-only denied prefix. */
+  readonly denied_frontier?: DeniedFrontierProof;
   readonly filing_version?: 1 | 2;
   readonly source_epoch?: number;
   readonly mined: ExtractMine;
@@ -433,23 +437,52 @@ function completeDeferredInputs(db: Database, inputs: readonly DeferredInput[]):
   const last = inputs.at(-1);
   if (last !== undefined) advanceExtractCheckpoint(db, DEFERRED_SCAN_KEY, last.event_id);
 }
-function queuedEvents(db: Database): CaptureEvent[] {
+function queuedEvents(db: Database, producer: ExtractionProducerPort, grantOf: SourceLookup): CaptureEvent[] {
   const after = readRailCursor(db, MODEL_PRODUCER_ID, DEFERRED_SCAN_KEY);
-  const queryAfter = db.query<DeferredInput, [string, number]>(
-    "SELECT event_id,source_key,checked_revision,checked_binding_digest FROM extract_deferred_inputs WHERE event_id>? ORDER BY event_id LIMIT ?",
-  );
-  const queryFirst = db.query<DeferredInput, [number]>(
-    "SELECT event_id,source_key,checked_revision,checked_binding_digest FROM extract_deferred_inputs ORDER BY event_id LIMIT ?",
-  );
-  let rows = after === null ? queryFirst.all(EXTRACT_BATCH) : queryAfter.all(after, EXTRACT_BATCH);
-  if (rows.length === 0 && after !== null) rows = queryFirst.all(EXTRACT_BATCH);
-  return rows.map(row => {
-    if (!validInput(row)) throw new Error("deferred extraction metadata is corrupt");
-    const event = readEvent(db, row.event_id);
-    if (event === null) throw new Error("deferred extraction event is missing");
-    if (sourceInput(db, event, undefined).source_key !== row.source_key) throw new Error("deferred extraction source binding is corrupt");
-    return event;
-  });
+  const digest = sourcePortBindingDigest(producer);
+  // This is a scheduling hint, never permission: every selected record is
+  // validated below. Unchanged immutable records remain denied until their
+  // source revision or concrete model destination changes.
+  const candidates = `SELECT d.event_id,d.source_key,d.checked_revision,d.checked_binding_digest
+    FROM extract_deferred_inputs d LEFT JOIN source_grants g ON g.source_key=d.source_key
+    LEFT JOIN events e ON e.event_id=d.event_id LEFT JOIN source_event_bindings b ON b.event_id=d.event_id
+    WHERE (${sourcePolicyEpoch(db) === 0 ? "1 OR " : ""}d.checked_revision<>coalesce(g.revision,0) OR d.checked_binding_digest<>?
+      OR d.source_key IS NOT b.source_key OR e.event_id IS NULL
+      OR d.checked_revision<0 OR d.checked_revision>9007199254740991
+      OR length(d.event_id)<>26 OR d.event_id GLOB '*[^0-9A-HJKMNP-TV-Z]*'
+      OR (d.source_key IS NOT NULL AND (length(d.source_key)<>26 OR d.source_key GLOB '*[^0-9A-HJKMNP-TV-Z]*'))
+      OR length(d.checked_binding_digest)<>64 OR d.checked_binding_digest GLOB '*[^a-f0-9]*')`;
+  const exclude = " AND (d.source_key IS NULL OR d.source_key NOT IN (SELECT value FROM json_each(?)))";
+  const queryAfter = db.query<DeferredInput,[string,string,string,number]>(`${candidates}${exclude} AND d.event_id>? ORDER BY d.event_id LIMIT ?`);
+  const queryFirst = db.query<DeferredInput,[string,string,number]>(`${candidates}${exclude} ORDER BY d.event_id LIMIT ?`);
+  const deniedSources = new Set<string>();
+  // A transport change invalidates every scheduling hint at once. Exclude
+  // whole sources only after proving their current policy denies every row;
+  // otherwise one large denied source would still hide a newly allowed one.
+  for (let page = 0; page < 32; page++) {
+    const excluded = JSON.stringify([...deniedSources]);
+    let rows = after === null ? queryFirst.all(digest,excluded,EXTRACT_BATCH) : queryAfter.all(digest,excluded,after,EXTRACT_BATCH);
+    if (rows.length === 0 && after !== null) rows = queryFirst.all(digest,excluded,EXTRACT_BATCH);
+    if (rows.length === 0) return [];
+    const selected = rows.flatMap(row => {
+      if (!validInput(row)) throw new Error("deferred extraction metadata is corrupt");
+      const stored = db.query<{source_key:string|null},[string]>("SELECT b.source_key FROM events e LEFT JOIN source_event_bindings b ON b.event_id=e.event_id WHERE e.event_id=?").get(row.event_id);
+      if (stored === null) throw new Error("deferred extraction event is missing");
+      if (stored.source_key !== row.source_key) throw new Error("deferred extraction source binding is corrupt");
+      const grant = row.source_key === null ? null : grantOf(row.source_key);
+      if (grant !== null && sourceExtractionDenied(grant,producer)) {
+        deniedSources.add(grant.source_key);
+        db.query("UPDATE extract_deferred_inputs SET checked_revision=?,checked_binding_digest=? WHERE event_id=?").run(grant.revision,digest,row.event_id);
+        return [];
+      }
+      const event = readEvent(db, row.event_id);
+      if (event === null) throw new Error("deferred extraction event is missing");
+      return [event];
+    });
+    if (selected.length > 0) return selected;
+    advanceExtractCheckpoint(db, DEFERRED_SCAN_KEY, rows.at(-1)!.event_id);
+  }
+  return [];
 }
 function saveBatch(db: Database, batch: DurableExtractBatch, legacyManifest = false): void {
   const serializedDrafts = batch.filing_version === 2
@@ -903,6 +936,19 @@ export function commitExtractCursor(db: Database, mined: MineResult): boolean {
     if (mined.source_epoch !== undefined && mined.source_epoch !== sourcePolicyEpoch(db)) throw new Error("source authorization changed during extraction");
     if (readExtractCursor(db) !== mined.previous_cursor) return false;
     const mode = mined.mode ?? "frontier";
+    if (mined.denied_frontier !== undefined) {
+      const proof = mined.denied_frontier, inputs = mined.deferred_inputs ?? [];
+      if (mode !== "frontier" || mined.mined.status !== "deferred" || mined.drafts.length !== 0 || mined.world !== undefined ||
+          mined.segment !== undefined || mined.skipped !== undefined || (mined.model_inputs?.length ?? 0) !== 0 ||
+          proof.binding_digest !== sourcePortBindingDigest(proof.producer) || inputs.length === 0) return false;
+      const current = deniedFrontier(db,parseCursor(mined.previous_cursor),proof.producer,undefined,inputs.length);
+      if (current === null || encodeCursor(current.cursor) !== encodeCursor(boundary) ||
+          JSON.stringify(current.inputs) !== JSON.stringify(inputs) ||
+          JSON.stringify(mined.input_ids) !== JSON.stringify(inputs.map(input=>input.event_id))) return false;
+      queueDeniedFrontier(db,inputs);
+      advanceExtractCheckpoint(db, EXTRACT_SOURCE_KEY, encodeCursor(boundary));
+      return true;
+    }
     const events = mode === "frontier" ? interval(db, mined.previous_cursor, boundary) : (mined.model_inputs ?? []).map(input => {
       const event = readEvent(db, input.event_id);
       if (event === null) throw new Error("deferred extraction input is missing");
@@ -1052,7 +1098,8 @@ async function mineBatch(
   // ports remain an explicitly supported source-bound contract.
   if (source_epoch > 0 && isEpochZeroProducerPort(producer)) return denied();
   if (source_epoch > 0 && !isLocalSourcePort(producer) && !sourceEventsAllowed(db, [], { owner: false, purpose: "extract", model: true, port: producer })) return denied();
-  const scope = { owner: false, purpose: "extract" as const, model: true, port: producer };
+  const grantOf = extractionSourceLookup(db);
+  const scope = { owner: false, purpose: "extract" as const, model: true, port: producer, grantOf };
   let mode: "frontier" | "deferred" = "frontier";
   let cursor: LedgerCursor | null = null;
   let inputIds: string[] = [];
@@ -1062,7 +1109,7 @@ async function mineBatch(
   let frontierEvents: readonly CaptureEvent[] = [];
 
   const queued = db.transaction(() => {
-    const candidates = queuedEvents(db);
+    const candidates = queuedEvents(db,producer,grantOf);
     const eligible: CaptureEvent[] = [];
     for (const event of candidates) {
       if (extractEligible(db, event)) eligible.push(event);
@@ -1110,6 +1157,11 @@ async function mineBatch(
   }
 
   if (usable.length === 0) {
+    const deniedPage = source_epoch === 0 ? null : deniedFrontier(db,parseCursor(previous_cursor),producer,grantOf);
+    if (deniedPage !== null && deniedPage.inputs.length >= EXTRACT_BATCH) return { source_epoch, previous_cursor, cursor: deniedPage.cursor,
+      mined: {status:"deferred",count:deniedPage.inputs.length}, drafts: [], mode:"frontier",
+      input_ids:deniedPage.inputs.map(input=>input.event_id),model_inputs:[],deferred_inputs:deniedPage.inputs,
+      denied_frontier:{producer,binding_digest:sourcePortBindingDigest(producer)} };
     const batch = readSince(db, parseCursor(previous_cursor), EXTRACT_BATCH);
     if (batch.events.length === 0 || batch.cursor === null) {
       return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: null };
