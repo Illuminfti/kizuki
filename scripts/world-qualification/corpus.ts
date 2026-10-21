@@ -1,2 +1,2 @@
-/** The current authored qualification split. Prior receipts retain their original corpus bytes. */
-export { qualificationCorpus } from "./corpus-v2";
+/** Current fresh split. Earlier reports retain their original immutable corpus bytes. */
+export { qualificationCorpus } from "./corpus-v3";

@@ -1,6 +1,6 @@
 # Fresh world-kind qualification split v3
 
-This is a newly authored, pre-observation synthetic split for the existing typed extraction contract, including the source-derived `person.interest` hypothesis boundary. It has **zero provider observations**. It is deliberately not selected by `corpus.ts` yet; the final execution source, candidate registry, prompt and reviewed bridge admission require a separate exact freeze.
+This is a newly authored, pre-observation synthetic split for the existing typed extraction contract, including the source-derived `person.interest` hypothesis boundary. It has **zero provider observations**. It is selected by `corpus.ts`; this changes no product offered flag. The final execution source, candidate registry, prompt and reviewed bridge admission require a separate exact freeze.
 
 The immutable case and oracle bytes are in `corpus-v3.json`. `corpus-v3-freeze.json` pins their canonical and file SHA-256 hashes, each case, authoring registry and prompts. Any substantive change after a provider observation requires a new unseen split. Prior v1/v2 reports keep their original bytes and meaning. The four repeated v2 diagnostic successes cannot qualify this split.
 
@@ -24,7 +24,7 @@ Source records are new, with different domains, lifecycle states, combinations, 
 
 Complete Concept (10) and Person (7) groups: **17 calls**, no retries. The other **45 cases remain not_run**. Three of the maximum 20 new calls remain unused, preserving the separate eight-call production reserve. Limits are ceilings, not a request to consume the balance.
 
-The existing runner couples `selected_kinds` with the candidate vocabulary, and report approval requires every selected kind to pass. An all-nine-kind registry with only 17 observed cases is an incomplete report and must not be approved as all-nine qualification. The execution freeze must explicitly select the intended complete kind groups and candidate vocabulary; authoring hashes are not permission to enable a producer kind or silently change the registry after evaluation.
+The existing runner couples `selected_kinds` with the candidate vocabulary, and report approval requires every selected kind to pass. An all-nine-kind registry with only 17 observed cases is an incomplete report and must not be approved as all-nine qualification. The intended execution selects Concept and Person only, preserving the preexisting Situation kind in the effective registry. The execution freeze pins that exact candidate vocabulary; authoring hashes are not permission to enable a producer kind or silently change the registry after evaluation.
 
 ## Verification
 

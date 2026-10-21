@@ -14,8 +14,8 @@ const registry = candidateRegistry(WORLD_VOCABULARY_MODULES,
   ['concept','situation','question','person','skill','framework','procedure','commitment','decision'], ['situation.has_commitment']);
 
 /** Authored oracle satisfiability only; never provider provenance or actual model quality. */
-function control(item: QualificationCase, chosen: Meaning[] = item.required.map(group => group[0]!)): Observation {
-  const input = caseInput(item, registry), mentions: ExtractResponseV2['mentions'][number][] = [];
+function control(item: QualificationCase, chosen: Meaning[] = item.required.map(group => group[0]!), candidate = registry): Observation {
+  const input = caseInput(item, candidate), mentions: ExtractResponseV2['mentions'][number][] = [];
   const seen = new Map<string, DraftRef>();
   const ref = (value: string | null): DraftRef | null => {
     if (value === null) return null;
@@ -70,7 +70,9 @@ test('every declared required alternative and optional tuple is typed, bounded, 
 test('the 17-case first tranche contains whole Concept and Person groups and leaves 45 not_run',()=>{
   const selected=corpus.cases.filter(c=>['concept','person'].includes(c.kind));
   expect(selected).toHaveLength(17);
-  const score=scoreRun(corpus,selected.map(c=>control(c)));
+  const candidate=candidateRegistry(WORLD_VOCABULARY_MODULES,['concept','person']);
+  expect(candidate.kinds.filter(k=>k.offeredToProducer).map(k=>k.id).sort()).toEqual(['concept','person','situation']);
+  const score=scoreRun(corpus,selected.map(c=>control(c,undefined,candidate)));
   expect(score.status).toBe('failed');
   expect(score.kinds.filter(k=>k.status==='passed').map(k=>k.kind)).toEqual(['concept','person']);
   expect(score.kinds.flatMap(k=>k.cases).filter(c=>c.errors.includes('not_run'))).toHaveLength(45);
