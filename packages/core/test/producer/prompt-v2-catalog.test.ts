@@ -32,3 +32,13 @@ test("catalog does not reveal disabled kinds or unoffered predicate values", () 
   expect(value.predicates.find((row: string[]) => row[0] === "decision.status")[3]).toEqual(["decision/open", "decision/decided"]);
   expect(prompt).not.toContain('"artifact.original"');
 });
+
+test("the offered interest contract teaches the writer's hypothesis boundary and stays absent when unoffered", () => {
+  const request = input(), prompt = extractionV2SystemContent(request);
+  expect(catalog(prompt).predicates).toContainEqual(["person.interest", "person", ["concept"], null, ["positive", "negative"]]);
+  expect(prompt).toContain('person.interest is a source-derived hypothesis');
+  expect(prompt).toContain('mode uncertain and interpretation inferred');
+  expect(prompt).toContain('never turn attention into a role, competence, or stable trait');
+  const without = extractionV2SystemContent({ ...request, predicates: request.predicates.filter(row => row.id !== 'person.interest') });
+  expect(without).not.toContain('person.interest is a source-derived hypothesis');
+});

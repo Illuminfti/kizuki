@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { qualificationCorpus } from "./corpus";
+import { qualificationCorpus } from "./corpus-v2";
+import { qualificationCorpus as activeCorpus } from "./corpus";
 import { caseInput, scoreCase, scoreRun, type Observation, type QualificationCase } from "./score";
 import { candidateRegistry, checkOfferedQualification, registryDigest, verifyQualificationReceipt } from "./registry";
 import { WORLD_REGISTRY, WORLD_VOCABULARY_MODULES } from "../../packages/core/src/contracts/world-vocabulary";
@@ -102,7 +103,7 @@ test("grounding requires exact witness nominations and cannot count context as i
 });
 
 test("grounding cases reach the actual conditional prompt and ProducerV2 parser", async () => {
-  const item = qualificationCorpus.cases.find(row => row.id === "concept-grounding-compatible-v2")!;
+  const item = activeCorpus.cases.find(row => row.id === "concept-identity-independent-witness-v3")!;
   const control = scripted(item);
   const server = startFakeEndpoint(() => Response.json({ id: "grounding-control", model: "synthetic", object: "chat.completion", created: 1,
     choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(control.response) } }],
@@ -152,6 +153,7 @@ test("a clean surrounding Git commit cannot attest an untracked or modified runn
 });
 
 test("the receipt verifier binds reviewed bytes, full cases, prompt, source and transport pacing", () => {
+  const qualificationCorpus = activeCorpus;
   // Deliberately fabricated verifier control, never a real provider receipt or an entry in REVIEWED_QUALIFICATIONS.
   const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["question"]);
   const observations = qualificationCorpus.cases.filter(row => row.kind === "question").map(item => scripted(item, registry));
@@ -205,7 +207,7 @@ test("actual port observation binds the exact prompt and usage but a single synt
     choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }) } }],
     usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }));
   try {
-    const result = await runQualification({ kinds: ["question"], base_url: server.base_url, model: "synthetic", case_ids: ["question-abstention-v2"] });
+    const result = await runQualification({ kinds: ["question"], base_url: server.base_url, model: "synthetic", case_ids: ["question-instruction-without-facts-v3"] });
     expect(result.observations).toHaveLength(1); expect(result.traces).toHaveLength(1);
     expect(result.observations[0]!.usage).toEqual({ calls: 1, input_tokens: 100, output_tokens: 10 });
     expect(result.score.kinds.find(row => row.kind === "question")?.status).toBe("failed");
@@ -225,7 +227,7 @@ test("endpoint and credential custody failures cannot call the model or expose t
   try {
     await expect(runQualification({ kinds: ["question"], base_url: "https://models.example.test/v1", model: "synthetic" })).rejects.toThrow("endpoint rejected");
     const path = join(directory, "token"); writeFileSync(path, "synthetic-private-marker", { mode: 0o644 });
-    await expect(runQualification({ kinds: ["question"], base_url: server.base_url, model: "synthetic", token_file: path, case_ids: ["question-abstention-v2"] })).rejects.toThrow("token custody rejected");
+    await expect(runQualification({ kinds: ["question"], base_url: server.base_url, model: "synthetic", token_file: path, case_ids: ["question-instruction-without-facts-v3"] })).rejects.toThrow("token custody rejected");
     expect(server.requests).toHaveLength(0);
   } finally { server.stop(); rmSync(directory, { recursive: true, force: true }); }
 });
@@ -238,7 +240,7 @@ test("optional synthetic raw evidence keeps rejected pre-parser output and refus
   const server = startFakeEndpoint(() => Response.json({ id: "synthetic-control", model: "synthetic", object: "chat.completion", created: 1,
     choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }],
     usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }, { status }));
-  const request = { kinds: ["question"], base_url: server.base_url, model: "synthetic", token_file: tokenPath, case_ids: ["question-abstention-v2"] };
+  const request = { kinds: ["question"], base_url: server.base_url, model: "synthetic", token_file: tokenPath, case_ids: ["question-instruction-without-facts-v3"] };
   try {
     const raw = join(directory, "raw.jsonl");
     const result = await runQualification({ ...request, raw_responses: raw });
@@ -286,7 +288,7 @@ test("an empty successful response proves abstention only; it cannot qualify pos
 });
 
 
-test("fresh split is distinct, complete, within planning budgets, and exercises every new offered predicate", () => {
+test("the retained v2 split stays distinct and bounded but cannot qualify the later interest contract", () => {
   const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation", "question", "person", "skill", "framework", "procedure", "commitment", "decision"], ["situation.has_commitment"]);
   expect(qualificationCorpus.schema).toBe("kizuki.world-qualification-corpus/v2");
   expect(qualificationCorpus.cases).toHaveLength(53);
@@ -294,7 +296,9 @@ test("fresh split is distinct, complete, within planning budgets, and exercises 
   const oldText = new Set(legacy.cases.flatMap(row => row.records.map(record => record.text)));
   const tested = new Set(qualificationCorpus.cases.flatMap(row => row.required.flat().map(meaning => meaning.predicate)));
   const baseline = new Set(WORLD_REGISTRY.offered.vocabulary.map(row => row.predicate));
-  for (const predicate of registry.offered.vocabulary) if (!baseline.has(predicate.predicate)) expect(tested.has(predicate.predicate)).toBe(true);
+  // The observed v2 corpus is immutable; the new v3 split must cover every current predicate.
+  expect(registry.offered.vocabulary.filter(predicate => !baseline.has(predicate.predicate) && !tested.has(predicate.predicate))
+    .map(predicate => predicate.predicate)).toEqual(["person.interest"]);
   for (const item of qualificationCorpus.cases) {
     expect(item.records.every(row => !oldText.has(row.text))).toBe(true);
     const input = caseInput(item, registry);
