@@ -198,6 +198,12 @@ test("an oversized identity frontier is partial and an owner merge refuses befor
     await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } }, { subject: "topic:other" });
     await f.write("concept.label", { kind: "literal", value: "Other concept" }, { subject: "topic:other" });
     for (let index = 0; index < 1025; index++) await f.write("concept.same_as", { kind: "subject", ref: f.ref("topic:other") }, {
+      mode: "hypothetical", from: new Date(Date.UTC(2026, 0, 1) + index).toISOString(), text: `Hypothetical identity candidate ${index}.`,
+    });
+    const before = worldData(correctionKit(db, f.ctx.vaultPath, { source: { connector: "card.fixture", sourceKey: f.sourceKey } }).read(f.ctx, f.input("find_concepts", { label: "" })));
+    expect(before.matches).toHaveLength(2);
+    expect(before.coverage.gaps).not.toContain("traversal_limit");
+    for (let index = 0; index < 1025; index++) await f.write("concept.same_as", { kind: "subject", ref: f.ref("topic:other") }, {
       from: new Date(Date.UTC(2026, 0, 1) + index).toISOString(), text: `Synthetic identity candidate ${index}.`,
     });
     const card = f.card();
@@ -206,10 +212,10 @@ test("an oversized identity frontier is partial and an owner merge refuses befor
     expect(card.coverage.gaps).toContain("traversal_limit");
     const kit = correctionKit(db, f.ctx.vaultPath, { source: { connector: "card.fixture", sourceKey: f.sourceKey } });
     const other = kit.find(kit.ctx, "concept", "Other concept");
-    const before = db.query<{ n: number }, []>("SELECT count(*) n FROM native_owner_evidence").get()!.n;
+    const evidenceBefore = db.query<{ n: number }, []>("SELECT count(*) n FROM native_owner_evidence").get()!.n;
     await expect(serveCorrect(f.ctx, { target: { world_claim: card.concept.classificationClaims[0]! },
       mode: "merge_identity", object: { kind: "node", ref: other }, statement: "Merge this bounded component." })).rejects.toThrow("traversal bounds");
-    expect(db.query<{ n: number }, []>("SELECT count(*) n FROM native_owner_evidence").get()!.n).toBe(before);
+    expect(db.query<{ n: number }, []>("SELECT count(*) n FROM native_owner_evidence").get()!.n).toBe(evidenceBefore);
   } finally { db.close(); f.dispose(); }
 });
 
@@ -280,6 +286,8 @@ test("equal names, quoted nominations and copied witnesses do not manufacture id
     expect(f.card().concept.resolution).toBe("distinct");
     const object = { kind: "subject" as const, ref: f.ref("topic:other") };
     await f.write("concept.same_as", object, { mode: "quoted", speaker: "person:speaker" });
+    expect(f.card().concept.resolution).toBe("distinct");
+    await f.write("concept.distinguished_from", object, { polarity: "negative" });
     expect(f.card().concept.resolution).toBe("distinct");
     await f.write("concept.same_as", object, { text: "An identity nomination" });
     await f.write("concept.same_as", object, { text: "An identity nomination", metadata: { copy_of: "earlier witness" } });

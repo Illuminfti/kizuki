@@ -92,6 +92,12 @@ export function identityCluster(frame: ReadFrame, anchor: string, joining?: stri
       AND r.raw_id=json_extract(c.payload,'$.object.ref.id')
       AND r.raw_namespace=coalesce(json_extract(c.payload,'$.object.ref.namespace'),'')
     WHERE c.discriminator='assertion' AND c.predicate IN ('concept.same_as','concept.distinguished_from')
+      AND (c.predicate='concept.same_as' OR c.polarity='positive')
+      AND json_extract(c.payload,'$.perspective.mode')='asserted'
+      AND json_extract(c.payload,'$.perspective.holder') IS NULL
+      AND json_extract(c.payload,'$.perspective.speaker') IS NULL
+      AND json_extract(c.payload,'$.perspective.addressee') IS NULL
+      AND json_array_length(c.payload,'$.context')=0
       AND (l.handle_id=? OR r.handle_id=?) AND l.handle_id<>r.handle_id
       AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
       AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${support.sql})
