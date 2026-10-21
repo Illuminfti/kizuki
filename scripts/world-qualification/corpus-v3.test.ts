@@ -7,7 +7,7 @@ import { WORLD_VOCABULARY_MODULES } from './candidate-modules';
 import { caseInput, scoreCase, scoreRun, validateCorpus, type Observation, type QualificationCase, type Meaning } from './score';
 import type { DraftRef, ExtractResponseV2, TextAnchor } from '../../packages/core/src/contracts/producer-v2';
 import { canonicalJson, sha256 } from '../evaluate-extraction';
-import { withWorldRegistry } from '../../packages/core/src/contracts/world-vocabulary';
+import { WORLD_REGISTRY, withWorldRegistry } from '../../packages/core/src/contracts/world-vocabulary';
 import { planModelExtractionV2 } from '../../packages/core/src/producer/model-v2';
 
 const registry = candidateRegistry(WORLD_VOCABULARY_MODULES,
@@ -51,6 +51,9 @@ test('fresh full split retains every family and boundary group without copying p
   const old=new Set(previous.cases.flatMap(c=>c.records.map(r=>r.text)));
   expect(corpus.cases.flatMap(c=>c.records).some(r=>old.has(r.text))).toBe(false);
   expect(scoreRun(corpus,[]).status).toBe('not_run');
+  const tested=new Set(corpus.cases.flatMap(c=>c.required.flat().map(m=>m.predicate)));
+  const baseline=new Set(WORLD_REGISTRY.offered.vocabulary.map(p=>p.predicate));
+  expect(registry.offered.vocabulary.filter(p=>!baseline.has(p.predicate)&&!tested.has(p.predicate)).map(p=>p.predicate)).toEqual([]);
 });
 
 test('every declared required alternative and optional tuple is typed, bounded, and satisfiable before observations',()=>{

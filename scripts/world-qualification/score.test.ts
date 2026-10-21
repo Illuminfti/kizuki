@@ -286,7 +286,7 @@ test("an empty successful response proves abstention only; it cannot qualify pos
 });
 
 
-test("fresh split is distinct, complete, within planning budgets, and exercises every new offered predicate", () => {
+test("the retained v2 split stays distinct and bounded but cannot qualify the later interest contract", () => {
   const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation", "question", "person", "skill", "framework", "procedure", "commitment", "decision"], ["situation.has_commitment"]);
   expect(qualificationCorpus.schema).toBe("kizuki.world-qualification-corpus/v2");
   expect(qualificationCorpus.cases).toHaveLength(53);
@@ -294,7 +294,9 @@ test("fresh split is distinct, complete, within planning budgets, and exercises 
   const oldText = new Set(legacy.cases.flatMap(row => row.records.map(record => record.text)));
   const tested = new Set(qualificationCorpus.cases.flatMap(row => row.required.flat().map(meaning => meaning.predicate)));
   const baseline = new Set(WORLD_REGISTRY.offered.vocabulary.map(row => row.predicate));
-  for (const predicate of registry.offered.vocabulary) if (!baseline.has(predicate.predicate)) expect(tested.has(predicate.predicate)).toBe(true);
+  // The observed v2 corpus is immutable; the new v3 split must cover every current predicate.
+  expect(registry.offered.vocabulary.filter(predicate => !baseline.has(predicate.predicate) && !tested.has(predicate.predicate))
+    .map(predicate => predicate.predicate)).toEqual(["person.interest"]);
   for (const item of qualificationCorpus.cases) {
     expect(item.records.every(row => !oldText.has(row.text))).toBe(true);
     const input = caseInput(item, registry);
