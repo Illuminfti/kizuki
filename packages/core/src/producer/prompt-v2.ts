@@ -50,6 +50,9 @@ export function extractionV2SystemContent(input: Pick<ProduceInputV2, "predicate
     ...(input.vocabulary_refs.includes("world/person") ? [
       "Person subjects require direct supplied refs from structured source handles. Person names, signatures and quote attributions alone never authorize Person classification, person.* or relationship.* claims on mention refs. Where a structured Person is supported, use the direct supplied subject for world.kind=world/person, person.label and its supported roles. Relationship endpoints and commitment debtor/creditor require structured supplied Person refs. A speaker mention may preserve attribution without creating a Person card.",
     ] : []),
+    ...(input.predicates.some(row => row.id === "person.interest") ? [
+      "person.interest is a source-derived hypothesis from a structured supplied Person to an evidenced Concept: use mode uncertain and interpretation inferred. Preserve the source, context, polarity and time; never turn attention into a role, competence, or stable trait. A visit or copied evidence does not establish independent support or authorize further learning.",
+    ] : []),
     ...(input.supplied_refs?.some(ref => /^g[a-f0-9]{64}\/[01]$/.test(ref.id)) ? [IDENTITY_GROUNDING_INSTRUCTION] : []),
     "Contract columns use raw for an unclassified endpoint and raw_subject for a source-grounded subject ref; concept object endpoints require concepts. Vocabulary objects use exactly the values listed for that predicate. Literals are source-grounded text. Use only the listed polarities; do not infer positivity from the predicate name.",
     `World contract (build-owned; only offered rows): ${JSON.stringify(worldContract(input))}`,
