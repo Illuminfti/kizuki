@@ -167,3 +167,58 @@ The branch's PR records the observed baseline with its exact head. Future
 workstreams should compare the same persona, questions, grants, hints, budget
 and scorer version, inspect missing IDs and privacy failures, and state any
 changed retrieval or extraction configuration.
+
+
+## Fixed quality baseline schedule
+
+The additive `baselines.ts` runner uses the same synthetic importer, scripted
+producer, native correction, scoped agent and clock worker. It measures three
+explicit retrieval arms: authorized raw timeline text, lexical search excerpts,
+and the current checkout's recall packet. Every returned body uses the same
+2000-token prefix budget and tokenizer. The arms run for owner and scoped agent
+before correction, after correction, and after imported-source revocation: 18
+observations, including failed or unavailable reads.
+
+```sh
+bun scripts/eval/fresh-agent/baselines.ts --out /tmp/quality-reference
+# Retain this receipt from the clean, recorded reference commit. On a candidate:
+bun scripts/eval/fresh-agent/baselines.ts --out /tmp/quality-candidate
+bun scripts/eval/fresh-agent/baselines.ts --compare /tmp/quality-reference/report.json /tmp/quality-candidate/report.json
+```
+
+The reference receipt freezes the current-Kizuki arm, alongside its raw-history
+and lexical controls. Comparison refuses dirty source, changed corpus, changed
+configuration, changed schedule, malformed rows or missing observations. Expected
+fact counts are fixed by stage and principal; imported receipts cannot rewrite
+that denominator. It
+returns per-arm score changes and explicit failure status, not a superiority
+verdict. A dirty development run remains labelled dirty and cannot serve as an
+accepted frozen baseline. The source fingerprint covers the actual package and
+harness files, including local modifications, and is checked again at completion;
+commit and tree alone would not identify a dirty run.
+
+The retained report contains source/corpus/configuration/schedule/output hashes,
+bounded scores, the tokenizer and budget, Bun/platform/architecture and a hardware
+fingerprint. It contains no query body, response body, source locator, raw fixture
+or vault. The parent owns the temporary fixture and removes it even when its
+120-second worker deadline terminates execution. Receipts are local files; hashes
+are unsalted and can confirm guesses, so this is data minimization, not anonymity
+or automatic erasure. The older fresh-agent report intentionally retains synthetic
+observations for scorer inspection; this new hashes-only report is separate.
+
+The schedule never shows the future correction to a read or producer before the
+owner correction occurs. The scoped agent never receives the owner's private
+native assertion. Source revocation removes imported facts; the independently
+authored native correction remains permitted to the owner because its provenance
+is the owner's new event, not the revoked imported statement. Historical exposure
+is counted separately from current recall and is not called a false current
+assertion merely because it appears in raw history. Every read phase verifies
+unchanged non-audit ledger tables, canon bytes and canon receipts; the planned
+setup/correction/revocation mutations occur separately through public APIs.
+
+This remains a small synthetic retrieval regression with exact-string scoring.
+It does not claim extraction quality, answering-model quality, representative
+human outcomes, or parity with commercial products. Missing expected facts remain
+visible rather than being removed from the denominator; forbidden evidence,
+future evidence and unexpected state mutations are hard failures that no recall
+average can hide. No provider is called.

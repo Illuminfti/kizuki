@@ -4,7 +4,7 @@ import {
   OWNER, addAgent, authenticate, bindSourceModelPort, createBudgetTracker,
   createModelProducerV2Port, initAgents, readSince, registerConnection,
   rebuildRetrieval, runBackfill, runWritePass, seedConnectorSensitivity, serveCorrect, servePropose,
-  serveWorldView, setSourceGrant, ulid,
+  serveWorldView, setSourceGrant, revokeSourceGrant, ulid,
 } from "../../../packages/core/src/index";
 import type { LlmPort, ServeContext } from "../../../packages/core/src/index";
 import { openLedger } from "../../../packages/core/src/testing";
@@ -78,7 +78,7 @@ export function discoveredCards(ctx: ServeContext, kind: "concept" | "situation"
   return [discovery, ...result.result.data.matches.map(match => serveWorldView(ctx, { ...query, operation: kind, [kind]: match.ref }))];
 }
 
-export async function generateVault(root: string, size: PersonaSize) {
+export async function generateVault(root: string, size: PersonaSize, options: { baseline?: boolean } = {}) {
   assertLogicalClock();
   const scenario = persona(size), vaultPath = join(root, "vault");
   const initialized = await initCommand.run({ env: { KIZUKI_CONFIG: join(root, "unused-config.toml") },
@@ -101,6 +101,7 @@ export async function generateVault(root: string, size: PersonaSize) {
     };
     writeFileSync(join(inputs, "mapping.json"), JSON.stringify(mapping));
     const importReceipts = [];
+    let sharedSource = "";
     for (const group of ["shared", "scope", "ceiling", "withheld"] as const) {
       const selected = scenario.records.filter(record =>
         (record.withheld ? "withheld" : record.sensitivity === "private" ? "ceiling" : record.subject === "family" ? "scope" : "shared") === group);
@@ -109,6 +110,7 @@ export async function generateVault(root: string, size: PersonaSize) {
         label: record.label, text: recordText(record), sensitivity: record.sensitivity ?? "personal" })).join("\n") + "\n");
       const connector = new LegacyEventsConnector({ path, format: "jsonl", mapping: join(inputs, "mapping.json") });
       const sourceKey = ulid();
+      if (group === "shared") sharedSource = sourceKey;
       registerConnection(db, CONNECTOR, sourceKey);
       // Host policy from the synthetic source class; the model cannot lower it.
       seedConnectorSensitivity(db, { connector_id: CONNECTOR, source_key: sourceKey }, {
@@ -158,17 +160,22 @@ export async function generateVault(root: string, size: PersonaSize) {
       .find(relation => relation?.predicate === "situation.blocker" && relation.object.kind === "literal" &&
         relation.object.value === "waiting for the paint samples");
     if (blocker === undefined || blocker === null) throw new Error("fixture blocker missing");
-    const corrected = await serveCorrect(ctx, { statement: "waiting for the load test", object: "waiting for the load test", target: { world_claim: blocker.claim } });
-    if (corrected.data?.claim_id === null || corrected.data?.claim_id === undefined) throw new Error("fixture correction failed");
+    const applyCorrection = async () => {
+      const corrected = await serveCorrect(ctx, { statement: "waiting for the load test", object: "waiting for the load test", target: { world_claim: blocker.claim } });
+      if (corrected.data?.claim_id === null || corrected.data?.claim_id === undefined) throw new Error("fixture correction failed");
+    };
+    if (!options.baseline) await applyCorrection();
     await producer.close();
     producer = undefined;
     await rebuildRetrieval(db, vaultPath, undefined, { layer: "search" });
     const { token } = addAgent(db, "fresh-agent", { ceiling: "personal", subjects: ["persona:ada", "persona:grace", "persona:orchard", "persona:bayes"],
-      types: null, tools: ["search", "context_packet", "world_view"], rate_limit_per_minute: 1000, relay_owner_corrections: false });
+      types: null, tools: ["search", "context_packet", "world_view", ...(options.baseline ? ["timeline" as const] : [])], rate_limit_per_minute: 1000, relay_owner_corrections: false });
     const principal = authenticate(db, token);
     if (principal === null) throw new Error("fixture authentication failed");
-    return { ...scenario, db, vaultPath, token, principal, build: { imports: importReceipts, extraction: passes,
-      propose: proposed.data.outcome, correct: "committed" as const } };
+    return { ...scenario, db, vaultPath, token, principal, applyCorrection,
+      revokeSharedSource: () => revokeSourceGrant(db, { source_key: sharedSource, expected_revision: 1, operation_id: "baseline-revoke-shared" }),
+      build: { imports: importReceipts, extraction: passes, propose: proposed.data.outcome,
+        correct: options.baseline ? "deferred" as const : "committed" as const } };
   } catch (error) {
     await producer?.close();
     db.close();

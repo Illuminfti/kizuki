@@ -6,7 +6,7 @@ import type { EstateErrorClass } from "./estate";
 export const PARITY_RECEIPT_SCHEMA = "kizuki.parity-receipt/v1";
 export const PARITY_RECEIPTS_DIR = join(".kizuki", "receipts", "parity");
 
-export type KizukiErrorClass = "context_incomplete" | "kizuki_error";
+export type KizukiErrorClass = "context_incomplete" | "kizuki_error" | "timeout" | "output_too_large";
 export type ParityVerdict = "met" | "below_threshold" | "not_measured";
 
 export interface SideReceipt<ErrorClass extends string> {

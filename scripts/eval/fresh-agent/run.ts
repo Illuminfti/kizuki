@@ -5,6 +5,7 @@ import { serveContextPacket, serveSearch, OWNER, ServeError } from "../../../pac
 import type { ServeContext } from "../../../packages/core/src/index";
 import { PACKET_TOKENIZER_ID } from "../../../packages/core/src/serving/packet-tokenizer";
 import { runSessionStart } from "../../../packages/cli/src/hook/session-start";
+import { boundedCommand } from "../../../packages/cli/src/parity/process";
 import { AS_OF } from "./persona";
 import { assertLogicalClock } from "./clock";
 import type { PersonaSize, PrincipalName, Question, Surface } from "./persona";
@@ -66,6 +67,7 @@ export function summarize(rows: Score[]) {
       fact_recall: rate(sum("recalled"), sum("expected")), returned: sum("returned"), stale: sum("stale"),
       stale_fact_rate: rate(sum("stale"), sum("returned")), leak_count: sum("leak_count"), cited: sum("cited"),
       provenance_rate: rate(sum("cited"), sum("returned")), tokens_used: sum("tokens_used"),
+      incomplete: selected.filter(row => row.status === "incomplete").length,
       failures: selected.filter(row => row.status.startsWith("skip:") || row.status.startsWith("error:")).length };
   }));
 }
@@ -107,37 +109,37 @@ export type EvaluationReport = Awaited<ReturnType<typeof evaluateAtLogicalTime>>
 
 /** Every entrypoint, including callers in bun:test, evaluates in its own clock domain. */
 export async function runEvaluation(options: { size?: PersonaSize; out?: string } = {}): Promise<EvaluationReport> {
+  return await runEvaluationWorker(options) as EvaluationReport;
+}
+
+/** Shared isolated clock/entropy worker for the existing retrieval report and baseline schedule. */
+export async function runEvaluationWorker(options: { size?: PersonaSize; out?: string; mode?: "baselines" } = {}): Promise<unknown> {
   const sandbox = options.out === undefined ? mkdtempSync(join(tmpdir(), "fresh-agent-")) : undefined;
   const out = options.out ?? join(sandbox!, "result");
+  // Parent owns the disposable raw fixture as well as the child: SIGKILL cannot
+  // bypass cleanup and leave a vault beside an otherwise hashes-only receipt.
+  const workspace = options.mode === "baselines" ? mkdtempSync(join(tmpdir(), "quality-baselines-work-")) : undefined;
   try {
-    const child = Bun.spawn([process.execPath, join(import.meta.dir, "worker.ts"), JSON.stringify({ ...options, out })], {
-      stdin: "ignore", stdout: "ignore", stderr: "pipe",
-    });
-    const deadline = setTimeout(() => child.kill("SIGKILL"), 120_000);
-    try {
-      const [code] = await Promise.all([child.exited, new Response(child.stderr).text()]);
-      if (code !== 0) throw new Error("fresh-agent evaluation failed");
-      return JSON.parse(readFileSync(join(out, "report.json"), "utf8")) as EvaluationReport;
-    } finally {
-      clearTimeout(deadline);
-      if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }
-    }
+    const result = await boundedCommand([process.execPath, join(import.meta.dir, "worker.ts"), JSON.stringify({ ...options, out, workspace })], { timeoutMs: 120_000 });
+    if (result.error !== undefined) throw new Error(`fresh-agent evaluation failed: ${result.error}`);
+    return JSON.parse(readFileSync(join(out, "report.json"), "utf8"));
   } finally {
+    if (workspace !== undefined) rmSync(workspace, { recursive: true, force: true });
     if (sandbox !== undefined) rmSync(sandbox, { recursive: true, force: true });
   }
 }
 
 export function evaluationExitCode(report: Pick<EvaluationReport, "summaries">): 0 | 1 {
-  return report.summaries.some(row => row.leak_count > 0 || row.failures > 0) ? 1 : 0;
+  return report.summaries.some(row => row.leak_count > 0 || row.failures > 0 || row.incomplete > 0) ? 1 : 0;
 }
 const percent = (value: number | null) => value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;
 
 export function renderMarkdown(report: EvaluationReport): string {
   const lines = ["# Fresh-agent retrieval benchmark", "", `Persona: ${report.persona}. Logical as-of: ${report.as_of}.`, "",
     `Scripted extraction; model-free scoring. Tokenizer: ${report.tokenizer}. Packet budget: ${report.packet_budget}.`, "",
-    "| Principal | Surface | Recall | Stale exposure | Leaks | Provenance | Tokens | Failures |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
-    ...report.summaries.map(row => `| ${row.principal} | ${row.surface} | ${row.recalled}/${row.expected} (${percent(row.fact_recall)}) | ${row.stale}/${row.returned} (${percent(row.stale_fact_rate)}) | ${row.leak_count} | ${row.cited}/${row.returned} (${percent(row.provenance_rate)}) | ${row.tokens_used} | ${row.failures} |`),
+    "| Principal | Surface | Recall | Stale exposure | Leaks | Provenance | Tokens | Incomplete | Failures |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ...report.summaries.map(row => `| ${row.principal} | ${row.surface} | ${row.recalled}/${row.expected} (${percent(row.fact_recall)}) | ${row.stale}/${row.returned} (${percent(row.stale_fact_rate)}) | ${row.leak_count} | ${row.cited}/${row.returned} (${percent(row.provenance_rate)}) | ${row.tokens_used} | ${row.incomplete} | ${row.failures} |`),
     "", "Stale exposure includes explicitly quoted historical facts. Provenance measures local addressable citations, not verified truth. Zero expected facts gives n/a recall.", "",
     "World views use discovery plus all returned cards with all valid windows and current knowledge. Session hooks use the host project hint. Search and recall packets use the same lexical hint. Context packets count the complete envelope; their budget constrains the Markdown body. See docs/evaluation.md for limits.", "",
     "| Principal | Surface | Question | Recall | Stale | Leaks | Provenance | Tokens | Status |",

@@ -18,6 +18,7 @@ export interface ParityConfig {
   k: number;
   timeoutMs: number;
   minOverlap: number;
+  signal?: AbortSignal;
 }
 
 export type KizukiAnswer =
@@ -38,10 +39,14 @@ export async function runParity(config: ParityConfig, retrieve: KizukiRetrieve):
   const startedAt = new Date();
   const queries: QueryReceipt[] = [];
   for (const [index, query] of config.queries.entries()) {
+    config.signal?.throwIfAborted();
     const kizukiStarted = performance.now();
     const kizuki = await retrieve(query);
+    config.signal?.throwIfAborted();
     const kizukiLatency = Math.round(performance.now() - kizukiStarted);
-    const estate = await askEstate(config.estate, query, { timeoutMs: config.timeoutMs, k: config.k });
+    const estate = await askEstate(config.estate, query, { timeoutMs: config.timeoutMs, k: config.k,
+      ...(config.signal === undefined ? {} : { signal: config.signal }) });
+    config.signal?.throwIfAborted();
     const chunks = kizuki.ok ? kizuki.chunks.slice(0, config.k) : [];
     queries.push({
       index,

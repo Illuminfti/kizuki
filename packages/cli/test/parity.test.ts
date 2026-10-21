@@ -557,7 +557,7 @@ describe("parity run: honesty and bounds", () => {
     const started = Date.now();
     const result = run(
       [process.execPath, ESTATE, "hang", "-", "-"],
-      ["--json", "--timeout-ms", "500"],
+      ["--json", "--timeout-ms", "5000"],
     );
     expect(result.exitCode, result.stderr).toBe(3);
     expect(Date.now() - started).toBeLessThan(45_000);

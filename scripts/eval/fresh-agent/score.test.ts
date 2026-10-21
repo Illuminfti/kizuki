@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { summarize, evaluationExitCode } from "./run";
 import { markdownAtoms, scoreObservation, worldAtoms } from "./score";
 import type { Fact, Question } from "./persona";
 
@@ -51,4 +52,11 @@ test("a completely uncited Markdown item cannot inherit the preceding citation",
     const score = scoreObservation(facts, question, "owner", "context_packet", { output: md, atoms: markdownAtoms(md), status: "ok" });
     expect(score).toMatchObject({ returned: 2, cited: 1, provenance_rate: 0.5 });
   }
+});
+
+test("incomplete authority or coverage remains visible and cannot pass the quality gate", () => {
+  const row = scoreObservation(facts, question, "owner", "world_view", { output: "the bridge is open", atoms: [{ text: "the bridge is open", cited: true }], status: "incomplete" });
+  const summaries = summarize([row]);
+  expect(summaries.find(one => one.principal === "owner" && one.surface === "world_view")).toMatchObject({ recalled: 1, incomplete: 1, failures: 0 });
+  expect(evaluationExitCode({ summaries })).toBe(1);
 });
