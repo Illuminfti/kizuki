@@ -1,3 +1,4 @@
+import { FORECAST_TABLE_SPECS } from "./forecasts";
 import { ATTENTION_TABLE_SPECS } from "./attention";
 import { CONSOLIDATION_TABLE_SPECS } from "./consolidation";
 import { MACHINE_BODY_TABLE } from "../../ledger/machine-body-schema";
@@ -107,6 +108,7 @@ export const WORLD_TABLE_SPECS: readonly WorldTableSpec[] = [
   ...ATTENTION_TABLE_SPECS,
   // slot: refs
   // slot: fcst
+  ...FORECAST_TABLE_SPECS,
   // slot: machine_images
   MACHINE_BODY_TABLE,
 ];

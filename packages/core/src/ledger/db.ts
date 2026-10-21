@@ -1,3 +1,4 @@
+import { applyForecasts } from "../world/tables/forecasts";
 import { applyAttention } from "../world/tables/attention";
 import { applyConsolidation } from "../world/tables/consolidation";
 import { applyWorldCanonV33 } from "../canon/world-schema";
@@ -247,6 +248,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: WORLD_MIGRATION_VERSIONS.refs, apply: applyKnownRefs },
   { version: WORLD_MIGRATION_VERSIONS.consol, apply: applyConsolidation },
   { version: WORLD_MIGRATION_VERSIONS.attn, apply: applyAttention },
+  { version: WORLD_MIGRATION_VERSIONS.fcst, apply: applyForecasts },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

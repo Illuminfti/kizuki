@@ -1,5 +1,6 @@
 import { atlasOp } from "./atlas";
 import { sliceOp } from "./slice";
+import { forecastOp, forecastScoresOp } from "./forecast";
 import { attentionOp } from "./attention";
 import { personOp } from "./person";
 import { findPeopleOp } from "./find-people";
@@ -105,6 +106,7 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   // slot: ATTN
   attentionOp,
   // slot: FCST
+  forecastOp, forecastScoresOp,
   // slot: ATLAS
   atlasOp,
 ];

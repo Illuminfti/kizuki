@@ -37,6 +37,7 @@ export const WORLD_MIGRATION_VERSIONS = {
   // slot: refs
   refs: 41,
   // slot: fcst
+  fcst: 44,
   // slot: machine_images
   machine_images: 36,
 } as const satisfies Partial<Record<WorldSlotKey, number>>;

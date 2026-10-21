@@ -1,5 +1,6 @@
 import type { Atlas, AtlasPanelName, AtlasObjectOperation } from "../contracts/atlas";
 import type { WorldSlice } from "../contracts/world-slice";
+import type { Forecast, ForecastScores } from "../contracts/forecast";
 import type { Attention } from "../contracts/attention";
 import type { PersonCard } from "../contracts/person-card";
 import type { WorldDiff } from "../contracts/world-diff";
@@ -71,6 +72,8 @@ export type {
 export type WorldReadInput =
   | { readonly operation: "atlas"; readonly panel?: AtlasPanelName; readonly focus?: { readonly operation: AtlasObjectOperation; readonly ref: WorldObjectRef; readonly card?: "kizuki.situation-card/v2" }; readonly baselineView?: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "slice"; readonly task: string; readonly kinds?: readonly string[]; readonly budgetTokens: number; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation:"forecast"; readonly commitment:WorldObjectRef; readonly valid:WorldValidQuery; readonly knownAt:WorldKnownAt }
+  | { readonly operation:"forecast_scores"; readonly valid:WorldValidQuery; readonly knownAt:WorldKnownAt }
   | { readonly operation: "diff"; readonly of: WorldRecord; readonly priorView: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "attention"; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "person"; readonly person: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
@@ -142,6 +145,7 @@ export type WorldReadInput =
 export type WorldData =
   | Atlas
   | WorldSlice
+  | Forecast | ForecastScores
   | WorldDiff
   | Attention
   | ConceptCard

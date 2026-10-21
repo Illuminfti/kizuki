@@ -1,3 +1,4 @@
+import { validateForecastJournal } from "./world/forecast/store";
 import { beginClaimHistoryRestore, prepareClaimHistoryImport, finishClaimHistoryRestore } from "./world/tables/known";
 import { createWorldTables, exportedWorldTables, resetWorldTables } from "./world/tables/registry";
 import { assertWorldState } from "./world/integrity";
@@ -3057,6 +3058,7 @@ export function restoreVault(
         assertTypedCanonReceipts(db, staging);
         validateDurableExtractStorage(db);
         finishClaimHistoryRestore(db, manifest.schema_versions.ledger);
+        validateForecastJournal(db);
       }).immediate();
 
       const events =

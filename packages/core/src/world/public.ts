@@ -86,3 +86,5 @@ export { WORLD_SLICE_SCHEMA, validateWorldSlice, type WorldSlice, type SliceItem
 export { ATLAS_SCHEMA, ATLAS_PANELS, ATLAS_OBJECT_OPERATIONS, validateAtlas, type Atlas, type AtlasPanel, type AtlasEntry, type AtlasPanelName, type AtlasObjectOperation } from "../contracts/atlas";
 export * from "../contracts/attention";
 export { setAttentionDisposition } from "./attention/state";
+
+export * from "../contracts/forecast";

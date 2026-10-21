@@ -1,5 +1,6 @@
 import { atlasCli } from "./atlas";
 import { sliceCli } from "./slice";
+import { forecastCli, forecastScoresCli } from "./forecast";
 import { attentionCli } from "./attention";
 import { personCli, findPeopleCli } from "./person";
 import { procedureCli, findProceduresCli, skillCli, frameworkCli, outcomeCli } from "./skills";
@@ -50,6 +51,7 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   // slot: ATTN
   { name: "attention", cli: attentionCli },
   // slot: FCST
+  { name:"forecast", cli:forecastCli }, { name:"forecast_scores", cli:forecastScoresCli },
   // slot: ATLAS
   { name: "atlas", cli: atlasCli },
 ];
