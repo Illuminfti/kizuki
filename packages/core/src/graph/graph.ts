@@ -20,7 +20,7 @@ import {
   stringArray,
 } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
-import { projectablePageEvidence } from "../vault/provenance";
+import { isDeterministicBrief, projectablePageEvidence } from "../vault/provenance";
 import { linkIndexFromTargets, linkKeys, resolveWikilink } from "./resolve";
 import type { LinkIndex } from "./resolve";
 import { initGraph } from "./schema";
@@ -125,7 +125,7 @@ function withoutCodeSpans(body: string): string {
   return parts.join("");
 }
 
-function wikilinks(body: string): string[] {
+export function wikilinks(body: string): string[] {
   const source = withoutCodeSpans(body);
   if (!source.includes("[[")) return [];
   const targets: string[] = [];
@@ -253,7 +253,7 @@ function assessPage(
   page: CanonPage,
   evidence: { readonly revision: { readonly authority: RetrievalAuthority } } | undefined,
 ): { row: PageRow; links: PageLinks } {
-  const active = isLiveCanonPage(page);
+  const active = isLiveCanonPage(page) && !isDeterministicBrief(page);
   const title = page.data["title"];
   return {
     row: {
@@ -627,7 +627,7 @@ function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount:
     layer: "graph",
     generation: existing?.generation ?? ulid(),
     rebuilt_at: new Date().toISOString(),
-    doc_count: existing?.doc_count ?? 0,
+    doc_count: db.query<{ n: number }, []>("SELECT count(*) AS n FROM graph_edges").get()!.n,
     source_count: existing?.source_count ?? 0,
     skipped_count: skippedCount + withheldCount,
     status: "degraded",
@@ -640,31 +640,29 @@ function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount:
 }
 
 function restoreGraphStamp(db: Database, state: GraphState): void {
-  const existing = readDerivedMeta(db, "graph");
-  if (state.withheldCount === 0 && (existing === null || existing.status === "ok")) return;
   const live = [...state.projected.values()];
-  const edges =
-    db
-      .query<{ count: number }, []>(
-        "SELECT count(*) AS count FROM graph_edges",
-      )
-      .get()?.count ?? 0;
-  stampDerived(
-    db,
-    stampGraph(
-      db,
-      {
-        generation: ulid(),
-        pages: [],
-        skipped: [],
-        rebuilt_at: new Date().toISOString(),
-        canon_hash: canonPagesHash(live),
-      },
-      live.length,
-      edges,
-      state.withheldCount,
-    ),
-  );
+  const edges = db.query<{ n: number }, []>("SELECT count(*) AS n FROM graph_edges").get()!.n;
+  const previous = readDerivedMeta(db, "graph");
+  const stamp = stampGraph(db, {
+    generation: previous?.status === "ok" ? previous.generation : ulid(),
+    pages: [], skipped: [], rebuilt_at: new Date().toISOString(), canon_hash: canonPagesHash(live),
+  }, live.length, edges, state.withheldCount);
+  // A completed idle observation preserves its generation and timestamp.
+  if (previous !== null && previous.status === stamp.status
+    && previous.doc_count === stamp.doc_count && previous.source_count === stamp.source_count
+    && previous.skipped_count === stamp.skipped_count && previous.ledger_watermark === stamp.ledger_watermark
+    && previous.canon_hash === stamp.canon_hash && previous.port_id === stamp.port_id
+    && previous.contract === stamp.contract && previous.space === stamp.space) return;
+  stampDerived(db, stamp);
+}
+
+/** Health from a validated walk; no page is admitted by its health stamp. */
+export function refreshGraphHealth(db: Database, pages: readonly CanonPage[], skipped = 0): void {
+  assertDerivedDiscoveryReady(db);
+  const evidence = projectablePageEvidence(db, pages);
+  const state = graphState(db, pages.map(page => assessPage(page, evidence.get(page.relPath)).row));
+  if (skipped > 0 || !state.complete) { stampGraphIncomplete(db, skipped, state.withheldCount); return; }
+  restoreGraphStamp(db, state);
 }
 
 /**
@@ -715,11 +713,28 @@ export function refreshPageEdges(
   skipped: number,
   signatures?: ReadonlyMap<string, string>,
 ): void {
+  refreshPageEdgesBatch(db, [page], pages, skipped, signatures);
+}
+
+/** One registry snapshot for every known repaired page in an incomplete walk. */
+export function refreshPageEdgesBatch(
+  db: Database, changed: readonly CanonPage[], pages: readonly CanonPage[], skipped: number,
+  signatures?: ReadonlyMap<string, string>,
+): void {
   assertDerivedDiscoveryReady(db);
-  const before = graphRegistryReady(db) ? registeredKeys(db, page.id, page.relPath) : [];
-  const state = syncRegistry(db, [...pages.filter(candidate => candidate.relPath !== page.relPath), page], skipped, signatures);
-  const row = state.rows.find((candidate) => candidate.id === page.id)!;
-  settleGraph(db, state, skipped, skipped === 0 ? null : { pageId: page.id, keys: [...before, ...linkKeys(row)] });
+  const replacements = new Map(changed.map(page => [page.relPath, page]));
+  const snapshot = [...pages.filter(page => !replacements.has(page.relPath)), ...changed];
+  const state = syncRegistry(db, snapshot, skipped, signatures);
+  if (skipped === 0) { settleGraph(db, state, 0, null); return; }
+  if (!state.complete) {
+    db.exec("DELETE FROM graph_edges");
+    clearGraphRegistry(db);
+    stampGraphIncomplete(db, skipped, state.withheldCount);
+    return;
+  }
+  removeHeldEdges(db, state);
+  for (const page of changed) projectOne(db, state, page.id);
+  stampGraphIncomplete(db, skipped, state.withheldCount);
 }
 
 /** Incremental delete from a walk. An incomplete walk projects only the pages that linked to it again. */
@@ -788,6 +803,17 @@ function settleRegisteredGraph(db: Database, pageId: string, keys: readonly stri
   if (registrySkipped(db) > 0) stampGraphIncomplete(db, registrySkipped(db), state.withheldCount);
   else if (state.withheldCount > 0) markDerivedHeld(db, "graph", state.withheldCount);
   else if (meta !== null && meta.status !== "ok") restoreGraphStamp(db, graphState(db, readRegistry(db)));
+  else if (meta !== null) {
+    // The registry proves counts without reopening unrelated pages. A full
+    // identity hash waits for the next validated snapshot.
+    const watermark = latestLedgerCursor(db);
+    stampDerived(db, { ...meta, rebuilt_at: new Date().toISOString(),
+      doc_count: db.query<{ n: number }, []>("SELECT count(*) AS n FROM graph_edges").get()!.n,
+      source_count: db.query<{ n: number }, []>("SELECT count(*) AS n FROM graph_pages WHERE active=1 AND admitted=1").get()!.n,
+      ledger_watermark: watermark === null ? null : `${watermark.accepted_at}\t${watermark.event_id}`,
+      canon_hash: null,
+    });
+  }
 }
 
 /** A lost registry never turns a page-local writer into a vault reconciliation. */

@@ -5,7 +5,7 @@
  * a gap or the order of a relation fails here. See helpers/world-golden.ts.
  */
 import { createHash } from "node:crypto";
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout, setSystemTime, test } from "bun:test";
 import { openLedger } from "../../src/ledger/db";
 import { purgeEvents } from "../../src/ledger/purge";
 import { revokeSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
@@ -77,6 +77,7 @@ function readCore(ctx: ServeContext): Record<string, unknown> {
 }
 
 async function withScene(run: (scene: GoldenScene) => void | Promise<void>): Promise<void> {
+  setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
   const scene = await goldenScene();
   try {
     // Keep the original projection goldens on the supported unreserved path.
@@ -85,6 +86,7 @@ async function withScene(run: (scene: GoldenScene) => void | Promise<void>): Pro
     await run(scene);
   } finally {
     scene.dispose();
+    setSystemTime();
   }
 }
 

@@ -74,6 +74,7 @@ describe("a command-line spec builds only the keys its core operation takes", ()
   const samples = new Map([
     ["--label", "flux"],
     ["--cursor", SAMPLE_TOKEN],
+    ["--about", SAMPLE_TOKEN],
     ["--ref", SAMPLE_TOKEN],
     ["--admission", SAMPLE_TOKEN],
     ["--event-version", SAMPLE_TOKEN],

@@ -31,3 +31,5 @@ export { sanitize, stripAnsi } from "./terminal-text";
 export { beginIngest, INGEST_PAUSE_MS, INGEST_SLICE_MS } from "./ingest/pace";
 export type { IngestClock, IngestSession } from "./ingest/pace";
 export { withControlWait } from "./ledger/busy";
+
+export { reconcileDerivedPages } from "./derived-refresh";

@@ -35,7 +35,7 @@ export function validateRetainedReceipt(value: unknown, allowReverted = false): 
   oneOf(value.authority, ["owner_correction", "owner_authored", "connector_evidence", "model_inference"]);
   if (typeof value.confidence !== "number" || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) invalid();
   oneOf(value.sensitivity, ["public", "personal", "private"]); oneOf(value.taint, ["clean", "quoted"]); ids(value.provenance);
-  array(value.superseded); for (const item of value.superseded) { object(item, ["claim_id", "claim_key"]); id(item.claim_id); id(item.claim_key); }
+  array(value.superseded); for (const item of value.superseded) { object(item, ["claim_id", "claim_key"]); id(item.claim_id); nullableText(item.claim_key); }
   array(value.candidates, 512); for (const item of value.candidates) { object(item, ["page_id", "rel_path", "authority", "created_at"]); id(item.page_id); id(item.rel_path); assertPageRelPath(item.rel_path); oneOf(item.authority, ["owner_correction", "owner_authored", "connector_evidence", "model_inference"]); text(item.created_at, 64); }
   array(value.retrieval_ops, 512); for (const item of value.retrieval_ops) { object(item, ["store", "op", "doc"]); id(item.store); oneOf(item.op, ["upsert", "remove"]); id(item.doc); if (!item.doc.startsWith("page:")) invalid(); }
   nullableText(value.reverts); if ((value.reverted_by !== null && (!allowReverted || !isUlid(value.reverted_by))) || !isRfc3339(value.at)) invalid();

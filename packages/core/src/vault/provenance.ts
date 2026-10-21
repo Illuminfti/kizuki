@@ -12,6 +12,15 @@ import { eventIdFromReference } from "../retrieval/ids";
 import { isLiveCanonPage, type CanonPage } from "./pages";
 import { parsePageSources } from "./schema";
 
+/** Administrative daemon summaries have no event basis and are outside evidence indexes. */
+export function isDeterministicBrief(page: CanonPage): boolean {
+  return /^dashboards\/brief-\d{4}-\d{2}-\d{2}\.md$/.test(page.relPath)
+    && page.id === `rollup:${page.relPath.slice("dashboards/".length, -3)}`
+    && page.data["type"] === "rollup"
+    && page.data["x-brief-producer"] === "deterministic"
+    && Array.isArray(page.data["sources"]) && page.data["sources"].length === 0;
+}
+
 export type LivePageEvidence =
   | { admitted: true; sourceIds: string[]; revision: CanonRevisionBasis }
   | { admitted: false; reason: "inactive" | "sources_unavailable" | "revision_unrecorded" | "recovery_pending" };

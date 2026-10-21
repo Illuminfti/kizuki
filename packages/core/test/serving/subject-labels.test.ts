@@ -55,7 +55,9 @@ test('actual written identity enables exact subject labels and name/handle match
   rebuildDerived(f.db, f.vault);
   const search = await serveSearch(owner(f), { query: 'orchard', scope: 'all' });
   expect(search.canon[0]?.subject_labels?.[0]?.display_name).toBe(LABEL);
-  expect(search.quoted.find(chunk => chunk.event_id === name.event)?.subject_labels?.[0]?.display_name).toBe(LABEL);
+  // A capture the returned page cites is folded into that page, so read the capture on its own.
+  const captures = await serveSearch(owner(f), { query: 'orchard', scope: 'ledger' });
+  expect(captures.quoted.find(chunk => chunk.event_id === name.event)?.subject_labels?.[0]?.display_name).toBe(LABEL);
   expect(search.canon[0]?.sources).toEqual(expect.arrayContaining([name.event, handle.event]));
 });
 
@@ -262,7 +264,7 @@ test('quoted identity raises a clean canonical aggregate taint without rewriting
   const chunk = result.canon.find(chunk => chunk.page_id === 'fact:clean-base')!;
   expect(chunk.subject_labels?.[0]?.display_name).toBe(LABEL); expect(chunk.taint).toBe('quoted');
   expect(chunk.authority).toBe(base.receipt.authority);
-  expect(result.quoted.find(chunk => chunk.event_id === event)?.tainted).toBe(true);
+  expect((await serveSearch(owner(f), { query: 'orchard', scope: 'ledger' })).quoted.find(chunk => chunk.event_id === event)?.tainted).toBe(true);
   expect(readFileSync(join(f.vault, base.receipt.page_path))).toEqual(bytes);
 });
 

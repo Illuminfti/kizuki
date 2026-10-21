@@ -16,4 +16,3 @@ export function identityReceiptCurrent(db: Database, claimId: string, id: string
       AND v.complete_from_sequence<=? AND NOT EXISTS(SELECT 1 FROM claim_lifecycle_history h WHERE h.claim_id=v.claim_id AND h.receipt_id=?))
   `).get(claimId, id, sequence, claimId, sequence, id) !== null;
 }
-

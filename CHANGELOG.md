@@ -33,6 +33,24 @@
 - Authorize claim windows before their limits, retain recent contradictions and
   readable coverage gaps in large vaults, rank recall by relevance and recency,
   skip oversized packet pieces, and scope health connections to exact sources.
+- Standing HTTP refuses oversized bodies, malformed UTF-8, excessive JSON
+  nesting and non-object argument containers before tool dispatch. Its body
+  reader shares the app endpoint's time limit and uses a 1 MiB byte limit
+  to fit Unicode proposals; the app retains its 128 KiB limit. Legacy JSONL import
+  refuses symlinks and non-regular files through the open descriptor.
+- Google Calendar refuses invalid all-day dates with a typed connector error
+  instead of throwing `RangeError`; valid leap-day dates remain accepted.
+- A seeded hostile-input fuzz campaign covers parser, file-reader, MCP and
+  HTTP boundaries with isolated workers, resource watchdogs and a replayable
+  synthetic corpus; see `scripts/fuzz/README.md` for CI and long local modes
+  and the enabled packet-rendering regression.
+- Beeper response reads use fixed storage and one deadline, refuse an oversized
+  body without waiting for the provider to settle stream cancellation, and
+  report a stalled body as unavailable. The local app reports malformed JSON,
+  invalid source-policy fields, refused correction and world-view input, an
+  unknown undo receipt and an unsupported calendar id as `invalid_request`
+  rather than `unavailable`, and a missing Google client configuration as
+  `misconfigured`.
 
 - Purge is physically total. After it, the purged text is gone from claim and
   proposal payloads (ids, provenance and receipts stay), from archive copies
@@ -115,6 +133,38 @@
 - `scripts/evaluate-extraction-model.ts` scores a real model on the synthetic
   fixture, refuses a non-loopback endpoint without `--allow-remote`, and labels
   the result as a fixture measurement, never a model-quality claim.
+
+### Source mirrors follow source truth
+
+- A markdown-folder or wiki sync that would withdraw more than the larger of 20
+  records and 20 percent of the source no longer tombstones the vault. It emits
+  no tombstones, ends `unavailable` with `mass_withdrawal_held: N of M`, and shows
+  that typed state as `hold` in `connect status` and `doctor` (which fails).
+  Restoring the source clears it; `kizuki sync CONNECTOR --source KEY
+  --confirm-withdrawals N` releases it once.
+- A record deleted and later restored, or edited and later reverted, is a new
+  revision (`revision_epoch`) instead of a swallowed duplicate, and the next
+  sync emits nothing. A staged wiki page carries `x-source-revision`, and the
+  sync pass reverts the archive receipt of a page whose source record came back,
+  while the page still holds the bytes the archive left.
+- A rename is one event with `moved_from` and no tombstone for the old path;
+  wiki pages retain their planned target. A wiki mapping edit, and its revert, re-emit only
+  pages whose planned output changed (`plan_sha256`); the mapping hash no longer
+  makes every page a new event.
+- The markdown-folder cursor no longer pins device and inode, so a disk
+  migration, a restore or a recreated folder resumes from the ledger's committed
+  files. A successful capture drain walks the tree once, revalidates emitted
+  folder files, and defaults to 1,000 files per page. Wiki drains reuse their
+  bounded plan until exhaustion; a later sync scans again.
+  Folder scans hash current bytes even when restored file metadata is unchanged.
+- Filing a proposal no longer reads the whole proposals and claims tables: two
+  content-hash indexes (created on open for existing ledgers) make a
+  5,000-file backfill cost work proportional to its size, not to its square.
+- Folder moves retain their original subject digest across further moves, edits
+  and ledger-backed restores. Automatic archive reversal respects the loop's
+  canon budgets and resumes past edited archives after a ledger restart.
+  Canon body replacement remains incomplete in the compatibility writer; these
+  mirror changes establish capture state and archive reversal.
 
 ### Operator safety
 
@@ -586,6 +636,32 @@
   passes over thousands per pass, still bounded by `max_pass_seconds`. The
   records stay in the ledger for search, timeline and context. Older deferred
   records use the same prefilter under their current extraction grant.
+
+### Retrieval quality
+
+- `query`, `search` and `context --query` answer natural-language questions. A
+  question of three or more words that matches fewer than three records
+  literally is retried on its content words (stopwords dropped, stem
+  matching), keeping results that hold at least 60% of them. The result is
+  labelled `query-relaxed` and each hit carries a `coverage` share; a question
+  nothing answers reports `query-no-match`. `kizuki query --json` exposes
+  `coverage`.
+- A page titled exactly the query ranks first, and loop-written pages
+  (`auto/`, daily briefs, `rollup`) rank below owner pages at close relevance.
+- `context --query` selects captures within the window by the query instead of
+  by recency (named subjects still add their recent captures after the
+  matches). A canon page and the capture it cites are returned once, and an
+  edited record is searchable only by its current capture. A query nothing
+  matches reports `query-no-match`.
+- A page edited after its first import is dated by the edit when the wiki
+  importer re-emits it, so timeline and "what changed recently" windows find
+  the revision instead of the created date.
+- Search caps its owner audit scan at 500 candidate identities and reports
+  `scan-bound`. Authorized matches are selected separately, so withheld evidence
+  cannot change agent relaxation, ranking or diagnostics.
+- `bun run eval:retrieval` scores a synthetic golden set (keyword, paraphrase,
+  decision and unanswerable questions) with hit@1/5/20, MRR and abstention, and
+  exits 1 under its pinned minimums. See `docs/retrieval-quality.md`.
 
 ## 1.0.2 (2026-09-24)
 

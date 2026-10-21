@@ -3,6 +3,7 @@ import { evidenceRef } from "../../contracts/world-card-kit";
 import { expandTimelineDetail, EXPAND_OFFSET_MAX, EXPAND_SPAN_MAX } from "../../serving/expand";
 import { currentQuotedSource } from "../../serving/ledger";
 import { createRedactor } from "../../serving/redact";
+import { issuedOpaqueFields } from "../../util/issued-opaque";
 import { authorizedClaimSql, authorizedSupportSql, validMeaningSql } from "../policy-sql";
 import { verifyClaim } from "../pipeline/collect";
 import { newReadFrame, claimVisibleSql } from "../pipeline/frame";
@@ -45,15 +46,26 @@ export const evidenceOp: ClaimsOp<ConceptEvidenceRef> = {
     if (prefix + selected + mapping.text(source.text.slice(end)) !== mapping.text(source.text)) return NOT_FOUND;
     const offset = Array.from(prefix).length, length = Array.from(selected).length;
     if (offset > EXPAND_OFFSET_MAX || length === 0) return NOT_FOUND;
-    const expanded = expandTimelineDetail(ctx, { event_id: target.event_id, integrity: target.text_hash, offset, span: Math.min(length, EXPAND_SPAN_MAX) });
+    // The opaque event-version and eligible support above already pin the raw
+    // capture inside this read transaction. Timeline expansion pins its served
+    // projection for agents; passing the raw digest there rejects any correctly
+    // redacted span. Let the shared quote gate produce that projection digest.
+    const expanded = expandTimelineDetail(ctx, { event_id: target.event_id, offset, span: Math.min(length, EXPAND_SPAN_MAX) });
     const quote = expanded.quoted[0];
     if (!quote || !expanded.data) return NOT_FOUND;
     // The shared quote gate uses an optional true marker. Evidence reports
     // truncation relative to this selected span, not the rest of its record.
     const { truncated: _quoteTruncated, ...sourceQuote } = quote;
     const { truncated: _recordTruncated, ...detail } = expanded.data;
-    return { status: "data", data: { schema: "kizuki.world-evidence/v1", evidence }, gaps: null,
-      quoted: [{ ...sourceQuote, ...detail, evidence, ...(detail.returned < length ? { truncated: true as const } : {}) }],
+    // Both identities and this exact anchor have been resolved and authorized.
+    // Parsed caller objects themselves never carry output trust.
+    const validated: ConceptEvidenceRef = {
+      ...evidence,
+      admission: issuedOpaqueFields(evidence.admission, ["token"]),
+      eventVersion: issuedOpaqueFields(evidence.eventVersion, ["token"]),
+    };
+    return { status: "data", data: { schema: "kizuki.world-evidence/v1", evidence: validated }, gaps: null,
+      quoted: [{ ...sourceQuote, ...detail, evidence: validated, ...(detail.returned < length ? { truncated: true as const } : {}) }],
     };
   },
 };

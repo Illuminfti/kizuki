@@ -12,6 +12,7 @@ import {
   collectCard,
   scanMatches,
   type Collector,
+  type MatchFilter,
 } from "./collect";
 import { enrich, type Enricher } from "./enrich";
 import { ENRICHERS } from "./enrichers";
@@ -99,8 +100,9 @@ export function readWorldMatches<KindId extends string>(
   label: string,
   after: string | null,
   scanBudget: number,
+  filter?: MatchFilter,
 ): WorldMatches<`kizuki.${KindId}-matches/v1`> {
   const kind = kindSpec(kindId);
-  const scan = scanMatches(frame, kind, label, after, scanBudget, active.groupers);
+  const scan = scanMatches(frame, kind, label, after, scanBudget, active.groupers, filter);
   return assembleMatches(frame, `kizuki.${kindId}-matches/v1`, kind, scan, after === null);
 }

@@ -18,6 +18,7 @@ export interface WorldKindEntry {
 export const WORLD_KINDS: readonly WorldKindEntry[] = Object.freeze([
   { id: "concept", population: "typed_extraction" },
   { id: "situation", population: "typed_extraction" },
+  { id: "question", population: "extraction_off" },
 ]);
 
 /** Shipped means the build has a way to fill the kind; dark means it has none turned on. */

@@ -6,6 +6,9 @@ import { situationOp } from "./situation";
 import { shareOp } from "./share";
 import { resumeOp } from "./resume";
 import { evidenceOp } from "./evidence";
+import { questionOp } from "./question";
+import { findQuestionsOp } from "./find-questions";
+import { frontierOp } from "./frontier";
 import type { WorldOp, WorldOpRegistry } from "./types";
 
 const COMMON_KEYS = ["operation", "valid", "knownAt", "priorView"];
@@ -74,6 +77,7 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   // slot: VIEW
   shareOp, resumeOp,
   // slot: QUEST
+  questionOp, findQuestionsOp, frontierOp,
   // slot: PEOPLE
   // slot: SKILL
   // slot: ART

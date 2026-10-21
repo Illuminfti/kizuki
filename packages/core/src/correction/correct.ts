@@ -22,7 +22,7 @@ import { BudgetExhausted, createBudgetTracker } from "../canon/budget";
 import { CanonWriteError } from "../canon/errors";
 import type { CanonIo } from "../canon";
 import { getCanonReceipt } from "../canon/receipts";
-import { getClaim, isSourcePageClaim, insertClaim, prepareClaimInsert, retryRetrievalOps, listClaims, supersedeLiveGroup, supersedeExactWorldClaim } from "../claims/store";
+import { getClaim, isSourcePageClaim, insertClaim, prepareClaimInsert, retryRetrievalOps, listClaims, supersedeLiveGroup, supersedeExactClaim, supersedeExactWorldClaim } from "../claims/store";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { CLAIM_MEANING_SCHEMA, type ClaimMeaning } from "../contracts/claim-v2";
 import type { Claim, FrontmatterValue, Producer } from "../contracts/proposal";
@@ -607,6 +607,11 @@ async function insertCorrection(
       if(typedSemantic!==undefined && plan?.world.mode !== "merge_identity" && plan?.world.mode !== "separate_identity" && (inserted.outcome==="stored" || inserted.outcome==="duplicate")) {
         supersedeExactWorldClaim(io, inserted.claim, live.claim_id, at);
       }
+      // Legacy claims without a key have no group to supersede.  Their exact
+      // claim id remains the correction target, so retire only that claim.
+      if (typedSemantic === undefined && live.claim_key === null && inserted.outcome === "stored") {
+        supersedeExactClaim(io, inserted.claim, live.claim_id, at);
+      }
       return inserted;
     }).immediate();
   } catch (error) {
@@ -636,6 +641,16 @@ interface AffectedPage {
 }
 
 function affectedPages(io: ScopedCorrectIo, group: Claim[], winner: Claim): AffectedPage[] {
+  // A keyless legacy claim is corrected by exact identity. Its correction must
+  // revise only the page that originally materialized that identity, never the
+  // broader provenance or subject neighbourhood used for keyed claim groups.
+  if (group.length === 1 && group[0]?.claim_key === null) {
+    const path = pagePathForClaim(io.db, group[0]);
+    if (path === null || !pageReadable(io, path)) return [];
+    const page = readVaultPage(io, path);
+    const id = page?.data["id"];
+    return typeof id === "string" ? [{ page_id: id, rel_path: path, relevance: 1 }] : [];
+  }
   if(io.db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(winner.claim_id)!==null) {
     const path=pagePathForClaim(io.db,winner);if(path===null)return [];
     const page=readVaultPage(io,path);if(page===null)return [];
@@ -784,6 +799,7 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
   const retryIdentity = input.world?.mode === "merge_identity" || input.world?.mode === "separate_identity" ? getRecordedCorrection(io.db, input) : null;
   const at = retryIdentity?.claim.asserted_at ?? nowOf(io);
   const plan = planCorrection(io, input, seed, at);
+  const exactLegacy = plan === null && seed.claim_key === null;
   // Authorize existing bytes before this operation retires their typed basis.
   if (io.readScope !== undefined) affectedPages(io, group, seed);
   const budget = io.budget ?? createBudgetTracker({ canon_writes_per_run: CORRECTION_MAX_PAGES });
@@ -872,7 +888,16 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
       ];
     });
 
-  const pages = affectedPages(io, group, winner);
+  let pages = affectedPages(io, group, winner);
+  // A legacy imported claim can have an old loop receipt that was not copied
+  // onto the claim row.  Its exact supersession is still journaled, which the
+  // arbiter uses to recover the one page it may rewrite.
+  if (pages.length === 0 && exactLegacy) {
+    const decision = resolveTarget(canonIo(io), winner);
+    if (decision.action === "edit" || decision.action === "supersede") {
+      pages = [{ page_id: decision.page_id, rel_path: decision.rel_path, relevance: 1 }];
+    }
+  }
   const remainder = Math.max(0, pages.length - CORRECTION_MAX_PAGES);
   const chosen = pages.slice(0, CORRECTION_MAX_PAGES);
   const rewritten: CorrectResult["rewritten"] = [];
@@ -950,7 +975,7 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
         } }),
       });
     } catch (error) {
-      const pending = correctionRecoveryPending(io.db, stored.claim_id, page.rel_path);
+      const pending = correctionRecoveryPending(io.db, stored.claim_id);
       if (pending.length > 0 || error instanceof CanonRecoveryError) { recoveryPending = pending; break; }
       if (error instanceof BudgetExhausted) {
         throw new CorrectError("budget_exhausted", error.stopped, { cause: error });
@@ -975,7 +1000,7 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
 
   bumpClaimsEpoch(io.db);
   // insertClaim already owns the durable, source-authorized retrieval update.
-  io.db.query("UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?").run(accepted.event_id);
+  if (recoveryPending === undefined) io.db.query("UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?").run(accepted.event_id);
 
   return {
     receipt_id: receiptId,

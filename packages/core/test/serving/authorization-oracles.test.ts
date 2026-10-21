@@ -444,3 +444,20 @@ test("canon and packet nominations cannot match generated marker words", async (
     expect(packet.redacted).toBeUndefined();
   } finally { f.dispose(); }
 });
+
+test("relaxed question coverage counts released words and cannot use a redacted credential term", async () => {
+  const f = await redactionFixture();
+  try {
+    const secret = ["sk", "hiddenorbit", "x".repeat(24)].join("-");
+    for (const [name, body] of [["visible", "Launch mission approved."], ["hidden", `Launch ${secret}`]] as const) {
+      await recordedPage(f.db, f.vaultPath, `facts/question-${name}.md`, {
+        id: `fact:question-${name}`, title: "Decision", type: "fact", status: "active",
+        sensitivity: "public", taint: "clean", subjects: ["person:ada"],
+      }, body, [f.events.public!]);
+    }
+    const answer = await serveSearch(f.agent("reader-public"), { query: "What launch mission hiddenorbit?", scope: "canon" });
+    expect(answer.canon.map(chunk => chunk.page_id)).toEqual(["fact:question-visible"]);
+    expect(answer.data?.coverage?.["fact:question-visible"]).toBeCloseTo(2 / 3);
+    expect(JSON.stringify(answer)).not.toContain(secret);
+  } finally { f.dispose(); }
+});

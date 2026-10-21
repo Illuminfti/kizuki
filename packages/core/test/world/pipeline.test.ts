@@ -13,7 +13,7 @@ import type { Enricher } from "../../src/world/pipeline/enrich";
 import type { Collector } from "../../src/world/pipeline/collect";
 import type { Grouper } from "../../src/world/pipeline/group";
 import { withWorldPipeline } from "@kizuki/core/testing";
-import { readWorldView } from "@kizuki/core/world";
+import { readWorldView, type WorldReadResult } from "@kizuki/core/world";
 import { WORLD_REGISTRY } from "../../src/contracts/world-vocabulary";
 import { KIND_ASSEMBLERS } from "../../src/world/kinds";
 import {
@@ -175,7 +175,7 @@ describe("groupers", () => {
 });
 
 describe("the recorded cutoff", () => {
-  test("a known-at time or snapshot is still unavailable(history) on every operation", () => {
+  test("card history distinguishes a pre-admission cutoff from an unknown snapshot; discovery remains unavailable", () => {
     const reader = goldenReader(scene.owner);
     const concept = reader.find("concepts", "find_concepts", "Bayesian updating")[0]!.ref;
     const situation = reader.find("situations", "find_situations", "Launch")[0]!.ref;
@@ -188,11 +188,11 @@ describe("the recorded cutoff", () => {
     ];
     for (const knownAt of [{ kind: "time", at: "2026-06-01T00:00:00.000Z" }, { kind: "snapshot", ref: snapshot }]) {
       for (const input of operations) {
-        expect(readWorldView(scene.owner, { ...input, valid: { kind: "all" }, knownAt })).toEqual({
-          schema: "kizuki.world-view/v1",
-          operation: input.operation,
-          result: { status: "unavailable", reason: "history" },
-        });
+        const expected: WorldReadResult = input.operation.startsWith("find_")
+          ? { schema: "kizuki.world-view/v1", operation: input.operation, result: { status: "unavailable", reason: "history" } }
+          : knownAt.kind === "time" ? { status: "not_found" }
+          : { schema: "kizuki.world-view/v1", operation: input.operation, result: { status: "new_view_required" } };
+        expect(readWorldView(scene.owner, { ...input, valid: { kind: "all" }, knownAt })).toEqual(expected);
       }
     }
   });

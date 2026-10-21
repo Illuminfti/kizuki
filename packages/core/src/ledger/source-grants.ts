@@ -1049,8 +1049,13 @@ function sourcePolicyServingSql(
   scope: SourceServingScope,
   ceiling: number | null,
 ): { sql: string; bindings: (string | number)[] } | null {
+  // Construct the same bounded policy proof before and after first enrollment.
+  // A hidden first source must not change a caller's statement/row footprint.
+  const bindingsPresent = tableExists(db, "source_event_bindings");
+  const grantsPresent = tableExists(db, "source_grants");
+  const nativePresent = tableExists(db, "native_owner_evidence");
   if (sourcePolicyEpoch(db) === 0) return null;
-  if (!tableExists(db, "source_event_bindings") || !tableExists(db, "source_grants")) {
+  if (!bindingsPresent || !grantsPresent) {
     return { sql: "0", bindings: [] };
   }
   const purpose = scope.purpose ?? "recall";
@@ -1066,7 +1071,7 @@ function sourcePolicyServingSql(
            WHEN 'private' THEN ${SENSITIVITY_ORDER.private}
            ELSE ${SENSITIVITY_ORDER.private}
          END <= ?`;
-  const native = tableExists(db, "native_owner_evidence")
+  const native = nativePresent
     ? ` OR EXISTS (
           SELECT 1 FROM native_owner_evidence AS n
           WHERE n.event_id = events.event_id AND n.origin = 'correction'
