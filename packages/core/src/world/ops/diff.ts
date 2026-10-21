@@ -14,7 +14,7 @@ export const diffOp: WorldOpFactory = (ops) => {
       if (!isPlainObject(of) || parseWorldRef(priorView, "view") === null) return null;
       const target = targets.find(op => op.name === of.operation);
       if (target === undefined || target.keys.required.length !== 1 ||
-        !hasWorldKeys(of, ["operation", ...target.keys.required], []) || target.parse(of) === null) return null;
+        !hasWorldKeys(of, ["operation", ...target.keys.required], target.keys.optional ?? []) || target.parse(of) === null) return null;
       return of;
     },
     run: (frame, of, when) => {

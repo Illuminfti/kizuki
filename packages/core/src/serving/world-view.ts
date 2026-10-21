@@ -17,6 +17,7 @@ import { WorldProjectionBudgetError } from "../world/projection";
 import type { discoverWorld } from "../world/projection";
 import type { WorldDescribe } from "../world/ops/describe";
 import type { ConceptCard } from "../contracts/concept-card";
+import type { SituationCardV2 } from "../contracts/situation-card-v2";
 import type { SituationCard } from "../contracts/situation-card";
 import { hasWorldKeys, parseWorldKnownAt, parseWorldRef, parseWorldValid } from "../world/ops/parse";
 import { activeWorldOps, findWorldOp } from "../world/ops/registry";
@@ -83,6 +84,7 @@ export type WorldReadInput =
   | {
       readonly operation: "situation";
       readonly situation: WorldObjectRef;
+      readonly card?: "kizuki.situation-card/v2";
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
       readonly priorView?: ViewToken;
@@ -145,6 +147,7 @@ export type WorldData =
   | WorldMatches<"kizuki.question-matches/v1">
   | HistoryPage
   | SituationCard
+  | SituationCardV2
   | ReturnType<typeof discoverWorld>
   | WorldDescribe
   | ShareData

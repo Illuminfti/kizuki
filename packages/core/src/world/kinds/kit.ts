@@ -20,6 +20,7 @@ export interface CardNode {
 
 /** What the pipeline hands a kind assembler; the assembler decides only how this kind lays it out. */
 export interface CardInput {
+  readonly situationV2?: import("../situation-v2").SituationDetails;
   readonly frame: ReadFrame;
   readonly node: CardNode;
   /** Relations whose subject is the requested endpoint. */
@@ -43,6 +44,7 @@ export interface AssembledCard {
 export interface KindAssembler {
   /** The `WorldKindSpec.id` this assembler serves. */
   readonly kind: string;
+  readonly cardSchema?: string;
   /** False when this card has no summary field and cannot consume consolidation. */
   readonly consolidation?: boolean;
   assemble(input: CardInput): AssembledCard;

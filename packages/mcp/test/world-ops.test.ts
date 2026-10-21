@@ -88,7 +88,7 @@ describe("world_view as generated from the registry", () => {
     const { schema } = await listed(await connect());
     expect(schema.properties?.["operation"]?.enum).toEqual(WORLD_OPS.map((op) => op.name));
     expect(Object.keys(schema.properties ?? {}).sort()).toEqual(
-      ["about", "artifact", "concept", "cursor", "evidence", "framework", "handle", "knownAt", "label", "of", "operation", "person", "priorView", "procedure", "question", "response_contract", "situation", "skill", "subject", "valid"],
+      ["about", "artifact", "card", "concept", "cursor", "evidence", "framework", "handle", "knownAt", "label", "of", "operation", "person", "priorView", "procedure", "question", "response_contract", "situation", "skill", "subject", "valid"],
     );
   });
 

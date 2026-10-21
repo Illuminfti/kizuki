@@ -13,7 +13,7 @@ import {
 
 describe("the shipped kinds", () => {
   test("Concept, Situation and Question register their own labels and card contracts", () => {
-    expect(WORLD_REGISTRY.kinds.map(kind => kind.id)).toEqual(["situation", "concept", "question", "person", "skill", "framework", "procedure", "artifact_version"]);
+    expect(WORLD_REGISTRY.kinds.map(kind => kind.id)).toEqual(["situation", "concept", "question", "person", "skill", "framework", "procedure", "commitment", "decision", "artifact_version"]);
     expect(WORLD_REGISTRY.kind("concept")).toMatchObject({
       vocabularyId: "world/concept", labelPredicate: "concept.label", pageType: "topic", endpointKind: "concept",
       cardSchema: "kizuki.concept-card/v1", offeredToProducer: true, population: ["extraction"],
@@ -29,6 +29,10 @@ describe("the shipped kinds", () => {
       vocabularyId: "world/question", labelPredicate: "question.text", pageType: "topic", endpointKind: "question",
       cardSchema: "kizuki.question-card/v1", offeredToProducer: false, population: ["extraction"],
     });
+    for (const kind of ["commitment", "decision"]) {
+      expect(WORLD_REGISTRY.kind(kind)).toMatchObject({ cardSchema: "kizuki.situation-card/v2", offeredToProducer: false });
+      expect(WORLD_REGISTRY.offered.refs).not.toContain(`world/${kind}`);
+    }
     expect(WORLD_REGISTRY.offered.refs).not.toContain("world/question");
     expect(WORLD_REGISTRY.offered.vocabulary.some(row => row.predicate.startsWith("question.") || row.predicate.startsWith("gap."))).toBe(false);
   });
@@ -44,7 +48,7 @@ describe("the shipped kinds", () => {
   });
 
   test("world.kind is derived from the kinds, so a kind cannot exist without its classification value", () => {
-    expect(getWorldVocabularySpec("world.kind")?.vocabulary_values).toEqual(["world/artifact_version", "world/concept", "world/framework", "world/person", "world/procedure", "world/question", "world/situation", "world/skill"]);
+    expect(getWorldVocabularySpec("world.kind")?.vocabulary_values).toEqual(["world/artifact_version", "world/commitment", "world/concept", "world/decision", "world/framework", "world/person", "world/procedure", "world/question", "world/situation", "world/skill"]);
   });
 
   test("every registration slot appears exactly once in the module list", () => {
@@ -52,7 +56,7 @@ describe("the shipped kinds", () => {
     for (const key of ["quest", "people", "skill", "sit2", "art", "ident"]) {
       expect(source.match(new RegExp(`// slot: ${key}$`, "gm"))).toHaveLength(1);
     }
-    expect(WORLD_VOCABULARY_MODULES).toHaveLength(9);
+    expect(WORLD_VOCABULARY_MODULES).toHaveLength(12);
   });
 });
 

@@ -13,6 +13,8 @@ export type { ArtifactCard } from "../contracts/artifact-card";
  * The world-model API of `@kizuki/core`. New operations and their types are
  * exported here so `src/index.ts` never has to change for them.
  */
+export { SITUATION_CARD_V2_SCHEMA, validateSituationCardV2 } from "../contracts/situation-card-v2";
+export type { SituationCardV2, CommitmentEntry, DecisionEntry } from "../contracts/situation-card-v2";
 export { validateHistoryPage } from "../contracts/world-history";
 export type { HistoryPage, StateTransition } from "../contracts/world-history";
 export { WORLD_DIFF_SCHEMA, WORLD_DIFF_FIELDS } from "../contracts/world-diff";

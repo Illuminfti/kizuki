@@ -76,6 +76,7 @@ export function assembleCard(
     }));
   return assembler.assemble({
     frame,
+    ...(body.situationV2 === undefined ? {} : { situationV2: body.situationV2 }),
     node: {
       schema: "kizuki.knowledge-node/v1",
       ref,

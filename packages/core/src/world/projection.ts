@@ -3,6 +3,7 @@ import type {
   ConceptCard,
   ConceptCoverage,
 } from "../contracts/concept-card";
+import type { SituationCardV2 } from "../contracts/situation-card-v2";
 import type { SituationCard } from "../contracts/situation-card";
 import type { ProcedureCard } from "../contracts/procedure-card";
 import type { FrameworkCard } from "../contracts/framework-card";
@@ -44,11 +45,13 @@ export function projectWorldCard(
   valid: WorldValidQuery,
   dependencies?: WorldDependencies,
   cutoff?: RecordedCutoff,
-): ConceptCard | SituationCard | QuestionCard | PersonCard | ProcedureCard | FrameworkCard | SkillCard | ArtifactCard | null {
+  cardSchema?: string,
+): ConceptCard | SituationCard | SituationCardV2 | QuestionCard | PersonCard | ProcedureCard | FrameworkCard | SkillCard | ArtifactCard | null {
   // Each shipped assembler builds its declared card.
-  return readWorldCard(newReadFrame(ctx, ns, valid, dependencies, cutoff), handle, kind) as
+  return readWorldCard(newReadFrame(ctx, ns, valid, dependencies, cutoff), handle, kind, cardSchema) as
     | ConceptCard
     | SituationCard
+    | SituationCardV2
     | ArtifactCard
     | QuestionCard
     | PersonCard

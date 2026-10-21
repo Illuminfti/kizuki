@@ -1512,11 +1512,15 @@ export async function prepareClaimInsert(
       if (world !== null && (result.outcome === "stored" || result.outcome === "contested")) {
         commitClaimV2(io.db, result.outcome === "stored" ? result.claim.claim_id : result.incoming.claim_id, {
           ...world,
+          scope: { ...world.scope, ...(io.deny_classes === undefined ? {} : { deny_classes: io.deny_classes }) },
+          ...(io.visibility === undefined ? {} : { visibility: io.visibility }),
           accepted_world: acceptedWorldValues(input, loadEventFacts(io.db, input.provenance)),
         });
       } else if (world !== null && result.outcome === "duplicate") {
         commitClaimV2(io.db, result.claim.claim_id, {
           ...world,
+          scope: { ...world.scope, ...(io.deny_classes === undefined ? {} : { deny_classes: io.deny_classes }) },
+          ...(io.visibility === undefined ? {} : { visibility: io.visibility }),
           accepted_world: acceptedWorldValues(input, loadEventFacts(io.db, input.provenance)),
         });
       }

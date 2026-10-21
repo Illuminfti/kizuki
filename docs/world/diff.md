@@ -19,7 +19,10 @@ valid-time window and recorded-time query:
 
 The CLI form is `kizuki world --operation diff --of-operation concept
 --ref=OBJECT_TOKEN --prior-view=VIEW_TOKEN --json`. Inline option values also
-handle opaque tokens beginning with `--`. The MCP `world_view` tool, loopback
+handle opaque tokens beginning with `--`. A Situation v2 baseline keeps its
+optional `card: "kizuki.situation-card/v2"` inside `of`; the CLI forwards this
+with `--card=kizuki.situation-card/v2`. Omitting or changing the selector does
+not reuse a baseline from another card shape. The MCP `world_view` tool, loopback
 HTTP and App use the same Core operation. A complete App detail offers **Check
 for changes**, followed by **Read current item** or **Check for more changes**.
 

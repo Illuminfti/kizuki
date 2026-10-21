@@ -29,7 +29,7 @@ export const resumeCli: WorldCliOp = {
   },
   render: (data) => data.schema === "kizuki.concept-card/v1"
     ? conceptCli.render(data as Parameters<typeof conceptCli.render>[0])
-    : data.schema === "kizuki.situation-card/v1"
+    : (data.schema === "kizuki.situation-card/v1" || data.schema === "kizuki.situation-card/v2")
       ? situationCli.render(data as Parameters<typeof situationCli.render>[0])
       : data.schema === "kizuki.question-card/v1"
         ? questionCli.render(data as Parameters<typeof questionCli.render>[0])

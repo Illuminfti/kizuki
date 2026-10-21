@@ -1,6 +1,9 @@
 import { PERSON_VOCABULARY } from "./world-vocab/person";
 import { ARTIFACT_VOCABULARY } from "./world-vocab/artifact";
 import { createWorldRegistry, type WorldRegistry, type WorldVocabularyModule, type WorldVocabularySpec } from "./world-kinds";
+import { COMMITMENT_VOCABULARY } from "./world-vocab/commitment";
+import { DECISION_VOCABULARY } from "./world-vocab/decision";
+import { SITUATION_V2_VOCABULARY } from "./world-vocab/situation-v2";
 import { CONCEPT_VOCABULARY } from "./world-vocab/concept";
 import { LEARNING_VOCABULARY } from "./world-vocab/learning";
 import { SITUATION_VOCABULARY } from "./world-vocab/situation";
@@ -31,6 +34,7 @@ export const WORLD_VOCABULARY_MODULES: readonly WorldVocabularyModule[] = [
   // slot: skill
   SKILL_VOCABULARY, FRAMEWORK_VOCABULARY, PROCEDURE_VOCABULARY,
   // slot: sit2
+  COMMITMENT_VOCABULARY, DECISION_VOCABULARY, SITUATION_V2_VOCABULARY,
   // slot: art
   ARTIFACT_VOCABULARY,
   // slot: ident
