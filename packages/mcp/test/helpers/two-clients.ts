@@ -25,7 +25,7 @@ export interface StdioClient {
   close(): Promise<void>;
 }
 
-async function stdioClient(vault: string, selector: string[], env: Record<string, string>): Promise<StdioClient> {
+export async function stdioClient(vault: string, selector: string[], env: Record<string, string>): Promise<StdioClient> {
   const child = Bun.spawn([process.execPath, BIN, "--vault", vault, ...selector], {
     stdin: "pipe",
     stdout: "pipe",

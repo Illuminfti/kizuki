@@ -17,6 +17,7 @@ import { mintOccurrenceId } from "../../src/claims/occurrences";
 import type { ClaimV2Assertion, ClaimV2Object } from "../../src/contracts/claim-v2";
 import type { RetrievalPort } from "../../src/contracts/retrieval";
 import { WORLD_ADMISSION_SCHEMA } from "../../src/contracts/world-admission";
+import { WORLD_REGISTRY } from "../../src/contracts/world-vocabulary";
 import { registerConnection } from "../../src/ledger/connections";
 import { accept } from "../../src/ledger/ledger";
 import { setSourceGrant } from "../../src/ledger/source-grants";
@@ -139,7 +140,7 @@ export async function worldSeed(db: Database, options: WorldSeedOptions = {}): P
   const claims: string[] = [];
   const specs: readonly SeedPredicate[] = [
     { predicate: "world.kind", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: `world/${kind}` } } },
-    { predicate: `${kind}.label`, object: { kind: "literal", value: label } },
+    { predicate: WORLD_REGISTRY.kinds.find(entry => entry.id === kind)?.labelPredicate ?? `${kind}.label`, object: { kind: "literal", value: label } },
     ...(options.predicates ?? defaultPredicates(kind)),
   ];
   for (const { predicate, object, polarity } of specs) {
