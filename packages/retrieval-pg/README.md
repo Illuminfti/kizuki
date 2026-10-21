@@ -154,3 +154,12 @@ same-ID revisions, denied-source/class ranking and diagnostics, redacted/prefix
 probes and in-flight revocation. Core's `semantic-domain.test.ts` covers empty
 engine nominations and final-publication revision controls; the MCP embedding
 tests exercise actual scoped transport consumption.
+
+SQL migration 3 adds private rebuild staging. A complete snapshot is keyed by
+its documents, caller-supplied source revision/policy identity, embedding space,
+and chunk settings. Successful batches survive restart; incomplete staging is
+never read by search. Repeating an interrupted rebuild resumes only that exact
+snapshot. Document and provenance erasure include staged rows and vectors, and
+owned-generation erasure removes their physical store. Activation checks the
+caller's current-source fence and atomically replaces the active index only
+when every chunk has a vector.

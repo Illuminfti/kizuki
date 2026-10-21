@@ -67,7 +67,7 @@ export class SqlStore {
       const versionTable=(await resource.db.query<{name:string|null}>("SELECT to_regclass('public.schema_migrations')::text AS name")).rows[0]?.name;
       if(versionTable!==null && versionTable!==undefined){
         const versions=(await resource.db.query<{version:number}>("SELECT version FROM schema_migrations")).rows;
-        if(versions.some(row=>row.version!==1 && row.version!==2))throw new PortError("config_invalid","unsupported retrieval SQL schema version",false);
+        if(versions.some(row=>row.version!==1 && row.version!==2 && row.version!==3))throw new PortError("config_invalid","unsupported retrieval SQL schema version",false);
       }
       await resource.db.exec(SCHEMA);
       await resource.db.transaction(async tx => {
@@ -76,6 +76,14 @@ export class SqlStore {
           await tx.exec("ALTER TABLE retrieval_docs ALTER COLUMN updated_at DROP NOT NULL; INSERT INTO schema_migrations VALUES(2)");
           await tx.query("UPDATE retrieval_meta SET value='2'::jsonb WHERE key='schema'");
         }
+      });
+      await resource.db.transaction(async tx => {
+        await tx.exec(`CREATE TABLE IF NOT EXISTS rebuild_docs (doc_id text PRIMARY KEY, doc jsonb NOT NULL);
+          CREATE TABLE IF NOT EXISTS rebuild_vectors (
+            chunk_id text PRIMARY KEY, doc_id text NOT NULL REFERENCES rebuild_docs ON DELETE CASCADE,
+            embedding vector NOT NULL);
+          INSERT INTO schema_migrations VALUES(3) ON CONFLICT DO NOTHING;
+          UPDATE retrieval_meta SET value='3'::jsonb WHERE key='schema'`);
       });
       const legacy = ["docs.json", "graph.json"].some(name => existsSync(join(dataDir, "store", name)));
       if (legacy && await store.meta("rebuilt") === null) {
@@ -95,7 +103,7 @@ export class SqlStore {
       this.active++;
       try { return await fn(); } finally { this.active--; }
     }).catch(error => {
-      if (error instanceof PortError) {
+      if (error instanceof PortError || (error instanceof DOMException && error.name === "AbortError")) {
         throw error;
       }
       throw new PortError("unavailable", "retrieval SQL operation failed", false);
@@ -240,7 +248,7 @@ export class SqlStore {
     const stored = (await this.db.query<{ chunk_index: number; body: string; embedded: boolean }>(
       "SELECT chunk_index,body,embedding IS NOT NULL AS embedded FROM retrieval_chunks WHERE doc_id=$1 ORDER BY chunk_index", [docId])).rows;
     if (stored.length !== chunks.length || stored.some((row, at) => !row.embedded || row.chunk_index !== chunks[at]!.index || row.body !== chunks[at]!.text)) return false;
-    await this.db.query("INSERT INTO rebuild_vectors SELECT chunk_id,embedding FROM retrieval_chunks WHERE doc_id=$1", [docId]);
+    await this.db.query("INSERT INTO rebuild_vectors SELECT chunk_id,doc_id,embedding FROM retrieval_chunks WHERE doc_id=$1 ON CONFLICT(chunk_id) DO NOTHING", [docId]);
     return true;
   }
   async pendingCount(query?: RetrievalQuery): Promise<number> {

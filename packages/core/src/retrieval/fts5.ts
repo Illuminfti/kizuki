@@ -288,7 +288,7 @@ export class Fts5RetrievalPort implements RetrievalPort {
     return { processed: validated.length };
   }
 
-  async rebuildFromDocuments(source: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>, options: { signal?: AbortSignal } = {}): Promise<void> {
+  async rebuildFromDocuments(source: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>, options: { signal?: AbortSignal; snapshot_id?: string; assertCurrent?: () => void } = {}): Promise<void> {
     options.signal?.throwIfAborted();
     this.assertMutable();
     this.rebuilding = true;
@@ -302,11 +302,14 @@ export class Fts5RetrievalPort implements RetrievalPort {
       this.assertOpen();
       options.signal?.throwIfAborted();
       this.assertGeneration();
+      options.assertCurrent?.();
       this.db.transaction(() => {
         this.assertGeneration();
         this.db.exec("DELETE FROM search_docs; DELETE FROM search_documents");
         this.writeDocs(docs);
         this.setMeta("rebuilt_at", this.ctx.clock());
+        options.signal?.throwIfAborted();
+        options.assertCurrent?.();
       }).immediate();
       this.projectEngineJson();
     } finally {

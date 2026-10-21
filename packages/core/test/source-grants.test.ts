@@ -2081,3 +2081,26 @@ test("clearing an A-derived claim key preserves a binding referenced by independ
     expect(db.query("SELECT 1 FROM events WHERE event_id=?").get(bb.event.event_id)).not.toBeNull();
     db.close();
 });
+
+test("acknowledged rebuild cancellation preserves authorized staging but poisons the timed-out port", async () => {
+  const { db, dir, a } = setup();
+  try {
+    grant(db, a);
+    expect(accept(db, event(), { source: { source_key: a, expected_revision: 1 } }).status).toBe("stored");
+    const port = bindLocalSourcePort(new FixtureVectorPort({ vector: false }), { store_id: "local:fixture" }) as FixtureVectorPort & {
+      rebuildFromDocuments: NonNullable<RetrievalPort["rebuildFromDocuments"]>;
+    };
+    Object.assign(port.descriptor, { method_timeouts_ms: { rebuildFromDocuments: 30 } });
+    let removed = false;
+    const remove = port.remove.bind(port);
+    port.remove = async ids => { removed = true; return remove(ids); };
+    port.rebuildFromDocuments = async (_docs, options) => {
+      expect(options?.snapshot_id).toMatch(/^[a-f0-9]{64}$/);
+      await new Promise<void>((_resolve, reject) => options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), { once: true }));
+    };
+    await expect(rebuildRetrieval(db, dir, port)).rejects.toThrow("timed out");
+    for (let turn = 0; turn < 40; turn++) await Promise.resolve();
+    expect(removed).toBe(false);
+    await expect(rebuildRetrieval(db, dir, port)).rejects.toThrow("source egress authorization unavailable");
+  } finally { db.close(); }
+});

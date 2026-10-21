@@ -1290,7 +1290,11 @@ id). Unknown IDs and a busy engine fail closed. A successful `--layer all`
 rebuild (the default) flips `[ports].retrieval` in `serve.toml` and records
 `port_state`. A failed or partial rebuild does not rewrite
 `serve.toml` or `port_state`. The previous store remains on disk until
-`kizuki rebuild --prune-old`. Changing the embedding space is a full re-embed.
+`kizuki rebuild --prune-old`. An embedded rebuild that reaches its 30-second
+deadline reports failure and retains completed vectors in a private stage. Repeat
+the same command to resume; only a complete, still-authorized snapshot becomes
+searchable. Changed source revisions, policy, embedding space or chunk settings
+invalidate that stage. Changing the embedding space is a full re-embed.
 `rebuild --layer all` refuses it unless `--confirm` is passed, and prices the
 work from doctor's measured embed-backfill throughput (`unmeasured` when none
 exists). A confirmed space change binds the configured embedding port and

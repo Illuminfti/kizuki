@@ -177,8 +177,14 @@ export interface RetrievalPort extends Port {
    * cannot be proved, including pending asynchronous work or changed custody.
    */
   fenceMutations?(): Promise<RetrievalMutationFence>;
-  /** Stage before atomic replacement. Cancellation retains the active generation. */
-  rebuildFromDocuments?(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>, options?: { signal?: AbortSignal }): Promise<void>;
+  /**
+   * Stage before atomic replacement. Cancellation retains the active generation.
+   * snapshot_id identifies the caller's authoritative revisions and policy epoch.
+   * Private resumable staging participates in document/provenance erasure and absence proofs.
+   * Call assertCurrent immediately before activation and before committing it when supplied;
+   * a thrown error must leave the prior generation active. Core also revalidates after settlement.
+   */
+  rebuildFromDocuments?(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>, options?: { signal?: AbortSignal; snapshot_id?: string; assertCurrent?: () => void }): Promise<void>;
   upsert(docs: readonly RetrievalDoc[]): Promise<RetrievalMutationReport>;
   /**
    * Embed up to `limit` chunks that have no vector yet and report what is left.
