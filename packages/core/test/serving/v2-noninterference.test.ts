@@ -1,12 +1,15 @@
 import { afterEach, expect, setDefaultTimeout, setSystemTime, test } from "bun:test";
 import { join } from "node:path";
-import { OWNER_AGENT_GRANT, TOOLS, addAgent, authenticate, setGrant } from "../../src/agents";
+import { OWNER, OWNER_AGENT_GRANT, TOOLS, addAgent, authenticate, setGrant } from "../../src/agents";
 import { insertClaim } from "../../src/claims/store";
 import { revokeSourceGrant } from "../../src/ledger/source-grants";
 import { initGraph } from "../../src/graph/schema";
 import { openLedger } from "../../src/ledger/db";
 import { initSearch } from "../../src/search/schema";
 import { dispatchServeTool } from "../../src/serving/dispatch";
+import { referenceScope } from "../../src/world/ref-kinds/common";
+import { issueClaimRef } from "../../src/world/ref-kinds/claim";
+import { issueEventVersionRef } from "../../src/world/ref-kinds/evidence";
 import { HIDDEN_MUTATIONS, checkNoninterference, hiddenScene, observe } from "../helpers/noninterference";
 import type { NoninterferenceScene, ReadCase } from "../helpers/noninterference";
 import { tempVault } from "../helpers/vault";
@@ -14,20 +17,30 @@ import { worldSeed } from "../helpers/world-seed";
 
 setDefaultTimeout(120_000);
 afterEach(() => setSystemTime());
+const ABSENT_PAGE = { kind: "page", token: "A".repeat(43) } as const;
+const NOT_FOUND = { code: "not_found", message: "not found" } as const;
+
+function visibleAnchor(scene: NoninterferenceScene) {
+  return scene.db.transaction(() => issueEventVersionRef(referenceScope(scene.reader), scene.visible.concept.eventId)!).immediate();
+}
 
 /** Real tool inputs. Writes use a denied hidden target, so observation never changes visible state. */
 function cases(scene: NoninterferenceScene): ReadCase[] {
+  const hidden = scene.db.transaction(() => {
+    const scope = referenceScope({ ...scene.reader, principal: OWNER });
+    return { event: issueEventVersionRef(scope, scene.hidden.eventId)!, claim: issueClaimRef(scope, scene.hidden.claims[2]!)! };
+  }).immediate();
   const inputs: Record<(typeof TOOLS)[number], Record<string, unknown>> = {
     search: { query: "Bayesian", scope: "all" },
-    get_page: { id: "absent:page" },
+    get_page: { page: ABSENT_PAGE },
     query_entities: { type: "topic" },
     timeline: { since: "2026-01-01T00:00:00Z", until: "2030-01-01T00:00:00Z" },
     context_packet: { query: "Bayesian", budget_tokens: 1_000 },
-    graph_neighbors: { id: "absent:page" },
+    graph_neighbors: { anchor: visibleAnchor(scene) },
     system_health: {},
     world_view: { operation: "concept", concept: scene.refs.concept, valid: { kind: "all" }, knownAt: { kind: "current" } },
-    propose: { kind: "claim", body: "A note", subjects: ["topic:bayes"], provenance: [scene.hidden.eventId] },
-    correct: { statement: "Use the revised definition.", target: { claim_id: scene.hidden.claims[2] }, dry_run: true },
+    propose: { kind: "claim", body: "A note", subject: scene.refs.concept, provenance: [hidden.event] },
+    correct: { statement: "Use the revised definition.", target: hidden.claim, dry_run: true },
   };
   return TOOLS.map((tool) => ({
     name: tool,
@@ -41,6 +54,22 @@ function cases(scene: NoninterferenceScene): ReadCase[] {
     },
   }));
 }
+
+test("the v2 matrix exercises valid reads and exact scoped refusals", async () => {
+  const scene = await hiddenScene();
+  try {
+    // Keep these assertions outside observe(), which intentionally captures
+    // thrown errors so it can compare refusals across hidden mutations.
+    for (const read of cases(scene)) {
+      const pending = read.run(scene.reader);
+      if (read.name === "get_page" || read.name === "propose" || read.name === "correct")
+        await expect(pending).rejects.toMatchObject(NOT_FOUND);
+      else if (read.name === "system_health")
+        await expect(pending).rejects.toMatchObject({ code: "unsupported_contract", message: "requested contract unavailable" });
+      else await expect(pending).resolves.toBeDefined();
+    }
+  } finally { scene.dispose(); }
+});
 
 test("all ten v2 tools preserve bytes, refusals and work counters across hidden mutations", async () => {
   setSystemTime(new Date("2026-09-30T12:00:00Z"));
@@ -68,7 +97,7 @@ test.each(["context_packet", "search", "graph_neighbors"] as const)(
     const scene = await hiddenScene();
     try {
       const args = tool === "context_packet" ? { include: [], budget_tokens: 1000 }
-        : tool === "search" ? { query: "Bayesian", scope: "all" } : { id: "absent:page" };
+        : tool === "search" ? { query: "Bayesian", scope: "all" } : { anchor: visibleAnchor(scene) };
       const read: ReadCase = { name: tool, run: (ctx) => dispatchServeTool(ctx, tool, args, { response_contract: "kizuki.envelope/v2" }) };
       await read.run(scene.reader);
       const control = await observe(scene.reader, read);
@@ -97,7 +126,7 @@ test("withdrawn visible evidence is never published by an overlapping packet rea
   try {
     const pending = dispatchServeTool(scene.reader, "context_packet", { include: ["timeline"], purpose: "recall", since: "2026-01-01T00:00:00Z", until: "2030-01-01T00:00:00Z", budget_tokens: 1000 }, { response_contract: "kizuki.envelope/v2" });
     revokeSourceGrant(scene.db, { source_key: scene.visible.concept.sourceKey, expected_revision: 1, operation_id: "overlapping-visible-revoke" });
-    await expect(pending).rejects.toMatchObject({ code: "error" });
+    await expect(pending).rejects.toMatchObject(NOT_FOUND);
   } finally { scene.dispose(); }
 });
 
@@ -109,7 +138,7 @@ test("a retained packet is not confirmed unchanged after its visible source is w
     const priorView = (before.data as { result: { view: unknown } }).result.view;
     const pending = dispatchServeTool(scene.reader, "context_packet", { ...args, priorView }, { response_contract: "kizuki.envelope/v2" });
     revokeSourceGrant(scene.db, { source_key: scene.visible.concept.sourceKey, expected_revision: 1, operation_id: "retained-visible-revoke" });
-    await expect(pending).rejects.toMatchObject({ code: "error" });
+    await expect(pending).rejects.toMatchObject(NOT_FOUND);
   } finally { scene.dispose(); }
 });
 
@@ -118,7 +147,7 @@ test("a narrowed grant refuses an in-flight async v2 packet", async () => {
   try {
     const pending = dispatchServeTool(scene.reader, "context_packet", { include: ["timeline"], purpose: "recall", since: "2026-01-01T00:00:00Z", until: "2030-01-01T00:00:00Z", budget_tokens: 1000 }, { response_contract: "kizuki.envelope/v2" });
     setGrant(scene.db, "narrow-reader", { subjects: [] });
-    await expect(pending).rejects.toMatchObject({ code: "error", message: "authority changed during request; retry" });
+    await expect(pending).rejects.toMatchObject(NOT_FOUND);
   } finally { scene.dispose(); }
 });
 
@@ -153,12 +182,12 @@ test("the first hidden source leaves v2 bytes and work unchanged across the epoc
     const ctx = { db, vaultPath: vault.path, principal };
     const read: ReadCase = {
       name: "get_page",
-      run: (live) => dispatchServeTool(live, "get_page", { id: "absent:page" }, {
+      run: (live) => dispatchServeTool(live, "get_page", { page: ABSENT_PAGE }, {
         response_contract: "kizuki.envelope/v2",
       }),
     };
     // Issue the principal reference before measuring either read.
-    await read.run(ctx);
+    await expect(read.run(ctx)).rejects.toMatchObject(NOT_FOUND);
     const before = await observe(ctx, read);
     await worldSeed(db, { subject: "topic:hidden", floor: "private", discover: false });
     const after = await observe(ctx, read);

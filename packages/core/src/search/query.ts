@@ -236,8 +236,11 @@ function searchPlan(
     return { ...EMPTY_PLAN, degraded: [...degraded, "scope-empty"] };
   }
 
-  const meta = readDerivedMeta(db, "search");
-  if (source?.owner !== false && meta !== null && meta.status !== "ok") {
+  // A global stamp can appear after indexing only hidden evidence. Scoped
+  // readers use visible-corpus health checks, so do not read this owner-only
+  // diagnostic even when its value would be omitted from the response.
+  const meta = source?.owner === false ? null : readDerivedMeta(db, "search");
+  if (meta !== null && meta.status !== "ok") {
     degraded.push(`index-${meta.status}`);
   }
   if (!tableExists(db, "search_docs")) {
