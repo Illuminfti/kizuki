@@ -13,7 +13,8 @@ import { asSensitivity, asTaint, eligible, loadCanon, pageDecision } from "./can
 import { auditArguments, gate, principalName } from "./gate";
 import type { Served } from "./gate";
 import { eventDecision, readServableEvents } from "./ledger";
-import type { Envelope, ServeContext } from "./types";
+import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA } from "./types";
 
 /**
  * The owner sees the vault. An agent sees only counts over what its grant can
@@ -137,7 +138,7 @@ function readableView(ctx: ServeContext): { events: number; connectors: Set<stri
   return { events, connectors, claims, capped: selected.length >= AGENT_VIEW_CAP || claims >= AGENT_VIEW_CAP };
 }
 
-export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
+export function serveHealth<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(ctx: ServeContext, contract: C = ENVELOPE_SCHEMA as C): ResponseEnvelope<HealthData, C> {
   return gate(
     ctx,
     "system_health",
@@ -237,5 +238,6 @@ export function serveHealth(ctx: ServeContext): Envelope<HealthData> {
         },
       };
     },
+    contract,
   );
 }

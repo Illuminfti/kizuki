@@ -25,6 +25,14 @@ function validLifecycle(claim: Claim): boolean {
     claim.superseded_by !== claim.claim_id;
 }
 
+/** Content and lifecycle used by a read; effective sensitivity is reauthorized separately. */
+export function claimPublicationFingerprint(claim: Claim): string {
+  const { sensitivity: _sensitivity, ...content } = claim;
+  return new Bun.CryptoHasher("sha256").update(JSON.stringify(content)).digest("hex");
+}
+
+export interface ClaimPublication { id: string; fingerprint: string; sensitivity: Sensitivity }
+
 /** One call's policy snapshot. Neither source text nor denied names escape. */
 export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadScope = { owner: grant === OWNER.grant, purpose: "recall" }) {
   const decisions = new Map<string, boolean>();
@@ -96,6 +104,13 @@ export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadS
       .flatMap((claim) => auditClaim(claim.claim_id));
   }
 
+  function publication(ids: readonly string[]): ClaimPublication[] {
+    return ids.flatMap((id) => {
+      const claim = readableClaims.get(id);
+      return claim === undefined ? [] : [{ id, fingerprint: claimPublicationFingerprint(claim), sensitivity: claim.sensitivity }];
+    });
+  }
+
   function canReadAlias(link: IdentityLink): boolean {
     const id = aliasId(link.subject_a, link.subject_b);
     const deny = (reason: AuditDenial["reason"]): false => {
@@ -148,5 +163,5 @@ export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadS
     return item === undefined ? [] : [item];
   }
 
-  return { canRead, canReadAlias, invalidAlias, denied, auditClaim, auditGroup, auditAlias };
+  return { canRead, canReadAlias, invalidAlias, denied, auditClaim, auditGroup, auditAlias, publication };
 }

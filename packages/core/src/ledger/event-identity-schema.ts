@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { hasContextPacketMarker } from "../canon/origin";
 import { EVENT_LIMITS } from "../contracts/event";
 import { classifyNewEventOrigin } from "./event-origin";
 import { EventRecordError, eventFromRow, type EventRow } from "./event-record";
@@ -86,7 +87,7 @@ export function bindLegacyEventOrigins(db: Database): void {
         const event = eventFromRow(row, db, "legacy");
         const nativeDigest = nativeRequestDigest(db, event.event_id);
         const origin = nativeDigest === null ? classifyNewEventOrigin(db, event) : "external";
-        if (origin === "self" && !event.text.includes("KIZUKI CONTEXT v1")) {
+        if (origin === "self" && !hasContextPacketMarker(event.text)) {
           if (++candidates > LEGACY_ORIGIN_MAX_CANDIDATES) throw new LegacyOriginRebuildRequired();
           candidate.run(event.event_id, row.accepted_at);
         }

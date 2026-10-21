@@ -297,13 +297,15 @@ export function searchAuditCandidates(
   db: Database,
   query: string,
   opts: Omit<SearchOptions, "ceiling"> & {
+    /** Scoped readers cannot enumerate candidates above their ceiling. */
+    ceiling?: Sensitivity;
     source?: { owner: boolean; purpose?: SourcePurpose };
     /** Ranked-window skip for serving. Absent from SearchOptions and public search(). */
     offset?: number;
   },
 ): { candidates: Pick<SearchHit, "doc_id" | "scope">[]; degraded: string[] } {
-  const { source, offset, ...rest } = opts;
-  const plan = searchPlan(db, query, rest, null, source, offset);
+  const { source, offset, ceiling, ...rest } = opts;
+  const plan = searchPlan(db, query, rest, ceiling === undefined ? null : requireCeiling(ceiling), source, offset);
   return {
     candidates: plan.tail === null ? [] : db
       .query<Pick<SearchHit, "doc_id" | "scope">, (string | number)[]>(`SELECT doc_id, scope ${plan.tail}`)

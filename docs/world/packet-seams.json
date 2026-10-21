@@ -28,44 +28,47 @@
   },
   {
     "packet": 484,
-    "workstream": "F1B",
-    "scope": "Additive grouping, collection, enrichment and kind assembly for the first Concept; later identity convergence is separate",
-    "core": "@kizuki/core/world: readWorldView and serveWorldView",
-    "cli": "kizuki world: concept and find_concepts (text and --json)",
-    "mcp": "world_view: concept and find_concepts",
-    "http": "/v1/world_view",
-    "app": "Concept cards and discovery through /app/v1/world_view",
-    "tests": [
-      "packages/core/test/world/pipeline-golden.test.ts",
-      "packages/core/test/world/pipeline.test.ts",
-      "packages/core/test/world/pipeline-kinds.test.ts",
-      "packages/core/test/world/discovery-grouping.test.ts",
-      "packages/core/test/world/pipeline-noninterference.test.ts",
-      "packages/cli/test/world-ops.test.ts",
-      "packages/mcp/test/world-ops.test.ts"
-    ]
-  },
-  {
-    "packet": 484,
     "workstream": "CARD",
     "scope": "Qualified card fields, shared support roots, current evidence spans and text rendering; identity convergence and consolidation remain separate",
     "core": "@kizuki/core/world: readWorldView and serveWorldView",
     "cli": "kizuki world: concept, situation and evidence (text and --json)",
     "mcp": "world_view: concept, situation and evidence",
     "http": "/v1/world_view",
-    "app": "/app/v1/world_view: cards and the quoted evidence envelope",
+    "app": "Concept cards and discovery through /app/v1/world_view",
+    "seams": {
+      "core": ["packages/core/src/world/public.ts", "packages/core/src/world/lineage.ts", "packages/core/src/world/ops/evidence.ts"],
+      "cli": ["packages/cli/src/commands/world/ops/evidence.ts", "packages/cli/src/commands/world/ops/relation-render.ts"],
+      "mcp": ["packages/mcp/src/world/ops/evidence.ts"],
+      "http": ["packages/core/src/serve/http.ts"],
+      "app": ["packages/cli/src/app/host.ts"]
+    },
+    "tests": [
+      "packages/core/test/world/card-fields.test.ts", "packages/core/test/world/card-lineage.test.ts",
+      "packages/core/test/world/card-oracles.test.ts", "packages/core/test/world/card-coverage-privacy.test.ts",
+      "packages/core/test/world/evidence.test.ts", "packages/cli/test/world-card.test.ts",
+      "packages/cli/test/world-card-parity.test.ts"
+    ]
+  },
+  {
+    "packet": 502,
+    "workstream": "ENV",
+    "scope": "Scoped envelope negotiation and content-baseline context packets; stored view history and World Diff remain separate work.",
+    "core": "dispatchServeTool and serveContextPacketV2",
+    "cli": "context, query and tell --response-contract (text and --json); session-start hook",
+    "mcp": "Ten tools with explicit selector negotiation and token defaults",
+    "http": "Existing /v1 tool routes with the response_contract wrapper",
+    "app": "Existing agent enrollment and world reads retain their contracts; ENV adds no App read operation",
     "seams": {
       "core": [
-        "packages/core/src/world/public.ts",
-        "packages/core/src/world/lineage.ts",
-        "packages/core/src/world/ops/evidence.ts"
+        "packages/core/src/serving/dispatch.ts",
+        "packages/core/src/serving/packet.ts"
       ],
       "cli": [
-        "packages/cli/src/commands/world/ops/evidence.ts",
-        "packages/cli/src/commands/world/ops/relation-render.ts"
+        "packages/cli/src/response-contract.ts",
+        "packages/cli/src/hook/session-start.ts"
       ],
       "mcp": [
-        "packages/mcp/src/world/ops/evidence.ts"
+        "packages/mcp/src/server.ts"
       ],
       "http": [
         "packages/core/src/serve/http.ts"
@@ -75,13 +78,57 @@
       ]
     },
     "tests": [
-      "packages/core/test/world/card-fields.test.ts",
-      "packages/core/test/world/card-lineage.test.ts",
-      "packages/core/test/world/card-oracles.test.ts",
-      "packages/core/test/world/card-coverage-privacy.test.ts",
-      "packages/core/test/world/evidence.test.ts",
-      "packages/cli/test/world-card.test.ts",
-      "packages/cli/test/world-card-parity.test.ts"
+      "packages/core/test/serving/v2-noninterference.test.ts",
+      "packages/core/test/serving/envelope-v2.test.ts",
+      "packages/core/test/serving/context-packet-v2.test.ts",
+      "packages/mcp/test/envelope-v2.test.ts",
+      "packages/cli/test/response-contract.test.ts",
+      "packages/cli/test/hook.test.ts",
+      "packages/cli/test/app-host.test.ts"
+    ],
+    "open_items": [
+      "ENV-4 requires D-ENV and remains a separate draft change."
+    ]
+  },
+  {
+    "packet": 490,
+    "workstream": "ENV",
+    "scope": "Scoped freshness reads without global policy epochs; typed references and stored view-token lifecycle remain separate work.",
+    "core": "dispatchServeTool and serveContextPacketV2",
+    "cli": "context, query and tell --response-contract (text and --json); session-start hook",
+    "mcp": "Ten tools with explicit selector negotiation and token defaults",
+    "http": "Existing /v1 tool routes with the response_contract wrapper",
+    "app": "Existing agent enrollment and world reads retain their contracts; ENV adds no App read operation",
+    "seams": {
+      "core": [
+        "packages/core/src/serving/dispatch.ts",
+        "packages/core/src/serving/packet.ts"
+      ],
+      "cli": [
+        "packages/cli/src/response-contract.ts",
+        "packages/cli/src/hook/session-start.ts"
+      ],
+      "mcp": [
+        "packages/mcp/src/server.ts"
+      ],
+      "http": [
+        "packages/core/src/serve/http.ts"
+      ],
+      "app": [
+        "packages/cli/src/app/host.ts"
+      ]
+    },
+    "tests": [
+      "packages/core/test/serving/v2-noninterference.test.ts",
+      "packages/core/test/serving/envelope-v2.test.ts",
+      "packages/core/test/serving/context-packet-v2.test.ts",
+      "packages/mcp/test/envelope-v2.test.ts",
+      "packages/cli/test/response-contract.test.ts",
+      "packages/cli/test/hook.test.ts",
+      "packages/cli/test/app-host.test.ts"
+    ],
+    "open_items": [
+      "ENV-4 requires D-ENV and remains a separate draft change."
     ]
   }
 ]

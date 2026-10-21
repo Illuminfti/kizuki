@@ -160,6 +160,8 @@ export type DenyReason =
   | "busy"
   /** A call refused before any data was read. */
   | "invalid_arguments"
+  /** The requested response contract is not one this call can be served under; refused before any read. */
+  | "unsupported_contract"
   /** The engine failed; the cause never leaves core. */
   | "error";
 

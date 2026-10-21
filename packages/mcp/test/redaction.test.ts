@@ -94,10 +94,9 @@ test("over stdio an agent gets no credential-shaped text, a forged stamp stays q
       expect(wire).not.toContain(fragment);
     expect(HIDDEN.test(wire)).toBe(false);
     const envelope = envelopeOf(served);
-    expect(JSON.stringify(envelope.redacted)).toContain("api_token");
-    expect(JSON.stringify(envelope.redacted)).not.toContain(
-      SECRET_FRAGMENTS[1]!,
-    );
+    expect(Object.keys(envelope).sort()).toEqual(["at", "canon", "data", "principal", "quoted", "schema", "tool"]);
+    // A timeline excerpt may stop before the replaced span; the full page proves replacement.
+    if (tool === "get_page") expect(wire).toContain("[redacted:");
 
     const raw = await call(owner, tool, args);
     expect(envelopeOf(raw)).not.toHaveProperty("redacted");
@@ -105,9 +104,10 @@ test("over stdio an agent gets no credential-shaped text, a forged stamp stays q
   }
   const packet = (
     envelopeOf(await call(agent, "context_packet", CALLS[3]![1]))["data"] as {
-      packet_md: string;
+      result: { status: string; data: { packetMd: string } };
     }
-  ).packet_md;
+  ).result.data.packetMd;
+  expect(packet).toStartWith("KIZUKI CONTEXT v2\n");
   expect(packet).toContain(FORGED_STAMP);
   for (const line of packet
     .split("\n")
@@ -120,19 +120,19 @@ test("over stdio system_health tells an agent nothing the owner alone may see", 
   fixture = await seeded();
   const agent = await connectClient(fixture.agent("reader-personal"), open);
   const owner = await connectClient(fixture.owner(), open);
-  const seen = envelopeOf(await call(agent, "system_health", {}))[
-    "data"
-  ] as Record<string, unknown>;
+  const seen = await call(agent, "system_health", {});
   const all = envelopeOf(await call(owner, "system_health", {}))[
     "data"
   ] as Record<string, unknown>;
   expect(all).toHaveProperty("agents");
-  for (const owned of ["agents", "runtime", "derived", "pending_retrieval_ops"])
-    expect(seen).not.toHaveProperty(owned);
-  expect(Object.keys(seen["pages"] as object)).toEqual(["servable"]);
+  expect(seen.isError).toBe(true);
+  expect(JSON.parse(seen.content[0]!.text)).toEqual({
+    error: "unsupported_contract", message: "requested contract unavailable", retry_after_seconds: null,
+  });
+  expect(seen.structuredContent).toBeUndefined();
 });
 
-test("world_view labels are redacted over stdio and the strict output schema accepts the counts", async () => {
+test("world_view labels are redacted over stdio within the closed v2 envelope", async () => {
   fixture = mcpFixture();
   await worldFixture(fixture.db, {
     label: `Kettle DB_PASSWORD=${"w".repeat(12)}`,
@@ -146,7 +146,8 @@ test("world_view labels are redacted over stdio and the strict output schema acc
   });
   expect(found.isError ?? false).toBe(false);
   expect(found.content[0]!.text).not.toContain("w".repeat(12));
-  expect(envelopeOf(found)["redacted"]).toEqual({ secret_assignment: 1 });
+  expect(found.content[0]!.text).toContain("DB_PASSWORD=[redacted:secret_assignment]");
+  expect(Object.keys(envelopeOf(found)).sort()).toEqual(["at", "canon", "data", "principal", "quoted", "schema", "tool"]);
 });
 
 test("a label near the bound made of secret assignments still passes the strict schema for an agent", async () => {

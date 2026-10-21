@@ -31,3 +31,8 @@ test("a registered operation without CLI or MCP cannot pass parity", () => {
   expect(() => verifyWorldSurfaceParity(WORLD_OPS, WORLD_CLI_OPS.slice(1), MCP_WORLD_OPS)).toThrow("lacks CLI");
   expect(() => verifyWorldSurfaceParity(WORLD_OPS, WORLD_CLI_OPS, MCP_WORLD_OPS.slice(1))).toThrow("lacks MCP");
 });
+
+test("ENV registers both packet portions with executable seams and regressions", () => {
+  expect(rows.filter((row) => row.workstream === "ENV").map((row) => row.packet)).toEqual([502, 490]);
+  expect(verifyPacketSeams(root, rows)).toBe(rows.length);
+});

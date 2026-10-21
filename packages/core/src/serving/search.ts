@@ -28,7 +28,8 @@ import {
   quotedChunk,
 } from "./ledger";
 import { ServeError } from "./types";
-import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
+import type { CanonChunk, QuotedChunk, ServeContext, ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA } from "./types";
 import { retrievalCandidates } from "./retrieval";
 import { currentQuotedSource } from "./ledger";
 import { attachSubjectLabels, canonSubjects, projectSubjectLabels } from "./subject-labels";
@@ -168,10 +169,11 @@ export interface SearchData {
   degraded: string[];
 }
 
-export async function serveSearch(
+export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
   args: SearchArgs,
-): Promise<Envelope<SearchData>> {
+  contract: C = ENVELOPE_SCHEMA as C,
+): Promise<ResponseEnvelope<SearchData, C>> {
   return gateAsync(ctx, "search", auditArguments(args), async ({ ctx, at }): Promise<Served<SearchData>> => {
     const grant = ctx.principal.grant;
     const query = text("query", args.query, MAX_QUERY_CHARS);
@@ -234,19 +236,20 @@ export async function serveSearch(
     const rankedOpts = {
       ...base,
       limit: MAX_RETRIEVAL_LIMIT,
+      ...(ctx.principal.kind === "owner" ? {} : { ceiling: grant.ceiling }),
       source: {
         owner: ctx.principal.kind === "owner",
         purpose: ctx.sourcePurpose ?? "recall",
       },
     };
     const degraded = new Set<string>();
-    const read = snapshotSearchRead(ctx, index.generation);
+    const read = contract === ENVELOPE_V2_SCHEMA ? null : snapshotSearchRead(ctx, index.generation);
     let offset = 0;
     let previousPage = "";
     // Page the same rank order until MAX_RETRIEVAL_LIMIT authorized hits or the
     // real end. FTS provenance is not an authorization predicate.
     while (true) {
-      assertSearchRead(ctx, read);
+      if (read !== null) assertSearchRead(ctx, read);
       const ranked = searchAuditCandidates(ctx.db, query, {
         ...rankedOpts,
         ...(offset === 0 ? {} : { offset }),
@@ -281,8 +284,12 @@ export async function serveSearch(
 
     return {
       canon, quoted, audit_served: [...audit.values()],
+      authorization: {
+        pages: canon.map((chunk) => ({ id: chunk.page_id, hash: index.byId.get(chunk.page_id)!.contentHash, sensitivity: chunk.sensitivity })),
+        events: quoted.map((chunk) => ({ id: chunk.event_id, sensitivity: chunk.sensitivity })),
+      },
       withheld: classified.withheld,
       ...(degraded.size === 0 ? {} : { data: { degraded: [...degraded] } }),
     };
-  });
+  }, contract);
 }

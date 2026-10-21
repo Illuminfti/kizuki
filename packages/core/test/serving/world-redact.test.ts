@@ -13,7 +13,7 @@ async function discover(db: ReturnType<typeof openLedger>, principal: Parameters
     label: "",
     valid: { kind: "all" },
     knownAt: { kind: "current" },
-  })) as { redacted?: Record<string, number>; data: unknown };
+  }, { response_contract: "kizuki.envelope/v2" })) as { data: unknown };
 }
 
 test("world_view labels are redacted for an agent and raw for the owner", async () => {
@@ -25,7 +25,7 @@ test("world_view labels are redacted for an agent and raw for the owner", async 
     const wire = JSON.stringify(served);
     expect(wire).not.toContain(PASSWORD);
     expect(wire).toContain("DB_PASSWORD=[redacted:secret_assignment]");
-    expect(served.redacted).toEqual({ secret_assignment: 1 });
+    expect(Object.keys(served).sort()).toEqual(["at", "canon", "data", "principal", "quoted", "schema", "tool"]);
 
     const owner = await discover(db, world.ctx.principal, world.ctx.vaultPath);
     expect(JSON.stringify(owner)).toContain(PASSWORD);
@@ -49,7 +49,7 @@ test("a concept card's definitions and evidence carry redacted text and untouche
       concept: ref,
       valid: { kind: "all" },
       knownAt: { kind: "current" },
-    })) as { data: { result: { data: { concept: { ref: unknown } } } } };
+    }, { response_contract: "kizuki.envelope/v2" })) as { data: { result: { data: { concept: { ref: unknown } } } } };
     const wire = JSON.stringify(card);
     expect(wire).not.toContain(PASSWORD);
     expect(wire).toContain("[redacted:secret_assignment]");

@@ -8,7 +8,7 @@ const [mode, root, hostTime] = process.argv.slice(2);
 if (root === undefined) throw new Error("fixture root required");
 installLogicalClock(mode === "host" ? hostTime! : AS_OF);
 const { runEvaluation, observe, packetObservation, summarize, evaluationExitCode } = await import("./run");
-const { OWNER, listClaims, listCanonReceipts, serveContextPacket } = await import("../../../packages/core/src/index");
+const { OWNER, listAudit, shapeArguments, listClaims, listCanonReceipts, serveContextPacket } = await import("../../../packages/core/src/index");
 const { openLedger } = await import("../../../packages/core/src/testing");
 
 if (mode === "host") {
@@ -18,7 +18,15 @@ if (mode === "host") {
     const corrections = listClaims(db).filter(claim => claim.authority === "owner_correction")
       .map(claim => ({ created_at: claim.created_at, asserted_at: claim.asserted_at, valid_from: claim.valid_from }));
     const receipts = listCanonReceipts(db).map(receipt => receipt.at);
-    writeFileSync(join(root, "regression.json"), JSON.stringify({ report, corrections, receipts, caller_time: new Date().toISOString() }));
+    // Hook v2 packets omit request time. The receipt still proves the hook
+    // ran on the evaluation clock, for both owner and token principals.
+    const sessionPurpose = JSON.stringify(shapeArguments({ purpose: "session" }).purpose);
+    const hookAudit = Object.fromEntries(["owner", "fresh-agent"].map(name => [name,
+      listAudit(db, name, { kind: "access", limit: 500 })
+        .filter(row => row.tool === "context_packet" && JSON.stringify(row.query_shape.purpose) === sessionPurpose)
+        .map(row => row.at),
+    ]));
+    writeFileSync(join(root, "regression.json"), JSON.stringify({ report, corrections, receipts, hook_audit: hookAudit, caller_time: new Date().toISOString() }));
   } finally { db.close(); }
   process.exit(0);
 } else if (mode === "unavailable") {

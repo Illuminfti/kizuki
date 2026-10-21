@@ -6,6 +6,7 @@ import { eventFromRow, type EventRow } from "./event-record";
 import { readSchemaVersion } from "./integrity";
 import { WORLD_MIGRATION_VERSIONS } from "../world/tables/versions";
 import { machineBodyHash, machineImageHashes } from "./machine-image";
+import { hasContextPacketMarker } from "../canon/origin";
 
 export const ABSENT_BYTE_HASH = sha256Hex("");
 export interface MachineByteIntent {
@@ -38,7 +39,6 @@ export function classifyNewEventOrigin(db: Database,
 
 function classify(db: Database, event: Pick<CaptureEvent, "text" | "text_hash">): "external" | "self" {
   if (!hash(event.text_hash) || sha256Hex(event.text) !== event.text_hash) throw new EventOriginError();
-  if (event.text.includes("KIZUKI CONTEXT v1")) return "self";
   // The exact bytes first, then the images a lightly edited copy derives from.
   const candidates = JSON.stringify([...new Set([event.text_hash, ...machineImageHashes(event.text)])]
     .filter(candidate => candidate !== ABSENT_BYTE_HASH));
@@ -52,6 +52,7 @@ function classify(db: Database, event: Pick<CaptureEvent, "text" | "text_hash">)
   if (matching !== null && (!hash(matching.after_hash) ||
       (matching.before_hash !== null && !hash(matching.before_hash)))) throw new EventOriginError();
   if (matching !== null) return "self";
+  if (hasContextPacketMarker(event.text)) return "self";
   // Historical event migration predates this registry; current admissions require it.
   if (readSchemaVersion(db) < WORLD_MIGRATION_VERSIONS.machine_images) return "external";
   const bodyHash = machineBodyHash(event.text);

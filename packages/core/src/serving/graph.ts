@@ -10,7 +10,8 @@ import { eventDecision, readServableEvents } from "./ledger";
 import type { ServableEvent } from "./ledger";
 import { retrievalGraphEdges } from "./retrieval";
 import { ServeError } from "./types";
-import type { Envelope, ServeContext } from "./types";
+import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA } from "./types";
 
 const GRAPH_EDGE_KINDS = ["wikilink", "subject", "source"] as const;
 
@@ -145,10 +146,11 @@ function classifyGraph(
   return { kept, withheld };
 }
 
-export async function serveGraph(
+export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
   args: GraphArgs,
-): Promise<Envelope<GraphData>> {
+  contract: C = ENVELOPE_SCHEMA as C,
+): Promise<ResponseEnvelope<GraphData, C>> {
   return gateAsync(
     ctx,
     "graph_neighbors",
@@ -206,7 +208,7 @@ export async function serveGraph(
       // Ceiling shapes the served cap on the local floor. A configured
       // engine already applied the requested ceiling; core still authorizes.
       const auditEdges =
-        walked.ok || grant.ceiling === undefined
+        ctx.principal.kind !== "owner" || walked.ok || grant.ceiling === undefined
           ? []
           : neighbors(ctx.db, id, query).edges.filter(
               (edge) => !foundKeys.has(edgeKey(edge)),
@@ -244,6 +246,11 @@ export async function serveGraph(
         canon: [],
         quoted: [],
         withheld: [...served.withheld, ...hidden.withheld],
+        authorization: {
+          pages: [...new Set(served.kept.flatMap((edge) => [edge.src, ...(edge.kind === "wikilink" && index.byId.has(edge.dst) ? [edge.dst] : [])]))]
+            .map((id) => ({ id, hash: index.byId.get(id)!.contentHash })),
+          events: served.kept.filter((edge) => edge.kind === "source").map((edge) => ({ id: edge.dst })),
+        },
         data: {
           id,
           edges: served.kept.slice(0, MAX_EDGES),
@@ -251,5 +258,6 @@ export async function serveGraph(
         },
       };
     },
+    contract,
   );
 }

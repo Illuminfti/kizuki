@@ -89,6 +89,24 @@ async function writeGraceClaim(vault: string): Promise<string> {
 }
 
 describe("kizuki tell", () => {
+  test("tell v2 returns the shared correction envelope and preserves v1 explicitly", async () => {
+    const setup = tempVault();
+    const claimId = await writeGraceClaim(setup.vault);
+    const result = runCli(setup.env, "tell", "Grace now works at Initech.",
+      "--claim", claimId, "--dry-run", "--response-contract", "kizuki.envelope/v2", "--json");
+    expect(result.exitCode, result.stderr).toBe(0);
+    const value = JSON.parse(result.stdout);
+    expect(Object.keys(value).sort()).toEqual(["command", "result", "schema"]);
+    expect(value.schema).toBe("kizuki.cli-result/v2");
+    expect(value.result.schema).toBe("kizuki.envelope/v2");
+    expect(value.result.tool).toBe("correct");
+    expect(Object.keys(value.result).sort()).toEqual(["at", "canon", "data", "principal", "quoted", "schema", "tool"]);
+    const legacy = runCli(setup.env, "tell", "Grace now works at Initech.",
+      "--claim", claimId, "--dry-run", "--response-contract", "kizuki.envelope/v1", "--json");
+    expect(legacy.exitCode, legacy.stderr).toBe(0);
+    expect(JSON.parse(legacy.stdout).schema).toBe("kizuki.cli.tell/v1");
+  });
+
   test("tell --claim corrects and rewrites without a model", async () => {
     const setup = tempVault();
     const claimId = await writeGraceClaim(setup.vault);

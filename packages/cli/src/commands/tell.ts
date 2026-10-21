@@ -1,9 +1,11 @@
 import { CorrectError, OWNER, correct, isWorldWireToken, serveCorrect } from "@kizuki/core";
-import type { CorrectArgs, WorldReadResult } from "@kizuki/core";
+import { ENVELOPE_V2_SCHEMA } from "@kizuki/core/world";
+import type { CorrectArgs, CorrectData, WorldReadResult } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
 import { tryRefreshDerived } from "../derived";
 import { clean, jsonEnvelope } from "../output";
+import { RESPONSE_CONTRACT_BOUND, RESPONSE_CONTRACT_OPTION, cliResultV2, contractFailure, responseContract, serveV2 } from "../response-contract";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 const MODES = ["replace_object", "retract", "reclassify_mode"] as const;
@@ -21,9 +23,11 @@ export const TELL_SCHEMA = {
     "--object-vocabulary",
     "--perspective-mode",
     "--refresh-concept-ref",
+    RESPONSE_CONTRACT_OPTION,
   ],
   flags: ["--dry-run", "--json", "--verbose"],
   bounds: {
+    [RESPONSE_CONTRACT_OPTION]: RESPONSE_CONTRACT_BOUND,
     "--since": "TIME",
     "--until": "TIME",
     "--mode": MODES.join("|"),
@@ -62,7 +66,7 @@ function renderRefreshed(view: WorldReadResult): string[] {
 export const tellCommand: Command = {
   name: "tell",
   usage:
-    'tell "<statement>" [--claim CLAIM_ID|--world-claim TOKEN] [--mode replace_object|retract|reclassify_mode] [--object TEXT|--object-ref TOKEN|--object-vocabulary ID] [--perspective-mode suggested|hypothetical|questioned] [--refresh-concept-ref TOKEN] [--since TIME] [--until TIME] [--dry-run] [--json] [--verbose]',
+    `tell "<statement>" [--claim CLAIM_ID|--world-claim TOKEN] [--mode replace_object|retract|reclassify_mode] [--object TEXT|--object-ref TOKEN|--object-vocabulary ID] [--perspective-mode suggested|hypothetical|questioned] [--refresh-concept-ref TOKEN] [--since TIME] [--until TIME] [--dry-run] [${RESPONSE_CONTRACT_OPTION} ${RESPONSE_CONTRACT_BOUND}] [--json] [--verbose]`,
   summary: "correct a claim; rewrite affected canon in the same pass",
   schema: TELL_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -81,6 +85,10 @@ export const tellCommand: Command = {
     const until = parsed.options.get("--until");
     if (claim !== undefined && worldClaim !== undefined) throw new UsageError(this.usage);
     if (worldClaim !== undefined && !isWorldWireToken(worldClaim)) throw new UsageError(this.usage);
+    const contract = responseContract(parsed.options);
+    if (contract === ENVELOPE_V2_SCHEMA && (since !== undefined || until !== undefined)) {
+      throw new UsageError("time scope is unavailable under the v2 correction contract");
+    }
     const mode = parsed.options.get("--mode");
     const objectText = parsed.options.get("--object");
     const objectRef = parsed.options.get("--object-ref");
@@ -101,35 +109,39 @@ export const tellCommand: Command = {
 
     return withVault(io, async (ctx) => {
       try {
-        if (worldClaim !== undefined) {
-          const served = await serveCorrect(
-            {
-              db: ctx.db,
-              vaultPath: ctx.vaultPath,
-              principal: OWNER,
-              ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
-            },
-            {
-              statement,
-              target: { world_claim: { kind: "claim", token: worldClaim } },
-              ...(mode === undefined ? {} : { mode: mode as NonNullable<CorrectArgs["mode"]> }),
-              ...(perspective === undefined ? {} : { perspective_mode: perspective as NonNullable<CorrectArgs["perspective_mode"]> }),
-              ...(objectText === undefined ? {} : { object: { kind: "literal" as const, value: objectText } }),
-              ...(objectRef === undefined ? {} : { object: { kind: "node" as const, ref: { kind: "object" as const, token: objectRef } } }),
-              ...(objectVocabulary === undefined ? {} : { object: { kind: "vocabulary" as const, id: objectVocabulary } }),
-              ...(refresh === undefined ? {} : { refresh_world: { operation: "concept" as const, concept: { kind: "object" as const, token: refresh } } }),
-              ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
-            },
-          );
-          if (served.data === undefined) throw new CorrectError("target_required", "world claim correction was not recorded");
-          const pending = served.data.recovery_pending !== undefined;
+        if (contract !== undefined || worldClaim !== undefined) {
+          const serve = {
+            db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER,
+            ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
+          };
+          const request = {
+            statement,
+            ...(worldClaim === undefined
+              ? (claim === undefined ? {} : { target: { claim_id: claim } })
+              : { target: { world_claim: { kind: "claim" as const, token: worldClaim } } }),
+            ...(mode === undefined ? {} : { mode: mode as NonNullable<CorrectArgs["mode"]> }),
+            ...(perspective === undefined ? {} : { perspective_mode: perspective as NonNullable<CorrectArgs["perspective_mode"]> }),
+            ...(objectText === undefined ? {} : { object: { kind: "literal" as const, value: objectText } }),
+            ...(objectRef === undefined ? {} : { object: { kind: "node" as const, ref: { kind: "object" as const, token: objectRef } } }),
+            ...(objectVocabulary === undefined ? {} : { object: { kind: "vocabulary" as const, id: objectVocabulary } }),
+            ...(refresh === undefined ? {} : { refresh_world: { operation: "concept" as const, concept: { kind: "object" as const, token: refresh } } }),
+            ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
+          };
+          const served = contract === undefined
+            ? await serveCorrect(serve, request)
+            : await serveV2(serve, "correct", request, contract);
+          const data = served.data as CorrectData | undefined;
+          if (data === undefined) throw new CorrectError("target_required", "world claim correction was not recorded");
+          const pending = data.recovery_pending !== undefined;
           const derived = pending ? { degraded: [] as string[] } : tryRefreshDerived(ctx.db, ctx.vaultPath);
           if (parsed.flags.has("--json")) {
-            io.out(jsonEnvelope("tell", pending ? "error" : derived.degraded.length > 0 ? "degraded" : "ok", served, { degraded: derived.degraded }));
+            io.out(served.schema === ENVELOPE_V2_SCHEMA
+              ? cliResultV2("tell", served)
+              : jsonEnvelope("tell", pending ? "error" : derived.degraded.length > 0 ? "degraded" : "ok", served, { degraded: derived.degraded }));
           } else {
-            io.out(served.data.answer);
-            if (parsed.flags.has("--verbose")) for (const pageWrite of served.data.rewritten) io.out(pageWrite.diff.trimEnd());
-            const view = served.data.refreshedWorld;
+            io.out(data.answer);
+            if (parsed.flags.has("--verbose")) for (const pageWrite of data.rewritten) io.out(pageWrite.diff.trimEnd());
+            const view = data.refreshedWorld;
             if (view !== undefined && view !== null) {
               // The correction stands whatever the read found.
               if ("result" in view && view.result.status === "unavailable") io.err("refresh: the corrected concept could not be read; the correction is recorded. Read it with kizuki world --operation concept.");
@@ -178,6 +190,9 @@ export const tellCommand: Command = {
         }
         throw error;
       }
+    }).catch((error: unknown) => {
+      if (contract === undefined) throw error;
+      return contractFailure(io, "tell", parsed.flags.has("--json"), error);
     });
   },
 };

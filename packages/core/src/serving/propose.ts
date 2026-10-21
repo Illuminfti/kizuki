@@ -10,7 +10,9 @@ import { auditArguments, claimsIo, gateAsync } from "./gate";
 import type { Served } from "./gate";
 import { eventDecision, readServableEvents } from "./ledger";
 import { ServeError } from "./types";
-import type { Envelope, ServeContext } from "./types";
+import { authorizedEventSql } from "../world/policy-sql";
+import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA } from "./types";
 
 /** `purge_review` is filed by purge itself, never by a producer. */
 const PROPOSE_KINDS = [
@@ -238,8 +240,17 @@ function predicateOf(
  * of the message, and so does the reason: an id that is absent and one that is
  * unreadable are refused identically.
  */
-function validateProvenance(ctx: ServeContext, provenance: string[]): void {
-  const facts = readServableEvents(ctx.db, provenance);
+function validateProvenance(ctx: ServeContext, provenance: string[], contract: ResponseContract): void {
+  // Preserve v1's owner-audit diagnostics. V2 must not materialize hidden
+  // provenance just to explain a refusal that stays generic on the wire.
+  let selected = provenance;
+  if (contract === ENVELOPE_V2_SCHEMA) {
+    const policy = authorizedEventSql(ctx);
+    selected = ctx.db.query<{ event_id: string }, (string | number)[]>(
+      `SELECT event_id FROM events WHERE event_id IN (SELECT value FROM json_each(?)) AND ${policy.clauses.join(" AND ")}`,
+    ).all(JSON.stringify(provenance), ...policy.bindings).map((row) => row.event_id);
+  }
+  const facts = readServableEvents(ctx.db, selected);
   const denials: AuditDenial[] = [];
   let refused = false;
   for (const id of provenance) {
@@ -261,10 +272,11 @@ function validateProvenance(ctx: ServeContext, provenance: string[]): void {
   }
 }
 
-export async function servePropose(
+export async function servePropose<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
   args: ProposeArgs,
-): Promise<Envelope<ProposeData>> {
+  contract: C = ENVELOPE_SCHEMA as C,
+): Promise<ResponseEnvelope<ProposeData, C>> {
   return gateAsync(
     ctx,
     "propose",
@@ -320,7 +332,7 @@ export async function servePropose(
     const subject = subjectOf(grant, args.subject, requested);
     const predicate = predicateOf(args.predicate, subject);
 
-    validateProvenance(ctx, provenance);
+    validateProvenance(ctx, provenance, contract);
 
     const filed = await insertClaim(
       claimsIo(ctx),
@@ -368,5 +380,6 @@ export async function servePropose(
       audit_ids: { claim_ids: [claim.claim_id] },
     };
   },
+  contract,
   );
 }

@@ -29,7 +29,7 @@ import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
 import type { RedactionCounts } from "./redact";
 import { clampWorldData } from "./world-clamp";
-import { ServeError } from "./types";
+import { ENVELOPE_V2_SCHEMA, ServeError } from "./types";
 import type { ServeContext } from "./types";
 import type { ConceptEvidenceRef } from "../contracts/concept-card";
 import type { WorldEvidenceData, WorldEvidenceSource, WorldQuotedEvidence } from "../world/ops/evidence-types";
@@ -237,6 +237,7 @@ export function serveWorldView(
         throw error;
       }
     },
+    ENVELOPE_V2_SCHEMA,
   );
   return ctx.db
     .transaction((): WorldViewEnvelope => {
@@ -259,7 +260,6 @@ export function serveWorldView(
             integrity: source.integrity, slice_integrity: source.slice_integrity,
             offset: source.offset, returned: source.returned, total: source.total, truncated: source.truncated === true };
         }),
-        ...(envelope.redacted === undefined ? {} : { redacted: envelope.redacted }),
         data: clampWorldData(envelope.data!),
       };
     })

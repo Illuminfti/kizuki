@@ -13,7 +13,9 @@ import {
 } from "./canon";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
-import type { CanonChunk, Envelope, ServeContext, SubjectLabelDegradation } from "./types";
+import type { ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA } from "./types";
+import type { CanonChunk, ServeContext, SubjectLabelDegradation } from "./types";
 import { attachSubjectLabels, canonSubjects, labelsFor, projectSubjectLabels } from "./subject-labels";
 
 export const ENTITY_TYPES = [
@@ -44,7 +46,7 @@ function matchesName(page: CanonPage, needle: string): boolean {
 
 export interface EntitiesData { degraded: SubjectLabelDegradation[] }
 
-export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope<EntitiesData> {
+export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(ctx: ServeContext, args: EntitiesArgs, contract: C = ENVELOPE_SCHEMA as C): ResponseEnvelope<EntitiesData, C> {
   return gate(
     ctx,
     "query_entities",
@@ -111,5 +113,6 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope<E
       return { canon, quoted: [], withheld, audit_served: [...audit.values()],
         ...(projection.degraded.length === 0 ? {} : { data: { degraded: projection.degraded } }) };
     },
+    contract,
   );
 }
