@@ -25,7 +25,8 @@ function correction(scope: RefScope, data: CorrectData, message?: "dry_run"): Co
   const index = data.rewritten.length === 0 ? null : loadCanon(scope.ctx);
   return {
     receipt: mutationReceipt(scope, data.receipt_id),
-    eventVersion: data.event_id === null ? null : issueWorldRef(scope.ctx.db, scope.ns, "event_version", data.event_id),
+    // A preview carries a hypothetical internal ID, not persisted evidence.
+    eventVersion: message === "dry_run" || data.event_id === null ? null : issueWorldRef(scope.ctx.db, scope.ns, "event_version", data.event_id),
     claim: data.claim_id === null ? null : issueWorldRef(scope.ctx.db, scope.ns, "claim", data.claim_id),
     superseded: data.superseded.map(item => issueWorldRef(scope.ctx.db, scope.ns, "claim", item.claim_id)),
     rewritten: data.rewritten.flatMap(item => {
@@ -36,7 +37,7 @@ function correction(scope: RefScope, data: CorrectData, message?: "dry_run"): Co
       const candidate = issueClaimGroupRef(scope, item.claim_ids), claims = item.claim_ids.map(id => issueClaimRef(scope, id));
       return candidate === null || claims.some(value => value === null) ? [] : [{ candidate, claims: claims.filter(value => value !== null) }];
     }),
-    message: data.event_id !== null || data.claim_id !== null ? "correction_recorded" : data.ambiguous.length > 0 ? "ambiguous" : message === "dry_run" ? "dry_run" : "no_change",
+    message: message !== "dry_run" && (data.event_id !== null || data.claim_id !== null) ? "correction_recorded" : data.ambiguous.length > 0 ? "ambiguous" : message === "dry_run" ? "dry_run" : "no_change",
     refreshedWorld: data.refreshedWorld ?? null,
   };
 }
