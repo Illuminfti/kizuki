@@ -19,10 +19,11 @@ import { ageSeconds, railDoctor, syncPassWait } from "./doctor-rails";
 import { egressDoctor, extractionDoctor } from "./doctor-extraction";
 import { readServeIntent } from "./intent";
 import { serviceFile } from "./service-files";
-import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readEmbeddingReceipts, readModelRunHistory, redactReceiptText, type ModelRunHistory } from "./receipts";
+import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readEmbeddingReceipts, readModelRunHistory, readPendingRunReceipts, redactReceiptText, type ModelRunHistory } from "./receipts";
 import { sha256Hex } from "../util/hash";
 import { listSchedules } from "./schema";
 import { countOversizedRecords, RETRY_SKIPPED_COMMAND } from "./extract-oversized";
+import { listQuarantinedPages } from "./write-quarantine";
 import type { SupervisorHost } from "./supervisor";
 import { queryServeService } from "./supervisor";
 import { ensureVaultId } from "./vault-id";
@@ -48,6 +49,7 @@ import {
   type SupervisorLastExit,
   type ThroughputDoctor,
   type OversizedDoctor,
+  type QuarantineDoctor,
   type SupervisorStatus,
 } from "./types";
 
@@ -514,10 +516,24 @@ export function inspectServeDoctor(
   // rail. A week of receipts is mostly no-op maintenance runs that judge nothing.
   const syncHistory = readModelRunHistory(db, since, DOCTOR_SYNC_RECEIPTS);
   const syncReceipts = syncHistory.receipts.filter((receipt): receipt is RunReceipt => receipt !== null);
+  // A held writer prevents publication, but its skipped runs are already
+  // durable in the journal. Include them in rail health without replaying or
+  // changing the ledger, and retain the same bounded chronological window.
+  const pendingReceipts = readPendingRunReceipts(db, vaultPath);
+  const railHistory = (rail: RailId): RunReceipt[] => {
+    const limit = rail === "sync" ? DOCTOR_SYNC_RECEIPTS : DOCTOR_RAIL_RECEIPTS;
+    const persisted = rail === "sync" ? syncReceipts : listRunReceipts(db, { rail, since, limit });
+    const runs = new Map(pendingReceipts.filter(receipt => receipt.rail === rail && receipt.finished_at >= since)
+      .map(receipt => [receipt.run_id, receipt]));
+    for (const receipt of persisted) runs.set(receipt.run_id, receipt);
+    return [...runs.values()]
+      .sort((a, b) => a.finished_at.localeCompare(b.finished_at) || a.run_id.localeCompare(b.run_id))
+      .slice(-limit);
+  };
   const work = { db, model_configured: modelConfigured, embedding_configured: options.embedding_configured ?? embedding.state === "configured" };
   const rails = DEFAULT_RAILS.map((spec) => railDoctor(
     spec.rail,
-    spec.rail === "sync" ? syncReceipts : listRunReceipts(db, { rail: spec.rail, since, limit: DOCTOR_RAIL_RECEIPTS }),
+    railHistory(spec.rail),
     schedules.get(spec.rail)?.period_s ?? spec.period_s,
     now,
     expectLive,
@@ -545,8 +561,9 @@ export function inspectServeDoctor(
   const oversized = oversizedDoctor(db);
   const pages: CanonPageReport =
     options.page_walk === false
-      ? { pages: [], skipped: [], truncated: false }
+      ? { pages: [], skipped: [], truncated: false, signatures: new Map() }
       : listCanonPagesReport(vaultPath);
+  const quarantined = quarantineDoctor(db, now);
   const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
   const cal = calibration(db, syncReceipts, now);
   const extraction = extractionDoctor(db, syncReceipts, model.canon_writing !== "off");
@@ -623,6 +640,7 @@ export function inspectServeDoctor(
     egress,
     throughput,
     oversized,
+    quarantined,
     stores,
     calibration: cal,
     ok: failures.length === 0,
@@ -637,6 +655,12 @@ function oversizedDoctor(db: Database): OversizedDoctor {
   const retry = skipped === 0 ? null : RETRY_SKIPPED_COMMAND;
   return { segmenting, skipped, retry,
     detail: `oversized records segmenting=${segmenting} skipped=${skipped}${retry === null ? "" : ` retry: ${retry}`}` };
+}
+
+/** A set-aside page is the writer's own decision, retried after a day; it is listed, not a failure. */
+function quarantineDoctor(db: Database, now: string): QuarantineDoctor {
+  const pages = listQuarantinedPages(db, now).map(({ handle, path, attempts, reason, until }) => ({ handle, path, attempts, reason, until }));
+  return { pages, detail: `quarantined typed pages=${pages.length}` };
 }
 
 function throughputDoctor(config: ServeConfig, syncPeriod: number, recordsSkipped: number): ThroughputDoctor {

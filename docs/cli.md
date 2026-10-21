@@ -340,8 +340,9 @@ One connection failure does not skip the rest.
 Capture through `backfill`, plain `sync`, and `import` does not open the optional
 retrieval engine, so an existing MCP retrieval session cannot block ingestion or
 source-consent checks. These commands still refresh the local SQLite search
-floor. `sync --once` runs the automation tick and retains its configured
-retrieval requirements.
+floor. `sync --once` runs the automation tick, with the sync rail's bounded
+slice per source (see [serve](#serve)) instead of draining to exhaustion, and
+retains its configured retrieval requirements.
 The Beeper connector conservatively rescans available history on each completed
 sync cycle to observe edits and explicit tombstones; unchanged records deduplicate.
 
@@ -358,6 +359,15 @@ deduplicate on the next pass. If a writer holds the ledger past every retry,
 the command stops with `lease_held`, naming the process that holds the writer
 lease and stating that running the same command again resumes from the last
 checkpoint. `database is locked` is not an error this CLI reports.
+
+`backfill`, `sync` and `import` are long writers. While they run they record
+themselves as the running ingest, so the daemon and `doctor` can name them as the
+holder, and while a serve daemon is running they release the ledger between
+commits: after every 250 ms of writing they leave it free for 150 ms, which is
+long enough for a waiting rail to take it. Without a daemon they do not slow
+down. The daemon, for its part, treats a ledger it cannot outwait as a skipped
+pass and never exits for it; see [the service
+lifecycle](service-lifecycle.md#the-daemon-and-owner-commands-share-one-ledger).
 
 ## query
 
@@ -522,6 +532,8 @@ Owner correction. `--claim` names a **live** legacy claim; `--world-claim`
 accepts the opaque claim token emitted by `kizuki world` for the current owner
 namespace. The options are mutually exclusive. Rewrites affected canon in the
 same pass. No model required. Prints an undo line when a receipt is minted.
+While the loop is writing canon, `tell` waits up to 30 seconds for the writer,
+which the loop lets go between pages, before it reports the writer busy.
 
 ## context
 
@@ -663,7 +675,8 @@ refusal lists those receipts and names `kizuki undo <receipt_id> --cascade`,
 which reverses them newest first. When nothing later explains the change, the
 page was edited outside Kizuki: the refusal says so and tells you to put the
 page back to the receipt's version by hand, or keep your edit and leave the
-receipt as it is. `--cascade` cannot help there, and the refusal says why.
+receipt as it is. `--cascade` cannot help there, and the refusal says why. Like `tell`, it waits up to 30
+seconds for a canon write in progress.
 
 ## audit
 
@@ -720,8 +733,13 @@ unless `serve.toml` says otherwise: `[serve] sync_period_s` sets the period,
 applied to the persisted schedule when the service starts, and `[extraction]`
 sets `max_calls_per_pass`, `records_per_request`, `max_input_tokens`,
 `max_output_tokens`, `max_pass_seconds` and the daily budgets
-`max_calls_per_day` and `max_output_tokens_per_day`. `serve status` and
-`doctor` print the effective values and the records skipped in the doctor
+`max_calls_per_day` and `max_output_tokens_per_day`. `[budget]
+canon_writes_per_run` (default 32) sets how many canon pages one pass writes, and
+a value above 32 raises the pass's former fixed ceiling;
+the pass takes the writer for one page at a time and reads a stop request
+between pages, and a typed page that fails three passes in a row is set aside
+for a day (see [canon writes per pass](extraction-budgets.md#canon-writes-per-pass)). `serve status` and
+`doctor` print the effective extraction and schedule values and the records skipped in the doctor
 window on a `throughput` line; `--json` reports them as `throughput` in the
 serve doctor report. A model that still answers HTTP 429 after the port's
 bounded retries stops the pass as `model:rate_limited`, and the next pass
@@ -730,13 +748,40 @@ pass as `model:budget_day`, and a model that refuses requests for different
 records alike stops it as `model:systemic_rejection` and is not asked again
 until a persisted wait is over; see
 [rejected responses](extraction-budgets.md#rejected-responses-and-daily-budgets). A pass never holds the vault writer across a model
-request, and `kizuki serve stop` or a signal ends it before its next request
-as `serve:stop_requested`. See [extraction budgets](extraction-budgets.md#owner-throughput-settings).
+request, and `kizuki serve stop` or a signal aborts a request in flight and ends
+the pass as `serve:stop_requested`. A pass that meets a ledger another writer
+holds is skipped as `ledger:lease_held` and retried with backoff. See
+[extraction budgets](extraction-budgets.md#owner-throughput-settings).
+
+During connector draining, a stop finishes and checkpoints the current bounded
+batch when the ledger is writable, then starts no further batch or source.
+Shutdown batch writes, receipt publication, lease release and sealing never
+wait for ledger contention: refused batches replay from their checkpoint, and
+stop receipts remain in the durable journal for later publication. Cancelled
+model passes skip derived refresh; in-flight retrieval rebuilds stop before
+replacing the active generation. `serve stop` can queue its request
+while the ledger is busy. Startup retries end once the daemon is running; busy
+final sealing never restarts a stopped daemon. Doctor includes pending journal
+receipts in rail health while another writer prevents their ledger publication.
+
+The sync rail reads sources in bounded slices. `[serve] connector_drain_seconds`
+(default 120) is the time one pass spends reading, shared among the enrolled
+connections, and `connector_drain_batches` (default 100) caps the batches per
+connection. A connection that is not exhausted stops at its committed cursor,
+the run receipt carries `has_more`, the write pass and the derived refresh still
+run, and the next pass resumes there, so a large first backfill does not hold
+the other rails; `serve stop` and SIGTERM end the pass within one batch.
+Records with no text, no letter or digit, or fewer than 12 letters and digits
+are passed over before any model request and counted by reason in the receipt's
+`records_prefiltered`; see
+[records with nothing to extract](extraction-budgets.md#records-with-nothing-to-extract).
 
 A record too large for one typed request is extracted one segment per request.
 One that cannot be split, such as a single token longer than a request, is
 skipped with a `record_oversized_skipped` receipt and the cursor moves on.
-`serve status` and `doctor` print an `oversized records` line with both counts.
+`serve status` and `doctor` print an `oversized records` line with both counts,
+and a `quarantined typed pages` line with the number of typed pages the writer
+has set aside, with one `quarantined` line each in `doctor`.
 `serve retry-skipped` puts every skipped record back on the deferred queue so
 the loop decides it again, and prints `requeued=N`. See
 [records too large for one request](extraction-budgets.md#records-too-large-for-one-request).

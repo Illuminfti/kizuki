@@ -2,6 +2,9 @@ import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-sco
 import { recoverCanonWrites } from "../canon/recovery";
 import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
 import { retryCanonProjectionObligations } from "../canon/projection-obligations";
+import { isLedgerBusy, withControlWait } from "../ledger/busy";
+import { LEDGER_LOOP_PROBE_TIMEOUT_MS } from "../ledger/limits";
+import { LedgerLeaseHeldError, railLeaseHeldNote } from "./lease-held";
 import { pidAlive, readBootId } from "./leases";
 import type { Database } from "bun:sqlite";
 import { skipCaptureFanoutClaims } from "../claims/capture-fanout";
@@ -23,17 +26,34 @@ import { CAPTURE_REPAIR_RECEIPT_PENDING, stageCaptureRepairReceipt, coalesceNoop
 import { applyRailPeriod, initServe, listSchedules } from "./schema";
 import {
   InjectedCrash,
+  LEDGER_LEASE_HELD_STOP,
   emptyRunTotals,
   type CrashPoint,
-  type ExtractionConfig,
   type RailId,
   type RunReceipt,
   type RunExecution,
+  type ServeConfig,
 } from "./types";
-import { runWritePass } from "./write-pass";
+import { STOP_REQUESTED, runWritePass } from "./write-pass";
 import { LegacyExtractReconciliationError, requireAtomicExtractReplay } from "./extract";
 
+/**
+ * What one sync pass may spend draining connectors. A connection that is not
+ * done when it is spent resumes from its cursor on the next pass, so a large
+ * first backfill cannot hold the other rails.
+ */
+export interface RailSyncDrain {
+  /** Milliseconds for the whole pass, shared among its connections. */
+  readonly deadline_ms: number;
+  /** Batches one connection may drain. */
+  readonly max_batches: number;
+  /** Read before every batch; true ends the pass. */
+  readonly stopRequested?: () => boolean;
+}
+
 export interface RailSyncResult {
+  /** True when a connection stopped at the drain budget or a stop request with more to read. */
+  readonly has_more?: true;
   readonly events_synced: number;
   readonly events_stored: number;
   readonly events_duplicate: number;
@@ -51,7 +71,7 @@ export interface RailRefreshReport {
 }
 
 interface RailHooksBase {
-  readonly sync?: () => Promise<RailSyncResult>;
+  readonly sync?: (drain: RailSyncDrain) => Promise<RailSyncResult>;
   /** Host-owned derived stores refresh after a successful or partial write pass. */
   readonly refresh?: () => Promise<RailRefreshReport>;
   readonly claims?: ClaimsIo;
@@ -89,6 +109,12 @@ export interface RailRuntimeV2 {
 
 type AnyRailRuntime = RailRuntime | RailRuntimeV2;
 
+/** What a host learns when a rail asks it for its runtime. */
+export interface RailRuntimeContext {
+  /** Aborted when the daemon is told to stop; a request in flight must end with it. */
+  readonly signal: AbortSignal;
+}
+
 const processInstance = crypto.randomUUID();
 
 export interface RunRailOptions {
@@ -96,8 +122,12 @@ export interface RunRailOptions {
   readonly now?: () => string;
   /** The daemon's stop request or signal; a sync pass reads it before every extraction step. */
   readonly stopRequested?: () => boolean;
+  /** Aborted with the daemon's stop, and handed to `acquireRuntime`. */
+  readonly signal?: AbortSignal;
+  /** The caller found the ledger held: skip the pass without touching it and record why. */
+  readonly ledgerHeld?: boolean;
   readonly hooks?: RailHooks;
-  readonly acquireRuntime?: () => Promise<RailRuntime>;
+  readonly acquireRuntime?: (context: RailRuntimeContext) => Promise<RailRuntime>;
   readonly crashAfter?: CrashPoint;
 }
 
@@ -106,8 +136,12 @@ export interface RunRailOptionsV2 {
   readonly now?: () => string;
   /** The daemon's stop request or signal; a sync pass reads it before every extraction step. */
   readonly stopRequested?: () => boolean;
+  /** Aborted with the daemon's stop, and handed to `acquireRuntime`. */
+  readonly signal?: AbortSignal;
+  /** The caller found the ledger held: skip the pass without touching it and record why. */
+  readonly ledgerHeld?: boolean;
   readonly hooks?: RailHooksV2;
-  readonly acquireRuntime?: () => Promise<RailRuntimeV2>;
+  readonly acquireRuntime?: (context: RailRuntimeContext) => Promise<RailRuntimeV2>;
   readonly crashAfter?: CrashPoint;
 }
 
@@ -152,12 +186,13 @@ async function runSyncRail(
   db: Database,
   vaultPath: string,
   budget: BudgetTracker,
-  extraction: ExtractionConfig,
+  config: ServeConfig,
   hooks: AnyRailHooks | undefined,
   runId: string,
   now: () => string,
   stopRequested: (() => boolean) | undefined,
 ): Promise<Partial<RunReceipt>> {
+  const { extraction } = config;
   const synced =
     hooks?.sync === undefined
       ? {
@@ -167,7 +202,14 @@ async function runSyncRail(
           events_self_skipped: 0,
           errors: [] as string[],
         }
-      : await hooks.sync();
+      : await hooks.sync({
+          deadline_ms: config.connector_drain_seconds * 1_000,
+          max_batches: config.connector_drain_batches,
+          ...(stopRequested === undefined ? {} : { stopRequested }),
+        });
+  if (stopRequested?.()) {
+    return { ...synced, status: "stopped", stopped: STOP_REQUESTED };
+  }
   const written = await runWritePass(db, vaultPath, {
     budget,
     extraction,
@@ -183,16 +225,20 @@ async function runSyncRail(
   // with a zeroed failed rail would hide a real write and understate budget.
   let refreshed: readonly string[];
   try {
-    refreshed = hooks?.refresh === undefined ? [] : (await hooks.refresh()).degraded;
+    refreshed = written.stopped === "serve:stop_requested" || stopRequested?.() || hooks?.refresh === undefined
+      ? [] : (await hooks.refresh()).degraded;
   } catch (error) {
-    refreshed = [redactReceiptError(error)];
+    refreshed = stopRequested?.() ? [] : [redactReceiptError(error)];
   }
   const errors = [...synced.errors, ...written.errors, ...refreshed];
+  // A drain the stop request cut short is a stopped pass even when no extraction step saw the request.
+  const stopped = stopRequested?.() === true ? STOP_REQUESTED : written.stopped;
   let status: RunReceipt["status"] = "ok";
-  if (written.stopped !== null) status = "stopped";
+  if (stopped !== null) status = "stopped";
   else if (errors.length > 0) status = "degraded";
   return {
     status,
+    ...(synced.has_more === true ? { has_more: true } : {}),
     events_synced: synced.events_synced,
     events_stored: synced.events_stored,
     events_duplicate: synced.events_duplicate,
@@ -204,10 +250,12 @@ async function runSyncRail(
     claims_superseded: written.claims_superseded,
     claims_rejected: written.claims_rejected,
     records_skipped: written.records_skipped,
+    ...(Object.keys(written.records_prefiltered).length === 0 ? {} : { records_prefiltered: written.records_prefiltered }),
     canon_writes: written.canon_writes,
+    ...(written.canon_quarantined.length === 0 ? {} : { canon_quarantined: written.canon_quarantined }),
     model: { ...written.model, model_ref: hooks?.model_ref ?? null },
     ...(written.oversized.segments + written.oversized.skipped === 0 ? {} : { oversized: written.oversized }),
-    stopped: written.stopped,
+    stopped,
     errors,
   };
 }
@@ -229,9 +277,11 @@ async function refreshDerivedOnce(hooks: AnyRailHooks | undefined): Promise<Rail
 async function runRetrievalSweep(
   db: Database,
   hooks: AnyRailHooks | undefined,
+  stopRequested: (() => boolean) | undefined,
 ): Promise<Partial<RunReceipt>> {
   // Catch-up does not depend on a claims port, so it runs either way.
   const refreshed = await refreshDerivedOnce(hooks);
+  if (stopRequested?.()) return { status: "stopped", stopped: "serve:stop_requested" };
   const ops =
     hooks?.claims === undefined
       ? { retried: 0, pending: pendingRetrievalOps(db).length, code: "retrieval-unavailable" }
@@ -451,6 +501,7 @@ async function runRailImpl(
   rail: RailId,
   options: AnyRunRailOptions,
 ): Promise<RunReceipt> {
+  const stopRequested = (): boolean => options.signal?.aborted === true || options.stopRequested?.() === true;
   const runId = ulid();
   activeRuns.add(runId);
   try {
@@ -469,6 +520,8 @@ async function runRailImpl(
       if (options.hooks !== undefined && options.acquireRuntime !== undefined) {
         throw new Error("rail hooks and acquireRuntime are mutually exclusive");
       }
+      options.signal?.throwIfAborted();
+      if (options.ledgerHeld === true) throw new LedgerLeaseHeldError("the ledger writer is held");
       // A failed preflight may append this run's audit receipt only. In particular,
       // do not import older receipt/usage journals before validating a sync decision.
       if (rail === "sync") requireAtomicExtractReplay(db);
@@ -498,9 +551,15 @@ async function runRailImpl(
       const config = loadServeConfig(vaultPath);
       budget = createDurableWriteBudget(db, now, config);
       if (options.acquireRuntime !== undefined) {
-        try { runtime = await options.acquireRuntime(); }
-        catch { throw new Error("rail runtime acquisition failed"); }
+        try { runtime = await options.acquireRuntime({ signal: options.signal ?? new AbortController().signal }); }
+        catch (error) {
+          if (isLedgerBusy(error) || error instanceof LedgerLeaseHeldError) throw error;
+          if (options.signal?.aborted && (error === options.signal.reason ||
+              (error instanceof Error && error.name === "AbortError"))) throw error;
+          throw new Error("rail runtime acquisition failed");
+        }
       }
+      options.signal?.throwIfAborted();
       hooks = withResolvedModel(runtime?.hooks ?? options.hooks);
       if (rail === "retrieval-sweep" && inspectCanonRecovery(db).projection_pending > 0) {
         const result = await retryCanonProjectionObligations({ db, vault_path: vaultPath,
@@ -510,10 +569,10 @@ async function runRailImpl(
       }
       switch (rail) {
         case "sync":
-          partial = await runSyncRail(db, vaultPath, budget, config.extraction, hooks, runId, now, options.stopRequested);
+          partial = await runSyncRail(db, vaultPath, budget, config, hooks, runId, now, stopRequested);
           break;
         case "retrieval-sweep":
-          partial = await runRetrievalSweep(db, hooks);
+          partial = await runRetrievalSweep(db, hooks, stopRequested);
           break;
         case "purge-sweep":
           partial = await runPurgeSweep(db, vaultPath, hooks, started);
@@ -533,8 +592,16 @@ async function runRailImpl(
       }
     } catch (error) {
       if (error instanceof InjectedCrash) { interrupted = true; throw error; }
-      partial = { status: "failed", errors: [redactReceiptError(error)],
-        ...(error instanceof LegacyExtractReconciliationError ? { stopped: error.code } : {}) };
+      // A writer this pass could not outwait is not a fault of the rail: the
+      // pass is skipped, its receipt names the holder, and the daemon backs off.
+      const held = isLedgerBusy(error) || error instanceof LedgerLeaseHeldError;
+      const cancelled = error === options.signal?.reason || (error instanceof Error && error.name === "AbortError");
+      partial = stopRequested() && (held || cancelled)
+        ? { status: "stopped", stopped: "serve:stop_requested" }
+        : held
+        ? { status: "stopped", stopped: LEDGER_LEASE_HELD_STOP, errors: [railLeaseHeldNote(vaultPath, db)] }
+        : { status: "failed", errors: [redactReceiptError(error)],
+          ...(error instanceof LegacyExtractReconciliationError ? { stopped: error.code } : {}) };
     } finally {
       // Close before publication so failure cannot leave a successful receipt.
       // This also releases the binding before any journal persistence can fail.
@@ -551,11 +618,16 @@ async function runRailImpl(
     if (usage !== null) {
       const metrics = JSON.parse(usage.metrics) as Pick<RunReceipt, "model" | "claims_rejected" | "claims_extracted">;
       partial = { ...partial, ...metrics, model: { ...metrics.model, model_ref: usage.model_ref } };
-      if (metrics.model.usage_unknown === true) partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "model attempt interrupted; token usage unknown"] };
+      // A contended ledger can retain the pre-request usage marker after an
+      // abort. Keep that uncertainty without reclassifying a requested stop.
+      if (metrics.model.usage_unknown === true && !stopRequested()) partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "model attempt interrupted; token usage unknown"] };
     }
     const repairProgress = getRunReceipt(db, runId);
     if (repairProgress?.stopped === CAPTURE_REPAIR_RECEIPT_PENDING) {
       partial = { ...partial, captures_skipped: repairProgress.captures_skipped! };
+    }
+    if (stopRequested() && partial.status !== "failed") {
+      partial = { ...partial, status: "stopped", stopped: "serve:stop_requested" };
     }
     const finished = now();
     const receipt: RunReceipt = {
@@ -584,10 +656,13 @@ async function runRailImpl(
     };
     // A scheduled run that did nothing advances its schedule without a receipt.
     if (options.crashAfter === undefined && coalesceNoopReceipt(db, vaultPath, receipt)) return receipt;
-    persistRunReceipt(db, vaultPath, receipt, {
+    const publish = (): void => persistRunReceipt(db, vaultPath, receipt, {
       ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
       ...(rail === "brief" ? { artifactPath: briefPath(vaultPath, dayOf(started)) } : {}),
     });
+    // A pass skipped for a held ledger journals its receipt, and asks the ledger only briefly.
+    if (options.ledgerHeld === true) withControlWait(db, publish, stopRequested() ? 0 : LEDGER_LOOP_PROBE_TIMEOUT_MS);
+    else publish();
     const published = getRunReceipt(db, runId);
     if (published === null) throw new Error("persisted run receipt unavailable");
     return published;

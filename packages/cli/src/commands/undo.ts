@@ -2,6 +2,7 @@ import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, UndoError, u
 import { UsageError, parseArguments, requirePositional } from "../args";
 import { withVault } from "../context";
 import { tryRefreshDerived } from "../derived";
+import { whileWriterBusy } from "../writer-wait";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
 
 export const UNDO_SCHEMA = {
@@ -25,11 +26,11 @@ export const undoCommand: Command = {
     return withVault(io, async (ctx) => {
       const original = getCanonReceipt(ctx.db, receiptId);
       try {
-        const revert = await undoReceipt(
+        const revert = await whileWriterBusy(() => undoReceipt(
           { db: ctx.db, vault_path: ctx.vaultPath, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) },
           receiptId,
           { cascade: parsed.flags.has("--cascade") },
-        );
+        ));
         io.out(`receipt_id=${revert.receipt_id}`);
         io.out(`reverts=${revert.reverts ?? ""}`);
         io.out(`page_path=${revert.page_path}`);

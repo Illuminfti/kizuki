@@ -1,6 +1,7 @@
 export interface SeenRequest {
   readonly method: string;
   readonly path: string;
+  readonly search: string;
   readonly headers: Record<string, string>;
   readonly body: unknown;
 }
@@ -65,6 +66,7 @@ export function startFakeEndpoint(reply?: FakeReply): FakeEndpoint {
       const seen: SeenRequest = {
         method: request.method,
         path: url.pathname,
+        search: url.search,
         headers: headerMap(request.headers),
         body,
       };

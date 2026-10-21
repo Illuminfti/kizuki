@@ -9,6 +9,7 @@ import {
 } from "../contracts/producer-v2";
 import { mintOccurrenceId, type OccurrenceEventIdentity } from "../claims/occurrences";
 import type { InsertClaimInput } from "../claims/store";
+import { guardClaim, normalizedInstructionSpans } from "./world-guards";
 
 /** The portion of the shared writer input produced by the model adapter. */
 export interface WorldDraftInsert extends InsertClaimInput {
@@ -135,6 +136,12 @@ export function prepareWorldDrafts(
     return { kind: "occurrence", id: mintOccurrenceId(event, event.source_key, mention.anchor) };
   };
 
+  const instructionSpanCache = new Map<string, string[]>();
+  const instructionSpansOf = (eventId: string): string[] => {
+    let spans = instructionSpanCache.get(eventId);
+    if (spans === undefined) instructionSpanCache.set(eventId, spans = normalizedInstructionSpans(eventById.get(eventId)!.text));
+    return spans;
+  };
   const dropped: DroppedDraftV2[] = [];
   const drafts = response.claims.flatMap(claim => {
     const anchors = completeAnchors(claim);
@@ -143,7 +150,7 @@ export function prepareWorldDrafts(
     // World support comes from one source. A claim citing records of two
     // sources can never be admitted; journaling it would wedge the batch.
     if (new Set(anchors.map(anchor => eventById.get(anchor.event_id)!.source_key)).size !== 1) return [];
-    const semantic: ClaimV2Assertion = {
+    const resolved: ClaimV2Assertion = {
       schema: CLAIM_V2_SCHEMA,
       discriminator: "assertion",
       subject: resolve(claim.subject, anchorKeys),
@@ -167,7 +174,17 @@ export function prepareWorldDrafts(
       temporal_basis: claim.temporal_basis,
       anchors: claim.anchors,
     };
-    if (!validateClaimV2Semantic(semantic).ok || context.admits?.(semantic) === false) {
+    if (!validateClaimV2Semantic(resolved).ok || context.admits?.(resolved) === false) {
+      dropped.push({ reason: "invalid_claim", id: claim.id });
+      return [];
+    }
+    // The model's literal is checked against the exact text it cited, so what
+    // it wrote about the record cannot outrank what the record says.
+    const semantic = guardClaim(resolved, claim.body, {
+      spans: anchors.map(anchor => eventById.get(anchor.event_id)!.text.slice(anchor.start_utf16, anchor.end_utf16)),
+      instructionSpans: [...new Set(anchors.map(anchor => anchor.event_id))].flatMap(instructionSpansOf),
+    });
+    if (semantic === null || !validateClaimV2Semantic(semantic).ok) {
       dropped.push({ reason: "invalid_claim", id: claim.id });
       return [];
     }

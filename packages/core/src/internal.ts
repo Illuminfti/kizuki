@@ -23,3 +23,6 @@ export { indexEvent, indexEvents, indexPage, initSearch, removeCanonPath, remove
 export { eventRetrievalDoc, publishLedgerEvent } from "./retrieval/events";
 export { initGraph } from "./graph";
 export { rebuildDerived, rebuildWorldLayer } from "./derived";
+export { beginIngest, INGEST_PAUSE_MS, INGEST_SLICE_MS } from "./ingest/pace";
+export type { IngestClock, IngestSession } from "./ingest/pace";
+export { withControlWait } from "./ledger/busy";

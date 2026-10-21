@@ -33,6 +33,7 @@ import {
 } from "../import-report";
 import type { ImportRecordError } from "../import-report";
 import { readBoundedFd, readReason } from "../read";
+import { assertOutsideVault, refuseVaultSource } from "../vault-boundary";
 import {
   compareStrings,
   errorMessage,
@@ -452,29 +453,6 @@ async function rootIdentity(root: string): Promise<RootIdentity> {
   // even when the selected child is named archive, auto, or an ordinary folder.
   await assertOutsideVault(resolved);
   return { realpath: resolved, dev: info.dev, ino: info.ino };
-}
-
-function refuseVaultSource(): never {
-  throw new KizukiError("misconfigured", "source_contains_kizuki_vault: choose an independent source folder outside Kizuki canon, archives and control data");
-}
-
-async function assertOutsideVault(directory: string): Promise<void> {
-  let current = directory;
-  for (let depth = 0; depth < 256; depth++) {
-    try {
-      // lstat also recognizes a dangling or hostile marker symlink. Exclude
-      // patterns cannot suppress this identity check.
-      await lstat(path.join(current, ".kizuki"));
-      refuseVaultSource();
-    } catch (error) {
-      if (!isPlainObject(error) && !(error instanceof Error)) throw error;
-      if (!("code" in error) || error.code !== "ENOENT") throw error;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) return;
-    current = parent;
-  }
-  throw new KizukiError("misconfigured", "source_path_depth: source ancestry exceeds the verification bound");
 }
 
 function underPinnedRoot(root: string, resolved: string): boolean {
