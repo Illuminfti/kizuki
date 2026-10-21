@@ -5,7 +5,7 @@ import { createOpenAiCompatibleLlmPort } from "../../packages/llm/src/openai-com
 import { fetchTransport, type ChatTransport } from "../../packages/llm/src/transport";
 import { isLoopbackHost } from "../../packages/llm/src/config";
 import type { PortContext } from "../../packages/core/src/contracts/ports";
-import { WORLD_VOCABULARY_MODULES } from "../../packages/core/src/contracts/world-vocabulary";
+import { WORLD_VOCABULARY_MODULES } from "./candidate-modules";
 import { canonicalJson, sha256 } from "../evaluate-extraction";
 import { qualificationCorpus } from "./corpus";
 import { candidateRegistry, registryDigest } from "./registry";

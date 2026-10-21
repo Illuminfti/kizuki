@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { canonicalJson, sha256 } from "../evaluate-extraction";
 
 export const RUNNER_FILES = [
+  "scripts/world-qualification/candidate-modules.ts",
   "scripts/world-qualification/run.ts", "scripts/world-qualification/score.ts", "scripts/world-qualification/registry.ts",
   "scripts/world-qualification/fingerprint.ts", "scripts/world-qualification/corpus.ts", "scripts/world-qualification/preexisting.json",
   "scripts/evaluate-extraction.ts", "packages/core/src/producer/model-v2.ts", "packages/core/src/producer/prompt-v2.ts",
