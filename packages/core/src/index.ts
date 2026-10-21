@@ -986,6 +986,7 @@ export type {
   ProposeArgs,
   ProposeData,
   QuotedChunk,
+  QuotedPageChunk,
   RewrittenPage,
   SearchArgs,
   SearchData,

@@ -25,6 +25,8 @@ function legacyFixture(size = 1) {
     db.query("UPDATE events SET content_hash=? WHERE event_id=?").run(computeLegacyContentHash(input), stored.event.event_id);
   }
   db.exec(`
+    DROP TRIGGER canon_body_receipt_changed; DROP TRIGGER canon_body_receipt_deleted; DROP TRIGGER canon_body_intent_deleted;
+    DROP TABLE canon_machine_body_images;
     DROP TABLE canon_projection_sources; DROP TABLE canon_projection_obligations; DROP TABLE canon_write_intent_sources; DROP TABLE canon_write_intents; DROP TABLE canon_read_generation;
     DROP TABLE canon_source_survivor_lineage;
     DROP TABLE purge_batch_receipts;

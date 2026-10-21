@@ -17,6 +17,7 @@ import {
   type ExportManifest,
 } from "../../src/export";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
+import { WORLD_MIGRATION_BASE } from "../../src/world/tables/versions";
 import { accept } from "../../src/ledger/ledger";
 import { runPurge } from "../../src/ledger/purge";
 import { initVault } from "../../src/vault/init";
@@ -67,6 +68,7 @@ function register(...specs: WorldTableSpec[]): void {
   disposers.push(registerWorldTableSpecs(specs));
 }
 
+// These synthetic specs exercise class mechanics, not a claimed schema migration.
 /** Rows keyed by an event, erased with the event by FK cascade. */
 const cascadeTable = (
   overrides: Partial<WorldTableSpec> = {},
