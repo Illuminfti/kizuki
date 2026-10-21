@@ -13,7 +13,7 @@ import {
 
 describe("the shipped kinds", () => {
   test("Concept, Situation and Question register their own labels and card contracts", () => {
-    expect(WORLD_REGISTRY.kinds.map(kind => kind.id)).toEqual(["situation", "concept", "question"]);
+    expect(WORLD_REGISTRY.kinds.map(kind => kind.id)).toEqual(["situation", "concept", "question", "skill", "framework", "procedure"]);
     expect(WORLD_REGISTRY.kind("concept")).toMatchObject({
       vocabularyId: "world/concept", labelPredicate: "concept.label", pageType: "topic", endpointKind: "concept",
       cardSchema: "kizuki.concept-card/v1", offeredToProducer: true, population: ["extraction"],
@@ -42,7 +42,7 @@ describe("the shipped kinds", () => {
   });
 
   test("world.kind is derived from the kinds, so a kind cannot exist without its classification value", () => {
-    expect(getWorldVocabularySpec("world.kind")?.vocabulary_values).toEqual(["world/concept", "world/question", "world/situation"]);
+    expect(getWorldVocabularySpec("world.kind")?.vocabulary_values).toEqual(["world/concept", "world/framework", "world/procedure", "world/question", "world/situation", "world/skill"]);
   });
 
   test("every registration slot appears exactly once in the module list", () => {
@@ -50,7 +50,7 @@ describe("the shipped kinds", () => {
     for (const key of ["quest", "people", "skill", "sit2", "art", "ident"]) {
       expect(source.match(new RegExp(`// slot: ${key}$`, "gm"))).toHaveLength(1);
     }
-    expect(WORLD_VOCABULARY_MODULES).toHaveLength(4);
+    expect(WORLD_VOCABULARY_MODULES).toHaveLength(7);
   });
 });
 

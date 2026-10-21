@@ -13,7 +13,7 @@ export interface SupportLineage {
 }
 
 const COPY_FIELDS = ["forward_from", "forwarded_from", "copied_from", "copy_of", "derived_from", "generated_from"];
-function derivation(metadata: unknown): Independence {
+export function eventDerivation(metadata: unknown): Independence {
   if (!isPlainObject(metadata)) return "unknown";
   if (COPY_FIELDS.some((key) => metadata[key] !== undefined && metadata[key] !== null && metadata[key] !== false)) return "dependent";
   if (metadata.lineage === undefined) return "independent";
@@ -61,7 +61,7 @@ export function supportLineage(frame: ReadFrame, input: readonly EligibleSupport
       }
       let metadata: unknown;
       try { metadata = JSON.parse(event.metadata); } catch { status = "unknown"; continue; }
-      const derived = event.origin === "self" ? "dependent" : derivation(metadata);
+      const derived = event.origin === "self" ? "dependent" : eventDerivation(metadata);
       if (derived === "unknown") status = "unknown";
       else if (derived === "dependent" && status !== "unknown") status = "dependent";
     }

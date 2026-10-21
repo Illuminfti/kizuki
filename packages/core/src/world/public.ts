@@ -1,3 +1,12 @@
+export { validateProcedureCard } from "../contracts/procedure-card";
+export type { ProcedureCard } from "../contracts/procedure-card";
+export { validateSkillCard } from "../contracts/skill-card";
+export type { SkillCard } from "../contracts/skill-card";
+export { validateFrameworkCard } from "../contracts/framework-card";
+export type { FrameworkCard } from "../contracts/framework-card";
+export { validateOutcomeCard } from "../contracts/outcome-card";
+export type { OutcomeCard } from "../contracts/outcome-card";
+export type { ProcedureUsefulness, OutcomeEvidence, OutcomeEvaluation } from "../contracts/outcome-card";
 /**
  * The world-model API of `@kizuki/core`. New operations and their types are
  * exported here so `src/index.ts` never has to change for them.

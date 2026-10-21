@@ -2,6 +2,9 @@ import { createWorldRegistry, type WorldRegistry, type WorldVocabularyModule, ty
 import { CONCEPT_VOCABULARY } from "./world-vocab/concept";
 import { LEARNING_VOCABULARY } from "./world-vocab/learning";
 import { SITUATION_VOCABULARY } from "./world-vocab/situation";
+import { SKILL_VOCABULARY } from "./world-vocab/skill";
+import { FRAMEWORK_VOCABULARY } from "./world-vocab/framework";
+import { PROCEDURE_VOCABULARY } from "./world-vocab/procedure";
 import { QUESTION_VOCABULARY } from "./world-vocab/question";
 
 export type { WorldEndpointKind, WorldObjectKind, WorldVocabularySpec } from "./world-kinds";
@@ -23,6 +26,7 @@ export const WORLD_VOCABULARY_MODULES: readonly WorldVocabularyModule[] = [
   QUESTION_VOCABULARY,
   // slot: people
   // slot: skill
+  SKILL_VOCABULARY, FRAMEWORK_VOCABULARY, PROCEDURE_VOCABULARY,
   // slot: sit2
   // slot: art
   // slot: ident

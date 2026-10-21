@@ -1,3 +1,4 @@
+import { assertFrameworkAcyclic } from "../framework-cycles";
 import type { WorldKindSpec } from "../../contracts/world-kinds";
 import { activeWorldRegistry } from "../../contracts/world-vocabulary";
 import { KIND_ASSEMBLERS } from "../kinds";
@@ -89,6 +90,7 @@ export function readWorldCard(
   const cluster = group(frame, handle, stages.groupers);
   const collection = collectCard(frame, cluster, kind, stages.collectors);
   if (collection === null) return null;
+  if (kindId === "framework") assertFrameworkAcyclic(frame, handle);
   const body = enrich(frame, collection.items, stages.enrichers, collection.overflow);
   return assembleCard(frame, kind, assembler, cluster, collection, body);
 }

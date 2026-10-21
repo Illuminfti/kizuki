@@ -6,6 +6,7 @@ export const CLAIM_ERROR_CODES = [
   "unknown_predicate",
   "space_mismatch",
   "world_endpoint_kind",
+  "world_cycle",
   "world_object_kind",
   "world_polarity",
   "world_vocabulary_value",

@@ -1,3 +1,4 @@
+import type { ProcedureUsefulness } from "../../contracts/outcome-card";
 import type { Relation, ViewGap } from "../../contracts/concept-card";
 import type { ConceptCard } from "../../contracts/concept-card";
 import type { ConceptLearning } from "../../contracts/concept-card";
@@ -20,6 +21,8 @@ export interface CardBody {
   /** Gaps beyond source coverage and the traversal bound; they make the card partial. */
   readonly gaps: readonly ViewGap[];
   readonly summary: CardSummary | null;
+  readonly outcomeUsefulness?: ProcedureUsefulness;
+  readonly independentSkillClaims?: readonly string[];
   readonly overflow?: boolean;
   readonly learning?: readonly ConceptLearning[];
 }

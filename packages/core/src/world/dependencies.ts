@@ -1,3 +1,5 @@
+import { claimReader, claimPublicationFingerprint } from "../serving/claims";
+import { getClaim } from "../claims/store";
 import { identityReceiptCurrent } from "./identity-receipt";
 import type { ServeContext } from "../serving/types";
 import type { Database } from "bun:sqlite";
@@ -10,6 +12,7 @@ import { sourceCoverage, type SourceCoverageGap } from "./coverage";
 /** Complete authorized evidence used by a projection, including evidence omitted from its wire body. */
 export interface WorldDependencies {
   readonly claims: Set<string>;
+  readonly legacyClaims: Map<string, string>;
   cutoff?: KnownCutoff;
   /** A returned temporal capability can retain an older, byte-equivalent cutoff. */
   snapshot?: { readonly cutoff: KnownCutoff; readonly current: (ctx: ServeContext) => boolean };
@@ -22,7 +25,7 @@ export interface WorldDependencies {
 }
 
 export function worldDependencies(): WorldDependencies {
-  return { claims: new Set(), supports: new Set(), events: new Set(), identityReceipts: new Map(), coverage: null };
+  return { claims: new Set(), legacyClaims: new Map(), supports: new Set(), events: new Set(), identityReceipts: new Map(), coverage: null };
 }
 
 export function recordWorldDependencies(deps: WorldDependencies, item: Eligible): void {
@@ -36,7 +39,7 @@ export function recordWorldDependencies(deps: WorldDependencies, item: Eligible)
 /** Bind the complete evidence closure to the existing erasure cascades, without adding another cache table. */
 export function dependencyRefs(db: Database, ns: WorldNamespace, deps: WorldDependencies): string[] {
   return [
-    ...[...deps.claims].map((id) => issueWorldRef(db, ns, "claim", id).token),
+    ...[...deps.legacyClaims.keys(), ...deps.claims].map((id) => issueWorldRef(db, ns, "claim", id).token),
     ...[...deps.supports].map((id) => issueWorldRef(db, ns, "admission", id).token),
     ...[...deps.events].map((id) => issueWorldRef(db, ns, "event_version", id).token),
   ];
@@ -44,6 +47,11 @@ export function dependencyRefs(db: Database, ns: WorldNamespace, deps: WorldDepe
 
 /** Validate one bounded evidence closure at its retained position and current authority. */
 export function worldEvidenceCurrent(ctx: ServeContext, deps: WorldDependencies, cutoff = deps.cutoff): boolean {
+  const legacy = claimReader(ctx.db, ctx.principal.grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
+  for (const [id, fingerprint] of deps.legacyClaims) {
+    const claim = getClaim(ctx.db, id);
+    if (claim === null || claim.status !== "live" || !legacy.canRead(claim) || claimPublicationFingerprint(claim) !== fingerprint) return false;
+  }
   for (const [claim, receipt] of deps.identityReceipts) if (!identityReceiptCurrent(ctx.db, claim, receipt, cutoff)) return false;
   const permitted = knownSupportSql(ctx, cutoff);
   const claim = authorizedClaimSql(ctx), held = knownHeldSql(ctx, "base", cutoff);

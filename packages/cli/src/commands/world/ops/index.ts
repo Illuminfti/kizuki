@@ -1,3 +1,4 @@
+import { procedureCli, findProceduresCli, skillCli, frameworkCli, outcomeCli } from "./skills";
 import { historyCli } from "./history";
 import { conceptCli } from "./concept";
 import { describeCli } from "./describe";
@@ -27,8 +28,13 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   { name: "question", cli: questionCli }, { name: "find_questions", cli: findQuestionsCli }, { name: "frontier", cli: frontierCli },
   // slot: PEOPLE
   // slot: SKILL
+  { name: "procedure", cli: procedureCli },
+  { name: "find_procedures", cli: findProceduresCli },
+  { name: "skill", cli: skillCli },
+  { name: "framework", cli: frameworkCli },
   // slot: ART
   // slot: OUTCOME
+  { name: "outcome", cli: outcomeCli },
   // slot: DIFF
   // slot: SLICE
   // slot: ATTN

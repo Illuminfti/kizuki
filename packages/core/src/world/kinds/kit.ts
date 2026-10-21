@@ -1,3 +1,4 @@
+import type { ProcedureUsefulness } from "../../contracts/outcome-card";
 import type { ConceptCoverage, Relation } from "../../contracts/concept-card";
 import type { ConceptLearning } from "../../contracts/concept-card";
 import type { CardSummary } from "../pipeline/enrich";
@@ -26,6 +27,8 @@ export interface CardInput {
   /** Every relation the read projected, including those about other endpoints that point here. */
   readonly relations: readonly Relation[];
   readonly summary: CardSummary | null;
+  readonly outcomeUsefulness?: ProcedureUsefulness | undefined;
+  readonly independentSkillClaims?: readonly string[] | undefined;
   readonly coverage: ConceptCoverage;
   readonly learning: readonly ConceptLearning[];
 }

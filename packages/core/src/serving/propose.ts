@@ -1,3 +1,8 @@
+import { worldNamespace, resolveWorldObject } from "../world/references";
+import { anchorOf } from "../world/pipeline/collect";
+import { rawSubjectRefKey } from "../contracts/claim-v2";
+import { canonicalJson, sha256Hex } from "../util/hash";
+import { OUTCOME_PREDICATES, parseOutcomeEvidence } from "../contracts/outcome-card";
 import type { AuditDenial, Grant } from "../agents";
 import { isRegisteredPredicate } from "../claims/predicates";
 import { insertClaim } from "../claims/store";
@@ -332,6 +337,21 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
     const subject = subjectOf(grant, args.subject, requested);
     const predicate = predicateOf(args.predicate, subject);
 
+    let object = args.object === undefined ? undefined : text("object", args.object, MAX_OBJECT_CHARS);
+    if (predicate !== undefined && OUTCOME_PREDICATES.includes(predicate as typeof OUTCOME_PREDICATES[number])) {
+      const evidence = parseOutcomeEvidence(predicate, object);
+      if (kind !== "claim" || evidence === null) throw refuse("object", "must contain bounded outcome evidence");
+      // A public token resolves only in the caller's current authorization namespace.
+      // Persist a stable digest, never a principal-local capability or raw namespace.
+      const binding = evidence.subjectRef === "none" ? "none" : ctx.db.transaction(() => {
+        const handle = resolveWorldObject(ctx.db, worldNamespace(ctx.db, principal), evidence.subjectRef);
+        const anchor = handle === null ? null : anchorOf(ctx.db, handle);
+        if (anchor === null || anchor.id !== subject) throw refuse("object", "subjectRef must be a current object token for the subject, or none");
+        return sha256Hex(rawSubjectRefKey(anchor));
+      }).immediate();
+      object = canonicalJson({ ...evidence, subjectRef: binding });
+      if (object.length > MAX_OBJECT_CHARS) throw refuse("object", "normalized outcome evidence is too large");
+    }
     validateProvenance(ctx, provenance, contract);
 
     const filed = await insertClaim(
@@ -351,9 +371,7 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
         taint: "quoted",
         ...(subject === undefined ? {} : { subject }),
         ...(predicate === undefined ? {} : { predicate }),
-        ...(args.object === undefined
-          ? {}
-          : { object: text("object", args.object, MAX_OBJECT_CHARS) }),
+        ...(object === undefined ? {} : { object }),
         ...(args.polarity === undefined
           ? {}
           : {

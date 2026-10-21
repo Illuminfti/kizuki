@@ -8,7 +8,7 @@ import { WORLD_VOCABULARY, WORLD_VOCABULARY_SCHEMA } from "../../src/contracts/w
  * and a migration story, not an edit of this table.
  */
 const PINNED_ROWS = [
-  ["world.kind", "raw", "vocabulary", "positive,negative", null, "world/concept,world/question,world/situation"],
+  ["world.kind", "raw", "vocabulary", "positive,negative", null, "world/concept,world/framework,world/procedure,world/question,world/situation,world/skill"],
   ["situation.label", "situation", "literal", "positive,negative", 400, null],
   ["situation.objective", "situation", "literal", "positive,negative", 400, null],
   ["situation.commitment", "situation", "literal", "positive,negative", 400, null],
@@ -32,6 +32,33 @@ const PINNED_ROWS = [
   ["question.motivates", "question", "raw_subject", "positive,negative", null, null],
   ["gap.kind", "question", "vocabulary", "positive,negative", null, "gap/missing_prerequisite,gap/unresolved_question,gap/contradiction,gap/stale_evidence,gap/misconception,gap/lack_of_practice,gap/missing_information"],
   ["gap.about", "question", "raw_subject", "positive,negative", null, null],
+  ["skill.label", "skill", "literal", "positive,negative", 400, null],
+  ["skill.evidence", "skill", "vocabulary", "positive,negative", null, "skill/self_report,skill/exposure,skill/explanation,skill/application,skill/observed_outcome"],
+  ["skill.about", "skill", "raw_subject", "positive,negative", null, null],
+  ["skill.demonstration", "skill", "raw_subject", "positive,negative", null, null],
+  ["skill.outcome", "skill", "raw_subject", "positive,negative", null, null],
+  ["skill.last_validated", "skill", "literal", "positive,negative", 400, null],
+  ["framework.label", "framework", "literal", "positive,negative", 400, null],
+  ["framework.purpose", "framework", "literal", "positive,negative", 400, null],
+  ["framework.includes", "framework", "raw_subject", "positive,negative", null, null],
+  ["framework.component", "framework", "raw_subject", "positive,negative", null, null],
+  ["framework.assumption", "framework", "literal", "positive,negative", 400, null],
+  ["framework.applies_to", "framework", "raw_subject,literal", "positive,negative", 400, null],
+  ["framework.failure_mode", "framework", "literal", "positive,negative", 400, null],
+  ["framework.lifecycle", "framework", "vocabulary", "positive,negative", null, "framework/encountered,framework/understood,framework/testing,framework/adopted,framework/modified,framework/rejected,framework/superseded"],
+  ["procedure.label", "procedure", "literal", "positive,negative", 400, null],
+  ["procedure.step", "procedure", "literal", "positive,negative", 400, null],
+  ["procedure.strategy", "procedure", "literal", "positive,negative", 400, null],
+  ["procedure.prerequisite", "procedure", "raw_subject,literal", "positive,negative", 400, null],
+  ["procedure.applies_to", "procedure", "raw_subject,literal", "positive,negative", 400, null],
+  ["procedure.required_capability", "procedure", "raw_subject", "positive,negative", null, null],
+  ["procedure.success_check", "procedure", "literal", "positive,negative", 400, null],
+  ["procedure.failure_mode", "procedure", "literal", "positive,negative", 400, null],
+  ["procedure.counterexample", "procedure", "literal,raw_subject", "positive,negative", 400, null],
+  ["procedure.last_validated", "procedure", "literal", "positive,negative", 400, null],
+  ["procedure.outcome", "procedure", "raw_subject", "positive,negative", null, null],
+  ["procedure.standard", "procedure", "literal", "positive,negative", 400, null],
+  ["procedure.exemplar", "procedure", "raw_subject", "positive,negative", null, null],
 ] as const;
 
 test("the shipped rows of kizuki.world-vocabulary/v1 keep their meaning", () => {

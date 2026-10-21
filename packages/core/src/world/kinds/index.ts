@@ -1,3 +1,6 @@
+import { skillAssembler } from "./skill";
+import { frameworkAssembler } from "./framework";
+import { procedureAssembler } from "./procedure";
 import { conceptAssembler } from "./concept";
 import type { KindAssembler } from "./kit";
 import { situationAssembler } from "./situation";
@@ -15,6 +18,7 @@ export const KIND_ASSEMBLERS: readonly KindAssembler[] = [
   questionAssembler,
   // slot: people
   // slot: skill
+  skillAssembler, frameworkAssembler, procedureAssembler,
   // slot: sit2
   // slot: art
 ];

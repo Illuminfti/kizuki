@@ -1,3 +1,8 @@
+import { skillOp } from "./skill";
+import { procedureOp } from "./procedure";
+import { frameworkOp } from "./framework";
+import { findProceduresOp } from "./find-procedures";
+import { outcomeOp } from "./outcome-read";
 import { historyOp } from "./history";
 import { conceptOp } from "./concept";
 import { describeOp } from "./describe";
@@ -80,8 +85,10 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   questionOp, findQuestionsOp, frontierOp,
   // slot: PEOPLE
   // slot: SKILL
+  procedureOp, findProceduresOp, skillOp, frameworkOp,
   // slot: ART
   // slot: OUTCOME
+  outcomeOp,
   // slot: DIFF
   // slot: SLICE
   // slot: ATTN

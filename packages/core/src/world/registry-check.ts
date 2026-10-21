@@ -1,3 +1,5 @@
+import { isRfc3339 } from "../util/time";
+import { frameworkWriteCycle } from "./framework-cycles";
 import type { Database } from "bun:sqlite";
 import { ClaimError, type ClaimErrorCode } from "../claims/errors";
 import { rawSubjectNamespace, rawSubjectRefKey, type ClaimV2Assertion, type RawSubjectRef } from "../contracts/claim-v2";
@@ -57,6 +59,7 @@ function knownEndpointKinds(
 
 /** The endpoint kinds a subject-valued object may have, or null when the row places no constraint. */
 function objectEndpointKinds(spec: WorldVocabularySpec): ReadonlySet<WorldEndpointKind> | null {
+  if (spec.predicate === "framework.includes") return new Set<WorldEndpointKind>(["framework", "procedure", "skill"]);
   return spec.objects.includes("raw_subject") || !spec.objects.includes("concept") ? null : new Set<WorldEndpointKind>(["concept"]);
 }
 
@@ -107,6 +110,9 @@ export function worldAssertionViolation(
       return { code: "world_endpoint_kind", detail: `${spec.predicate} ${role} is already classified as another kind` };
     }
   }
+  if (semantic.predicate === "procedure.last_validated" && (semantic.object.kind !== "literal" || !isRfc3339(semantic.object.value)))
+    return { code: "world_vocabulary_value", detail: "procedure.last_validated requires an RFC3339 instant" };
+  if (frameworkWriteCycle(db, semantic)) return { code: "world_cycle", detail: "framework component cycle or traversal limit" };
   return null;
 }
 
