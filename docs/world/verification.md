@@ -62,6 +62,21 @@ result proves registration only.
 
 ## Evidence limits
 
+The extraction prompt chooses perspective per proposition: an evidenced kind
+and exact grounded name can be asserted while substantive details remain
+reported or uncertain. Type and label remain qualified claims; uncertain or
+merely attributed classifications are not promoted for discovery. Core still
+assigns model-inference authority and requires the existing grounding checks.
+This is a prospective prompt clarification, not a change to stored claims or
+the reader's asserted-classification and asserted-label rules.
+
+`packages/core/test/serve/extract-v2-perspective.test.ts` exercises the actual
+producer adapter, writer and public reader with scripted responses: historical
+mixed-perspective Situations, reported kind/label distinctions, revocation,
+purge, consolidation non-promotion and incomplete-template abstention. These
+regressions prove pipeline behavior; they do not establish that a real model
+chooses the correct perspective or abstains on those inputs.
+
 This harness does not establish production activation or authorize model
 egress. [Held-out extraction qualification](qualification.md) has a separate
 real-model runner and exact-artifact review gate. Its offline scorer tests do

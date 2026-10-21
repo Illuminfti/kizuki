@@ -906,6 +906,7 @@ export function consentsToJudge(
   return egress.judge_endpoint === judge.model_endpoint && egress.judge_model === judge.model &&
     retentionAccepted(egress.external_retention, judge.retention);
 }
+export type SourceGrantLookup = (sourceKey: string) => SourceGrant | null;
 export interface SourceReadScope {
   owner: boolean;
   deny_classes?: readonly EventClass[];
@@ -913,7 +914,7 @@ export interface SourceReadScope {
   port?: object;
   model?: boolean;
   /** Resolves a source grant; a bulk caller passes a memoized lookup so each source is inspected once. */
-  grantOf?: (sourceKey: string) => SourceGrant | null;
+  grantOf?: SourceGrantLookup;
 }
 /** Necessary source-level permission; record fields are still checked separately. */
 function grantAllowsScope(grant: SourceGrant | null, scope: SourceReadScope, model: ModelDestination | undefined): boolean {
@@ -1129,6 +1130,7 @@ export function sourceSensitivity(
   db: Database,
   ids: readonly string[],
   current: SensitivityHint,
+  grantOf?: SourceGrantLookup,
 ): SensitivityHint {
   let floor = current;
   if (sourcePolicyEpoch(db) === 0) return floor;
@@ -1141,7 +1143,7 @@ export function sourceSensitivity(
     if (row !== null)
       floor = raiseSensitivity(
         floor,
-        inspectSourceGrant(db, row.source_key)?.policy.sensitivity_floor ??
+        (grantOf === undefined ? inspectSourceGrant(db, row.source_key) : grantOf(row.source_key))?.policy.sensitivity_floor ??
           "private",
       );
   }

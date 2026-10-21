@@ -24,6 +24,13 @@ export interface ClassRule {
 const MAX_METADATA_VALUES = 1_000;
 const ID_CHUNK = 500;
 
+// Only clean inputs enter this weak memo. Metadata is flattened again on every
+// call because even parsed pages are mutable. Conservative accounting includes
+// collected keys until a reset, bounding retained strings without strong keys.
+const MAX_CACHED_CLASS_CHARACTERS = 32 * 1_048_576;
+let credentialScans = new WeakMap<object, { text: string; metadata: string }>();
+let cachedClassCharacters = 0;
+
 /** False means the scan was truncated, never that the unscanned tail was clean. */
 function metadataLines(value: unknown, key: string, out: string[], depth: number): boolean {
   if (out.length >= MAX_METADATA_VALUES || depth > EVENT_LIMITS.metadataDepth) return false;
@@ -42,10 +49,33 @@ function metadataLines(value: unknown, key: string, out: string[], depth: number
 
 /** Text and metadata scalars as `name=value`; an incomplete scan is credential. */
 export function credentialShaped(text: string, metadata: unknown): boolean {
-  if (scrubText(text).redactions.length > 0) return true;
+  const key = metadata !== null && typeof metadata === "object" ? metadata : undefined;
+  const prior = key === undefined ? undefined : credentialScans.get(key);
+  if (prior?.text !== text && scrubText(text).redactions.length > 0) return true;
   const lines: string[] = [];
   if (!metadataLines(metadata, "metadata", lines, 0)) return true;
-  return lines.length > 0 && scrubText(lines.join("\n")).redactions.length > 0;
+  const rendered = lines.join("\n");
+  if (prior?.text === text && prior.metadata === rendered) return false;
+  const credential = lines.length > 0 && scrubText(rendered).redactions.length > 0;
+  if (key !== undefined) {
+    // A metadata getter can reenter classification, so account against the current memo.
+    const current = credentialScans.get(key);
+    if (current !== undefined) {
+      cachedClassCharacters -= current.text.length + current.metadata.length;
+      credentialScans.delete(key);
+    }
+    // Unknown callers can exceed the accepted event bounds; do not retain their payload.
+    if (!credential && text.length <= EVENT_LIMITS.textBytes && rendered.length <= EVENT_LIMITS.metadataBytes) {
+      const characters = text.length + rendered.length;
+      if (cachedClassCharacters + characters > MAX_CACHED_CLASS_CHARACTERS) {
+        credentialScans = new WeakMap();
+        cachedClassCharacters = 0;
+      }
+      credentialScans.set(key, { text, metadata: rendered });
+      cachedClassCharacters += characters;
+    }
+  }
+  return credential;
 }
 
 /** Stored metadata that will not parse cannot be shown clean: it reads as credential. */

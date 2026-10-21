@@ -2,7 +2,7 @@ import { selectedPage } from "../query/selection";
 import { boundScrubText } from "../producer/scrub";
 import { resolve } from "node:path";
 import type { Database } from "bun:sqlite";
-import { sourceEventsAllowed, sourceSensitivity, sourceServingSql } from "../ledger/source-grants";
+import { sourceEventsAllowed, sourceSensitivity, sourceServingSql, type SourceGrantLookup } from "../ledger/source-grants";
 import { classesOfEvents } from "../ledger/event-classes";
 import { classesOfPage } from "../canon/page-classes";
 import { compareRfc3339 } from "../agents/time";
@@ -13,8 +13,7 @@ import { authorize, sensitivity, denyClassesOf } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
 import { canonAuthorities } from "../canon/authority";
-import { getCanonReceipt } from "../canon/receipts";
-import { isWorldCanonReceipt } from "../canon/world-receipt";
+import { getWorldCanonReceipt } from "../canon/receipts";
 import { purgeDiscoveryPending } from "../derived-holds";
 import { eventIdFromReference } from "../retrieval/ids";
 import { isHeld } from "../ledger/purge";
@@ -28,7 +27,7 @@ import {
 } from "../vault/pages";
 import type { CanonPageCache } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
-import { assessLivePageEvidence, type LivePageEvidence } from "../vault/provenance";
+import { assessLivePageEvidence, type LivePageEvidence, type PageEvidenceReader } from "../vault/provenance";
 import { PAGE_TAINTS } from "../vault/schema";
 import type { PageTaint } from "../vault/schema";
 import { redactorOf } from "./redact";
@@ -275,7 +274,7 @@ export function loadCanon(ctx: ServeContext, options: { readonly include_archive
     byId.set(page.id, page);
     byPath.set(page.relPath, page);
   }
-  const permitted = report.pages.filter(page => !denied.has(page.relPath) && authorize(grant, pageScope(ctx, page)).allow);
+  const permitted = report.pages.filter(page => !denied.has(page.relPath) && authorize(grant, pageScope(ctx, page, grant)).allow);
   const holds = tableExists(ctx.db, "canon_holds") ? ctx.db.query<{ page_path: string }, [string]>(`
     SELECT page_path FROM (
       SELECT page_path FROM canon_holds UNION SELECT page_path FROM canon_write_intents
@@ -320,17 +319,22 @@ export function eligible(page: CanonPage): boolean {
   return isLiveCanonPage(page);
 }
 
-export function pageScope(ctx: ServeContext, page: CanonPage): Servable {
+/** An explicit effective grant omits only dimensions its authorization does not inspect. */
+export function pageScope(ctx: ServeContext, page: CanonPage, grant?: Grant): Servable {
+  return scopeForSources(ctx, page, stringArray(page.data["sources"]).map(eventIdFromReference), grant);
+}
+
+function scopeForSources(ctx: ServeContext, page: CanonPage, ids: readonly string[], grant?: Grant): Servable {
   const type = stringField(page, "type");
-  const ids = stringArray(page.data["sources"]).map(eventIdFromReference);
-  const span = sourceSpan(ctx.db, ids);
+  const span = grant !== undefined && grant.since === null && grant.until === null ? null : sourceSpan(ctx.db, ids);
   return {
     id: page.id,
     sensitivity: stringField(page, "sensitivity"),
     ...(type === null ? {} : { type }),
     subjects: stringArray(page.data["subjects"]),
     ...(span === null ? {} : { occurred_span: span }),
-    classes: [...new Set([...classesOfPage(ctx.db, page), ...classesOfEvents(ctx.db, ids)])],
+    classes: grant !== undefined && denyClassesOf(grant).length === 0
+      ? [] : [...new Set([...classesOfPage(ctx.db, page), ...classesOfEvents(ctx.db, ids)])],
   };
 }
 
@@ -364,14 +368,21 @@ function sourceSpan(db: Database, ids: readonly string[]): { from: string; to: s
   return from === null || to === null ? null : { from, to };
 }
 
+/** Internal phase readers; omitted for every final publication/writer check. */
+interface CanonReadAccess {
+  evidence: PageEvidenceReader;
+  grantOf: SourceGrantLookup;
+}
+
 export function pageDecision(
   index: CanonIndex,
   grant: Grant,
   page: CanonPage,
+  read?: CanonReadAccess,
 ): ReturnType<typeof pageSnapshotDecision> {
   if (!selectedPage(index.sourceContext.db, index.sourceContext.selection, stringArray(page.data.sources).map(eventIdFromReference))) return { allow: false, reason: "held" };
   if (index.deniedPaths.has(page.relPath) || index.generation !== canonReadGeneration(index.sourceContext.db) || index.holds.has(page.relPath)) return { allow: false, reason: "held" };
-  return pageSnapshotDecision(index.sourceContext, grant, page);
+  return pageSnapshotDecision(index.sourceContext, grant, page, false, read);
 }
 
 /** The writer checks each exact snapshot before disclosing correction content. */
@@ -380,6 +391,7 @@ export function pageSnapshotDecision(
   grant: Grant,
   page: CanonPage,
   historicalSnapshot = false,
+  read?: CanonReadAccess,
 ):
   | { allow: true; sensitivity: Sensitivity; taint: PageTaint; evidence: Extract<LivePageEvidence, { admitted: true }> }
   | { allow: false; reason: DenyReason } {
@@ -387,28 +399,28 @@ export function pageSnapshotDecision(
   // instead of casts. A page missing either is withheld from everyone, the
   // owner included: an unstamped page may be verbatim capture, and serving
   // it as canon would hand a reader capture dressed as produced prose.
-  const scope = authorize(grant, pageScope(sourceCtx, page));
+  const scope = authorize(grant, pageScope(sourceCtx, page, grant));
   if (!scope.allow) return scope;
   if (canonReadHeld(sourceCtx, page)) return { allow: false, reason: "held" };
-  const evidence = assessLivePageEvidence(sourceCtx.db, page, undefined, {...sourceCtx,principal:{...sourceCtx.principal,grant}}, historicalSnapshot);
+  const context = {...sourceCtx,principal:{...sourceCtx.principal,grant}};
+  const evidence = read === undefined
+    ? assessLivePageEvidence(sourceCtx.db, page, undefined, context, historicalSnapshot)
+    : read.evidence(page, context, historicalSnapshot);
   if (!evidence.admitted) return { allow: false, reason: "held" };
-  if (!sourceEventsAllowed(sourceCtx.db, evidence.sourceIds, { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
+  if (!sourceEventsAllowed(sourceCtx.db, evidence.sourceIds, { owner: sourceCtx.principal.kind === "owner", purpose: sourceCtx.sourcePurpose ?? "recall", ...(read === undefined ? {} : { grantOf: read.grantOf }) })) return { allow: false, reason: "held" };
   const original = sensitivity(page.data["sensitivity"]);
-  const label = original === null ? null : sourceSensitivity(sourceCtx.db, evidence.sourceIds, original);
+  const label = original === null ? null : sourceSensitivity(sourceCtx.db, evidence.sourceIds, original, read?.grantOf);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
   const recordedTaint = asTaint(page.data["taint"]);
   if (recordedTaint === null) return { allow: false, reason: "missing_taint" };
   // Earlier typed model pages may have a receipted clean stamp. Tighten their
   // served trust class without rewriting the immutable receipt or page image.
   const receipt = evidence.revision.authority === "model_inference"
-    ? getCanonReceipt(sourceCtx.db, evidence.revision.receipt_id) : null;
-  const taint = receipt !== null && isWorldCanonReceipt(receipt) ? "quoted" : recordedTaint;
+    ? getWorldCanonReceipt(sourceCtx.db, evidence.revision.receipt_id) : null;
+  const taint = receipt !== null ? "quoted" : recordedTaint;
   // A page is as old as its evidence and carries the classes of its sources.
-  const span = grant.since === null && grant.until === null ? null : sourceSpan(sourceCtx.db, evidence.sourceIds);
   const decision = authorize(grant, {
-    ...pageScope(sourceCtx, page),
-    ...(span === null ? {} : { occurred_span: span }),
-    classes: [...new Set([...classesOfPage(sourceCtx.db, page), ...classesOfEvents(sourceCtx.db, evidence.sourceIds)])],
+    ...scopeForSources(sourceCtx, page, evidence.sourceIds, grant),
     sensitivity: label,
   });
   return decision.allow

@@ -289,7 +289,7 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
 
       // Empty replies can still omit authorized subject, source or prose links.
       // Select the root's permitted corpus before reconstructing its health.
-      const permitted = index.pages.filter(page => authorize(grant, pageScope(index.sourceContext, page)).allow);
+      const permitted = index.pages.filter(page => authorize(grant, pageScope(index.sourceContext, page, grant)).allow);
       const links = linkIndexFromPages(permitted);
       const related = root === undefined ? permitted.filter(page =>
         ((kinds === undefined || kinds.includes("subject"))

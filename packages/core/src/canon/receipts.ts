@@ -1,4 +1,4 @@
-import { isWorldCanonReceipt, parseWorldCanonReceipt, type WorldCanonReceiptRecord, type ErasedWorldCanonReceipt } from "./world-receipt";
+import { isWorldCanonReceipt, parseWorldCanonReceipt, type WorldCanonReceiptRecord, type ErasedWorldCanonReceipt, type RetainedWorldCanonReceipt } from "./world-receipt";
 import { completedEventPurgeProofs } from "../ledger/purge";
 import { canonicalJson } from "../util/hash";
 import { ABSENT_PAGE_HASH } from "../vault/write";
@@ -226,16 +226,33 @@ export function readReceiptRecords(vaultPath: string): CanonReceiptRecord[] {
 export function readReceiptsLog(vaultPath: string): CanonReceipt[] {
   return readReceiptRecords(vaultPath).filter((record): record is CanonReceipt => !isErasedReceipt(record));
 }
-export function getCanonReceiptRecord(db: Database, receiptId: string): CanonReceiptRecord | null {
+function canonReceiptRow(db: Database, receiptId: string): CanonReceiptRow | null {
   if (!tableExists(db, "canon_receipts")) return null;
-  const row = db
+  return db
     .query<CanonReceiptRow, [string]>("SELECT * FROM canon_receipts WHERE receipt_id = ?")
     .get(receiptId);
+}
+export function getCanonReceiptRecord(db: Database, receiptId: string): CanonReceiptRecord | null {
+  const row = canonReceiptRow(db, receiptId);
   return row === null ? null : rowToReceiptRecord(row);
 }
 export function getCanonReceipt(db: Database, receiptId: string): CanonReceipt | null {
   const record = getCanonReceiptRecord(db, receiptId);
   return record === null || isErasedReceipt(record) ? null : record;
+}
+
+/** Typed-proof callers need no legacy JSON payload, but retain every refusal. */
+export function getWorldCanonReceipt(db: Database, receiptId: string): RetainedWorldCanonReceipt | null {
+  const row = canonReceiptRow(db, receiptId);
+  if (row === null) return null;
+  if (row.receipt_state !== "erased" && (row.record_codec === undefined || row.record_codec === "v1")) {
+    assertReceiptPaths(row);
+    return null;
+  }
+  // Unsupported codecs, malformed typed rows and erased-record integrity keep
+  // the existing parser. In particular, an erased v1 row is still invalid.
+  const record = rowToReceiptRecord(row);
+  return isErasedReceipt(record) || !isWorldCanonReceipt(record) ? null : record;
 }
 
 /** One bounded causal history in the existing journal, including erased bridges.

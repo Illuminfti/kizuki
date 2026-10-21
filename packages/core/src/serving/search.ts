@@ -30,6 +30,7 @@ import {
 } from "./arguments";
 import { canonChunk, eligible, excerptOf, loadCanon, pageDecision, pageScope } from "./canon";
 import type { CanonIndex } from "./canon";
+import { CanonAccessPhase } from "./canon-access";
 import { eventsCitedByPages } from "./dedupe";
 import { claimsEpoch } from "./epoch";
 import { auditArguments, gateAsync } from "./gate";
@@ -264,10 +265,11 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
       base.excludePaths = [...index.holds];
       const seen = new Set<string>();
       const narrowed = { ...grant, ...(types === undefined ? {} : { types }), ...(subjects === undefined ? {} : { subjects }), ...(window.since === undefined ? {} : { since: window.since }), ...(window.until === undefined ? {} : { until: window.until }) };
+      const access = new CanonAccessPhase(index, narrowed);
       const classified: Classification = { canon: [], quoted: [], withheld: [] };
       const rankedOpts = {
-        canonIds: index.pages.filter(page => eligible(page) && pageDecision(index, narrowed, page).allow).map(page => `page:${page.id}`),
-        canonPaths: index.pages.filter(page => authorize(narrowed, pageScope(ctx, page)).allow).map(page => page.relPath),
+        canonIds: index.pages.filter(page => eligible(page) && access.decision(page).allow).map(page => `page:${page.id}`),
+        canonPaths: index.pages.filter(page => authorize(narrowed, pageScope(ctx, page, narrowed)).allow).map(page => page.relPath),
         ...base,
         limit: MAX_RETRIEVAL_LIMIT,
         ceiling: grant.ceiling,
@@ -359,7 +361,7 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
       });
       if (canon.length + quoted.length > 0) degraded.delete(NO_MATCH_LABEL);
       else if (question) degraded.add(NO_MATCH_LABEL);
-      if ((scope !== "ledger" && visibleIndexDegraded(index, narrowed, "search")) || (scope !== "canon" && visibleLedgerIndexMissing(ctx, narrowed))) degraded.add("index-degraded");
+      if ((scope !== "ledger" && visibleIndexDegraded(index, narrowed, "search", index.pages, access)) || (scope !== "canon" && visibleLedgerIndexMissing(ctx, narrowed))) degraded.add("index-degraded");
       const canonicalSubjects = new Map(canon.map(chunk => [chunk.page_id, canonSubjects(index, index.byId.get(chunk.page_id)!)]));
       const projection = projectSubjectLabels(index, narrowed, at, [...canonicalSubjects.values()].flat().concat(quoted.flatMap(chunk => chunk.subjects)), canon.length + quoted.length);
       const audit = new Map<string, AuditItem>();
