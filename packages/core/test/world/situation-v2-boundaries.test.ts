@@ -57,6 +57,30 @@ test("the writer rejects simultaneous same-perspective cycles, permits disjoint 
  }finally{f.dispose();}
 },120_000);
 
+test("a scoped correction cannot discover a hidden intermediate dependency through cycle refusal",async()=>{
+ const f=await situationV2Fixture();try{
+  await f.declare("project:two","situation","Second");
+  await f.declare("project:three","situation","Third");
+  await f.declare("project:hidden","situation","Hidden intermediate");
+  await f.write("situation.requires",node(f,"project:hidden"),{subject:"project:launch",metadata:{relpath:"restricted/edge.md"}});
+  await f.write("situation.requires",node(f,"project:two"),{subject:"project:hidden"});
+  await f.write("situation.requires",node(f,"project:three"),{subject:"project:two"});
+  f.materialize("project:two");
+  const grant=inspectSourceGrant(f.db,f.sourceKey)!;
+  setSourceGrant(f.db,{source_key:f.sourceKey,expected_revision:grant.revision,operation_id:"hidden-dependency-class",policy:{...grant.policy,class_rules:[{path_glob:"restricted/**",class:"machine_exhaust"}]}});
+  const agent=addAgent(f.db,"dependency-reader",{...OWNER_AGENT_GRANT,deny_classes:["machine_exhaust"]}),ctx={...f.ctx,principal:authenticate(f.db,agent.token)!};
+  const found=serveWorldView(ctx,{operation:"find_situations",label:"Second",valid:{kind:"all"},knownAt:{kind:"current"}}).data;
+  if(!("result"in found)||!("data"in found.result)||!("matches"in found.result.data))throw Error("second situation missing");
+  const input={operation:"situation",situation:found.result.data.matches[0]!.ref,card:"kizuki.situation-card/v2",valid:{kind:"all"},knownAt:{kind:"current"}};
+  const read=()=>{const value=serveWorldView(ctx,input).data;if(!("result"in value)||!("data"in value.result)||value.result.data.schema!=="kizuki.situation-card/v2")throw Error("typed situation missing");return value.result.data;};
+  const before=read();
+  await serveCorrect(ctx,{statement:"This depends on the launch.",target:{world_claim:before.dependencies[0]!.relation.claim},mode:"replace_object",object:{kind:"node",ref:f.findSituation(ctx)}});
+  expect(read().dependencies).toHaveLength(1);
+  expect(read().coverage.gaps).not.toContain("stale_dependencies");
+  expect(f.readSituation().coverage.gaps).toContain("stale_dependencies");
+ }finally{f.dispose();}
+},120_000);
+
 test("only receipted native-owner completion is done, and undo returns the commitment to open",async()=>{
  const f=await situationV2Fixture();try{
   f.materialize("commitment:review");
