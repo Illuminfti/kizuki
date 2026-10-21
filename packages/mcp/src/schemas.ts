@@ -4,7 +4,7 @@ import type { Tool } from "@kizuki/core";
 import { z } from "zod";
 import { REDACTED } from "./redaction";
 import { MCP_WORLD_OPS } from "./world/ops";
-import { WIRE_TOKEN, worldGaps, worldRef, worldCoverage, worldRelation } from "./world/ops/shared";
+import { SCOPED_INPUT_REF, WIRE_TOKEN, worldGaps, worldRef, worldCoverage, worldRelation } from "./world/ops/shared";
 import { buildWorldSurface } from "./world/surface";
 
 /**
@@ -232,14 +232,14 @@ export const SEARCH_INPUT = z.strictObject({
   scope: z.enum(["canon", "ledger", "all"]).optional(),
   limit: z.int().min(1).max(50).optional(),
   types: z.array(ID).max(16).optional(),
-  subjects: z.array(z.union([ID, worldRef("raw_subject")])).max(16).optional(),
+  subjects: z.array(z.union([ID, SCOPED_INPUT_REF])).max(16).optional(),
   since: RFC3339.optional(),
   until: RFC3339.optional(),
   full_text: z.boolean().optional(),
 });
 
 export const GET_PAGE_INPUT = z.strictObject({
-  page: worldRef("page").optional(),
+  page: SCOPED_INPUT_REF.optional(),
   id: z.string().min(1).max(256).optional(),
   path: z.string().min(4).max(256).optional(),
 });
@@ -251,14 +251,14 @@ export const ENTITIES_INPUT = z.strictObject({
 });
 
 export const TIMELINE_INPUT = z.strictObject({
-  source: worldRef("source").optional(), eventVersion: worldRef("event_version").optional(),
+  source: SCOPED_INPUT_REF.optional(), eventVersion: SCOPED_INPUT_REF.optional(),
   day: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   since: RFC3339.optional(),
   until: RFC3339.optional(),
-  subject: z.union([ID, scopedRefs(["raw_subject", "object"])]).optional(),
+  subject: z.union([ID, SCOPED_INPUT_REF]).optional(),
   connector_id: ID.optional(),
   kind: ID.optional(),
   limit: z.int().min(1).max(200).optional(),
@@ -269,7 +269,7 @@ export const TIMELINE_INPUT = z.strictObject({
 });
 
 export const GRAPH_INPUT = z.strictObject({
-  id: ID.optional(), anchor: GRAPH_ANCHOR_V2.optional(),
+  id: ID.optional(), anchor: SCOPED_INPUT_REF.optional(),
   depth: z.int().min(1).max(2).optional(),
   kinds: z
     .array(z.enum(["wikilink", "subject", "source"]))
@@ -280,9 +280,9 @@ export const GRAPH_INPUT = z.strictObject({
 export const HEALTH_INPUT = z.strictObject({});
 
 export const PACKET_INPUT = z.strictObject({
-  taskEventVersion: worldRef("event_version").optional(),
+  taskEventVersion: SCOPED_INPUT_REF.optional(),
   query: z.string().min(1).max(512).optional(),
-  subjects: z.array(z.union([ID, worldRef("raw_subject")])).max(16).optional(),
+  subjects: z.array(z.union([ID, SCOPED_INPUT_REF])).max(16).optional(),
   since: RFC3339.optional(),
   until: RFC3339.optional(),
   budget_tokens: z.int().min(50).max(2000).optional(),
@@ -352,11 +352,11 @@ const CORRECT_OBJECT_REF = z.strictObject({ kind: z.literal("object"), token: CO
  */
 export const CORRECT_INPUT = z.strictObject({
   statement: z.string().min(1).max(2000),
-  target: z.union([scopedRefs(["claim", "claim_group", "raw_subject"]), z
+  target: z.union([SCOPED_INPUT_REF, z
     .strictObject({
       claim_id: ID.optional(),
       claim_key: z.string().regex(/^[0-9a-f]{64}$/).optional(),
-      subject: z.union([ID, scopedRefs(["raw_subject", "object"])]).optional(),
+      subject: z.union([ID, SCOPED_INPUT_REF]).optional(),
       world_claim: z.strictObject({ kind: z.literal("claim"), token: CORRECT_TOKEN }).optional(),
     }).refine((target) => [target.claim_id, target.claim_key, target.subject, target.world_claim].filter((value) => value !== undefined).length <= 1, "target names exactly one selector")]).optional(),
   object: z
@@ -382,7 +382,7 @@ export const CORRECT_INPUT = z.strictObject({
 
 export const PROPOSE_INPUT = z.strictObject({
   kind: z.enum(["entity", "claim", "edit", "merge", "deletion"]),
-  target: z.union([z.string().max(256), worldRef("page")]).nullable().optional(),
+  target: z.union([z.string().max(256), SCOPED_INPUT_REF]).nullable().optional(),
   body: z.string().min(1).max(65536),
   frontmatter: z
     .record(z.string().max(64), FRONTMATTER_VALUE)
@@ -395,12 +395,12 @@ export const PROPOSE_INPUT = z.strictObject({
       `must hold at most ${MAX_FRONTMATTER_CHARS} characters in total`,
     )
     .optional(),
-  subjects: z.array(z.union([ID, worldRef("raw_subject")])).max(16).optional(),
-  subject: z.union([ID, scopedRefs(["raw_subject", "object"])]).optional(),
+  subjects: z.array(z.union([ID, SCOPED_INPUT_REF])).max(16).optional(),
+  subject: z.union([ID, SCOPED_INPUT_REF]).optional(),
   predicate: ID.optional(),
   object: z.union([z.string().min(1).max(1024), worldRelation.shape.object]).optional(),
   polarity: z.enum(["positive", "negative"]).optional(),
-  provenance: z.array(z.union([ID, worldRef("event_version")])).min(1).max(64),
+  provenance: z.array(z.union([ID, SCOPED_INPUT_REF])).min(1).max(64),
   confidence: z.number().min(0).max(1).optional(),
 });
 

@@ -16,3 +16,14 @@ describe("closed scoped references", () => {
       Object.create({ kind: "page", token }), { kind: "page", token: "\u200b" + token }]) expect(parseScopedRef(value)).toBeNull();
   });
 });
+
+test("token grammar refuses every appended ASCII character and noncanonical encoding before resolution", () => {
+  const token = randomBytes(32).toString("base64url");
+  for (const kind of SCOPED_REF_KINDS) {
+    for (let code = 0; code < 128; code++) {
+      expect(parseScopedRef({ kind, token: token + String.fromCharCode(code) })).toBeNull();
+      expect(parseScopedRef({ kind, token: String.fromCharCode(code) + token })).toBeNull();
+    }
+    for (const suffix of ["\r\n", "\u2028", "\u2029", "=", "=="]) expect(parseScopedRef({ kind, token: token + suffix })).toBeNull();
+  }
+});

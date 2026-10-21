@@ -7,11 +7,13 @@ import { worldSeed } from "../helpers/world-seed";
 test("all world operations retain bounded output and reader work on a 5000-claim corpus", async () => {
   const scene = await verificationScene();
   try {
+    // Retain capabilities before expansion makes the Concept intentionally incomplete.
+    // The measured reads still see every claim in the expanded corpus.
+    const inputs = verificationInputs(scene);
     await worldSeed(scene.db, { sourceKey: scene.visible.concept.sourceKey, subject: "topic:bayes", label: "Bayesian updating",
       discover: false, predicates: Array.from({ length: 5_000 }, (_, i) => ({ predicate: "concept.example",
         object: { kind: "literal" as const, value: `Synthetic observation ${i}.` } })) });
     expect(scene.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE status='live'").get()!.n).toBeGreaterThanOrEqual(5_000);
-    const inputs = verificationInputs(scene);
     for (const name of WORLD_VERIFICATION_OPERATIONS) {
       const observed = collectReadFrames(() => serveWorldView(scene.reader, inputs[name]));
       expect(Buffer.byteLength(JSON.stringify(observed.result)), `${name}: response bytes`).toBeLessThanOrEqual(256 * 1024);

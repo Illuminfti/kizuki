@@ -1,7 +1,11 @@
 import { z } from "zod";
+import { SCOPED_REF_KINDS } from "@kizuki/core/world";
 
 const TIME = z.string().min(20).max(40);
 export const WIRE_TOKEN = z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/);
+// Kind eligibility belongs to Core resolution, so a well-formed wrong kind
+// reaches the same unavailable result as an absent or inaccessible target.
+export const SCOPED_INPUT_REF = z.strictObject({ kind: z.enum(SCOPED_REF_KINDS), token: WIRE_TOKEN });
 export const WORLD_OBJECT_REF = z.strictObject({
   kind: z.literal("object"),
   token: WIRE_TOKEN,

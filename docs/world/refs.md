@@ -18,8 +18,9 @@ an identifier. Existing source-field policy and redaction apply below adapters.
 
 `system_health` remains owner-only. Unknown selectors and scoped requests for v1
 retain the fixed contract refusal. Invalid reference syntax is invalid input;
-well-formed references that are absent, erased, unauthorized, or from another
-principal namespace are uniformly unavailable.
+well-formed references that are absent, erased, unauthorized, of an ineligible
+kind, or from another principal namespace are uniformly unavailable. MCP
+validates the same closed reference grammar and leaves kind eligibility to Core.
 
 V2 mutation inputs resolve current authority before preparation and again inside
 the existing claim transaction. Typed claims use their semantic subject and
@@ -93,7 +94,8 @@ Focused executable controls are in `test/contracts/scoped-refs.test.ts`,
 `test/world/observations.test.ts`, `test/serving/scoped-tools.test.ts`, and
 `test/serving/world-correct-scope.test.ts` under Core. Ordinary correction fencing
 and targeted replacement/undo are covered in the correction and serving suites.
-MCP's scoped-reference suite uses real stdio and HTTP clients; CLI and App tests
+MCP's scoped-reference and output-scanner suites use real stdio and HTTP clients,
+scan all ten tools for raw generated identities, and compare reference refusals. CLI and App tests
 cover the shipped consumers. The common operation matrix includes Observation
 for noninterference, purge, and consumer parity. Exact-head integration receipts
 must accompany the release handoff; this document alone is not a release receipt.
