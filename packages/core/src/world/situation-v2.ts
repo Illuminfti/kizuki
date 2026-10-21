@@ -79,26 +79,32 @@ export function collectSituationDetails(frame: ReadFrame, cluster: Cluster, body
     const statuses = by("commitment.status").filter(r => isAsserted(r) ||
       (r.polarity === "positive" && ["reported","quoted"].includes(r.perspective.mode)
         && r.object.kind === "vocabulary" && ["commitment/done","commitment/claimed_done"].includes(r.object.id)));
-    const authoritativeDone = items.some(c => c.relation.predicate === "commitment.status" && isAsserted(c.relation)
-      && c.relation.object.kind === "vocabulary" && c.relation.object.id === "commitment/done"
-      && c.eligible.supports.some(s => s.row.support_origin === "native_owner" && s.admission.epistemicKind === "owner_assertion"
-        && ["owner_correction","owner_authored"].includes(s.admission.authority))
-      && (() => { const id = frame.ctx.db.query<{receipt_id:string|null},[string]>("SELECT receipt_id FROM claims WHERE claim_id=?").get(c.eligible.claimId)?.receipt_id;
-        if (!id || !identityReceiptCurrent(frame.ctx.db,c.eligible.claimId,id,frame.cutoff.kind === "current" ? undefined : frame.cutoff)) return false;
-        frame.dependencies?.identityReceipts.set(c.eligible.claimId,id); return true; })());
+    const ownerStatuses = new Set(items.flatMap(c => {
+      if (c.relation.predicate !== "commitment.status" || !isAsserted(c.relation) || c.relation.object.kind !== "vocabulary" ||
+          !c.eligible.supports.some(s => s.row.support_origin === "native_owner" && s.admission.epistemicKind === "owner_assertion" &&
+            ["owner_correction","owner_authored"].includes(s.admission.authority))) return [];
+      const id = frame.ctx.db.query<{receipt_id:string|null},[string]>("SELECT receipt_id FROM claims WHERE claim_id=?").get(c.eligible.claimId)?.receipt_id;
+      if (!id || !identityReceiptCurrent(frame.ctx.db,c.eligible.claimId,id,frame.cutoff.kind === "current" ? undefined : frame.cutoff)) return [];
+      frame.dependencies?.identityReceipts.set(c.eligible.claimId,id);
+      return [c.relation.object.id];
+    }));
     const values = new Set(statuses.flatMap(r => r.object.kind === "vocabulary" ? [r.object.id] : []));
     let status: CommitmentEntry["status"] = values.size === 1 && values.has("commitment/dropped") ? "dropped"
       : values.has("commitment/done") || values.has("commitment/claimed_done") ? "claimed_done" : "open";
-    if (authoritativeDone && !values.has("commitment/dropped") && !values.has("commitment/open")) status = "done";
+    if (ownerStatuses.has("commitment/done") && !values.has("commitment/dropped") && !values.has("commitment/open")) status = "done";
+    const ownerReopened = ownerStatuses.has("commitment/open"), ownerDropped = ownerStatuses.has("commitment/dropped");
+    if (ownerReopened) status = "open";
+    else if (ownerDropped) status = "dropped";
     let statusBasis = statuses.map(r => r.claim);
     const deliverables = by("commitment.deliverable").filter(isAsserted);
     const criteria = new Set(deliverables.flatMap(r => r.object.kind === "literal" ? [r.object.value] : []));
-    const criterion = criteria.size === 1 ? [...criteria][0]! : null;
     // Node deliverables need the authenticated ART outcome binding. A matching
     // arbitrary artifactVersion string cannot identify a captured artifact.
     const nodeDeliverable = deliverables.some(r => r.object.kind === "node");
     if (nodeDeliverable) gaps.add("coverage");
-    if (!nodeDeliverable && criterion !== null && criterion.length <= 128) {
+    const boundedCriteria = criteria.size > 0 && [...criteria].every(criterion => criterion.length <= 128);
+    if (criteria.size > 0 && !boundedCriteria) gaps.add("coverage");
+    if (!nodeDeliverable && boundedCriteria) {
       const current = frame.cutoff.kind === "current" && (frame.valid.kind === "all" ||
         (frame.valid.kind === "at" && frame.currentOutcomeAt === frame.valid.at));
       if (!current) gaps.add("coverage");
@@ -106,9 +112,9 @@ export function collectSituationDetails(frame: ReadFrame, cluster: Cluster, body
         const subject = items[0]!.eligible.semantic.subject;
         const outcomes = readOutcomes(frame,subject.id,sha256Hex(rawSubjectRefKey(subject)));
         for (const gap of outcomes.coverage.gaps) gaps.add(gap);
-        const matching = outcomes.evaluations.filter(e => e.conditions?.criterion === criterion);
-        if (!values.has("commitment/dropped") && outcomes.coverage.status === "complete_for_query" &&
-            matching.length > 0 && matching.every(e => e.result === "met")) {
+        const matching = outcomes.evaluations.filter(e => e.conditions !== null && criteria.has(e.conditions.criterion));
+        if (!ownerReopened && !ownerDropped && !values.has("commitment/dropped") && outcomes.coverage.status === "complete_for_query" &&
+            [...criteria].every(criterion => matching.some(e => e.conditions?.criterion === criterion)) && matching.every(e => e.result === "met")) {
           const basis = [...new Map([...statusBasis,...matching.flatMap(e => [e.report,...e.observations,...e.reviews])].map(ref => [ref.token,ref])).values()];
           if (basis.length > 128) gaps.add("traversal_limit");
           else { status = "done"; statusBasis = basis; }

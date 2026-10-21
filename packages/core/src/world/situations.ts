@@ -25,6 +25,8 @@ export interface SituationItem {
 }
 
 export interface SituationState {
+  /** The exact qualified projection used for these session lines; no second read. */
+  readonly card: SituationCardV2;
   readonly world: WorldDependencies;
   readonly label: string | null;
   readonly objective: readonly SituationItem[];
@@ -149,7 +151,7 @@ function readOne(
     const found = item(basis,`${label}; status=${commitment.status}; overdue=${commitment.overdue}; due=${due}`);
     if (found !== null) commitments.push({...found,predicate:"situation.commitment"});
   }
-  return { world, subject:row.raw_id, label:card.situation.labels[0]?.text ?? null,
+  return { card, world, subject:row.raw_id, label:card.situation.labels[0]?.text ?? null,
     objective:items(card.objective === null ? [] : [card.objective]), blocker:items(card.blocker === null ? [] : [card.blocker]),
     change:items(card.recentChange === null ? [] : [card.recentChange]), commitments,
     uncertain:items(card.uncertainty),

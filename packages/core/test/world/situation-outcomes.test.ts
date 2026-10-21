@@ -72,6 +72,7 @@ test("session current completion agrees with the card while past-valid and retai
   expect(f.entry(f.ctx,{knownAt:past.knownAt}).status).toBe("claimed_done");
   const explicitPast=readSituations(f.ctx,{limit:8,at:"2026-10-20T00:00:00Z",canRead:()=>true});
   expect(explicitPast.flatMap(s=>s.commitments).some(c=>c.text.includes("Review draft; status=claimed_done"))).toBe(true);
+  expect(explicitPast.flatMap(s=>s.card.commitments).find(c=>c.label?.object.kind==="literal"&&c.label.object.value==="Review draft")?.status).toBe("claimed_done");
   revokeSourceGrant(f.db,{source_key:f.actors[1]!.source,expected_revision:1,operation_id:"revoke-observer"});
   expect(f.entry().status).toBe("claimed_done");
  }finally{f.dispose();}
@@ -112,5 +113,35 @@ test("an omitted completed commitment retains its evidence at final packet publi
   await expect(dispatchServeTool({...f.ctx,db},"context_packet",{purpose:"session",budget_tokens:2000},{response_contract:"kizuki.envelope/v2"}))
     .rejects.toThrow("authorized evidence changed during request");
   expect(changed).toBe(true);
+ }finally{f.dispose();}
+},120_000);
+
+import { serveCorrect } from "../../src/serving/correct";
+import { undoReceipt } from "../../src/canon/undo";
+import { worldNamespace, resolveWorldClaim } from "../../src/world/references";
+
+test("all literal deliverable criteria require independent evidence and owner reopening wins over earlier completion",async()=>{
+ const f=await fixture();try{
+  await f.file(0,"outcome.self_report","met");
+  await f.file(1,"outcome.observation","met");
+  await f.file(2,"outcome.review","accepted");
+  expect(f.entry().status).toBe("done");
+  await f.write("commitment.deliverable",literal("spelling checked"),{subject:"commitment:review"});
+  expect(f.entry().status).toBe("claimed_done");
+  await f.file(0,"outcome.self_report","met",{criterion:"spelling checked"});
+  await f.file(1,"outcome.observation","met",{criterion:"spelling checked"});
+  await f.file(2,"outcome.review","accepted",{criterion:"spelling checked"});
+  expect(f.entry().status).toBe("done");
+  f.materialize("commitment:review");
+  const sourceDone=f.db.transaction(()=>f.entry().statusBasis.find(ref=>{
+    const id=resolveWorldClaim(f.db,worldNamespace(f.db,f.ctx.principal),ref.token);
+    return id!==null&&f.db.query("SELECT 1 FROM claim_v2_semantics WHERE claim_id=? AND predicate='commitment.status' AND json_extract(payload,'$.object.ref.id')='commitment/done'").get(id)!==null;
+  }))();
+  if(!sourceDone)throw Error("completion status claim missing");
+  const changed=await serveCorrect(f.ctx,{statement:"The commitment is open again.",target:{world_claim:sourceDone},mode:"replace_object",object:{kind:"vocabulary",id:"commitment/open"}});
+  expect(f.entry().status).toBe("open");
+  if(!changed.data?.receipt_id)throw Error("owner reopening receipt missing");
+  await undoReceipt({db:f.db,vault_path:f.ctx.vaultPath},changed.data.receipt_id);
+  expect(f.entry().status).toBe("done");
  }finally{f.dispose();}
 },120_000);
