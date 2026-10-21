@@ -11,6 +11,7 @@ export type WorldSlotKey = (typeof WORLD_SLOT_KEYS)[number];
 
 export const PURGE_REINGEST_MIGRATION_VERSION = 34;
 export const CURSOR_STORE_MIGRATION_VERSION = 35;
+export const CANON_CLAIM_RETRY_MIGRATION_VERSION = 37;
 
 /** The last ledger version before the world table slots. */
 export const WORLD_MIGRATION_BASE = CURSOR_STORE_MIGRATION_VERSION;

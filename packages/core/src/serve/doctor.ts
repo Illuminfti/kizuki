@@ -660,9 +660,10 @@ function oversizedDoctor(db: Database): OversizedDoctor {
 /** A set-aside page is the writer's own decision, retried after a day; it is listed, not a failure. */
 function quarantineDoctor(db: Database, now: string): QuarantineDoctor {
   const pages = listQuarantinedPages(db, now).map(({ handle, path, attempts, reason, until }) => ({ handle, path, attempts, reason, until }));
-  const claims = listQuarantinedClaims(db, now).map(({ claim_id, attempts, reason, until }) => ({ claim_id, attempts, reason, until }));
-  return { pages, ...(claims.length === 0 ? {} : { claims }),
-    detail: `quarantined typed pages=${pages.length}${claims.length === 0 ? "" : ` unmaterialized legacy claims=${claims.length}`}` };
+  const held = listQuarantinedClaims(db, now);
+  const claims = held.claims.map(({ claim_id, attempts, reason, until }) => ({ claim_id, attempts, reason, until }));
+  return { pages, ...(claims.length === 0 ? {} : { claims }), ...(held.truncated ? { claims_truncated: true } : {}),
+    detail: `quarantined typed pages=${pages.length}${claims.length === 0 && !held.truncated ? "" : ` unmaterialized legacy claims${held.truncated ? " shown" : ""}=${claims.length}${held.truncated ? " (truncated)" : ""}`}` };
 }
 
 function throughputDoctor(config: ServeConfig, syncPeriod: number, recordsSkipped: number): ThroughputDoctor {

@@ -1,3 +1,5 @@
+import { redactReceiptText, redactReceiptError } from "../util/receipt-redaction";
+export { redactReceiptText, redactReceiptError } from "../util/receipt-redaction";
 import type { Database } from "bun:sqlite";
 import {
   appendFileSync,
@@ -45,12 +47,6 @@ export function runReceiptsPath(vaultPath: string): string {
   return join(vaultPath, RUN_RECEIPTS_PATH);
 }
 
-export function redactReceiptText(text: string): string {
-  return text
-    .replace(/\/(?:home|Users|tmp|var|workspace|opt)\/[^\s"']+/g, "[path]")
-    .replace(/\b[A-Za-z0-9_-]{20,}\b/g, "[redacted]");
-}
-
 function quarantineNotices(value: unknown): { canon_quarantined?: CanonQuarantineNotice[] } {
   if (!Array.isArray(value) || value.length === 0 || value.length > 10_000) return {};
   const notices: CanonQuarantineNotice[] = [];
@@ -71,11 +67,6 @@ export function isRedactedModelReference(reference: string): boolean {
 
 export function readModelReferenceDigest(value: unknown): string | undefined {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value) ? value : undefined;
-}
-
-export function redactReceiptError(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  return redactReceiptText(text).slice(0, 240);
 }
 
 export function parseRunExecution(value: unknown): RunExecution | undefined {

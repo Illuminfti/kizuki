@@ -1,3 +1,4 @@
+import { CANON_CLAIM_RETRY_TABLE } from "../../ledger/canon-claim-retry-schema";
 import { MACHINE_BODY_TABLE } from "../../ledger/machine-body-schema";
 import type { Database } from "bun:sqlite";
 import { LedgerStoreError } from "../../ledger/errors";
@@ -99,6 +100,7 @@ export const WORLD_TABLE_SPECS: readonly WorldTableSpec[] = [
   // slot: fcst
   // slot: machine_images
   MACHINE_BODY_TABLE,
+  CANON_CLAIM_RETRY_TABLE,
 ];
 
 /** Durable classes must reach purge; only derived and cache tables may opt out with `none`. */

@@ -312,11 +312,6 @@ export function erasePurgedPayloads(
          subjects='[]', frontmatter='{}', model_ref=NULL WHERE claim_id=?`,
     );
     for (const id of claimIds) blankClaim.run(id);
-    // Retry diagnostics cannot retain a purged claim's locator or old failure context.
-    if (tableExists(db, "rail_cursors")) {
-      const clearRetry = db.query("DELETE FROM rail_cursors WHERE rail='kizuki.canon.writer' AND source_key=?");
-      for (const id of claimIds) clearRetry.run(`legacy:${id}`);
-    }
     if (claimV2TablesPresent(db)) {
       const dropSemantics = db.query(
         "DELETE FROM claim_v2_semantics WHERE claim_id=?",

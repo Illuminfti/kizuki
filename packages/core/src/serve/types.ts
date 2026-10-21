@@ -533,6 +533,7 @@ export interface TopFailure {
 
 /** Unmaterialized work set aside after repeated failures; not a failure of the service. */
 export interface QuarantineDoctor {
+  readonly claims_truncated?: boolean;
   readonly claims?: readonly {
     readonly claim_id: string;
     readonly attempts: number;

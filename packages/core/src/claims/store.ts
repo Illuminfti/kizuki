@@ -1,3 +1,4 @@
+import { CLAIM_RETRY_FAILURES, CLAIM_RETRY_MS } from "../ledger/canon-claim-retry-schema";
 import { UNWRITTEN_CAPTURE_NOTE_WHERE } from "./capture-fanout";
 import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { historicalSourceWriteAllowed, inspectSourceGrant, sourceEventsAllowed, requireSourceEvents, sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, type SourceReadScope } from "../ledger/source-grants";
@@ -872,18 +873,24 @@ export function listUnwrittenLiveClaims(
   db: Database,
   limit = 32,
   excluded: readonly string[] = [],
+  now = new Date().toISOString(),
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
   const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 32;
+  const at = Date.parse(now);
+  const held = tableExists(db, "canon_claim_retries") && Number.isFinite(at);
+  const holdClause = held ? `AND NOT EXISTS (SELECT 1 FROM canon_claim_retries r WHERE r.claim_id=claims.claim_id
+    AND r.attempts>=${CLAIM_RETRY_FAILURES} AND r.last_at_ms<=? AND r.last_at_ms>?)` : "";
   return db
-    .query<ClaimRow, [string, number]>(
+    .query<ClaimRow, (string | number)[]>(
       `SELECT * FROM claims
         WHERE ${unwrittenLiveWhere(db)}
           AND claim_id NOT IN (SELECT value FROM json_each(?))
+          ${holdClause}
         ORDER BY created_at, claim_id
         LIMIT ?`,
     )
-    .all(JSON.stringify(excluded), bound)
+    .all(JSON.stringify(excluded), ...(held ? [at, at - CLAIM_RETRY_MS] : []), bound)
     .map(rowToClaim);
 }
 

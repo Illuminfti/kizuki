@@ -1,8 +1,9 @@
+import { CLAIM_RETRY_FAILURES, CLAIM_RETRY_MS, CLAIM_RETRY_MAX_REASON } from "../ledger/canon-claim-retry-schema";
 import type { Database } from "bun:sqlite";
 import { readRailCursor, writeRailCursor } from "../ledger/checkpoints";
 import { tableExists } from "../ledger/schema";
 import { isPlainObject } from "../util/validate";
-import { redactReceiptError } from "./receipts";
+import { redactReceiptError } from "../util/receipt-redaction";
 
 /**
  * Typed pages the canon writer could not write, kept across passes so one
@@ -95,8 +96,8 @@ export function clearStuckPage(db: Database, handle: string): void {
 }
 
 
-const CLAIM_KEY_PREFIX = "legacy:";
 const MAX_QUARANTINED_CLAIMS = 10_000;
+const MAX_DIAGNOSTIC_CLAIM_ID_BYTES = 1024;
 
 /** Unwritten legacy claims remain live, with their full provenance, while retry is delayed. */
 export interface QuarantinedClaim {
@@ -106,59 +107,47 @@ export interface QuarantinedClaim {
   readonly last_at: string;
   readonly until: string;
 }
-
-function parseClaim(claimId: string, raw: string): Omit<QuarantinedClaim, "until"> | null {
-  try {
-    const value: unknown = JSON.parse(raw);
-    if (claimId.length === 0 || !isPlainObject(value) || Object.keys(value).sort().join() !== "attempts,last_at,reason") return null;
-    const { attempts, reason, last_at } = value;
-    if (typeof attempts !== "number" || !Number.isSafeInteger(attempts) || attempts < 1 ||
-      typeof reason !== "string" || typeof last_at !== "string" || !Number.isFinite(Date.parse(last_at)) ||
-      new Date(last_at).toISOString() !== last_at) return null;
-    return { claim_id: claimId, attempts, reason: redactReceiptError(reason).slice(0, MAX_REASON), last_at };
-  } catch { return null; }
+interface RetryRow { claim_id: string; attempts: number; reason: string; last_at_ms: number }
+function claimRetry(row: RetryRow): QuarantinedClaim {
+  return { claim_id: row.claim_id, attempts: row.attempts,
+    reason: redactReceiptError(row.reason).slice(0, CLAIM_RETRY_MAX_REASON),
+    last_at: new Date(row.last_at_ms).toISOString(), until: new Date(row.last_at_ms + CLAIM_RETRY_MS).toISOString() };
 }
 
-function heldClaim(claim: Omit<QuarantinedClaim, "until">, now: string): QuarantinedClaim | null {
-  const at = Date.parse(claim.last_at), current = Date.parse(now), until = at + QUARANTINE_MS;
-  if (claim.attempts < QUARANTINE_FAILURES || !Number.isFinite(current) || at > current ||
-    !Number.isFinite(new Date(until).getTime()) || until <= current) return null;
-  return { ...claim, until: new Date(until).toISOString() };
-}
-
-/** Dead, corrected, written or purged claims cannot hold a queue slot or appear as pending work. */
-export function listQuarantinedClaims(db: Database, now: string): QuarantinedClaim[] {
-  if (!tableExists(db, "rail_cursors") || !tableExists(db, "claims")) return [];
-  // The normal empty quarantine needs no claims lookup. Avoid adding a third
-  // unwritten-claim query to every doctor inspection and sync pass.
-  if (db.query("SELECT 1 FROM rail_cursors WHERE rail = ? AND source_key LIKE ? LIMIT 1")
-    .get(WRITER_RAIL, `${CLAIM_KEY_PREFIX}%`) === null) return [];
-  const held: QuarantinedClaim[] = [];
-  const rows = db.query<{ claim_id: string; cursor: string }, [string, string, number]>(
-    `SELECT c.claim_id, r.cursor FROM rail_cursors r JOIN claims c ON c.claim_id = substr(r.source_key, ${CLAIM_KEY_PREFIX.length + 1})
-     WHERE r.rail = ? AND r.source_key LIKE ? AND c.status = 'live' AND c.receipt_id IS NULL AND c.is_world_typed = 0
-     ORDER BY r.source_key LIMIT ?`,
-  ).all(WRITER_RAIL, `${CLAIM_KEY_PREFIX}%`, MAX_QUARANTINED_CLAIMS);
-  for (const row of rows) {
-    const claim = parseClaim(row.claim_id, row.cursor);
-    const value = claim === null ? null : heldClaim(claim, now);
-    if (value !== null) held.push(value);
-  }
-  return held;
+/** Bounded diagnostic sample only. The writer excludes every active hold in SQL. */
+export function listQuarantinedClaims(db: Database, now: string): { claims: QuarantinedClaim[]; truncated: boolean } {
+  const at = Date.parse(now);
+  if (!Number.isFinite(at) || !tableExists(db, "canon_claim_retries") ||
+    db.query("SELECT 1 FROM canon_claim_retries LIMIT 1").get() === null) return { claims: [], truncated: false };
+  const rows = db.query<RetryRow, [number, number, number]>(
+    `SELECT r.* FROM canon_claim_retries r JOIN claims c USING(claim_id)
+     WHERE c.status='live' AND c.receipt_id IS NULL AND c.is_world_typed=0
+       AND r.attempts>=${CLAIM_RETRY_FAILURES} AND r.last_at_ms<=? AND r.last_at_ms>?
+       AND length(CAST(r.claim_id AS BLOB))<=${MAX_DIAGNOSTIC_CLAIM_ID_BYTES}
+     ORDER BY r.claim_id LIMIT ?`,
+  ).all(at, at - CLAIM_RETRY_MS, MAX_QUARANTINED_CLAIMS + 1);
+  // Test for omitted identities without bringing their unbounded bytes into JS.
+  const oversized = db.query<{ omitted: number }, [number, number]>(
+    `SELECT 1 AS omitted FROM canon_claim_retries r JOIN claims c USING(claim_id)
+     WHERE c.status='live' AND c.receipt_id IS NULL AND c.is_world_typed=0
+       AND r.attempts>=${CLAIM_RETRY_FAILURES} AND r.last_at_ms<=? AND r.last_at_ms>?
+       AND length(CAST(r.claim_id AS BLOB))>${MAX_DIAGNOSTIC_CLAIM_ID_BYTES} LIMIT 1`,
+  ).get(at, at - CLAIM_RETRY_MS) !== null;
+  return { claims: rows.slice(0, MAX_QUARANTINED_CLAIMS).map(claimRetry), truncated: oversized || rows.length > MAX_QUARANTINED_CLAIMS };
 }
 
 export function recordStuckClaim(db: Database, claimId: string, reason: string, now: string): QuarantinedClaim | null {
-  if (claimId.length === 0) return null;
-  const raw = readRailCursor(db, WRITER_RAIL, CLAIM_KEY_PREFIX + claimId);
-  const previous = raw === null ? null : parseClaim(claimId, raw);
-  const next = { claim_id: claimId, attempts: Math.min(Number.MAX_SAFE_INTEGER, (previous?.attempts ?? 0) + 1),
-    reason: redactReceiptError(reason).slice(0, MAX_REASON), last_at: now };
-  const { claim_id: _claimId, ...stored } = next;
-  writeRailCursor(db, WRITER_RAIL, CLAIM_KEY_PREFIX + claimId, JSON.stringify(stored));
-  return heldClaim(next, now);
+  const at = Date.parse(now);
+  if (!Number.isFinite(at) || !Number.isFinite(new Date(at + CLAIM_RETRY_MS).getTime())) return null;
+  const row = db.query<RetryRow, [string, number, string]>(
+    `INSERT INTO canon_claim_retries (claim_id,attempts,reason,last_at_ms)
+     SELECT claim_id,1,?,? FROM claims WHERE claim_id=? AND status='live' AND receipt_id IS NULL AND is_world_typed=0
+     ON CONFLICT(claim_id) DO UPDATE SET attempts=min(attempts+1,9007199254740991),reason=excluded.reason,last_at_ms=excluded.last_at_ms
+     RETURNING *`,
+  ).get(redactReceiptError(reason).slice(0, CLAIM_RETRY_MAX_REASON), at, claimId);
+  return row !== null && row.attempts >= CLAIM_RETRY_FAILURES ? claimRetry(row) : null;
 }
 
 export function clearStuckClaim(db: Database, claimId: string): void {
-  if (tableExists(db, "rail_cursors")) db.query("DELETE FROM rail_cursors WHERE rail = ? AND source_key = ?")
-    .run(WRITER_RAIL, CLAIM_KEY_PREFIX + claimId);
+  db.query("DELETE FROM canon_claim_retries WHERE claim_id=?").run(claimId);
 }

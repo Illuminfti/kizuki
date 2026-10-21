@@ -54,7 +54,7 @@ import { isProducerV2, type ExtractionProducerPort } from "./extract-v2";
 import { backoffRemaining, readRejections, recordRejection, writeRejections } from "./extract-rejections";
 import { redactReceiptError } from "./receipts";
 import { runWorldJobs } from "./world-jobs";
-import { clearStuckPage, listQuarantinedPages, recordStuckPage, clearStuckClaim, listQuarantinedClaims, recordStuckClaim } from "./write-quarantine";
+import { clearStuckPage, listQuarantinedPages, recordStuckPage, clearStuckClaim, recordStuckClaim } from "./write-quarantine";
 import { reconcileCanonGraph } from "../canon/graph-maintenance";
 
 /**
@@ -473,8 +473,7 @@ function writeNextPage(
     }
   }
 
-  const excluded = [...attempted, ...listQuarantinedClaims(db, now).map(claim => claim.claim_id)];
-  for (const claim of listUnwrittenLiveClaims(db, WRITE_PASS_SCAN, excluded)) {
+  for (const claim of listUnwrittenLiveClaims(db, WRITE_PASS_SCAN, [...attempted], now)) {
     if (attempted.has(claim.claim_id)) continue;
     attempted.add(claim.claim_id);
     try {

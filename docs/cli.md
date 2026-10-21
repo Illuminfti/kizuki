@@ -781,7 +781,12 @@ One that cannot be split, such as a single token longer than a request, is
 skipped with a `record_oversized_skipped` receipt and the cursor moves on.
 `serve status` and `doctor` print an `oversized records` line with both counts,
 and a `quarantined typed pages` line with the number of typed pages the writer
-has set aside, with one `quarantined` line each in `doctor`.
+has set aside, with one `quarantined` line each in `doctor`. Repeated legacy
+claim failures also retain their full provenance while retry is delayed for a day.
+Doctor lists at most 10,000 active legacy holds and reports `claims_truncated`
+when more exist or a historical claim ID exceeds the 1,024-byte diagnostic
+display limit. Truncated reports count displayed entries only. Retry storage and
+writer exclusion retain every exact claim identity, regardless of display size.
 `serve retry-skipped` puts every skipped record back on the deferred queue so
 the loop decides it again, and prints `requeued=N`. See
 [records too large for one request](extraction-budgets.md#records-too-large-for-one-request).
