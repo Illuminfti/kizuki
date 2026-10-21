@@ -89,7 +89,7 @@ export function assembleCard(
     relations,
     summary: body.summary,
     learning: body.learning ?? [],
-    coverage: coverageOf(frame, collection.overflow, body.gaps),
+    coverage: coverageOf(frame, collection.overflow || cluster.overflow === true, body.gaps),
   });
 }
 
