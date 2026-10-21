@@ -167,11 +167,25 @@ describe("no-op runs do not append a receipt per tick", () => {
 
   test("the daemon counts persisted receipts, not coalesced runs", async () => {
     const { path, db } = vault();
+    // Exercise 25 due idle slots, independent of today's date or other rails.
+    // In particular, overdue briefs always persist and must not consume this
+    // fixture's finite turn budget before a coalescible rail runs.
+    db.query("UPDATE schedules SET enabled = (rail = 'purge-sweep')").run();
+    const period = schedule(db, "purge-sweep").period_s;
+    const now = at(24 * period);
     let turns = 0;
-    const result = await runServeDaemon(db, path, { http: false, shouldContinue: () => (turns += 1) <= 25 });
-    const persisted = listRunReceipts(db).length;
-    expect(result.receipts).toBe(persisted);
-    expect(persisted).toBeLessThan(25);
+    const result = await runServeDaemon(db, path, {
+      http: false, now: () => now,
+      shouldContinue: () => (turns += 1) <= 25,
+      sleep: async () => { throw new Error("fixture expected 25 due idle slots"); },
+    });
+    const persisted = listRunReceipts(db);
+    expect(result.receipts).toBe(persisted.length);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]!.rail).toBe("purge-sweep");
+    expect(turns).toBe(26);
+    expect(schedule(db, "purge-sweep")).toMatchObject({ last_run_at: now, next_run_at: at(25 * period) });
+    expect(journalLines(path)).toHaveLength(1);
     db.close();
   }, 30_000);
 
