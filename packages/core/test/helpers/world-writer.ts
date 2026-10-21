@@ -20,6 +20,7 @@ export interface WorldWrite {
   readonly object: WorldObjectSpec;
   readonly polarity?: "positive" | "negative";
   readonly mode?: ClaimV2Assertion["perspective"]["mode"];
+  readonly interpretation?: ClaimV2Assertion["perspective"]["interpretation"];
 }
 
 const CONNECTOR = "world.writer";
@@ -80,7 +81,7 @@ export function worldWriter(options: { readonly db?: Database; readonly io?: Omi
         speaker: null,
         addressee: null,
         mode: spec.mode ?? "asserted",
-        interpretation: "explicit",
+        interpretation: spec.interpretation ?? "explicit",
         anchors: [],
       },
       context: [],
