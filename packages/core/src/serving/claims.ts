@@ -5,6 +5,8 @@ import { authorize, sensitivity, SENSITIVITY_ORDER } from "../agents";
 import type { AuditDenial, AuditItem, Grant, Sensitivity, Servable } from "../agents";
 import type { IdentityLink } from "../claims/identity";
 import { getClaim } from "../claims/store";
+import { classesOfEvents } from "../ledger/event-classes";
+import { claimReadSql } from "../claims/read-scope";
 import type { Claim } from "../contracts/proposal";
 import { isAuthorityTier } from "../contracts/proposal";
 import { isRfc3339 } from "../util/time";
@@ -70,6 +72,8 @@ export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadS
       ...(typeof type === "string" ? { type } : {}),
       subjects: claim.subject === null ? claim.subjects : [claim.subject],
       occurred_at: claim.valid_from,
+      // A claim carries the classes of the events it cites.
+      classes: classesOfEvents(db, claim.provenance),
     };
     const decision = authorize(grant, item);
     if (item.sensitivity === "public" || item.sensitivity === "personal" || item.sensitivity === "private") claim.sensitivity = item.sensitivity;
@@ -163,5 +167,7 @@ export function claimReader(db: Database, grant: Grant, sourceScope: SourceReadS
     return item === undefined ? [] : [item];
   }
 
-  return { canRead, canReadAlias, invalidAlias, denied, auditClaim, auditGroup, auditAlias, publication };
+  const scope = { grant, source: sourceScope };
+  return { scope, publication, canRead, canReadAlias, invalidAlias, denied, auditClaim, auditGroup, auditAlias,
+    visibility: { ...claimReadSql(db, scope), canRead } };
 }

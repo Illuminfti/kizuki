@@ -1,3 +1,5 @@
+import { denyClassesOf } from "../agents";
+import { searchableText, servedTextMatcher } from "./search-match";
 import type { AuditDenial, AuditItem } from "../agents";
 import { compareRfc3339 } from "../agents/time";
 import type { Claim } from "../contracts/proposal";
@@ -6,11 +8,12 @@ import type { Database } from "bun:sqlite";
 import { isMachineOriginPath } from "../canon/origin";
 import { listValidityGaps } from "../claims/gaps";
 import { listLiveConflicts } from "../claims/identity";
-import { listClaims } from "../claims/store";
-import { neighbors } from "../graph/graph";
+import { getClaim } from "../claims/store";
+import { claimReadSql, type ClaimReadScope } from "../claims/read-scope";
+import { instantSecondSql, instantNanoSql } from "../query/sql";
+import { neighbors, neighborsForServing } from "../graph/graph";
 import { bareRetrievalId } from "../retrieval/ids";
-import { search } from "../search/query";
-import type { SearchOptions } from "../search/query";
+import { searchAuditCandidates } from "../search/query";
 import { compareText } from "../util/order";
 import { stringArray } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
@@ -26,6 +29,7 @@ import { collectAuthorizedTimeline } from "./ledger";
 import { blockquote, oneLine, redactorOf, stripInvisible } from "./redact";
 import type { Redactor } from "./redact";
 import { retrievalCandidates, retrievalGraphCandidates } from "./retrieval";
+import { graphServingScope, requiresClassScopedGraph } from "./graph-scope";
 import type { PacketSection, SessionSection } from "./sections";
 import type { CanonChunk, QuotedChunk, ServeContext } from "./types";
 
@@ -87,8 +91,7 @@ function longestFit(max: number, ok: (n: number) => boolean): number | null {
 /**
  * Bound a canon atom's excerpt, then its title projection, until `fits`
  * accepts the rendered block. Returns null when even the provenance-only
- * form (stamps, page id, path) cannot fit — the packer must then stop
- * rather than skip ahead.
+ * form (stamps, page id, path) cannot fit; the packer can skip this atom.
  */
 export function boundCanonAtom(
   piece: Piece,
@@ -175,36 +178,35 @@ export interface PieceRequest {
  * Narrow in SQL, then authorize in the store cursor before the accepted-result
  * cap. Filtering a default page after LIMIT hides later allowed rows.
  */
-function loadWorkingClaims(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean) {
-  if (wanted === undefined || wanted.length === 0) {
-    return listClaims(db, { status: "live", keyed: true, limit: 400, filter: canRead }).slice(0, CANDIDATE_LIMIT);
-  }
-  const seen = new Set<string>();
-  const out: ReturnType<typeof listClaims> = [];
-  for (const subject of wanted) {
-    for (const claim of listClaims(db, {
-      status: "live",
-      keyed: true,
-      subject,
-      limit: 400,
-      filter: canRead,
-    }).slice(0, CANDIDATE_LIMIT)) {
-      if (seen.has(claim.claim_id)) continue;
-      seen.add(claim.claim_id);
-      out.push(claim);
-    }
+function loadWorkingClaims(db: Database, wanted: string[] | undefined, reader: ReturnType<typeof claimReader>, query?: string): Claim[] {
+  const permitted = claimReadSql(db, reader.scope);
+  const terms = [...new Set(query?.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])].slice(0, 32);
+  const relevance = terms.length === 0 ? "0.0" : terms.map(() => "(instr(lower(coalesce(claims.subject,'')||' '||coalesce(claims.predicate,'')||' '||coalesce(claims.object,'')),?)>0)").join("+");
+  const subjects = wanted === undefined || wanted.length === 0 ? undefined : JSON.stringify(wanted);
+  const params = [...permitted.bindings, ...(subjects === undefined ? [] : [subjects]), ...terms];
+  const out: Claim[] = [];
+  // Rank the readable cursor, not an oldest-first prefix that was already cut.
+  for (const row of db.query<{ claim_id: string }, (string | number)[]>(`
+    SELECT claim_id FROM claims WHERE status='live' AND claim_key IS NOT NULL AND ${permitted.sql}
+      ${subjects === undefined ? "" : "AND claims.subject IN (SELECT value FROM json_each(?))"}
+    ORDER BY (${relevance}) DESC, ${instantSecondSql("claims.asserted_at")} DESC,
+      ${instantNanoSql("claims.asserted_at")} DESC, claim_id DESC`).iterate(...params)) {
+    const claim = getClaim(db, row.claim_id);
+    if (claim === null || !reader.canRead(claim)) continue;
+    out.push(claim);
+    if (out.length === CANDIDATE_LIMIT) break;
   }
   return out;
 }
 
-export function loadSubjectConflicts(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean) {
+export function loadSubjectConflicts(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean, scope?: ClaimReadScope) {
   if (wanted === undefined || wanted.length === 0) {
-    return listLiveConflicts(db, { limit: 8, canRead });
+    return listLiveConflicts(db, { limit: 8, canRead, ...(scope === undefined ? {} : { scope }) });
   }
   const seen = new Set<string>();
   const out: ReturnType<typeof listLiveConflicts> = [];
   for (const subject of wanted) {
-    for (const conflict of listLiveConflicts(db, { subject, limit: 8, canRead })) {
+    for (const conflict of listLiveConflicts(db, { subject, limit: 8, canRead, ...(scope === undefined ? {} : { scope }) })) {
       if (seen.has(conflict.claim_key)) continue;
       seen.add(conflict.claim_key);
       out.push(conflict);
@@ -213,14 +215,14 @@ export function loadSubjectConflicts(db: Database, wanted: string[] | undefined,
   return out;
 }
 
-export function loadSubjectGaps(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean) {
+export function loadSubjectGaps(db: Database, wanted: string[] | undefined, canRead: (claim: Claim) => boolean, scope?: ClaimReadScope) {
   if (wanted === undefined || wanted.length === 0) {
-    return listValidityGaps(db, { limit: 8, canRead });
+    return listValidityGaps(db, { limit: 8, canRead, ...(scope === undefined ? {} : { scope }) });
   }
   const seen = new Set<string>();
   const out: ReturnType<typeof listValidityGaps> = [];
   for (const subject of wanted) {
-    for (const gap of listValidityGaps(db, { subject, limit: 8, canRead })) {
+    for (const gap of listValidityGaps(db, { subject, limit: 8, canRead, ...(scope === undefined ? {} : { scope }) })) {
       if (seen.has(gap.claim_key)) continue;
       seen.add(gap.claim_key);
       out.push(gap);
@@ -251,6 +253,14 @@ export async function collectPieces(
   const packed = new Set<string>();
 
   if (request.include.includes("canon")) {
+    const decisions = new Map<string, ReturnType<typeof pageDecision>>();
+    const decisionFor = (page: CanonPage): ReturnType<typeof pageDecision> => {
+      const cached = decisions.get(page.id);
+      if (cached !== undefined) return cached;
+      const decision = pageDecision(index, grant, page);
+      decisions.set(page.id, decision);
+      return decision;
+    };
     const candidates: CanonPage[] = nominated.ids.flatMap((id) => {
       const page = id.startsWith("page:") ? index.byId.get(bareRetrievalId(id)) : undefined;
       if (page === undefined) return [];
@@ -258,19 +268,37 @@ export async function collectPieces(
       return [page];
     });
     if (request.query !== undefined) {
-      const opts: SearchOptions = {
+      const opts = {
         scope: "canon",
         limit: CANDIDATE_LIMIT,
-        ceiling: grant.ceiling,
         excludePaths: [...index.holds],
+        source: {
+          owner: ctx.principal.kind === "owner",
+          purpose: ctx.sourcePurpose ?? "recall",
+          deny_classes: denyClassesOf(grant),
+        },
         ...(request.subjects === undefined
           ? {}
           : { subjects: request.subjects }),
         ...(request.types === undefined ? {} : { types: request.types }),
-      };
-      for (const hit of search(ctx.db, request.query, opts)) {
-        const page = index.byId.get(bareRetrievalId(hit.doc_id));
-        if (page !== undefined) candidates.push(page);
+      } satisfies Parameters<typeof searchAuditCandidates>[2];
+      let accepted = 0;
+      let offset = 0;
+      const rankedPages = new Set<string>();
+      // Share search's source/class-aware rank order. Page past identities
+      // denied by live snapshot checks so they cannot fill the packet window.
+      while (accepted < CANDIDATE_LIMIT) {
+        const ranked = searchAuditCandidates(ctx.db, request.query, { ...opts, offset });
+        for (const hit of ranked.candidates) {
+          const page = index.byId.get(bareRetrievalId(hit.doc_id));
+          if (page === undefined || rankedPages.has(page.id) || !eligible(page) || !decisionFor(page).allow) continue;
+          rankedPages.add(page.id);
+          candidates.push(page);
+          accepted += 1;
+          if (accepted === CANDIDATE_LIMIT) break;
+        }
+        if (ranked.candidates.length < CANDIDATE_LIMIT) break;
+        offset += ranked.candidates.length;
       }
     }
     if (request.subjects !== undefined) {
@@ -290,20 +318,30 @@ export async function collectPieces(
       }
     }
 
-    for (const page of candidates) {
-      if (packed.has(page.id) || !eligible(page)) continue;
-      const decision = pageDecision(index, grant, page);
-      if (!decision.allow) continue;
-      packed.add(page.id);
-      const { excerpt, truncated } = excerptOf(page.body, CANON_EXCERPT, ctx);
-      const chunk = canonChunk(index, page, decision, excerpt, truncated);
-      pieces.push({
-        section: "canon",
-        heading: pageHeading(chunk, "## canon"),
-        block: canonBlock(chunk, redactorOf(ctx)),
-        canon: chunk,
-        canonHash: page.contentHash,
-      });
+    const matcher = request.query === undefined || ctx.principal.kind === "owner"
+      ? undefined : servedTextMatcher(request.query);
+    try {
+      for (const page of candidates) {
+        if (packed.has(page.id) || !eligible(page)) continue;
+        const decision = decisionFor(page);
+        if (!decision.allow) continue;
+        if (matcher !== undefined) {
+          const title = typeof page.data["title"] === "string" ? page.data["title"] : "";
+          if (!matcher.matches(searchableText(title, undefined, ctx.servingSecrets), searchableText(page.body, CANON_EXCERPT, ctx.servingSecrets))) continue;
+        }
+        packed.add(page.id);
+        const { excerpt, truncated } = excerptOf(page.body, CANON_EXCERPT, ctx);
+        const chunk = canonChunk(index, page, decision, excerpt, truncated);
+        pieces.push({
+          section: "canon",
+          heading: pageHeading(chunk, "## canon"),
+          block: canonBlock(chunk, redactorOf(ctx)),
+          canon: chunk,
+          canonHash: page.contentHash,
+        });
+      }
+    } finally {
+      matcher?.close();
     }
   }
 
@@ -315,16 +353,19 @@ export async function collectPieces(
     for (const root of roots) {
       const rootId = root.canon?.page_id;
       if (rootId === undefined) continue;
-      const fromPort = await retrievalGraphCandidates(ctx, rootId, {
-        ceiling: grant.ceiling,
-        limit: GRAPH_CHUNKS,
-      });
+      const fromPort = requiresClassScopedGraph(ctx)
+        ? { ok: false, ids: [], degraded: ctx.retrieval === undefined ? [] : ["retrieval-graph-class-scope-unavailable"] }
+        : await retrievalGraphCandidates(ctx, rootId, {
+            ceiling: grant.ceiling,
+            limit: GRAPH_CHUNKS,
+          });
       for (const reason of fromPort.degraded) {
         if (!nominated.degraded.includes(reason)) nominated.degraded.push(reason);
       }
       plans.push({ rootId, ids: fromPort.ok ? fromPort.ids : [], fallback: !fromPort.ok });
     }
     const liveIndex = loadCanon(ctx);
+    let localScope: ReturnType<typeof graphServingScope> | undefined;
     let added = 0;
     const consider = (targetId: string): void => {
       if (added === GRAPH_CHUNKS) return;
@@ -352,13 +393,14 @@ export async function collectPieces(
     };
     for (const plan of plans) {
       if (added === GRAPH_CHUNKS) break;
-      const ids = plan.fallback
-        ? neighbors(ctx.db, plan.rootId, {
-            depth: 1,
-            kinds: ["wikilink"],
-            ceiling: grant.ceiling,
-          }).edges.map((edge) => edge.dst)
-        : plan.ids;
+      let ids = plan.ids;
+      if (plan.fallback) {
+        const options = { depth: 1 as const, kinds: ["wikilink" as const], ceiling: grant.ceiling };
+        const found = requiresClassScopedGraph(ctx)
+          ? neighborsForServing(ctx.db, plan.rootId, options, localScope ??= graphServingScope(liveIndex, grant))
+          : neighbors(ctx.db, plan.rootId, options);
+        ids = found.edges.map(edge => edge.dst);
+      }
       for (const id of ids) {
         if (added === GRAPH_CHUNKS) break;
         consider(id);
@@ -414,7 +456,7 @@ export async function collectPieces(
   if (request.include.includes("claims")) {
     const wanted = request.subjects;
     const reader = claimReader(ctx.db, grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
-    const live = loadWorkingClaims(ctx.db, wanted, reader.canRead);
+    const live = loadWorkingClaims(ctx.db, wanted, reader, request.query);
     for (const claim of live) {
       pieces.push({
         section: "claims",
@@ -424,7 +466,7 @@ export async function collectPieces(
         claims: reader.publication([claim.claim_id]),
       });
     }
-    for (const conflict of loadSubjectConflicts(ctx.db, wanted, reader.canRead)) {
+    for (const conflict of loadSubjectConflicts(ctx.db, wanted, reader.canRead, reader.scope)) {
       pieces.push({
         section: "claims",
         heading: "## counterevidence",
@@ -435,7 +477,7 @@ export async function collectPieces(
           ` :: ${conflict.claims.map((item) => inline(item.claim_id)).join(",")}\n`,
       });
     }
-    for (const gap of loadSubjectGaps(ctx.db, wanted, reader.canRead)) {
+    for (const gap of loadSubjectGaps(ctx.db, wanted, reader.canRead, reader.scope)) {
       pieces.push({
         section: "claims",
         heading: "## counterevidence",

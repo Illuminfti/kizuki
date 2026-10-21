@@ -1,3 +1,4 @@
+import { createRedactor } from "../../serving/redact";
 import type { Database } from "bun:sqlite";
 import {
   rawSubjectNamespace,
@@ -205,6 +206,7 @@ export function scanMatches(
   const { ctx, valid } = frame;
   const found: { handle: string; labels: string[] }[] = [];
   const wanted = foldLabel(label);
+  const preview = createRedactor(ctx.principal);
   let traversal = false;
   let next = false;
   let budgetSpent = false;
@@ -298,7 +300,7 @@ export function scanMatches(
         overflow ||= eligible.some((member) => member.overflow);
       }
       if (
-        wanted.length > 0 && !labels.some((text) => labelMatches(text, wanted))
+        wanted.length > 0 && !labels.some((text) => labelMatches(preview.text(text), wanted))
       )
         continue;
       if (found.length === MAX_WORLD_MATCHES) {

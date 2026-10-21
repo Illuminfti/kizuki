@@ -38,9 +38,9 @@ function producer(result: () => ProduceResult, calls: { value: number }): Produc
   };
 }
 
-test("self-only frontier advances without calling the producer", async () => {
+test.each(["v1", "v2"])("%s self-only frontier advances without calling the producer", async (contract) => {
   const { path, db } = fixture();
-  const self = putEvent(db, { text: "KIZUKI CONTEXT v1\nsynthetic loop bytes" });
+  const self = putEvent(db, { text: `KIZUKI CONTEXT ${contract}\nsynthetic loop bytes` });
   const calls = { value: 0 };
   const receipt = await runRail(db, path, "sync", {
     hooks: {

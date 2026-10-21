@@ -117,7 +117,7 @@ export interface ContextPacketData {
   session?: SessionReport;
   purpose: PacketPurpose;
   delivery: "full" | "unchanged";
-  /** True when packing stopped because a later in-scope chunk would exceed the budget. */
+  /** True when an in-scope piece was omitted or shortened to fit the budget. */
   truncated: boolean;
   packet_hash: string;
   /** Same digest as packet_hash; named for If-None-Match / retain-prefix clients. */
@@ -406,6 +406,7 @@ async function servePacket(
           ? undefined
           : readTaskAttachment(ctx, taskArgs, header, budget);
         const taskBody = attached?.block ?? "";
+        const taskPacket = redactor.join([header, taskBody]);
         const gathered = {
           canon: [],
           quoted: attached?.quoted ?? [],
@@ -423,8 +424,8 @@ async function servePacket(
               result: {
                 status: "incomplete",
                 data: {
-                  packetMd: `${header}${taskBody}`,
-                  tokens: tokens(`${header}${taskBody}`),
+                  packetMd: taskPacket,
+                  tokens: tokens(taskPacket),
                   budgetTokens: budget,
                   tokenizer: PACKET_TOKENIZER_ID,
                   purpose,
@@ -442,9 +443,9 @@ async function servePacket(
         return {
           ...gathered,
           data: {
-            packet_md: `${header}${taskBody}`,
+            packet_md: taskPacket,
             retrieval_degraded: ["context-unavailable"],
-            tokens_estimate: tokens(`${header}${taskBody}`),
+            tokens_estimate: tokens(taskPacket),
             budget_tokens: budget,
             sections: emptySections,
             purpose,
@@ -538,18 +539,15 @@ async function servePacket(
         const rendered = `${prefix}${chosen.block}`;
         const candidateTokens = tokens(`${header}${body}${rendered}`);
         // A canon atom may shrink its excerpt (and title projection) to fit.
-        // Packing still stops at the first chunk that cannot fit even then:
-        // skipping ahead would make the packet depend on chunk order in a
-        // way a reader cannot predict.
+        // An oversized piece yields to later units that can still fit.
         if (candidateTokens > budget) {
+          truncated = true;
           if (chosen.canon === undefined) {
-            truncated = true;
-            break;
+            continue;
           }
           const bounded = boundOverflowingCanon(chosen, `${header}${body}`, prefix, budget, redactor);
           if (bounded === null) {
-            truncated = true;
-            break;
+            continue;
           }
           chosen = bounded;
         }
@@ -559,7 +557,7 @@ async function servePacket(
         // whose complete provenance audit cannot fit in one bounded row.
         if (audit.size + canon.length + quoted.length + freshAudit.length + chunkCount > MAX_AUDIT_ITEMS) {
           truncated = true;
-          break;
+          continue;
         }
         body = redactor.join([body, prefix, chosen.block]);
         heading = chosen.heading;
@@ -598,7 +596,7 @@ async function servePacket(
         : undefined;
 
       if (epoch === undefined) {
-        const packetMd = `${header}${body}`;
+        const packetMd = redactor.join([header, body]);
         const content: PacketContentV2 = {
           packetMd,
           tokens: tokens(packetMd),

@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
 import { serveTimeline } from "../../src/serving/timeline";
-import { serveFixture, storeEvent } from "./helpers";
+import { storeEvent } from "./helpers";
+import { credentialFixture } from "./credential-fixture";
 
 test("two-line credentials are scrubbed even when the first fragment is short", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     for (const first of [0, 1, 5, 51]) {
       for (const suffix of ["", "Q"]) {
@@ -19,7 +20,7 @@ test("two-line credentials are scrubbed even when the first fragment is short", 
 });
 
 test("URL userinfo credentials without a password delimiter are scrubbed", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const credential = "synthetic" + "Credential123";
     const id = storeEvent(f.db, "url-userinfo", "2026-02-28T10:30:00Z", `custom+app://${credential}@example.test/path`, "person:ada", "public");
@@ -30,7 +31,7 @@ test("URL userinfo credentials without a password delimiter are scrubbed", async
 });
 
 test("an invalid outer prefix cannot hide a credential wrapped inside it", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const text = `kzk_sk-${"A".repeat(12)}\n${"A".repeat(12)}`;
     const id = storeEvent(f.db, "wrapped-nested-prefix", "2026-02-28T10:30:00Z", text, "person:ada", "public");
@@ -41,7 +42,7 @@ test("an invalid outer prefix cannot hide a credential wrapped inside it", async
 });
 
 test("encoded URL userinfo is scrubbed before decoding changes its delimiters", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const password = encodeURIComponent(["p/q", "r s"].join("@"));
     const id = storeEvent(f.db, "url-encoded-userinfo", "2026-02-28T10:30:00Z",
@@ -53,7 +54,7 @@ test("encoded URL userinfo is scrubbed before decoding changes its delimiters", 
 });
 
 test("URL passwords are scrubbed when the username is empty", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const value = "synthetic" + "Credential123";
     const id = storeEvent(f.db, "url-password-only", "2026-02-28T10:30:00Z",
@@ -65,7 +66,7 @@ test("URL passwords are scrubbed when the username is empty", async () => {
 });
 
 test("quoted and re-flowed PEM text is scrubbed without swallowing following stamps", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const header = ["-----BEGIN", ["PRIVATE", "KEY-----"].join("\n> ")].join(" ");
     const footer = ["-----END", ["PRIVATE", "KEY-----"].join(" ")].join(" ");
@@ -81,7 +82,7 @@ test("quoted and re-flowed PEM text is scrubbed without swallowing following sta
 });
 
 test("variable credentials keep long continuation parts private", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const prefix = ["xa", "pp-1-A0123456789-1234567890123-"].join("");
     const text = `${prefix}\n${"S".repeat(32)}`;
@@ -93,7 +94,7 @@ test("variable credentials keep long continuation parts private", async () => {
 });
 
 test("literal YAML credential values beginning with a dollar sign are scrubbed", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const value = ["$", "synthetic", "Credential123"].join("");
     const id = storeEvent(f.db, "yaml-dollar-value", "2026-02-28T10:30:00Z", `password: ${value}`, "person:ada", "public");
@@ -104,7 +105,7 @@ test("literal YAML credential values beginning with a dollar sign are scrubbed",
 });
 
 test("YAML block scalar credentials are removed without consuming the next field", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     for (const indicator of ["|", ">-"]) {
       const secret = "synthetic" + "Credential123";
@@ -120,7 +121,7 @@ test("YAML block scalar credentials are removed without consuming the next field
 });
 
 test("short Authorization credentials and line-wrapped Bearer values retain capture scrub coverage", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const value = "Q".repeat(20);
     const short = ["q", "r", "s", "t"];

@@ -2,6 +2,8 @@ import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
 import { canonicalizeProducer, isProducer } from "../contracts/proposal";
 import { claimKey, contentSignature } from "./hash";
+import { applyScopedClaimIdempotency } from "./scoped-idempotency";
+import { SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION } from "../world/tables/versions";
 
 /** RFC 0002 §18.1 — claims-core widens durable state to schema v3. */
 export const CLAIMS_SCHEMA_VERSION = 3;
@@ -464,8 +466,8 @@ function keepSignatureOccupant(db: Database): void {
 
 /**
  * Pending-only content-signature idempotency for the legacy proposals
- * projection, and live-only claims uniqueness so a withdrawn row cannot
- * occupy the slot of later evidence. Unique indexes are dropped before
+ * projection, and the versioned live-only claims lookup so a withdrawn row
+ * cannot occupy the slot of later evidence. Indexes are dropped before
  * hashes are rewritten so a remigration collapse cannot abort init.
  */
 export function applyLegacyStagingIdempotency(db: Database): void {
@@ -497,7 +499,12 @@ export function applyLegacyStagingIdempotency(db: Database): void {
        WHERE status = 'pending'`,
   );
   if (!tableExists(db, "claims")) return;
-  db.exec(
+  const version = tableExists(db, "schema_version")
+    ? db.query<{ version: number }, []>("SELECT version FROM schema_version").get()?.version ?? 0
+    : 0;
+  if (version >= SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION) {
+    applyScopedClaimIdempotency(db);
+  } else db.exec(
     `CREATE UNIQUE INDEX claims_idempotency
        ON claims (kind, coalesce(target, ''), body_hash)
        WHERE status = 'live' AND kind <> 'purge_review'

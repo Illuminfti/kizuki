@@ -10,6 +10,7 @@ import { rebuildWorldLayer } from "../../src/derived";
 import { openLedger } from "../../src/ledger/db";
 import { purgeEvents } from "../../src/ledger/purge";
 import { runServeDaemon } from "../../src/serve/daemon";
+import { fingerprintOf } from "../../src/world/views/store";
 import { hiddenScene } from "../helpers/noninterference";
 import { pingOp, PING_INPUT } from "./world-test-op";
 import type { ServeContext } from "../../src/serving/types";
@@ -142,4 +143,33 @@ test("invalid and ungranted resume calls are audited without recording the handl
   const rows = made.db.query("SELECT * FROM agent_audit WHERE tool='world_view'").all();
   expect(rows.length).toBeGreaterThanOrEqual(2);
   expect(JSON.stringify(rows)).not.toContain(shared.handle);
+});
+
+
+test("resume reports class-restricted coverage even when other grant dimensions match", async () => {
+  const { made, owner } = await setup();
+  const shared = share(owner, made.visible.concept.ref!);
+  const reader = addAgent(made.db, "class-reader", OWNER_AGENT_GRANT);
+  const ctx = { ...owner, principal: authenticate(made.db, reader.token)! };
+  expect(result(ctx, resume(shared.handle))).toMatchObject({
+    status: "incomplete", reasons: ["coverage"],
+    data: { coverage: { status: "partial", gaps: ["coverage"] } },
+  });
+  setGrant(made.db, "class-reader", { deny_classes: [] });
+  expect(result({ ...ctx, principal: authenticate(made.db, reader.token)! }, resume(shared.handle)))
+    .toMatchObject({ status: "current" });
+});
+
+
+test("a pre-class saved handle remains readable and reports the narrower reader scope", async () => {
+  const { made, owner } = await setup();
+  const shared = share(owner, made.visible.concept.ref!);
+  const row = made.db.query<{ scope: string }, []>("SELECT scope FROM world_resume_handles").get()!;
+  const { deny_classes, ...oldScope } = JSON.parse(row.scope);
+  expect(deny_classes).toEqual([]);
+  const scope = JSON.stringify(oldScope);
+  made.db.query("UPDATE world_resume_handles SET scope=?,scope_digest=?").run(scope, fingerprintOf(Buffer.from(scope)));
+  const reader = addAgent(made.db, "legacy-handle-reader", OWNER_AGENT_GRANT);
+  expect(result({ ...owner, principal: authenticate(made.db, reader.token)! }, resume(shared.handle)))
+    .toMatchObject({ status: "incomplete", reasons: ["coverage"] });
 });

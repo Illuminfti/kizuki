@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setGrant } from "../../src/agents";
 import { MAX_RETRIEVAL_LIMIT } from "../../src/contracts/retrieval";
 import { rebuildDerived } from "../../src/derived";
 import { stampDerived } from "../../src/derived-meta";
@@ -740,6 +741,7 @@ describe("serveSearch bounds captured text to an excerpt", () => {
   test("agent excerpts redact a token across the cut and full_text keeps redaction", async () => {
     const live = await serveFixture();
     try {
+      setGrant(live.db, "reader-public", { deny_classes: [] });
       const token = `sk-${"Q".repeat(48)}`;
       const text = `${TOKEN} ${".".repeat(580 - TOKEN.length - 1)}${token}${".".repeat(200)}`;
       const id = storeEvent(live.db, "rec-secret-boundary", "2026-02-28T12:00:00Z", text, "person:ada", "public");

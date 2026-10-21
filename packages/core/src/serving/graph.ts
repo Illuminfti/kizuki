@@ -1,5 +1,5 @@
 import type { AuditDenial, Grant } from "../agents";
-import { neighbors } from "../graph/graph";
+import { neighbors, neighborsForServing } from "../graph/graph";
 import type { GraphEdge, GraphEdgeKind } from "../graph/graph";
 import { enumOf, identifier } from "./arguments";
 import { eligible, loadCanon, pageDecision } from "./canon";
@@ -9,6 +9,7 @@ import type { Served } from "./gate";
 import { eventDecision, readServableEvents } from "./ledger";
 import type { ServableEvent } from "./ledger";
 import { retrievalGraphEdges } from "./retrieval";
+import { graphServingScope, requiresClassScopedGraph } from "./graph-scope";
 import { ServeError } from "./types";
 import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
 import { ENVELOPE_SCHEMA } from "./types";
@@ -162,7 +163,7 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
       const kinds = kindsOf(args.kinds);
 
       const walked =
-        kinds === undefined
+        kinds === undefined && !requiresClassScopedGraph(ctx)
           ? await retrievalGraphEdges(ctx, id, {
               hops: depth,
               limit: MAX_EDGES,
@@ -197,13 +198,30 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
         limit: MAX_EDGES,
         ...(kinds === undefined ? {} : { kinds }),
       };
+      const authorizedDecisions = new Map<string, PageDecision>();
+      const authorizedDenials: AuditDenial[] = [];
+      const accept = (edge: GraphEdge): boolean => {
+        const facts = readServableEvents(ctx.db, edge.kind === "source" ? [edge.dst] : []);
+        const classified = classifyGraph([edge], index, grant, facts, new Set(), true, authorizedDecisions, true);
+        const allow = classified.kept.length > 0;
+        if (authorizedDenials.length < MAX_EDGES) authorizedDenials.push(...classified.withheld);
+        return allow;
+      };
+      let scopedTruncated = false;
+      const scopedFloor = () => {
+        const result = neighborsForServing(ctx.db, id, { ...query, ceiling: grant.ceiling, filter: accept }, graphServingScope(index, grant));
+        scopedTruncated ||= result.truncated;
+        return result;
+      };
       const found = walked.ok
         ? {
             id,
             edges: walked.edges,
             truncated: walked.truncated,
           }
-        : neighbors(ctx.db, id, { ...query, ceiling: grant.ceiling });
+        : ctx.principal.kind === "owner"
+          ? neighbors(ctx.db, id, { ...query, ceiling: grant.ceiling })
+          : scopedFloor();
       const foundKeys = new Set(found.edges.map(edgeKey));
       // Ceiling shapes the served cap on the local floor. A configured
       // engine already applied the requested ceiling; core still authorizes.
@@ -231,6 +249,16 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
         decisions,
         !walked.ok,
       );
+      // Supplement every agent traversal, independently of the provider's raw
+      // overflow flag. Only the scoped floor can prove authorized overflow.
+      if (walked.ok && ctx.principal.kind !== "owner") {
+        const floor = scopedFloor();
+        const extra = classifyGraph(floor.edges, index, grant,
+          readServableEvents(ctx.db, floor.edges.filter(edge => edge.kind === "source").map(edge => edge.dst)),
+          seen, true, decisions, true);
+        served.kept.push(...extra.kept);
+        served.withheld.push(...extra.withheld);
+      }
       const hidden = classifyGraph(
         auditEdges,
         index,
@@ -245,7 +273,7 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
       return {
         canon: [],
         quoted: [],
-        withheld: [...served.withheld, ...hidden.withheld],
+        withheld: [...served.withheld, ...hidden.withheld, ...authorizedDenials],
         authorization: {
           pages: [...new Set(served.kept.flatMap((edge) => [edge.src, ...(edge.kind === "wikilink" && index.byId.has(edge.dst) ? [edge.dst] : [])]))]
             .map((id) => ({ id, hash: index.byId.get(id)!.contentHash })),
@@ -254,7 +282,7 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
         data: {
           id,
           edges: served.kept.slice(0, MAX_EDGES),
-          truncated: found.truncated || served.kept.length > MAX_EDGES,
+          truncated: (ctx.principal.kind === "owner" ? found.truncated : scopedTruncated) || served.kept.length > MAX_EDGES,
         },
       };
     },

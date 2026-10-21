@@ -1,4 +1,7 @@
+import { createRedactor } from "./redact";
+import { searchableText, servedTextMatcher } from "./search-match";
 import type { Database } from "bun:sqlite";
+import { denyClassesOf } from "../agents";
 import type { AuditDenial, AuditItem, Grant } from "../agents";
 import { canonReadGeneration } from "../canon/write-intent";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
@@ -75,7 +78,13 @@ function classify(
   hits: Pick<SearchHit, "doc_id" | "scope">[],
   seen: Set<string>,
   fullText: boolean,
+  matches?: ReturnType<typeof servedTextMatcher>["matches"],
 ): Classification {
+  // Candidate previews must not charge redactions to the response. Render the
+  // final selected rows with the call's redactor after applying its limit.
+  index = { ...index, sourceContext: {
+    ...index.sourceContext, redactor: createRedactor(index.sourceContext.principal, index.sourceContext.servingSecrets),
+  } };
   const result: Classification = { canon: [], quoted: [], withheld: [] };
   const pageSeen = new Set<string>();
 
@@ -92,9 +101,14 @@ function classify(
         result.withheld.push({ id: page.id, reason: decision.reason });
         continue;
       }
+      const { excerpt, truncated } = excerptOf(page.body, LEDGER_EXCERPT, index.sourceContext);
+      const chunk = canonChunk(index, page, decision, excerpt, truncated);
+      if (matches !== undefined && !matches(
+        searchableText(typeof page.data["title"] === "string" ? page.data["title"] : "", undefined, index.sourceContext.servingSecrets),
+        searchableText(page.body, LEDGER_EXCERPT, index.sourceContext.servingSecrets),
+      )) continue;
       seen.add(hit.doc_id);
-      const { excerpt, truncated } = excerptOf(page.body, 600, index.sourceContext);
-      result.canon.push(canonChunk(index, page, decision, excerpt, truncated));
+      result.canon.push(chunk);
       continue;
     }
 
@@ -105,8 +119,10 @@ function classify(
       result.withheld.push({ id: quoted.event_id, reason: decision.reason });
       continue;
     }
+    const chunk = boundedQuote(quotedChunk(quoted, decision.sensitivity, index.sourceContext, fullText ? quoted.text.length : 4096), fullText, index.sourceContext);
+    if (matches !== undefined && !matches("", searchableText(quoted.text, fullText ? undefined : LEDGER_EXCERPT, index.sourceContext.servingSecrets))) continue;
     seen.add(hit.doc_id);
-    result.quoted.push(quotedChunk(quoted, decision.sensitivity, index.sourceContext, fullText ? quoted.text.length : 4096));
+    result.quoted.push(chunk);
   }
 
   return result;
@@ -210,88 +226,108 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
       ...window,
     };
 
-    const nominated = await retrievalCandidates(ctx, query, { ...base, ceiling: grant.ceiling });
-    // Re-read current canon and evidence only after the engine finishes.
-    const index = loadCanon(ctx);
-    base.excludePaths = [...index.holds];
-    const seen = new Set<string>();
-    const narrowed = { ...grant, ...(types === undefined ? {} : { types }), ...(subjects === undefined ? {} : { subjects }), ...(window.since === undefined ? {} : { since: window.since }), ...(window.until === undefined ? {} : { until: window.until }) };
-    const classified: Classification = { canon: [], quoted: [], withheld: [] };
-    absorbClassification(
-      classified,
-      classify(
-        ctx.db,
-        index,
-        narrowed,
-        nominated.ids.map((doc_id) => ({
-          doc_id,
-          scope: doc_id.startsWith("page:") ? "canon" : "ledger",
-        } as const)),
-        seen,
-        fullText,
-      ),
-    );
-    // Preserve nomination deduplication, including denied nominations. Ranked
-    // pages retain only admitted identities; an arbitrary denied prefix must
-    // not accumulate in the cross-page set. Each page has its own bounded set.
-    for (const id of nominated.ids) seen.add(id);
-    const rankedOpts = {
-      ...base,
-      limit: MAX_RETRIEVAL_LIMIT,
-      ...(ctx.principal.kind === "owner" ? {} : { ceiling: grant.ceiling }),
-      source: {
-        owner: ctx.principal.kind === "owner",
-        purpose: ctx.sourcePurpose ?? "recall",
-      },
-    };
-    const degraded = new Set<string>();
-    const read = contract === ENVELOPE_V2_SCHEMA ? null : snapshotSearchRead(ctx, index.generation);
-    let offset = 0;
-    let previousPage = "";
-    // Page the same rank order until MAX_RETRIEVAL_LIMIT authorized hits or the
-    // real end. FTS provenance is not an authorization predicate.
-    while (true) {
-      if (read !== null) assertSearchRead(ctx, read);
-      const ranked = searchAuditCandidates(ctx.db, query, {
-        ...rankedOpts,
-        ...(offset === 0 ? {} : { offset }),
-      });
-      for (const reason of ranked.degraded) degraded.add(reason);
-      if (ranked.candidates.length === 0) break;
-      const pageKey = ranked.candidates.map((hit) => hit.doc_id).join("\0");
-      if (pageKey === previousPage) break;
-      previousPage = pageKey;
+    const matcher = ctx.principal.kind === "owner" ? undefined : servedTextMatcher(query);
+    try {
+      const nominated = await retrievalCandidates(ctx, query, { ...base, ceiling: grant.ceiling });
+      // Re-read current canon and evidence only after the engine finishes.
+      const index = loadCanon(ctx);
+      base.excludePaths = [...index.holds];
+      const seen = new Set<string>();
+      const narrowed = { ...grant, ...(types === undefined ? {} : { types }), ...(subjects === undefined ? {} : { subjects }), ...(window.since === undefined ? {} : { since: window.since }), ...(window.until === undefined ? {} : { until: window.until }) };
+      const classified: Classification = { canon: [], quoted: [], withheld: [] };
       absorbClassification(
         classified,
-        classify(ctx.db, index, narrowed, ranked.candidates, seen, fullText),
+        classify(
+          ctx.db,
+          index,
+          narrowed,
+          nominated.ids.map((doc_id) => ({
+            doc_id,
+            scope: doc_id.startsWith("page:") ? "canon" : "ledger",
+          } as const)),
+          seen,
+          fullText,
+          matcher?.matches,
+        ),
       );
-      if (
-        authorizedCount(classified) >= MAX_RETRIEVAL_LIMIT ||
-        ranked.candidates.length < MAX_RETRIEVAL_LIMIT
-      ) {
-        break;
+      // Preserve nomination deduplication, including denied nominations. Ranked
+      // pages retain only admitted identities; an arbitrary denied prefix must
+      // not accumulate in the cross-page set. Each page has its own bounded set.
+      for (const id of nominated.ids) seen.add(id);
+      const rankedOpts = {
+        ...base,
+        limit: MAX_RETRIEVAL_LIMIT,
+        ...(ctx.principal.kind === "owner" ? {} : { ceiling: grant.ceiling }),
+        source: {
+          owner: ctx.principal.kind === "owner",
+          purpose: ctx.sourcePurpose ?? "recall",
+          deny_classes: denyClassesOf(grant),
+        },
+      };
+      const degraded = new Set<string>();
+      const read = contract === ENVELOPE_V2_SCHEMA ? null : snapshotSearchRead(ctx, index.generation);
+      let offset = 0;
+      let previousPage = "";
+      // Page the same rank order until MAX_RETRIEVAL_LIMIT authorized hits or the
+      // real end. FTS provenance is not an authorization predicate.
+      while (true) {
+        if (read !== null) assertSearchRead(ctx, read);
+        const ranked = searchAuditCandidates(ctx.db, query, {
+          ...rankedOpts,
+          ...(offset === 0 ? {} : { offset }),
+        });
+        for (const reason of ranked.degraded) degraded.add(reason);
+        if (ranked.candidates.length === 0) break;
+        const pageKey = ranked.candidates.map((hit) => hit.doc_id).join("\0");
+        if (pageKey === previousPage) break;
+        previousPage = pageKey;
+        absorbClassification(
+          classified,
+          classify(ctx.db, index, narrowed, ranked.candidates, seen, fullText, matcher?.matches),
+        );
+        if (
+          authorizedCount(classified) >= MAX_RETRIEVAL_LIMIT ||
+          ranked.candidates.length < MAX_RETRIEVAL_LIMIT
+        ) {
+          break;
+        }
+        offset += ranked.candidates.length;
       }
-      offset += ranked.candidates.length;
-    }
-    const canon = classified.canon.slice(0, rows), quoted = classified.quoted.slice(0, Math.max(0, rows - classified.canon.length)).map(chunk => boundedQuote(chunk, fullText, index.sourceContext));
-    const canonicalSubjects = new Map(canon.map(chunk => [chunk.page_id, canonSubjects(index, index.byId.get(chunk.page_id)!)]));
-    const projection = projectSubjectLabels(index, narrowed, at, [...canonicalSubjects.values()].flat().concat(quoted.flatMap(chunk => chunk.subjects)), canon.length + quoted.length);
-    const audit = new Map<string, AuditItem>();
-    for (const chunk of [...canon, ...quoted]) {
-      const subjects = "page_id" in chunk ? canonicalSubjects.get(chunk.page_id)! : chunk.subjects;
-      for (const item of attachSubjectLabels(projection, chunk, subjects)) audit.set(item.id, item);
-    }
-    for (const reason of nominated.degraded) degraded.add(reason);
-    for (const reason of projection.degraded) degraded.add(reason);
+      const canon = classified.canon.slice(0, rows).map(candidate => {
+        const page = index.byId.get(candidate.page_id)!;
+        const decision = pageDecision(index, narrowed, page);
+        if (!decision.allow) throw new ServeError("held", "canon evidence unavailable");
+        const { excerpt, truncated } = excerptOf(page.body, LEDGER_EXCERPT, index.sourceContext);
+        return canonChunk(index, page, decision, excerpt, truncated);
+      });
+      const quoted = classified.quoted.slice(0, Math.max(0, rows - canon.length)).map(candidate => {
+        const source = currentQuotedSource(ctx.db, candidate.event_id);
+        if (source === null) throw new ServeError("held", "evidence unavailable");
+        const decision = eventDecision(narrowed, source, index.sourceContext);
+        if (!decision.allow) throw new ServeError("held", "evidence unavailable");
+        return boundedQuote(quotedChunk(source, decision.sensitivity, index.sourceContext, fullText ? source.text.length : 4096), fullText, index.sourceContext);
+      });
+      const canonicalSubjects = new Map(canon.map(chunk => [chunk.page_id, canonSubjects(index, index.byId.get(chunk.page_id)!)]));
+      const projection = projectSubjectLabels(index, narrowed, at, [...canonicalSubjects.values()].flat().concat(quoted.flatMap(chunk => chunk.subjects)), canon.length + quoted.length);
+      const audit = new Map<string, AuditItem>();
+      for (const chunk of [...canon, ...quoted]) {
+        const subjects = "page_id" in chunk ? canonicalSubjects.get(chunk.page_id)! : chunk.subjects;
+        for (const item of attachSubjectLabels(projection, chunk, subjects)) audit.set(item.id, item);
+      }
+      for (const reason of nominated.degraded) degraded.add(reason);
+      for (const reason of projection.degraded) degraded.add(reason);
 
-    return {
-      canon, quoted, audit_served: [...audit.values()],
-      authorization: {
-        pages: canon.map((chunk) => ({ id: chunk.page_id, hash: index.byId.get(chunk.page_id)!.contentHash, sensitivity: chunk.sensitivity })),
-        events: quoted.map((chunk) => ({ id: chunk.event_id, sensitivity: chunk.sensitivity })),
-      },
-      withheld: classified.withheld,
-      ...(degraded.size === 0 ? {} : { data: { degraded: [...degraded] } }),
-    };
+      return {
+        canon, quoted, audit_served: [...audit.values()],
+        authorization: {
+          pages: canon.map((chunk) => ({ id: chunk.page_id, hash: index.byId.get(chunk.page_id)!.contentHash, sensitivity: chunk.sensitivity })),
+          events: quoted.map((chunk) => ({ id: chunk.event_id, sensitivity: chunk.sensitivity })),
+        },
+        withheld: classified.withheld,
+        ...(degraded.size === 0 ? {} : { data: { degraded: [...degraded] } }),
+      };
+    } finally {
+      matcher?.close();
+    }
   }, contract);
 }

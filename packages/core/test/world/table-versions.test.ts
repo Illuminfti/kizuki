@@ -11,6 +11,7 @@ import {
   type WorldTableSpec,
 } from "../../src/world/tables/registry";
 import {
+  LEDGER_MIGRATION_VERSIONS,
   WORLD_MIGRATION_BASE,
   WORLD_MIGRATION_VERSIONS,
   WORLD_SLOT_KEYS,
@@ -41,9 +42,10 @@ function sourceFiles(directory: string): string[] {
 
 describe("migration numbers", () => {
   test("are unique and contiguous from the base, and the ledger ends where they end", () => {
-    const numbers = Object.values<number>(WORLD_MIGRATION_VERSIONS).sort(
-      (a, b) => a - b,
-    );
+    const numbers = [
+      ...Object.values<number>(WORLD_MIGRATION_VERSIONS),
+      ...Object.values<number>(LEDGER_MIGRATION_VERSIONS).filter((version) => version > WORLD_MIGRATION_BASE),
+    ].sort((a, b) => a - b);
     expect(new Set(numbers).size).toBe(numbers.length);
     expect(numbers).toEqual(
       numbers.map((_, index) => WORLD_MIGRATION_BASE + 1 + index),

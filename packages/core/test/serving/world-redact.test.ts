@@ -21,7 +21,7 @@ test("world_view labels are redacted for an agent and raw for the owner", async 
   const db = openLedger(":memory:");
   try {
     const world = await worldFixture(db, { label: LABEL });
-    const agent = authenticate(db, addAgent(db, "world-redact", { ...OWNER_AGENT_GRANT }).token)!;
+    const agent = authenticate(db, addAgent(db, "world-redact", { ...OWNER_AGENT_GRANT, deny_classes: [] }).token)!;
     const served = await discover(db, agent, world.ctx.vaultPath);
     const wire = JSON.stringify(served);
     expect(wire).not.toContain(PASSWORD);
@@ -40,7 +40,7 @@ test("a concept card's definitions and evidence carry redacted text and untouche
   const db = openLedger(":memory:");
   try {
     const world = await worldFixture(db, { label: LABEL });
-    const agent = authenticate(db, addAgent(db, "world-card", { ...OWNER_AGENT_GRANT }).token)!;
+    const agent = authenticate(db, addAgent(db, "world-card", { ...OWNER_AGENT_GRANT, deny_classes: [] }).token)!;
     const found = (await discover(db, agent, world.ctx.vaultPath)) as {
       data: { result: { data: { matches: { ref: { kind: "object"; token: string } }[] } } };
     };
@@ -64,7 +64,7 @@ test("conditional views compare and retain the redacted served projection", asyn
   const db = openLedger(":memory:");
   try {
     const world = await worldFixture(db, { label: LABEL });
-    const agent = authenticate(db, addAgent(db, "conditional-redact", { ...OWNER_AGENT_GRANT }).token)!;
+    const agent = authenticate(db, addAgent(db, "conditional-redact", { ...OWNER_AGENT_GRANT, deny_classes: [] }).token)!;
     const ctx = { db, vaultPath: world.ctx.vaultPath, principal: agent };
     const input = { operation: "find_concepts", label: "", valid: { kind: "all" }, knownAt: { kind: "current" } };
     const first = await dispatchServeTool(ctx, "world_view", input, { response_contract: "kizuki.envelope/v2" }) as {

@@ -1,4 +1,5 @@
 import { insertClaim } from "../../src/claims/store";
+import { setGrant } from "../../src/agents";
 import { rebuildDerived } from "../../src/derived";
 import { accept } from "../../src/ledger/ledger";
 import { ulid } from "../../src/util/ulid";
@@ -29,6 +30,8 @@ export interface RedactFixture extends Fixture {
  */
 export async function redactFixture(): Promise<RedactFixture> {
   const base = await serveFixture();
+  // These positive tests exercise redaction after explicit class access.
+  for (const name of ["reader-public", "reader-private"]) setGrant(base.db, name, { deny_classes: [] });
   const secretEvent = storeEvent(
     base.db,
     "rec-secret",

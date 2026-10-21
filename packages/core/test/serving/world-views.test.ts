@@ -74,7 +74,7 @@ describe("view tokens on world_view", () => {
       operation: "resume", handle: share.data.handle, valid: { kind: "all" }, knownAt: { kind: "current" },
     }));
     expect(resumed).toMatchObject({ status: "incomplete", reasons: ["coverage"], data: { concept: { ref: made.refs.concept }, coverage: { status: "partial", gaps: ["coverage"] } } });
-    const peer = addAgent(made.db, "wide-peer", OWNER_AGENT_GRANT);
+    const peer = addAgent(made.db, "wide-peer", { ...OWNER_AGENT_GRANT, deny_classes: [] });
     const principal = authenticate(made.db, peer.token)!;
     const full = resultOf(readWorldView({ ...owner, principal }, {
       operation: "resume", handle: share.data.handle, valid: { kind: "all" }, knownAt: { kind: "current" },

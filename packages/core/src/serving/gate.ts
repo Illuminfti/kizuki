@@ -4,6 +4,7 @@ import { canonReadGeneration } from "../canon/write-intent";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
 import {
   resolvePrincipal,
+  denyClassesOf,
   toolAllowed,
 } from "../agents";
 import { reserveServingAudit as reserveAudit, updateServingAudit as updateAudit } from "./audit-capability";
@@ -15,6 +16,7 @@ import type {
   Tool,
 } from "../agents";
 import type { ClaimsIo } from "../claims/store";
+import { claimReader } from "./claims";
 import { claimsEpoch } from "./epoch";
 import { createRedactor, redactValue } from "./redact";
 import { compareText } from "../util/order";
@@ -178,8 +180,15 @@ function boundedArguments(
  * the host bound one.
  */
 export function claimsIo(ctx: ServeContext): ClaimsIo {
+  if (ctx.principal.kind !== "owner") {
+    const reader = claimReader(ctx.db, ctx.principal.grant, { owner: false, purpose: "recall" });
+    return { db: ctx.db, visibility: reader.visibility, deny_classes: denyClassesOf(ctx.principal.grant),
+      ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
+    };
+  }
   return {
     db: ctx.db,
+    deny_classes: denyClassesOf(ctx.principal.grant),
     ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
   };
 }

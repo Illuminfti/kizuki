@@ -55,10 +55,13 @@ import {
   upsertPageIndex,
 } from "./store";
 import type { CanonIo, ExistingPage } from "./store";
+import type { WorldMaterializationScope } from "./world-materialization";
 
 export interface ApplyCanonWriteOptions {
   writer: Writer;
   budget: BudgetTracker;
+  /** Trusted caller read scope for typed page rematerialization. */
+  readScope?: WorldMaterializationScope;
 }
 
 /** Set by the writer; a producer that supplies one is refused (§4.4). */
@@ -418,7 +421,8 @@ export function applyCanonWriteOwned(
   requireCanonFiles(scope, io);
   claim = snapshotByteInput(claim);
   decision = snapshotByteInput(decision);
-  opts = Object.freeze({ writer: opts.writer, budget: opts.budget });
+  const { writer, budget, readScope } = opts;
+  opts = Object.freeze({ writer, budget, ...(readScope === undefined ? {} : { readScope }) });
   if (!isWriter(opts.writer)) {
     throw new CanonWriteError("writer_invalid", "writer must be loop, correction, revert or import");
   }
@@ -434,7 +438,7 @@ export function applyCanonWriteOwned(
   const primary = assertBatch(persisted, typed);
   let claims: readonly Claim[] = persisted;
   const handle = typed ? worldClaimHandle(io.db, primary.claim_id) : null;
-  const materialization = handle === null ? null : selectWorldMaterialization(io.db, handle);
+  const materialization = handle === null ? null : selectWorldMaterialization(io.db, handle, opts.readScope);
   if (typed) {
     if (handle === null || materialization === null || target.rel_path !== worldCanonPath(handle) || persisted.some(item => worldClaimHandle(io.db,item.claim_id) !== handle || !materialization.basis.some(basis => basis.claim_id === item.claim_id))) throw new CanonWriteError("decision_stale", "typed canon requires its exact admitted world handle");
     claims = materialization.claims;

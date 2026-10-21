@@ -8,7 +8,7 @@ import type { DerivedStamp } from "../derived-meta";
 import { assertDerivedDiscoveryReady, markDerivedHeld, readDerivedHolds } from "../derived-holds";
 import { latestLedgerCursor } from "../ledger/ledger";
 import { tableExists } from "../ledger/schema";
-import { sourcePolicyEpoch } from "../ledger/source-grants";
+import { sourceServingSql, sourcePolicyEpoch, type SourceServingScope } from "../ledger/source-grants";
 import { bareRetrievalId } from "../retrieval/ids";
 import { ulid } from "../util/ulid";
 import { compareText } from "../util/order";
@@ -57,12 +57,21 @@ export interface NeighborOptions {
   kinds?: GraphEdgeKind[];
   limit?: number;
   ceiling?: Sensitivity;
+  /** Trusted consumer authorization, applied before the result cap and traversal. */
+  filter?: (edge: GraphEdge) => boolean;
 }
 
 export interface NeighborResult {
   id: string;
   edges: GraphEdge[];
   truncated: boolean;
+}
+
+/** Internal serving snapshot; deliberately absent from NeighborOptions. */
+export interface GraphServingScope {
+  readablePageIds: readonly string[];
+  excludedPageIds: readonly string[];
+  source: SourceServingScope;
 }
 
 interface StoredEdge {
@@ -880,6 +889,8 @@ function incidentEdges(
   kinds: GraphEdgeKind[] | undefined,
   ceiling: Sensitivity | undefined,
   remaining: number,
+  serving?: GraphServingScope,
+  filter?: (edge: GraphEdge) => boolean,
 ): GraphEdge[] {
   if (ids.length === 0 || kinds?.length === 0 || remaining <= 0) return [];
   const collected: GraphEdge[] = [];
@@ -900,18 +911,47 @@ function incidentEdges(
       );
       bindings.push(SENSITIVITY_ORDER[ceiling], SENSITIVITY_ORDER[ceiling]);
     }
-    const extraSql = extra.length === 0 ? "" : ` AND ${extra.join(" AND ")}`;
-    bindings.push(remaining - collected.length);
-    collected.push(
-      ...db
-        .query<GraphEdge, (string | number)[]>(
-          `SELECT src, dst, kind FROM graph_edges
-           WHERE (src IN (${idSlots}) OR dst IN (${idSlots}))${extraSql}
-           ORDER BY src, dst, kind
-           LIMIT ?`,
+    if (serving !== undefined) {
+      // Admission precedes both LIMIT and frontier expansion. Checking only
+      // the selected edges lets hidden topology spend the readable cap.
+      extra.push("src IN (SELECT value FROM json_each(?))");
+      bindings.push(JSON.stringify(serving.readablePageIds));
+      extra.push(`(kind != 'wikilink' OR (
+        dst NOT IN (SELECT value FROM json_each(?)) AND (
+          dst IN (SELECT value FROM json_each(?)) OR NOT EXISTS (
+            SELECT 1 FROM page_index WHERE page_id = graph_edges.dst
+          )
         )
-        .all(...bindings),
-    );
+      ))`);
+      bindings.push(JSON.stringify(serving.excludedPageIds), JSON.stringify(serving.readablePageIds));
+      const source = sourceServingSql(db, serving.source,
+        ceiling === undefined ? null : SENSITIVITY_ORDER[ceiling]);
+      if (source !== null) {
+        extra.push(`(kind != 'source' OR EXISTS (
+          SELECT 1 FROM events WHERE events.event_id = CASE
+            WHEN graph_edges.dst LIKE 'event:%' THEN substr(graph_edges.dst, 7)
+            ELSE graph_edges.dst END AND ${source.sql}
+        ))`);
+        bindings.push(...source.bindings);
+      }
+    }
+    const extraSql = extra.length === 0 ? "" : ` AND ${extra.join(" AND ")}`;
+    let after: GraphEdge | undefined;
+    for (;;) {
+      const rows = db.query<GraphEdge, (string | number)[]>(
+        `SELECT src, dst, kind FROM graph_edges
+         WHERE (src IN (${idSlots}) OR dst IN (${idSlots}))${extraSql}
+           ${after === undefined ? "" : "AND (src,dst,kind) > (?,?,?)"}
+         ORDER BY src, dst, kind LIMIT ?`,
+      ).all(...bindings, ...(after === undefined ? [] : [after.src, after.dst, after.kind]), remaining);
+      for (const edge of rows) {
+        if (filter !== undefined && !filter(edge)) continue;
+        collected.push(edge);
+        if (collected.length === remaining) return collected;
+      }
+      if (rows.length < remaining) break;
+      after = rows[rows.length - 1]!;
+    }
   }
   return collected;
 }
@@ -938,6 +978,25 @@ export function neighbors(
   id: string,
   opts: NeighborOptions = {},
 ): NeighborResult {
+  return walkNeighbors(db, id, opts);
+}
+
+/** Internal scoped selection; final serving still rechecks the snapshot. */
+export function neighborsForServing(
+  db: Database,
+  id: string,
+  opts: NeighborOptions,
+  serving: GraphServingScope,
+): NeighborResult {
+  return walkNeighbors(db, id, opts, serving);
+}
+
+function walkNeighbors(
+  db: Database,
+  id: string,
+  opts: NeighborOptions,
+  serving?: GraphServingScope,
+): NeighborResult {
   const depth = opts.depth ?? 1;
   if (depth !== 1 && depth !== 2) {
     throw new RangeError("neighbors depth must be 1 or 2");
@@ -963,6 +1022,8 @@ export function neighbors(
       opts.kinds,
       opts.ceiling,
       limit + 1,
+      serving,
+      edge => !seenEdges.has(`${edge.src}\u0000${edge.dst}\u0000${edge.kind}`) && (opts.filter?.(edge) ?? true),
     );
     const next: string[] = [];
     const frontierNodes = new Set(frontier);

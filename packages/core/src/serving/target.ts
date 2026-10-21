@@ -1,7 +1,8 @@
+import type { Database } from "bun:sqlite";
+import { classesOfEvents } from "../ledger/event-classes";
 import { authorize } from "../agents";
 import type { AuditDenial, DenyReason, Grant, Servable } from "../agents";
 import { getClaim, listClaims } from "../claims/store";
-import { sourcePolicyEpoch } from "../ledger/source-grants";
 import { claimReader } from "./claims";
 import { authorizedClaimSql } from "./claim-policy-sql";
 import type { Claim } from "../contracts/proposal";
@@ -64,16 +65,14 @@ export interface Resolved {
 function visibleTo(ctx: ServeContext, hidden: AuditDenial[] = []): (claim: Claim) => boolean {
   if (ctx.principal.kind === "owner") return () => true;
   const grant = ctx.principal.grant;
-  const reader = claimReader(ctx.db, grant, { owner: false, purpose: "correction" });
-  const sourcePolicy = sourcePolicyEpoch(ctx.db) > 0;
+  const reader = claimReader(ctx.db, grant, { owner: false, purpose: "recall" });
+  const correctionReader = claimReader(ctx.db, grant, { owner: false, purpose: "correction" });
   return (claim) => {
     // The real reason goes to the owner's audit row, never to the caller.
-    const decision = authorize(grant, claimServable(claim));
-    if (!decision.allow) {
-      hidden.push({ id: claim.claim_id, reason: decision.reason });
-      return false;
-    }
-    if (sourcePolicy && !reader.canRead(claim)) {
+    const decision = authorize(grant, claimServable(ctx.db, claim));
+    if (!decision.allow) hidden.push({ id: claim.claim_id, reason: decision.reason });
+    if (!decision.allow) return false;
+    if (!reader.canRead(claim) || !correctionReader.canRead(claim)) {
       hidden.push({ id: claim.claim_id, reason: "held" });
       return false;
     }
@@ -82,8 +81,14 @@ function visibleTo(ctx: ServeContext, hidden: AuditDenial[] = []): (claim: Claim
 }
 
 /** Scoped targets are selected under policy before complete claims are decoded. */
+function targetPolicy(ctx: ServeContext): { sql: string; bindings: (string | number)[] } {
+  const recall = authorizedClaimSql({ ...ctx, sourcePurpose: "recall" });
+  const correction = authorizedClaimSql({ ...ctx, sourcePurpose: "correction" });
+  return { sql: `(${recall.sql}) AND (${correction.sql})`, bindings: [...recall.bindings, ...correction.bindings] };
+}
+
 function scopedTargets(ctx: ServeContext, where: string, bindings: string[], visible: (claim: Claim) => boolean): Claim[] {
-  const policy = authorizedClaimSql(ctx);
+  const policy = targetPolicy(ctx);
   const selected: Claim[] = [];
   for (const row of ctx.db.query<{ claim_id: string }, (string | number)[]>(
     `SELECT claim_id FROM claims WHERE status='live' AND ${where} AND ${policy.sql}
@@ -119,9 +124,11 @@ export function resolve(
   const visible = visibleTo(ctx, hidden);
   // Only the compatibility path gathers privileged denial diagnostics.
   const scopedV2 = ctx.principal.kind === "agent" && contract === ENVELOPE_V2_SCHEMA;
+  const visibility = ctx.principal.kind === "owner" ? undefined
+    : claimReader(ctx.db, ctx.principal.grant, { owner: false, purpose: "recall" }).visibility;
   if (target.claim_id !== undefined) {
     const id = identifier("target.claim_id", target.claim_id);
-    const policy = scopedV2 ? authorizedClaimSql(ctx) : null;
+    const policy = scopedV2 ? targetPolicy(ctx) : null;
     const selected = policy === null || ctx.db.query<{ claim_id: string }, (string | number)[]>(
       `SELECT claim_id FROM claims WHERE claim_id=? AND status='live' AND ${policy.sql}`,
     ).get(id, ...policy.bindings) !== null;
@@ -150,6 +157,7 @@ export function resolve(
       status: "live",
       limit: MAX_CANDIDATES,
       filter: visible,
+      ...(visibility === undefined ? {} : { visibility }),
     }) : scopedTargets(ctx, "claim_key=?", [target.claim_key], visible);
     if (claims.length === 0) {
       throw refuse("target.claim_key", "names no live claim", hidden);
@@ -166,6 +174,7 @@ export function resolve(
     keyed: true,
     limit: MAX_CANDIDATES,
     filter: visible,
+    ...(visibility === undefined ? {} : { visibility }),
   }) : scopedTargets(ctx, "subject=? AND claim_key IS NOT NULL", [subject], visible);
   if (claims.length === 0) {
     throw refuse("target.subject", "names no live keyed claim", hidden);
@@ -181,7 +190,7 @@ export function resolve(
  * far" is one question with one answer: the same gate the read tools use, so
  * a grant's window and type scope bind here exactly as they do there.
  */
-function claimServable(claim: Claim): Servable {
+function claimServable(db: Database, claim: Claim): Servable {
   const type = claim.frontmatter["type"];
   return {
     id: claim.claim_id,
@@ -192,6 +201,8 @@ function claimServable(claim: Claim): Servable {
         ? [...claim.subjects]
         : [claim.subject, ...claim.subjects],
     occurred_at: claim.valid_from,
+    // A claim carries the classes of the events it cites, on every ledger.
+    classes: classesOfEvents(db, claim.provenance),
   };
 }
 
@@ -202,6 +213,7 @@ const OUT_OF_SCOPE: Record<DenyReason, string> = {
   type_out_of_scope: "the target is outside the grant",
   subject_out_of_scope: "the target is outside the grant",
   time_out_of_scope: "the target is outside the grant",
+  class_denied: "the target is outside the grant",
   held: "the target is held",
   tool_not_granted: "the target is outside the grant",
   unknown_agent: "the target is outside the grant",
@@ -212,9 +224,9 @@ const OUT_OF_SCOPE: Record<DenyReason, string> = {
   error: "the target is outside the grant",
 };
 
-export function readable(grant: Grant, claims: Claim[]): void {
+export function readable(db: Database, grant: Grant, claims: Claim[]): void {
   for (const claim of claims) {
-    const decision = authorize(grant, claimServable(claim));
+    const decision = authorize(grant, claimServable(db, claim));
     if (decision.allow) continue;
     throw new ServeError(decision.reason, OUT_OF_SCOPE[decision.reason]);
   }

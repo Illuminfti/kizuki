@@ -2,6 +2,8 @@ import type { AuditDenial } from "../agents";
 import { toolAllowed } from "../agents";
 import { compareRfc3339 } from "../agents/time";
 import { getClaim } from "../claims/store";
+import { claimReadSql } from "../claims/read-scope";
+import { instantSecondSql, instantNanoSql } from "../query/sql";
 import type { Claim } from "../contracts/proposal";
 import { readSituations } from "../world/situations";
 import type { SituationItem, SituationState } from "../world/situations";
@@ -13,7 +15,6 @@ import {
 } from "./candidates";
 import type { Piece } from "./candidates";
 import { claimReader } from "./claims";
-import { authorizedClaimSql } from "./claim-policy-sql";
 import { instantBoundPair, instantPairSql } from "../query/sql";
 import { oneLine, redactorOf } from "./redact";
 import type { Redactor } from "./redact";
@@ -197,7 +198,7 @@ function readable(
   // Keep the owner's existing bounded-window availability diagnostic. Scoped
   // windows must contain only candidates the caller may actually use.
   const scoped = ctx.principal.kind === "agent";
-  const policy = scoped ? authorizedClaimSql(ctx) : { sql: "1", bindings: [] };
+  const permitted = claimReadSql(ctx.db, reader.scope);
   const valid = scoped ? `AND ${instantPairSql("claims.valid_from")} <= (?,?) AND
     (claims.valid_to IS NULL OR ${instantPairSql("claims.valid_to")} > (?,?))` : "";
   const atPair = instantBoundPair(at, "at");
@@ -207,20 +208,15 @@ function readable(
   const requestedBindings = requested === "" ? [] : [JSON.stringify(subjects), JSON.stringify(subjects)];
   for (const row of ctx.db
     .query<{ claim_id: string }, (string | number)[]>(
-      `SELECT claim_id FROM claims WHERE status='live' AND ${where} AND ${policy.sql} ${valid} ${requested} ORDER BY asserted_at DESC, claim_id LIMIT ${CANDIDATES}`,
+      `SELECT claim_id FROM claims WHERE status='live' AND (${where}) AND ${permitted.sql} ${valid} ${requested}
+        ORDER BY ${instantSecondSql("claims.asserted_at")} DESC, ${instantNanoSql("claims.asserted_at")} DESC, claim_id DESC`,
     )
-    .iterate(...bindings, ...policy.bindings, ...(scoped ? [...atPair, ...atPair] : []), ...requestedBindings)) {
-    scanned += 1;
+    .iterate(...bindings, ...permitted.bindings, ...(scoped ? [...atPair, ...atPair] : []), ...requestedBindings)) {
     const claim = getClaim(ctx.db, row.claim_id);
-    if (
-      claim === null ||
-      !current(claim, at) ||
-      !keep(claim) ||
-      !reader.canRead(claim)
-    )
-      continue;
-    found.push(claim);
-    if (found.length === SECTION_ITEMS) break;
+    if (claim === null || !reader.canRead(claim)) continue;
+    scanned += 1;
+    if (current(claim, at) && keep(claim)) found.push(claim);
+    if (found.length === SECTION_ITEMS || scanned === CANDIDATES) break;
   }
   return { claims: found, truncated: found.length === 0 && scanned === CANDIDATES };
 }
@@ -396,6 +392,7 @@ export function collectSessionPieces(
       ctx.db,
       wanted,
       reader.canRead,
+      reader.scope,
     )) {
       // Members are re-read whole so each carries the taint and sensitivity stamps of its own text.
       const members = conflict.claims.flatMap((member) => {
@@ -426,13 +423,13 @@ export function collectSessionPieces(
         ),
       );
     }
-    for (const gap of loadSubjectGaps(ctx.db, wanted, reader.canRead)) {
+    for (const gap of loadSubjectGaps(ctx.db, wanted, reader.canRead, reader.scope)) {
       lines.push(
         piece(
           "uncertain",
           "## uncertain (contradictions and open questions)",
           `- gap key=${inline(gap.claim_key.slice(0, 12))} ${inline(redactor.text(gap.predicate ?? "-"))} unknown between ${inline(gap.after)} and ${inline(gap.before)}\n`,
-          [],
+          reader.auditGroup(gap.claim_key).map(item => item.id),
           reader,
         ),
       );

@@ -1,3 +1,5 @@
+import { createRedactor } from "./redact";
+import type { Redactor } from "./redact";
 import type { AuditDenial, AuditItem } from "../agents";
 import { compareText } from "../util/order";
 import type { CanonPage } from "../vault/pages";
@@ -36,10 +38,10 @@ export interface EntitiesArgs {
   limit?: number;
 }
 
-function matchesName(page: CanonPage, needle: string): boolean {
+function matchesName(page: CanonPage, needle: string, redactor: Redactor): boolean {
   return (
-    (stringField(page, "title") ?? "").toLowerCase().includes(needle) ||
-    (stringField(page, "x-handle") ?? "").toLowerCase().includes(needle)
+    redactor.text(stringField(page, "title") ?? "").toLowerCase().includes(needle) ||
+    redactor.text(stringField(page, "x-handle") ?? "").toLowerCase().includes(needle)
   );
 }
 
@@ -62,6 +64,8 @@ export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEM
       const rows = limit("limit", args.limit, MAX_LIMIT, DEFAULT_LIMIT);
 
       const index = loadCanon(ctx);
+      // Matching and ordering use served labels without tallying discarded candidates.
+      const preview = createRedactor(ctx.principal);
       const candidates = index.pages
         .filter((page) => {
           if (!eligible(page)) return false;
@@ -75,8 +79,8 @@ export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEM
         .sort(
           (left, right) =>
             compareText(
-              (stringField(left, "title") ?? ""),
-              (stringField(right, "title") ?? ""),
+              preview.text(stringField(left, "title") ?? ""),
+              preview.text(stringField(right, "title") ?? ""),
             ) || compareText(left.id, right.id),
         );
 
@@ -85,7 +89,7 @@ export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEM
       const admitted = candidates.flatMap(page => {
         const decision = pageDecision(index, ctx.principal.grant, page);
         if (!decision.allow) {
-          if (name === undefined || matchesName(page, name)) withheld.push({ id: page.id, reason: decision.reason });
+          if (name === undefined || matchesName(page, name, preview)) withheld.push({ id: page.id, reason: decision.reason });
           return [];
         }
         return [{ page, decision, subjects: canonSubjects(index, page) }];
@@ -94,8 +98,8 @@ export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEM
       const audit = new Map<string, AuditItem>();
       for (const { page, decision, subjects } of admitted) {
         const labels = labelsFor(projection, subjects);
-        if (name !== undefined && !matchesName(page, name) && !labels.some(label =>
-          [label.display_name, ...label.handles].some(value => value?.toLowerCase().includes(name)))) continue;
+        if (name !== undefined && !matchesName(page, name, preview) && !labels.some(label =>
+          [label.display_name, ...label.handles].some(value => value !== null && preview.text(value).toLowerCase().includes(name)))) continue;
         // The scan runs past the limit so a match withheld further down the
         // order is still counted; only the served rows stop at the limit.
         if (canon.length === rows) continue;

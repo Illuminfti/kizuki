@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
 import { serveTimeline } from "../../src/serving/timeline";
-import { serveFixture, storeEvent } from "./helpers";
+import { storeEvent } from "./helpers";
+import { credentialFixture } from "./credential-fixture";
 
 test("a variable-length token's long second line stays private after a recognizable first line", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     for (const prefix of ["sk-", "gh" + "p_", "xa" + "pp-"]) {
       const text = `${prefix}${"A".repeat(24)}\n${"B".repeat(24)}\nnext line: keep this`;
@@ -16,7 +17,7 @@ test("a variable-length token's long second line stays private after a recogniza
 });
 
 test("a complete token leaves the next line's short prose and sibling assignment intact", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const text = `gh${"p_"}${"A".repeat(36)}\nnext line\npassword=${"synthetic" + "Credential123"}`;
     const id = storeEvent(f.db, "token-next-line", "2026-02-28T10:30:00Z", text, "person:ada", "public");
@@ -27,7 +28,7 @@ test("a complete token leaves the next line's short prose and sibling assignment
 });
 
 test("PEM headers re-flowed immediately after BEGIN and END remain private", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const text = ["-----BEGIN", "PRIVATE KEY-----", "A".repeat(64), "-----END", "PRIVATE KEY-----", "next line: keep this"].join("\n");
     const id = storeEvent(f.db, "pem-delimiter-wrap", "2026-02-28T10:30:00Z", text, "person:ada", "public");
@@ -38,7 +39,7 @@ test("PEM headers re-flowed immediately after BEGIN and END remain private", asy
 });
 
 test("complete tokens on consecutive lines remain two distinct redactions", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const text = [`sk-${"A".repeat(24)}`, "gh" + `p_${"B".repeat(36)}`].join("\n");
     const id = storeEvent(f.db, "distinct-tokens", "2026-02-28T10:30:00Z", text, "person:ada", "public");
@@ -49,7 +50,7 @@ test("complete tokens on consecutive lines remain two distinct redactions", asyn
 });
 
 test("a complete token followed by a JWT keeps each credential's redaction kind", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const jwt = `eyJ${"h".repeat(24)}.${"p".repeat(12)}.${"s".repeat(12)}`;
     const text = [`sk-${"A".repeat(24)}`, jwt].join("\n");
@@ -61,7 +62,7 @@ test("a complete token followed by a JWT keeps each credential's redaction kind"
 });
 
 test("a complete token followed by a re-flowed PEM keeps both redaction kinds", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const text = [`sk-${"A".repeat(24)}`, "-----BEGIN", "PRIVATE KEY-----", "A".repeat(64), "-----END PRIVATE", "KEY-----"].join("\n");
     const id = storeEvent(f.db, "token-then-pem", "2026-02-28T10:30:00Z", text, "person:ada", "public");

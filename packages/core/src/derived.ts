@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { initPageClasses, stampPageClasses, removePageClasses } from "./canon/page-classes";
 import { reconcileCanonGraph } from "./canon/graph-maintenance";
 import {
   derivedMetaNeedsRebuild,
@@ -105,6 +106,9 @@ export function rebuildDerived(
   initSearch(db);
   initGraph(db);
   return db.transaction(() => {
+    initPageClasses(db);
+    db.exec("DELETE FROM canon_page_classes");
+    for (const page of report.pages) stampPageClasses(db, page);
     const search = rebuildSearchLayer(db, input);
     // Held inactive pages still provide aliases needed to exclude relations.
     const graph = rebuildGraphLayer(db, { ...input, pages: report.pages });
@@ -138,6 +142,7 @@ export function refreshDerivedPage(
   // Reconciliation of unrelated disk edits belongs to the normal refresh/rebuild.
   if (scope !== undefined) {
     db.transaction(() => {
+      stampPageClasses(db, page);
       replacePage(db, page);
       if (graphRegistryReady(db)) {
         const changed = graphEvidenceChanges(db).length > 0;
@@ -152,6 +157,7 @@ export function refreshDerivedPage(
   const signatures = scanCanonSignatures(vaultPath);
   const report = graphRegistryCurrent(db, signatures, page) ? null : listCanonPagesReport(vaultPath);
   db.transaction(() => {
+    stampPageClasses(db, page);
     replacePage(db, page);
     if (report === null) refreshRegisteredPage(db, page, signatures);
     else refreshPageEdges(db, page, report.pages, report.skipped.length, report.signatures);
@@ -169,6 +175,7 @@ export function removeDerivedPage(
   initGraph(db);
   if (scope !== undefined) {
     db.transaction(() => {
+      removePageClasses(db, pageId);
       removeDoc(db, "canon", pageId);
       if (graphRegistryReady(db)) {
         const changed = graphEvidenceChanges(db).length > 0;
@@ -183,6 +190,7 @@ export function removeDerivedPage(
   const signatures = scanCanonSignatures(vaultPath);
   const report = graphRegistryCurrent(db, signatures, { id: pageId }) ? null : listCanonPagesReport(vaultPath);
   db.transaction(() => {
+    removePageClasses(db, pageId);
     removeDoc(db, "canon", pageId);
     if (report === null) removeRegisteredPage(db, pageId);
     else removePageEdges(db, pageId, report.pages, report.skipped.length, report.signatures);

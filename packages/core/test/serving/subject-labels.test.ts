@@ -266,7 +266,7 @@ test('quoted identity raises a clean canonical aggregate taint without rewriting
   expect(readFileSync(join(f.vault, base.receipt.page_path))).toEqual(bytes);
 });
 
-test('denied rows may exhaust optional enrichment quota but only generic degradation reaches the reader', async () => {
+test('denied rows do not consume the readable label quota', async () => {
   const f = fixture();
   // Unknown connectors default private even when a model asks for public.
   // This synthetic connector explicitly declares the intended public baseline.
@@ -277,10 +277,10 @@ test('denied rows may exhaust optional enrichment quota but only generic degrada
   expect(serveEntities(ctx, { name: LABEL })).toMatchObject({ canon: [expect.objectContaining({ subject_labels: expect.any(Array) })] });
   for (let i = 0; i < 33; i++) await writeIdentity(f.io, { written: false, sensitivity: 'private', predicate: 'identity.handle_on', object: `@HIDDEN_QUOTA_${i}` });
   const result = serveEntities(ctx, {});
-  expect(result.canon).toHaveLength(1); expect(result.canon[0]?.subject_labels).toBeUndefined();
-  expect(result.data).toEqual({ degraded: ['subject-labels-overflow'] });
+  expect(result.canon).toHaveLength(1); expect(result.canon[0]?.subject_labels?.[0]?.display_name).toBe(LABEL);
+  expect(result.data).toBeUndefined();
   expect(result.canon[0]?.sources).toContain(first.event);
-  expect(serveEntities(ctx, { name: LABEL }).canon).toHaveLength(0);
+  expect(serveEntities(ctx, { name: LABEL }).canon).toHaveLength(1);
   expect(JSON.stringify(result)).not.toContain('HIDDEN_QUOTA');
   expect(result.denied).toEqual([]);
 });

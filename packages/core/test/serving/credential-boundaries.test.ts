@@ -12,7 +12,8 @@ import { createRedactor } from "../../src/serving/redact";
 import type { Redactor } from "../../src/serving/redact";
 import type { Envelope } from "../../src/serving/types";
 import { claimInput } from "../claims/helpers";
-import { serveFixture, storeEvent } from "./helpers";
+import { storeEvent } from "./helpers";
+import { credentialFixture } from "./credential-fixture";
 
 setDefaultTimeout(120_000);
 
@@ -26,7 +27,7 @@ const ZWSP = c(0x200b);
 
 
 test("a scoped agent cannot lift a working Kizuki credential out of captured text", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     // A broader agent's real token, minted in this temporary ledger, pasted into a capture.
     const victim = addAgent(f.db, "owner-harness", { ...OWNER_AGENT_GRANT });
@@ -146,7 +147,7 @@ const SHAPES: { name: string; text: string; marker: string; control?: true }[] =
   ];
 
 test("credential shapes are not served to a scoped agent", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const eventId = storeEvent(
       f.db,
@@ -183,7 +184,7 @@ const WRAPPED: { name: string; text: string; marker: string }[] = [
 ];
 
 test("credentials wrapped, re-flowed or encoded are not served to a scoped agent", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const eventId = storeEvent(f.db, "rec-wrapped", "2026-02-28T10:33:30Z", WRAPPED.map((shape) => shape.text).join("\n\n"), "person:ada", "public");
     const answer = (await dispatchServeTool(f.agent("reader-public"), "timeline", { event_id: eventId, span: 2000 })) as Envelope<unknown>;
@@ -198,7 +199,7 @@ test("credentials wrapped, re-flowed or encoded are not served to a scoped agent
 
 
 test("the integrity digest does not confirm a guess at a redacted value", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const password = "sunshine2024";
     const eventId = storeEvent(
@@ -239,7 +240,7 @@ test("the integrity digest does not confirm a guess at a redacted value", async 
 
 
 test("serving a preview scrubs a bounded amount of text, not the whole capture", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     for (let index = 0; index < 6; index += 1) {
       storeEvent(
@@ -289,7 +290,7 @@ const RECALL = {
 };
 
 test("terminal escape sequences in a capture do not reach packet text", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     storeEvent(
       f.db,
@@ -312,7 +313,7 @@ test("terminal escape sequences in a capture do not reach packet text", async ()
 });
 
 test("a capture cannot close the wrapper the harness puts around the packet", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     storeEvent(
       f.db,
@@ -331,7 +332,7 @@ test("a capture cannot close the wrapper the harness puts around the packet", as
 });
 
 test("variation-selector payloads are stripped like tag characters", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     // ASCII carried as variation selectors after a visible emoji: it renders as one emoji.
     const carry = (text: string): string =>
@@ -354,7 +355,7 @@ test("variation-selector payloads are stripped like tag characters", async () =>
 });
 
 test("the redacted count reports one replaced span as one", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const eventId = storeEvent(f.db, "rec-one-secret", "2026-02-28T10:38:00Z", `one secret DB_PASSWORD=${["abcdefgh", "1234"].join("")} only`, "person:ada", "public");
     const answer = (await dispatchServeTool(f.agent("reader-public"), "timeline", { event_id: eventId, span: 500 })) as Envelope<unknown>;
@@ -367,7 +368,7 @@ test("the redacted count reports one replaced span as one", async () => {
 
 
 test("an unterminated PEM field cannot consume later claims", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     for (const [index, subject] of ["person:a1", ["-----BEGIN", "X-----"].join(" "), "person:a3", "person:a4"].entries()) {
       await insertClaim({ db: f.db }, claimInput(f.events["public"]!, {
@@ -383,7 +384,7 @@ test("an unterminated PEM field cannot consume later claims", async () => {
 });
 
 test("agent task pins bind scrubbed text and count the secret once", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const text = `kizuki.task/v1\nconstraint: preserve receipts password=${"p".repeat(12)}`;
     const id = storeEvent(f.db, "task-secret", "2026-02-28T10:00:00Z", text, "person:ada", "public");
@@ -397,7 +398,7 @@ test("agent task pins bind scrubbed text and count the secret once", async () =>
 });
 
 test("agent correction receipt hashes cannot confirm raw canon secret guesses", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     const filed = await insertClaim({ db: f.db }, claimInput(f.events["public"]!, {
       subject: "person:ada", subjects: ["person:ada"], predicate: "tool.uses", object: "old-tool",

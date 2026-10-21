@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
 import { serveTimeline } from "../../src/serving/timeline";
-import { serveFixture, storeEvent } from "./helpers";
+import { storeEvent } from "./helpers";
+import { credentialFixture } from "./credential-fixture";
 
 test("a wrapped variable-length token with a short or long final fragment is redacted whole", async () => {
-  const f = await serveFixture();
+  const f = await credentialFixture();
   try {
     for (const length of [1, 12, 600]) {
       const text = `sk-${"A".repeat(24)}\n${"B".repeat(length)}\nnext line: keep this`;
