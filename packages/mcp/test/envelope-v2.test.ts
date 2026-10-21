@@ -5,6 +5,7 @@ import { worldSeed } from "../../core/test/helpers/world-seed";
 import { envelopeOf } from "./client";
 import type { ToolCallResult } from "./client";
 import { twoClients } from "./helpers/two-clients";
+import { envelopeV2For } from "../src/schemas";
 
 setDefaultTimeout(120_000);
 const KEYS = ["at", "canon", "data", "principal", "quoted", "schema", "tool"];
@@ -92,4 +93,39 @@ test("stdio negotiates explicit contracts and audits selector refusals before to
       expect(clients.audit().agent).toHaveLength(count + 1);
     }
   } finally { await clients.close(); }
+});
+
+test("stdio packet v2 preserves authorized unit witnesses and validates their exact bounds", async () => {
+  for (const floor of ["public", "private"] as const) {
+    const clients = await twoClients({ seed: { floor, kind: "situation", subject: "project:launch", label: "Launch",
+      purposes: ["capture", "derive", "recall", "session"] },
+      agent: { tools: ["context_packet", "world_view"], subjects: null, deny_classes: [] } });
+    try {
+      const reply = await clients.agent.call("context_packet", { purpose: "session", query: "Launch", budget_tokens: 2000 });
+      expect(reply.isError).not.toBe(true);
+      const envelope = envelopeOf(reply);
+      const packet = envelope.data as { result: { status: string; data: { servedUnits: number; coverage: { gaps: string[] } } } };
+      expect(packet.result.status).not.toBe("unchanged");
+      if (floor === "public") expect(packet.result.data.servedUnits).toBeGreaterThan(0);
+      else expect(packet.result.data.servedUnits).toBe(0);
+      const schema = envelopeV2For("context_packet");
+      expect(schema.safeParse(envelope).success).toBe(true);
+      for (const servedUnits of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, undefined]) {
+        const invalid = structuredClone(envelope) as typeof envelope & { data: typeof packet };
+        invalid.data.result.data.servedUnits = servedUnits as number;
+        expect(schema.safeParse(invalid).success).toBe(false);
+      }
+      // Storage is a packet fallback diagnostic, not a World Slice coverage gap.
+      const fallback = {
+        ...envelope,
+        data: { schema: "kizuki.context-packet/v2", result: {
+          status: "incomplete", data: packet.result.data, reasons: ["storage"],
+        } },
+      };
+      expect(schema.safeParse(fallback).success).toBe(true);
+      const invalidCoverage = structuredClone(fallback);
+      invalidCoverage.data.result.data.coverage.gaps = ["storage"];
+      expect(schema.safeParse(invalidCoverage).success).toBe(false);
+    } finally { await clients.close(); }
+  }
 });
