@@ -1,3 +1,4 @@
+import { attentionOp } from "./attention";
 import { personOp } from "./person";
 import { findPeopleOp } from "./find-people";
 import { historyOp } from "./history";
@@ -88,6 +89,7 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   // slot: DIFF
   // slot: SLICE
   // slot: ATTN
+  attentionOp,
   // slot: FCST
   // slot: ATLAS
 ];

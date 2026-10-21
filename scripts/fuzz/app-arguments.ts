@@ -45,6 +45,10 @@ export function appEnvelopes(world: AppWorld): Record<AppRoute, Envelope[]> {
     capture: [{ source_key: world.source, mode: "backfill" }],
     query: [{ text: "synthetic", limit: 5 }],
     activity: [{ limit: 5 }],
+    attention_disposition: [
+      { cue: WORLD_TOKEN, action: "dismiss" },
+      { cue: WORLD_TOKEN, action: "snooze", until: "2026-12-31T00:00:00.000Z" },
+    ],
     undo: [{ receipt_id: "synthetic-receipt", cascade: false }],
     operation: [{ id: "synthetic-operation" }],
     revoke: [{ source_key: UNENROLLED, expected_revision: 0, operation_id: operation_id() }],

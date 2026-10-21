@@ -807,11 +807,31 @@ function worldRelation(relation) {
   const qualifiers = [relation.polarity === 'negative' ? 'Negated statement' : null, modes[relation.perspective?.mode]].filter(Boolean);
   return el('div', { class: 'belief-details' }, el('h3', {}, labels[relation.predicate] || 'Supporting statement'), qualifiers.length ? el('p', {}, qualifiers.join(' · ')) : null, el('p', { class: 'result-text' }, worldObjectText(relation)), el('p', {}, worldAssessmentText(relation)));
 }
+function renderAttention(data) {
+  const reason = { quiet: 'No material change needs your attention.', missing_coverage: 'Some source history is missing. Kizuki cannot call this quiet.', stale_consolidation: 'Summaries are behind the evidence. Delivery is waiting.', provider_failure: 'A provider is unavailable or failed. Delivery is waiting.' };
+  return el('div', {}, el('p', {}, 'Dismiss or snooze a cue without changing the supporting facts.'), ...data.states.map(item => {
+    if (item.state !== 'candidate') return el('p', { role: 'status' }, reason[item.state] || 'Attention is unavailable.');
+    const label = { blocker: 'A goal has a blocker', uncertainty: 'A goal has unresolved uncertainty', commitment_due: 'A commitment is due', stale_summary: 'A goal summary is behind' };
+    return el('article', { class: 'result-item' }, el('h2', {}, label[item.source] || 'Attention cue'),
+      el('p', {}, item.disposition === 'dismissed' ? 'Dismissed' : item.disposition === 'snoozed' ? `Snoozed until ${item.snoozedUntil}` : 'Available to inspect'),
+      button('View supporting situation', () => { state.worldKind = 'situations'; loadWorld(item.subject); }, 'secondary'),
+      button('Dismiss', () => changeAttention(item.cue, 'dismiss'), 'quiet', { disabled: item.disposition === 'dismissed' }),
+      button('Snooze for a day', () => changeAttention(item.cue, 'snooze'), 'quiet'));
+  }), worldCoverage(data.coverage));
+}
+async function changeAttention(cue, action) {
+  const session = bearer, generation = privacyGeneration, epoch = state.status?.visibility_epoch;
+  const current = () => session === bearer && generation === privacyGeneration && epoch === state.status?.visibility_epoch && privateViewValid;
+  try {
+    await api('attention_disposition', { cue, action, ...(action === 'snooze' ? { until: new Date(Date.now() + 86400000).toISOString() } : {}) });
+    if (current() && state.worldKind === 'attention') await loadWorld(null);
+  } catch (error) { if (current() && error?.code !== 'stale_response') message('The cue changed or could not be updated. Read attention again.'); }
+}
 function renderWorld() {
   const kind = state.worldKind, field = el('input', { id: 'world-query', type: 'search', placeholder: `Find ${kind}…`, 'aria-label': `Find ${kind}`, autocomplete: 'off' }); field.value = state.worldQuery;
   const choose = value => { state.worldKind = value; loadWorld(null); };
   const form = el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); state.worldQuery = field.value; loadWorld(null); } }, icon('search'), field, el('button', { class: 'button button-primary', type: 'submit' }, 'Find'));
-  const section = el('section', { 'aria-busy': state.worldLoading ? 'true' : 'false' }, heading('Your world.', 'Ideas and ongoing situations, connected to the information you save.'), el('div', { class: 'world-tabs', role: 'group', 'aria-label': 'World type' }, button('Concepts', () => choose('concepts'), state.worldKind === 'concepts' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'concepts' }), button('Situations', () => choose('situations'), state.worldKind === 'situations' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'situations' })), form, el('p', { class: 'search-hint' }, 'Kizuki uses your configured model to organise sources you allow it to read. You can always search saved sources without a model.'));
+  const section = el('section', { 'aria-busy': state.worldLoading ? 'true' : 'false' }, heading('Your world.', 'Ideas and ongoing situations, connected to the information you save.'), el('div', { class: 'world-tabs', role: 'group', 'aria-label': 'World type' }, button('Attention', () => choose('attention'), state.worldKind === 'attention' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'attention' }), button('Concepts', () => choose('concepts'), state.worldKind === 'concepts' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'concepts' }), button('Situations', () => choose('situations'), state.worldKind === 'situations' ? 'primary' : 'secondary', { 'aria-pressed': state.worldKind === 'situations' })), kind === 'attention' ? null : form, el('p', { class: 'search-hint' }, 'Kizuki uses your configured model to organise sources you allow it to read. You can always search saved sources without a model.'));
   const resumeField = el('input', { type: 'text', placeholder: 'Resume handle', 'aria-label': 'Resume handle', maxlength: '43', autocomplete: 'off' });
   section.append(el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); loadWorld(null, { operation: 'resume', handle: resumeField.value.trim() }); } }, resumeField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Resume')));
   const retry = () => loadWorld();
@@ -829,7 +849,9 @@ function renderWorld() {
     else {
       if (result.status === 'unchanged') section.append(el('p', { role: 'status' }, 'No visible change since your previous read.'));
       const data = result.data, matches = Array.isArray(data?.matches) ? data.matches : null;
-      if (matches !== null) {
+      if (data?.schema === 'kizuki.attention/v1') {
+        section.append(renderAttention(data));
+      } else if (matches !== null) {
         section.append(matches.length ? el('div', { class: 'result-list' }, ...matches.map(item => el('article', { class: 'result-item' }, el('h3', {}, Array.isArray(item.labels) && item.labels[0] ? item.labels[0] : 'Untitled'), button('View details', () => loadWorld(item.ref), 'quiet')))) : noMatches());
         const coverage = worldCoverage(data.coverage); if (coverage) section.append(coverage);
       } else {
@@ -855,10 +877,10 @@ function renderWorld() {
 async function loadWorld(ref = state.worldRef, request = null) {
   const sequence = ++worldSequence, session = bearer, generation = privacyGeneration, epoch = state.status?.visibility_epoch;
   const current = () => sequence === worldSequence && session === bearer && generation === privacyGeneration && epoch === state.status?.visibility_epoch && privateViewValid;
-  const operation = ref ? (state.worldKind === 'concepts' ? 'concept' : 'situation') : (state.worldKind === 'concepts' ? 'find_concepts' : 'find_situations');
+  const operation = state.worldKind === 'attention' ? 'attention' : ref ? (state.worldKind === 'concepts' ? 'concept' : 'situation') : (state.worldKind === 'concepts' ? 'find_concepts' : 'find_situations');
   const previous = state.world;
   const prior = !request && previous?.operation === operation && ref && state.worldRef?.token === ref.token && previous?.result?.data && previous?.result?.view?.kind === 'view' ? previous.result.view : null;
-  const payload = { ...(request || { operation, ...(ref ? { [operation]: ref } : { label: state.worldQuery }) }), ...(prior ? { priorView: prior } : {}), valid: { kind: 'all' }, knownAt: { kind: 'current' } };
+  const payload = { ...(request || { operation, ...(operation === 'attention' ? {} : ref ? { [operation]: ref } : { label: state.worldQuery }) }), ...(prior ? { priorView: prior } : {}), valid: { kind: 'all' }, knownAt: { kind: 'current' } };
   state.worldRef = ref; state.world = null; state.worldError = false; state.worldLoading = true;
   if (state.view === 'world') render();
   try {

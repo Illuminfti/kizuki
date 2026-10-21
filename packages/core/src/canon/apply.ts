@@ -727,12 +727,20 @@ export function applyPurgeRewrite(
   }
   const prior = existingSources(existing.page);
   const purgedEvents = new Set(input.purged_event_ids.map(eventIdFromReference));
-  const remainingSources = prior.filter(
+  // A deterministic cue describes one exact evidence basis. Removing any of
+  // that basis invalidates the entire delivery, including its opaque cue key;
+  // generic claim-fragment redaction cannot reconstruct a remaining cue.
+  const attentionKey = existing.page.data["x-attention-cue"];
+  const eraseAttention = typeof attentionKey === "string" && /^[A-Za-z0-9_-]{43}$/.test(attentionKey) &&
+    existing.page.data["x-attention-producer"] === "deterministic" && existing.page.data["type"] === "rollup" &&
+    existing.page.data["id"] === `rollup:attention-${attentionKey}` && input.rel_path === `dashboards/attention-${attentionKey}.md` &&
+    prior.some(source => purgedEvents.has(eventIdFromReference(source)));
+  const remainingSources = eraseAttention ? [] : prior.filter(
     (source) => !purgedEvents.has(eventIdFromReference(source)),
   );
   const body =
     input.source_erasure === undefined
-      ? redactBody(existing.page.body, input.purged_claim_bodies)
+      ? eraseAttention ? "" : redactBody(existing.page.body, input.purged_claim_bodies)
       : (input.source_erasure.page?.body ?? "");
   const nothingRemains =
     input.source_erasure === undefined
@@ -749,6 +757,7 @@ export function applyPurgeRewrite(
       ? remainingSources
       : (input.source_erasure.page?.data["sources"] ?? []);
   if (nothingRemains) data["status"] = "archived";
+  if (eraseAttention) { delete data["x-attention-cue"]; delete data["x-attention-producer"]; }
 
   const priorSensitivity = existing.page.data["sensitivity"];
   const sensitivity = isSensitivity(priorSensitivity)

@@ -1,3 +1,4 @@
+import { attentionFragment } from "./attention";
 import { personFragment, findPeopleFragment } from "./person";
 import { historyFragment } from "./history";
 import { conceptFragment } from "./concept";
@@ -34,6 +35,7 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   // slot: DIFF
   // slot: SLICE
   // slot: ATTN
+  attentionFragment,
   // slot: FCST
   // slot: ATLAS
 ];

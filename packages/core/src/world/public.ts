@@ -65,3 +65,6 @@ export { verifyWorldCopy } from "./verify";
 export type { WorldIntegrityReport } from "./verify";
 export type { SourceCoverageReport } from "./coverage";
 export type { ScanCoverage, PassCoverage } from "../contracts/source-coverage";
+
+export * from "../contracts/attention";
+export { setAttentionDisposition } from "./attention/state";

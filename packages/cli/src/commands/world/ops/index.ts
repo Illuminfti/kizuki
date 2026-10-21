@@ -1,3 +1,4 @@
+import { attentionCli } from "./attention";
 import { personCli, findPeopleCli } from "./person";
 import { historyCli } from "./history";
 import { conceptCli } from "./concept";
@@ -34,6 +35,7 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   // slot: DIFF
   // slot: SLICE
   // slot: ATTN
+  { name: "attention", cli: attentionCli },
   // slot: FCST
   // slot: ATLAS
 ];

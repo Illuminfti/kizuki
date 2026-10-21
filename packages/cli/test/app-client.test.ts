@@ -70,6 +70,41 @@ function fixture() {
 }
 const status = (operations: unknown[] = [], epoch = '1') => ({ vault: { ready: true }, visibility_epoch: epoch, operations });
 
+import { attentionFixture } from '../../core/test/helpers/attention-fixture';
+import { createAppHost } from '../src/app/host';
+test('real Attention response renders shipped buttons and writes only owner dispositions', async () => {
+    const memory = await attentionFixture(), helpers = createHelpers(), env = helpers.isolatedEnv({ KIZUKI_VAULT: memory.vault.path });
+    const initialized = helpers.runCli(env, 'init', memory.vault.path, '--no-service');
+    expect(initialized.exitCode, initialized.stderr).toBe(0);
+    const host = createAppHost({ env, vaultOverride: memory.vault.path, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out() {}, err() {}, prompt: async () => '' });
+    const client = fixture(), all = (node: Element): Element[] => [node, ...node.children.flatMap(all)];
+    async function respond(route: string) {
+        const request = client.requests.find(item => item.route === route)!;
+        const response = await host.handle(new Request(`http://127.0.0.1/app/v1/${route}`, { method: 'POST', body: JSON.stringify(request.payload) }));
+        const value = await response.json() as { ok: boolean; data: unknown };
+        expect(value.ok).toBe(true); client.reply(route, value.data); await tick();
+    }
+    try {
+        const before = memory.db.query('SELECT claim_id,confidence,status FROM claims ORDER BY claim_id').all();
+        const loaded = client.evaluate<Promise<void>>(`state.view='world'; state.worldKind='attention'; loadWorld(null);`);
+        await respond('world_view'); await loaded;
+        expect(client.main.textContent).toContain('A goal has a blocker');
+        expect(client.main.querySelector('#world-query')).toBeNull();
+        const dismiss = all(client.main).find(node => node.tag === 'button' && node.textContent === 'Dismiss')!;
+        const clicked = dismiss.fire('click'); await respond('attention_disposition'); await respond('world_view'); await clicked;
+        expect(client.main.textContent).toContain('Dismissed'); expect(memory.candidates()[0]!.disposition).toBe('dismissed');
+        const snooze = all(client.main).find(node => node.tag === 'button' && node.textContent === 'Snooze for a day')!;
+        const snoozed = snooze.fire('click'); await respond('attention_disposition'); await respond('world_view'); await snoozed;
+        expect(client.main.textContent).toContain('Snoozed until'); expect(memory.candidates()[0]!.disposition).toBe('snoozed');
+        expect(memory.db.query('SELECT claim_id,confidence,status FROM claims ORDER BY claim_id').all()).toEqual(before);
+        const stale = client.evaluate<Promise<void>>(`changeAttention(${JSON.stringify(memory.candidates()[0]!.cue)}, 'dismiss')`);
+        client.evaluate('invalidatePrivateView()'); await respond('attention_disposition'); await stale;
+        expect(client.main.textContent).not.toContain('A goal has a blocker');
+        expect(client.requests.filter(item => item.route === 'world_view')).toHaveLength(0);
+        expect(client.storageWrites).toHaveLength(0);
+    } finally { await host.close(); memory.dispose(); helpers.cleanup(); }
+}, 120_000);
+
 test('dialog initial focus skips hidden controls and hidden containers', () => {
     for (const nested of [false, true]) {
         const f = fixture();
