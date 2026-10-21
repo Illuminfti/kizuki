@@ -25,6 +25,15 @@ import {parseWorldAdmission} from "../../src/contracts/world-admission";
 import {insertClaim} from "../../src/claims/store";
 import {worldReceiptChain} from "../../src/canon/receipts";
 
+function quoteIdentifier(name: string): string {
+ return `"${name.replaceAll('"', '""')}"`;
+}
+
+function dropTriggersReferencing(db: Database, table: string): void {
+ const triggers=db.query<{name:string},[string,string]>("SELECT name FROM sqlite_master WHERE type='trigger' AND (tbl_name=? OR sql LIKE '%' || ? || '%')").all(table,table);
+ for(const {name} of triggers)db.exec(`DROP TRIGGER ${quoteIdentifier(name)}`);
+}
+
 test("typed reads use the actual relay grant and reject source withdrawal",async()=>{
  const f=canonFixture();try {
   initSearch(f.db);initGraph(f.db);
@@ -51,6 +60,8 @@ test("migration failure rolls back table rebuild and restores foreign-key enforc
   ensureLedgerSchema(db);
   db.exec("PRAGMA foreign_keys=OFF");
   db.exec("DROP TRIGGER canon_body_receipt_changed; DROP TRIGGER canon_body_receipt_deleted; DROP TRIGGER canon_body_intent_deleted; DROP TABLE canon_machine_body_images");
+  // The v32 fixture predates claim-history triggers that cite canon receipts.
+  dropTriggersReferencing(db,"canon_receipts");
   db.exec("DROP TABLE canon_receipts");applyCanonV4(db);
   db.exec("UPDATE schema_version SET version=32");
   db.exec("CREATE TABLE review_child(receipt_id TEXT REFERENCES canon_receipts(receipt_id) ON DELETE RESTRICT)");

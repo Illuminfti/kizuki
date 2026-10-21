@@ -13,6 +13,19 @@ import { createBudgetTracker } from "../src/canon/budget";
 import { initVault } from "../src/vault/init";
 import type { ProducerPort } from "../src/contracts/producer";
 
+function quoteIdentifier(name: string): string {
+  return `"${name.replaceAll('"', '""')}"`;
+}
+
+function dropCurrentTriggersReferencing(db: Database, tables: readonly string[]): void {
+  const condition = tables.map(() => "(tbl_name=? OR sql LIKE '%' || ? || '%')").join(" OR ");
+  const args = tables.flatMap((table) => [table, table]);
+  const triggers = db.query<{ name: string }, string[]>(
+    `SELECT name FROM sqlite_master WHERE type='trigger' AND (${condition})`,
+  ).all(...args);
+  for (const { name } of triggers) db.exec(`DROP TRIGGER ${quoteIdentifier(name)}`);
+}
+
 function legacyFixture(size = 1) {
   const root = mkdtempSync(join(tmpdir(), "kizuki-event-v15-"));
   const path = join(root, "ledger.sqlite");
@@ -24,20 +37,42 @@ function legacyFixture(size = 1) {
     if (stored.status !== "stored") throw new Error("fixture event failed");
     db.query("UPDATE events SET content_hash=? WHERE event_id=?").run(computeLegacyContentHash(input), stored.event.event_id);
   }
+  // The checked-in v15 fixture has no triggers. Remove only current triggers
+  // that reference tables reconstructed below, so later-world guards cannot
+  // obstruct the faithful v15 shape.
+  db.exec("PRAGMA foreign_keys=OFF");
+  dropCurrentTriggersReferencing(db, [
+    "agent_enrollments",
+    "canon_machine_body_images",
+    "canon_machine_byte_intents",
+    "canon_projection_obligations",
+    "canon_projection_sources",
+    "canon_read_generation",
+    "canon_source_survivor_lineage",
+    "canon_write_intent_sources",
+    "canon_write_intents",
+    "events",
+    "native_owner_evidence",
+    "purge_batch_receipts",
+    "purge_batches",
+    "rail_cursors",
+  ]);
+  // SQLite rebuilds `native_owner_evidence` for DROP COLUMN. Do that while
+  // its legacy event parent still exists; the v15 event swap follows it.
+  db.exec("ALTER TABLE native_owner_evidence DROP COLUMN event_content_hash");
   db.exec(`
-    DROP TRIGGER canon_body_receipt_changed; DROP TRIGGER canon_body_receipt_deleted; DROP TRIGGER canon_body_intent_deleted;
+    DROP TRIGGER IF EXISTS canon_body_receipt_changed; DROP TRIGGER IF EXISTS canon_body_receipt_deleted; DROP TRIGGER IF EXISTS canon_body_intent_deleted;
     DROP TABLE canon_machine_body_images;
     DROP TABLE canon_projection_sources; DROP TABLE canon_projection_obligations; DROP TABLE canon_write_intent_sources; DROP TABLE canon_write_intents; DROP TABLE canon_read_generation;
     DROP TABLE canon_source_survivor_lineage;
     DROP TABLE purge_batch_receipts;
     DROP TABLE purge_batches;
-    DROP TRIGGER agent_enrollments_block_legacy_agent_insert;
-    DROP TRIGGER agent_enrollments_block_token_update;
+    DROP TRIGGER IF EXISTS agent_enrollments_block_legacy_agent_insert;
+    DROP TRIGGER IF EXISTS agent_enrollments_block_token_update;
     DROP TABLE agent_enrollments;
-    DROP TRIGGER events_identity_insert;
-    DROP TRIGGER canon_loop_hash_insert; DROP TRIGGER canon_loop_hash_update;
-    DROP TRIGGER native_owner_hash_insert; DROP TRIGGER native_owner_hash_update;
-    ALTER TABLE native_owner_evidence DROP COLUMN event_content_hash;
+    DROP TRIGGER IF EXISTS events_identity_insert;
+    DROP TRIGGER IF EXISTS canon_loop_hash_insert; DROP TRIGGER IF EXISTS canon_loop_hash_update;
+    DROP TRIGGER IF EXISTS native_owner_hash_insert; DROP TRIGGER IF EXISTS native_owner_hash_update;
     DROP INDEX canon_loop_before_hash; DROP INDEX canon_loop_after_hash;
     DROP TABLE canon_machine_byte_intents;
     ALTER TABLE events DROP COLUMN content_hash_version;

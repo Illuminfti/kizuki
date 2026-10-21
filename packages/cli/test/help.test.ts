@@ -267,7 +267,7 @@ describe("help", () => {
         "--since": "TIME",
         "--until": "TIME",
         "--response-contract": "kizuki.envelope/v1|kizuki.envelope/v2",
-        "--mode": "replace_object|retract|reclassify_mode",
+        "--mode": "replace_object|retract|reclassify_mode|merge_identity|separate_identity",
         "--perspective-mode": "suggested|hypothetical|questioned",
       });
       expect(body.data.irreversible).toBe(false);

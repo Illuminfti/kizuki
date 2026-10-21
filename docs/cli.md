@@ -831,6 +831,17 @@ TUI. The actual change appears first with compact trust details; `d` reveals
 full receipt hashes and provenance. Command filters apply throughout paging
 and reloads. The only effect that TUI may emit is `undo`.
 
+## attention
+
+```text
+usage: kizuki attention [--json] | attention dismiss CUE [--json] | attention snooze CUE --until TIME [--json]
+```
+
+Read goal-aware attention cues, dismiss one cue, or snooze it until an RFC3339
+time within the next year. Dismissal and snoozing change attention disposition;
+they do not change the underlying claims or authorize an action. `--json`
+returns the same result as a structured envelope.
+
 ## serve
 
 ```text
