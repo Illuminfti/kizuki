@@ -62,7 +62,7 @@ describe("omitted evidence expansion", () => {
     });
     if (!("quoted" in envelope)) throw new Error("expected a timeline envelope");
     expect(envelope.quoted).toHaveLength(1);
-    expect(envelope.quoted[0]?.text).toBe(OMITTED);
+    expect(envelope.quoted.find(chunk => "event_id" in chunk)?.text).toBe(OMITTED);
     expect(envelope.quoted[0]?.tainted).toBe(true);
     expect(envelope.data).toEqual({
       integrity: sha256(fullText),
@@ -80,7 +80,7 @@ describe("omitted evidence expansion", () => {
       offset: 0,
       span: 1,
     });
-    expect(envelope.quoted[0]?.text).toBe("🙂");
+    expect(envelope.quoted.find(chunk => "event_id" in chunk)?.text).toBe("🙂");
     expect(envelope.data?.truncated).toBe(true);
     expect(envelope.data?.returned).toBe(1);
   });

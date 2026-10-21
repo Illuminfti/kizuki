@@ -19,6 +19,7 @@ import type { ServeContext } from "../../serving/types";
 import type { WorldValidQuery } from "../../serving/world-view";
 import { canonicalJson } from "../../util/hash";
 import { assertionEndpoints } from "../allocation";
+import { heldUntilCorroborated } from "../corroboration";
 import { authorizedSupportSql } from "../policy-sql";
 import { handleFor } from "../relation";
 import { charge, type ReadBudget } from "./frame";
@@ -256,6 +257,10 @@ export function eligibleWorldClaim(
     }
     supports.push({ row, admission, events });
   }
+  // Current reads hold model authority claims until their permitted support
+  // corroborates them. Historical validation still verifies the recorded basis.
+  if (!options.historical && supports.length > 0 &&
+      heldUntilCorroborated(ctx.db, claimId, permitted)) return null;
   return supports.length === 0
     ? null
     : {
