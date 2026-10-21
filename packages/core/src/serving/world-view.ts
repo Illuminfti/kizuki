@@ -2,6 +2,10 @@ import type { PersonCard } from "../contracts/person-card";
 import { resolvePrincipal, toolAllowed, type Principal } from "../agents";
 import { tableExists } from "../ledger/schema";
 import type { HistoryPage } from "../contracts/world-history";
+import type { ProcedureCard } from "../contracts/procedure-card";
+import type { FrameworkCard } from "../contracts/framework-card";
+import type { SkillCard } from "../contracts/skill-card";
+import type { OutcomeCard } from "../contracts/outcome-card";
 import type { QuestionCard } from "../contracts/question-card";
 import type { Frontier } from "../world/ops/frontier";
 import type { WorldMatches } from "../world/pipeline/assemble";
@@ -91,12 +95,24 @@ export type WorldReadInput =
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
     }
+  | { readonly operation: "find_procedures"; readonly label?: string; readonly cursor?: string; readonly about?: WorldObjectRef;
+      readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "procedure"; readonly procedure: WorldObjectRef;
+      readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "skill"; readonly skill: WorldObjectRef;
+      readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "framework"; readonly framework: WorldObjectRef;
+      readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "outcome"; readonly subject: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "describe" }
   | {
       readonly operation: "share";
       readonly of:
         | { readonly operation: "concept"; readonly concept: WorldObjectRef }
-        | { readonly operation: "situation"; readonly situation: WorldObjectRef };
+        | { readonly operation: "situation"; readonly situation: WorldObjectRef }
+        | { readonly operation: "procedure"; readonly procedure: WorldObjectRef }
+        | { readonly operation: "skill"; readonly skill: WorldObjectRef }
+        | { readonly operation: "framework"; readonly framework: WorldObjectRef };
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
     }
@@ -113,6 +129,8 @@ export type WorldData =
   | ConceptCard
   | PersonCard
   | QuestionCard
+  | ProcedureCard | FrameworkCard | SkillCard | OutcomeCard
+  | WorldMatches<"kizuki.procedure-matches/v1">
   | Frontier
   | WorldMatches<"kizuki.person-matches/v1">
   | WorldMatches<"kizuki.question-matches/v1">

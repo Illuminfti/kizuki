@@ -1,5 +1,6 @@
 import { collectSituationDetails } from "../situation-v2";
 import { SITUATION_CARD_V2_SCHEMA } from "../../contracts/situation-card-v2";
+import { assertFrameworkAcyclic } from "../framework-cycles";
 import type { WorldKindSpec } from "../../contracts/world-kinds";
 import { activeWorldRegistry } from "../../contracts/world-vocabulary";
 import { KIND_ASSEMBLERS } from "../kinds";
@@ -92,6 +93,7 @@ export function readWorldCard(
   const cluster = group(frame, handle, stages.groupers);
   const collection = collectCard(frame, cluster, kind, stages.collectors);
   if (collection === null) return null;
+  if (kindId === "framework") assertFrameworkAcyclic(frame, handle);
   let body = enrich(frame, collection.items, stages.enrichers, collection.overflow, { cluster, kind: kind.id });
   if (kindId === "situation" && cardSchema === SITUATION_CARD_V2_SCHEMA)
     body = { ...body, situationV2: collectSituationDetails(frame,cluster,body) };

@@ -91,6 +91,8 @@ export function assembleCard(
     relations,
     summary: body.summary,
     learning: body.learning ?? [],
+    outcomeUsefulness: body.outcomeUsefulness,
+    independentSkillClaims: body.independentSkillClaims,
     coverage: coverageOf(frame, collection.overflow || cluster.overflow === true, body.gaps),
   });
 }
