@@ -4,6 +4,7 @@ import type { ConsolidationDoctor } from "./doctor-consolidation";
 import type { ProducerDiagnostic } from "../contracts/producer";
 import type { ExternalRetention } from "../ledger/source-grants";
 import { MAX_V2_EVENTS, MAX_V2_OUTPUT_TOKENS } from "../contracts/producer-v2";
+import type { CanonCapacity } from "../vault/canon-limits";
 
 /**
  * RFC 0002 §4.6 / §11: daemon rails, leases, run receipts and doctor.
@@ -558,6 +559,8 @@ export interface ServeDoctorReport {
   readonly oversized: OversizedDoctor;
   readonly quarantined: QuarantineDoctor;
   readonly stores: StoreDoctor;
+  /** Live and archived canon page counts against the configured ceiling; null when the page walk was skipped. */
+  readonly canon: CanonCapacity | null;
   readonly calibration: CalibrationDoctor;
   readonly ok: boolean;
   readonly failures: string[];

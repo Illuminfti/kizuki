@@ -1,3 +1,4 @@
+import { assertPositiveAuthorityMutationAllowed } from "../canon/positive-authority";
 import { validateWorldAdmissionProofs } from "./world-grounding";
 import { OUTCOME_PREDICATES } from "../contracts/outcome-card";
 import { validateArtifactClaim } from "../world/artifact-binding";
@@ -710,8 +711,7 @@ export function claimRetrievalDoc(claim: Claim): RetrievalDoc {
  * about. It cannot roll the claim back: canon and the ledger are the record,
  * and a derived index is disposable.
  */
-function enqueueRetrieval(db: Database, io: ClaimsIo, claim: Claim, at: string): string | null {
-  const store = io.retrieval?.descriptor.id;
+export function enqueueClaimRetrieval(db: Database, store: string | undefined, claim: Claim, at: string): string | null {
   if (store === undefined || !tableExists(db, "retrieval_ops")) return null;
   const opId = ulid();
   db.query<never, [string, string, string, string]>(
@@ -924,14 +924,26 @@ export function countWrittenLiveClaims(db: Database): number {
 export function listUnwrittenLiveClaims(
   db: Database,
   limit = 32,
+  prioritizeExisting = false,
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
   const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 32;
+  // Scheduling hints only: the arbiter still validates the actual bytes and
+  // resolves bindings. Existing mutations must not sit behind held creates.
+  const priority = prioritizeExisting && tableExists(db, "page_index") ? `
+    CASE WHEN EXISTS (SELECT 1 FROM page_index p WHERE
+      p.page_id=claims.target OR p.rel_path=replace(claims.target, ':', '/')||'.md' OR
+      p.rel_path='auto/'||replace(claims.target, ':', '/')||'.md' OR
+      p.subject_key=claims.subject OR p.page_id IN
+        (SELECT page_id FROM claim_bindings WHERE claim_key=claims.claim_key))
+      OR EXISTS (SELECT 1 FROM claim_supersessions s JOIN claims loser ON loser.claim_id=s.loser
+        WHERE s.winner=claims.claim_id AND loser.receipt_id IS NOT NULL)
+    THEN 0 ELSE 1 END,` : "";
   return db
     .query<ClaimRow, [number]>(
       `SELECT * FROM claims
         WHERE ${unwrittenLiveWhere(db)}
-        ORDER BY created_at, claim_id
+        ORDER BY ${priority} created_at, claim_id
         LIMIT ?`,
     )
     .all(bound)
@@ -945,23 +957,26 @@ export function listUnwrittenLiveClaims(
  * on the same `claim_key` stays skipped.
  */
 export function reviveUncontestedSkipped(db: Database): number {
-  initClaims(db);
-  const rows = db
-    .query<{ claim_id: string }, []>(
-      `UPDATE claims SET status = 'live'
-        WHERE status = 'skipped'
-          AND retracted_at IS NULL
-          AND superseded_by IS NULL
-          AND (
-            claim_key IS NULL
-            OR claim_key NOT IN (
-              SELECT claim_key FROM claims
-               WHERE status = 'live' AND claim_key IS NOT NULL
-            )
-          ) RETURNING claim_id`,
-    )
-    .all();
-  return rows.length;
+  return db.transaction(() => {
+    assertPositiveAuthorityMutationAllowed(db);
+    initClaims(db);
+    const rows = db
+      .query<{ claim_id: string }, []>(
+        `UPDATE claims SET status = 'live'
+          WHERE status = 'skipped'
+            AND retracted_at IS NULL
+            AND superseded_by IS NULL
+            AND (
+              claim_key IS NULL
+              OR claim_key NOT IN (
+                SELECT claim_key FROM claims
+                 WHERE status = 'live' AND claim_key IS NOT NULL
+              )
+            ) RETURNING claim_id`,
+      )
+      .all();
+    return rows.length;
+  }).immediate();
 }
 
 export function getClaim(db: Database, claimId: string): Claim | null {
@@ -1079,20 +1094,24 @@ export function supersessionsForReceipt(
  */
 export function skipUnwrittenClaim(db: Database, claimId: string, at: string): boolean {
   return db.transaction(() => {
+    assertPositiveAuthorityMutationAllowed(db);
     const skipped = db.query<{ claim_id: string }, [string, string]>(
       `UPDATE claims SET status = 'skipped', retracted_at = ?
         WHERE claim_id = ? AND status = 'live' AND receipt_id IS NULL RETURNING claim_id`,
     ).get(at, claimId) !== null;
     if (skipped) db.query("UPDATE proposals SET status = 'withdrawn' WHERE proposal_id = ? AND status = 'pending'").run(claimId);
     return skipped;
-  })();
+  }).immediate();
 }
 
 /** Undo of a write: the claim this receipt materialized is no longer live. */
 export function markClaimReverted(db: Database, claimId: string, at: string): void {
-  const claim = getClaim(db, claimId);
-  if (claim === null) return;
-  persistClaim(db, { ...claim, status: "reverted", retracted_at: at });
+  return db.transaction(() => {
+    assertPositiveAuthorityMutationAllowed(db);
+    const claim = getClaim(db, claimId);
+    if (claim === null) return;
+    persistClaim(db, { ...claim, status: "reverted", retracted_at: at });
+  }).immediate();
 }
 
 /** Undo of a write: a claim this receipt superseded is live again. */
@@ -1101,15 +1120,18 @@ export function reinstateClaim(
   claimId: string,
   priorValidTo: string | null,
 ): void {
-  const claim = getClaim(db, claimId);
-  if (claim === null) return;
-  persistClaim(db, {
-    ...claim,
-    status: "live",
-    superseded_by: null,
-    retracted_at: null,
-    valid_to: priorValidTo,
-  });
+  return db.transaction(() => {
+    assertPositiveAuthorityMutationAllowed(db);
+    const claim = getClaim(db, claimId);
+    if (claim === null) return;
+    persistClaim(db, {
+      ...claim,
+      status: "live",
+      superseded_by: null,
+      retracted_at: null,
+      valid_to: priorValidTo,
+    });
+  }).immediate();
 }
 
 /** Undo of a revert: put a previously-reinstated loser back to superseded. */
@@ -1120,15 +1142,18 @@ export function resupersedeClaim(
   at: string,
   validTo: string | null,
 ): void {
-  const claim = getClaim(db, claimId);
-  if (claim === null) return;
-  persistClaim(db, {
-    ...claim,
-    status: "superseded",
-    superseded_by: winnerId,
-    retracted_at: at,
-    valid_to: validTo,
-  });
+  return db.transaction(() => {
+    assertPositiveAuthorityMutationAllowed(db);
+    const claim = getClaim(db, claimId);
+    if (claim === null) return;
+    persistClaim(db, {
+      ...claim,
+      status: "superseded",
+      superseded_by: winnerId,
+      retracted_at: at,
+      valid_to: validTo,
+    });
+  }).immediate();
 }
 
 /**
@@ -1143,36 +1168,39 @@ export function supersedeLiveGroup(
   visibility?: ClaimVisibility,
   pageTarget?: Claim,
 ): { claim_id: string; claim_key: string; rule: "R5" }[] {
-  if (winner.claim_key === null) return [];
-  const candidates = liveByKey(db, winner.claim_key, visibility);
-  if (pageTarget !== undefined && isSourcePageClaim(db, pageTarget)) {
-    const connector = pageTarget.frontmatter["x-connector"] as string;
-    const record = pageTarget.frontmatter["x-source-record-id"] as string;
-    // Pre-enrollment-key rows retain their stored identity. A correction
-    // journals their retirement while inheriting the enrollment-scoped key.
-    candidates.push(...liveByKey(db, pageClaimKey(connector, record), visibility).filter(claim =>
-      pageSource(db, claim) === pageSource(db, pageTarget)));
-  }
-  const live = [...new Map(candidates.map(claim => [claim.claim_id, claim])).values()].filter(
-    (claim) => claim.claim_id !== winner.claim_id,
-  );
-  if (pageTarget !== undefined && live.some(claim => AUTHORITY_TIERS[claim.authority] > AUTHORITY_TIERS[winner.authority])) {
-    throw new ClaimError("schema_invalid", "source page correction is below stored authority");
-  }
-  const out: { claim_id: string; claim_key: string; rule: "R5" }[] = [];
-  for (const loser of live) {
-    const prior = loser.valid_to;
-    persistClaim(db, {
-      ...loser,
-      status: "superseded",
-      superseded_by: winner.claim_id,
-      retracted_at: at,
-      valid_to: minTimestamp(loser.valid_to, winner.valid_from),
-    });
-    writeSupersession(db, winner.claim_id, loser.claim_id, "R5", prior, at);
-    out.push({ claim_id: loser.claim_id, claim_key: loser.claim_key ?? winner.claim_key, rule: "R5" });
-  }
-  return out;
+  return db.transaction(() => {
+    assertPositiveAuthorityMutationAllowed(db);
+    if (winner.claim_key === null) return [];
+    const candidates = liveByKey(db, winner.claim_key, visibility);
+    if (pageTarget !== undefined && isSourcePageClaim(db, pageTarget)) {
+      const connector = pageTarget.frontmatter["x-connector"] as string;
+      const record = pageTarget.frontmatter["x-source-record-id"] as string;
+      // Pre-enrollment-key rows retain their stored identity. A correction
+      // journals their retirement while inheriting the enrollment-scoped key.
+      candidates.push(...liveByKey(db, pageClaimKey(connector, record), visibility).filter(claim =>
+        pageSource(db, claim) === pageSource(db, pageTarget)));
+    }
+    const live = [...new Map(candidates.map(claim => [claim.claim_id, claim])).values()].filter(
+      (claim) => claim.claim_id !== winner.claim_id,
+    );
+    if (pageTarget !== undefined && live.some(claim => AUTHORITY_TIERS[claim.authority] > AUTHORITY_TIERS[winner.authority])) {
+      throw new ClaimError("schema_invalid", "source page correction is below stored authority");
+    }
+    const out: { claim_id: string; claim_key: string; rule: "R5" }[] = [];
+    for (const loser of live) {
+      const prior = loser.valid_to;
+      persistClaim(db, {
+        ...loser,
+        status: "superseded",
+        superseded_by: winner.claim_id,
+        retracted_at: at,
+        valid_to: minTimestamp(loser.valid_to, winner.valid_from),
+      });
+      writeSupersession(db, winner.claim_id, loser.claim_id, "R5", prior, at);
+      out.push({ claim_id: loser.claim_id, claim_key: loser.claim_key ?? winner.claim_key, rule: "R5" });
+    }
+    return out;
+  }).immediate();
 }
 
 /** Trusted enrollment identity comes from ledger bindings, never captured frontmatter. */
@@ -1203,6 +1231,7 @@ export function isSourcePageClaim(db: Database, claim: Claim): boolean {
 /** Source page revisions replace one another; legacy keys remain null. Runs inside filing's transaction. */
 export function supersedePageRevisions(db: Database, winnerId: string, at: string): void {
   if (!db.inTransaction) throw new Error("page supersession requires the claim transaction");
+  assertPositiveAuthorityMutationAllowed(db);
   const winner = getClaim(db, winnerId);
   if (winner === null || winner.status !== "live" || winner.authority !== "connector_evidence" || !isSourcePageClaim(db, winner)) return;
   // Only the unfinished write's guarded claims await writer completion.
@@ -1307,6 +1336,7 @@ function supersedeExactLegacyClaim(
   const { db } = io;
   if (!db.inTransaction)
     throw new ClaimError("schema_invalid", "exact supersession requires the claim transaction");
+  assertPositiveAuthorityMutationAllowed(db);
   const loser = getClaim(db, loserId);
   if (
     loser === null ||
@@ -1337,7 +1367,7 @@ function supersedeExactLegacyClaim(
         purpose: "correction",
         port: retrieval,
       }));
-  enqueueRetrieval(db, retrievalAllowed ? io : { db }, superseded, at);
+  enqueueClaimRetrieval(db, retrievalAllowed ? io.retrieval?.descriptor.id : undefined, superseded, at);
 }
 
 /** Typed targeted correction shares the existing supersession journal and retrieval outbox transaction. */
@@ -1353,6 +1383,7 @@ export function supersedeExactWorldClaim(
       "schema_invalid",
       "typed supersession requires the claim transaction",
     );
+  assertPositiveAuthorityMutationAllowed(db);
   const loser = getClaim(db, loserId);
   const prior = readClaimV2Semantic(db, loserId);
   const next = readClaimV2Semantic(db, winner.claim_id);
@@ -1392,7 +1423,7 @@ export function supersedeExactWorldClaim(
         purpose: "correction",
         port: retrieval,
       }));
-  enqueueRetrieval(db, retrievalAllowed ? io : { db }, superseded, at);
+  enqueueClaimRetrieval(db, retrievalAllowed ? io.retrieval?.descriptor.id : undefined, superseded, at);
 }
 
 function remainingProvenanceCount(db: Database, claim: Claim): number {
@@ -1527,6 +1558,7 @@ export async function prepareClaimInsert(
     apply() {
       if (!io.db.inTransaction) throw new Error("prepared claim requires a transaction");
       io.beforeCommit?.();
+      assertPositiveAuthorityMutationAllowed(io.db);
       const at = nowOf(io);
       const world = preparedWorldCommit(io.db, input, scope, at);
       const existing = world === null ? null : io.db.query<{ claim_id: string }, [string]>(
@@ -1718,7 +1750,7 @@ function applyClaimInsert(
       io.db.query("UPDATE claims SET sensitivity = ? WHERE claim_id = ?")
         .run(sensitivity, exact.claim_id);
       const relabeled = { ...exact, sensitivity };
-      enqueueRetrieval(io.db, io, relabeled, at);
+      enqueueClaimRetrieval(io.db, io.retrieval?.descriptor.id, relabeled, at);
       return { outcome: "duplicate", claim: relabeled, dedup: mode };
     }
     return { outcome: "duplicate", claim: exact, dedup: mode };
@@ -1738,7 +1770,7 @@ function applyClaimInsert(
   // conflict/R5 when the object or polarity differs (RFC 0002 §5.2, §6.3).
   if (structural !== undefined) {
     const confirmed = corroborate(io.db, structural, claim, at);
-    if (confirmed !== structural) enqueueRetrieval(io.db, io, confirmed, at);
+    if (confirmed !== structural) enqueueClaimRetrieval(io.db, io.retrieval?.descriptor.id, confirmed, at);
     return { outcome: "duplicate", claim: confirmed, dedup: mode };
   }
 
@@ -1784,7 +1816,7 @@ function applyClaimInsert(
           valid_to: minTimestamp(live.valid_to, claim.valid_from),
         });
         writeSupersession(io.db, claim.claim_id, live.claim_id, resolution.rule, prior, at);
-        enqueueRetrieval(io.db, io, live, at);
+        enqueueClaimRetrieval(io.db, io.retrieval?.descriptor.id, live, at);
         superseded.push({ claim_id: live.claim_id, rule: resolution.rule });
       }
     }
@@ -1793,7 +1825,7 @@ function applyClaimInsert(
   const stored: Claim = { ...claim, status: incomingStatus };
   insertRow(io.db, stored, input.world_admission !== undefined);
   if (incomingStatus !== "skipped") {
-    enqueueRetrieval(io.db, io, stored, at);
+    enqueueClaimRetrieval(io.db, io.retrieval?.descriptor.id, stored, at);
   }
 
   if (incomingStatus === "skipped") {

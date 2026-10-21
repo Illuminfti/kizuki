@@ -149,22 +149,30 @@ export interface PendingWorldGroup { readonly handle:string; readonly claims:Cla
  * materializer. Groups whose handle is in `excluded` are passed over without
  * using up the window, so a page that cannot be written does not hide the ones behind it.
  */
-export function pendingWorldCanonClaims(db:Database,limit=32,excluded:ReadonlySet<string>=new Set()):PendingWorldGroup[] {
+export function pendingWorldCanonClaims(db:Database,limit=32,excluded:ReadonlySet<string>=new Set(),existingOnly=false):PendingWorldGroup[] {
  const ctx=context(db),permitted=authorizedSupportSql(ctx),window=MAX_PENDING_GROUPS*MAX_PAGE_CLAIMS;
  const held=heldClaimSql("c",permitted);
+ const existingPage=`EXISTS (SELECT 1 FROM claim_v2_semantics m JOIN semantic_bindings b ON
+  b.raw_kind=m.subject_kind AND b.raw_id=m.subject_id AND
+  (b.raw_kind='occurrence' OR (json_extract(b.raw_namespace,'$.connector_id')=json_extract(m.payload,'$.subject.namespace.connector_id') AND json_extract(b.raw_namespace,'$.source_key')=json_extract(m.payload,'$.subject.namespace.source_key')))
+  JOIN page_index p ON p.rel_path='auto/world/'||b.handle_id||'.md' WHERE m.claim_id=c.claim_id)`;
  const groups=new Map<string,Claim[]>();
- let after="";
- while(groups.size<limit) {
-  const ids=db.query<{claim_id:string},(string|number)[]>(`SELECT c.claim_id FROM claims c WHERE c.is_world_typed=1 AND c.status='live' AND c.receipt_id IS NULL AND c.claim_id>? AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql} ORDER BY c.claim_id LIMIT ?`).all(after,...permitted.bindings,...held.bindings,window);
-  for(const {claim_id} of ids) {
-   const handle=worldClaimHandle(db,claim_id),claim=getClaim(db,claim_id);if(handle===null||claim===null||excluded.has(handle))continue;
-   if(!groups.has(handle)&&groups.size===limit)continue;
-   const group=groups.get(handle)??[];
-   if(group.length===MAX_PAGE_CLAIMS)continue;
-   group.push(claim);groups.set(handle,group);
+ // Existing pages retain priority without losing the durable held-page exclusion
+ // or the keyset walk past a bounded window of unwriteable groups.
+ for(const priority of (existingOnly?[1]:[1,0])) {
+  let after="";
+  while(groups.size<limit) {
+   const ids=db.query<{claim_id:string},(string|number)[]>(`SELECT c.claim_id FROM claims c WHERE c.is_world_typed=1 AND c.status='live' AND c.receipt_id IS NULL AND c.claim_id>? AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql} AND ${existingPage}=? ORDER BY c.claim_id LIMIT ?`).all(after,...permitted.bindings,...held.bindings,priority,window);
+   for(const {claim_id} of ids) {
+    const handle=worldClaimHandle(db,claim_id),claim=getClaim(db,claim_id);if(handle===null||claim===null||excluded.has(handle))continue;
+    if(!groups.has(handle)&&groups.size===limit)continue;
+    const group=groups.get(handle)??[];
+    if(group.length===MAX_PAGE_CLAIMS)continue;
+    group.push(claim);groups.set(handle,group);
+   }
+   if(ids.length<window)break;
+   after=ids[ids.length-1]!.claim_id;
   }
-  if(ids.length<window)break;
-  after=ids[ids.length-1]!.claim_id;
  }
  return [...groups].map(([handle,claims])=>({handle,claims}));
 }

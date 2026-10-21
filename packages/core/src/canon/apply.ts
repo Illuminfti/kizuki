@@ -1,3 +1,4 @@
+import { assertPositiveAuthorityMutationAllowed } from "./positive-authority";
 import { ATTENTION_SOURCES, attentionDeliveryBody, attentionDeliveryLine } from "../contracts/attention";
 import { completedEventPurgeProofs } from "../ledger/purge";
 import { canonicalJson, sha256Hex } from "../util/hash";
@@ -42,6 +43,7 @@ import { assertPageRelPath, assertReceiptPaths, assertStoredPageRelPath } from "
 import { cloneExactJson } from "../util/validate";
 import type { TargetDecision } from "./arbiter";
 import { chargeCanonWrite, type BudgetTracker } from "./budget";
+import { requireCanonWriteCapacity } from "./capacity";
 import { CanonWriteError } from "./errors";
 import { getCanonReceipt, type CanonReceipt, type PageAction, type RetrievalOpRef } from "./receipts";
 import { initCanon } from "./schema";
@@ -500,6 +502,11 @@ export function applyCanonWriteOwned(
   requireSourceEvents(io.db, Array.isArray(prepared.page.data["sources"]) ? prepared.page.data["sources"].filter((id): id is string => typeof id === "string") : [], { owner: true, purpose: "derive" });
   prepared.sensitivity = sourceSensitivity(io.db, provenance, prepared.sensitivity);
   prepared.page.data["sensitivity"] = prepared.sensitivity;
+  // Reserve positive inventory growth for every forward mutation, including
+  // edits and archive transitions. Only creation/reactivation needs a live slot.
+  const newLivePage = (existing === null || existing.page.data["status"] === "archived") && prepared.page.data["status"] !== "archived";
+  requireCanonWriteCapacity(io.vault_path, newLivePage, existing === null ? 1 : 0,
+    Buffer.byteLength(serializePage(prepared.page)) - (existing?.byte_length ?? 0));
   const superseded = typed ? io.db.query<{claim_id:string;claim_key:string},[string]>("SELECT s.loser AS claim_id,m.semantic_key AS claim_key FROM claim_supersessions s JOIN claim_v2_semantics m ON m.claim_id=s.loser WHERE s.winner IN (SELECT value FROM json_each(?)) ORDER BY s.loser").all(JSON.stringify(ownedClaims.map(item=>item.claim_id))) : supersededRefs(io, decision);
   const retrievalOps: RetrievalOpRef[] =
     io.retrieval_store === undefined
@@ -508,6 +515,7 @@ export function applyCanonWriteOwned(
 
   const expectedAfter = hashBytes(Buffer.from(serializePage(prepared.page)));
   const admit = (): void => {
+    assertPositiveAuthorityMutationAllowed(io.db);
     persistedClaims(io, persisted, typed);
     if (worldBasis !== null) {
       const current = latestWorldReceiptRecord(io.db, target.rel_path);
@@ -991,7 +999,7 @@ function applySourcePurgeWrite(scope: VaultMutationScope, io: CanonIo, input: So
         provenance: next === null ? [...input.purged_event_ids] : existingSources(next),
         superseded: [], candidates: [], retrieval_ops: [], reverts: null, reverted_by: null, at: nowOf(io),
     };
-    const intent = stageSourceErasureIntent(io, input.source_erasure.source_key, input.purged_event_ids, receipt, pageId);
+    const intent = io.db.transaction(() => stageSourceErasureIntent(scope, io, input.source_erasure.source_key, input.purged_event_ids, receipt, pageId)).immediate();
     commitMachineByteIntent(io.db, intent.receipt, () => {
       if (input.purged_event_ids.some(id => io.db.query(
         "SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'",

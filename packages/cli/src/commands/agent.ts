@@ -39,6 +39,7 @@ const MESSAGES: Record<AgentEnrollmentErrorCode, string> = {
   name_conflict: "This agent name is already active or reserved. Preserve its setup and choose a different name.",
   migration_required: "Execution requires the current ledger migration. Preview left the existing vault unchanged.",
   enrollment_busy: "The vault is busy or preview requires a stable checkpoint without journal sidecars. Retry the same operation ID and request.",
+  erasure_pending: "Source erasure recovery is pending. Retry the same operation ID and request after recovery completes.",
   recovery_required: "Enrollment is incomplete and its credential is inactive. Preserve the file; revoke the pending name before using a new operation ID and destination.",
   enrollment_unavailable: "Enrollment could not be reconciled. Retry the same operation ID and request before starting another setup.",
   unknown_agent: "No active agent has this name. Revoked and unfinished setups cannot be amended; list agents to check the name.",

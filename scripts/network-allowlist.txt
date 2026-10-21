@@ -2,6 +2,7 @@
 # site is the scanner fingerprint (enclosing symbol, API, occurrence).
 # An entry is stale when the path is untracked or that exact site is absent.
 # Do not add a path or site until the call exists.
+packages/mcp/test/helpers/golden-app.ts:call.fetch#1:authenticated synthetic journey through the test-owned loopback App endpoint
 packages/core/src/contracts/remote.ts:(toplevel).import.node.http#1:loopback port adapter; TCP is restricted to loopback and Unix sockets stay local
 packages/core/src/contracts/remote.ts:(toplevel).import.node.http#2:loopback port adapter; TCP is restricted to loopback and Unix sockets stay local
 packages/core/test/contracts/remote-child.ts:(toplevel).import.node.http#1:loopback child server for remote adapter parity tests

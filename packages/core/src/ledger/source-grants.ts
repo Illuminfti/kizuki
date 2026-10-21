@@ -1,3 +1,4 @@
+import { assertPositiveAuthorityMutationAllowed } from "../canon/positive-authority";
 import { withControlWait } from "./busy";
 import {
   claimV2TablesPresent,
@@ -469,6 +470,7 @@ export function setSourceGrant(
         policy_digest: sha256Hex(JSON.stringify(policy)),
       });
       if (prior !== null) return prior;
+      assertPositiveAuthorityMutationAllowed(db);
       const connection = db
         .query<{ connector_id: string }, [string]>(
           "SELECT connector_id FROM connections WHERE source_key=?",

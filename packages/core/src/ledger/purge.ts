@@ -33,7 +33,8 @@ import { sha256Hex } from "../util/hash";
 import { isVisibleIdentifier } from "../util/opaque-identifier";
 import { isUlid, ulid } from "../util/ulid";
 import { parseFrontmatter } from "../vault/frontmatter";
-import { MAX_CANON_PAGES, MAX_CANON_WALK_BYTES, listCanonPagesReport } from "../vault/pages";
+import { loadCanonLimits } from "../vault/canon-limits";
+import { listCanonPagesReport } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
 import { eventPurgeProofDigest, initPurgeOps, PURGE_SLA_SECONDS } from "./purge-schema";
 import { capturePurgeClaimScope, compactLedger, erasePurgedPayloads, markSupportPurgedClaims, proveLocalStores, truncateLedgerLog, type PurgeErasure, type PurgeStoreProof } from "./purge-stores";
@@ -527,9 +528,10 @@ function collectCanonSnapshot(vaultPath: string): PageFingerprint[] {
   if (vaultPath === ":memory:" || vaultPath.length === 0) return [];
   const report = listCanonPagesReport(vaultPath);
   if (report.truncated) {
+    const limits = loadCanonLimits(vaultPath);
     throw new PurgeError(
       "canon_scan_truncated",
-      `purge refused: canon scan stopped at its bound (${MAX_CANON_PAGES} pages or ${MAX_CANON_WALK_BYTES} bytes); the affected pages cannot be enumerated`,
+      `purge refused: canon scan stopped at its bound (${limits.walk_files} files or ${limits.walk_bytes} bytes); the affected pages cannot be enumerated; raise max_scan_files or max_scan_bytes under [canon] in .kizuki/serve.toml`,
     );
   }
   const rows: PageFingerprint[] = [];

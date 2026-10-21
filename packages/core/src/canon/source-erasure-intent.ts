@@ -13,7 +13,7 @@ import {
 import type { CanonReceipt } from "./receipts";
 import { CanonAuthorityResolver } from "./authority";
 import type { CanonIo } from "./store";
-import { readOwnedCanonPage } from "./io";
+import { readOwnedCanonPage, requireCanonFiles } from "./io";
 import { openSourceErasureReceiptStream } from "./receipt-stream";
 import { assertPageRelPath } from "./paths";
 import { assertVaultMutationScope, type VaultMutationScope } from "../vault/mutation-scope";
@@ -239,7 +239,9 @@ function coreEqual(left: SourceErasureIntent, right: SourceErasureIntent): boole
         JSON.stringify(left.receipt) === JSON.stringify(right.receipt);
 }
 
-export function stageSourceErasureIntent(io: CanonIo, source: string, ids: readonly string[], receipt: CanonReceipt, pageId: string | null): SourceErasureIntent {
+export function stageSourceErasureIntent(scope: VaultMutationScope, io: CanonIo, source: string, ids: readonly string[], receipt: CanonReceipt, pageId: string | null): SourceErasureIntent {
+    requireCanonFiles(scope, io);
+    if (!io.db.inTransaction) throw new Error("source erasure intent requires an immediate transaction");
     const original = originalRow(io.db, receipt);
     const lineage = isLiveSurvivorReceipt(receipt) ? liveSurvivorLineage(io, receipt, original) : null;
     const next: SourceErasureIntentV2 = {
