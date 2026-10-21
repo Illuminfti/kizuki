@@ -119,7 +119,7 @@ answer, and discards inaccessible data through its existing privacy fence.
 ## Storage, recovery and verification
 
 The VIEW migration is allocated in `world/tables/versions.ts` after the
-pre-existing purge and connector cursor migrations. All four tables are cache class:
+pre-existing purge, connector cursor and machine-provenance migrations. All four tables are cache class:
 `world_view_partitions`, `world_view_tokens`, `world_view_token_deps` and
 `world_resume_handles`. They are not exported. Restore and world rebuild erase
 tokens and handles and seed reservations from current principals. Service

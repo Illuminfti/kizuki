@@ -8,6 +8,10 @@ import { enrollAppAgent } from "../../src/agents/app-enrollment";
 import { rebuildWorldLayer } from "../../src/derived";
 import { exportVault, restoreVault } from "../../src/export";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
+import { commitMachineByteIntent } from "../../src/ledger/event-origin";
+import { machineBodyHash } from "../../src/ledger/machine-image";
+import { sha256Hex } from "../../src/util/hash";
+import { ulid } from "../../src/util/ulid";
 import { initVault } from "../../src/vault/init";
 import { initializeEnrollmentLedger } from "../agents/custody-fixture";
 import {
@@ -17,6 +21,7 @@ import {
 } from "../../src/world/views/partitions";
 import { issueWorldRef, worldNamespace } from "../../src/world/references";
 import { WORLD_VIEW_TABLE_SPECS } from "../../src/world/tables/views";
+import { WORLD_MIGRATION_VERSIONS } from "../../src/world/tables/versions";
 
 setDefaultTimeout(60_000);
 
@@ -82,7 +87,7 @@ describe("the view tables", () => {
     expect(count(db, "world_view_partitions")).toBe(1);
   });
 
-  test("a ledger migrated from the previous version reserves the owner and every live agent, oldest first", () => {
+  test("a ledger migrated from the prior version preserves machine provenance and reserves every live principal", () => {
     const dir = tempDir();
     const path = join(dir, "ledger.db");
     let db = openLedger(path);
@@ -90,10 +95,13 @@ describe("the view tables", () => {
     const second = addAgent(db, "second-reader", OWNER_AGENT_GRANT);
     const gone = addAgent(db, "gone-reader", OWNER_AGENT_GRANT);
     revokeAgent(db, "gone-reader");
+    const page = "---\ntitle: Orchard\n---\nOrchard volunteers shelve books.\n";
+    const intent = { receipt_id: ulid(), before_hash: null, after_hash: sha256Hex(page) };
+    commitMachineByteIntent(db, intent, () => {}, { before: null, after: page });
     db.exec(`
       DROP TABLE world_resume_handles; DROP TABLE world_view_token_deps; DROP TABLE world_view_tokens; DROP TABLE world_view_partitions;
       DROP TRIGGER world_view_agent_revoked; DROP TRIGGER world_view_agent_deleted;
-      UPDATE schema_version SET version=${LEDGER_SCHEMA_VERSION - 1};`);
+      UPDATE schema_version SET version=${WORLD_MIGRATION_VERSIONS.view - 1};`);
     db.close();
     db = ledger(path);
     expect(db.query("SELECT version FROM schema_version").get()).toEqual({
@@ -103,6 +111,12 @@ describe("the view tables", () => {
     expect(viewPartitionOf(db, first.agent.agent_id)).toBe(1);
     expect(viewPartitionOf(db, second.agent.agent_id)).toBe(2);
     expect(viewPartitionOf(db, gone.agent.agent_id)).toBeNull();
+    expect(db.query("SELECT receipt_id,image_hash,body_hash FROM canon_machine_body_images").all()).toEqual([
+      { receipt_id: intent.receipt_id, image_hash: intent.after_hash, body_hash: machineBodyHash(page) },
+    ]);
+    expect(db.query("SELECT receipt_id FROM canon_machine_byte_intents").all()).toEqual([
+      { receipt_id: intent.receipt_id },
+    ]);
   });
 
   test("reserving is idempotent, hands out the lowest free partition, and a full vault never displaces anyone", () => {
