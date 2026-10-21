@@ -6,7 +6,7 @@
  * first, add its count to WORLD_MIGRATION_BASE and to every entry in one commit.
  * A key that is not built keeps its marker and has no entry.
  */
-export const WORLD_SLOT_KEYS = ["view", "known", "consol", "ident", "attn", "refs", "fcst"] as const;
+export const WORLD_SLOT_KEYS = ["view", "known", "consol", "ident", "attn", "refs", "fcst", "machine_images"] as const;
 export type WorldSlotKey = (typeof WORLD_SLOT_KEYS)[number];
 
 export const PURGE_REINGEST_MIGRATION_VERSION = 34;
@@ -23,4 +23,6 @@ export const WORLD_MIGRATION_VERSIONS = {
   // slot: attn
   // slot: refs
   // slot: fcst
+  // slot: machine_images
+  machine_images: 36,
 } as const satisfies Partial<Record<WorldSlotKey, number>>;

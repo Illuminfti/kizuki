@@ -968,7 +968,7 @@ function applySourcePurgeWrite(scope: VaultMutationScope, io: CanonIo, input: So
         "SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'",
       ).get(id) === null)) throw new CanonWriteError("decision_stale", "source erasure admission changed");
       if (next !== null) requireSourceEvents(io.db, existingSources(next), { owner: true, purpose: "derive" });
-    });
+    }, { before: null, after: next === null ? null : serializePage(next) });
     const cap = grantCanonWrite("loop", intent.receipt.receipt_id, io.vault_path, files);
     const outcome = writePage(cap, join(io.vault_path, input.rel_path), next ?? { data, body: "\n" }, {
         revision: true, expected_hash: existing.hash, erase_prior: true, delete: nothingRemains,

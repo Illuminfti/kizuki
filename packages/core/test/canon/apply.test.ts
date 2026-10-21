@@ -577,7 +577,8 @@ describe("applyCanonWrite", () => {
       MAX_FRONTMATTER_ARRAY_ITEMS,
     );
 
-    const extra = putEvent(db);
+    // This is independent evidence, not a copy of the page just written.
+    const extra = putEvent(db, { text: "An independent record confirms Grace's updated role." });
     const overflow = await storeClaim(db, extra, {
       kind: "edit",
       predicate: null,

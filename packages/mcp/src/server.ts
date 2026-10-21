@@ -1,3 +1,4 @@
+import type { QuotedChunk, QuotedPageChunk } from "@kizuki/core";
 import { ServeError, dispatchServeTool, resolvePrincipal, toolAllowed } from "@kizuki/core";
 import { activeWorldOps, findWorldOp, worldOpInputKeys } from "@kizuki/core/world";
 import type { WorldViewEnvelope, Envelope, ServeContext, Tool } from "@kizuki/core";
@@ -59,7 +60,7 @@ type ToolResult = {
   isError?: boolean;
 };
 
-function served(envelope: Envelope<unknown> | WorldViewEnvelope): ToolResult {
+function served(envelope: Envelope<unknown, QuotedChunk | QuotedPageChunk> | WorldViewEnvelope): ToolResult {
   return {
     content: [{ type: "text", text: JSON.stringify(envelope) }],
     structuredContent: envelope,
@@ -91,7 +92,7 @@ function refused(error: unknown): ToolResult {
 }
 
 async function respond(
-  run: () => Promise<Envelope<unknown> | WorldViewEnvelope>,
+  run: () => Promise<Envelope<unknown, QuotedChunk | QuotedPageChunk> | WorldViewEnvelope>,
 ): Promise<ToolResult> {
   try {
     return served(await run());
@@ -124,7 +125,7 @@ function engineArguments(
 
 /** The advertised world_view shape is a summary; every answer is held to the whole grammar. */
 function checked(
-  envelope: Envelope<unknown> | WorldViewEnvelope,
+  envelope: Envelope<unknown, QuotedChunk | QuotedPageChunk> | WorldViewEnvelope,
   answer: { safeParse(value: unknown): { success: boolean } },
 ): WorldViewEnvelope {
   if (!answer.safeParse(envelope).success) throw new ServeError("error", "serving failed");

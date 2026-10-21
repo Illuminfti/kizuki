@@ -331,6 +331,31 @@ test("exports the original external stamp and preserves later byte intents throu
   } finally { db.close(); }
 });
 
+test("body registry survives backup and refuses an orphaned image", () => {
+  const { backup, db, vault } = fixture();
+  const page = "---\ntitle: Orchard\n---\nOrchard volunteers shelve books.\n";
+  const intent = { receipt_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV", before_hash: null, after_hash: sha256Hex(page) };
+  try {
+    commitMachineByteIntent(db, intent, () => {}, { before: null, after: page });
+    rmSync(backup, { recursive: true });
+    exportVault(db, vault, backup);
+    const target = join(temporary("body-registry-roundtrip-"), "vault");
+    restoreVault(backup, target);
+    const restored = openLedger(join(target, ".kizuki", "kizuki.db"));
+    try {
+      expect(accept(restored, { ...validEvent(), source_record_id: "body-copy", text: "---\ntitle: Edited\n---\nOrchard volunteers shelve books." }))
+        .toMatchObject({ status: "stored", event: { origin: "self" } });
+    } finally { restored.close(); }
+    const manifest = readManifest(backup);
+    const row = db.query<Record<string, unknown>, []>("SELECT * FROM canon_machine_body_images").get()!;
+    writeJsonl(backup, manifest, "world/canon_machine_body_images.jsonl", [{ ...row, receipt_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW" }]);
+    signManifest(backup, manifest);
+    const refused = join(temporary("body-registry-orphan-"), "vault");
+    expect(() => restoreVault(backup, refused)).toThrow("machine body registry is invalid");
+    expect(existsSync(refused)).toBe(false);
+  } finally { db.close(); }
+});
+
 test.each(["duplicate", "invalid hash", "missing field", "extra field", "oversized row"])(
   "refuses a re-signed byte-intent stream with %s", (mutation) => {
     const { backup, db } = fixture();

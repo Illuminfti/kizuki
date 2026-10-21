@@ -8,7 +8,7 @@ import { isWorldCanonReceipt, type RetainedWorldCanonReceipt } from "./world-rec
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
 import { openWorldErasureReceiptStream, openOrdinaryRecoveryReceiptStream, type WorldErasureReceiptStream, type OrdinaryRecoveryReceiptStream } from "./receipt-stream";
-import { commitMachineByteIntent } from "../ledger/event-origin";
+import { commitMachineByteIntent, recordMachineBodyImages } from "../ledger/event-origin";
 import { getClaim, markClaimReverted, minTimestamp, reinstateClaim, resupersedeClaim, supersessionsForReceipt } from "../claims/store";
 import { tableExists } from "../ledger/schema";
 import { getCanonReceipt, type CanonReceipt } from "./receipts";
@@ -93,6 +93,10 @@ function completeRows(io: CanonIo, intent: CanonWriteIntent): void {
   // The intent and all effects are deleted/committed together. An existing row
   // with a surviving intent is not a legitimate halfway SQLite transaction.
   if (getCanonReceipt(io.db, receipt.receipt_id) !== null) recoveryFailure("receipt_changed", receipt.receipt_id);
+  if (receipt.writer === "loop") recordMachineBodyImages(io.db, receipt, {
+    before: decodeCanonImage(intent.before_base64)?.toString("utf8") ?? null,
+    after: decodeCanonImage(intent.after_base64)?.toString("utf8") ?? null,
+  });
   insertReceiptRow(io.db, receipt, completion.claim_kind);
   if (completion.mode === "write") {
     const ids = JSON.stringify(receipt.claim_ids);
@@ -128,7 +132,10 @@ function completeErasureRows(io:CanonIo,intent:WorldCanonErasureIntent):void {
   const machine=io.db.query<{before_hash:string|null;after_hash:string},[string]>("SELECT before_hash,after_hash FROM canon_machine_byte_intents WHERE receipt_id=?").get(receipt.receipt_id);
   if(machine===null||machine.before_hash!==intent.receipt.before_hash||machine.after_hash!==intent.receipt.after_hash)recoveryFailure("intent_invalid",receipt.receipt_id);
   io.db.query("DELETE FROM canon_machine_byte_intents WHERE receipt_id=?").run(receipt.receipt_id);
-  if(isErasedReceipt(receipt))insertErasedReceiptRow(io.db,receipt);else insertReceiptRow(io.db,receipt,"purge_review");
+  if(isErasedReceipt(receipt))insertErasedReceiptRow(io.db,receipt);else {
+    insertReceiptRow(io.db,receipt,"purge_review");
+    recordMachineBodyImages(io.db,receipt,{before:null,after:decodeCanonImage(intent.after_base64)?.toString("utf8")??null});
+  }
   for(const erased of intent.erasure.redactions) {
     eraseReceiptRow(io.db,erased);
     if(tableExists(io.db,"canon_write_reservations"))io.db.query("UPDATE canon_write_reservations SET page_path='',before_hash=NULL WHERE receipt_id=?").run(erased.receipt_id);
@@ -198,7 +205,7 @@ export function commitCanonWrite(scope: VaultMutationScope, io: CanonIo, prepare
       } as CanonWriteIntent);
       stream.verifyBinding();
     };
-    if (prepared.receipt.writer === "loop") commitMachineByteIntent(io.db, prepared.receipt, admit);
+    if (prepared.receipt.writer === "loop") commitMachineByteIntent(io.db, prepared.receipt, admit, { before: prepared.before?.toString("utf8") ?? null, after: prepared.after?.toString("utf8") ?? null });
     else io.db.transaction(admit).immediate();
     return finish(scope, io, intent!, stream);
   } finally { stream.close(); }
@@ -219,7 +226,7 @@ export function commitWorldCanonErasure(scope:VaultMutationScope,io:CanonIo,prep
         erasure:{...prepared.erasure,log_after_hash:plan.after_hash,log_after_length:plan.after_length}};
       assertCanonAdmission(io.db,candidate);
       intent=persistCanonWriteIntent(io.db,candidate) as WorldCanonErasureIntent;stream.verifyBinding();
-    });
+    }, { before: null, after: prepared.after?.toString("utf8") ?? null });
     return finish(scope,io,intent!,stream);
   }finally{stream.close();}
 }

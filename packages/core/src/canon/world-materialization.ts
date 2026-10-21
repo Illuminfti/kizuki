@@ -18,6 +18,7 @@ import type { WorldAdmission } from "../contracts/world-admission";
 import { canonicalJson, sha256Hex } from "../util/hash";
 import { eligibleWorldClaim, type EligibleSupport, type ReadBudget } from "../world/projection";
 import { authorizedSupportSql } from "../world/policy-sql";
+import { heldClaimSql } from "../world/corroboration";
 import type { ServeContext } from "../serving/types";
 import type { WorldClaimBasis } from "./world-receipt";
 import { CanonWriteError } from "./errors";
@@ -49,7 +50,7 @@ function titleOf(semantic:ClaimV2Assertion,current:string):string {
 }
 function context(db:Database):ServeContext {return {db,vaultPath:"",principal:OWNER,sourcePurpose:"derive"};}
 function render(claim:Claim,support:EligibleSupport):Claim {
- return {...claim,body:support.admission.rendering.body,frontmatter:{},authority:support.admission.authority,confidence:support.admission.confidence,provenance:support.events.map(event=>event.event_id)};
+ return {...claim,body:support.admission.rendering.body,frontmatter:{},taint:support.row.support_origin==="native_owner"?claim.taint:"quoted",authority:support.admission.authority,confidence:support.admission.confidence,provenance:support.events.map(event=>event.event_id)};
 }
 export interface WorldMaterialization {
  readonly handle:string; readonly claims:readonly Claim[];readonly basis:readonly WorldClaimBasis[];
@@ -89,7 +90,8 @@ export function assertWorldBasis(db:Database,basis:readonly WorldClaimBasis[]|nu
 /** Distinct bounded queue: neutral typed parents never enter the legacy materializer. */
 export function pendingWorldCanonClaims(db:Database,limit=32):Claim[][] {
  const ctx=context(db),permitted=authorizedSupportSql(ctx);
- const ids=db.query<{claim_id:string},(string|number)[]>(`SELECT c.claim_id FROM claims c WHERE c.is_world_typed=1 AND c.status='live' AND c.receipt_id IS NULL AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) ORDER BY c.claim_id LIMIT ?`).all(...permitted.bindings,Math.min(limit,32)*MAX_PAGE_CLAIMS);
+ const held=heldClaimSql("c",permitted);
+ const ids=db.query<{claim_id:string},(string|number)[]>(`SELECT c.claim_id FROM claims c WHERE c.is_world_typed=1 AND c.status='live' AND c.receipt_id IS NULL AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql} ORDER BY c.claim_id LIMIT ?`).all(...permitted.bindings,...held.bindings,Math.min(limit,32)*MAX_PAGE_CLAIMS);
  const groups=new Map<string,Claim[]>();
  for(const {claim_id} of ids) {
   const handle=worldClaimHandle(db,claim_id),claim=getClaim(db,claim_id);if(handle===null||claim===null)continue;
