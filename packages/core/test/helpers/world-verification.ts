@@ -1,3 +1,4 @@
+import { forecastVerificationFixture, FORECAST_SUBJECTS } from "./forecast-verification";
 import { EMPTY_SUMMARY_MODEL, completeEmptyWorldSummaries } from "./world-consolidation";
 import { artifactFixture } from "./artifact-fixture";
 import { skillFixture, PROCEDURE, SKILL, FRAMEWORK } from "./skill-fixture";
@@ -13,7 +14,7 @@ import type { ShareData } from "../../src/world/views/resume";
 
 export const WORLD_VERIFICATION_OPERATIONS = [
   "find_concepts", "find_situations", "concept", "situation", "describe",
-  "evidence", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people", "find_procedures", "procedure", "skill", "framework", "outcome", "artifact_version", "find_artifacts", "diff", "slice", "atlas", "attention",
+  "evidence", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people", "find_procedures", "procedure", "skill", "framework", "outcome", "artifact_version", "find_artifacts", "diff", "slice", "atlas", "attention", "forecast", "forecast_scores",
 ] as const;
 export type VerificationOperation = typeof WORLD_VERIFICATION_OPERATIONS[number];
 const PERSON = "person:verification-ada";
@@ -22,9 +23,11 @@ const input = (operation: string, own = {}) => ({ operation, ...own, ...WHEN });
 
 export async function verificationScene(): Promise<NoninterferenceScene> {
   const base = await hiddenScene({model:EMPTY_SUMMARY_MODEL});
+  let forecasts: Awaited<ReturnType<typeof forecastVerificationFixture>> | undefined;
   let skills: Awaited<ReturnType<typeof skillFixture>> | undefined;
   let artifacts: Awaited<ReturnType<typeof artifactFixture>> | undefined;
   try {
+    forecasts = await forecastVerificationFixture(base.db);
     skills = await skillFixture(base.db);
     artifacts = await artifactFixture(base.db);
     const artifact = await artifacts.capture("Synthetic verification artifact exact bytes.");
@@ -35,7 +38,7 @@ export async function verificationScene(): Promise<NoninterferenceScene> {
       predicates: [{ predicate: "person.role", object: { kind: "literal", value: "Reviewer" } }] });
     await completeEmptyWorldSummaries(base.db, base.vaultPath);
     const agent = addAgent(base.db, "verification-reader", {
-      ...OWNER_AGENT_GRANT, ceiling: "public", subjects: ["topic:bayes", "project:launch", QUESTION, PERSON, PROCEDURE, SKILL, FRAMEWORK, "framework:inspection", artifact.subject.id, ...(artifact.metadata.versionOf ? [artifact.metadata.versionOf] : [])],
+      ...OWNER_AGENT_GRANT, ceiling: "public", subjects: [...FORECAST_SUBJECTS, "topic:bayes", "project:launch", QUESTION, PERSON, PROCEDURE, SKILL, FRAMEWORK, "framework:inspection", artifact.subject.id, ...(artifact.metadata.versionOf ? [artifact.metadata.versionOf] : [])],
       // Four observations per operation plus setup reads; production limits stay unchanged.
       rate_limit_per_minute: 4 * WORLD_VERIFICATION_OPERATIONS.length + 16,
     });
@@ -49,9 +52,9 @@ export async function verificationScene(): Promise<NoninterferenceScene> {
     };
     return { ...base, reader,
       refs: { concept: ref("find_concepts", "Bayesian"), situation: ref("find_situations", "Launch") },
-      dispose() { artifacts?.dispose(); skills?.dispose(); base.dispose(); },
+      dispose() { forecasts?.dispose(); artifacts?.dispose(); skills?.dispose(); base.dispose(); },
     };
-  } catch (error) { artifacts?.dispose(); skills?.dispose(); base.dispose(); throw error; }
+  } catch (error) { forecasts?.dispose(); artifacts?.dispose(); skills?.dispose(); base.dispose(); throw error; }
 }
 
 export function verificationInputs(scene: NoninterferenceScene): Record<VerificationOperation, Record<string, unknown>> {
@@ -81,6 +84,12 @@ export function verificationInputs(scene: NoninterferenceScene): Record<Verifica
   if (!("result" in artifacts) || !("data" in artifacts.result) || !("matches" in artifacts.result.data)) throw new Error("verification artifacts failed");
   const artifact = artifacts.result.data.matches[0]?.ref;
   if (!artifact) throw new Error("verification ArtifactVersion positive control is absent");
+  const forecastBoards = read("find_situations", { label: "Forecast verification board" });
+  if (!("result" in forecastBoards) || !("data" in forecastBoards.result) || !("matches" in forecastBoards.result.data)) throw Error("forecast board missing");
+  const forecastBoard = read("situation", { situation: forecastBoards.result.data.matches[0]!.ref, card: "kizuki.situation-card/v2" });
+  if (!("result" in forecastBoard) || !("data" in forecastBoard.result) || forecastBoard.result.data.schema !== "kizuki.situation-card/v2") throw Error("forecast card missing");
+  const commitment = forecastBoard.result.data.commitments[0]?.commitment;
+  if (!commitment) throw Error("forecast positive control missing");
   const of = { operation: "concept", concept: scene.refs.concept };
   if (concept.result.status !== "current" || !("kind" in concept.result.view)) throw new Error("verification diff baseline is incomplete");
   const shared = read("share", { of });
@@ -97,6 +106,7 @@ export function verificationInputs(scene: NoninterferenceScene): Record<Verifica
     resume: input("resume", { handle }), question: input("question", { question }),
     find_questions: input("find_questions", { label: "update" }), frontier: input("frontier"),
     attention: input("attention"),
+    forecast: input("forecast", { commitment }), forecast_scores: input("forecast_scores"),
     atlas: input("atlas", { panel: "people" }),
     slice: input("slice", { task: "Resume the launch", kinds: ["concept", "situation"], budgetTokens: 2000 }),
     person: input("person", { person }), find_people: input("find_people", { label: "Ada" }),
