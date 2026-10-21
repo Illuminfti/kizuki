@@ -3,7 +3,6 @@ import { claimKey, hashBody } from "../../src/claims/hash";
 import { insertClaim } from "../../src/claims/store";
 import { dispatchServeTool } from "../../src/serving/dispatch";
 import { serveContextPacket } from "../../src/serving/packet";
-import type { ContextPacketData } from "../../src/serving/packet";
 import type { Envelope, ServeContext } from "../../src/serving/types";
 import { ulid } from "../../src/util/ulid";
 import { claimInput } from "../claims/helpers";
@@ -11,6 +10,8 @@ import { checkNoninterference, observe } from "../helpers/noninterference";
 import type { ReadCase } from "../helpers/noninterference";
 import { serveFixture } from "./helpers";
 import type { Fixture } from "./helpers";
+
+type PacketEnvelope = Awaited<ReturnType<typeof serveContextPacket>>;
 
 interface Filed {
   subject: string;
@@ -73,12 +74,12 @@ async function olderClaims(f: Fixture, count: number, hidden: boolean): Promise<
 
 async function packetAs(
   ctx: ServeContext,
-): Promise<Envelope<ContextPacketData>> {
+): Promise<PacketEnvelope> {
   return serveContextPacket(ctx, { purpose: "session", budget_tokens: 1200 });
 }
 
 /** What a reader sees of a session packet, minus the clock and the epoch on the header's second line. */
-function view(envelope: Envelope<ContextPacketData>) {
+function view(envelope: PacketEnvelope) {
   const data = envelope.data!;
   const lines = data.packet_md.split("\n");
   return {
