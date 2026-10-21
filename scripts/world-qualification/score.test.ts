@@ -6,7 +6,7 @@ import { WORLD_REGISTRY, WORLD_VOCABULARY_MODULES } from "../../packages/core/sr
 import { canonicalJson, sha256 } from "../evaluate-extraction";
 import type { ExtractResponseV2, DraftRef, TextAnchor } from "../../packages/core/src/contracts/producer-v2";
 import { runQualification } from "./run";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { startFakeEndpoint } from "../../packages/llm/test/fake-endpoint";
@@ -227,6 +227,43 @@ test("endpoint and credential custody failures cannot call the model or expose t
     const path = join(directory, "token"); writeFileSync(path, "synthetic-private-marker", { mode: 0o644 });
     await expect(runQualification({ kinds: ["question"], base_url: server.base_url, model: "synthetic", token_file: path, case_ids: ["question-abstention-v2"] })).rejects.toThrow("token custody rejected");
     expect(server.requests).toHaveLength(0);
+  } finally { server.stop(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("optional synthetic raw evidence keeps rejected pre-parser output and refuses overwrite or credential echoes", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "qualification-raw-"));
+  const token = 'synthetic-diagnostic-"header-marker';
+  const tokenPath = join(directory, "header"); writeFileSync(tokenPath, token, { mode: 0o600 });
+  let content = "synthetic malformed JSON before the claim parser", status = 200;
+  const server = startFakeEndpoint(() => Response.json({ id: "synthetic-control", model: "synthetic", object: "chat.completion", created: 1,
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }],
+    usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }, { status }));
+  const request = { kinds: ["question"], base_url: server.base_url, model: "synthetic", token_file: tokenPath, case_ids: ["question-abstention-v2"] };
+  try {
+    const raw = join(directory, "raw.jsonl");
+    const result = await runQualification({ ...request, raw_responses: raw });
+    const bytes = readFileSync(raw, "utf8"), record = JSON.parse(bytes);
+    expect(result.observations[0]!.status).toBe("rejected");
+    expect(record.response.choices[0].message.content).toBe(content);
+    const responseHash = result.traces[0]!.response_sha256;
+    expect(typeof responseHash).toBe("string");
+    expect(sha256(canonicalJson(record.response))).toBe(responseHash!);
+    expect(record.case_id).toBe(request.case_ids[0]); expect(record.omitted).toBeNull();
+    expect(bytes).not.toContain(token); expect(bytes).not.toContain(tokenPath);
+    expect(statSync(raw).mode & 0o777).toBe(0o600);
+    await expect(runQualification({ ...request, raw_responses: raw })).rejects.toThrow();
+    const link = join(directory, "link"); symlinkSync(raw, link);
+    await expect(runQualification({ ...request, raw_responses: link })).rejects.toThrow();
+    expect(server.requests).toHaveLength(1); expect(readFileSync(raw, "utf8")).toBe(bytes);
+    content = token;
+    const echoed = join(directory, "echo.jsonl"); await runQualification({ ...request, raw_responses: echoed });
+    const echo = readFileSync(echoed, "utf8"); expect(echo).not.toContain(token);
+    expect(JSON.parse(echo)).toMatchObject({ response: null, omitted: "credential_echo" });
+    status = 500; content = "synthetic-provider-error-body-must-not-be-retained";
+    const failed = join(directory, "failed.jsonl"); const refused = await runQualification({ ...request, raw_responses: failed });
+    const failure = readFileSync(failed, "utf8"); expect(failure).not.toContain(content);
+    expect(JSON.parse(failure)).toMatchObject({ response: null, omitted: "transport_failed", transport: "failed", http_status: 500 });
+    expect(refused.halt_reason).toBe("transport_refused"); expect(server.requests).toHaveLength(3);
   } finally { server.stop(); rmSync(directory, { recursive: true, force: true }); }
 });
 

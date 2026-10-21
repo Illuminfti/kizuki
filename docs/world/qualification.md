@@ -85,6 +85,17 @@ per-case conditional prompt hashes, timing, parsed responses and measured usage.
 cannot claim a clean source revision. `--cases` supports diagnosis, but a
 partial kind never qualifies.
 
+For diagnosis of this fixed synthetic corpus, optionally add
+`--raw-responses /absolute/private/new-responses.jsonl`. This separate file
+retains successful HTTP response bodies before the producer parser, including
+output the parser rejects. Each record carries the matching case, prompt,
+request and response hashes from the normal receipt. The runner creates the
+file exclusively with mode 0600, refuses an existing file or symlink, fsyncs
+each record, and limits records to 2 MiB and the file to 32 MiB. Provider error
+bodies and exact credential echoes are omitted with an explicit reason. Keep
+this artifact private; it is diagnostic output, never model input or a
+replacement for the scorer. No raw response file is created by default.
+
 ## Review and activation gate
 
 Transport observation alone cannot prove provider identity: a local test

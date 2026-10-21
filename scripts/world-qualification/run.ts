@@ -17,6 +17,8 @@ import { validateResume, type ResumeEvidence, type Trace } from "./resume";
 export interface RunOptions {
   kinds: readonly string[]; base_url?: string; model?: string; token_file?: string;
   allow_remote?: boolean; output?: string; case_ids?: readonly string[];
+  /** Opt-in private JSONL evidence for this fixed synthetic corpus only. Never read as model input. */
+  raw_responses?: string;
   extensions?: readonly string[];
   resume_from?: string; resume_sha256?: string; stopped?: () => boolean;
 }
@@ -85,7 +87,7 @@ export async function runQualification(options: RunOptions) {
       "Transport observation alone does not establish provider identity. Reviewed endpoint/service evidence must accompany an approved report hash.",
       "This fixed authored split must not be used to tune prompts or select responses; changes require a fresh unseen split."],
     score: scoreRun(qualificationCorpus, observations.filter(row => traces.some(trace => trace.case_id === row.case_id && trace.transport === "ok"))) });
-  let fd: number | undefined;
+  let fd: number | undefined, rawFd: number | undefined, rawBytes = 0;
   const save = () => {
     const value = report();
     if (fd !== undefined) { const bytes = Buffer.from(JSON.stringify(value, null, 2) + "\n"); if (bytes.length > 32 * 1024 * 1024) throw new Error("qualification receipt exceeds bound");
@@ -101,6 +103,7 @@ export async function runQualification(options: RunOptions) {
   };
   if (options.output !== undefined) fd = openSync(options.output, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   try {
+    if (options.raw_responses !== undefined) rawFd = openSync(options.raw_responses, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     if (options.base_url === undefined || options.model === undefined || missing.length > 0) { if (options.base_url === undefined || options.model === undefined) missing.push("model_unconfigured"); return save(); }
     const url = new URL(options.base_url);
     if ((!isLoopbackHost(url.hostname) && options.allow_remote !== true) || !["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error("endpoint rejected");
@@ -122,6 +125,23 @@ export async function runQualification(options: RunOptions) {
       trace.response_sha256 = sha256(response.ok ? canonicalJson(response.body) : `${response.kind}:${response.status}`);
       trace.transport = response.ok ? "ok" : "failed";
       save();
+      if (rawFd !== undefined) {
+        // Preserve pre-parser output for synthetic diagnosis, never request headers,
+        // credential paths, or provider error bodies. A malicious credential echo
+        // is recorded only as an omission; even this opt-in artifact cannot keep it.
+        const body = response.ok ? canonicalJson(response.body) : null;
+        const omitted = body === null ? "transport_failed" : token !== null && body.includes(JSON.stringify(token).slice(1, -1)) ? "credential_echo" : null;
+        const bytes = Buffer.from(JSON.stringify({ schema: "kizuki.synthetic-model-response/v1", ...trace,
+          omitted, response: response.ok && omitted === null ? response.body : null }) + "\n");
+        if (bytes.length > 2 * 1024 * 1024 || rawBytes + bytes.length > 32 * 1024 * 1024) throw new Error("qualification raw response exceeds bound");
+        let offset = 0;
+        while (offset < bytes.length) {
+          const written = writeSync(rawFd, bytes, offset, bytes.length - offset);
+          if (written === 0) throw new Error("qualification raw response write made no progress");
+          offset += written;
+        }
+        rawBytes += bytes.length; fsyncSync(rawFd);
+      }
       return response;
     };
     const context = (config: Record<string, unknown>): PortContext => ({ config, vault_path: "/nonexistent", data_dir: "/nonexistent",
@@ -146,7 +166,7 @@ export async function runQualification(options: RunOptions) {
       }
       return save();
     } finally { await producer.close(); await llm.close(); }
-  } finally { if (fd !== undefined) closeSync(fd); }
+  } finally { if (rawFd !== undefined) closeSync(rawFd); if (fd !== undefined) closeSync(fd); }
 }
 
 if (import.meta.main) {
@@ -156,10 +176,11 @@ if (import.meta.main) {
   try {
     const args = process.argv.slice(2), value = (flag: string) => { const at = args.indexOf(flag); return at < 0 ? undefined : args[at + 1]; };
     const kinds = value("--kinds"), output = value("--out");
-    const allowed = ["--kinds", "--out", "--base-url", "--model", "--token-file", "--allow-remote", "--cases", "--extensions", "--resume-from", "--resume-sha256"];
+    const allowed = ["--kinds", "--out", "--raw-responses", "--base-url", "--model", "--token-file", "--allow-remote", "--cases", "--extensions", "--resume-from", "--resume-sha256"];
     for (let index = 0; index < args.length; index++) { const flag = args[index]!; if (!allowed.includes(flag) || args.indexOf(flag) !== index) throw new Error("invalid arguments"); if (flag !== "--allow-remote" && (args[++index] === undefined || args[index]!.startsWith("--"))) throw new Error("missing argument"); }
     if (kinds === undefined || output === undefined) throw new Error("required arguments missing");
     const result = await runQualification({ kinds: kinds.split(","), output, stopped: () => stopped,
+      ...(value("--raw-responses") === undefined ? {} : { raw_responses: value("--raw-responses")! }),
       ...(value("--resume-from") === undefined ? {} : { resume_from: value("--resume-from")! }),
       ...(value("--resume-sha256") === undefined ? {} : { resume_sha256: value("--resume-sha256")! }),
       ...(value("--base-url") === undefined ? {} : { base_url: value("--base-url")! }), ...(value("--model") === undefined ? {} : { model: value("--model")! }),
