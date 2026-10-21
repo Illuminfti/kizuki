@@ -222,3 +222,16 @@ human outcomes, or parity with commercial products. Missing expected facts remai
 visible rather than being removed from the denominator; forbidden evidence,
 future evidence and unexpected state mutations are hard failures that no recall
 average can hide. No provider is called.
+
+The quality baseline's `authoritative-plus-scoped-reference-integrity/v2`
+read-state witness keeps claims, events, grants, every other non-audit table,
+canon files and promotion receipts byte-identical during reads. Public typed
+recall may add rows only to six named capability tables: authorization namespaces,
+wire references, and object, claim, admission and event-version targets. Existing
+rows must remain identical; additions must belong to the exact current reader's
+grant-bound namespace, have the matching target kind, pass foreign-key checks,
+and preserve exact event versions. Tests inject claim, event, grant, canon and
+wrong-principal reference changes to prove rejection. This protocol is pinned in
+the receipt configuration; receipts from the older all-table equality protocol
+are not silently compared under the revised invariant. Fact expectations,
+privacy checks, budgets and correction/revocation schedules are unchanged.

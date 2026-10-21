@@ -1,5 +1,6 @@
+import { baselineReadState, baselineReadUnchanged } from "./read-state";
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, openSync, readSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cpus, totalmem } from "node:os";
 import { OWNER, serveContextPacket, serveSearch, serveTimeline } from "../../../packages/core/src/index";
@@ -20,7 +21,7 @@ const digest = (value: unknown) => hash(JSON.stringify(value));
 const LIMITS = ["retrieval_only", "scripted_fixture_not_model_quality", "historical_exposure_not_false_current", "no_human_or_competitor_trial"] as const;
 const CONFIG = { arms: BASELINE_ARMS, budget: BUDGET, tokenizer: PACKET_TOKENIZER_ID, model: "none",
   fixture_producer: "scripted-persona-v1", principals: ["owner", "scoped_agent"], query_hash: hash(QUERY),
-  projection: "source-text-prefix/v1", scope_sha256: hash("persona:orchard"), timeline_limit: 200, search_limit: 20 } as const;
+  projection: "source-text-prefix/v1", read_state: "authoritative-plus-scoped-reference-integrity/v2", scope_sha256: hash("persona:orchard"), timeline_limit: 200, search_limit: 20 } as const;
 
 /** The files actually read by this checkout, including uncommitted harness files.
  * No path or source body is persisted. A dirty result remains labelled dirty. */
@@ -41,24 +42,6 @@ export function baselineSource() {
 }
 
 type Fixture = Awaited<ReturnType<typeof generateVault>>;
-/** Read-phase invariant, separate from planned setup/correction/revocation. */
-function stateHash(f: Fixture): string {
-  const tables = f.db.query<{name:string},[]>("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all();
-  const parts: unknown[] = tables.filter(row => row.name !== "agent_audit").map(({name}) => [name, digest(f.db.query(`SELECT * FROM "${name.replaceAll('"','""')}"`).all())]);
-  const walk = (dir: string) => {
-    for (const name of readdirSync(dir).sort()) {
-      if (dir === f.vaultPath && name === ".kizuki") continue;
-      const path = join(dir, name), stat = lstatSync(path);
-      if (stat.isDirectory()) walk(path);
-      else if (stat.isFile()) parts.push([path.slice(f.vaultPath.length), hash(readFileSync(path))]);
-      else throw new Error("unexpected fixture filesystem entry");
-    }
-  };
-  walk(f.vaultPath);
-  const receipts = join(f.vaultPath, ".kizuki", "receipts", "promotions.jsonl");
-  try { parts.push(hash(readFileSync(receipts))); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  return digest(parts);
-}
 
 export interface BaselineRow {
   stage: typeof BASELINE_SCHEDULE[number]; arm: typeof BASELINE_ARMS[number]; principal: "owner" | "scoped_agent";
@@ -80,7 +63,7 @@ export async function evaluateBaselinesAtLogicalTime(options: { out: string; wor
       if (stage === "after_source_revoke") f.revokeSharedSource();
       for (const principal of CONFIG.principals) for (const arm of BASELINE_ARMS) {
         const ctx = { db: f.db, vaultPath: f.vaultPath, principal: principal === "owner" ? OWNER : f.principal };
-        const before = stateHash(f);
+        const before = baselineReadState(ctx);
         let text = "", status: BaselineRow["status"] = "ok";
         try {
           if (arm === "raw_history") {
@@ -104,7 +87,7 @@ export async function evaluateBaselinesAtLogicalTime(options: { out: string; wor
           expected: expectedValue === null ? 0 : 1, recalled: expectedValue !== null && limited.includes(expectedValue) ? 1 : 0,
           old_exposure: stage === "before_correction" ? 0 : Number(limited.includes(OLD)),
           forbidden: new Set(forbidden.filter(value => limited.includes(value))).size,
-          future: stage === "before_correction" ? Number(limited.includes(NEW)) : 0, state_unchanged: before === stateHash(f) });
+          future: stage === "before_correction" ? Number(limited.includes(NEW)) : 0, state_unchanged: baselineReadUnchanged(before, ctx) });
       }
     }
     if (JSON.stringify(baselineSource()) !== JSON.stringify(source)) throw new Error("baseline source changed during evaluation");

@@ -57,10 +57,11 @@ export function sliceAssembler(kind: string) {
 }
 
 /** One bounded source of candidates for the public slice and session-start renderer. */
-export function collectSlice(frame: WorldFrame, kinds: readonly string[], when: WorldWhen, task = ""): SliceCandidates {
+export function collectSlice(frame: Pick<WorldFrame, "ctx" | "ns" | "dependencies">, kinds: readonly string[], when: WorldWhen, task = "", options: { projection?: "relations"; subjects?: readonly string[]; matchingOnly?: boolean } = {}): SliceCandidates {
   const constraints: SliceItem[] = [], detail: SliceItem[] = [], providers: ProviderCoverage[] = [];
   const gaps = new Set<ViewGap>(sourceCoverage(frame.ctx, frame.dependencies));
-  const read = newReadFrame(frame.ctx, frame.ns, when.valid, frame.dependencies);
+  const read = { ...newReadFrame(frame.ctx, frame.ns, when.valid, frame.dependencies),
+    ...(options.projection === undefined ? {} : { projection: options.projection }) };
   const preview = createRedactor(frame.ctx.principal, frame.ctx.servingSecrets);
   let truncated = false;
   let exhausted = false;
@@ -74,10 +75,10 @@ export function collectSlice(frame: WorldFrame, kinds: readonly string[], when: 
     } else providers.push({ kind: id, status: "included" });
     if (exhausted) continue;
     try {
-      const matches = readWorldMatches(read, id, "", null, WORLD_DISCOVERY_SCAN_BUDGET);
+      const matches = readWorldMatches(read, id, "", null, WORLD_DISCOVERY_SCAN_BUDGET, undefined, options.subjects);
       for (const gap of matches.coverage.gaps) gaps.add(gap);
       // Discovery keeps every examined authorized label/classification in the dependency closure.
-      const selected = relevantMatches(matches.matches, task, preview);
+      const selected = relevantMatches(matches.matches, task, preview, !options.matchingOnly);
       if (matches.cursor !== null || selected.length > 4) { truncated = true; gaps.add("traversal_limit"); }
       for (const match of selected.slice(0, 4)) {
         const handle = resolveWorldObject(frame.ctx.db, frame.ns, match.ref.token);

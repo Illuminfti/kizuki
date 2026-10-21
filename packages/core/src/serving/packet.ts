@@ -2,6 +2,7 @@ import { normalizeReadArgs } from "./v2/read-input";
 import { packetPrincipal, scopePacketPieces } from "./v2/packet-pieces";
 import { projectCanonChunk, projectQuotedChunk } from "./v2/chunks";
 import { referenceScope } from "../world/ref-kinds/common";
+import { compileRecallSlice } from "../world/slice/recall";
 import { compileSessionSlice } from "../world/slice/session";
 import { redactorOf } from "./redact";
 import type { Redactor } from "./redact";
@@ -486,6 +487,20 @@ async function servePacket(
           ...(types === undefined ? {} : { types }),
           ...window,
         }));
+        if (purpose === "recall" && request.include === undefined && request.since === undefined && request.until === undefined) {
+          try {
+            const recall = compileRecallSlice(ctx, { at, header, budgetTokens: budget,
+              ...(query === undefined ? {} : { query }), ...(subjects === undefined ? {} : { subjects }) });
+            pieces = [...recall.pieces, ...pieces];
+            if (recall.pieces.length > 0) degraded = degraded.filter(gap => gap !== "query-no-match");
+            degraded.push(...recall.degraded);
+            stateTruncated ||= recall.truncated;
+            worldPublications.push(recall.world);
+          } catch {
+            // Preserve independently authorized canon/capture if typed recall is unavailable.
+            degraded.push("coverage");
+          }
+        }
         if (gatherState) {
           try {
             const state = (v2 ? compileSessionSlice : collectSessionPieces)(ctx, {
