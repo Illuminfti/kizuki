@@ -29,6 +29,12 @@ export function recordWorldDependencies(deps: WorldDependencies, item: Eligible)
   deps.claims.add(item.claimId);
   for (const support of item.supports) {
     deps.supports.add(support.row.support_key);
+    if (support.admission.schema === "kizuki.world-admission/v2") {
+      for (const basis of support.admission.grounding) {
+        deps.supports.add(basis.classification.support_key);
+        deps.supports.add(basis.label.support_key);
+      }
+    }
     for (const event of support.events) deps.events.add(event.event_id);
   }
 }

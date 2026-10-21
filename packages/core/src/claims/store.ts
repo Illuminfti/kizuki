@@ -1,3 +1,4 @@
+import { validateWorldAdmissionProofs } from "./world-grounding";
 import type { ClaimVisibility } from "./visibility";
 import { UNWRITTEN_CAPTURE_NOTE_WHERE } from "./capture-fanout";
 import { pageClaimKey } from "./hash";
@@ -351,6 +352,8 @@ function preparedWorldCommit(
   if (!native && (grant === null || grant.status !== "active")) {
     throw new ClaimError("provenance_unresolved", "world admission source grant is not active");
   }
+  const grounding = admission.schema === "kizuki.world-admission/v2"
+    ? validateWorldAdmissionProofs(db, admission, sourceKey, { scope }) : [];
   return {
     semantic: input.semantic,
     support: {
@@ -359,7 +362,7 @@ function preparedWorldCommit(
       grant_revision: native ? 0 : grant!.revision,
       events: supportEventIds.map((eventId, index) => ({ event_id: eventId, event_content_hash: native
         ? db.query<{ content_hash: string }, [string]>("SELECT content_hash FROM events WHERE event_id=?").get(eventId)?.content_hash ?? ""
-        : bindings[index]!.content_hash })),
+        : bindings[index]!.content_hash })).concat(grounding),
       anchors,
       admission: { schema: admission.schema, rendering: admission.rendering, epistemicKind: admission.epistemicKind },
       admitted_at: at,

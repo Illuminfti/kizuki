@@ -1,4 +1,5 @@
-import { CLAIM_V2_SCHEMA, rawSubjectRefKey, validateClaimV2Semantic, type ClaimV2Assertion, type ClaimV2Object, type RawSubjectRef, type QualifiedSuppliedRef } from "../contracts/claim-v2";
+import { isGroundedIdentity, type WorldAdmission, type WorldGrounding } from "../contracts/world-admission";
+import { CLAIM_V2_SCHEMA, rawSubjectRefKey, validateClaimV2Semantic, type ClaimV2Assertion, type ClaimV2Object, type RawSubjectRef } from "../contracts/claim-v2";
 import type { AuthorityTier, FrontmatterValue } from "../contracts/proposal";
 import {
   type DroppedDraftV2,
@@ -22,16 +23,7 @@ export interface WorldDraftInsert extends InsertClaimInput {
   readonly confidence: number;
   readonly sensitivity: RichClaimDraft["sensitivity"];
   readonly semantic: ClaimV2Assertion;
-  readonly world_admission: {
-    readonly schema: "kizuki.world-admission/v1";
-    readonly semantic: ClaimV2Assertion;
-    readonly rendering: { readonly body: string; readonly frontmatter: Record<string, FrontmatterValue> };
-    /** Recomputed by the shared writer. */
-    readonly authority: AuthorityTier;
-    /** Recomputed and clamped by the shared writer. */
-    readonly confidence: number;
-    readonly epistemicKind: "model_inference";
-  };
+  readonly world_admission: WorldAdmission;
 }
 
 export interface WorldDraftEvent extends OccurrenceEventIdentity {
@@ -51,7 +43,10 @@ export interface WorldDraftContext {
   /** Immutable event revisions selected by the host, keyed by event id. */
   readonly events: readonly WorldDraftEvent[];
   /** Host-created capability map; keys are request-local supplied handles only. */
-  readonly supplied_refs: ReadonlyMap<string, QualifiedSuppliedRef>;
+  readonly supplied_refs: ReadonlyMap<string, RawSubjectRef>;
+  /** Request-local catalog issued by Core, never copied from model output. */
+  readonly grounding?: ReadonlyMap<string, WorldGrounding>;
+  readonly witness_event_ids?: ReadonlySet<string>;
   readonly model_ref: string | null;
   /**
    * The host's last word on a resolved assertion, asked once per claim in
@@ -100,7 +95,7 @@ export function prepareWorldDrafts(
   if (supplied.size !== input.supplied_refs.length || context.supplied_refs.size !== supplied.size) fail("supplied handle set differs from quoted input");
   for (const [handle, raw] of context.supplied_refs) {
     const anchors = supplied.get(handle);
-    if (anchors === undefined || raw.kind !== "supplied" || raw.namespace === undefined || raw.namespace === null) fail("supplied handle is not a qualified trusted raw subject");
+    if (anchors === undefined || (!context.grounding?.has(handle) && (raw.kind !== "supplied" || !("namespace" in raw) || raw.namespace === null))) fail("supplied handle is not a qualified trusted raw subject");
     const cited = new Set(anchors.map(anchorKey));
     if (cited.size !== anchors.length) fail("supplied handle has duplicate anchors");
   }
@@ -113,11 +108,13 @@ export function prepareWorldDrafts(
   }
   const mentions = new Map(response.mentions.map(mention => [mention.id, mention]));
   if (mentions.size !== response.mentions.length) fail("duplicate mention id");
+  let identity = false;
+  let usedGrounding = new Map<string, WorldGrounding>();
   const resolve = (ref: { readonly kind: "mention" | "supplied"; readonly id: string }, claimAnchors: ReadonlySet<string>): RawSubjectRef => {
     if (ref.kind === "supplied") {
       const raw = context.supplied_refs.get(ref.id);
       const anchors = supplied.get(ref.id);
-      if (raw === undefined || anchors === undefined) fail("supplied reference is unsupported by claim evidence");
+      if (raw === undefined || anchors === undefined || raw.kind !== "supplied" || !("namespace" in raw) || context.grounding?.has(ref.id)) fail("supplied reference is unsupported by claim evidence");
       const cited = anchors.filter(anchor => claimAnchors.has(anchorKey(anchor)));
       if (cited.length === 0) fail("supplied reference is unsupported by claim evidence");
       if (!cited.some(anchor => {
@@ -133,6 +130,13 @@ export function prepareWorldDrafts(
     if (mention === undefined || !claimAnchors.has(anchorKey(mention.anchor))) fail("mention is unsupported by claim evidence");
     const event = eventById.get(mention.anchor.event_id);
     if (event === undefined) fail("mention anchor is outside immutable event input");
+    if (identity && mention.candidate_refs.length > 0) {
+      const candidate = mention.candidate_refs.length === 1 && mention.candidate_refs[0]!.kind === "supplied"
+        ? context.grounding?.get(mention.candidate_refs[0]!.id) : undefined;
+      if (!candidate) fail("identity candidate is not a host-issued endpoint");
+      usedGrounding.set(rawSubjectRefKey(candidate.endpoint), candidate);
+      return candidate.endpoint;
+    }
     return { kind: "occurrence", id: mintOccurrenceId(event, event.source_key, mention.anchor) };
   };
 
@@ -144,7 +148,12 @@ export function prepareWorldDrafts(
   };
   const dropped: DroppedDraftV2[] = [];
   const drafts = response.claims.flatMap(claim => {
+    identity = ["concept.same_as", "concept.distinguished_from"].includes(claim.predicate);
+    usedGrounding = new Map();
     const anchors = completeAnchors(claim);
+    if (context.witness_event_ids && anchors.some(a => !context.witness_event_ids!.has(a.event_id))) {
+      dropped.push({ reason: "invalid_claim", id: claim.id }); return [];
+    }
     const anchorKeys = new Set(anchors.map(anchorKey));
     if (anchors.length === 0 || !anchors.every(anchor => eventById.has(anchor.event_id))) fail("claim has an out-of-source anchor");
     // World support comes from one source. A claim citing records of two
@@ -188,9 +197,13 @@ export function prepareWorldDrafts(
       dropped.push({ reason: "invalid_claim", id: claim.id });
       return [];
     }
+    if ((usedGrounding.size > 0 || (identity && (context.grounding?.size ?? 0) > 0)) && (usedGrounding.size !== 2 || !isGroundedIdentity(semantic))) {
+      dropped.push({ reason: "invalid_claim", id: claim.id }); return [];
+    }
     const provenance = [...new Set(anchors.map(anchor => anchor.event_id))].sort();
-    const admission = {
-      schema: "kizuki.world-admission/v1" as const,
+    const admission: WorldAdmission = {
+      ...(usedGrounding.size === 0 ? { schema: "kizuki.world-admission/v1" as const }
+        : { schema: "kizuki.world-admission/v2" as const, grounding: [...usedGrounding.values()].sort((a, b) => rawSubjectRefKey(a.endpoint) < rawSubjectRefKey(b.endpoint) ? -1 : 1) }),
       semantic,
       rendering: { body: claim.body, frontmatter: {} },
       authority: "model_inference" as AuthorityTier,

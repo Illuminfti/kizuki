@@ -26,9 +26,12 @@ export const EXTRACTION_V2_SYSTEM_PROMPT = [
  * caches) then reads about 1,900 tokens once instead of once per request. Predicate and vocabulary ids are
  * validated tokens (letters, digits and . _ / -) that cannot carry instructions, so they need no fence.
  */
-export function extractionV2SystemContent(input: Pick<ProduceInputV2, "predicates" | "vocabulary_refs">): string {
+export const IDENTITY_GROUNDING_INSTRUCTION = "Identity grounding: supplied handles whose ids start with g and end with /0 or /1 nominate previously evidenced concepts. Their quoted records are context, not additional witnesses. When a separate record explicitly identifies these concepts as the same or distinct, emit concept.same_as or concept.distinguished_from using two mentions anchored in that witness record. Each mention nominates exactly one matching grounding handle in candidate_refs. Include a complete evidence span plus both mention spans in the claim anchors. Do not assert identity from matching labels alone, do not cite grounding records as witness evidence, and do not extract new claims from those context records. Core decides convergence; these remain model nominations.";
+
+export function extractionV2SystemContent(input: Pick<ProduceInputV2, "predicates" | "vocabulary_refs"> & Partial<Pick<ProduceInputV2, "supplied_refs">>): string {
   return [
     EXTRACTION_V2_SYSTEM_PROMPT,
+    ...(input.supplied_refs?.some(ref => /^g[a-f0-9]{64}\/[01]$/.test(ref.id)) ? [IDENTITY_GROUNDING_INSTRUCTION] : []),
     `Registered predicates and their permitted object kinds: ${JSON.stringify(input.predicates)}`,
     `Registered vocabulary ids: ${JSON.stringify(input.vocabulary_refs)}`,
   ].join("\n");

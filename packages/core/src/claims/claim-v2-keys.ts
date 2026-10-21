@@ -120,6 +120,8 @@ export interface ClaimV2SupportEventRef {
 
 export interface ClaimV2SupportKeyInput {
   readonly support_origin?: "source" | "native_owner";
+  /** Present only for the explicitly versioned world-admission/v2 codec. */
+  readonly grounding_digest?: string | undefined;
   readonly semantic_key: string;
   readonly source_key: string;
   readonly grant_revision: number;
@@ -149,7 +151,8 @@ export function supportKey(input: ClaimV2SupportKeyInput): string {
         : 0,
   );
   const anchors = [...input.anchors].sort(anchorOrder);
-  return tuple(input.support_origin === "native_owner" ? "kizuki.claim/v2#native-support" : SUPPORT_DOMAIN, [
+  return tuple(input.grounding_digest === undefined ? (input.support_origin === "native_owner" ? "kizuki.claim/v2#native-support" : SUPPORT_DOMAIN) : "kizuki.world-admission/v2#support", [
+    ...(input.grounding_digest === undefined ? [] : [input.grounding_digest]),
     input.semantic_key,
     input.source_key,
     String(input.grant_revision),

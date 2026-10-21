@@ -4,7 +4,7 @@ import { authorizedClaimSql } from "./policy-sql";
 import { knownSupportSql, knownValidSql, knownHeldSql } from "./known/cutoff";
 import { verifyClaim } from "./pipeline/collect";
 import { claimVisibleSql, type ReadFrame } from "./pipeline/frame";
-import type { Cluster, Grouper } from "./pipeline/group";
+import type { Cluster } from "./pipeline/group";
 import type { Eligible } from "./pipeline/eligible";
 import type { RawSubjectRef } from "../contracts/claim-v2";
 import type { ServeContext } from "../serving/types";
@@ -17,7 +17,7 @@ export const IDENTITY_MAX_MEMBERS = 256;
 export const IDENTITY_MAX_EDGES = 1024;
 
 type Edge = { claim_id: string; left: string; right: string };
-type Pair = { left: string; right: string; claims: Eligible[]; blocked: boolean };
+type Pair = { left: string; right: string; claims: Eligible[]; blocked: boolean; qualified: boolean | undefined };
 
 /** Identity is a read projection over ordinary claims, never a persistent representative. */
 const frames = new WeakMap<ReadFrame, Map<string, Cluster>>();
@@ -128,19 +128,22 @@ export function identityCluster(frame: ReadFrame, anchor: string, joining?: stri
       if (item.supports.every(s => s.row.support_origin === "native_owner") && !nativeReceipted(frame, item)) continue;
       const ends = [row.left, row.right].sort(), key = JSON.stringify(ends);
       let pair = pairs.get(key);
-      if (!pair) { pair = { left: ends[0]!, right: ends[1]!, claims: [], blocked: false }; pairs.set(key, pair); }
+      if (!pair) { pair = { left: ends[0]!, right: ends[1]!, claims: [], blocked: false, qualified: undefined }; pairs.set(key, pair); }
       const negative = item.semantic.predicate === "concept.same_as" ? item.semantic.polarity === "negative" : item.semantic.polarity === "positive";
       if (negative) pair.blocked = true;
-      else if (item.semantic.predicate === "concept.same_as") pair.claims.push(item);
+      else if (item.semantic.predicate === "concept.same_as") { pair.claims.push(item); pair.qualified = undefined; }
     }
     // Two assertions of the same pair may carry independent supports even
     // when their validity starts differ. Copies and shared roots still count once.
     for (const pair of pairs.values()) {
       if (!members.has(pair.left) && !members.has(pair.right)) continue;
       const supports = pair.claims.flatMap(item => item.supports);
-      const qualifies = pair.claims.some(item => item.supports.some(s => s.row.support_origin === "native_owner") && nativeReceipted(frame, item)) ||
+      // One synchronous frame has immutable evidence. Recompute only when a
+      // newly discovered claim adds supports, rather than charging the same
+      // witness text once for every other member in the traversal.
+      pair.qualified ??= pair.claims.some(item => item.supports.some(s => s.row.support_origin === "native_owner") && nativeReceipted(frame, item)) ||
         (supports.length > 0 && supportLineage(frame, supports).count >= 2);
-      if (pair.blocked || !qualifies) { ambiguous = true; continue; }
+      if (pair.blocked || !pair.qualified) { ambiguous = true; continue; }
       for (const next of [pair.left, pair.right]) if (!members.has(next)) {
         if (members.size === IDENTITY_MAX_MEMBERS) { overflow = true; break; }
         members.add(next); queue.push(next);
@@ -161,7 +164,9 @@ export function identityCluster(frame: ReadFrame, anchor: string, joining?: stri
   return cache.get(anchor)!;
 }
 
-export const identityGrouper: Grouper = (frame, cluster) => identityCluster(frame, cluster.anchor);
+export function identityGrouper(frame: ReadFrame, cluster: Cluster): Cluster {
+  return identityCluster(frame, cluster.anchor);
+}
 
 /** Native correction preflight uses the same scoped traversal, before recording any statement. */
 export function identityCorrectionAllowed(ctx: ServeContext, subject: RawSubjectRef, object: RawSubjectRef): boolean {
