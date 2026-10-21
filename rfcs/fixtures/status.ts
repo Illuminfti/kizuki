@@ -64,7 +64,7 @@ export const FIXTURE_STATUS: FixtureRegistry = {
   "world-outcome-replay-design": deferred("OUTCOME"),
   "world-outcome-stages-design": deferred("OUTCOME"),
   "world-outcome-usefulness-design": deferred("OUTCOME"),
-  "world-perspective-binding-design": deferred("PEOPLE"),
+  "world-perspective-binding-design": executable("packages/core/test/world/people-oracles.test.ts"),
   "world-procedure-evidence-design": deferred("SKILL"),
   "world-question-copy-design": executable("packages/core/test/world/questions-oracles.test.ts"),
   "world-question-reopen-design": executable("packages/core/test/world/questions-oracles.test.ts"),

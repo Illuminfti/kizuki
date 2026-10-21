@@ -1,3 +1,4 @@
+import { consolidationDoctor } from "./doctor-consolidation";
 import type { Database } from "bun:sqlite";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -49,6 +50,8 @@ interface BriefFacts {
   readonly unwritten_claims: number;
   readonly events_past_cursor: number;
   readonly deferred_inputs: number;
+  readonly consolidation_pending: number;
+  readonly consolidation_capped: boolean;
   readonly new_events: number;
 }
 
@@ -203,6 +206,7 @@ function gatherFacts(db: Database, now: string): BriefFacts {
   const until = instant(now);
   const since = windowStart(db, until.slice(0, 10), until);
   const rails = railProblems(db, since, until);
+  const consolidation = consolidationDoctor(db, until, false);
   const changes = canonChanges(db, since, until);
   return {
     since,
@@ -214,6 +218,8 @@ function gatherFacts(db: Database, now: string): BriefFacts {
     problems: rails.problems,
     problems_omitted: rails.omitted,
     unwritten_claims: countUnwrittenLiveClaims(db),
+    consolidation_pending: consolidation.backlog,
+    consolidation_capped: consolidation.backlog_capped,
     events_past_cursor: eventsPastCursor(db),
     deferred_inputs: tableExists(db, "extract_deferred_inputs")
       ? count(db, "SELECT count(*) AS n FROM extract_deferred_inputs")
@@ -290,6 +296,7 @@ function briefBody(
     `- Live claims not yet written to canon: ${facts.unwritten_claims}`,
     `- Ledger events past the extraction cursor: ${facts.events_past_cursor}`,
     `- Deferred extraction inputs: ${facts.deferred_inputs}`,
+    `- Summaries pending consolidation${facts.consolidation_capped ? " (at least)" : ""}: ${facts.consolidation_pending}`,
     "",
     "## State",
     `- Canon writing: ${modelRef === null || modelRef === "" ? "off (no model configured; connectors, ledger, search, timeline and undo still work)" : `on (${inline(modelRef)})`}`,

@@ -1,3 +1,4 @@
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -21,7 +22,8 @@ afterEach(() => { for (const dispose of cleanup.splice(0).reverse()) dispose(); 
 const WHEN = { valid: { kind: "all" }, knownAt: { kind: "current" } } as const;
 const REQUIRED = { status: "new_view_required" } as const;
 async function setup() {
-  const made = await hiddenScene(); cleanup.push(() => made.dispose());
+  const made = await hiddenScene({ model: EMPTY_SUMMARY_MODEL }); cleanup.push(() => made.dispose());
+  await completeEmptyWorldSummaries(made.db, made.vaultPath);
   const owner: ServeContext = { db: made.db, vaultPath: made.vaultPath, principal: OWNER };
   const read = { operation: "concept", concept: made.visible.concept.ref!, ...WHEN };
   return { made, owner, read };
@@ -103,6 +105,8 @@ test("backup, restore and rebuild erase tokens and handles; a fresh authorized r
   expect(copy.query("SELECT count(*) AS n FROM world_resume_handles").get()).toEqual({ n: 0 });
   expect(result(ctx, { ...read, priorView: prior.view })).toEqual(REQUIRED);
   expect(result(ctx, resume(shared.handle))).toEqual(REQUIRED);
+  expect(result(ctx, read)).toMatchObject({ status: "incomplete", reasons: expect.arrayContaining(["pending_consolidation"]) });
+  await completeEmptyWorldSummaries(copy, ctx.vaultPath);
   expect(result(ctx, read)).toMatchObject({ status: "current", view: { kind: "view" } });
   rebuildWorldLayer(made.db);
   expect(result(owner, { ...read, priorView: prior.view })).toEqual(REQUIRED);

@@ -1,3 +1,4 @@
+import type { KnownCutoff, KnownConsolidationPin } from "./cutoff";
 import type { ServeContext } from "../../serving/types";
 import { canonicalJson } from "../../util/hash";
 import { issuedOpaqueFields } from "../../util/issued-opaque";
@@ -15,10 +16,7 @@ import { fingerprintOf, issueView, lookupView } from "../views/store";
 const SNAPSHOT_CACHE_SCHEMA = "kizuki.known-snapshot-cache/v1";
 const SNAPSHOT_DOMAIN = "known-snapshot" as const;
 
-export interface KnownSnapshotCutoff {
-  readonly at: string;
-  readonly sequence: number;
-}
+export type KnownSnapshotCutoff = KnownCutoff;
 
 export interface KnownSnapshotInput {
   /** The normalized internal semantic handle, never a caller-controlled label. */
@@ -56,6 +54,30 @@ function validCutoff(value: KnownSnapshotCutoff): boolean {
   return isRfc3339(value.at) && Number.isSafeInteger(value.sequence) && value.sequence >= 0;
 }
 
+/** Freeze absence as well as presence: a saved cutoff cannot acquire later summaries. */
+function freezeConsolidations(cutoff: KnownCutoff, dependencies: WorldDependencies): KnownCutoff {
+  return { ...cutoff, consolidations: cutoff.consolidations ?? [...dependencies.consolidations]
+    .map(([basisDigest, row]) => ({ basisDigest, ...row })).sort((a, b) => a.basisDigest.localeCompare(b.basisDigest)) };
+}
+
+function decodeConsolidations(value: unknown): readonly KnownConsolidationPin[] | null {
+  // Older private cache payloads predate consolidation and therefore admitted none.
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 16) return null;
+  const pins: KnownConsolidationPin[] = [], seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
+    const row = item as Record<string, unknown>;
+    if (typeof row.basisDigest !== "string" || !/^[a-f0-9]{64}$/.test(row.basisDigest) ||
+      typeof row.responseHash !== "string" || !/^[a-f0-9]{64}$/.test(row.responseHash) ||
+      typeof row.completedAt !== "string" || !isRfc3339(row.completedAt) ||
+      typeof row.expiresAt !== "string" || !isRfc3339(row.expiresAt) || seen.has(row.basisDigest)) return null;
+    seen.add(row.basisDigest);
+    pins.push({ basisDigest: row.basisDigest, responseHash: row.responseHash, completedAt: row.completedAt, expiresAt: row.expiresAt });
+  }
+  return pins;
+}
+
 function decodePayload(bytes: Uint8Array): SnapshotPayload | null {
   try {
     const value: unknown = JSON.parse(Buffer.from(bytes).toString("utf8"));
@@ -68,6 +90,8 @@ function decodePayload(bytes: Uint8Array): SnapshotPayload | null {
     ) return null;
     const cutoff = record.cutoff as Record<string, unknown>;
     if (typeof cutoff.at !== "string" || typeof cutoff.sequence !== "number" || !validCutoff({ at: cutoff.at, sequence: cutoff.sequence })) return null;
+    const consolidations = decodeConsolidations(cutoff.consolidations);
+    if (consolidations === null) return null;
     const valid = parseWorldValid(record.valid);
     if (valid === null) return null;
     return {
@@ -75,7 +99,7 @@ function decodePayload(bytes: Uint8Array): SnapshotPayload | null {
       handle: record.handle,
       valid,
       purpose: record.purpose,
-      cutoff: { at: cutoff.at, sequence: cutoff.sequence },
+      cutoff: { at: cutoff.at, sequence: cutoff.sequence, consolidations },
     };
   } catch (error) {
     if (error instanceof SyntaxError) return null;
@@ -116,7 +140,7 @@ export function issueKnownSnapshot(
     handle: input.handle,
     valid: input.valid,
     purpose: purposeOf(ctx),
-    cutoff: input.cutoff,
+    cutoff: freezeConsolidations(input.cutoff, dependencies),
   };
   try {
     const issued = ctx.db.transaction(() => issueView(
@@ -208,9 +232,10 @@ export function retainKnownSnapshotDependency(
   frame: WorldFrame, ref: WorldSnapshotRef, handle: string, valid: WorldValidQuery, cutoff: KnownSnapshotCutoff, reuseView = false,
 ): void {
   if (frame.dependencies === undefined) return;
-  frame.dependencies.snapshot = { cutoff, current: ctx => {
+  const expected = freezeConsolidations(cutoff, frame.dependencies);
+  frame.dependencies.snapshot = { cutoff: expected, current: ctx => {
     const saved = lookupKnownSnapshot(ctx, frame.ns, ref, handle, valid);
-    if (saved === null || saved.at !== cutoff.at || saved.sequence !== cutoff.sequence) return false;
+    if (saved === null || canonicalJson(saved) !== canonicalJson(expected)) return false;
     const view = frame.view;
     return !reuseView || (view !== undefined && view.partition !== null && view.prior !== null &&
       lookupView(ctx, view.partition, frame.ns.id, view.digest, view.prior.token, new Date().toISOString()) !== null);

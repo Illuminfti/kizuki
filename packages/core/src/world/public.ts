@@ -4,6 +4,8 @@
  */
 export { validateHistoryPage } from "../contracts/world-history";
 export type { HistoryPage, StateTransition } from "../contracts/world-history";
+export { PERSON_CARD_SCHEMA, validatePersonCard } from "../contracts/person-card";
+export type { PersonCard, PersonPerspective } from "../contracts/person-card";
 export { QUESTION_CARD_SCHEMA, validateQuestionCard } from "../contracts/question-card";
 export type { QuestionCard, QuestionStatus } from "../contracts/question-card";
 export type { Frontier } from "./ops/frontier";

@@ -1,3 +1,4 @@
+import { PERSON_VOCABULARY } from "./world-vocab/person";
 import { createWorldRegistry, type WorldRegistry, type WorldVocabularyModule, type WorldVocabularySpec } from "./world-kinds";
 import { CONCEPT_VOCABULARY } from "./world-vocab/concept";
 import { LEARNING_VOCABULARY } from "./world-vocab/learning";
@@ -22,6 +23,7 @@ export const WORLD_VOCABULARY_MODULES: readonly WorldVocabularyModule[] = [
   // slot: quest
   QUESTION_VOCABULARY,
   // slot: people
+  PERSON_VOCABULARY,
   // slot: skill
   // slot: sit2
   // slot: art

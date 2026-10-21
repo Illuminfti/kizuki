@@ -1,3 +1,4 @@
+import { consolidationConfig } from "../contracts/consolidation";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isPlainObject } from "../util/validate";
@@ -175,5 +176,6 @@ export function loadServeConfig(vaultPath: string): ServeConfig {
       CONNECTOR_DRAIN_BOUNDS.connector_drain_batches.max,
     ),
     extraction: extraction(extract),
+    consolidation: consolidationConfig(parsed["consolidation"]),
   };
 }

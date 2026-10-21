@@ -1,3 +1,4 @@
+import { consolidationDoctor } from "./doctor-consolidation";
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { embeddingThroughputFromReceipts } from "../retrieval/reembed";
@@ -643,6 +644,7 @@ export function inspectServeDoctor(
     rails,
     model,
     extraction,
+    consolidation: consolidationDoctor(db, now, model.canon_writing !== "off", config.consolidation),
     egress,
     throughput,
     oversized,

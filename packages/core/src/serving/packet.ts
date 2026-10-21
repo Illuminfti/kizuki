@@ -497,6 +497,7 @@ async function servePacket(
       const canon: CanonChunk[] = [];
       const quoted: QuotedChunk[] = [];
       const audit = new Map<string, AuditItem>();
+      const worldPublications: import("../world/dependencies").WorldDependencies[] = [];
       const claimPublications = new Map<string, import("./claims").ClaimPublication>();
       const pagePublications = new Map<string, { hash: string; sensitivity: import("../agents").Sensitivity }>();
       const sections = { ...emptySections };
@@ -569,6 +570,7 @@ async function servePacket(
           sections[chosen.section as keyof typeof sections] += 1;
         }
         for (const item of freshAudit) audit.set(item.id, item);
+        if (chosen.world !== undefined) worldPublications.push(chosen.world);
         for (const item of chosen.claims ?? []) claimPublications.set(item.id, item);
         if (chosen.canon !== undefined && chosen.canonHash !== undefined) pagePublications.set(chosen.canon.page_id, { hash: chosen.canonHash, sensitivity: chosen.canon.sensitivity });
         if (chosen.canon !== undefined) canon.push(chosen.canon);
@@ -624,6 +626,7 @@ async function servePacket(
             pages: [...pagePublications].map(([id, stamp]) => ({ id, ...stamp })),
             events: quoted.map((chunk) => ({ id: chunk.event_id, sensitivity: chunk.sensitivity })),
             claims: [...claimPublications.values()],
+            world: worldPublications,
           },
           data: {
             schema: PACKET_V2_SCHEMA,

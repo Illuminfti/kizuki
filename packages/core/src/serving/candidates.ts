@@ -167,6 +167,7 @@ export interface Piece {
   quoted?: QuotedChunk;
   audit?: AuditItem[];
   claims?: import("./claims").ClaimPublication[];
+  world?: import("../world/dependencies").WorldDependencies;
 }
 
 export interface PieceRequest {

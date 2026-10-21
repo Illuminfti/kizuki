@@ -1,3 +1,4 @@
+import { personStatements } from "../collectors/person";
 import { createRedactor } from "../../serving/redact";
 import type { Database } from "bun:sqlite";
 import {
@@ -73,7 +74,7 @@ export function anchorOf(db: Database, handle: string): RawSubjectRef | null {
  * where to look and proves nothing: every id it returns is verified before it
  * is served.
  */
-export type Collector = (frame: ReadFrame, cluster: Cluster) => readonly string[];
+export type Collector = (frame: ReadFrame, cluster: Cluster, kind: WorldKindSpec) => readonly string[];
 
 /** Live claims about members, with the anchor's classification and labels first. */
 const claimsAboutMembers: Collector = (frame, cluster) => {
@@ -129,6 +130,7 @@ const claimsAboutMembers: Collector = (frame, cluster) => {
 /** Ordered. A workstream adds one line under its marker. */
 export const COLLECTORS: readonly Collector[] = [
   claimsAboutMembers,
+  personStatements,
   // slot: ident
 ];
 
@@ -153,7 +155,7 @@ export function collectCard(
   const anchor = anchorOf(frame.ctx.db, cluster.anchor);
   if (anchor === null) return null;
   const candidates = [
-    ...new Set(collectors.flatMap((collect) => collect(frame, cluster))),
+    ...new Set(collectors.flatMap((collect) => collect(frame, cluster, kind))),
   ];
   frame.stats.rowsExamined += candidates.length;
   const items: Eligible[] = [];

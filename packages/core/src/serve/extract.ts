@@ -1,3 +1,5 @@
+import { validateWorldGrounding } from "../claims/world-grounding";
+import { groundedWorldInput } from "./world-grounding";
 import { sourcePolicyEpoch, sourceEventsAllowed, isEpochZeroProducerPort, sourcePortBindingDigest } from "../ledger/source-grants";
 import { createHash } from "node:crypto";
 import { hasContextPacketMarker } from "../canon/origin";
@@ -262,7 +264,10 @@ function isWorldDraft(draft: ClaimDraft | WorldDraftInsert): draft is WorldDraft
   return "world_admission" in draft;
 }
 function draftEventIds(draft: ClaimDraft | WorldDraftInsert): readonly string[] {
-  return isWorldDraft(draft) ? draft.provenance : draft.event_ids;
+  if (!isWorldDraft(draft)) return draft.event_ids;
+  return draft.world_admission.schema === "kizuki.world-admission/v2"
+    ? [...new Set([...draft.provenance, ...draft.world_admission.grounding.flatMap(g => [...g.classification.events, ...g.label.events].map(e => e.event_id))])]
+    : draft.provenance;
 }
 function historicalClaimSignatures(
   db: Database,
@@ -299,8 +304,8 @@ function sourceKey(db: Database, eventId: string): string | null {
     "SELECT source_key FROM source_event_bindings WHERE event_id=?",
   ).get(eventId)?.source_key ?? null;
 }
-function worldInput(db: Database, events: readonly CaptureEvent[], budget: WorldRequestBudget): ProduceInputV2 {
-  return worldProduceInput(events, worldSuppliedReferences(events, eventId => sourceKey(db, eventId)).input, budget);
+function worldInput(db: Database, events: readonly CaptureEvent[], budget: WorldRequestBudget, producer?: ProducerV2Port): ProduceInputV2 {
+  return groundedWorldInput(db, events, budget, producer).input;
 }
 function segmentEvent(event: CaptureEvent, start: number, end: number): CaptureEvent {
   return { ...event, text: event.text.slice(start, end) };
@@ -471,12 +476,13 @@ function journalWorldDrafts(
   mined: MineResult,
   events: readonly CaptureEvent[],
   modelRef: string | null,
+  producer?: ExtractionProducerPort,
 ): WorldDrafts {
   if (mined.world === undefined) throw new Error("producer v2 decision is incomplete");
   const segment = mined.segment;
   const quoted = segment === undefined ? events : events.map(event => segmentEvent(event, segment.start, segment.end));
-  const supplied = worldSuppliedReferences(quoted, eventId => sourceKey(db, eventId));
-  const input = worldProduceInput(quoted, supplied.input, mined.world.input.budget);
+  const planned = groundedWorldInput(db, quoted, mined.world.input.budget, segment === undefined && producer && isProducerV2(producer) ? producer : undefined);
+  const input = planned.input;
   if (canonicalJson(input) !== canonicalJson(mined.world.input)) {
     throw new Error("extraction inputs changed during model call");
   }
@@ -484,7 +490,7 @@ function journalWorldDrafts(
   const decision = segment === undefined
     ? { input, response: mined.world.response }
     : recordSegmentDecision(input, mined.world.response, events[0]!, segment);
-  const contextEvents = events.map(event => {
+  const contextEvents = (segment === undefined ? planned.events : events).map(event => {
     const identity = db.query<{ accepted_at: string }, [string]>(
       "SELECT accepted_at FROM events WHERE event_id=?",
     ).get(event.event_id);
@@ -503,7 +509,9 @@ function journalWorldDrafts(
   const pending: PendingClassifications = new Map();
   return prepareWorldDrafts(decision.response, decision.input, {
     events: contextEvents,
-    supplied_refs: supplied.refs,
+    supplied_refs: planned.refs,
+    grounding: planned.grounding,
+    witness_event_ids: new Set(events.map(e => e.event_id)),
     model_ref: modelRef,
     admits: semantic => {
       if (worldAssertionViolation(db, semantic, { pending }) !== null) return false;
@@ -550,7 +558,7 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
     }
     // The request quoted only the model inputs, never the held or passed records between them.
     const sent = new Set(modelInputs.map(input => input.event_id));
-    const world = filingVersion === 2 ? journalWorldDrafts(db, mined, events.filter(event => sent.has(event.event_id)), modelRef) : null;
+    const world = filingVersion === 2 ? journalWorldDrafts(db, mined, events.filter(event => sent.has(event.event_id)), modelRef, producer) : null;
     const drafts = world === null ? mined.drafts : world.drafts;
     const dropped = world?.dropped ?? [];
     // Resolution declined or omitted every typed claim: there is nothing to journal or file.
@@ -678,7 +686,7 @@ function parseStoredExtractBatch(row: StoredExtractRow): DurableExtractBatch {
   if (!legacyManifest) {
     const modelIds = modelInputs.map(input => input.event_id);
     const deferredIds = deferredInputs.map(input => input.event_id);
-    if (drafts.some(draft => draftEventIds(draft).some(id => !modelIds.includes(id)))) {
+    if (drafts.some(draft => (isWorldDraft(draft) ? draft.provenance : draft.event_ids).some(id => !modelIds.includes(id)))) {
       throw new Error("durable extraction provenance is invalid");
     }
     const order = new Map(ids.map((id, index) => [id, index]));
@@ -712,10 +720,15 @@ function readStoredExtractBatch(db: Database, enforceConsent: boolean, producer?
   if (legacyManifest) validateLegacyInputPartition(db, events, stored.drafts as readonly ClaimDraft[]);
   else validateInputPartition(db, mode, cursor, events, modelInputs, deferredInputs);
   const sent = modelInputs.length === 0 ? [...new Set(stored.drafts.flatMap(draft => [...draftEventIds(draft)]))] : modelInputs.map(input => input.event_id);
-  if (stored.drafts.some(draft => draftEventIds(draft).some(id => !sent.includes(id)))) throw new Error("durable extraction provenance is invalid");
+  if (stored.drafts.some(draft => (isWorldDraft(draft) ? draft.provenance : draft.event_ids).some(id => !sent.includes(id)))) throw new Error("durable extraction provenance is invalid");
   const original = { ...stored, input_ids: ids };
   const view = filingDrafts(db, stored.drafts);
-  const externalSent = sent.filter(id => {
+  const groundingIds = [...new Set(stored.drafts.filter(isWorldDraft).flatMap(draft => draft.world_admission.schema === "kizuki.world-admission/v2"
+    ? draft.world_admission.grounding.flatMap(g => [...g.classification.events, ...g.label.events].map(e => e.event_id)) : []))];
+  for (const draft of stored.drafts.filter(isWorldDraft)) {
+    if (draft.world_admission.schema === "kizuki.world-admission/v2") validateWorldGrounding(db, draft.world_admission.grounding, { restore: true });
+  }
+  const externalSent = [...new Set([...sent, ...groundingIds])].filter(id => {
     const event = readEvent(db, id);
     if (event === null) throw new Error("durable extraction input is missing");
     return validateEventOrigin(db, event).origin === "external";
@@ -844,7 +857,7 @@ export function purgeExtractInputs(db: Database, eventIds: ReadonlySet<string>, 
     else advanceExtractCheckpoint(db, EXTRACT_SOURCE_KEY, nextPrevious);
   }
   if (batch === null) return;
-  if (!batch.input_ids.some(id => eventIds.has(id)) && !batch.deferred_inputs.some(input => eventIds.has(input.event_id)) && nextPrevious === previous) return;
+  if (!batch.input_ids.some(id => eventIds.has(id)) && !batch.deferred_inputs.some(input => eventIds.has(input.event_id)) && !batch.drafts.some(d => draftEventIds(d).some(id => eventIds.has(id))) && nextPrevious === previous) return;
   const remaining = batch.input_ids.filter(id => !eventIds.has(id));
   db.query("DELETE FROM extract_batches").run();
   if (remaining.length === 0) {
@@ -1170,7 +1183,7 @@ async function mineBatch(
   };
   let selectedCount = v2 ? 0 : 1;
   let selectedInput: ProduceInput | ProduceInputV2 = v2
-    ? worldInput(db, usable.slice(0, 1), limits)
+    ? worldInput(db, usable.slice(0, 1), limits, v2 ? producer : undefined)
     : inputFor(usable.slice(0, 1));
   let oversized = false;
   if (v2) {
@@ -1178,7 +1191,7 @@ async function mineBatch(
     const resuming = usable.findIndex(event => segmentStart(db, event.event_id) > 0);
     const whole = Math.min(resuming < 0 ? usable.length : resuming, limits.records_per_request);
     for (let count = 1; count <= whole; count++) {
-      const candidate = worldInput(db, usable.slice(0, count), limits);
+      const candidate = worldInput(db, usable.slice(0, count), limits, producer);
       try {
         const plan = planModelExtractionV2(candidate);
         if (plan.status === "ready") { selectedCount = count; selectedInput = plan.input; }
@@ -1222,7 +1235,7 @@ async function mineBatch(
     return mineRecordSegment(db, producer as ProducerV2Port, usable[0]!, limits, denied, { filing_version: 2, source_epoch,
       previous_cursor, cursor, input_ids: inputIds, mode, model_inputs: modelInputs, deferred_inputs: deferredInputs });
   }
-  selectedInput = v2 ? worldInput(db, usable, limits) : inputFor(usable);
+  selectedInput = v2 ? worldInput(db, usable, limits, producer) : inputFor(usable);
   const selectedIds = new Set(usable.map(event => event.event_id));
   if (source_epoch !== sourcePolicyEpoch(db)) return denied();
   if (v2) {

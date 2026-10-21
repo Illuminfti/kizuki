@@ -13,6 +13,7 @@ export const ORACLE_COVERAGE_FLOOR = [
   "world-concept-absence-design", "world-concept-design#a_hidden_mutation",
   "world-concept-design#a_copy_raw_retained", "world-concept-design#a_narrowed_old_view",
   "world-longitudinal-design#x_a_restore_old", "world-question-copy-design", "world-question-reopen-design",
+  "world-perspective-binding-design",
 ] as const;
 
 export const WORLD_GATE_TESTS = [
@@ -24,6 +25,10 @@ export const WORLD_GATE_TESTS = [
   "packages/core/test/world/questions-security.test.ts",
   "packages/core/test/world/questions-history.test.ts",
   "packages/core/test/world/evidence.test.ts",
+  "packages/core/test/world/people-security.test.ts",
+  "packages/core/test/world/people-history.test.ts",
+  "packages/core/test/world/people-grouping.test.ts",
+  "packages/core/test/serving/people-session.test.ts",
   "packages/core/test/world/verify.test.ts",
   "packages/cli/test/verify-world.test.ts",
   "scripts/world-verify.test.ts",

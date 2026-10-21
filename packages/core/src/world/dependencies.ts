@@ -17,18 +17,26 @@ export interface WorldDependencies {
   readonly events: Set<string>;
   /** Exact receipt ownership used to activate native identity, rechecked at publication. */
   readonly identityReceipts: Map<string, string>;
+  /** Exact retained summary records used by a card; rebuild/expiry wins at publication. */
+  readonly consolidations: Map<string, { responseHash: string; completedAt: string; expiresAt: string }>;
   /** Authorized sources and the completeness/backlog gaps observed during assembly. */
   coverage: { readonly sources: readonly string[]; readonly gaps: readonly SourceCoverageGap[] } | null;
 }
 
 export function worldDependencies(): WorldDependencies {
-  return { claims: new Set(), supports: new Set(), events: new Set(), identityReceipts: new Map(), coverage: null };
+  return { claims: new Set(), supports: new Set(), events: new Set(), identityReceipts: new Map(), consolidations: new Map(), coverage: null };
 }
 
 export function recordWorldDependencies(deps: WorldDependencies, item: Eligible): void {
   deps.claims.add(item.claimId);
   for (const support of item.supports) {
     deps.supports.add(support.row.support_key);
+    if (support.admission.schema === "kizuki.world-admission/v2") {
+      for (const basis of support.admission.grounding) {
+        deps.supports.add(basis.classification.support_key);
+        deps.supports.add(basis.label.support_key);
+      }
+    }
     for (const event of support.events) deps.events.add(event.event_id);
   }
 }
@@ -44,6 +52,12 @@ export function dependencyRefs(db: Database, ns: WorldNamespace, deps: WorldDepe
 
 /** Validate one bounded evidence closure at its retained position and current authority. */
 export function worldEvidenceCurrent(ctx: ServeContext, deps: WorldDependencies, cutoff = deps.cutoff): boolean {
+  for (const [basis, summary] of deps.consolidations) {
+    const row = ctx.db.query<{ response_hash: string; completed_at: string; expires_at: string }, [string]>(
+      "SELECT response_hash,completed_at,expires_at FROM world_consolidation WHERE basis_digest=? AND status='complete'",
+    ).get(basis);
+    if (row === null || row.response_hash !== summary.responseHash || row.completed_at !== summary.completedAt || row.expires_at !== summary.expiresAt || row.expires_at <= new Date().toISOString()) return false;
+  }
   for (const [claim, receipt] of deps.identityReceipts) if (!identityReceiptCurrent(ctx.db, claim, receipt, cutoff)) return false;
   const permitted = knownSupportSql(ctx, cutoff);
   const claim = authorizedClaimSql(ctx), held = knownHeldSql(ctx, "base", cutoff);

@@ -58,7 +58,7 @@ export interface CanonReceipt {
   sensitivity: Sensitivity;
   taint: ClaimTaint;
   provenance: string[];
-  superseded: { claim_id: string; claim_key: string }[];
+  superseded: { claim_id: string; claim_key: string | null }[];
   candidates: PageCandidate[];
   retrieval_ops: RetrievalOpRef[];
   reverts: string | null;

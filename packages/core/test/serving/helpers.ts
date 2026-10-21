@@ -303,7 +303,7 @@ function enrollFixtureConnection(db: Database): string {
   return sourceKey;
 }
 
-export async function serveFixture(): Promise<Fixture> {
+export async function serveFixture(options: { held?: boolean } = {}): Promise<Fixture> {
   const vaultPath = mkdtempSync(join(tmpdir(), "kizuki-serving-"));
   initVault(vaultPath);
   const db = openLedger(join(vaultPath, ".kizuki", "kizuki.db"));
@@ -389,7 +389,7 @@ export async function serveFixture(): Promise<Fixture> {
     true,
   );
 
-  const heldPath = await makeHeldPage(db, vaultPath, events["hold"] as string);
+  const heldPath = options.held === false ? "" : await makeHeldPage(db, vaultPath, events["hold"] as string);
   // Exercise serving's schema denials separately from purge's conservative
   // hold of unreadable pages, whose unknown aliases withhold the whole graph.
   writeInvalidPages(vaultPath);

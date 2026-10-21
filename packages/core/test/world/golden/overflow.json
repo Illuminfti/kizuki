@@ -167,12 +167,13 @@
   "coverage": {
     "status": "partial",
     "gaps": [
-      "traversal_limit"
+      "traversal_limit",
+      "pending_consolidation"
     ],
     "validWindow": {
       "kind": "all"
     },
     "history": "unavailable"
   },
-  "digest": "278c595ecdc54f573f4c641d75b7e950cdd33285dd6a333a7fdd349524466110"
+  "digest": "87b5d3dff088875dad98cfa042f88b1b168a5d428e80449f4fcaacb405afb1a2"
 }

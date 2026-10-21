@@ -36,9 +36,9 @@ function meaning(value: any): any {
 
 function cliArgs(name: VerificationOperation, input: Record<string, any>): string[] {
   switch (name) {
-    case "concept": case "situation": case "question": return ["--ref", input[name].token];
+    case "concept": case "situation": case "question": case "person": return ["--ref", input[name].token];
     case "history": return ["--ref", input.concept.token];
-    case "find_concepts": case "find_situations": case "find_questions": return ["--label", input.label];
+    case "find_concepts": case "find_situations": case "find_questions": case "find_people": return ["--label", input.label];
     case "share": return ["--of-operation", input.of.operation, "--ref", input.of.concept.token];
     case "resume": return ["--resume", input.handle];
     case "evidence": return ["--admission", input.evidence.admission.token, "--event-version", input.evidence.eventVersion.token,
@@ -55,6 +55,8 @@ const TEXT: Record<VerificationOperation, readonly string[]> = {
   share: ["Resume handle:"], resume: ["Bayesian updating", "Coverage:"],
   question: ["When should I update a belief?", "Status: open; understanding: unknown", "Coverage:"],
   find_questions: ["When should I update a belief?"], frontier: ["Coverage:"],
+  person: ["Ada", "Person:", "Reviewer", "holder=unattributed speaker=unattributed mode=asserted", "Coverage:"],
+  find_people: ["Ada"],
 };
 
 test("every world operation agrees through Core, CLI text and JSON, stdio MCP, HTTP and App", async () => {

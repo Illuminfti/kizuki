@@ -10,9 +10,10 @@ import type { ShareData } from "../../src/world/views/resume";
 
 export const WORLD_VERIFICATION_OPERATIONS = [
   "find_concepts", "find_situations", "concept", "situation", "describe",
-  "evidence", "history", "share", "resume", "question", "find_questions", "frontier",
+  "evidence", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people",
 ] as const;
 export type VerificationOperation = typeof WORLD_VERIFICATION_OPERATIONS[number];
+const PERSON = "person:verification-ada";
 const WHEN = { valid: { kind: "all" }, knownAt: { kind: "current" } } as const;
 const input = (operation: string, own = {}) => ({ operation, ...own, ...WHEN });
 
@@ -21,8 +22,12 @@ export async function verificationScene(): Promise<NoninterferenceScene> {
   try {
     await worldSeed(base.db, { kind: "question", subject: QUESTION, label: "When should I update a belief?", discover: false,
       predicates: [{ predicate: "question.status", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "question/open" } } }] });
+    await worldSeed(base.db, { kind: "person", subject: PERSON, label: "Ada", discover: false,
+      predicates: [{ predicate: "person.role", object: { kind: "literal", value: "Reviewer" } }] });
     const agent = addAgent(base.db, "verification-reader", {
-      ...OWNER_AGENT_GRANT, ceiling: "public", subjects: ["topic:bayes", "project:launch", QUESTION],
+      ...OWNER_AGENT_GRANT, ceiling: "public", subjects: ["topic:bayes", "project:launch", QUESTION, PERSON],
+      // Four observations per operation plus setup reads; production limits stay unchanged.
+      rate_limit_per_minute: 4 * WORLD_VERIFICATION_OPERATIONS.length + 16,
     });
     const reader = { ...base.reader, principal: authenticate(base.db, agent.token)! };
     const ref = (operation: string, label: string) => {
@@ -49,6 +54,10 @@ export function verificationInputs(scene: NoninterferenceScene): Record<Verifica
   if (!("result" in questions) || !("data" in questions.result) || !("matches" in questions.result.data)) throw new Error("verification questions failed");
   const question = questions.result.data.matches[0]?.ref;
   if (!question) throw new Error("verification Question positive control is absent");
+  const people = read("find_people", { label: "Ada" });
+  if (!("result" in people) || !("data" in people.result) || !("matches" in people.result.data)) throw new Error("verification people failed");
+  const person = people.result.data.matches[0]?.ref;
+  if (!person) throw new Error("verification Person positive control is absent");
   const of = { operation: "concept", concept: scene.refs.concept };
   const shared = read("share", { of });
   if (!("result" in shared) || !("data" in shared.result)) throw new Error("verification sharing failed");
@@ -63,6 +72,7 @@ export function verificationInputs(scene: NoninterferenceScene): Record<Verifica
     history: input("history", { concept: scene.refs.concept }), share: input("share", { of }),
     resume: input("resume", { handle }), question: input("question", { question }),
     find_questions: input("find_questions", { label: "update" }), frontier: input("frontier"),
+    person: input("person", { person }), find_people: input("find_people", { label: "Ada" }),
   };
 }
 

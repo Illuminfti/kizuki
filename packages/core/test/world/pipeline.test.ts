@@ -1,3 +1,4 @@
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 /**
  * The seams of the staged projection: a new enricher, collector, grouper or
  * kind is a registration, and none of them can widen what a reader may see.
@@ -29,7 +30,8 @@ setDefaultTimeout(120_000);
 let scene: GoldenScene;
 beforeAll(async () => {
   setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
-  scene = await goldenScene();
+  scene = await goldenScene({ model: EMPTY_SUMMARY_MODEL });
+  await completeEmptyWorldSummaries(scene.db, scene.vaultPath);
 });
 afterAll(() => { scene.dispose(); setSystemTime(); });
 
