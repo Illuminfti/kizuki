@@ -5,6 +5,8 @@ import { boundTestErrors, REPOSITORY_ROOT } from "../../rfcs/fixtures/status";
 import { WORLD_OPS } from "../../packages/core/src/world/ops/registry";
 import { WORLD_VERIFICATION_OPERATIONS } from "../../packages/core/test/helpers/world-verification";
 import { verifyPacketSeams, verifyWorldSurfaceParity } from "../verify-packet-seams";
+import { WORLD_REGISTRY } from "../../packages/core/src/contracts/world-vocabulary";
+import { checkOfferedQualification, loadReviewedQualifications } from "../world-qualification/registry";
 
 /** Unit identities, not a count: replacing a covered oracle cannot conceal regression. */
 export const ORACLE_COVERAGE_FLOOR = [
@@ -25,6 +27,7 @@ export const WORLD_GATE_TESTS = [
   "packages/core/test/world/verify.test.ts",
   "packages/cli/test/verify-world.test.ts",
   "scripts/world-verify.test.ts",
+  "scripts/world-qualification/score.test.ts",
 ] as const;
 
 export function verifyOracleCoverage(coverage: OracleCoverage, root = REPOSITORY_ROOT, floor: readonly string[] = ORACLE_COVERAGE_FLOOR): string[] {
@@ -56,6 +59,7 @@ function requireTest(root: string, path: string): void {
 }
 
 export function verifyWorldRegistry(root = REPOSITORY_ROOT): { tests: string[]; executable: number; total: number; operations: number } {
+  checkOfferedQualification(WORLD_REGISTRY, loadReviewedQualifications(root, WORLD_REGISTRY));
   const coverage = oracleCoverage();
   const tests = [...new Set([...WORLD_GATE_TESTS, ...verifyOracleCoverage(coverage, root)])].sort();
   for (const path of tests) requireTest(root, path);

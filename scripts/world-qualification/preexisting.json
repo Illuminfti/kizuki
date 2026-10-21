@@ -1,0 +1,88 @@
+{
+  "source_commit": "2ffd40af61f0c7ebf6a6b18693466f605e646cbd",
+  "qualification": "preexisting_unqualified",
+  "kinds": [
+    {
+      "id": "situation",
+      "sha256": "a633c48de0ece661d31f40ac5ed4428324b04c308977a627a5ee6298e13d0915"
+    },
+    {
+      "id": "concept",
+      "sha256": "3f9248e39f79afe11d7f04b2d3360cb799f3c21d7529b93c7775eba61ac0b412"
+    }
+  ],
+  "predicates": [
+    {
+      "id": "situation.label",
+      "sha256": "3c3002325eb3f0fb096f4981b5fda2327a49ee8fc05a152b506ea21eb8c16c66"
+    },
+    {
+      "id": "situation.objective",
+      "sha256": "052d733e3aa6b59c0a05b49ed1261c47915478d1379b4cbb6877150c498faf0b"
+    },
+    {
+      "id": "situation.commitment",
+      "sha256": "f0a34f1685377cad81302ab68182a52d704486f951a4915546bf0806d56d92a2"
+    },
+    {
+      "id": "situation.blocker",
+      "sha256": "961da4421c5e00fbc064a0d59a045ea43ddcd8f99bbe686ba9a416b3554c84ab"
+    },
+    {
+      "id": "situation.change",
+      "sha256": "8d040b78570de9dd8089c41526a22f61c5b5d5b12063655f4976944e3e50611c"
+    },
+    {
+      "id": "situation.participant",
+      "sha256": "f0f6ad700b147766998896b3f481d62ac16ac79b04236be817f9bd79c651b2c9"
+    },
+    {
+      "id": "concept.label",
+      "sha256": "c474be573cec9c301ddc3a979c09d01a46fa95adc2a033a5f48741dc5a4980b5"
+    },
+    {
+      "id": "concept.definition",
+      "sha256": "c4fc9804a1270608991cb3beb0f875f068f88ee604fe9372c6971a0617cbd2fb"
+    },
+    {
+      "id": "concept.requires",
+      "sha256": "bb81ae6f7ccf7e0cd1380f722106f9ae290f066da61091d15513df916b5f8f84"
+    },
+    {
+      "id": "concept.example",
+      "sha256": "aa590a51e9ece65aa4a559ba3efbfc45b301abfc9a1eae1cc4a47167185bd897"
+    },
+    {
+      "id": "concept.counterexample",
+      "sha256": "c0e4ddb8e648304fd6dc57d4d877bc850202f26c75a51cba894d93afa4f385e7"
+    },
+    {
+      "id": "concept.same_as",
+      "sha256": "c066e6c120532e3148d5ccb0d2315a38438aa89108c054e93ea20a3295bebf45"
+    },
+    {
+      "id": "concept.distinguished_from",
+      "sha256": "39cdc3cfeb5d6bff7d083af4a5e5e0355e4d7865a4fe38a4db966d68177606a0"
+    },
+    {
+      "id": "learning.exposure",
+      "sha256": "5f72584ad14a89e8516d10aa27645c66a94dcb9007b07b8a07a939edb1fe2fb5"
+    },
+    {
+      "id": "learning.explanation",
+      "sha256": "9fbbbeeb19d05639eaa4bb47962a8e2ef679628821d5528ad456ac0afd02d81c"
+    },
+    {
+      "id": "learning.application",
+      "sha256": "77549b1725eea0ead787b02e40c610710fe3ba99ddaf69600af86f5c8e875142"
+    },
+    {
+      "id": "learning.demonstration",
+      "sha256": "99ca095c5ca9c9d1da23d7edc955972e12497a25599c71859655ffe22a46a9bc"
+    },
+    {
+      "id": "learning.assistance",
+      "sha256": "d35c5bd22da584510dbf3dc057ea74e9408eaccec31d106297ad986157132b59"
+    }
+  ]
+}
