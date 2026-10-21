@@ -1,6 +1,11 @@
 import { attentionOp } from "./attention";
 import { personOp } from "./person";
 import { findPeopleOp } from "./find-people";
+import { skillOp } from "./skill";
+import { procedureOp } from "./procedure";
+import { frameworkOp } from "./framework";
+import { findProceduresOp } from "./find-procedures";
+import { outcomeOp } from "./outcome-read";
 import { historyOp } from "./history";
 import { conceptOp } from "./concept";
 import { describeOp } from "./describe";
@@ -84,8 +89,10 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   // slot: PEOPLE
   personOp, findPeopleOp,
   // slot: SKILL
+  procedureOp, findProceduresOp, skillOp, frameworkOp,
   // slot: ART
   // slot: OUTCOME
+  outcomeOp,
   // slot: DIFF
   // slot: SLICE
   // slot: ATTN

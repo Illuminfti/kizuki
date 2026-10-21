@@ -469,6 +469,7 @@ async function servePacket(
       // An explicit `include` asks for exactly those sections.
       const gatherState = profile.session_state && args.include === undefined;
       const stateReasons: Partial<Record<SessionSection, SessionEmptyReason>> = {};
+      const worldPublications: import("../world/dependencies").WorldDependencies[] = [];
       try {
         ({ pieces, withheld, degraded } = await collectPieces(ctx, {
           include,
@@ -487,6 +488,7 @@ async function servePacket(
           withheld.push(...state.withheld);
           degraded.push(...state.degraded);
           Object.assign(stateReasons, state.reasons);
+          worldPublications.push(...state.world);
         }
       } catch {
         // The cause stays inside core; the packet degrades instead of failing.
@@ -497,7 +499,6 @@ async function servePacket(
       const canon: CanonChunk[] = [];
       const quoted: QuotedChunk[] = [];
       const audit = new Map<string, AuditItem>();
-      const worldPublications: import("../world/dependencies").WorldDependencies[] = [];
       const claimPublications = new Map<string, import("./claims").ClaimPublication>();
       const pagePublications = new Map<string, { hash: string; sensitivity: import("../agents").Sensitivity }>();
       const sections = { ...emptySections };

@@ -42,6 +42,8 @@ describe("the operation registry", () => {
       "history",
       "share",
       "resume",
+      "question", "find_questions", "frontier",
+      "procedure", "find_procedures", "skill", "framework", "outcome",
     ]);
   });
 
@@ -205,6 +207,11 @@ describe("describe", () => {
       kinds: [
         { id: "concept", state: "shipped", population: "typed_extraction" },
         { id: "situation", state: "shipped", population: "typed_extraction" },
+        { id: "question", state: "dark", population: "extraction_off" },
+        { id: "skill", state: "dark", population: "extraction_off" },
+        { id: "framework", state: "dark", population: "extraction_off" },
+        { id: "procedure", state: "dark", population: "extraction_off" },
+        { id: "outcome", state: "shipped", population: "propose" },
       ],
       operations: WORLD_OPS.map((op) => ({
         name: op.name,

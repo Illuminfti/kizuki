@@ -1,6 +1,13 @@
+import { worldNamespace } from "../world/references";
+import { readableWorldNode } from "../world/endpoint-access";
+import { resolvePrincipal } from "../agents";
+import { rawSubjectRefKey } from "../contracts/claim-v2";
+import { canonicalJson, sha256Hex } from "../util/hash";
+import { OUTCOME_PREDICATES, parseOutcomeEvidence } from "../contracts/outcome-card";
 import type { AuditDenial, Grant } from "../agents";
 import { isRegisteredPredicate } from "../claims/predicates";
-import { insertClaim } from "../claims/store";
+import { prepareClaimInsert, retryRetrievalOps } from "../claims/store";
+import { initClaims } from "../claims/init";
 import { CLAIM_POLARITIES } from "../contracts/proposal";
 import type { ClaimPolarity, FrontmatterValue } from "../contracts/proposal";
 import { isPlainObject } from "../util/validate";
@@ -332,10 +339,35 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
     const subject = subjectOf(grant, args.subject, requested);
     const predicate = predicateOf(args.predicate, subject);
 
+    let checkOutcomeBinding: (() => string) | undefined;
+    let object = args.object === undefined ? undefined : text("object", args.object, MAX_OBJECT_CHARS);
+    if (predicate !== undefined && OUTCOME_PREDICATES.includes(predicate as typeof OUTCOME_PREDICATES[number])) {
+      const evidence = parseOutcomeEvidence(predicate, object);
+      if (kind !== "claim" || evidence === null) throw refuse("object", "must contain bounded outcome evidence");
+      // Lookup identity is not authority. Check current readable evidence both
+      // before preparation and in the transaction that files the claim.
+      checkOutcomeBinding = () => {
+        const current = resolvePrincipal(ctx.db, principal);
+        if (current === null || current.kind !== "agent" || current.grant_epoch !== principal.grant_epoch)
+          throw refuse("object", "authority changed during outcome filing; retry");
+        if (evidence.subjectRef === "none") return "none";
+        const live = { ...ctx, principal: current };
+        const anchor = readableWorldNode(live, worldNamespace(ctx.db, current), evidence.subjectRef);
+        if (anchor === null || anchor.id !== subject) throw refuse("object", "subjectRef must be a current object token for the subject, or none");
+        return sha256Hex(rawSubjectRefKey(anchor));
+      };
+      // Persist a stable digest, never a principal-local capability or raw namespace.
+      const binding = ctx.db.transaction(checkOutcomeBinding).immediate();
+      object = canonicalJson({ ...evidence, subjectRef: binding });
+      if (object.length > MAX_OBJECT_CHARS) throw refuse("object", "normalized outcome evidence is too large");
+    }
     validateProvenance(ctx, provenance, contract);
 
-    const filed = await insertClaim(
-      claimsIo(ctx),
+    if (ctx.db.inTransaction) throw new Error("claim insertion requires a top-level transaction");
+    initClaims(ctx.db);
+    const io = claimsIo(ctx);
+    const prepared = await prepareClaimInsert(
+      io,
       {
         kind,
         target,
@@ -351,9 +383,7 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
         taint: "quoted",
         ...(subject === undefined ? {} : { subject }),
         ...(predicate === undefined ? {} : { predicate }),
-        ...(args.object === undefined
-          ? {}
-          : { object: text("object", args.object, MAX_OBJECT_CHARS) }),
+        ...(object === undefined ? {} : { object }),
         ...(args.polarity === undefined
           ? {}
           : {
@@ -361,6 +391,16 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
             }),
       },
     );
+
+    if (ctx.db.inTransaction) throw new Error("claim insertion requires a top-level transaction");
+    const filed = ctx.db.transaction(() => {
+      if (checkOutcomeBinding !== undefined) {
+        checkOutcomeBinding();
+        validateProvenance(ctx, provenance, contract);
+      }
+      return prepared.apply();
+    }).immediate();
+    await retryRetrievalOps(io);
 
     const claim =
       filed.outcome === "contested" ? filed.incoming : filed.claim;
