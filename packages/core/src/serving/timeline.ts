@@ -4,6 +4,7 @@ import type { TimelineOptions } from "../query/timeline";
 import {
   day,
   identifier,
+  resolvedSubjectIdentifier,
   limit,
   rfc3339,
   scopedSubjects,
@@ -20,7 +21,7 @@ import {
   readServableEvents,
 } from "./ledger";
 import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
-import { ENVELOPE_SCHEMA } from "./types";
+import { ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA } from "./types";
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 50;
@@ -64,7 +65,7 @@ export function serveTimeline<C extends ResponseContract = typeof ENVELOPE_SCHEM
     const subject =
       request.subject === undefined
         ? undefined
-        : identifier("subject", request.subject);
+        : (contract === ENVELOPE_V2_SCHEMA ? resolvedSubjectIdentifier : identifier)("subject", request.subject);
     const kind =
       request.kind === undefined ? undefined : identifier("kind", request.kind);
     // `timeline` takes a single subject and kind, so these calls only check

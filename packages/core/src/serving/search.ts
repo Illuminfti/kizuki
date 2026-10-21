@@ -20,6 +20,7 @@ import {
   enumOf,
   flag,
   idList,
+  resolvedSubjectIdentifier,
   limit,
   rfc3339,
   scopedSubjects,
@@ -238,7 +239,7 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
       grant,
       request.subjects === undefined
         ? undefined
-        : idList("subjects", request.subjects, MAX_SCOPE_IDS),
+        : idList("subjects", request.subjects, MAX_SCOPE_IDS, contract === ENVELOPE_V2_SCHEMA ? resolvedSubjectIdentifier : undefined),
     );
     const window = scopedWindow(
       grant,

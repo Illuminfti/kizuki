@@ -99,3 +99,15 @@ scan all ten tools for raw generated identities, and compare reference refusals.
 cover the shipped consumers. The common operation matrix includes Observation
 for noninterference, purge, and consumer parity. Exact-head integration receipts
 must accompany the release handoff; this document alone is not a release receipt.
+
+## Native subjects
+
+Scoped proposals, search, context packets and timelines resolve subject references
+before validating the authoritative
+ID with the event contract's 1,024-byte native subject limit. It preserves exact
+source spelling and namespace, including native Markdown document identities.
+The wire still requires 43-character typed reference tokens and at most 16
+subjects, rejects duplicate IDs, and rechecks current grants and provenance.
+Typed graph reads dispatch the resolved anchor after checking depth and edge kinds;
+legacy graph IDs keep their existing validation. Legacy raw-ID consumers retain
+their existing 64-character identifier limit.

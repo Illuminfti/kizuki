@@ -12,6 +12,7 @@ import { CONTEXT_PACKET_MARKERS } from "../canon/origin";
 import {
   enumOf,
   idList,
+  resolvedSubjectIdentifier,
   range,
   rfc3339,
   scopedSubjects,
@@ -344,7 +345,7 @@ async function servePacket(
         grant,
         request.subjects === undefined
           ? undefined
-          : idList("subjects", request.subjects, MAX_SUBJECTS),
+          : idList("subjects", request.subjects, MAX_SUBJECTS, v2 ? resolvedSubjectIdentifier : undefined),
       );
       const requestedSince =
         request.since === undefined ? undefined : rfc3339("since", request.since);
