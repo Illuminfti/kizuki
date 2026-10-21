@@ -1,0 +1,32 @@
+# Owner-approved 2026-10-21: exact synthetic identifiers and redaction canaries.
+# Directory scans run from this repository root (gitleaks dir ... .).
+# These are fixture-specific fingerprints, not file or rule exclusions.
+packages/core/test/fixtures/agent-enrollment-ledger16-claim.sql:generic-api-key:371
+packages/core/test/export.test.ts:generic-api-key:82
+packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:98
+packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:99
+packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:339
+packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:343
+packages/core/test/serving/canon-classes.test.ts:generic-api-key:37
+packages/core/test/serving/credential-boundaries.test.ts:generic-api-key:183
+packages/core/test/serving/world-correct-modes.test.ts:generic-api-key:102
+# The same approved synthetic canary moved by the source-grant test import.
+packages/core/test/serving/world-correct-modes.test.ts:generic-api-key:103
+
+# Owner-approved 2026-10-21: the 16 exact historical fixture/prose findings.
+25b841c94987fb121977425c860846f633ec193c:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:93
+25b841c94987fb121977425c860846f633ec193c:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:94
+25b841c94987fb121977425c860846f633ec193c:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:333
+25b841c94987fb121977425c860846f633ec193c:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:337
+25b841c94987fb121977425c860846f633ec193c:packages/core/test/serving/canon-classes.test.ts:generic-api-key:34
+bda6b73613b111b4ea27e3887eb0df42f021b374:packages/core/test/serving/credential-boundaries.test.ts:generic-api-key:182
+d08e7852d0b3a90f2e0577d0ff7a63bef2b01400:packages/core/test/purge.test.ts:generic-api-key:263
+5ade2e95fe53f3f390b6eaff199a2690eb32ac3f:docs/campaigns/2026-09-07-clean-stop/records/book/GROK-FLEET-FIRST-10-20260906.json:generic-api-key:113
+5ade2e95fe53f3f390b6eaff199a2690eb32ac3f:docs/campaigns/2026-09-07-clean-stop/records/book/GROK-FLEET-100-20260906.json:generic-api-key:2601
+5ade2e95fe53f3f390b6eaff199a2690eb32ac3f:docs/campaigns/2026-09-07-clean-stop/records/book/GROK-FLEET-100-20260906.json:generic-api-key:2644
+2380a97c8e576550f00edc59f08af0c3b61421fc:packages/core/test/export-snapshot.test.ts:generic-api-key:53
+7b751f9b9ceb2d0582b247ad2c642151dfd4fa15:packages/core/test/export.test.ts:generic-api-key:683
+300fd43c4aec55534844f916ff9472c533db6672:packages/core/test/connections-state-rewrite.test.ts:generic-api-key:146
+0edfb5aa5a3635e0c9b9de7c3b90fe73f10c8d3d:packages/core/test/connections.test.ts:generic-api-key:685
+dcf0d4a8def2ff530f2184fbe1e0bbc01cb76134:packages/core/test/export.test.ts:generic-api-key:77
+dcf0d4a8def2ff530f2184fbe1e0bbc01cb76134:packages/core/test/connections.test.ts:generic-api-key:450

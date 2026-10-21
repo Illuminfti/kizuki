@@ -133,16 +133,32 @@ test.each(["head", "worktree", "index", "untracked", "alias", "normalized-doc", 
   expect(readdirSync(f.root).some(name => name.startsWith(".kizuki-surface-publish-"))).toBe(false);
 }, 30_000);
 
-test("producer refuses unsafe or existing output and preserves competing bytes", () => {
+test("producer refuses an existing output and preserves its bytes", () => {
   const f = fixture(); writeFileSync(f.out, "existing evidence");
-  expect(f.emit().exitCode).toBe(2); expect(readFileSync(f.out, "utf8")).toBe("existing evidence");
-  const alias = join(f.root, "alias"); symlinkSync(f.root, alias, "dir");
-  for (const out of [join(alias, "other.json"), join(f.repo, "forbidden.json")]) {
-    expect(f.emit(["--candidate", f.candidate, "--out", out]).exitCode).toBe(2);
+  const child = f.emit();
+  expect(child.exitCode).toBe(2); expect(child.stdout.toString()).toBe("");
+  expect(child.stderr.toString()).toBe("surface-proof-failed: no surface receipt credited\n");
+  expect(readFileSync(f.out, "utf8")).toBe("existing evidence");
+  expect(git(f.repo, ["status", "--porcelain"])).toBe("");
+}, 30_000);
+
+test("producer refuses unsafe output targets", () => {
+  const f = fixture(), alias = join(f.root, "alias"); symlinkSync(f.root, alias, "dir");
+  for (const [out, reason] of [[join(alias, "other.json"), "unsafe-path"], [join(f.repo, "forbidden.json"), "output-inside-checkout"]] as const) {
+    const child = f.emit(["--candidate", f.candidate, "--out", out]);
+    expect(child.exitCode).toBe(2); expect(child.stdout.toString()).toBe("");
+    expect(child.stderr.toString()).toBe(`${reason}: no surface receipt credited\n`);
     expect(existsSync(out)).toBe(false);
   }
+  expect(git(f.repo, ["status", "--porcelain"])).toBe("");
+}, 30_000);
+
+test("producer refuses a symlink output and preserves competing bytes", () => {
+  const f = fixture(); writeFileSync(f.out, "existing evidence");
   const leaf = join(f.root, "leaf.json"); symlinkSync(f.out, leaf);
-  expect(f.emit(["--candidate", f.candidate, "--out", leaf]).exitCode).toBe(2);
+  const child = f.emit(["--candidate", f.candidate, "--out", leaf]);
+  expect(child.exitCode).toBe(2); expect(child.stdout.toString()).toBe("");
+  expect(child.stderr.toString()).toBe("surface-proof-failed: no surface receipt credited\n");
   expect(lstatSync(leaf).isSymbolicLink()).toBe(true); expect(readFileSync(f.out, "utf8")).toBe("existing evidence");
   expect(git(f.repo, ["status", "--porcelain"])).toBe("");
 }, 30_000);

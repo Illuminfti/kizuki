@@ -63,10 +63,19 @@ describe("host-date isolation", () => {
       for (const correction of data.corrections) expect(correction).toEqual({ created_at: AS_OF, asserted_at: AS_OF, valid_from: AS_OF });
       expect(data.receipts.length).toBeGreaterThan(0);
       expect(data.receipts.every((at: string) => at === AS_OF)).toBe(true);
+      for (const principal of ["owner", "fresh-agent"]) {
+        const timestamps = data.hook_audit[principal] as string[];
+        expect(timestamps.length).toBeGreaterThan(0);
+        expect(timestamps.every(at => at === AS_OF)).toBe(true);
+      }
       const report = data.report as EvaluationReport;
       expect(report.as_of).toBe(AS_OF);
       for (const { surface, observation } of report.observations) {
-        if (surface === "session_hook") expect(observation.output).toContain(`at=${AS_OF}`);
+        if (surface === "session_hook") {
+          const header = observation.output.split("\n").slice(0, 3).join("\n");
+          expect(header.startsWith("KIZUKI CONTEXT v2\n")).toBe(true);
+          expect(header).not.toMatch(/\b(?:at|epoch|claims_epoch|etag|packet_hash)=/);
+        }
         else if (surface === "context_packet" || surface === "search") expect(JSON.parse(observation.output).at).toBe(AS_OF);
         else for (const envelope of JSON.parse(observation.output)) expect(envelope.at).toBe(AS_OF);
       }
@@ -89,6 +98,16 @@ test("unavailable packets fail observation, summary and the command exit gate; u
     expect(code).toBe(1);
     expect(data.statuses).toEqual(["skip:unavailable", "skip:unavailable", "ok", "truncated"]);
     expect(data.fallback.data.retrieval_degraded).not.toContain("context-unavailable");
+    expect(data.fallback.data.retrieval_degraded).toContain("retrieval-unavailable");
+    expect(data.fallback.data.truncated).toBe(false);
+    expect(data.fallback.quoted.length).toBeGreaterThan(0);
+    expect(data.fallback.data.tokens_estimate).toBeLessThanOrEqual(2000);
+    // Measure a real overflow instead of relabeling a complete packet. It
+    // remains usable, but must never be reported as complete by the scorer.
+    expect(data.bounded.data.truncated).toBe(true);
+    expect(data.bounded.data.retrieval_degraded).toContain("required_context_overflow");
+    expect(data.bounded.data.retrieval_degraded).not.toContain("context-unavailable");
+    expect(data.bounded.data.tokens_estimate).toBeLessThanOrEqual(2000);
     expect(data.observation.status).toBe("skip:unavailable");
     expect(JSON.parse(data.observation.output).data.retrieval_degraded).toContain("context-unavailable");
     expect(data.summaries.find((row: { principal: string; surface: string }) => row.principal === "owner" && row.surface === "context_packet").failures).toBe(1);

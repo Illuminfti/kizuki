@@ -34,6 +34,8 @@ serving function and translates the result back. It holds no policy of its own.
 - One retrieval connection is bound at startup and closed when the session
   ends. The engine never opens its own: `--retrieval ID` resolves a
   registered port, and every call in the session reaches that one instance.
+  The vault's configured embedding port is bound with the embedded engine and
+  closed with it; the adapter adds no ranking policy of its own.
 
 ## Schema validation
 

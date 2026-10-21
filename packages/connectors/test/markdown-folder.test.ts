@@ -184,7 +184,7 @@ describe("MarkdownFolderConnector", () => {
           source_record_id: "alpha.md",
           kind: "file",
           text: "# Alpha\n",
-          subjects: [expect.objectContaining({subject_id:expect.stringMatching(/^markdown-folder:[a-f0-9]{64}$/),role:"about"})],
+          subjects: [expect.objectContaining({subject_id:expect.stringMatching(/^markdown-folder:[a-f0-9]{64}$/),role:"about"}), expect.objectContaining({subject_id:expect.stringMatching(/^artifact:sha256:[a-f0-9]{64}$/),role:"about"})],
           deleted: false,
           attachments: [],
           metadata: expect.objectContaining({
@@ -198,7 +198,7 @@ describe("MarkdownFolderConnector", () => {
           source_record_id: "nested/beta.md",
           kind: "file",
           text: "βeta\n",
-          subjects: [expect.objectContaining({subject_id:expect.stringMatching(/^markdown-folder:[a-f0-9]{64}$/),role:"about"})],
+          subjects: [expect.objectContaining({subject_id:expect.stringMatching(/^markdown-folder:[a-f0-9]{64}$/),role:"about"}), expect.objectContaining({subject_id:expect.stringMatching(/^artifact:sha256:[a-f0-9]{64}$/),role:"about"})],
           deleted: false,
           attachments: [],
           metadata: expect.objectContaining({
@@ -283,7 +283,7 @@ describe("MarkdownFolderConnector", () => {
         occurred_at: tombstone.observed_at,
         observed_at: tombstone.observed_at,
         text: "",
-        subjects: initial.events[0]!.subjects,
+        subjects: [initial.events[0]!.subjects[0]!],
         deleted: true,
         attachments: [],
         metadata: { relpath: "removed.md", snapshot: "absent" },
@@ -334,7 +334,7 @@ describe("MarkdownFolderConnector", () => {
     }
   });
 
-  test("rejects a same-root cursor when page_size or exclude changes", async () => {
+  test("rejects a same-root cursor when exclude changes and resumes it when only page_size changes", async () => {
     const root = await makeTempDir();
     try {
       await writeFile(path.join(root, "a.md"), "alpha\n");
@@ -347,7 +347,6 @@ describe("MarkdownFolderConnector", () => {
       expect(first.has_more).toBe(true);
 
       const mismatches: Array<{ path: string; page_size: number; exclude?: string[] }> = [
-        { path: root, page_size: 2 },
         { path: root, page_size: 1, exclude: ["c.md"] },
       ];
       for (const config of mismatches) {
@@ -368,6 +367,10 @@ describe("MarkdownFolderConnector", () => {
           }
         }
       }
+
+      // A batch size is only how much one page emits: the same token resumes at another.
+      const resized = await createMarkdownFolderConnector({ path: root, page_size: 2 }).backfill(first.cursor);
+      expect(resized.events.map((event) => event.source_record_id)).toEqual(["b.md", "c.md"]);
 
       const remaining: string[] = [];
       let cursor = first.cursor;
@@ -442,7 +445,7 @@ describe("MarkdownFolderConnector", () => {
       expect(health.state).toBe("degraded");
       expect(health.detail ?? "").toContain("not_utf8");
       const terminal = await connector.backfill(batch.cursor);
-      expect(terminal).toEqual({ events: [], cursor: batch.cursor, status: "unavailable",
+      expect(terminal).toEqual({ events: [], cursor: batch.cursor, status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
         detail: "partial_import: 1 record errors (not_utf8=1)" });
       expect(await connector.backfill(batch.cursor)).toEqual(terminal);
     } finally {
@@ -470,7 +473,7 @@ describe("MarkdownFolderConnector", () => {
       expect([b, c, removed].map(batch => batch.events.map(event => [event.source_record_id, event.deleted])))
         .toEqual([[["b-new.md", false]], [["c-new.md", false]], [["a-removed.md", true]]]);
       const terminal = await connector.sync(removed.cursor);
-      expect(terminal).toEqual({ events: [], cursor: removed.cursor, status: "unavailable",
+      expect(terminal).toEqual({ events: [], cursor: removed.cursor, status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
         detail: "partial_import: 1 record errors (not_utf8=1)" });
       expect(JSON.parse(terminal.cursor!).files.map(([name]: [string]) => name))
         .toEqual(["b-new.md", "c-new.md", "z-private-name.md"]);
@@ -584,7 +587,7 @@ describe("MarkdownFolderConnector", () => {
       listing = spyOn(filesystem, "readdir").mockImplementation(((...args: Parameters<typeof original>) =>
         String(args[0]) === root ? Promise.resolve(crowded) : original(...args)) as typeof original);
       const result = await connector.sync(first.cursor);
-      expect(result).toEqual({ events: [], cursor: first.cursor, status: "unavailable",
+      expect(result).toEqual({ events: [], cursor: first.cursor, status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
         detail: "partial_import: 1 record errors (scan_limit=1); scan truncated" });
       expect(await connector.sync(first.cursor)).toEqual(result);
       listing.mockRestore(); listing = undefined;
@@ -614,7 +617,7 @@ describe("MarkdownFolderConnector", () => {
         expect(
           second.events.map((event) => event.source_record_id),
         ).not.toContain("nested/hidden.md");
-        expect(second).toEqual({ events: [], cursor: first.cursor, status: "unavailable",
+        expect(second).toEqual({ events: [], cursor: first.cursor, status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
           detail: "partial_import: 1 record errors (unreadable=1)" });
       } finally {
         await chmod(nested, 0o755);
@@ -661,7 +664,7 @@ describe("MarkdownFolderConnector", () => {
       const health = await connector.health();
       expect(health.state).toBe("degraded");
       expect(health.detail ?? "").toContain("depth");
-      expect(await connector.backfill(batch.cursor)).toEqual({ events: [], cursor: batch.cursor, status: "unavailable",
+      expect(await connector.backfill(batch.cursor)).toEqual({ events: [], cursor: batch.cursor, status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
         detail: "partial_import: 1 record errors (depth=1)" });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -720,7 +723,7 @@ describe("MarkdownFolderConnector", () => {
       expect(await connector.backfill(batch.cursor)).toEqual({
         events: [],
         cursor: batch.cursor,
-        status: "unavailable",
+        status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
         detail: "partial_import: 1 record errors (too_large=1)",
       });
     } finally {
@@ -754,14 +757,15 @@ test("document subjects survive edits and tombstones without collapsing distinct
     const initial = await connector.backfill(null);
     const first = initial.events.find(event => event.source_record_id === "same-name.md")!;
     const second = initial.events.find(event => event.source_record_id === "same_name.md")!;
-    expect(first.subjects).toHaveLength(1);
+    expect(first.subjects).toHaveLength(2);
     expect(first.subjects[0]?.subject_id).not.toBe(second.subjects[0]?.subject_id);
     await writeFile(path.join(root, "same-name.md"), "changed contents");
     const edited = await connector.sync(initial.cursor);
-    expect(edited.events.find(event => event.source_record_id === "same-name.md")?.subjects).toEqual(first.subjects);
+    expect(edited.events.find(event => event.source_record_id === "same-name.md")?.subjects[0]).toEqual(first.subjects[0]);
+    expect(edited.events.find(event => event.source_record_id === "same-name.md")?.subjects[1]?.subject_id).not.toBe(first.subjects[1]?.subject_id);
     await unlink(path.join(root, "same-name.md"));
     const removed = await connector.sync(edited.cursor);
-    expect(removed.events.find(event => event.source_record_id === "same-name.md" && event.deleted)?.subjects).toEqual(first.subjects);
+    expect(removed.events.find(event => event.source_record_id === "same-name.md" && event.deleted)?.subjects).toEqual([first.subjects[0]!]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1446,7 +1450,7 @@ describe("markdown folder committed identities", () => {
       expect(second).toEqual({
         events: [],
         cursor: first.cursor,
-        status: "unavailable",
+        status: "unavailable", coverage: expect.objectContaining({ failed: 1, pending: 0 }),
         detail: "partial_import: 1 record errors (unreadable=1)",
       });
     } finally {
@@ -1476,22 +1480,23 @@ describe("markdown folder committed identities", () => {
     }
   });
 
-  test("a compact cursor still rejects a foreign root", async () => {
+  test("a compact cursor resumes on a migrated root and emits only differences", async () => {
     const firstRoot = await makeTempDir();
     const secondRoot = await makeTempDir();
     try {
       await writeFile(path.join(firstRoot, "a.md"), "a\n");
       await writeFile(path.join(secondRoot, "a.md"), "a\n");
+      await writeFile(path.join(secondRoot, "b.md"), "b\n");
+      const committed = () => [["a.md", identityOf("a\n")]] as [string, { sha256: string; size: number }][];
       const first = await createMarkdownFolderConnector(
         { path: firstRoot },
-        { committedFiles: () => [] },
+        { committedFiles: committed },
       ).backfill(null);
-      await expect(
-        createMarkdownFolderConnector(
-          { path: secondRoot },
-          { committedFiles: () => [] },
-        ).sync(first.cursor),
-      ).rejects.toThrow("does not belong to this root");
+      const second = await createMarkdownFolderConnector(
+        { path: secondRoot },
+        { committedFiles: committed },
+      ).sync(first.cursor);
+      expect(second.events.map((event) => [event.source_record_id, event.deleted])).toEqual([["b.md", false]]);
     } finally {
       await rm(firstRoot, { recursive: true, force: true });
       await rm(secondRoot, { recursive: true, force: true });
@@ -1516,4 +1521,19 @@ describe("markdown folder committed identities", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+});
+
+test('artifact metadata remains content-bound across a rename and ignores frontmatter identity fields', async () => {
+  const root=await makeTempDir();
+  try {
+    const content='---\nartifact: {sha256: fake, byteLength: 1}\n---\nExact bytes\n';
+    await writeFile(path.join(root,'before.md'),content);
+    const connector=createMarkdownFolderConnector({path:root});
+    const before=await connector.backfill(null), captured=before.events[0]!;
+    await filesystem.rename(path.join(root,'before.md'),path.join(root,'after.md'));
+    const after=await connector.sync(before.cursor), moved=after.events.find(event=>!event.deleted)!;
+    expect(moved.metadata.artifact).toEqual(captured.metadata.artifact);
+    expect(moved.subjects[1]).toEqual(captured.subjects[1]);
+    expect(moved.metadata.artifact).toMatchObject({sha256:identityOf(content).sha256,byteLength:Buffer.byteLength(content),mediaType:'text/markdown'});
+  } finally { await rm(root,{recursive:true,force:true}); }
 });

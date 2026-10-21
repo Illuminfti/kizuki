@@ -12,12 +12,15 @@ Reading order for a stranger or an agent landing on this tree:
 
 Related:
 
+- [scoped-write-authorization.md](scoped-write-authorization.md) — caller-readable claim filing, page rewrites and served-text matching
 - [product-context.md](product-context.md) — direction; not a shipping claim
 - [upstream-policy.md](upstream-policy.md) — retrieval credit and dependency rules
+- [retrieval-quality.md](retrieval-quality.md): how search matches questions, and the harness that measures it
 - [retrieval-engine-integration.md](retrieval-engine-integration.md): integrated memory adoption programme and work ownership, not shipped features
 - [retrieval-engine-acceptance.md](retrieval-engine-acceptance.md): 49 proposed acceptance obligations, not executed tests
 - [upgrade.md](upgrade.md): upgrade an installed package in place, with a file-level backup and rollback
 - [integrations.md](integrations.md): connect Claude Code, Codex or any MCP client, with a session-start hook
+- [canon-capacity.md](canon-capacity.md): the canon page ceiling, its states and what stops
 - [legacy-import.md](legacy-import.md) — estate importers
 - [beacon-import.md](beacon-import.md) — source-consented local agent-run snapshots
 - [event-identity-origin.md](event-identity-origin.md) — event revisions, machine origin and backup compatibility

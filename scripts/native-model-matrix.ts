@@ -44,6 +44,8 @@ const sha = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).d
 const check = (value: unknown, code: string): void => { if (!value) throw new Error(`native_model_${code}`); };
 const MODEL = "native-lifecycle-synthetic";
 const SOURCE_TEXT = "Ada is the coordinator for Orchard library.\n";
+const MODEL_OUTPUT_QUERY = '"Orchard library coordinator"';
+type NativeQueryHit = { doc_id: string; scope: string; authority: string; snippet: string };
 
 /** Diagnostic projection only: never serialize the receipt or endpoint response.
  * Reserve space for both attempts so an offline error cannot hide recovery's cause. */
@@ -62,7 +64,7 @@ export function modelFailureDiagnostic(phase: NativeModelPhase,
 
 /** Exit zero alone does not establish a healthy query: the CLI can return a
  * degraded envelope. Require its complete public success boundary and hit data. */
-export function readStrictNativeQuery(result: { exit_code: number; stdout: string; stderr: string }): { scope: string; authority: string; snippet: string }[] {
+export function readStrictNativeQuery(result: { exit_code: number; stdout: string; stderr: string }): NativeQueryHit[] {
   check(result.exit_code === 0 && result.stderr === "" && Buffer.byteLength(result.stdout) <= 65_536, "query_command");
   let body: any; try { body = JSON.parse(result.stdout); } catch { check(false, "query_json"); }
   check(body && typeof body === "object" && !Array.isArray(body) && Object.keys(body).sort().join() === "data,degraded,schema,status,warnings" &&
@@ -70,8 +72,42 @@ export function readStrictNativeQuery(result: { exit_code: number; stdout: strin
     body.data && typeof body.data === "object" && !Array.isArray(body.data) && Object.keys(body.data).sort().join() === "hits,withheld" && body.data.withheld === 0 &&
     Array.isArray(body.data.hits) && body.data.hits.length <= 50, "query_envelope");
   for (const hit of body.data.hits) check(hit && typeof hit === "object" && !Array.isArray(hit) && ["canon","ledger"].includes(hit.scope) &&
-    typeof hit.authority === "string" && typeof hit.snippet === "string", "query_hit");
+    typeof hit.doc_id === "string" && typeof hit.authority === "string" && typeof hit.snippet === "string", "query_hit");
   return body.data.hits;
+}
+
+/** Authority is a confidence ceiling, not producer identity: a single untrusted
+ * connector also receives model_inference authority. Typed canon is rendered by
+ * a deterministic writer, so follow both newly written claims and retained basis. */
+export function countNativeModelCanonReceipts(db: Database): number {
+  return db.query<{ n: number }, []>(`SELECT count(*) AS n FROM canon_receipts r
+    WHERE r.producer='model' OR r.model_ref IS NOT NULL
+      OR EXISTS (SELECT 1 FROM json_each(r.claim_ids) j JOIN claims c ON c.claim_id=j.value WHERE c.producer='model')
+      OR EXISTS (SELECT 1 FROM json_each(r.world_basis,'$.after') j JOIN claims c
+        ON c.claim_id=json_extract(j.value,'$.claim_id') WHERE c.producer='model')`).get()!.n;
+}
+
+/** Bind readable output to a current typed receipt retaining a model claim.
+ * Authority alone is not lineage, and a historical receipt cannot certify a
+ * replaced page. This observer is bounded to the owned synthetic fixture. */
+export function nativeModelPageIds(db: Database): string[] {
+  const rows = db.query<{ doc_id: string }, []>(`SELECT 'page:' || p.page_id AS doc_id
+    FROM page_index p JOIN canon_receipts r ON r.receipt_id=p.last_receipt
+    WHERE r.page_path=p.rel_path AND r.after_hash=p.last_hash
+      AND r.record_codec='kizuki.canon-receipt/v2' AND r.receipt_state='retained'
+      AND EXISTS (SELECT 1 FROM json_each(r.world_basis,'$.after') j JOIN claims c
+        ON c.claim_id=json_extract(j.value,'$.claim_id') WHERE c.producer='model' AND c.status='live')
+    ORDER BY p.page_id LIMIT 33`).all();
+  check(rows.length <= 32, "model_page_limit");
+  return rows.map(row => row.doc_id);
+}
+
+/** The frozen reply's assertion is the role, not its free-form body prose.
+ * Preserve its conservative qualifiers and require both public readability
+ * and current receipted model lineage; a captured source cannot stand in. */
+export function nativeModelOutputReadable(hits: readonly NativeQueryHit[], modelPages: readonly string[]): boolean {
+  return hits.some(hit => hit.scope === "canon" && hit.authority === "model_inference" && modelPages.includes(hit.doc_id) &&
+    hit.snippet === "employment.role: Orchard library coordinator\n(positive; uncertain; inferred interpretation; valid from unknown until unknown; unknown time basis)\n");
 }
 
 /** The observer never migrates the installed daemon's database or retains statements. */
@@ -90,8 +126,7 @@ export function readInstalledModelAttempt(vault: string, expected: NativeModelIn
       if (receipt!.execution?.pid === expected.pid && receipt!.execution.instance_id === expected.instance_id) {
         const present = db.query<{ n: number }, [string]>("SELECT count(*) AS n FROM events WHERE text=?").get(SOURCE_TEXT);
         const claims = db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE producer='model'").get()!;
-        const canon = db.query<{ n: number }, []>("SELECT count(*) AS n FROM canon_receipts WHERE producer='model' OR authority='model_inference'").get()!;
-        return { receipt: receipt!, source_event_present: present?.n === 1, model_claims: claims.n, model_canon_receipts: canon.n };
+        return { receipt: receipt!, source_event_present: present?.n === 1, model_claims: claims.n, model_canon_receipts: countNativeModelCanonReceipts(db), model_pages: nativeModelPageIds(db) };
       }
     }
     return null;
@@ -114,15 +149,18 @@ export function prepareModelRecoverySchedule(vault: string, stopConfirmed: boole
     binding();
     return db.transaction(() => {
       binding();
-      const schedules = db!.query<Record<string, string | number | null>, []>("SELECT * FROM schedules ORDER BY rail LIMIT 9").all();
-      check(schedules.length === 7, "schedule_inventory");
+      const expectedRails = ["backup", "brief", "doctor-sweep", "embed-backfill", "journal-prune", "purge-sweep", "retrieval-sweep", "sync", "verify-world"];
+      // Include a sentinel row so an unexpected extension cannot be hidden by
+      // the bounded inventory read. The controller may change only sync's due time.
+      const schedules = db!.query<Record<string, string | number | null>, []>("SELECT * FROM schedules ORDER BY rail LIMIT 10").all();
+      check(JSON.stringify(schedules.map(row => row.rail)) === JSON.stringify(expectedRails), "schedule_inventory");
       const sync = schedules.find(row => row.rail === "sync"); check(sync && (sync.next_run_at === null || typeof sync.next_run_at === "string"), "schedule_sync_missing");
       const old = sync!.next_run_at as string | null, next = new Date(Date.now() - 1000).toISOString();
       const receipts = () => { const rows = db!.query("SELECT * FROM run_receipts ORDER BY run_id LIMIT 129").all(); const text = JSON.stringify(rows); check(rows.length <= 128 && text.length <= 1_048_576, "schedule_receipts_bound"); return text; };
       const priorReceipts = receipts();
       const result = db!.query("UPDATE schedules SET next_run_at=? WHERE rail='sync' AND next_run_at IS ?").run(next, old);
       check(result.changes === 1, "schedule_cas_conflict");
-      const after = db!.query<Record<string, string | number | null>, []>("SELECT * FROM schedules ORDER BY rail LIMIT 9").all();
+      const after = db!.query<Record<string, string | number | null>, []>("SELECT * FROM schedules ORDER BY rail LIMIT 10").all();
       const changed = after.find(row => row.rail === "sync"); check(changed?.next_run_at === next, "schedule_due_not_written"); changed!.next_run_at = old;
       check(JSON.stringify(after) === JSON.stringify(schedules) && receipts() === priorReceipts, "schedule_unrelated_mutation"); binding();
       return { rail: "sync" as const, old, next, reason: "synthetic-due-time-for-recovery" as const };
@@ -223,10 +261,10 @@ export async function runNativeModelMatrix(host: NativeModelHost): Promise<void>
       const deadline = Date.now() + 30_000;
       while (observation === null && Date.now() < deadline) { observation = readInstalledModelAttempt(vault, instance); if (observation === null) await Bun.sleep(100); }
       check(observation !== null, "receipt_missing");
-      const result = host.invoke(["query", "Orchard", "--json", "--vault", vault]);
-      const modelQuery = host.invoke(["query", "operations", "--json", "--vault", vault]);
+      const result = host.invoke(["query", "Orchard", "--scope", "ledger", "--json", "--vault", vault]);
+      const modelQuery = host.invoke(["query", MODEL_OUTPUT_QUERY, "--json", "--vault", vault]);
       const sourceHits = readStrictNativeQuery(result), modelHits = readStrictNativeQuery(modelQuery);
-      const modelOutputReadable = modelHits.some(hit => hit.scope === "canon" && hit.authority === "model_inference" && hit.snippet.includes("operations"));
+      const modelOutputReadable = nativeModelOutputReadable(modelHits, observation!.model_pages);
       const counts = endpoint.observation(), receipt = observation!.receipt;
       const evidence: NativeModelEvidence = { ...instance, receipt_run_id: receipt.run_id, receipt_status: receipt.status,
         model_calls: receipt.model.calls, model_unavailable: receipt.model.unavailable, claims_extracted: receipt.claims_extracted, canon_writes: receipt.canon_writes,
@@ -247,15 +285,15 @@ export async function runNativeModelMatrix(host: NativeModelHost): Promise<void>
         const recoveryDeadline = Date.now() + 30_000;
         while (next === null && Date.now() < recoveryDeadline) { next = readInstalledModelAttempt(vault, recovered); if (next === null) await Bun.sleep(100); }
         check(next !== null, "recovery_receipt_missing");
-        const recoveredSource = host.invoke(["query", "Orchard", "--json", "--vault", vault]);
-        const recoveredModel = host.invoke(["query", "operations", "--json", "--vault", vault]);
+        const recoveredSource = host.invoke(["query", "Orchard", "--scope", "ledger", "--json", "--vault", vault]);
+        const recoveredModel = host.invoke(["query", MODEL_OUTPUT_QUERY, "--json", "--vault", vault]);
         const recoveredCounts = recoveredEndpoint.observation(), nextReceipt = next!.receipt;
         recoveryReceipt = nextReceipt;
         const recoveredSourceHits = readStrictNativeQuery(recoveredSource), recoveredModelHits = readStrictNativeQuery(recoveredModel);
         evidence.recovery = { stop_confirmed: stopConfirmed, receipt_trigger: nextReceipt.execution?.trigger ?? "absent", receipt_due_at: nextReceipt.execution?.due_at ?? null, scheduling_override: schedulingOverride, trigger: "service-restart", ...recovered, receipt_run_id: nextReceipt.run_id, receipt_status: nextReceipt.status,
           model_calls: nextReceipt.model.calls, model_unavailable: nextReceipt.model.unavailable, claims_extracted: nextReceipt.claims_extracted, canon_writes: nextReceipt.canon_writes,
           endpoint_requests: recoveredCounts.requests, unexpected_requests: recoveredCounts.unexpected, model_claims: next!.model_claims, model_canon_receipts: next!.model_canon_receipts,
-          model_output_readable: recoveredModelHits.some(hit => hit.scope === "canon" && hit.authority === "model_inference" && hit.snippet.includes("operations")),
+          model_output_readable: nativeModelOutputReadable(recoveredModelHits, next!.model_pages),
           source_event_present: next!.source_event_present, query_preserved: recoveredSourceHits.some(hit => hit.scope === "ledger" && hit.authority === "connector_evidence" && hit.snippet === SOURCE_TEXT),
           daemon_active: host.stillActive(vault, recovered), config_unchanged: sha(readFileSync(config)) === configHash,
           credential_unchanged: readFileSync(key, "utf8") === endpoint.key, endpoint_unchanged: recoveredEndpoint.endpoint === endpoint.endpoint };

@@ -11,6 +11,18 @@ import { LEDGER_BUSY_TIMEOUT_MS, LEDGER_CONTROL_BUSY_TIMEOUT_MS, MAX_READ_SINCE 
 import { accept, readSince, replay } from "../src/ledger/ledger";
 import { validEvent } from "./fixtures";
 
+function quoteIdentifier(name: string): string {
+  return `"${name.replaceAll('"', '""')}"`;
+}
+
+function takeTriggersReferencing(db: Database, table: string): string[] {
+  const triggers = db.query<{ name: string; sql: string }, [string, string]>(
+    "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND (tbl_name=? OR sql LIKE '%' || ? || '%')",
+  ).all(table, table);
+  for (const { name } of triggers) db.exec(`DROP TRIGGER ${quoteIdentifier(name)}`);
+  return triggers.map(({ sql }) => sql);
+}
+
 function stored(db: Database, source = "rec-1") {
   const result = accept(db, { ...validEvent(), source_record_id: source });
   if (result.status !== "stored") throw new Error(`expected stored, got ${result.status}`);
@@ -82,25 +94,12 @@ describe("ledger p1 store", () => {
     try {
       const db = openLedger(path);
       db.exec("PRAGMA foreign_keys = OFF");
+      const current = db.query<{ sql: string }, []>("SELECT sql FROM sqlite_master WHERE type='table' AND name='events'").get()!.sql;
+      const nonStrict = current.replace(/\s+STRICT$/, "");
+      const eventTriggers = takeTriggersReferencing(db, "events");
       db.exec("DROP TABLE events");
-      db.exec(`
-        CREATE TABLE events (
-          event_id TEXT PRIMARY KEY,
-          connector_id TEXT NOT NULL,
-          source_record_id TEXT NOT NULL,
-          kind TEXT NOT NULL,
-          occurred_at TEXT NOT NULL,
-          observed_at TEXT NOT NULL,
-          text TEXT NOT NULL,
-          subjects TEXT NOT NULL,
-          sensitivity_hint TEXT,
-          deleted INTEGER NOT NULL,
-          attachments TEXT NOT NULL,
-          metadata TEXT NOT NULL,
-          content_hash TEXT NOT NULL,
-          accepted_at TEXT NOT NULL
-        );
-      `);
+      db.exec(nonStrict);
+      for (const trigger of eventTriggers) db.exec(trigger);
       db.close();
       expect(() => openLedger(path)).toThrow(/STRICT|schema/);
     } finally {

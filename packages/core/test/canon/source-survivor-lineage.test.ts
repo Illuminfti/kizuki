@@ -26,6 +26,7 @@ import { listCanonPages } from "../../src/vault/pages";
 import { validEvent } from "../fixtures";
 import { sha256Hex } from "../../src/util/hash";
 import { ulid } from "../../src/util/ulid";
+import { ErasurePendingError } from "../../src/canon/positive-authority";
 import { storeClaim, write } from "./helpers";
 
 const dirs: string[] = [];
@@ -66,6 +67,46 @@ function grant(db: ReturnType<typeof openLedger>, key: string, operation: string
     policy: policy(),
   });
 }
+
+test("source intent staging orders competing authority transactions before publication", async () => {
+  const { db, dir, a, b } = setup();
+  let second: ReturnType<typeof openLedger> | undefined;
+  const originalQuery = db.query;
+  try {
+    grant(db, a, "grant-a"); grant(db, b, "grant-b");
+    const aa = acceptSource(db, a, "a", "A erasure fixture");
+    const bb = acceptSource(db, b, "b", "B survives independently");
+    const io = { db, vault_path: dir };
+    write(io, await storeClaim(db, aa.event_id, { body: "A erasure fixture", frontmatter: { type: "person", title: "Shared" } }));
+    write(io, await storeClaim(db, bb.event_id, { kind: "merge", predicate: null, object: null, body: "B survives independently", frontmatter: { type: "person", title: "Shared" } }));
+    second = openLedger(join(dir, ".kizuki", "kizuki.db"));
+    second.exec("PRAGMA busy_timeout=0");
+    setSourceGrant(second, { source_key: b, expected_revision: 1, operation_id: "b-wins-before-staging", policy: policy() });
+    revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "erase-a" });
+    const receiptLog = join(dir, ".kizuki", "receipts", "promotions.jsonl");
+    chmodSync(receiptLog, 0o400); // retain the real staged intent for restart checks
+    let intercepted = false;
+    db.query = ((sql: string, ...args: unknown[]) => {
+      if (sql.startsWith("INSERT INTO canon_source_erasure_intents(")) {
+        intercepted = true;
+        expect(db.inTransaction).toBe(true);
+        expect(() => setSourceGrant(second!, { source_key: b, expected_revision: 2, operation_id: "b-competes-with-staging", policy: policy() })).toThrow(/busy|locked/i);
+      }
+      return originalQuery.call(db, sql, ...args as []);
+    }) as typeof db.query;
+    expect((await resumeSourceRevocation(db, dir, "erase-a", retrieval)).status).toBe("denied");
+    db.query = originalQuery;
+    expect(intercepted).toBe(true);
+    const pending = db.query<{ intent: string }, []>("SELECT intent FROM canon_source_erasure_intents").all();
+    expect(pending.length).toBeGreaterThan(0);
+    expect(pending.some(row => JSON.parse(row.intent).policies.some((binding: { source_key: string; revision: number }) => binding.source_key === b && binding.revision === 2))).toBe(true);
+    expect(() => setSourceGrant(second!, { source_key: b, expected_revision: 2, operation_id: "b-after-staging", policy: policy() })).toThrow(ErasurePendingError);
+    expect(second.query("SELECT 1 FROM source_grant_receipts WHERE operation_id IN ('b-competes-with-staging','b-after-staging')").all()).toEqual([]);
+    chmodSync(receiptLog, 0o600);
+    expect((await resumeSourceRevocation(db, dir, "erase-a", retrieval)).status).toBe("purged");
+    expect(setSourceGrant(second, { source_key: b, expected_revision: 2, operation_id: "b-after-recovery", policy: policy() }).revision).toBe(3);
+  } finally { db.query = originalQuery; second?.close(); db.close(); }
+});
 
 function event(sourceRecord: string, text: string) {
   return { ...validEvent(), connector_id: "kizuki.fixture", source_record_id: sourceRecord, text };

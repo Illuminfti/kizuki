@@ -8,7 +8,7 @@ import type { DerivedStamp } from "../derived-meta";
 import { assertDerivedDiscoveryReady, markDerivedHeld, readDerivedHolds } from "../derived-holds";
 import { latestLedgerCursor } from "../ledger/ledger";
 import { tableExists } from "../ledger/schema";
-import { sourcePolicyEpoch } from "../ledger/source-grants";
+import { sourceServingSql, sourcePolicyEpoch, type SourceServingScope } from "../ledger/source-grants";
 import { bareRetrievalId } from "../retrieval/ids";
 import { ulid } from "../util/ulid";
 import { compareText } from "../util/order";
@@ -20,7 +20,7 @@ import {
   stringArray,
 } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
-import { projectablePageEvidence } from "../vault/provenance";
+import { isDeterministicBrief, projectablePageEvidence } from "../vault/provenance";
 import { linkIndexFromTargets, linkKeys, resolveWikilink } from "./resolve";
 import type { LinkIndex } from "./resolve";
 import { initGraph } from "./schema";
@@ -57,12 +57,21 @@ export interface NeighborOptions {
   kinds?: GraphEdgeKind[];
   limit?: number;
   ceiling?: Sensitivity;
+  /** Trusted consumer authorization, applied before the result cap and traversal. */
+  filter?: (edge: GraphEdge) => boolean;
 }
 
 export interface NeighborResult {
   id: string;
   edges: GraphEdge[];
   truncated: boolean;
+}
+
+/** Internal serving snapshot; deliberately absent from NeighborOptions. */
+export interface GraphServingScope {
+  readablePageIds: readonly string[];
+  excludedPageIds: readonly string[];
+  source: SourceServingScope;
 }
 
 interface StoredEdge {
@@ -116,7 +125,7 @@ function withoutCodeSpans(body: string): string {
   return parts.join("");
 }
 
-function wikilinks(body: string): string[] {
+export function wikilinks(body: string): string[] {
   const source = withoutCodeSpans(body);
   if (!source.includes("[[")) return [];
   const targets: string[] = [];
@@ -244,7 +253,7 @@ function assessPage(
   page: CanonPage,
   evidence: { readonly revision: { readonly authority: RetrievalAuthority } } | undefined,
 ): { row: PageRow; links: PageLinks } {
-  const active = isLiveCanonPage(page);
+  const active = isLiveCanonPage(page) && !isDeterministicBrief(page);
   const title = page.data["title"];
   return {
     row: {
@@ -618,7 +627,7 @@ function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount:
     layer: "graph",
     generation: existing?.generation ?? ulid(),
     rebuilt_at: new Date().toISOString(),
-    doc_count: existing?.doc_count ?? 0,
+    doc_count: db.query<{ n: number }, []>("SELECT count(*) AS n FROM graph_edges").get()!.n,
     source_count: existing?.source_count ?? 0,
     skipped_count: skippedCount + withheldCount,
     status: "degraded",
@@ -631,31 +640,29 @@ function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount:
 }
 
 function restoreGraphStamp(db: Database, state: GraphState): void {
-  const existing = readDerivedMeta(db, "graph");
-  if (state.withheldCount === 0 && (existing === null || existing.status === "ok")) return;
   const live = [...state.projected.values()];
-  const edges =
-    db
-      .query<{ count: number }, []>(
-        "SELECT count(*) AS count FROM graph_edges",
-      )
-      .get()?.count ?? 0;
-  stampDerived(
-    db,
-    stampGraph(
-      db,
-      {
-        generation: ulid(),
-        pages: [],
-        skipped: [],
-        rebuilt_at: new Date().toISOString(),
-        canon_hash: canonPagesHash(live),
-      },
-      live.length,
-      edges,
-      state.withheldCount,
-    ),
-  );
+  const edges = db.query<{ n: number }, []>("SELECT count(*) AS n FROM graph_edges").get()!.n;
+  const previous = readDerivedMeta(db, "graph");
+  const stamp = stampGraph(db, {
+    generation: previous?.status === "ok" ? previous.generation : ulid(),
+    pages: [], skipped: [], rebuilt_at: new Date().toISOString(), canon_hash: canonPagesHash(live),
+  }, live.length, edges, state.withheldCount);
+  // A completed idle observation preserves its generation and timestamp.
+  if (previous !== null && previous.status === stamp.status
+    && previous.doc_count === stamp.doc_count && previous.source_count === stamp.source_count
+    && previous.skipped_count === stamp.skipped_count && previous.ledger_watermark === stamp.ledger_watermark
+    && previous.canon_hash === stamp.canon_hash && previous.port_id === stamp.port_id
+    && previous.contract === stamp.contract && previous.space === stamp.space) return;
+  stampDerived(db, stamp);
+}
+
+/** Health from a validated walk; no page is admitted by its health stamp. */
+export function refreshGraphHealth(db: Database, pages: readonly CanonPage[], skipped = 0): void {
+  assertDerivedDiscoveryReady(db);
+  const evidence = projectablePageEvidence(db, pages);
+  const state = graphState(db, pages.map(page => assessPage(page, evidence.get(page.relPath)).row));
+  if (skipped > 0 || !state.complete) { stampGraphIncomplete(db, skipped, state.withheldCount); return; }
+  restoreGraphStamp(db, state);
 }
 
 /**
@@ -706,11 +713,28 @@ export function refreshPageEdges(
   skipped: number,
   signatures?: ReadonlyMap<string, string>,
 ): void {
+  refreshPageEdgesBatch(db, [page], pages, skipped, signatures);
+}
+
+/** One registry snapshot for every known repaired page in an incomplete walk. */
+export function refreshPageEdgesBatch(
+  db: Database, changed: readonly CanonPage[], pages: readonly CanonPage[], skipped: number,
+  signatures?: ReadonlyMap<string, string>,
+): void {
   assertDerivedDiscoveryReady(db);
-  const before = graphRegistryReady(db) ? registeredKeys(db, page.id, page.relPath) : [];
-  const state = syncRegistry(db, [...pages.filter(candidate => candidate.relPath !== page.relPath), page], skipped, signatures);
-  const row = state.rows.find((candidate) => candidate.id === page.id)!;
-  settleGraph(db, state, skipped, skipped === 0 ? null : { pageId: page.id, keys: [...before, ...linkKeys(row)] });
+  const replacements = new Map(changed.map(page => [page.relPath, page]));
+  const snapshot = [...pages.filter(page => !replacements.has(page.relPath)), ...changed];
+  const state = syncRegistry(db, snapshot, skipped, signatures);
+  if (skipped === 0) { settleGraph(db, state, 0, null); return; }
+  if (!state.complete) {
+    db.exec("DELETE FROM graph_edges");
+    clearGraphRegistry(db);
+    stampGraphIncomplete(db, skipped, state.withheldCount);
+    return;
+  }
+  removeHeldEdges(db, state);
+  for (const page of changed) projectOne(db, state, page.id);
+  stampGraphIncomplete(db, skipped, state.withheldCount);
 }
 
 /** Incremental delete from a walk. An incomplete walk projects only the pages that linked to it again. */
@@ -779,6 +803,17 @@ function settleRegisteredGraph(db: Database, pageId: string, keys: readonly stri
   if (registrySkipped(db) > 0) stampGraphIncomplete(db, registrySkipped(db), state.withheldCount);
   else if (state.withheldCount > 0) markDerivedHeld(db, "graph", state.withheldCount);
   else if (meta !== null && meta.status !== "ok") restoreGraphStamp(db, graphState(db, readRegistry(db)));
+  else if (meta !== null) {
+    // The registry proves counts without reopening unrelated pages. A full
+    // identity hash waits for the next validated snapshot.
+    const watermark = latestLedgerCursor(db);
+    stampDerived(db, { ...meta, rebuilt_at: new Date().toISOString(),
+      doc_count: db.query<{ n: number }, []>("SELECT count(*) AS n FROM graph_edges").get()!.n,
+      source_count: db.query<{ n: number }, []>("SELECT count(*) AS n FROM graph_pages WHERE active=1 AND admitted=1").get()!.n,
+      ledger_watermark: watermark === null ? null : `${watermark.accepted_at}\t${watermark.event_id}`,
+      canon_hash: null,
+    });
+  }
 }
 
 /** A lost registry never turns a page-local writer into a vault reconciliation. */
@@ -880,6 +915,8 @@ function incidentEdges(
   kinds: GraphEdgeKind[] | undefined,
   ceiling: Sensitivity | undefined,
   remaining: number,
+  serving?: GraphServingScope,
+  filter?: (edge: GraphEdge) => boolean,
 ): GraphEdge[] {
   if (ids.length === 0 || kinds?.length === 0 || remaining <= 0) return [];
   const collected: GraphEdge[] = [];
@@ -900,18 +937,47 @@ function incidentEdges(
       );
       bindings.push(SENSITIVITY_ORDER[ceiling], SENSITIVITY_ORDER[ceiling]);
     }
-    const extraSql = extra.length === 0 ? "" : ` AND ${extra.join(" AND ")}`;
-    bindings.push(remaining - collected.length);
-    collected.push(
-      ...db
-        .query<GraphEdge, (string | number)[]>(
-          `SELECT src, dst, kind FROM graph_edges
-           WHERE (src IN (${idSlots}) OR dst IN (${idSlots}))${extraSql}
-           ORDER BY src, dst, kind
-           LIMIT ?`,
+    if (serving !== undefined) {
+      // Admission precedes both LIMIT and frontier expansion. Checking only
+      // the selected edges lets hidden topology spend the readable cap.
+      extra.push("src IN (SELECT value FROM json_each(?))");
+      bindings.push(JSON.stringify(serving.readablePageIds));
+      extra.push(`(kind != 'wikilink' OR (
+        dst NOT IN (SELECT value FROM json_each(?)) AND (
+          dst IN (SELECT value FROM json_each(?)) OR NOT EXISTS (
+            SELECT 1 FROM page_index WHERE page_id = graph_edges.dst
+          )
         )
-        .all(...bindings),
-    );
+      ))`);
+      bindings.push(JSON.stringify(serving.excludedPageIds), JSON.stringify(serving.readablePageIds));
+      const source = sourceServingSql(db, serving.source,
+        ceiling === undefined ? null : SENSITIVITY_ORDER[ceiling]);
+      if (source !== null) {
+        extra.push(`(kind != 'source' OR EXISTS (
+          SELECT 1 FROM events WHERE events.event_id = CASE
+            WHEN graph_edges.dst LIKE 'event:%' THEN substr(graph_edges.dst, 7)
+            ELSE graph_edges.dst END AND ${source.sql}
+        ))`);
+        bindings.push(...source.bindings);
+      }
+    }
+    const extraSql = extra.length === 0 ? "" : ` AND ${extra.join(" AND ")}`;
+    let after: GraphEdge | undefined;
+    for (;;) {
+      const rows = db.query<GraphEdge, (string | number)[]>(
+        `SELECT src, dst, kind FROM graph_edges
+         WHERE (src IN (${idSlots}) OR dst IN (${idSlots}))${extraSql}
+           ${after === undefined ? "" : "AND (src,dst,kind) > (?,?,?)"}
+         ORDER BY src, dst, kind LIMIT ?`,
+      ).all(...bindings, ...(after === undefined ? [] : [after.src, after.dst, after.kind]), remaining);
+      for (const edge of rows) {
+        if (filter !== undefined && !filter(edge)) continue;
+        collected.push(edge);
+        if (collected.length === remaining) return collected;
+      }
+      if (rows.length < remaining) break;
+      after = rows[rows.length - 1]!;
+    }
   }
   return collected;
 }
@@ -938,6 +1004,25 @@ export function neighbors(
   id: string,
   opts: NeighborOptions = {},
 ): NeighborResult {
+  return walkNeighbors(db, id, opts);
+}
+
+/** Internal scoped selection; final serving still rechecks the snapshot. */
+export function neighborsForServing(
+  db: Database,
+  id: string,
+  opts: NeighborOptions,
+  serving: GraphServingScope,
+): NeighborResult {
+  return walkNeighbors(db, id, opts, serving);
+}
+
+function walkNeighbors(
+  db: Database,
+  id: string,
+  opts: NeighborOptions,
+  serving?: GraphServingScope,
+): NeighborResult {
   const depth = opts.depth ?? 1;
   if (depth !== 1 && depth !== 2) {
     throw new RangeError("neighbors depth must be 1 or 2");
@@ -963,6 +1048,8 @@ export function neighbors(
       opts.kinds,
       opts.ceiling,
       limit + 1,
+      serving,
+      edge => !seenEdges.has(`${edge.src}\u0000${edge.dst}\u0000${edge.kind}`) && (opts.filter?.(edge) ?? true),
     );
     const next: string[] = [];
     const frontierNodes = new Set(frontier);

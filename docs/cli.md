@@ -187,6 +187,35 @@ and owner recall of text and its provenance:
 }
 ```
 
+A policy may also carry two optional keys. Both are validated when you grant
+and both are omitted from the stored policy when you leave them out, so an
+existing grant reads back exactly as it was written.
+
+- `sensitivity_default` (`public`, `personal` or `private`) is honoured only for
+  the owner-mapped importers, `import-legacy-wiki` and `import-legacy-events`,
+  whose per-record labels come from a mapping file you wrote. It sets the
+  tier those labels may lower a record to, and it may not be below the
+  connection's floor (`personal` for these importers). With it, a page the
+  importer labelled `personal` is stored `personal`; a page labelled `private`,
+  a page with no label, and a page the importer could not read stay `private`.
+  Without it, or on any other connector, every record stays at the connector's
+  own default, so nothing changes until you regrant. Withdrawing the key is not
+  retroactive: it only returns records captured afterwards to the connector
+  default, and events and claims already stored as `personal` stay `personal`.
+  To re-tighten stored material, raise `sensitivity_floor` to `private`. Set `sensitivity_floor` to `personal` in
+  the same policy, because the grant floor still raises every record to itself.
+  Claims take their tier from the sources of their own provenance events, so
+  one private source no longer raises the claims of another source of the
+  same connector.
+- `class_rules` is a list of `{ "path_glob": "06-execution/**", "class":
+  "machine_exhaust" }` objects (`class` is `machine_exhaust` or `credential`; at
+  most 32 rules). A rule marks every event of this source whose `source_record_id`
+  or recorded `relpath` matches the glob (`*` stays inside a segment, `**` spans
+  segments). Marks are recomputed for the source's stored events when a regrant
+  changes the rules; that rescan runs inside the regrant, so on a source with
+  a very large event count expect the regrant to take a while and other writers
+  to wait. See [Withheld classes](agent-enrollment.md#withheld-classes).
+
 Purposes are `capture`, `recall`, `session`, `correction`, `audit`, `derive`,
 `extract`, and `export`; choose only the uses you authorize. Populated fields
 outside `allowed_fields` refuse capture. `extract` does not make an untrusted
@@ -282,55 +311,86 @@ model. `kizuki connect status` shows, for every source, that path only:
   model the grant names. A grant whose model is not the configured one is marked
   `(not the configured model)`; it cannot send anything until the configuration
   matches it.
-- **Retention**: `none`, or `provider-managed`, the only retention stance a
-  grant can record, followed by the provider controls the configured model asks
-  the router to enforce (`[ports.llm.provider]`, for example
-  `data_collection=deny zdr=true`) or `no provider controls requested`. Kizuki
-  cannot see what a provider retains; the stance says who manages it, not that
-  retention is off.
+- **Retention**: `none`, or the loosest retention class the grant accepts
+  (`zero-retention`, `logged-no-training`, `logged-and-trained` or
+  `provider-managed`). For a class other than `provider-managed`, and when the
+  granted model is the configured one, it adds `model declares <class>` or
+  `model declares nothing`, the class from `[ports.llm] retention`. Then come the
+  provider controls the configured model asks the router to enforce
+  (`[ports.llm.provider]`, for example `data_collection=deny zdr=true`) or `no
+  provider controls requested`. Kizuki cannot see what a provider retains; the
+  class is what the owner accepted and declared, not proof that retention is off.
+
+A grant states the loosest class it accepts in `egress.external_retention`:
+`zero_retention`, `logged_no_training`, `logged_and_trained` (strictest to
+loosest) or `provider_managed`, which accepts any model and keeps every earlier
+grant working unchanged. The configured model declares its own class in
+`[ports.llm] retention`, and an undeclared model counts as `logged_and_trained`.
+Text is sent only when the model's declared class is at least as strict as the
+class the grant accepts; otherwise the source's events are held, not sent. A
+configured System One judge is sent the same events and claims, so it needs the
+same consent, and its destination differs from the model's. A grant names the
+judge as its own pair beside the model, `judge_endpoint` (the judge's
+`<base_url>/systemone`) and `judge_model`; both or neither, and a grant without
+the pair keeps its earlier form and digest. With a judge configured and no pair
+that matches it, the source's events are held, not sent and not filed as empty,
+and `kizuki doctor` and `connect status` say `held` next to the source. The judge
+declares no retention class, so the grant must accept `logged_and_trained` or
+`provider_managed`. Use `connect grant --policy FILE` to supply this explicit
+pair; the app's model-only permit action does not grant judge access. See
+[`@kizuki/llm`](../packages/llm/README.md#retention-classes).
 
 `connect status --json` reports the same view as `egress` on each connection
-(`destination`, `host`, `model`, `retention`, `provider_controls`,
-`configured`), and `connect status --source KEY` adds it to the consent line and
-JSON. Provider controls are not part of the model binding that consent names;
-see [`@kizuki/llm`](../packages/llm/README.md#provider-privacy-controls-portsllmprovider).
+(`destination`, `host`, `model`, `retention`, `declared_retention`,
+`provider_controls`, `configured`), and `connect status --source KEY` adds it to the consent line and
+JSON. Provider controls are not part of the model binding that consent names; the
+declared retention class is. See [`@kizuki/llm`](../packages/llm/README.md#provider-privacy-controls-portsllmprovider).
 
 Before an extraction prompt reaches the `[ports.llm]` endpoint, it is scrubbed
 of obvious secrets. Each match is replaced by `[redacted:<kind>]`, where kind is:
 
 | Kind | What it matches |
 | --- | --- |
-| `pem` | A `-----BEGIN ...-----` block through its `END` line, or to the end of the text when unterminated. |
+| `pem` | A PEM block, including re-flowed headers. An unfinished block consumes only key-body lines, so a malformed field cannot swallow a packet. |
 | `jwt` | Three dot-separated base64url segments starting `eyJ`. |
 | `api_token` | `sk-`, `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`, `github_pat_`, `xox[abposr]-`, `AKIA` and `ASIA` shapes above a minimum length. |
 | `bearer` | The value of an `Authorization: Bearer` header. |
-| `secret_assignment` | The value (four or more characters) of a `NAME=value` assignment whose name contains `secret`, `token`, `password`, `passwd` or `api_key`. The name stays. |
+| `secret_assignment` | A nonempty value in a shell, JSON or YAML field whose name contains `secret`, `token`, `password`, `passwd`, `api_key`, `private_key` or `credential`. The name stays. |
 | `seed_phrase` | A run of 12 or more lowercase words of three to eight letters, separated by spaces, commas or single line breaks, that has a 12-word stretch with fewer than two common English function words. The whole run is redacted, so a phrase inside a sentence, one of 24 words, or one with a lead-in word such as `seed` or `phrase` is caught. A capital letter, digit, other punctuation, a blank line or a word of nine or more letters ends a run. |
+
+The shared Core scrubber also recognizes Kizuki tokens, Stripe live, Google,
+GitLab, npm and Slack app tokens, wrapped and percent-encoded credentials,
+JSON/YAML secret fields, Basic/Token authorization (`authorization`) and URL
+credentials for any scheme (`url_credentials`). Invisible format characters
+and variation selectors are removed (`control` when counted separately).
+These patterns also protect agent serving and coding-session capture.
 
 The scrubber is a heuristic backstop with no dependency, not a guarantee. It
 does not know your secrets: an unrecognized shape, a numbered or capitalized
-phrase, a password in prose or a short value passes through. A `token=` value
-of fewer than eight digits is treated as a counter and kept. A prose run that
+phrase or a password in prose passes through. Known token counters such as
+`max_tokens` and `token_count` keep numeric values of fewer than eight digits.
+A prose run that
 resembles a mnemonic, or a long list of plain lowercase words, is redacted. The ledger is never changed; only the copy
 sent to the model is. The model's anchors into scrubbed text are moved back onto
 the original record. The per-kind counts appear as `model.redacted` in each run
 receipt, and are absent when nothing was redacted.
 
-**Known limit: the admission judge is a separate destination.** When
+**The admission judge is a separate destination.** When
 `[ports.systemone]` is configured, the extraction-path admission judge (typed
 and legacy) receives the same scrubbed extraction text at its own `base_url`
-(the default host is `api.typesafe.ai`), not at the `[ports.llm]` endpoint. That
-destination is not named by source consent, is not covered by
-`[ports.llm.provider]`, and is not shown by `connect status` or its `--json`
-`egress`. Scrubbing applies to it; the egress and retention view does not.
-Leave `[ports.systemone]` unset to keep extraction text on the `[ports.llm]`
-destination alone. The judge the reflex path uses is not scrubbed.
+(the default host is `api.typesafe.ai`), not at the `[ports.llm]` endpoint. Source
+consent covers it only when the grant names it (`judge_endpoint`, `judge_model`,
+above); `connect status` and `kizuki doctor` show whether it does. It is not
+covered by `[ports.llm.provider]`. Scrubbing applies to it. Leave `[ports.systemone]`
+unset to keep extraction text on the `[ports.llm]` destination alone. The judge
+the reflex path uses is not scrubbed.
 
 ## backfill / sync
 
 ```text
 usage: kizuki backfill <connector> [--source PATH|KEY]
 usage: kizuki sync [connector] [--source PATH|KEY]
+usage: kizuki sync CONNECTOR --source KEY --confirm-withdrawals N
 ```
 
 Historical capture vs source refresh. Each selected connection is drained
@@ -343,8 +403,28 @@ source-consent checks. These commands still refresh the local SQLite search
 floor. `sync --once` runs the automation tick, with the sync rail's bounded
 slice per source (see [serve](#serve)) instead of draining to exhaustion, and
 retains its configured retrieval requirements.
+Markdown-folder and wiki sources follow their source: a record that returns
+after a deletion, or reverts to earlier text, is a new revision and not a
+duplicate; a rename is one event; and a source that is migrated to another
+device keeps its checkpoint (see [markdown sources](markdown-sources.md)).
 The Beeper connector conservatively rescans available history on each completed
 sync cycle to observe edits and explicit tombstones; unchanged records deduplicate.
+
+### Held mass withdrawals
+
+A markdown-folder or wiki source that would lose more than the larger of 20
+records and 20 percent of its records in one pass is a likely unmounted, emptied
+or half-restored root, not a decision. That pass emits no tombstones, prints
+`error: mass_withdrawal_held: N of M`, and exits `1`. The same typed state shows
+as `hold` (`{state, withdrawn, total}`, otherwise `null`) on the source in
+`connect status [--source KEY] --json` and `doctor --json` (`connections[].hold`),
+and as a `source-hold` line in `doctor`, which then reports `status=failed`.
+Restoring the source clears it on the next sync. To accept the loss, run
+`kizuki sync CONNECTOR --source KEY --confirm-withdrawals N` with the reported
+count: it releases that run only, and a pass that would withdraw more than N
+stays held. `--confirm-withdrawals` is refused without `--source` or with
+anything but a positive whole number. See [markdown sources](markdown-sources.md)
+and [legacy import](legacy-import.md).
 
 ### Running commands while the daemon writes
 
@@ -385,6 +465,23 @@ A cut excerpt ends with `…` in text output and has `"truncated": true` in
 `--json`. `--full-text` returns whole records; a large capture then makes a
 large document. Canon hits are unchanged.
 
+Words are ANDed. A question of three or more words (it ends in `?` or starts
+with a question or instruction word, and has no quotes or `*`) that matches
+fewer than three records that way is retried on its content words: stopwords
+drop out, inflected words match by stem, and a result must contain at least
+60% of the distinct content words. `degraded` then carries `query-relaxed`,
+and `--json` gives each hit a `coverage` between 0 and 1, the share of those
+words it holds (a literal match is `1`); a caller that wants a stricter answer
+thresholds it. A question nothing answers prints `0 hits` and reports
+`query-no-match` rather than returning loose matches. A page whose title is the
+whole query ranks first, and at close relevance a page the owner wrote ranks
+above one the loop wrote (under `auto/`, a daily brief, or a `rollup`). One
+result stands for one record: a capture that a returned canon page cites is not
+listed beside it, and once a record is edited only its current capture is
+searchable. The scan of withheld candidates is capped at 500 candidate identities in the owner audit sample, reported as
+`scan-bound`. Agent selection filters sensitivity and live source policy before
+matching; withheld evidence changes no agent diagnostic or ranking statistic.
+
 Reads wait out ordinary daemon writes rather than failing: `query` and
 `context` keep the owner access-audit writer on the same bounded busy timeout
 as every other ledger connection, and report `lease_held` rather than a lock
@@ -397,11 +494,30 @@ the baseline FTS index; a missing optional index stays missing and is reported
 as degraded. An older or incomplete authoritative schema requires explicit
 `kizuki init <path>` before reads can proceed.
 
-The embedded retrieval factory currently requires writer initialization. CLI
-and app reads therefore use the authorized SQLite floor when it is selected,
-reporting `configured-engine-unavailable` and `retrieval-unavailable`. They
-preserve the configured engine and do not acquire its writer lease, create its
-files, or claim that hybrid retrieval ran. Unknown engine IDs still refuse.
+`query` and `context` bind the configured retrieval engine when it is free and
+the vault selects an embedding port (see
+[Semantic retrieval](#semantic-retrieval-embedding-port)). A vector-capable
+engine receives hybrid requests; otherwise reads use lexical ranking. A live host that holds the engine's writer lease (the daemon, an MCP
+session) leaves the read on the authorized SQLite floor, reported as
+`configured-engine-unavailable` and `retrieval-unavailable`. Whenever an
+embedding port is configured and the answer did not rank by vector, it also
+carries `retrieval-vector-unavailable`, so a lexical answer is never passed off
+as a hybrid one. Other CLI reads and the local app declare a configured engine
+unavailable without acquiring it. Unknown engine IDs still refuse.
+
+## verify world
+
+```text
+usage: kizuki verify world --vault /absolute/offline-copy [--json]
+```
+
+Audit an offline, checkpointed copy without writes or model calls. The command
+requires an explicit absolute path and refuses WAL, SHM and rollback-journal
+sidecars. It reports PASS or FAIL for ledger schema/integrity, world provenance
+and historical coverage, with exit 0 for all checks passing and 1 for failure.
+See [World verification](world/verification.md) for the checks and their limits.
+The weekly `verify-world` daemon rail records the same checks; doctor shows its
+last result and age.
 
 ## doctor
 
@@ -423,8 +539,11 @@ claim ids (for `tell --claim`), leftover skipped rows, connections,
 checkpoints (with the first error of each source's last run as `last_error`),
 derived-index freshness, writer ROLE stamps, machine vs human
 origin counts, calibration/liveness probes, receipts, holds, serve rails,
-a `vector layer:` line (`off (no embedding model configured)` or
-`configured (<port id>)` or `invalid (<reason>)`, read from `[ports] embedding`; JSON reports it as
+a `vector layer:` line (`off (no embedding model configured)`,
+`configured (<port id>)`, `invalid (<reason>)`, `not in use (...)` when an
+embedding port is configured but retrieval is not the embedded engine, or
+`refused (...)` when the embedded engine turned the corpus away as over its
+memory bound; read from `[ports] embedding`; JSON reports it as
 `serve.stores.vector_layer`), and `canon writing: on|configured|unverified|off`. Off when no model is
 configured. The default report runs SQLite `quick_check` and samples ledger
 events. `--integrity`
@@ -494,8 +613,10 @@ extract cursor for a granted source (counted up to 10,000, shown as `N+`) and
 passes in a row were rejected as truncated, it adds the change to make: set
 `[ports.llm] reasoning_effort` or raise `[extraction] max_output_tokens`. An
 `egress` line names, for every source whose text may go to a model, the
-endpoint host, the model and `retention=provider_managed`, which means the
-provider keeps sent text under its own policy. When canon files cannot be
+endpoint host, the model and the retention class the grant accepts, for example
+`retention=provider_managed` (the provider keeps sent text under its own policy)
+or `retention=zero_retention` (the grant accepts only a model that declares zero
+retention). When canon files cannot be
 indexed, doctor prints `index-degraded` with the skipped paths (the first 16)
 and their total; a canon page held out of the index by an open hold or write is
 listed as `index-degraded` too, and a truncated canon walk is said aloud. The
@@ -507,6 +628,18 @@ source was exhausted. `--json` keeps `backfill_complete`, which only a finished
 backfill run sets, beside `last_run_clean`. The closing `next:` line follows from
 the structured top failure of a failed report and never suggests `kizuki tell`;
 for a down rail it points at `kizuki serve status`, which only reads.
+
+A `canon pages` line reports live pages, archived pages, the configured
+ceiling and a state of `ok`, `near` (80 percent) or `full` (JSON:
+`serve.canon`; `scan_limited` names a reached scan resource budget).
+Archived pages are counted apart and do not count against the
+ceiling. At `near` and `full` doctor fails and names the next step: raise
+`[canon] max_live_pages` in `serve.toml`. At `full` the writer holds new pages
+under the named state `canon_ceiling` while queries, context, rebuild, export,
+purge and edits of existing pages keep working within scan resource budgets.
+Growing writes that exceed those budgets refuse with `canon_scan_incomplete`
+before publication. See
+[canon capacity](canon-capacity.md).
 
 Doctor names the fix when it can. A `serve.toml` that is not mode 600 stops the
 model configuration from being read; the report then names the file's mode and
@@ -556,7 +689,11 @@ grant. Other purposes are unchanged. Same engine as MCP
 on stdout and offer a next step on stderr. If gathering fails, the CLI returns
 exit 1 and reports `degraded` in JSON instead of presenting the header as a
 complete packet. Omitting `--since`/`--until` keeps the purpose profile's
-recent window (session is seven days). Explicit RFC3339 bounds pass through to
+recent window (session is seven days). With `--query`, the query picks the
+canon pages and, within that window, the captures, using the same matching as
+`query`; a capture that a packed page cites is left out, and named subjects
+add their other recent captures after the matches. A query that matches
+neither reports `query-no-match` in `retrieval_degraded`. Explicit RFC3339 bounds pass through to
 Core's existing request fields; timeline evidence uses each source's
 `occurred_at`. Malformed timestamps and an inverted window are usage errors
 before the vault is opened. `--task-event` asks Core for structured sections
@@ -577,7 +714,7 @@ in [what an agent is served](agent-enrollment.md#what-an-agent-is-served).
 Status: shipped
 
 ```text
-usage: kizuki hook session-start --harness claude-code|codex|generic [--budget N] [--timeout-ms MS] [--token-ref env:VAR|file:/absolute/path] [--direct] [--verbose]
+usage: kizuki hook session-start --harness claude-code|codex|generic [--budget N] [--timeout-ms MS] [--token-ref env:VAR|file:/absolute/path | --owner] [--direct] [--verbose]
 ```
 
 Prints a compact, bounded, provenance-labelled context block
@@ -591,7 +728,9 @@ claude-code` and `--harness codex` print
 `--harness generic` prints the plain text. Quoted and taint labels stay on the
 lines. `--budget` is 50 to 2000 tokens (default 450) and `--timeout-ms` is 100
 to 60000 (default 2500). `--token-ref` reads as an enrolled agent, so the call is
-audited under that agent's name; without it the hook reads as the owner. The
+audited under that agent's name. Without it the hook prints nothing unless
+`--owner` explicitly selects owner authority. Every principal's hook output is
+secret-scrubbed at the agent grade and stripped of terminal controls. The
 reference is a file or an environment variable, never the token itself.
 
 It exits 0 and prints nothing on a timeout, a denied or revoked credential, a
@@ -601,7 +740,10 @@ to standard error and never a path, token or captured text. `--direct` reads in
 the current process without contacting the daemon; its deadline cannot interrupt
 a read already running. A misconfigured command is silent and exits 0 too, and
 out-of-range numbers are clamped to their bounds, so a settings typo never
-fails a session. The hook writes nothing and
+fails a session, including malformed `--vault` arguments. Output over 64 KiB
+(including UTF-8 encoding, JSON framing and the final newline) is omitted;
+`--verbose` reports `oversized`. Source installs must use the safe Bun launcher
+in [integrations](integrations.md#how-the-hook-behaves). The hook writes no canon and
 contacts only the loopback daemon. See [integrations](integrations.md) for
 Claude Code, Codex and generic recipes.
 
@@ -689,6 +831,17 @@ TUI. The actual change appears first with compact trust details; `d` reveals
 full receipt hashes and provenance. Command filters apply throughout paging
 and reloads. The only effect that TUI may emit is `undo`.
 
+## attention
+
+```text
+usage: kizuki attention [--json] | attention dismiss CUE [--json] | attention snooze CUE --until TIME [--json]
+```
+
+Read goal-aware attention cues, dismiss one cue, or snooze it until an RFC3339
+time within the next year. Dismissal and snoozing change attention disposition;
+they do not change the underlying claims or authorize an action. `--json`
+returns the same result as a structured envelope.
+
 ## serve
 
 ```text
@@ -708,9 +861,12 @@ reports `configured` with the daemon's own last success and failure from its
 run receipts, or `unverified` when the daemon has left none. The optional `[ports.llm] reasoning_effort` (`none`,
 `minimal`, `low`, `medium` or `high`) is sent with each model request;
 `doctor` and `serve status` show it next to the bound model, and `doctor`
-names an invalid value. The optional `[ports.llm.provider]` table
+names an invalid value. The optional `temperature` (0 to 2) and `json_mode`
+(`response_format` `json_object`) keys are sent only when set. The optional
+`[ports.llm.provider]` table
 (`data_collection`, `zdr`, `order`, `only`, `ignore`, `allow_fallbacks`) is
-passed through to OpenAI-compatible routers; see
+passed through to OpenAI-compatible routers, and `retention` declares the
+class the destination is held to; see
 [Model egress and retention](#model-egress-and-retention). Rails hold the ledger only for the length of one batch; they
 never keep a write transaction open across a network or model call, so owner
 verbs keep working while the loop runs. See
@@ -724,7 +880,11 @@ reads a rail's liveness from the schedule as well as its receipts. The
 `embed-backfill` rail runs every minute only while an embedding port is
 configured; without one it backs off to an hour, applied when the service starts
 and re-checked on each run, and doctor does not call it down for producing
-nothing. Doctor counts an idle rail's empty streak in elapsed periods, so coalescing does not slow that alarm. A new embedding selection is applied when the service starts and on the embed rail's next run. The `journal-prune` rail drops receipts older than
+nothing. With an embedding port and the embedded engine bound, each run embeds
+up to 200 chunks that have no vector yet, newest documents first, and its
+receipt counts the documents embedded and the chunks still waiting. When the
+embedding server does not answer, the run is `degraded` with
+`embedding-unavailable` and the backlog is left for the next run. Doctor counts an idle rail's empty streak in elapsed periods, so coalescing does not slow that alarm. The rail rechecks its on/off selection and schedule each run; restart the service to bind a changed embedding port or model. The `journal-prune` rail drops receipts older than
 `[serve] journal_retention_days` (default 7) and then the oldest until
 `run-receipts.jsonl` fits 8 MiB. Doctor reads at most the newest 5,000 receipts and scans at most the newest 1 MiB of the journal for orphans.
 
@@ -781,7 +941,12 @@ One that cannot be split, such as a single token longer than a request, is
 skipped with a `record_oversized_skipped` receipt and the cursor moves on.
 `serve status` and `doctor` print an `oversized records` line with both counts,
 and a `quarantined typed pages` line with the number of typed pages the writer
-has set aside, with one `quarantined` line each in `doctor`.
+has set aside, with one `quarantined` line each in `doctor`. Repeated legacy
+claim failures also retain their full provenance while retry is delayed for a day.
+Doctor lists at most 10,000 active legacy holds and reports `claims_truncated`
+when more exist or a historical claim ID exceeds the 1,024-byte diagnostic
+display limit. Truncated reports count displayed entries only. Retry storage and
+writer exclusion retain every exact claim identity, regardless of display size.
 `serve retry-skipped` puts every skipped record back on the deferred queue so
 the loop decides it again, and prints `requeued=N`. See
 [records too large for one request](extraction-budgets.md#records-too-large-for-one-request).
@@ -794,6 +959,98 @@ indexed as `retrieval.upserts` and what remains as `retrieval.pending_ops`; it
 is `ok` only when nothing remains, and reports `derived-index-behind` while the
 index is still behind. A sweep with nothing outstanding is a healthy pass, and
 only a sweep that keeps leaving work behind is reported down.
+
+## Semantic retrieval (embedding port)
+
+Status: shipped, off unless configured
+
+Full-text search needs no model and no configuration. Vector and hybrid ranking
+need two choices in `serve.toml`: the embedded retrieval engine, and an embedding
+port. `kizuki.embedding.local-http` sends text to an embedding server you run on
+the same machine and never contacts anything else.
+
+```toml
+[ports]
+retrieval = "kizuki.retrieval.embedded-pg"
+
+[ports.embedding]
+id = "kizuki.embedding.local-http"
+api = "openai"                       # "openai" (/v1/embeddings) or "ollama" (/api/embed)
+endpoint = "http://127.0.0.1:8080"   # an IPv4 loopback or [::1] address literal, no path
+model = "nomic-embed-text-v1.5"      # the id the server knows, pinned
+dims = 768                           # the width the model returns, pinned
+max_input_tokens = 2048              # the model's context window, pinned
+prompt_query = "search_query: {q}"                       # optional, default "{q}"
+prompt_doc = "search_document: {title}\n{text}"           # optional, default "{title}\n\n{text}"
+chunk_tokens = 400                   # optional; overlap defaults to 15% (chunk_overlap)
+batch_size = 16                      # optional, 1..64 inputs per request
+timeout_ms = 30000                   # optional, 100..300000
+```
+
+The port refuses to start unless `api`, `endpoint`, `model`, `dims` and
+`max_input_tokens` are set. It refuses any endpoint that is not an IPv4
+loopback or `::1` address literal on plain `http`: hostnames (including
+`localhost`), other addresses, credentials, paths, query strings and redirects
+are all errors, and there is no override. It opens its own socket to that
+address, so an `HTTP_PROXY` in the environment cannot reroute the text. Kizuki
+does not start, download or supervise the server or the model. A loopback
+address is not proof that the server keeps text on the machine: a port forward
+or a proxy you run can carry it elsewhere, and that is yours to check.
+
+- **Identity.** The space id names the model, the width, both prompts and the
+  token estimate (`local-http:<model>@<dims>#<digest>`). Changing a prompt,
+  the model, width or chunk configuration is a new space: vectors made under the old one stop
+  matching, and `kizuki rebuild --confirm` re-embeds. The endpoint and wire
+  format are not part of it. A reply with the wrong width, count or a
+  non-finite value is a `space_mismatch` and is never padded or truncated.
+- **Chunking.** The port budgets one token per UTF-8 byte, including whitespace
+  (`kizuki:utf8-bytes-v1`), a conservative bound for byte-level BPE and
+  byte-fallback tokenizers. This is not an exact model tokenizer. Chunking counts
+  complete spans, preserves Unicode boundaries, and reserves space for the
+  document prompt, a title capped at 64 bytes and eight special tokens. Configure
+  a smaller window for servers that expand input or add more framing tokens.
+  Ollama is also asked to refuse truncation. The title is framed into each
+  document input and is separate from the body chunk.
+- **Hybrid everywhere it is advertised.** `query`, `context`, MCP `search` and
+  `context_packet` ask a vector-capable engine for hybrid ranking. If the
+  server is down, slow or refuses, the engine answers with keyword ranking and
+  the answer carries `retrieval-vector-unavailable`; the embedding call may use
+  two thirds of the 3 second search deadline. `retrieval-vector-partial` means
+  some permitted chunks have no vector yet, so vector results cover only part
+  of the caller's permitted corpus.
+- **Backlog.** The `embed-backfill` rail embeds chunks without vectors, 200 per
+  run. A write embeds the documents it wrote and leaves an older backlog to the
+  rail. A refresh reuses the vectors of documents that did not change.
+- **Capacity bound.** The embedded engine accepts up to 4 MiB of titles and
+  bodies by default, with fixed caps of 5,000 documents, 10,000 chunks, 20,000
+  subject links and 16 MiB of serialized document metadata. Rebuild stops reading
+  at the first exceeded bound, before calling the model or replacing the active
+  index. `kizuki doctor` names the resource and limit that refused the last index
+  update. The prior index is preserved; the authorized lexical floor remains
+  available. Only a successful authoritative rebuild clears that refusal.
+  `max_text_bytes` (1 MiB to 1 GiB) under `[ports.retrieval]` can raise the text
+  cap, using `id = "kizuki.retrieval.embedded-pg"`; the other caps remain.
+  These are conservative workload limits, not a measured service RSS guarantee.
+  Keep hybrid off on a constrained unit until the model server and retrieval
+  engine fit its memory and CPU budget.
+
+The deterministic quality fixture proves that the hybrid wiring recovers
+synthetic paraphrases that lexical retrieval misses. It does not measure the
+quality of any real model. Embeddings remain off by default; enabling them and
+pinning an immutable model id on the local server are owner choices.
+
+Restart the daemon and MCP sessions after changing embedding configuration;
+their engine and embedder are bound for the process lifetime. The backfill rail
+rechecks the configured on/off state and schedule on each pass.
+
+Wire formats were checked on 2026-09-30 against the
+[OpenAI embeddings reference](https://developers.openai.com/api/reference/resources/embeddings/methods/create)
+and [Ollama embed reference](https://docs.ollama.com/api/embed). Tests use fake
+loopback servers; live model quality and capacity qualification remain unrun.
+
+The GGUF table embedder (`kizuki.embedding.gguf`) loads only the small table
+format used by the tests and refuses real transformer models. It is a fixture,
+not the local model path.
 
 ## models
 
@@ -832,7 +1089,8 @@ of a purge that has not run (held pages, pending store operations, an unsealed
 erasure); on a finished purge it only proves. It prints one proof per store and
 `pending`/`done`/`failed` operation state. While any inert
 legacy identity row remains, identity absence is unprovable rather than
-successful. If the canon scan stops at its page-count or byte bound, the
+successful. If the canon scan stops at its file-count or byte bound (see
+[canon capacity](canon-capacity.md)), the
 affected pages cannot be enumerated, so preview and deletion both refuse with
 `canon_scan_truncated` instead of purging against a partial scan. A completed
 deletion and a completed `--verify` both refresh the derived index cursor so
@@ -1061,7 +1319,11 @@ id). Unknown IDs and a busy engine fail closed. A successful `--layer all`
 rebuild (the default) flips `[ports].retrieval` in `serve.toml` and records
 `port_state`. A failed or partial rebuild does not rewrite
 `serve.toml` or `port_state`. The previous store remains on disk until
-`kizuki rebuild --prune-old`. Changing the embedding space is a full re-embed.
+`kizuki rebuild --prune-old`. An embedded rebuild that reaches its 30-second
+deadline reports failure and retains completed vectors in a private stage. Repeat
+the same command to resume; only a complete, still-authorized snapshot becomes
+searchable. Changed source revisions, policy, embedding space or chunk settings
+invalidate that stage. Changing the embedding space is a full re-embed.
 `rebuild --layer all` refuses it unless `--confirm` is passed, and prices the
 work from doctor's measured embed-backfill throughput (`unmeasured` when none
 exists). A confirmed space change binds the configured embedding port and
@@ -1069,7 +1331,16 @@ rebuilds vectors in that space. The public CLI refuses when that binding is
 unavailable instead of discarding vector state. Other layers are not implemented and exit 2. `--prune-old` cannot
 be combined with `--layer`, `--port`, `--confirm`, or a budget option.
 
-Rebuild has no fixed corpus ceiling. It runs under an explicit resource budget:
+Semantic retrieval does not by itself qualify semantic claim deduplication. An
+embedding space without a calibrated claim-equivalence threshold uses structural
+claim deduplication; typed world claims always use their exact semantic identity.
+Owner corrections remain available with such a retrieval model.
+
+Reading canon is bounded by the vault's independent `[canon] max_scan_files`
+and `max_scan_bytes` resource budgets (see [canon capacity](canon-capacity.md)).
+The selected retrieval engine can impose a smaller capacity bound (see Semantic
+retrieval above). The authoritative rebuild scanner also runs under an explicit
+resource budget:
 `--max-records N` (documents a configured retrieval port may be handed at once,
 default 1000000), `--max-entries N` (vault directory entries the preflight may
 inspect, default 200000), and `--max-source-bytes N` (canon file bytes, and
@@ -1219,7 +1490,11 @@ Within one adapter process, canon reads (`search`, `get_page`, `query_entities`,
 authority between calls. A page is read again when its file changes, and
 authority is resolved again when the receipt history changes, so a canon write
 or an edit on disk is visible to the next call. `system_health` still checks
-every page against the principal's grant on each call.
+every page against the principal's grant on each call. A page file that cannot
+be read, a symlink included, is withheld from every read and counted in
+`system_health` as `pages.withheld`; the owner's `withheld_pages` names its path
+and problem, and an agent sees only the count. A page that will not parse, a
+duplicate page id, or a directory that cannot be listed still refuses the read.
 
 ## agent
 
@@ -1366,3 +1641,11 @@ has been qualified by the synthetic test suite. See X's official
 [native app setup](https://docs.x.com/fundamentals/developer-apps),
 [OAuth authorization code flow](https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code)
 and [usage billing](https://docs.x.com/x-api/getting-started/pricing).
+
+
+### Source coverage diagnostics
+
+Doctor and connection status include per-source scan and ledger coverage,
+backfill state, occurrence bounds, successful-pass time, and blind spots with
+next steps. See [source coverage](source-coverage.md) for unknown-count and
+excluded-directory semantics.

@@ -1,3 +1,8 @@
+import { forecastJob } from "../world/forecast/job";
+import type { ConsolidationConfig, ConsolidationRunReport } from "../contracts/consolidation";
+import type { LlmPort } from "../contracts/llm";
+import { consolidationJob } from "./consolidate";
+import { artifactMetadataJob } from "../world/artifact-import";
 import type { Database } from "bun:sqlite";
 import { redactReceiptError } from "./receipts";
 
@@ -9,6 +14,10 @@ export interface WorldJobContext {
   readonly stopRequested: () => boolean;
   /** Whether the pass has a model bound. A job that needs one reports pending work instead of failing. */
   readonly modelConfigured: boolean;
+  readonly llm?: LlmPort;
+  readonly consolidation?: ConsolidationConfig;
+  /** Internal report sink; no captured content or destination credentials. */
+  readonly onConsolidation?: (report: ConsolidationRunReport) => void;
 }
 
 export interface WorldJob {
@@ -19,13 +28,17 @@ export interface WorldJob {
    * and never holds the canon writer across a model request. A thrown error
    * degrades the pass and does not stop the jobs after it.
    */
-  readonly run: (ctx: WorldJobContext) => void | Promise<void>;
+  readonly run: (ctx: WorldJobContext) => void | { readonly stop: string } | Promise<void | { readonly stop: string }>;
 }
 
 /** Background jobs run once per sync pass in this order. A workstream adds one line under its marker. */
 export const WORLD_JOBS: readonly WorldJob[] = [
+  // slot: art
+  artifactMetadataJob,
   // slot: consol
+  consolidationJob,
   // slot: fcst
+  forecastJob,
 ];
 
 let registered: readonly WorldJob[] = [];
@@ -46,17 +59,24 @@ export interface WorldJobsResult {
   readonly errors: readonly string[];
   /** A stop request arrived before every job ran. */
   readonly stopped: boolean;
+  readonly reason?: string;
+  readonly consolidation?: ConsolidationRunReport;
 }
 
 export async function runWorldJobs(ctx: WorldJobContext): Promise<WorldJobsResult> {
   const errors: string[] = [];
+  let consolidation: ConsolidationRunReport | undefined;
+  const report = () => consolidation === undefined ? {} : { consolidation };
+  ctx = { ...ctx, onConsolidation: (value) => { consolidation = value; } };
   for (const job of [...WORLD_JOBS, ...registered]) {
-    if (ctx.stopRequested()) return { errors, stopped: true };
+    if (ctx.stopRequested()) return { errors, stopped: true, ...report() };
     try {
-      await job.run(ctx);
+      const result = await job.run(ctx);
+      if (result !== undefined) return { errors, stopped: true, reason: result.stop, ...report() };
+      if (ctx.stopRequested()) return { errors, stopped: true, ...report() };
     } catch (error) {
       errors.push(`world_job:${job.id}:${redactReceiptError(error)}`);
     }
   }
-  return { errors, stopped: false };
+  return { errors, stopped: false, ...report() };
 }

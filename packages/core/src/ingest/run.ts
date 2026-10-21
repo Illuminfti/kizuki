@@ -1,3 +1,4 @@
+import { parseScanCoverage, type PassCoverage, type ScanCoverage } from "../contracts/source-coverage";
 import { sourceCaptureAdmission, type SourceAdmission } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import { setImmediate as yieldToHost } from "node:timers/promises";
@@ -56,6 +57,7 @@ export function sourceGrants(manifest: Manifest): ProducerGrants {
 }
 
 export interface RunResult {
+  coverage?: PassCoverage;
   /** Set only by a call that stopped on a slice limit or a stop request while the connector still had more to read. */
   has_more?: true;
   stored: number;
@@ -245,6 +247,15 @@ function ingressBatch(
       if (problem !== null) return { ok: false, error: problem };
       cursorStore = cloned as CursorStoreDelta;
     }
+    const coverageField = ownData(batch, "coverage");
+    if (coverageField === null) return { ok: false, error: "sync batch coverage must be an own data property" };
+    let coverage: ScanCoverage | undefined;
+    if (coverageField.present) {
+      const failures: string[] = [];
+      const safe = cloneExactJson(coverageField.value, "coverage", { maxDepth: 4, maxKeysPerObject: 8, maxArrayLength: 512, maxStringBytes: 1024, maxKeyBytes: 64, maxTotalBytes: 262144 }, failures);
+      try { coverage = parseScanCoverage(safe); }
+      catch { return { ok: false, error: "sync batch coverage is invalid" }; }
+    }
 
     let cursor: string | null;
     try {
@@ -278,6 +289,7 @@ function ingressBatch(
     // The snapshot must not inherit hostile completion/status fields from Object.prototype.
     const snapshot = Object.assign(Object.create(null), {
       events: cloned as unknown as CaptureEventInput[],
+      ...(coverage === undefined ? {} : { coverage }),
       cursor,
       ...(cursorStore === undefined ? {} : { cursor_store: cursorStore }),
       ...(hasMoreField.present ? { has_more: hasMoreField.value as boolean } : {}),
@@ -421,6 +433,9 @@ function labelBatch(
   const policy = getConnectorSensitivity(db, connectorId, sourceKey);
   const floor = policy?.floor ?? "private";
   const defaultSensitivity = policy?.default_sensitivity ?? "private";
+  // An owner-lowered default trusts the owner's labels, not a missing one:
+  // a record that arrives without a label is unknown, and unknown is private.
+  const unlabeled = policy?.set_by === "grant" ? "private" : undefined;
   return {
     ...batch,
     events: batch.events.map((input) => {
@@ -432,7 +447,7 @@ function labelBatch(
           connector_floor: floor,
           connector_default: defaultSensitivity,
           ...(validated.value.sensitivity_hint === undefined
-            ? {}
+            ? unlabeled === undefined ? {} : { event_hint: unlabeled }
             : { event_hint: validated.value.sensitivity_hint }),
         }).sensitivity,
       };
@@ -544,6 +559,7 @@ function persistRun(
   status: ConnectionRunStatus,
   backfillComplete = false,
   cursorStore?: CursorStoreDelta,
+  pass?: { scan?: ScanCoverage; completed?: boolean; errorClass?: string },
 ): RunResult {
   const committed_cursor =
     status === "ok" ? assertCursorSize(attempted_cursor, "attempted_cursor") : previous_cursor;
@@ -559,6 +575,12 @@ function persistRun(
   const started = new Date().toISOString();
   return runImmediate(db, (): RunResult => {
     requireActiveConnection(db, connector_id, source_key);
+    const prior = getCheckpoint(db, connector_id, source_key)?.last_result.coverage;
+    storedResult.coverage = {
+      scan: pass?.scan ?? prior?.scan ?? null,
+      last_successful_pass_at: pass?.completed === true ? started : prior?.last_successful_pass_at ?? null,
+      last_error_class: status === "ok" ? null : pass?.errorClass ?? status,
+    };
     const checkpoint = persistCheckpointRow(
       db,
       connector_id,
@@ -692,7 +714,7 @@ async function runConnector(
     const status: ConnectionRunStatus = isUnavailable(error, null)
       ? "unavailable"
       : "failed";
-    return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, status), terminal: false };
+    return { result: persistRun(db, connector_id, source_key, mode, previous, previous, result, status, false, undefined, { errorClass: error instanceof KizukiError ? error.code : error instanceof DeadlineError ? "timeout" : status }), terminal: false };
   }
 
   const ingress = ingressBatch(received);
@@ -708,7 +730,7 @@ async function runConnector(
       batch.detail ?? `${connector_id}: connector unavailable`,
       previous,
     );
-    return { result: persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "unavailable"), terminal: false };
+    return { result: persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "unavailable", false, undefined, batch.coverage === undefined ? undefined : { scan: batch.coverage }), terminal: false };
   }
 
   const refusal = batchRefusal(manifest, connector_id, batch) ?? storeRefusal(cursorStore, batch);
@@ -735,8 +757,9 @@ async function runConnector(
     batch.cursor,
     processed,
     status,
-    mode === "backfill" && status === "ok" && hasMore === false,
+    (mode === "backfill" || manifest.capabilities.sync_covers_backfill === true) && status === "ok" && hasMore === false,
     batch.cursor_store,
+    { ...(batch.coverage === undefined ? {} : { scan: batch.coverage }), completed: status === "ok" && hasMore === false },
   );
   const result = processed.suppressed === undefined ? persisted : { ...persisted, suppressed: processed.suppressed };
   return { result, terminal: status === "ok" && hasMore === false, continue_empty: status === "ok" && hasMore === true };
@@ -849,6 +872,7 @@ export async function runToCompletion(
     opts?.pace?.();
     absorb(total, result);
     total.cursor = stored();
+    if (result.coverage !== undefined) total.coverage = result.coverage;
     // Deliver host callbacks even after a terminal batch, before another connection starts.
     await yieldToHost();
     if (result.errors.length > 0) return total;

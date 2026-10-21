@@ -16,7 +16,7 @@ export interface CorrectTarget {
   claim_key?: string;
 }
 
-export const CORRECTION_MODES = ["replace_object", "retract", "reclassify_mode"] as const;
+export const CORRECTION_MODES = ["replace_object", "retract", "reclassify_mode", "merge_identity", "separate_identity"] as const;
 export type CorrectionMode = (typeof CORRECTION_MODES)[number];
 /** The perspective modes a claim can be reclassified to: what the owner calls an idea rather than a fact. */
 export const RECLASSIFIED_MODES = ["suggested", "hypothetical", "questioned"] as const;
@@ -30,7 +30,8 @@ export type ReclassifiedMode = (typeof RECLASSIFIED_MODES)[number];
 export type WorldCorrection =
   | { readonly mode: "replace_object"; readonly object?: ClaimV2Object }
   | { readonly mode: "retract" }
-  | { readonly mode: "reclassify_mode"; readonly to: ReclassifiedMode };
+  | { readonly mode: "reclassify_mode"; readonly to: ReclassifiedMode }
+  | { readonly mode: "merge_identity" | "separate_identity"; readonly object: Extract<ClaimV2Object, {kind: "subject"}> };
 
 export interface CorrectInput {
   /** 1..2000 chars; the owner's words, stored verbatim. */
@@ -73,6 +74,9 @@ export interface CorrectResult {
 }
 
 export interface CorrectIo {
+  /** Internal scoped adapter guards. They can only narrow the existing writer;
+   * never accepted from a public correction input or persisted. */
+  readonly scoped?: { readonly assertCurrent: () => void; readonly selection?: import("../query/selection").EvidenceSelection };
   readonly db: Database;
   readonly vault_path: string;
   readonly now?: () => string;
@@ -80,13 +84,13 @@ export interface CorrectIo {
   readonly retrieval?: RetrievalPort;
   readonly retrieval_store?: string;
   readonly budget?: BudgetTracker;
-  /** Default `owner`. An `agent:<id>` relay records `x-relayed-by`. */
+  /** Default `owner`. An enrolled `agent:<id or name>` uses its stored grant and records `x-relayed-by`. */
   readonly producer?: Producer;
   /**
    * RFC 0002 §6.4. False downgrades the insert to `owner_authored`.
    * Default true.
    */
   readonly relay_owner_corrections?: boolean;
-  /** When set, `correct` must be in `grant.tools`. */
+  /** Optional trusted owner restriction. Agents always use their current stored grant. */
   readonly grant?: Grant;
 }

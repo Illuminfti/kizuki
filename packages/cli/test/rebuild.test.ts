@@ -126,11 +126,20 @@ test("default rebuild JSON and text identify the actual SQLite floor count", () 
 
 for (const historical of ["ledger15", "ledger16"]) test(`public rebuild makes migrated ${historical} immediately queryable and preserves its cursor on refusal`, async () => {
   const setup = helpers.tempVault();
-  const {openCanonFiles} = await import("../../core/src/vault/canon-files");
   const {replayHistoricalRecoverySql} = await import("../../../scripts/native-recovery-fixtures");
   const {readFileSync,existsSync} = await import("node:fs");
-  const files=openCanonFiles(setup.vault);
-  try {const prior=files.readPrivate(".kizuki/kizuki.db");expect(prior).not.toBeNull();const stage=files.create(".kizuki/fixture-ledger.tmp",new Uint8Array());files.replace(stage,prior!);}finally{files.close();}
+  // This fresh synthetic vault is quiescent. A SQLite database is not a canon
+  // text file and can legitimately exceed the text adapter's 1 MiB bound.
+  const { openSync, fstatSync, ftruncateSync, closeSync, constants } = await import("node:fs");
+  const ledger = join(setup.vault, ".kizuki/kizuki.db");
+  for (const suffix of ["-wal", "-shm", "-journal"]) expect(existsSync(ledger + suffix)).toBe(false);
+  const fd = openSync(ledger, constants.O_WRONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(fd);
+    expect(stat.isFile()).toBe(true);
+    expect(stat.uid).toBe(process.geteuid!());
+    ftruncateSync(fd, 0);
+  } finally { closeSync(fd); }
   replayHistoricalRecoverySql(setup.vault,historical);
   expect(helpers.runCli(setup.env,"init",setup.vault,"--no-service","--no-default").exitCode).toBe(0);
   const stale=helpers.runCli(setup.env,"query","synthetic","--scope","ledger","--json");expect(stale.exitCode).toBe(1);expect(stale.stderr).toContain("index-behind-ledger");

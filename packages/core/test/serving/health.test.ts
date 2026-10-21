@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { OWNER, getAgent, initAgents } from "../../src/agents";
 import { openLedger } from "../../src/ledger/db";
 import { readSqliteRuntime } from "../../src/ledger/runtime";
+import { bindSourceEvent, setSourceGrant, sourceCaptureAdmission } from "../../src/ledger/source-grants";
 import { serveHealth } from "../../src/serving/health";
 import { servePropose } from "../../src/serving/propose";
 import { serveFixture } from "./helpers";
@@ -33,7 +34,9 @@ describe("serveHealth", () => {
       stamped: 9,
       servable: 6,
       held: 1,
+      withheld: 0,
     });
+    expect(data?.withheld_pages).toEqual([]);
     expect(data?.events).toBe(6);
     // Seven recorded page claims remain; the held page claim was purged.
     expect(data?.live_claims).toBe(7);
@@ -57,6 +60,14 @@ describe("serveHealth", () => {
   });
 
   test("an agent sees its own grant and its own servable count", () => {
+    // A source listing requires an exact evidence binding, even in legacy mode.
+    setSourceGrant(fixture.db, {
+      source_key: fixture.sourceKey, expected_revision: 0, operation_id: "health-fixture-source",
+      policy: { purposes: ["capture", "recall", "derive", "session", "correction", "export"],
+        allowed_fields: ["text", "subjects", "attachments", "metadata"],
+        retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public" },
+    });
+    bindSourceEvent(fixture.db, fixture.events["public"]!, sourceCaptureAdmission(fixture.db, "fixture", fixture.sourceKey)!);
     const data = serveHealth(fixture.agent("reader-public")).data;
     expect(data?.principal.kind).toBe("agent");
     expect(data?.principal.name).toBe("reader-public");

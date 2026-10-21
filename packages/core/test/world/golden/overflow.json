@@ -77,7 +77,7 @@
           "kind": "known",
           "value": 0.5
         },
-        "independence": "unknown",
+        "independence": "dependent",
         "evidence": [
           {
             "admission": {
@@ -142,7 +142,7 @@
           "kind": "known",
           "value": 0.5
         },
-        "independence": "unknown",
+        "independence": "dependent",
         "evidence": [
           {
             "admission": {
@@ -167,12 +167,13 @@
   "coverage": {
     "status": "partial",
     "gaps": [
-      "traversal_limit"
+      "traversal_limit",
+      "pending_consolidation"
     ],
     "validWindow": {
       "kind": "all"
     },
     "history": "unavailable"
   },
-  "digest": "d86ebbb654a334eb42e15ca32cc947c6df4b8def465e93097293286a6839d5b8"
+  "digest": "87b5d3dff088875dad98cfa042f88b1b168a5d428e80449f4fcaacb405afb1a2"
 }

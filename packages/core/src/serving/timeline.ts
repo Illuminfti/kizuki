@@ -1,8 +1,10 @@
+import { normalizeReadArgs, type TimelineArgsV2 } from "./v2/read-input";
 import { timelineAuditCandidates } from "../query/timeline";
 import type { TimelineOptions } from "../query/timeline";
 import {
   day,
   identifier,
+  resolvedSubjectIdentifier,
   limit,
   rfc3339,
   scopedSubjects,
@@ -18,7 +20,8 @@ import {
   eventDecision,
   readServableEvents,
 } from "./ledger";
-import type { Envelope, ServeContext } from "./types";
+import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA } from "./types";
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 50;
@@ -43,43 +46,50 @@ export interface TimelineArgs {
 
 export type { TimelineExpandData } from "./expand";
 
-export function serveTimeline(
+export function serveTimeline<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
-  args: TimelineArgs,
-): Envelope<TimelineExpandData | undefined> {
+  args: TimelineArgs | TimelineArgsV2,
+  contract: C = ENVELOPE_SCHEMA as C,
+): ResponseEnvelope<TimelineExpandData | undefined, C, null> {
   return gate(ctx, "timeline", auditArguments(args), ({ ctx }): Served<TimelineExpandData | undefined> => {
-    if (wantsTimelineExpansion(args)) return expandTimelineDetail(ctx, args);
+    const normalized = normalizeReadArgs(ctx, "timeline", args, contract);
+    ctx = normalized.ctx;
+    const request = normalized.args as unknown as TimelineArgs;
+    if (wantsTimelineExpansion(request)) return expandTimelineDetail(ctx, request);
     const grant = ctx.principal.grant;
     const window = scopedWindow(
       grant,
-      args.since === undefined ? undefined : rfc3339("since", args.since),
-      args.until === undefined ? undefined : rfc3339("until", args.until),
+      request.since === undefined ? undefined : rfc3339("since", request.since),
+      request.until === undefined ? undefined : rfc3339("until", request.until),
     );
     const subject =
-      args.subject === undefined
+      request.subject === undefined
         ? undefined
-        : identifier("subject", args.subject);
+        : (contract === ENVELOPE_V2_SCHEMA ? resolvedSubjectIdentifier : identifier)("subject", request.subject);
     const kind =
-      args.kind === undefined ? undefined : identifier("kind", args.kind);
+      request.kind === undefined ? undefined : identifier("kind", request.kind);
     // `timeline` takes a single subject and kind, so these calls only check
     // membership; a scoped grant with neither argument is enforced in SQL.
     if (subject !== undefined) scopedSubjects(grant, [subject]);
     if (kind !== undefined) scopedTypes(grant, [kind]);
 
-    const rows = limit("limit", args.limit, MAX_LIMIT, DEFAULT_LIMIT);
+    const rows = limit("limit", request.limit, MAX_LIMIT, DEFAULT_LIMIT);
     const base: Omit<TimelineOptions, "ceiling"> = {
-      ...(args.day === undefined ? {} : { day: day("day", args.day) }),
+      ...(request.day === undefined ? {} : { day: day("day", request.day) }),
       ...window,
       ...(subject === undefined ? {} : { subject }),
-      ...(args.connector_id === undefined
+      ...(request.connector_id === undefined
         ? {}
-        : { connector_id: identifier("connector_id", args.connector_id) }),
+        : { connector_id: identifier("connector_id", request.connector_id) }),
       ...(kind === undefined ? {} : { kind }),
     };
 
     const { quoted, withheld, seen } = collectAuthorizedTimeline(ctx, base, rows);
 
-    const auditIds = timelineAuditCandidates(ctx.db, { ...base, limit: rows });
+    // Privileged denial enumeration belongs to the owner's audit read. A
+    // scoped response must never materialize candidates outside its grant.
+    const auditIds = ctx.principal.kind === "owner"
+      ? timelineAuditCandidates(ctx.db, { ...base, limit: rows }) : [];
     const auditFacts = readServableEvents(ctx.db, auditIds);
     for (const id of auditIds) {
       if (seen.has(id)) continue;
@@ -91,5 +101,5 @@ export function serveTimeline(
     }
 
     return { canon: [], quoted, withheld };
-  });
+  }, contract);
 }

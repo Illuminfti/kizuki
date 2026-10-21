@@ -42,7 +42,7 @@ for (const mode of ["source", "compiled"] as const) {
           rails = (db.query("SELECT rail,status,report FROM run_receipts").all() as { rail: string; status: string; report: string }[])
             .map(row => ({ rail: row.rail, status: row.status, errors: JSON.parse(row.report).errors }));
         } finally { db.close(); }
-        if (rails.length === 7) break;
+        if (rails.length === 9) break;
         await Bun.sleep(50);
       }
       // Observe stop independently even when health failed, matching the native oracle.
@@ -50,10 +50,10 @@ for (const mode of ["source", "compiled"] as const) {
       const stopDeadline = Date.now() + 5000;
       while (child.exitCode === null && Date.now() < stopDeadline) await Bun.sleep(50);
       expect({ rails, stopExit: stop.exitCode, daemonExit: child.exitCode }).toEqual({
-        rails: expect.arrayContaining(["sync", "retrieval-sweep", "purge-sweep", "embed-backfill", "brief", "doctor-sweep", "journal-prune"]
+        rails: expect.arrayContaining(["sync", "retrieval-sweep", "purge-sweep", "embed-backfill", "brief", "doctor-sweep", "journal-prune", "backup", "verify-world"]
           .map(rail => ({ rail, status: "ok", errors: [] }))), stopExit: 0, daemonExit: 0,
       });
-      expect(rails).toHaveLength(7);
+      expect(rails).toHaveLength(9);
     } finally {
       if (child && child.exitCode === null) { child.kill("SIGTERM"); await child.exited; }
       chmodSync(ancestor, 0o700);

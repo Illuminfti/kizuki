@@ -32,8 +32,16 @@ an unknown key: a typo that quietly changed which pages were labelled private
 would be the worst failure this code could have, so every key is checked.
 
 The mapping is hashed (canonical JSON, keys sorted at every depth) and the
-hash travels with each event. Reformatting the file changes nothing;
-changing a mapped value re-runs the affected pages.
+hash travels with each event as `mapping_hash`, for the record. Reformatting
+the file changes nothing. Each wiki event also carries `plan_sha256`, a digest
+of what the migration decided about that page: its text, labels, target and
+fields, and not the mapping's hash or a file time. A changed mapping re-emits
+exactly the pages whose digest changed, so a mapping edit that decides nothing
+new, and the revert of any edit, emit no events for the pages they leave
+alone. A page keeps the target it was first emitted with, so a mapping edit
+never places a second copy of a page; a new `dir` mapping applies to pages
+added afterwards. Pages an earlier release stored carry no digest and are
+trusted until the page itself changes.
 
 A page the changed mapping no longer imports — an excluded type, or a path the
 `ignore` list now matches — is withdrawn on the next run: the wiki importer
@@ -41,6 +49,51 @@ emits a tombstone carrying `excluded_by_mapping`, which retracts the proposal
 the earlier run filed. The file itself is untouched, and the record does not
 claim a deletion that never happened. A page the walk could not read is
 neither imported nor withdrawn — it stays in the cursor until a run can tell.
+
+### The wiki follows its source
+
+A sync brings the ledger to where the wiki is, in both directions:
+
+- **Restore and revert are new state.** The ledger stores an event once per
+  content hash, so a page that comes back after a deletion, or returns to text
+  it had before, would otherwise be dropped as a duplicate. When the source
+  record has earlier events and a page is emitted because its state changed,
+  the event carries `revision_epoch`, the count of events the record already
+  has. The staged page carries it as `x-source-revision`, so the claim is a new
+  claim, not a repeat of the old one. A record the ledger already holds
+  unchanged is not emitted, so the next sync after a restore emits nothing.
+  When a returned page's earlier deletion archived its canon page, the
+  writer's sync pass reverts that archive receipt while the page still holds
+  the bytes the archive left; a page changed since stays as it is.
+- **A rename is one event.** A page that vanishes while a new page appears with
+  exactly the same bytes is a rename when that pairing is unique (one vanished
+  name and one new name for those bytes; empty files never pair). The new page
+  is emitted once with `moved_from` naming the old path and the old page's
+  target, so it keeps the same target. The old path gets no tombstone; the ledger treats it as moved from
+  then on. Two identical files that both move are not guessed at, and are
+  withdrawn and re-added as before.
+- **A mass withdrawal is held, not applied.** When one pass would withdraw
+  more than the larger of 20 pages and 20 percent of the source's pages, it
+  emits no tombstones and ends `unavailable` with the typed state
+  `mass_withdrawal_held: N of M`. An emptied root, an unmounted volume or a
+  half-restored tree is the likely cause. The hold appears as `hold` on the
+  source in `kizuki connect status` and in `kizuki doctor` (which then fails),
+  and clears when the next sync no longer needs it. If the wiki really lost
+  those pages, release it once with
+  `kizuki sync import-legacy-wiki --source KEY --confirm-withdrawals N`, where
+  N is the reported count; a pass that would withdraw more than N stays held.
+  The release covers that run only.
+- **A capture drain plans once.** Successful backfill pages reuse one bounded
+  tree scan and plan on the same connector instance. A changed root or restarted
+  drain scans again; edits made during a drain are captured by the next sync.
+
+Canon body replacement on a source revision is incomplete in the current
+compatibility writer: an edited, reverted, restored or renamed page can retain
+earlier source prose. The rules above describe ledger revisions, target identity
+and archive reversal; they do not claim that the materialized body already
+matches the latest source. Automatic archive reversal requires a configured
+model, respects the canon write budget and checkpoints its bounded scan so
+edited archives cannot permanently block later returned pages.
 
 ## Wiki mapping
 
@@ -361,6 +414,26 @@ estate really left unmarked, then re-import.
 `x-legacy-sensitivity` appears only where the mapping really did read a label,
 so a defaulted page never looks like a decision the previous system made.
 
+## Serving the labels you mapped
+
+Importing a label does not by itself change who may read the page. A source
+consented before this option stays at the connector default, `private`, however
+its pages are labelled. To have the labels you mapped decide the tier, regrant
+the source with a policy that adds `"sensitivity_default": "personal"` and sets
+`"sensitivity_floor": "personal"` (the full policy is in
+[source consent](cli.md#source-consent)).
+
+The next sync stores a page labelled `personal` as `personal`. The regrant is not
+retroactive: a page the importer already stored is not re-read while it is
+unchanged, so it stays `private` until you purge or tombstone it and import it
+again, and only records stored after the regrant take the labelled tier. A page labelled
+`private`, a page with no label, and a page whose frontmatter or label could not
+be read stay `private`, so the fail-closed rule holds. The floor for these
+importers is `personal`, so `public` is never reachable. To exclude machine
+output from an agent that otherwise reads private material, add `class_rules`
+for its paths and list `machine_exhaust` in that agent's `deny_classes`
+([withheld classes](agent-enrollment.md#withheld-classes)).
+
 ## Honest limits
 
 - **A credential-shaped field is dropped, not carried.** A frontmatter field
@@ -377,10 +450,27 @@ so a defaulted page never looks like a decision the previous system made.
   forward through an export; a row rewritten after it was imported is not
   re-read. Re-import from scratch (a fresh source, or a changed mapping) to
   pick it up. The wiki importer does notice an edited page, because it
-  compares content hashes on every run.
+  compares content hashes on every run. Each imported page carries a claim key
+  built from the logical `page:<connector>:<source_record_id>` identity, scoped
+  by its enrolled source and encoded with the claim contract's SHA-256 hash.
+  Derive consent is checked before an edit supersedes
+  the earlier claim for that page: the canon page shows the newest body once,
+  its frontmatter takes the newest fields, and `sources` retains prior canon
+  provenance plus the newly written revision's event. Undoing the write of an edit restores the previous
+  revision. Claims imported before pages carried a key are superseded by the
+  first edit that arrives; their stored null keys remain unchanged. A source
+  revision cannot supersede a higher-authority correction. The source record
+  decides, not the mapped target: an edit that moves a page to a new target still updates the canon page it
+  already has.
 - **Without a mapped date field, `occurred_at` is the file's mtime.** Copying
   a wiki rewrites mtimes and therefore rewrites event identity. Mapping a date
   field is the stable choice.
+- **An edited wiki page is dated by the edit.** A page the importer already
+  emitted and now re-emits because its content changed takes the file's mtime
+  as `occurred_at` (never later than the run; an unusable mtime uses the run),
+  so a timeline window over recent days finds the revision. A page's first
+  import keeps its mapped date. The report's `occurred_at` for a revised page
+  is `mtime`.
 - **The frontmatter reader covers a subset.** Block mappings and sequences,
   flow sequences and mappings on one line, block scalars, quoted and plain
   scalars, and comments. Anchors, aliases, tags, complex keys, directives and

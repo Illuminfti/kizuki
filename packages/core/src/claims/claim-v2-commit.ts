@@ -1,3 +1,7 @@
+import { recordSupportObservation } from "./observations";
+import { assertSituationAcyclic } from "../world/situation-cycle";
+import type { ClaimVisibility } from "./visibility";
+import { groundingDigest, validateWorldAdmissionProofs, witnessEventIds } from "./world-grounding";
 import type { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
 import type { AuthorityTier } from "../contracts/proposal";
@@ -34,6 +38,7 @@ import { parseWorldAdmission, completeWorldAnchors, type WorldAdmission } from "
 import { allocateWorldEndpoints } from "../world/allocation";
 import { validateWorldAssertionAgainstRegistry } from "../world/registry-check";
 import { WORLD_TABLES } from "../world/schema";
+import { qualifiedPersonInterest } from "../contracts/world-vocab/person";
 import { tableColumns, tableExists } from "../ledger/schema";
 import { eventFromRow, type EventRow } from "../ledger/event-record";
 
@@ -61,6 +66,7 @@ export interface ClaimV2CommitInput {
   readonly support: ClaimV2SupportAdmission;
   /** The reading scope the caller is authorized for, as `prepareClaimInsert` derives it. */
   readonly scope: SourceReadScope;
+  readonly visibility?: ClaimVisibility;
   /** Present only for the closed world-admission codec, never generic legacy v2. */
   readonly world_admission?: WorldAdmission;
   /** Computed by the shared insertion writer, never accepted from its caller. */
@@ -285,6 +291,7 @@ function derivedWorldAdmission(
   return {
     schema: supplied.schema,
     semantic: supplied.semantic,
+    ...(supplied.schema === "kizuki.world-admission/v2" ? { grounding: supplied.grounding } : {}),
     rendering: supplied.rendering,
     authority,
     confidence,
@@ -343,9 +350,25 @@ export function commitClaimV2(
   }
   const supportOrigin = input.support.origin ?? "source";
   if (supportOrigin === "native_owner") requireNativeOwnerSupport(db, input.support);
-  else requireAdmittedSource(db, input.support, input.scope);
+  else {
+    const witness = suppliedWorld?.schema === "kizuki.world-admission/v2" ? new Set(witnessEventIds(suppliedWorld)) : null;
+    requireAdmittedSource(db, witness === null ? input.support : { ...input.support, events: input.support.events.filter(e => witness.has(e.event_id)) }, input.scope);
+    requireSourceEvents(db, input.support.events.map(e => e.event_id), input.scope);
+  }
   if (suppliedWorld !== null && mapped.value.discriminator === "assertion") {
     validateWorldAssertionAgainstRegistry(db, suppliedWorld.semantic);
+    // Enforce the extraction guard again at the shared writer, including
+    // replay and callers that do not pass through the model draft adapter.
+    if (suppliedWorld.semantic.predicate === "person.interest" && !qualifiedPersonInterest(suppliedWorld.semantic, supportOrigin === "native_owner"))
+      throw new ClaimError("schema_invalid", "source-derived interest must remain an uncertain interpretation");
+    assertSituationAcyclic(db, suppliedWorld.semantic, input.scope, input.visibility);
+    if (suppliedWorld.schema === "kizuki.world-admission/v2") {
+      if (supportOrigin !== "source" || input.accepted_world?.authority !== "model_inference") throw new ClaimError("schema_invalid", "grounded identity requires model inference");
+      const grounded = validateWorldAdmissionProofs(db, suppliedWorld, input.support.source_key, { scope: input.scope });
+      const ids = new Set([...witnessEventIds(suppliedWorld), ...grounded.map(e => e.event_id)]);
+      if (ids.size !== input.support.events.length || input.support.events.some(e => !ids.has(e.event_id)))
+        throw new ClaimError("provenance_unresolved", "grounded identity support differs from its witness and grounding");
+    }
     if(input.accepted_world===undefined) throw new ClaimError("schema_invalid","qualified world authority must come from the shared writer");
     const expectedAnchors=completeWorldAnchors(suppliedWorld.semantic);
     if(canonicalJson(expectedAnchors)!==canonicalJson(input.support.anchors))
@@ -393,6 +416,7 @@ export function commitClaimV2(
 
   const supportKeyValue = supportKey({
     support_origin: supportOrigin,
+    ...(suppliedWorld === null ? {} : { grounding_digest: groundingDigest(suppliedWorld) }),
     semantic_key: row.semantic_key,
     source_key: input.support.source_key,
     grant_revision: input.support.grant_revision,
@@ -432,8 +456,8 @@ export function commitClaimV2(
       input.support.admitted_at,
       ...(suppliedWorld === null ? [] : [supportOrigin]),
     ];
-    const written = db.query(`INSERT INTO claim_v2_support (${columns}) VALUES (${placeholders})`).run(...args);
-    if (written.changes !== 1) {
+    const written = db.query(`INSERT INTO claim_v2_support (${columns}) VALUES (${placeholders}) RETURNING support_key`).all(...args);
+    if (written.length !== 1) {
       throw new ClaimError(
         "schema_invalid",
         "claim/v2 support row was refused by the ledger",
@@ -457,7 +481,8 @@ export function commitClaimV2(
     input.support.events.map((event) => event.event_id),
   );
   if (suppliedWorld !== null) {
-    ensureClaimOccurrences(db, suppliedWorld.semantic, supportOrigin === "native_owner" ? null : input.support.source_key);
+    if (suppliedWorld.schema === "kizuki.world-admission/v1") ensureClaimOccurrences(db, suppliedWorld.semantic, supportOrigin === "native_owner" ? null : input.support.source_key);
+    recordSupportObservation(db, supportKeyValue);
     allocateWorldEndpoints(db, suppliedWorld.semantic, supportKeyValue, input.support.admitted_at);
   }
 

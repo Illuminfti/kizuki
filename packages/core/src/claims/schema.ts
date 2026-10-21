@@ -2,6 +2,8 @@ import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
 import { canonicalizeProducer, isProducer } from "../contracts/proposal";
 import { claimKey, contentSignature } from "./hash";
+import { applyScopedClaimIdempotency } from "./scoped-idempotency";
+import { SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION } from "../world/tables/versions";
 
 /** RFC 0002 §18.1 — claims-core widens durable state to schema v3. */
 export const CLAIMS_SCHEMA_VERSION = 3;
@@ -40,10 +42,18 @@ CREATE TABLE IF NOT EXISTS claims (
 ) STRICT;
 `;
 
+const LEGACY_SOURCE_INDEX = `
+CREATE INDEX IF NOT EXISTS claims_legacy_source_event
+  ON claims(json_extract(provenance, '$[0]'))
+  WHERE claim_key IS NULL AND producer = 'deterministic'
+    AND authority = 'connector_evidence' AND kind IN ('entity', 'claim');
+`;
+
 const CLAIMS_INDEXES = `
 CREATE INDEX IF NOT EXISTS claims_by_key ON claims(claim_key, status, valid_from);
 CREATE INDEX IF NOT EXISTS claims_by_status ON claims(status, created_at);
 CREATE INDEX IF NOT EXISTS claims_by_subject ON claims(subject, status);
+${LEGACY_SOURCE_INDEX}
 `;
 
 const SUPPORTING_TABLES = `
@@ -348,10 +358,14 @@ function backfillProposalContentHash(db: Database): void {
     producer: string;
     confidence: number;
     content_hash: string;
+    claim_key: string | null;
   };
+  const keySql = tableExists(db, "claims") && columnNames(db, "claims").has("claim_key")
+    ? "(SELECT claim_key FROM claims WHERE claims.claim_id = proposals.proposal_id)"
+    : "NULL";
   const select = db.prepare<ProposalHashRow, []>(
     `SELECT proposal_id, kind, target, body, frontmatter, subjects,
-            producer, confidence, content_hash
+            producer, confidence, content_hash, ${keySql} AS claim_key
        FROM proposals`,
   );
   const update = db.prepare(
@@ -388,6 +402,7 @@ function backfillProposalContentHash(db: Database): void {
             ? canonicalizeProducer(row.producer)
             : row.producer,
           confidence: row.confidence,
+          claim_key: row.claim_key,
         }),
         row.proposal_id,
       );
@@ -464,8 +479,8 @@ function keepSignatureOccupant(db: Database): void {
 
 /**
  * Pending-only content-signature idempotency for the legacy proposals
- * projection, and live-only claims uniqueness so a withdrawn row cannot
- * occupy the slot of later evidence. Unique indexes are dropped before
+ * projection, and the versioned live-only claims lookup so a withdrawn row
+ * cannot occupy the slot of later evidence. Indexes are dropped before
  * hashes are rewritten so a remigration collapse cannot abort init.
  */
 export function applyLegacyStagingIdempotency(db: Database): void {
@@ -496,8 +511,23 @@ export function applyLegacyStagingIdempotency(db: Database): void {
        ON proposals (content_hash)
        WHERE status = 'pending'`,
   );
+  // Filing looks a signature up among pending and promoted rows, and every
+  // filing re-checks that no live claim lacks one. The partial indexes serve
+  // neither `IN (...)`, a promoted row nor a blank hash, so without these each
+  // proposal filed reads a whole table and a backfill is quadratic.
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS proposals_by_content_hash ON proposals (content_hash)",
+  );
   if (!tableExists(db, "claims")) return;
   db.exec(
+    "CREATE INDEX IF NOT EXISTS claims_by_content_hash ON claims (content_hash)",
+  );
+  const version = tableExists(db, "schema_version")
+    ? db.query<{ version: number }, []>("SELECT version FROM schema_version").get()?.version ?? 0
+    : 0;
+  if (version >= SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION) {
+    applyScopedClaimIdempotency(db);
+  } else db.exec(
     `CREATE UNIQUE INDEX claims_idempotency
        ON claims (kind, coalesce(target, ''), body_hash)
        WHERE status = 'live' AND kind <> 'purge_review'
@@ -516,6 +546,12 @@ function stagingIdempotencyReady(db: Database): boolean {
     return false;
   }
   if (tableExists(db, "claims") && !columnNames(db, "claims").has("content_hash")) {
+    return false;
+  }
+  if (
+    indexSql(db, "proposals_by_content_hash") === null ||
+    (tableExists(db, "claims") && indexSql(db, "claims_by_content_hash") === null)
+  ) {
     return false;
   }
   const proposalsSql = indexSql(db, "proposals_signature") ?? "";
@@ -551,7 +587,9 @@ function emptyLiveSignature(db: Database): boolean {
   // Native claims use the blank-hash uniqueness index. Only a matching
   // legacy proposal can supply a signature through the backfill above.
   const claims = db.prepare<{ ok: number }, []>(
-    `SELECT 1 AS ok FROM claims
+    // Named because, without table statistics, the planner walks every live
+    // claim; readiness has already required this index to exist.
+    `SELECT 1 AS ok FROM claims INDEXED BY claims_by_content_hash
       WHERE content_hash = ''
         AND status = 'live'
         AND kind <> 'purge_review'
@@ -575,11 +613,13 @@ export function repairClaimsCompatibility(
   options: { includeStaging?: boolean } = {},
 ): void {
   if (!claimsSurfaceReady(db)) applyClaimsV3(db);
+  if (indexSql(db, "claims_legacy_source_event") === null) db.exec(LEGACY_SOURCE_INDEX);
   if (options.includeStaging && !stagingIdempotencyReady(db)) {
     applyLegacyStagingIdempotency(db);
   }
 }
 
 export function claimsCompatibilityReady(db: Database): boolean {
-  return claimsSurfaceReady(db) && stagingIdempotencyReady(db);
+  return claimsSurfaceReady(db) && stagingIdempotencyReady(db) &&
+    indexSql(db, "claims_legacy_source_event") !== null;
 }

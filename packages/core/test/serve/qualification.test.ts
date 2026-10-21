@@ -9,7 +9,7 @@ test("empty/fixture observations never qualify an estate or human gate", () => {
   expect(result.release_qualified).toBe(false);
   expect(result.estate).toBe("not-observed");
   expect(result.human).toBe("not-observed");
-  expect(result.status).toBe("interrupted"); // all seven rails are mandatory
+  expect(result.status).toBe("interrupted"); // Every registered rail is mandatory.
 });
 test("a wall clock jump cannot supply elapsed days", () => {
   const jumped = sample(604_800_000); jumped.monotonic_ms = 101;
@@ -24,7 +24,8 @@ test("uncaptured intervals and backward time interrupt", () => {
   expect(evaluateQualification(profile, [sample(0), sample(61_000)]).issues).toContain("collection-gap");
   expect(evaluateQualification(profile, [sample(1000), sample(0)]).issues).toContain("clock-discontinuity");
 });
-import { DEFAULT_RAILS, RAIL_IDS } from "../../src/serve/types";
+
+import { DEFAULT_RAILS, RAIL_IDS } from "../../src/serve/rail-registry";
 function trace(duration: number, firstAfterPeriod = false) {
   const p: QualificationProfile = {...profile, rails:DEFAULT_RAILS.map(spec=>({...spec,next_run_at:new Date(start + (firstAfterPeriod ? spec.period_s * 1000 : 0)).toISOString()}))};
   const due = new Map<string,number>(DEFAULT_RAILS.map(spec=>[spec.rail,firstAfterPeriod ? spec.period_s*1000 : 0]));
@@ -59,7 +60,7 @@ test("manual, once, legacy and degraded receipts cannot fill automatic due slots
 });
 test("duplicate hashes dedupe, conflicting run ids and unbound processes interrupt",()=>{
   const {p,samples}=trace(0); const first=samples[0]!.receipts[0]!;
-  samples[0]!.receipts.push({...first});expect(evaluateQualification(p,samples).automatic_runs).toBe(7);
+  samples[0]!.receipts.push({...first});expect(evaluateQualification(p,samples).automatic_runs).toBe(9);
   samples[0]!.receipts.push({...first,sha256:"c".repeat(64)});expect(evaluateQualification(p,samples).issues).toContain("conflicting-run-id");
   first.execution={...first.execution!,pid:99};expect(evaluateQualification(p,samples).issues).toContain("run-process-unbound");
 });
@@ -98,7 +99,7 @@ test("UTC fixture timing does not claim local morning or supervisor qualificatio
 });
 
 test("seven days with no runs cannot qualify from future initial due dates or unsupported cadence", async () => {
-  const { DEFAULT_RAILS } = await import("../../src/serve/types");
+  const { DEFAULT_RAILS } = await import("../../src/serve/rail-registry");
   const { samples } = trace(604_800_000);
   for (const s of samples) s.receipts = [];
   const rails = DEFAULT_RAILS.map(r => ({ ...r, next_run_at: new Date(start + 8 * 86_400_000).toISOString() }));
@@ -115,7 +116,7 @@ test("seven-day completion waits for genuine receipts for slots due exactly at t
   const end = 604_800_000;
   const { p, samples } = trace(end, true);
   const boundaryRuns = samples.at(-1)!.receipts.splice(0);
-  expect(boundaryRuns).toHaveLength(6);
+  expect(boundaryRuns).toHaveLength(8);
   expect(samples.flatMap(s => s.receipts).filter(r => r.rail === "journal-prune")).toHaveLength(6);
   const waiting = evaluateQualification(p, samples);
   expect(waiting.status).toBe("awaiting-observation");

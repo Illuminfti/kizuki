@@ -191,10 +191,10 @@ describe("help", () => {
     expect(body.schema).toBe("kizuki.cli.help/v1");
     expect(body.status).toBe("ok");
     expect(body.data.name).toBe("query");
-    expect(body.data.options).toEqual(["--scope", "--limit"]);
+    expect(body.data.options).toEqual(["--scope", "--limit", "--response-contract"]);
     expect(body.data.flags).toEqual(["--json", "--degraded", "--full-text"]);
     expect(body.data.defaults).toEqual({ "--scope": "all", "--limit": "20" });
-    expect(body.data.bounds).toEqual({ "--scope": "canon|ledger|all", "--limit": "1..50" });
+    expect(body.data.bounds).toEqual({ "--scope": "canon|ledger|all", "--limit": "1..50", "--response-contract": "kizuki.envelope/v1|kizuki.envelope/v2" });
     expect(body.data.irreversible).toBe(false);
     expect(body.data.exit_codes.map((item) => item.code)).toEqual([0, 1, 2]);
   });
@@ -252,6 +252,8 @@ describe("help", () => {
       expect(body.data.options).toEqual([
         "--claim",
         "--world-claim",
+        "--claim-group-ref",
+        "--subject-ref",
         "--since",
         "--until",
         "--mode",
@@ -260,12 +262,14 @@ describe("help", () => {
         "--object-vocabulary",
         "--perspective-mode",
         "--refresh-concept-ref",
+        "--response-contract",
       ]);
       expect(body.data.flags).toEqual(["--dry-run", "--json", "--verbose"]);
       expect(body.data.bounds).toMatchObject({
         "--since": "TIME",
         "--until": "TIME",
-        "--mode": "replace_object|retract|reclassify_mode",
+        "--response-contract": "kizuki.envelope/v1|kizuki.envelope/v2",
+        "--mode": "replace_object|retract|reclassify_mode|merge_identity|separate_identity",
         "--perspective-mode": "suggested|hypothetical|questioned",
       });
       expect(body.data.irreversible).toBe(false);
@@ -433,7 +437,7 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("context");
-      expect(body.data.options).toEqual(["--purpose", "--budget", "--query", "--since", "--until", "--task-event", "--task-integrity"]);
+      expect(body.data.options).toEqual(["--purpose", "--budget", "--query", "--since", "--until", "--task-event", "--task-event-version", "--task-integrity", "--response-contract"]);
       expect(body.data.flags).toEqual(["--json"]);
       expect(body.data.defaults).toEqual({ "--purpose": "session" });
       expect(body.data.bounds).toEqual({
@@ -443,6 +447,7 @@ describe("help", () => {
         "--until": "RFC3339",
         "--task-event": "identifier",
         "--task-integrity": "sha256",
+        "--response-contract": "kizuki.envelope/v1|kizuki.envelope/v2",
       });
       expect(body.data.irreversible).toBe(false);
     }
@@ -695,7 +700,7 @@ describe("help", () => {
         data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
       };
       expect(body.data.name).toBe("sync");
-      expect(body.data.options).toEqual(["--source"]);
+      expect(body.data.options).toEqual(["--source", "--confirm-withdrawals"]);
       expect(body.data.flags).toEqual(["--once"]);
       expect(body.data.irreversible).toBe(false);
     }
@@ -874,6 +879,8 @@ describe("help", () => {
         "--calendar",
         "--history-start",
         "--url",
+        "--exclude-cwd",
+        "--include-headless",
       ]);
       expect(body.data.flags).toEqual(["--list", "--json", "--new-source", "--no-browser"]);
       expect(body.data.irreversible).toBe(false);
@@ -885,6 +892,8 @@ describe("help", () => {
     expect(text.stdout).toContain("--new-source");
     expect(text.stdout).toContain("--no-browser");
     expect(text.stdout).toContain("--url");
+    expect(text.stdout).toContain("--exclude-cwd DIR ...");
+    expect(text.stdout).toContain("--include-headless true|false");
     for (const [args, diagnostic] of [
       [["connect", "--nope"], "unknown option --nope"],
       [["connect", "--json", "--json"], "repeated flag --json"],

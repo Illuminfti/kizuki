@@ -9,6 +9,7 @@ import {
   PortError,
   PortRegistry,
   SourceGrantError,
+  bindSourceJudgePort,
   bindSourceModelPort,
   bindEpochZeroProducerPort,
   sourcePolicyEpoch,
@@ -267,9 +268,10 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
   )).port;
   const { signal } = options;
   const llm: LlmPort = signal === undefined ? boundLlm
-    : { ...boundLlm, complete: (request) => boundLlm.complete({ ...request, signal }) };
+    : { ...boundLlm, complete: (request) => boundLlm.complete({ ...request, signal: request.signal === undefined ? signal : AbortSignal.any([signal, request.signal]) }) };
   let producer: ProducerPort | ProducerV2Port | undefined;
   let systemone: SystemOnePort | undefined;
+  let judge: ReturnType<typeof parseSystemOneJevConfig> | undefined;
   try {
     if (llm.model_ref !== null) {
       const configured = selected.id === MODEL_LLM_ID ? parseOpenAiCompatibleConfig(selected.config) : null;
@@ -290,7 +292,7 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
             runtimeError("configured systemone secret reference cannot be resolved");
           }
         }
-        parseSystemOneJevConfig(config);
+        judge = parseSystemOneJevConfig(config);
         registerSystemOnePorts(registry);
         const boundJudge = (await registry.bindFromConfig<SystemOnePort>(
           "systemone",
@@ -324,8 +326,16 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
         bindSourceModelPort(producer, {
           model_endpoint: chatCompletionsUrl(configured.base_url),
           model: configured.model,
+          ...(configured.retention === null ? {} : { retention: configured.retention }),
+        });
+        bindSourceModelPort(llm, {
+          model_endpoint: chatCompletionsUrl(configured.base_url),
+          model: configured.model,
+          ...(configured.retention === null ? {} : { retention: configured.retention }),
         });
       }
+      // The judge is sent the same events and claims, so it is egress: consent must name it too.
+      if (judge !== undefined) bindSourceJudgePort(producer, { model_endpoint: `${judge.base_url}/systemone`, model: judge.model });
     }
   } catch (error) {
     // A partially bound producer is still owned here. Cleanup failures must
@@ -361,6 +371,7 @@ export async function createServeRuntime(options: ServeRuntimeOptions): Promise<
   return {
     hooks: {
       model_ref: binding?.llm.model_ref ?? null,
+      ...(binding === undefined ? {} : { llm: binding.llm }),
       embedding_configured: embeddingConfigured(options.vaultPath),
       ...(binding?.producer === undefined ? {} : { producer: binding.producer }),
       claims,

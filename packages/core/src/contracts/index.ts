@@ -10,6 +10,8 @@ export * from "./claim-v2";
 export * from "./durable-observation";
 export * from "./concept-card";
 export * from "./situation-card";
+export * from "./situation-card-v2";
+export * from "./person-card";
 export * from "./notifier";
 export * from "./storage";
 export * from "./surface";
@@ -20,3 +22,7 @@ export * from "./connector";
 export * from "./event";
 export * from "./proposal";
 export * from "./secret-ref";
+
+export * from "./observation";
+export * from "./scoped-refs";
+export * from "./scoped-tools";

@@ -1,3 +1,4 @@
+import { assertPositiveAuthorityMutationAllowed, ErasurePendingError } from "../canon/positive-authority";
 import { Database, constants } from "bun:sqlite";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,6 +11,7 @@ import { ulid } from "../util/ulid";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../ledger/db";
 import { assertLedgerSchema } from "../ledger/integrity";
 import { oneShotGet as readOne, tableExists } from "../ledger/schema";
+import { reserveViewPartition } from "../world/views/partitions";
 
 const SCHEMA = "kizuki.agent-enrollment/v1" as const;
 const GRANT_SCHEMA = "kizuki.agent-grant/v1" as const;
@@ -45,7 +47,7 @@ export interface AgentEnrollmentResult {
 export type AgentEnrollmentErrorCode =
   | "invalid_request" | "invalid_grant" | "vault_unavailable" | "unsupported_platform"
   | "credential_unsafe" | "credential_conflict" | "operation_conflict" | "name_conflict"
-  | "migration_required" | "enrollment_busy" | "recovery_required" | "enrollment_unavailable" | "unknown_agent";
+  | "migration_required" | "enrollment_busy" | "recovery_required" | "enrollment_unavailable" | "unknown_agent" | "erasure_pending";
 export class AgentEnrollmentError extends Error {
   constructor(readonly code: AgentEnrollmentErrorCode) { super(code); }
 }
@@ -62,6 +64,7 @@ type CredentialState = AgentEnrollmentResult["credential"];
 function fail(code: AgentEnrollmentErrorCode): never { throw new AgentEnrollmentError(code); }
 function safeError(error: unknown): never {
   if (error instanceof AgentEnrollmentError) throw error;
+  if (error instanceof ErasurePendingError) fail("erasure_pending");
   if (error instanceof Error && /SQLITE_(BUSY|LOCKED)|database is (busy|locked)/i.test(error.message)) fail("enrollment_busy");
   fail("enrollment_unavailable");
 }
@@ -76,13 +79,17 @@ function normalizedGrant(value: unknown): Grant {
   try {
     if (value === null || typeof value !== "object" || Array.isArray(value)) fail("invalid_grant");
     const input = value as Record<string, unknown>, keys = Object.keys(input).sort();
-    const expected = ["ceiling", "rate_limit_per_minute", "relay_owner_corrections", "since", "subjects", "tools", "types", "until"];
+    const required = ["ceiling", "rate_limit_per_minute", "relay_owner_corrections", "since", "subjects", "tools", "types", "until"];
+    // `deny_classes` is the one optional field; leaving it out keeps the default denial.
+    const expected = "deny_classes" in input ? ["ceiling", "deny_classes", ...required.slice(1)] : required;
     if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index]) ||
       !Array.isArray(input.tools) || input.tools.length > TOOLS.length) fail("invalid_grant");
     // Validate bounded lists and strings before any serialization or copying.
     const grant = validateAgentGrant(input as unknown as Grant);
     const sorted = (items: readonly string[] | null) => items === null ? null : [...new Set(items)].sort();
-    const normalized = { ...grant, types: sorted(grant.types), subjects: sorted(grant.subjects), tools: sorted(grant.tools) as Grant["tools"] };
+    const { deny_classes: denied, ...rest } = grant;
+    const normalized: Grant = { ...rest, types: sorted(grant.types), subjects: sorted(grant.subjects), tools: sorted(grant.tools) as Grant["tools"],
+      ...(denied === undefined ? {} : { deny_classes: sorted(denied) as NonNullable<Grant["deny_classes"]> }) };
     if (Buffer.byteLength(JSON.stringify(normalized)) > MAX_GRANT_BYTES) fail("invalid_grant");
     return normalized;
   } catch { fail("invalid_grant"); }
@@ -256,6 +263,7 @@ function reserve(ledger: EnrollmentLedger, shape: RequestShape, directory: Crede
   return ledger.write(db => {
     const existing = readRow(db, shape.request.operation_id);
     if (existing !== null) { assertRequest(existing, shape, directory.identity); return { row: existing, replayed: true }; }
+    assertPositiveAuthorityMutationAllowed(db);
     checkNewRequest(db, shape, directory);
     const agentId = ulid();
     if (readOne(db, "SELECT 1 FROM agents WHERE agent_id=?", agentId) !== null) fail("name_conflict");
@@ -271,6 +279,7 @@ function bind(ledger: EnrollmentLedger, shape: RequestShape, directory: Credenti
     const current = readRow(db, row.operation_id);
     if (current === null || !["reserved", "file_bound"].includes(current.state) || current.generation !== row.generation) fail("operation_conflict");
     assertRequest(current, shape, directory.identity);
+    assertPositiveAuthorityMutationAllowed(db);
     const existing = directory.inspect(shape.filename);
     if (existing !== null) { existing.close(); fail("recovery_required"); }
     const held = directory.create(shape.filename);
@@ -289,6 +298,7 @@ function activate(ledger: EnrollmentLedger, directory: CredentialDirectory, deli
   return ledger.write(db => {
     const current = readRow(db, delivery.row.operation_id);
     if (current === null || current.state !== "file_bound" || current.generation !== delivery.row.generation || !exactDelivery(current, directory, delivery.held, delivery.bytes)) fail("operation_conflict");
+    assertPositiveAuthorityMutationAllowed(db);
     if (current.grant_json.length > MAX_GRANT_BYTES) fail("invalid_grant");
     const grant = normalizedGrant(JSON.parse(current.grant_json));
     if (publish) directory.writeComplete(delivery.held, delivery.bytes);
@@ -296,6 +306,7 @@ function activate(ledger: EnrollmentLedger, directory: CredentialDirectory, deli
     const at = new Date().toISOString();
     db.run("INSERT INTO agents (agent_id,name,token_hash,created_at) VALUES (?,?,?,?)", [current.agent_id, current.name, current.token_hash, at]);
     writeAgentGrant(db, current.agent_id, grant, at, 1);
+    reserveViewPartition(db, current.agent_id, at);
     recordLifecycle(db, current.agent_id, "agent.create", { after: grant }, at);
     db.run("UPDATE agent_enrollments SET state='completed',completed_at=?,updated_at=? WHERE operation_id=?", [at, at, current.operation_id]);
     return readRow(db, current.operation_id)!;

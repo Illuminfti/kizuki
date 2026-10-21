@@ -1,6 +1,8 @@
+import { normalizeReadArgs, type GetPageArgsV2 } from "./v2/read-input";
 import { relPath, text } from "./arguments";
 import {
   canonChunk,
+  deniedPageAudit,
   eligible,
   excerptOf,
   loadCanon,
@@ -9,16 +11,20 @@ import {
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
 import { ServeError } from "./types";
-import type { Envelope, ServeContext } from "./types";
+import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA } from "./types";
 
 const MAX_ID_CHARS = 256;
 const MAX_BODY_CHARS = 65_536;
 
 export type GetPageArgs = { id: string } | { path: string };
 
-export function serveGetPage(ctx: ServeContext, args: GetPageArgs): Envelope {
+export function serveGetPage<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(ctx: ServeContext, args: GetPageArgs | GetPageArgsV2, contract: C = ENVELOPE_SCHEMA as C): ResponseEnvelope<undefined, C, null> {
   return gate(ctx, "get_page", auditArguments(args), ({ ctx }): Served<undefined> => {
-    const bag: Record<string, unknown> = { ...args };
+    const normalized = normalizeReadArgs(ctx, "get_page", args, contract);
+    ctx = normalized.ctx;
+    const request = normalized.args as unknown as GetPageArgs;
+    const bag: Record<string, unknown> = { ...request };
     const wantsId = bag["id"] !== undefined;
     const wantsPath = bag["path"] !== undefined;
     if (wantsId === wantsPath) {
@@ -43,7 +49,7 @@ export function serveGetPage(ctx: ServeContext, args: GetPageArgs): Envelope {
     // Absent or retracted answers the same way: existence is neither
     // confirmed nor denied to a caller who guessed an id.
     if (page === undefined || !eligible(page)) {
-      return { canon: [], quoted: [], withheld: [] };
+      return { canon: [], quoted: [], withheld: page === undefined ? deniedPageAudit(index, wantsId ? { id: selector } : { path: selector }) : [] };
     }
 
     const decision = pageDecision(index, ctx.principal.grant, page);
@@ -61,5 +67,5 @@ export function serveGetPage(ctx: ServeContext, args: GetPageArgs): Envelope {
       quoted: [],
       withheld: [],
     };
-  });
+  }, contract);
 }

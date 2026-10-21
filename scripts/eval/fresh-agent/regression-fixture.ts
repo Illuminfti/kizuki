@@ -8,7 +8,7 @@ const [mode, root, hostTime] = process.argv.slice(2);
 if (root === undefined) throw new Error("fixture root required");
 installLogicalClock(mode === "host" ? hostTime! : AS_OF);
 const { runEvaluation, observe, packetObservation, summarize, evaluationExitCode } = await import("./run");
-const { OWNER, listClaims, listCanonReceipts, serveContextPacket } = await import("../../../packages/core/src/index");
+const { OWNER, listAudit, shapeArguments, listClaims, listCanonReceipts, serveContextPacket } = await import("../../../packages/core/src/index");
 const { openLedger } = await import("../../../packages/core/src/testing");
 
 if (mode === "host") {
@@ -18,7 +18,15 @@ if (mode === "host") {
     const corrections = listClaims(db).filter(claim => claim.authority === "owner_correction")
       .map(claim => ({ created_at: claim.created_at, asserted_at: claim.asserted_at, valid_from: claim.valid_from }));
     const receipts = listCanonReceipts(db).map(receipt => receipt.at);
-    writeFileSync(join(root, "regression.json"), JSON.stringify({ report, corrections, receipts, caller_time: new Date().toISOString() }));
+    // Hook v2 packets omit request time. The receipt still proves the hook
+    // ran on the evaluation clock, for both owner and token principals.
+    const sessionPurpose = JSON.stringify(shapeArguments({ purpose: "session" }).purpose);
+    const hookAudit = Object.fromEntries(["owner", "fresh-agent"].map(name => [name,
+      listAudit(db, name, { kind: "access", limit: 500 })
+        .filter(row => row.tool === "context_packet" && JSON.stringify(row.query_shape.purpose) === sessionPurpose)
+        .map(row => row.at),
+    ]));
+    writeFileSync(join(root, "regression.json"), JSON.stringify({ report, corrections, receipts, hook_audit: hookAudit, caller_time: new Date().toISOString() }));
   } finally { db.close(); }
   process.exit(0);
 } else if (mode === "unavailable") {
@@ -29,17 +37,23 @@ if (mode === "host") {
   try {
     const question = fixture.questions.find(question => question.id === "now")!;
     const ctx = { db: fixture.db, vaultPath: fixture.vaultPath, principal: OWNER };
-    const fallback = await serveContextPacket({ ...ctx, retrievalUnavailable: true }, { query: question.query, purpose: "recall", budget_tokens: 2000 });
+    // An explicit canon request exercises the usable lexical fallback within
+    // budget. Default recall also includes whole qualified world relations;
+    // this persona legitimately overflows that same budget.
+    const fallbackContext = { ...ctx, retrievalUnavailable: true as const };
+    const request = { query: question.query, purpose: "recall" as const, budget_tokens: 2000 };
+    const fallback = await serveContextPacket(fallbackContext, { ...request, include: ["canon"] });
+    const bounded = await serveContextPacket(fallbackContext, request);
     const { data, ...noData } = fallback;
     const statuses = [packetObservation(noData).status,
       packetObservation({ ...fallback, data: { ...data!, packet_md: "", truncated: true } }).status,
       packetObservation(fallback).status,
-      packetObservation({ ...fallback, data: { ...data!, truncated: true } }).status];
+      packetObservation(bounded).status];
     // A broken deterministic floor produces Core's real context-unavailable envelope.
     fixture.db.exec("DROP TABLE search_docs; CREATE TABLE search_docs (broken TEXT)");
     const observation = await observe(fixture, "owner", "context_packet", question, root);
     const summaries = summarize([scoreObservation(fixture.facts, question, "owner", "context_packet", observation)]);
-    writeFileSync(join(root, "regression.json"), JSON.stringify({ statuses, fallback, observation, summaries }));
+    writeFileSync(join(root, "regression.json"), JSON.stringify({ statuses, fallback, bounded, observation, summaries }));
     exitCode = evaluationExitCode({ summaries });
   } finally { fixture.db.close(); }
   process.exit(exitCode);

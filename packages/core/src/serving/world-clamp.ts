@@ -1,3 +1,6 @@
+import type { ServeContext } from "./types";
+import { createRedactor, redactValue } from "./redact";
+
 /**
  * A redaction marker is longer than a short secret, so redacting a string that
  * already sat at its bound can push it past the bound the strict world_view
@@ -32,6 +35,13 @@ function clamp(value: unknown): unknown {
       out[name] = cut(item, LABEL_MAX);
     } else if (name === "summary" && isRecord(item) && typeof item["text"] === "string") {
       out[name] = { ...(clamp(item) as Record<string, unknown>), text: cut(item["text"], SUMMARY_MAX) };
+    } else if (name === "quoted" && typeof item === "string" && typeof value["stage"] === "string") {
+      out[name] = cut(item, 1024);
+    } else if (["subjectRef", "task", "attempt", "criterion", "artifactVersion", "environment"].includes(name) &&
+        typeof item === "string" && typeof value["confounded"] === "boolean") {
+      out[name] = cut(item, 128);
+    } else if (name === "content" && value["schema"] === "kizuki.artifact-card/v1" && isRecord(item)) {
+      out[name] = { ...item, sha256: typeof item["sha256"] === "string" && /^[0-9a-f]{64}$/.test(item["sha256"]) ? item["sha256"] : null, mediaType: typeof item["mediaType"] === "string" ? cut(item["mediaType"],128) : null };
     } else {
       out[name] = clamp(item);
     }
@@ -42,4 +52,10 @@ function clamp(value: unknown): unknown {
 /** `data` with every bounded world_view string cut to the bound the grammar states. */
 export function clampWorldData<T>(data: T): T {
   return clamp(data) as T;
+}
+
+/** Preview exactly the retained bytes without consuming output redaction counts. */
+export function worldViewProjection<T>(ctx: ServeContext, data: T): T {
+  return ctx.redactor === undefined ? data
+    : clampWorldData(redactValue(createRedactor(ctx.principal, ctx.servingSecrets), data));
 }

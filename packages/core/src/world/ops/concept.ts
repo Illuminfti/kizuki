@@ -1,19 +1,22 @@
 import { resolveWorldObject } from "../references";
-import { projectWorldCard } from "../projection";
-import { NOT_FOUND, coveredOutcome } from "./outcome";
+import { readKnownCard } from "../known/reader";
+import { NOT_FOUND } from "./outcome";
 import { parseWorldRef } from "./parse";
 import type { ClaimsOp, WorldObjectRef } from "./types";
+
+const readObject: NonNullable<ClaimsOp["readObject"]> = (frame, handle, when) => readKnownCard(frame, handle, "concept", when);
 
 export const conceptOp: ClaimsOp<WorldObjectRef> = {
   source: "claims",
   name: "concept",
   keys: { required: ["concept"], optional: [] },
   dataSchemas: ["kizuki.concept-card/v1"],
+  views: true,
+  knownAt: true,
+  readObject,
   parse: (input) => parseWorldRef(input["concept"], "object"),
-  run: ({ ctx, ns }, ref, { valid }) => {
-    const handle = resolveWorldObject(ctx.db, ns, ref.token);
-    if (handle === null) return NOT_FOUND;
-    const card = projectWorldCard(ctx, ns, handle, "concept", valid);
-    return card === null ? NOT_FOUND : coveredOutcome(card);
+  run: (frame, ref, when) => {
+    const handle = resolveWorldObject(frame.ctx.db, frame.ns, ref.token);
+    return handle === null ? (when.knownAt.kind === "snapshot" ? { status: "new_view_required" } : NOT_FOUND) : readObject(frame, handle, when);
   },
 };

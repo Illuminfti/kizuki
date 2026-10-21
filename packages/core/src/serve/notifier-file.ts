@@ -71,6 +71,10 @@ function notifyOwned(
   files.ensureDirectory("dashboards");
   const prior = files.read(name);
   const bytes = Buffer.from(notification.body);
+  if (prior !== null && Buffer.from(prior.bytes).equals(bytes)) {
+    prior.close();
+    return { notification_id: notification.notification_id, delivered_at: new Date().toISOString(), destination: "dashboards/", duplicate: true };
+  }
   if (prior === null) files.create(name, bytes).close();
   else {
     const temporary = `${dirname(name)}/.${basename(name)}.${ulid()}.tmp`;

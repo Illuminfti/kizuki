@@ -1,9 +1,12 @@
+import { sessionPerson } from "../world/person-session";
 import type { AuditDenial } from "../agents";
 import { toolAllowed } from "../agents";
 import { compareRfc3339 } from "../agents/time";
 import { getClaim } from "../claims/store";
+import { claimReadSql } from "../claims/read-scope";
+import { instantSecondSql, instantNanoSql } from "../query/sql";
 import type { Claim } from "../contracts/proposal";
-import { readSituations } from "../world/situations";
+import { readCurrentSituations } from "../world/situations";
 import type { SituationItem, SituationState } from "../world/situations";
 import {
   claimLine,
@@ -13,6 +16,7 @@ import {
 } from "./candidates";
 import type { Piece } from "./candidates";
 import { claimReader } from "./claims";
+import { instantBoundPair, instantPairSql } from "../query/sql";
 import { oneLine, redactorOf } from "./redact";
 import type { Redactor } from "./redact";
 import { SESSION_SECTIONS } from "./sections";
@@ -97,6 +101,8 @@ export function emptyReasonText(
 
 export interface SessionPieces {
   pieces: Piece[];
+  /** Includes evidence for completed commitments omitted from the open section. */
+  world: import("../world/dependencies").WorldDependencies[];
   /** Empty-section reasons decided while gathering. */
   reasons: Partial<Record<SessionSection, SessionEmptyReason>>;
   withheld: AuditDenial[];
@@ -118,15 +124,16 @@ function stamps(claim: Claim): string {
 /** A world statement line: same stamps as a working-knowledge claim, with the situation named. */
 function situationLine(state: SituationState, item: SituationItem, redactor: Redactor): string {
   // Redacted before it is cut, so a secret on the cut is gone whole.
-  const say = (text: string): string => clamp(redactor.text(text));
+  const say = (text: string): string => redactor.format(text, (value) => JSON.stringify(clamp(value)));
   const hedge =
     item.polarity === "negative" || item.mode !== "asserted"
       ? ` polarity=${item.polarity} mode=${item.mode}`
       : "";
-  return (
-    `- [claim:${inline(item.claim.claim_id)}] ${stamps(item.claim)}${hedge}` +
-    ` :: situation ${JSON.stringify(say(state.label ?? state.subject))} ${inline(item.predicate.slice(10))} ${JSON.stringify(say(item.text))}\n`
-  );
+  return redactor.join([
+    `- [claim:${inline(item.claim.claim_id)}] ${stamps(item.claim)}${hedge} :: situation `,
+    say(state.label ?? state.subject), " ",
+    redactor.format(item.predicate.slice(item.predicate.indexOf(".")+1), inline), " ", say(item.text), "\n",
+  ]);
 }
 
 function piece(
@@ -135,12 +142,15 @@ function piece(
   block: string,
   ids: string[],
   reader: ReturnType<typeof claimReader>,
+  world?: import("../world/dependencies").WorldDependencies,
 ): Piece {
   return {
     section,
     heading,
     block,
     audit: ids.flatMap((id) => reader.auditClaim(id)),
+    claims: reader.publication(ids),
+    ...(world === undefined ? {} : {world}),
   };
 }
 
@@ -156,8 +166,8 @@ function claimPiece(
     heading,
     claimLine({
       ...claim,
-      object: claim.object === null ? null : clamp(redactor.text(claim.object)),
-    }),
+      object: claim.object === null ? null : redactor.format(claim.object, clamp),
+    }, redactor),
     [claim.claim_id],
     reader,
   );
@@ -186,25 +196,32 @@ function readable(
   where: string,
   bindings: (string | number)[],
   keep: (claim: Claim) => boolean,
+  subjects?: readonly string[],
 ): Readable {
   const found: Claim[] = [];
   let scanned = 0;
+  // Keep the owner's existing bounded-window availability diagnostic. Scoped
+  // windows must contain only candidates the caller may actually use.
+  const scoped = ctx.principal.kind === "agent";
+  const permitted = claimReadSql(ctx.db, reader.scope);
+  const valid = scoped ? `AND ${instantPairSql("claims.valid_from")} <= (?,?) AND
+    (claims.valid_to IS NULL OR ${instantPairSql("claims.valid_to")} > (?,?))` : "";
+  const atPair = instantBoundPair(at, "at");
+  const requested = !scoped || subjects === undefined || subjects.length === 0 ? "" :
+    `AND (claims.subject IN (SELECT value FROM json_each(?)) OR (claims.subject IS NULL AND
+      EXISTS(SELECT 1 FROM json_each(claims.subjects) s WHERE s.value IN (SELECT value FROM json_each(?)))))`;
+  const requestedBindings = requested === "" ? [] : [JSON.stringify(subjects), JSON.stringify(subjects)];
   for (const row of ctx.db
     .query<{ claim_id: string }, (string | number)[]>(
-      `SELECT claim_id FROM claims WHERE status='live' AND ${where} ORDER BY asserted_at DESC, claim_id LIMIT ${CANDIDATES}`,
+      `SELECT claim_id FROM claims WHERE status='live' AND (${where}) AND ${permitted.sql} ${valid} ${requested}
+        ORDER BY ${instantSecondSql("claims.asserted_at")} DESC, ${instantNanoSql("claims.asserted_at")} DESC, claim_id DESC`,
     )
-    .iterate(...bindings)) {
-    scanned += 1;
+    .iterate(...bindings, ...permitted.bindings, ...(scoped ? [...atPair, ...atPair] : []), ...requestedBindings)) {
     const claim = getClaim(ctx.db, row.claim_id);
-    if (
-      claim === null ||
-      !current(claim, at) ||
-      !keep(claim) ||
-      !reader.canRead(claim)
-    )
-      continue;
-    found.push(claim);
-    if (found.length === SECTION_ITEMS) break;
+    if (claim === null || !reader.canRead(claim)) continue;
+    scanned += 1;
+    if (current(claim, at) && keep(claim)) found.push(claim);
+    if (found.length === SECTION_ITEMS || scanned === CANDIDATES) break;
   }
   return { claims: found, truncated: found.length === 0 && scanned === CANDIDATES };
 }
@@ -218,13 +235,13 @@ const marks = (values: readonly string[]) => values.map(() => "?").join(",");
  */
 export function collectSessionPieces(
   ctx: ServeContext,
-  request: { at: string; since: string; subjects?: readonly string[] },
+  request: { at: string; since: string; subjects?: readonly string[]; typed?: boolean },
 ): SessionPieces {
   const grant = ctx.principal.grant;
   const reader = claimReader(ctx.db, grant, {
     owner: ctx.principal.kind === "owner",
     purpose: ctx.sourcePurpose ?? "session",
-  });
+  }, ctx.selection);
   const inSubjects = (claim: Claim): boolean =>
     request.subjects === undefined ||
     request.subjects.length === 0 ||
@@ -255,10 +272,9 @@ export function collectSessionPieces(
     }
   };
   const situations = (): SituationState[] => {
-    if (!worldGranted) return [];
-    return readSituations(ctx, {
+    if (!worldGranted || request.typed === false) return [];
+    return readCurrentSituations(ctx, {
       limit: SITUATIONS,
-      at: request.at,
       ...(request.subjects === undefined || request.subjects.length === 0
         ? {}
         : { subjects: request.subjects }),
@@ -276,12 +292,29 @@ export function collectSessionPieces(
       `authority IN (${marks(OWNER_TIERS)}) AND polarity='positive' AND subject IS NOT NULL AND predicate IN (${marks(OWNER_PREDICATES)})`,
       [...OWNER_TIERS, ...OWNER_PREDICATES],
       inSubjects,
+      request.subjects,
     );
     if (truncated) reasons.owner = "unavailable";
     for (const claim of facts) shown.add(claim.claim_id);
-    return facts.map((claim) =>
-      claimPiece("owner", "## owner (owner-authority facts)", claim, reader, redactor),
-    );
+    const seenPeople = new Set<string>();
+    return facts.flatMap((claim) => {
+      const person = worldGranted && request.typed !== false ? sessionPerson(ctx, claim, request.at) : null;
+      if (person !== null) {
+        const ids = [claim.claim_id, ...person.deps.claims];
+        if (ids.every(id => { const row = getClaim(ctx.db, id); return row !== null && reader.canRead(row); })) {
+          if (seenPeople.has(person.card.person.ref.token)) return [];
+          seenPeople.add(person.card.person.ref.token);
+          const labels = person.card.person.labels.map(label => redactor.format(label.text, clamp)).join(" / ");
+          const relations = person.card.perspectives.flatMap(group => group.relations).slice(0, SECTION_ITEMS);
+          const block = redactor.join([
+            `- Person card (quoted data): ${labels || "unlabelled"}; no agreement inferred.\n`,
+            ...relations.map(item => `- taint=quoted :: ${item.predicate} ${redactor.format(item.object.kind === "literal" ? item.object.value : JSON.stringify(item.object), clamp)} holder=${item.perspective.holder?.token ?? "unattributed"} speaker=${item.perspective.speaker?.token ?? "unattributed"} mode=${item.perspective.mode}\n`),
+          ]);
+          return [{ ...piece("owner", "## owner (Person card; quoted data)", block, ids, reader), world: person.deps }];
+        }
+      }
+      return [claimPiece("owner", "## owner (owner-authority facts)", claim, reader, redactor)];
+    });
   });
 
   run("now", () => {
@@ -294,8 +327,9 @@ export function collectSessionPieces(
             "now",
             "## now (situations)",
             situationLine(state, item, redactor),
-            [item.claim.claim_id],
+            [...(item.claimIds ?? [item.claim.claim_id])],
             reader,
+            state.world,
           ),
         );
       }
@@ -310,6 +344,7 @@ export function collectSessionPieces(
         inSubjects(claim) &&
         !shown.has(claim.claim_id) &&
         compareRfc3339(claim.asserted_at, "asserted_at", request.at, "at") <= 0,
+      request.subjects,
     );
     for (const claim of changes) {
       shown.add(claim.claim_id);
@@ -330,8 +365,9 @@ export function collectSessionPieces(
             "commitments",
             "## commitments (open)",
             situationLine(state, item, redactor),
-            [item.claim.claim_id],
+            [...(item.claimIds ?? [item.claim.claim_id])],
             reader,
+            state.world,
           ),
         );
       }
@@ -340,9 +376,10 @@ export function collectSessionPieces(
       ctx,
       reader,
       request.at,
-      `polarity='positive' AND predicate IN (${marks(COMMITMENT_PREDICATES)})`,
+      `polarity='positive' ${request.typed === false ? 'AND is_world_typed=0' : ''} AND predicate IN (${marks(COMMITMENT_PREDICATES)})`,
       [...COMMITMENT_PREDICATES],
       inSubjects,
+      request.subjects,
     );
     for (const claim of claims)
       lines.push(
@@ -363,8 +400,9 @@ export function collectSessionPieces(
             "uncertain",
             "## uncertain (contradictions and open questions)",
             situationLine(state, item, redactor),
-            [item.claim.claim_id],
+            [...(item.claimIds ?? [item.claim.claim_id])],
             reader,
+            state.world,
           ),
         );
       }
@@ -377,6 +415,7 @@ export function collectSessionPieces(
       ctx.db,
       wanted,
       reader.canRead,
+      reader.scope,
     )) {
       // Members are re-read whole so each carries the taint and sensitivity stamps of its own text.
       const members = conflict.claims.flatMap((member) => {
@@ -386,25 +425,34 @@ export function collectSessionPieces(
       const first = members[0];
       const values = members.map(
         (member) =>
-          `${member.polarity === "negative" ? "not " : ""}${JSON.stringify(clamp(redactor.text(member.object ?? "")))} [claim:${inline(member.claim_id)}] ${stamps(member)} status=${member.status}`,
+          redactor.join([
+            member.polarity === "negative" ? "not " : "",
+            redactor.format(member.object ?? "", (value) => JSON.stringify(clamp(value))),
+            ` [claim:${inline(member.claim_id)}] ${stamps(member)} status=${member.status}`,
+          ]),
       );
       lines.push(
         piece(
           "uncertain",
           "## uncertain (contradictions and open questions)",
-          `- conflict key=${inline(conflict.claim_key.slice(0, 12))} live=${members.length} :: ${inline(first?.subject ?? "-")} ${inline(first?.predicate ?? "-")} ${values.join(" vs ")}\n`,
+          redactor.join([
+            `- conflict key=${inline(conflict.claim_key.slice(0, 12))} live=${members.length} :: `,
+            redactor.format(first?.subject ?? "-", inline), " ",
+            redactor.format(first?.predicate ?? "-", inline), " ",
+            ...values.flatMap((value, index) => index === 0 ? [value] : [" vs ", value]), "\n",
+          ]),
           members.map((member) => member.claim_id),
           reader,
         ),
       );
     }
-    for (const gap of loadSubjectGaps(ctx.db, wanted, reader.canRead)) {
+    for (const gap of loadSubjectGaps(ctx.db, wanted, reader.canRead, reader.scope)) {
       lines.push(
         piece(
           "uncertain",
           "## uncertain (contradictions and open questions)",
-          `- gap key=${inline(gap.claim_key.slice(0, 12))} ${inline(gap.predicate ?? "-")} unknown between ${inline(gap.after)} and ${inline(gap.before)}\n`,
-          [],
+          `- gap key=${inline(gap.claim_key.slice(0, 12))} ${inline(redactor.text(gap.predicate ?? "-"))} unknown between ${inline(gap.after)} and ${inline(gap.before)}\n`,
+          reader.auditGroup(gap.claim_key).map(item => item.id),
           reader,
         ),
       );
@@ -432,6 +480,7 @@ export function collectSessionPieces(
   out.push(...explained);
   return {
     pieces: out,
+    world: (situationCache ?? []).map(state => state.world),
     reasons,
     withheld: [...reader.denied.values()],
     degraded,

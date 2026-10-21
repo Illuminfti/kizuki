@@ -1,8 +1,9 @@
+import { CLAIM_RETRY_FAILURES, CLAIM_RETRY_MS, CLAIM_RETRY_MAX_REASON } from "../ledger/canon-claim-retry-schema";
 import type { Database } from "bun:sqlite";
 import { readRailCursor, writeRailCursor } from "../ledger/checkpoints";
 import { tableExists } from "../ledger/schema";
 import { isPlainObject } from "../util/validate";
-import { redactReceiptError } from "./receipts";
+import { redactReceiptError } from "../util/receipt-redaction";
 
 /**
  * Typed pages the canon writer could not write, kept across passes so one
@@ -92,4 +93,61 @@ export function recordStuckPage(
 export function clearStuckPage(db: Database, handle: string): void {
   if (!tableExists(db, "rail_cursors")) return;
   db.query("DELETE FROM rail_cursors WHERE rail = ? AND source_key = ?").run(WRITER_RAIL, KEY_PREFIX + handle);
+}
+
+
+const MAX_QUARANTINED_CLAIMS = 10_000;
+const MAX_DIAGNOSTIC_CLAIM_ID_BYTES = 1024;
+
+/** Unwritten legacy claims remain live, with their full provenance, while retry is delayed. */
+export interface QuarantinedClaim {
+  readonly claim_id: string;
+  readonly attempts: number;
+  readonly reason: string;
+  readonly last_at: string;
+  readonly until: string;
+}
+interface RetryRow { claim_id: string; attempts: number; reason: string; last_at_ms: number }
+function claimRetry(row: RetryRow): QuarantinedClaim {
+  return { claim_id: row.claim_id, attempts: row.attempts,
+    reason: redactReceiptError(row.reason).slice(0, CLAIM_RETRY_MAX_REASON),
+    last_at: new Date(row.last_at_ms).toISOString(), until: new Date(row.last_at_ms + CLAIM_RETRY_MS).toISOString() };
+}
+
+/** Bounded diagnostic sample only. The writer excludes every active hold in SQL. */
+export function listQuarantinedClaims(db: Database, now: string): { claims: QuarantinedClaim[]; truncated: boolean } {
+  const at = Date.parse(now);
+  if (!Number.isFinite(at) || !tableExists(db, "canon_claim_retries") ||
+    db.query("SELECT 1 FROM canon_claim_retries LIMIT 1").get() === null) return { claims: [], truncated: false };
+  const rows = db.query<RetryRow, [number, number, number]>(
+    `SELECT r.* FROM canon_claim_retries r JOIN claims c USING(claim_id)
+     WHERE c.status='live' AND c.receipt_id IS NULL AND c.is_world_typed=0
+       AND r.attempts>=${CLAIM_RETRY_FAILURES} AND r.last_at_ms<=? AND r.last_at_ms>?
+       AND length(CAST(r.claim_id AS BLOB))<=${MAX_DIAGNOSTIC_CLAIM_ID_BYTES}
+     ORDER BY r.claim_id LIMIT ?`,
+  ).all(at, at - CLAIM_RETRY_MS, MAX_QUARANTINED_CLAIMS + 1);
+  // Test for omitted identities without bringing their unbounded bytes into JS.
+  const oversized = db.query<{ omitted: number }, [number, number]>(
+    `SELECT 1 AS omitted FROM canon_claim_retries r JOIN claims c USING(claim_id)
+     WHERE c.status='live' AND c.receipt_id IS NULL AND c.is_world_typed=0
+       AND r.attempts>=${CLAIM_RETRY_FAILURES} AND r.last_at_ms<=? AND r.last_at_ms>?
+       AND length(CAST(r.claim_id AS BLOB))>${MAX_DIAGNOSTIC_CLAIM_ID_BYTES} LIMIT 1`,
+  ).get(at, at - CLAIM_RETRY_MS) !== null;
+  return { claims: rows.slice(0, MAX_QUARANTINED_CLAIMS).map(claimRetry), truncated: oversized || rows.length > MAX_QUARANTINED_CLAIMS };
+}
+
+export function recordStuckClaim(db: Database, claimId: string, reason: string, now: string): QuarantinedClaim | null {
+  const at = Date.parse(now);
+  if (!Number.isFinite(at) || !Number.isFinite(new Date(at + CLAIM_RETRY_MS).getTime())) return null;
+  const row = db.query<RetryRow, [string, number, string]>(
+    `INSERT INTO canon_claim_retries (claim_id,attempts,reason,last_at_ms)
+     SELECT claim_id,1,?,? FROM claims WHERE claim_id=? AND status='live' AND receipt_id IS NULL AND is_world_typed=0
+     ON CONFLICT(claim_id) DO UPDATE SET attempts=min(attempts+1,9007199254740991),reason=excluded.reason,last_at_ms=excluded.last_at_ms
+     RETURNING *`,
+  ).get(redactReceiptError(reason).slice(0, CLAIM_RETRY_MAX_REASON), at, claimId);
+  return row !== null && row.attempts >= CLAIM_RETRY_FAILURES ? claimRetry(row) : null;
+}
+
+export function clearStuckClaim(db: Database, claimId: string): void {
+  db.query("DELETE FROM canon_claim_retries WHERE claim_id=?").run(claimId);
 }

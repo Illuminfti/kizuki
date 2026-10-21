@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { stampCredentialClass } from "./event-classes";
 import { authorizeSourceCapture, bindSourceEvent, type SourceAdmission } from "./source-grants";
 import { validateEventInput } from "../contracts/event";
 import type {
@@ -18,6 +19,7 @@ import { LEDGER_ID_MAX, LEDGER_KIND_MAX, MAX_READ_SINCE, REPLAY_PAGE_SIZE } from
 import { findPurgeSuppression } from "./purge-suppression";
 import { tableExists } from "./schema";
 import { placeholders } from "../util/sql";
+import { indexEvent } from "../search/indexer";
 
 export type AcceptErrorKind = "validation" | "infrastructure";
 
@@ -168,7 +170,10 @@ export function accept(
         };
       }
 
-      const origin = classifyNewEventOrigin(db, { text: normalized.text, text_hash: textHash });
+      const origin = classifyNewEventOrigin(db, { text: normalized.text, text_hash: textHash }, {
+        connector_id: normalized.connector_id, source_record_id: normalized.source_record_id,
+        source_key: deps.source?.source_key ?? null,
+      });
       insertBoundEvent(db, normalized, eventId, origin, "capture", null);
 
       if (deps.source !== undefined) bindSourceEvent(db, eventId, deps.source);
@@ -216,10 +221,11 @@ function insertBoundEvent(db: Database, input: CaptureEventInput, eventId: strin
     input.text, JSON.stringify(input.subjects), input.sensitivity_hint ?? null, input.deleted ? 1 : 0,
     JSON.stringify(input.attachments), JSON.stringify(input.metadata), identity.content_hash, acceptedAt, 2,
     identity.text_hash, origin, 1, kind, computeOriginBinding(identity, acceptedAt, kind, requestDigest));
+  stampCredentialClass(db, eventId, input);
 }
 
 /** Internal Core native operation. Public capture has no exemption parameter. */
-export function recordNativeCorrectionEvent(db: Database, input: CaptureEventInput, requestDigest: string): {
+export function recordNativeCorrectionEvent(db: Database, input: CaptureEventInput, requestDigest: string, beforeRecord?: () => void): {
   event_id: string; duplicate: boolean;
 } {
   const checked = validateEventInput(input);
@@ -237,8 +243,12 @@ export function recordNativeCorrectionEvent(db: Database, input: CaptureEventInp
       if (nativeRequestDigest(db, stored.event_id) !== requestDigest) {
         throw new Error("correction recording conflicts with existing evidence");
       }
+      indexEvent(db, stored);
       return { event_id: stored.event_id, duplicate: true };
     }
+    // Exact replay is read-only. New native evidence shares the caller's
+    // current authority check inside this existing capture transaction.
+    beforeRecord?.();
     const eventId = ulid();
     insertBoundEvent(db, event, eventId, "external", "native", requestDigest);
     using proof = db.prepare(`INSERT INTO native_owner_evidence
@@ -246,6 +256,10 @@ export function recordNativeCorrectionEvent(db: Database, input: CaptureEventInp
     proof.run(eventId, requestDigest, event.observed_at, computeContentHash(event));
     const stored = readEvent(db, eventId);
     if (stored === null) throw new Error("native correction recording failed");
+    // This writer bypasses connector ingestion. Keep its independently readable
+    // evidence searchable in the same transaction, even if source-backed canon
+    // is later withheld. The ordinary event index preserves quoted authority.
+    indexEvent(db, stored);
     return { event_id: stored.event_id, duplicate: false };
   }).immediate();
 }
@@ -408,6 +422,27 @@ export const LIVE_PREDICATE = `
        )
   )
 `;
+
+/**
+ * `later` is a live capture of the same source record as `earlier` that the
+ * ledger accepted after it: the record was edited and `earlier` is a prior
+ * version. Both names are `events` aliases. The ledger keeps every version as
+ * evidence; readers that want the current text exclude the earlier ones.
+ */
+export function laterVersionSql(later: string, earlier: string): string {
+  const binding = (alias: string): string =>
+    `(SELECT source_key FROM source_event_bindings WHERE event_id = ${alias}.event_id)`;
+  return `(
+    ${later}.deleted = 0
+    AND ${later}.connector_id = ${earlier}.connector_id
+    AND ${later}.source_record_id = ${earlier}.source_record_id
+    AND ${binding(later)} IS ${binding(earlier)}
+    AND (
+      ${later}.accepted_at > ${earlier}.accepted_at
+      OR (${later}.accepted_at = ${earlier}.accepted_at AND ${later}.event_id > ${earlier}.event_id)
+    )
+  )`;
+}
 
 function replayWhere(
   filter: ReplayFilter,

@@ -18,6 +18,9 @@ test("typed retained receipt round trips exact basis through existing table and 
   expect(parseReceiptRecordLine(JSON.stringify(input))).toEqual(input);
   expect(parseWorldCanonReceipt({...input,basis:{...input.basis,after:[{...input.basis.after![0],extra:true}]}})).toBeNull();
   expect(parseWorldCanonReceipt({...input,extra:true})).toBeNull();
+  const semantic={...input,basis:{...input.basis,after:input.basis.after!.map(item=>({...item,rendering:"semantic/v1" as const}))}};
+  expect(parseWorldCanonReceipt(semantic)).toEqual(semantic);
+  for(const rendering of [null,"unknown/v1",false])expect(parseWorldCanonReceipt({...semantic,basis:{...semantic.basis,after:semantic.basis.after.map(item=>({...item,rendering}))}})).toBeNull();
  }finally{db.close();}
 });
 test("typed erased receipt contains no retained payload and verifies its domain-separated integrity",()=>{

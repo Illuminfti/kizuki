@@ -1,16 +1,19 @@
+import { selectedEvent } from "../query/selection";
 import type { Database } from "bun:sqlite";
 import { liveEventIds } from "../ledger/ledger";
 import { sourceEventsAllowed, sourceSensitivity } from "../ledger/source-grants";
 import type { ServeContext } from "./types";
-import { authorize } from "../agents";
+import { authorize, denyClassesOf } from "../agents";
+import { classesByEvent, classesOfEvents } from "../ledger/event-classes";
 import type { AuditDenial, DenyReason, Grant, Sensitivity, Servable } from "../agents";
-import { previewText, timeline } from "../query/timeline";
+import { PREVIEW_CODE_POINTS, timeline } from "../query/timeline";
 import type { TimelineEntry, TimelineOptions } from "../query/timeline";
 import { bareRetrievalId, retrievalDocId } from "../retrieval/ids";
 import type { SearchHit } from "../search/query";
 import { placeholders } from "../util/sql";
 import { asSensitivity } from "./canon";
 import { redactorOf } from "./redact";
+import { boundScrubText } from "../producer/scrub";
 import type { QuotedChunk } from "./types";
 
 /** Bound on one `IN (...)` list, matching the graph layer's frontier chunk. */
@@ -22,6 +25,8 @@ export interface ServableEvent {
   occurred_at: string;
   sensitivity: string;
   subjects: string[];
+  /** Content classes stamped on the event; absent until read from the ledger. */
+  classes?: readonly string[];
 }
 
 export interface QuotedSource extends ServableEvent {
@@ -63,6 +68,7 @@ export function readServableEvents(
   ]);
   const facts = new Map<string, ServableEvent>();
   for (const group of chunks([...live])) {
+    const classes = classesByEvent(db, group);
     const rows = db
       .query<ServableEventRow, string[]>(
         `SELECT event_id, kind, occurred_at,
@@ -78,6 +84,7 @@ export function readServableEvents(
         occurred_at: row.occurred_at,
         sensitivity: row.sensitivity,
         subjects: subjectIds(row.subjects),
+        classes: classes.get(row.event_id) ?? [],
       };
       facts.set(row.event_id, event);
       facts.set(retrievalDocId("event", row.event_id), event);
@@ -97,6 +104,7 @@ export function eventServable(facts: ServableEvent): Servable {
     type: facts.kind,
     subjects: facts.subjects,
     occurred_at: facts.occurred_at,
+    ...(facts.classes === undefined ? {} : { classes: facts.classes }),
   };
 }
 
@@ -107,11 +115,20 @@ export function eventDecision(
 ):
   | { allow: true; sensitivity: Sensitivity }
   | { allow: false; reason: DenyReason } {
-  if (ctx !== undefined && !sourceEventsAllowed(ctx.db, [facts.event_id], { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" })) return { allow: false, reason: "held" };
+  const scope = authorize(grant, eventServable(facts));
+  if (!scope.allow) return scope;
+  if (ctx !== undefined && !sourceEventsAllowed(ctx.db, [facts.event_id], { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall", deny_classes: denyClassesOf(grant) })) return { allow: false, reason: "held" };
+  if (ctx !== undefined && !selectedEvent(ctx.db, ctx.selection, facts.event_id)) return { allow: false, reason: "held" };
   const original = asSensitivity(facts.sensitivity);
   const label = original === null || ctx === undefined ? original : sourceSensitivity(ctx.db, [facts.event_id], original);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
-  const decision = authorize(grant, { ...eventServable(facts), sensitivity: label });
+  // Facts read straight from the ledger carry their classes; a timeline row
+  // does not, so a caller with a context looks them up rather than skip the check.
+  const known: ServableEvent =
+    facts.classes === undefined && ctx !== undefined
+      ? { ...facts, classes: classesOfEvents(ctx.db, [facts.event_id]) }
+      : facts;
+  const decision = authorize(grant, { ...eventServable(known), sensitivity: label });
   return decision.allow
     ? { allow: true, sensitivity: label }
     : { allow: false, reason: decision.reason };
@@ -121,15 +138,19 @@ export function quotedChunk(
   source: QuotedSource,
   sensitivity: Sensitivity,
   ctx: ServeContext,
+  maxChars = 4096,
 ): QuotedChunk {
+  const redactor = redactorOf(ctx);
+  const bounded = boundScrubText(source.text, maxChars);
   return {
     event_id: source.event_id,
-    connector_id: source.connector_id,
-    kind: source.kind,
+    connector_id: redactor.text(source.connector_id),
+    kind: redactor.text(source.kind),
     occurred_at: source.occurred_at,
     sensitivity,
-    subjects: source.subjects,
-    text: redactorOf(ctx).text(source.text),
+    subjects: source.subjects.map((subject) => redactor.text(subject)),
+    text: redactor.text(bounded.text),
+    ...(bounded.truncated ? { truncated: true as const } : {}),
     tainted: true,
   };
 }
@@ -180,11 +201,13 @@ export function collectAuthorizedTimeline(
   for (let page = 0; page < TIMELINE_AUTH_PAGES && quoted.length < limit; page += 1) {
     const entries = timeline(ctx.db, {
       ...opts,
+      ...(ctx.selection === undefined ? {} : { selection: ctx.selection }),
       ceiling: grant.ceiling,
       limit,
       source: {
         owner: ctx.principal.kind === "owner",
         purpose: ctx.sourcePurpose ?? "recall",
+        deny_classes: denyClassesOf(grant),
       },
       ...(grantSubjects === undefined ? {} : { subjects: grantSubjects }),
       ...(grantKinds === undefined ? {} : { kinds: grantKinds }),
@@ -209,7 +232,7 @@ export function collectAuthorizedTimeline(
       const full = currentQuotedSource(ctx.db, entry.event_id);
       if (full === null) continue;
       const chunk = quotedChunk({ ...source, text: full.text }, decision.sensitivity, ctx);
-      quoted.push({ ...chunk, text: previewText(chunk.text) });
+      quoted.push({ ...chunk, text: redactorOf(ctx).text(chunk.text, { offset: 0, span: PREVIEW_CODE_POINTS, inline: true }) });
       if (quoted.length >= limit) break;
     }
     const last = entries[entries.length - 1];

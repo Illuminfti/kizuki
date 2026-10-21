@@ -77,17 +77,20 @@ function attestedEndpoints(value: unknown, subject: RawSubjectRef): readonly Raw
   return value as RawSubjectRef[];
 }
 
-function nativeTarget(event: ReturnType<typeof eventFromRow>): { readonly claim_id: string; readonly semantic_key: string; readonly subject: RawSubjectRef; readonly predicate: string; readonly endpoints: readonly RawSubjectRef[] } | null {
+function nativeTarget(event: ReturnType<typeof eventFromRow>): { readonly claim_id: string; readonly semantic_key: string; readonly subject: RawSubjectRef; readonly predicate: string; readonly endpoints: readonly RawSubjectRef[]; readonly identity_mode?: "merge_identity" | "separate_identity" } | null {
   const target = event.metadata.world_target;
   if (typeof target !== "object" || target === null || Array.isArray(target)) return null;
-  const value = target as { claim_id?: unknown; semantic_key?: unknown; subject?: unknown; predicate?: unknown; endpoints?: unknown };
-  if (Object.keys(target).length !== (Object.hasOwn(target, "endpoints") ? 5 : 4)) return null;
+  const value = target as { claim_id?: unknown; semantic_key?: unknown; subject?: unknown; predicate?: unknown; endpoints?: unknown; identity_mode?: unknown };
+  const identity = Object.hasOwn(target, "identity_mode");
+  if (identity && value.identity_mode !== "merge_identity" && value.identity_mode !== "separate_identity") return null;
+  if (Object.keys(target).length !== (Object.hasOwn(target, "endpoints") ? 5 : 4) + (identity ? 1 : 0)) return null;
   if (typeof value.claim_id !== "string" || !isUlid(value.claim_id) || typeof value.semantic_key !== "string" || !/^[a-f0-9]{64}$/.test(value.semantic_key) || typeof value.predicate !== "string" ||
       typeof value.subject !== "object" || value.subject === null) return null;
   const subject = value.subject as RawSubjectRef;
   if (!(qualifiedSupplied(subject) || canonicalOccurrence(subject))) return null;
   const endpoints = attestedEndpoints(value.endpoints, subject);
-  return endpoints === null ? null : { claim_id: value.claim_id, semantic_key: value.semantic_key, subject, predicate: value.predicate, endpoints };
+  return endpoints === null ? null : { claim_id: value.claim_id, semantic_key: value.semantic_key, subject, predicate: value.predicate, endpoints,
+    ...(identity ? { identity_mode: value.identity_mode as "merge_identity" | "separate_identity" } : {}) };
 }
 
 function isNativeCorrection(db: Database, event: ReturnType<typeof eventFromRow>): boolean {
@@ -112,7 +115,13 @@ export function validateWorldEndpointProofs(
     const target = cited.map(({ event }) => isNativeCorrection(db, event) ? nativeTarget(event) : null).find((value): value is NonNullable<typeof value> => value !== null);
     // The statement attests the subject it corrects and, beyond it, only the endpoints the writer recorded with it.
     const attested = target === undefined ? null : new Set([target.subject, ...target.endpoints].map(rawSubjectRefKey));
-    if (target === undefined || attested === null || canonicalJson(semantic.subject) !== canonicalJson(target.subject) || semantic.predicate !== target.predicate ||
+    const identity = target?.identity_mode !== undefined;
+    const identityShape = !identity || (target.predicate === "world.kind" && semantic.predicate === "concept.same_as" &&
+      semantic.object.kind === "subject" && !sameRef(semantic.subject, semantic.object.ref) && target.endpoints.length === 1 &&
+      sameRef(target.endpoints[0]!, semantic.object.ref) && semantic.context.length === 0 &&
+      semantic.perspective.mode === "asserted" && semantic.perspective.holder === null && semantic.perspective.speaker === null && semantic.perspective.addressee === null &&
+      semantic.polarity === (target.identity_mode === "merge_identity" ? "positive" : "negative"));
+    if (target === undefined || attested === null || canonicalJson(semantic.subject) !== canonicalJson(target.subject) || !identityShape || (!identity && semantic.predicate !== target.predicate) ||
         !cited.some(({ event }) => isNativeCorrection(db, event) && hasSubject(event, target.subject.id)) ||
         assertionEndpoints(semantic).some(ref => !attested.has(rawSubjectRefKey(ref)))) {
       throw new ClaimError("provenance_unresolved", "native world endpoint lacks its immutable correction target");
@@ -124,6 +133,8 @@ export function validateWorldEndpointProofs(
           !sameRef(priorSemantic.subject, target.subject) || priorSemantic.predicate !== target.predicate) {
         throw new ClaimError("provenance_unresolved", "native world endpoint target is not a live attested claim");
       }
+      if (identity && (priorSemantic.object.kind !== "vocabulary" || priorSemantic.object.ref.id !== "world/concept" || priorSemantic.polarity !== "positive" || priorSemantic.context.length !== 0 || priorSemantic.perspective.mode !== "asserted" || priorSemantic.perspective.holder !== null || priorSemantic.perspective.speaker !== null || priorSemantic.perspective.addressee !== null))
+        throw new ClaimError("provenance_unresolved", "native identity correction requires a concept classification");
       // A node the statement adds must already be one the world holds; the statement cannot mint an endpoint.
       const held = new Set(assertionEndpoints(priorSemantic).map(rawSubjectRefKey));
       for (const ref of target.endpoints) {

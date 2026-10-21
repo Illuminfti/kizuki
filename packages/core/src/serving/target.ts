@@ -1,12 +1,15 @@
+import type { Database } from "bun:sqlite";
+import { classesOfEvents } from "../ledger/event-classes";
 import { authorize } from "../agents";
 import type { AuditDenial, DenyReason, Grant, Servable } from "../agents";
 import { getClaim, listClaims } from "../claims/store";
-import { sourcePolicyEpoch } from "../ledger/source-grants";
+import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { claimReader } from "./claims";
+import { authorizedClaimSql } from "./claim-policy-sql";
 import type { Claim } from "../contracts/proposal";
-import { identifier } from "./arguments";
-import { ServeError } from "./types";
-import type { ServeContext } from "./types";
+import { identifier, resolvedSubjectIdentifier } from "./arguments";
+import { ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA, ServeError } from "./types";
+import type { ResponseContract, ServeContext } from "./types";
 
 /**
  * A subject with more live keyed readings than this is not a target: the
@@ -63,18 +66,39 @@ export interface Resolved {
 function visibleTo(ctx: ServeContext, hidden: AuditDenial[] = []): (claim: Claim) => boolean {
   if (ctx.principal.kind === "owner") return () => true;
   const grant = ctx.principal.grant;
-  const reader = claimReader(ctx.db, grant, { owner: false, purpose: "correction" });
-  const sourcePolicy = sourcePolicyEpoch(ctx.db) > 0;
+  const reader = claimReader(ctx.db, grant, { owner: false, purpose: "recall" }, ctx.selection);
+  const correctionReader = claimReader(ctx.db, grant, { owner: false, purpose: "correction" }, ctx.selection);
   return (claim) => {
     // The real reason goes to the owner's audit row, never to the caller.
-    if (sourcePolicy && !reader.canRead(claim)) {
+    const decision = authorize(grant, claimServable(ctx.db, claim));
+    if (!decision.allow) hidden.push({ id: claim.claim_id, reason: decision.reason });
+    if (!decision.allow) return false;
+    if (!reader.canRead(claim) || !correctionReader.canRead(claim)) {
       hidden.push({ id: claim.claim_id, reason: "held" });
       return false;
     }
-    const decision = authorize(grant, claimServable(claim));
-    if (!decision.allow) hidden.push({ id: claim.claim_id, reason: decision.reason });
-    return decision.allow;
+    return true;
   };
+}
+
+/** Scoped targets are selected under policy before complete claims are decoded. */
+function targetPolicy(ctx: ServeContext): { sql: string; bindings: (string | number)[] } {
+  const recall = authorizedClaimSql({ ...ctx, sourcePurpose: "recall" });
+  const correction = authorizedClaimSql({ ...ctx, sourcePurpose: "correction" });
+  return { sql: `(${recall.sql}) AND (${correction.sql})`, bindings: [...recall.bindings, ...correction.bindings] };
+}
+
+function scopedTargets(ctx: ServeContext, where: string, bindings: string[], visible: (claim: Claim) => boolean): Claim[] {
+  const policy = targetPolicy(ctx);
+  const selected: Claim[] = [];
+  for (const row of ctx.db.query<{ claim_id: string }, (string | number)[]>(
+    `SELECT claim_id FROM claims WHERE status='live' AND ${where} AND ${policy.sql}
+      ORDER BY created_at, claim_id LIMIT ${MAX_CANDIDATES}`,
+  ).iterate(...bindings, ...policy.bindings)) {
+    const claim = getClaim(ctx.db, row.claim_id);
+    if (claim !== null && visible(claim)) selected.push(claim);
+  }
+  return selected;
 }
 
 /** True when `claim` is inside what `ctx.principal` could have read; the replay path uses it too. */
@@ -85,6 +109,7 @@ export function claimVisibleTo(ctx: ServeContext, claim: Claim): boolean {
 export function resolve(
   ctx: ServeContext,
   target: CorrectTarget | undefined,
+  contract: ResponseContract = ENVELOPE_SCHEMA,
 ): Resolved {
   if (target === undefined) {
     throw refuse("target", "name a claim, a claim key or a subject");
@@ -98,15 +123,27 @@ export function resolve(
 
   const hidden: AuditDenial[] = [];
   const visible = visibleTo(ctx, hidden);
+  // Only the compatibility path gathers privileged denial diagnostics.
+  const scopedV2 = contract === ENVELOPE_V2_SCHEMA;
+  const visibility = ctx.principal.kind === "owner" ? undefined
+    : claimReader(ctx.db, ctx.principal.grant, { owner: false, purpose: "recall" }).visibility;
   if (target.claim_id !== undefined) {
+    const id = identifier("target.claim_id", target.claim_id);
+    const policy = scopedV2 ? targetPolicy(ctx) : null;
+    const selected = policy === null || ctx.db.query<{ claim_id: string }, (string | number)[]>(
+      `SELECT claim_id FROM claims WHERE claim_id=? AND status='live' AND ${policy.sql}`,
+    ).get(id, ...policy.bindings) !== null;
     const claim = getClaim(
       ctx.db,
-      identifier("target.claim_id", target.claim_id),
+      selected ? id : "",
     );
     if (claim === null || claim.status !== "live" || !visible(claim)) {
       throw refuse("target.claim_id", "names no live claim", hidden);
     }
-    if (claim.claim_key === null) {
+    // A legacy importer claim has no key, so correction addresses it by its
+    // exact identity. Typed world claims are also keyless, but their support
+    // journal requires the typed correction path instead.
+    if (claim.claim_key === null && readClaimV2Semantic(ctx.db, claim.claim_id) !== null) {
       throw refuse(
         "target.claim_id",
         "names a claim with no predicate to correct",
@@ -119,12 +156,13 @@ export function resolve(
     if (!CLAIM_KEY.test(target.claim_key)) {
       throw refuse("target.claim_key", "must be a claim key");
     }
-    const claims = listClaims(ctx.db, {
+    const claims = !scopedV2 ? listClaims(ctx.db, {
       claim_key: target.claim_key,
       status: "live",
       limit: MAX_CANDIDATES,
       filter: visible,
-    });
+      ...(visibility === undefined ? {} : { visibility }),
+    }) : scopedTargets(ctx, "claim_key=?", [target.claim_key], visible);
     if (claims.length === 0) {
       throw refuse("target.claim_key", "names no live claim", hidden);
     }
@@ -133,14 +171,15 @@ export function resolve(
 
   // Narrowed in SQL. Reading a default page of the table and filtering it in
   // memory stops finding real targets the moment a vault outgrows that page.
-  const subject = identifier("target.subject", target.subject);
-  const claims = listClaims(ctx.db, {
+  const subject = (scopedV2 ? resolvedSubjectIdentifier : identifier)("target.subject", target.subject);
+  const claims = !scopedV2 ? listClaims(ctx.db, {
     status: "live",
     subject,
     keyed: true,
     limit: MAX_CANDIDATES,
     filter: visible,
-  });
+    ...(visibility === undefined ? {} : { visibility }),
+  }) : scopedTargets(ctx, "subject=? AND claim_key IS NOT NULL", [subject], visible);
   if (claims.length === 0) {
     throw refuse("target.subject", "names no live keyed claim", hidden);
   }
@@ -155,7 +194,7 @@ export function resolve(
  * far" is one question with one answer: the same gate the read tools use, so
  * a grant's window and type scope bind here exactly as they do there.
  */
-function claimServable(claim: Claim): Servable {
+function claimServable(db: Database, claim: Claim): Servable {
   const type = claim.frontmatter["type"];
   return {
     id: claim.claim_id,
@@ -166,6 +205,8 @@ function claimServable(claim: Claim): Servable {
         ? [...claim.subjects]
         : [claim.subject, ...claim.subjects],
     occurred_at: claim.valid_from,
+    // A claim carries the classes of the events it cites, on every ledger.
+    classes: classesOfEvents(db, claim.provenance),
   };
 }
 
@@ -176,18 +217,21 @@ const OUT_OF_SCOPE: Record<DenyReason, string> = {
   type_out_of_scope: "the target is outside the grant",
   subject_out_of_scope: "the target is outside the grant",
   time_out_of_scope: "the target is outside the grant",
+  class_denied: "the target is outside the grant",
   held: "the target is held",
   tool_not_granted: "the target is outside the grant",
   unknown_agent: "the target is outside the grant",
   rate_limited: "the target is outside the grant",
   busy: "the target is outside the grant",
   invalid_arguments: "the target is outside the grant",
+  not_found: "not found",
+  unsupported_contract: "the target is outside the grant",
   error: "the target is outside the grant",
 };
 
-export function readable(grant: Grant, claims: Claim[]): void {
+export function readable(db: Database, grant: Grant, claims: Claim[]): void {
   for (const claim of claims) {
-    const decision = authorize(grant, claimServable(claim));
+    const decision = authorize(grant, claimServable(db, claim));
     if (decision.allow) continue;
     throw new ServeError(decision.reason, OUT_OF_SCOPE[decision.reason]);
   }

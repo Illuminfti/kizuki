@@ -10,11 +10,14 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  OWNER,
+  initAgents,
   initVault,
   isPlainObject,
   MAX_CURSOR_BYTES,
@@ -22,9 +25,12 @@ import {
   MAX_SYNC_BATCH_BYTES,
   MAX_SYNC_BATCH_EVENTS,
   runBatch,
+  serveContextPacket,
+  serveTimeline,
 } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
-import { openLedger } from "@kizuki/core/testing";
+import { rebuildDerived } from "@kizuki/core/internal";
+import { openLedger, timeline } from "@kizuki/core/testing";
 import { KizukiError } from "../src/errors";
 import { InMemoryLedger } from "../src/ledger";
 import {
@@ -161,6 +167,7 @@ describe("construction", () => {
       capabilities: {
         backfill: true,
         sync: true,
+        sync_covers_backfill: true,
         tombstones: true,
         purge: false,
         fixture: true,
@@ -245,6 +252,63 @@ describe("backfill and sync", () => {
     // hash that covers the metadata, so a suffix note that appeared only on
     // the run that decided it would file the page a second time.
     expect(after?.metadata).toEqual(before?.metadata as Record<string, unknown>);
+  });
+
+  test("an edited page is dated by the edit, so a timeline window finds the revision", async () => {
+    writeMapping({ occurred_at: { field: "created", format: "date" } });
+    const page = (body: string): string => `---\ntitle: Notes\ncreated: 2026-01-05\n---\n${body}\n`;
+    const stamp = (iso: string): void => {
+      const seconds = Date.parse(iso) / 1000;
+      utimesSync(join(wiki, "notes/plan.md"), seconds, seconds);
+    };
+    write("notes/plan.md", page("First draft."));
+    stamp("2026-01-06T09:00:00Z");
+    const connector = createLegacyWikiConnector({ path: wiki });
+    const first = await connector.backfill(null);
+    // The first import has no earlier version: the page happened when it was created.
+    expect(first.events[0]?.occurred_at).toBe("2026-01-05T00:00:00.000Z");
+
+    write("notes/plan.md", page("Second draft."));
+    stamp("2026-03-10T12:00:00Z");
+    const second = await connector.sync(first.cursor);
+    expect(second.events[0]?.occurred_at).toBe("2026-03-10T12:00:00.000Z");
+    expect(connector.lastReport()?.pages[0]?.occurred_at).toBe("mtime");
+
+    const db = openLedger(":memory:");
+    runBatch(db, first, GRANTED);
+    runBatch(db, second, GRANTED);
+    const since = timeline(db, { ceiling: "private", since: "2026-03-01T00:00:00Z" });
+    expect(since.map((entry) => entry.text_preview)).toEqual(["Second draft."]);
+    expect(timeline(db, { ceiling: "private", until: "2026-02-01T00:00:00Z" }).map((entry) => entry.text_preview)).toEqual(["First draft."]);
+    const vaultPath = join(root, "vault");
+    initVault(vaultPath);
+    initAgents(db);
+    rebuildDerived(db, vaultPath);
+    const ctx = { db, vaultPath, principal: OWNER };
+    const window = { since: "2026-03-01T00:00:00Z", until: "2026-04-01T00:00:00Z" };
+    const served = await serveTimeline(ctx, window);
+    expect(served.quoted.map(chunk => chunk.text)).toEqual(["Second draft."]);
+    const packet = await serveContextPacket(ctx, { query: "draft", include: ["timeline"], ...window });
+    // Timeline previews trim whitespace; packets preserve the captured text.
+    expect(packet.quoted.filter(chunk => "event_id" in chunk).map(chunk => ({
+      text: chunk.text.trim(), event_id: chunk.event_id, occurred_at: chunk.occurred_at,
+    }))).toEqual([{
+      text: "Second draft.", event_id: served.quoted[0]!.event_id, occurred_at: "2026-03-10T12:00:00.000Z",
+    }]);
+    db.close();
+  });
+
+  test("a revision dated after the run is clamped to the run", async () => {
+    writeMapping({ occurred_at: { field: "created", format: "date" } });
+    write("notes/plan.md", "---\ncreated: 2026-01-05\n---\nOne.\n");
+    const connector = createLegacyWikiConnector({ path: wiki });
+    const first = await connector.backfill(null);
+    write("notes/plan.md", "---\ncreated: 2026-01-05\n---\nTwo.\n");
+    const future = Date.now() / 1000 + 86_400 * 365;
+    utimesSync(join(wiki, "notes/plan.md"), future, future);
+    const second = await connector.sync(first.cursor);
+    const observed = Date.parse(second.events[0]?.observed_at ?? "");
+    expect(Date.parse(second.events[0]?.occurred_at ?? "")).toBeLessThanOrEqual(observed);
   });
 
   test("a removed page becomes a tombstone with an empty body", async () => {
@@ -404,7 +468,7 @@ describe("backfill and sync", () => {
     ).toEqual(["journal/ada.md=entities/ada-2", "notes/ada.md=entities/ada"]);
   });
 
-  test("a changed mapping re-emits every page and the report says why", async () => {
+  test("a changed mapping re-emits only the pages it changes and the report says why", async () => {
     seed();
     const first = await createLegacyWikiConnector({ path: wiki }).backfill(
       null,
@@ -414,8 +478,25 @@ describe("backfill and sync", () => {
     });
     const connector = createLegacyWikiConnector({ path: wiki });
     const second = await connector.sync(first.cursor);
-    expect(second.events).toHaveLength(8);
+    expect(second.events).toHaveLength(1);
+    expect(second.events[0]?.sensitivity_hint).toBe("private");
     expect(connector.lastReport()?.notes).toEqual(["mapping_changed"]);
+  });
+
+  test("a mapping edit that changes nothing a page decided emits nothing, and neither does its revert", async () => {
+    seed();
+    const first = await createLegacyWikiConnector({ path: wiki }).backfill(
+      null,
+    );
+    for (const overrides of [
+      { ignore: ["drafts/**", "never-there/**"] },
+      {},
+    ]) {
+      writeMapping(overrides);
+      const connector = createLegacyWikiConnector({ path: wiki });
+      const next = await connector.sync(first.cursor);
+      expect(next.events).toEqual([]);
+    }
   });
 
   test("a malformed cursor is a parse error, not a silent full walk", async () => {
@@ -569,9 +650,10 @@ describe("backfill and sync", () => {
         { hash: "a".repeat(64), target: `entities/topics/gone-${index}.md` },
       ]);
     }
+    // The wiki is empty, so every page is withdrawn: released by the owner.
     const connector = createLegacyWikiConnector(
       { path: wiki },
-      { committedFiles: () => identities },
+      { committedFiles: () => identities, confirmWithdrawals: count },
     );
     const primed = await connector.sync(null);
     expect(primed.events).toEqual([]);

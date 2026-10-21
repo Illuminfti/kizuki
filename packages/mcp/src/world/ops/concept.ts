@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { WORLD_OBJECT_REF, worldCommon, worldNode, worldRelation } from "./shared";
+import { WORLD_CONCEPT_FIELD, worldCommon, worldNode, worldRelation } from "./shared";
 import type { McpWorldOp } from "./types";
 
 export const conceptFragment: McpWorldOp = {
   name: "concept",
-  fields: { concept: WORLD_OBJECT_REF.optional() },
+  fields: { concept: WORLD_CONCEPT_FIELD },
   data: {
     "kizuki.concept-card/v1": {
       concept: worldNode("concept"),
@@ -24,5 +24,5 @@ export const conceptFragment: McpWorldOp = {
     },
   },
   summary:
-    "concept reads one Concept by the object token find_concepts returned, passed in the field named concept.",
+    "concept reads a Concept ObjectRef.",
 };

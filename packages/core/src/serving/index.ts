@@ -1,3 +1,4 @@
+export { scopedWriterRefusal } from "./v2/writer-refusal";
 export { ENVELOPE_SCHEMA, ServeError } from "./types";
 export type {
   CanonChunk,

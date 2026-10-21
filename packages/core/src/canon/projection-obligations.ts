@@ -7,7 +7,7 @@ import { MAX_CANON_INTENT_BYTES, MAX_CANON_IDENTITY_BINDINGS } from "../ledger/c
 import { requireSourceEvents, sourceSensitivity, sourcePolicyEpoch } from "../ledger/source-grants";
 import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { FTS5_RETRIEVAL_ID } from "../retrieval/fts5";
-import { validateAbsenceProof, validateRetrievalDoc } from "../contracts/retrieval";
+import { MUTATION_FENCE_CAPABILITY, validateAbsenceProof, validateRetrievalDoc } from "../contracts/retrieval";
 import { sha256Hex } from "../util/hash";
 import { isPlainObject } from "../util/validate";
 import { parseFrontmatter } from "../vault/frontmatter";
@@ -131,11 +131,12 @@ export function refreshCanonProjectionFloor(scope: VaultMutationScope, io: Canon
 }
 
 function transitionExecution(scope: VaultMutationScope, io: CanonIo, receiptId: string, expectedDigest: string, index: number,
-  expected: "scheduled" | "started", next: "started" | "acknowledged") {
+  expected: "scheduled" | "started", next: "scheduled" | "started" | "acknowledged", assertFence?: () => void) {
   return io.db.transaction(() => {
     const saved = readCanonProjectionObligation(io.db, receiptId);
     if (saved === null || saved.row.digest !== expectedDigest || saved.value.external_execution[index] !== expected) recoveryFailure("projection_pending", receiptId);
     verify(scope, io, saved.value);
+    assertFence?.();
     saved.value.external_execution[index] = next;
     const json = JSON.stringify(saved.value), digest = sha256Hex(json);
     const changed = io.db.query("UPDATE canon_projection_obligations SET obligation=?,digest=? WHERE receipt_id=? AND digest=?").run(json, digest, receiptId, expectedDigest);
@@ -154,21 +155,39 @@ export async function retryCanonProjectionObligationsOwned(scope: VaultMutationS
   const completed: string[] = [];
   for (const { receipt_id } of ids) {
     let saved = readCanonProjectionObligation(io.db, receipt_id); if (saved === null) continue;
-    const page = verify(scope, io, saved.value);
+    let page = verify(scope, io, saved.value);
     const ops = saved.value.external_ops;
     if (saved.value.external_execution.every(state => state === "acknowledged")) { refreshCanonProjectionFloor(scope, io, receipt_id); completed.push(receipt_id); continue; }
-    // A lost response or dead process cannot prove an earlier remote write has
-    // stopped. Repeating it and undoing later could resurrect old bytes.
-    if (saved.value.external_execution.includes("started")) recoveryFailure("projection_pending", receipt_id);
     const port = io.retrieval;
+    const unknown = saved.value.external_execution.includes("started");
+    if (unknown && (port === undefined || ops.some(op => op.store !== port.descriptor.id) ||
+        !port.descriptor.supports.includes(MUTATION_FENCE_CAPABILITY) ||
+        typeof port.fenceMutations !== "function")) recoveryFailure("projection_pending", receipt_id);
     if (port === undefined || ops.some(op => op.store !== port.descriptor.id)) continue;
     const store = port.descriptor.id;
     const remove = port.remove.bind(port), upsert = port.upsert.bind(port), absent = port.verifyAbsent.bind(port);
     const generation = canonReadGeneration(io.db);
     requireSourceEvents(io.db, saved.value.derive_ids, { owner: true, purpose: "derive", port });
+    let assertFence: (() => void) | undefined;
+    if (port.descriptor.supports.includes(MUTATION_FENCE_CAPABILITY)) {
+      // No replay until the bound store proves prior work cannot arrive later.
+      // Recheck all authority after the await before changing durable state.
+      if (typeof port.fenceMutations !== "function") recoveryFailure("projection_pending", receipt_id);
+      const fence = await port.fenceMutations();
+      page = verify(scope, io, saved.value);
+      requireSourceEvents(io.db, saved.value.derive_ids, { owner: true, purpose: "derive", port });
+      if (fence?.store !== store || typeof fence.assertCurrent !== "function" || port.descriptor.id !== store || canonReadGeneration(io.db) !== generation) recoveryFailure("authority_changed", receipt_id);
+      const check = fence.assertCurrent.bind(fence);
+      assertFence = () => {
+        if (check() !== undefined || port.descriptor.id !== store) recoveryFailure("authority_changed", receipt_id);
+      };
+      for (const [index, state] of saved.value.external_execution.entries()) {
+        if (state === "started") saved = transitionExecution(scope, io, receipt_id, saved.row.digest, index, "started", "scheduled", assertFence);
+      }
+    }
     for (const [index, op] of ops.entries()) {
       if (saved.value.external_execution[index] === "acknowledged") continue;
-      saved = transitionExecution(scope, io, receipt_id, saved.row.digest, index, "scheduled", "started");
+      saved = transitionExecution(scope, io, receipt_id, saved.row.digest, index, "scheduled", "started", assertFence);
       if (op.op === "remove") {
         const report = await remove([op.doc]);
         if (!Number.isSafeInteger(report.processed) || report.processed < 1) recoveryFailure("projection_pending", receipt_id);
@@ -193,7 +212,7 @@ export async function retryCanonProjectionObligationsOwned(scope: VaultMutationS
         if (op.op === "upsert") { await remove([op.doc]); const proof = validateAbsenceProof(await absent([op.doc])); if (proof.store !== store || proof.checked !== 1 || proof.found.length !== 0) recoveryFailure("projection_pending", receipt_id); }
         throw error;
       }
-      saved = transitionExecution(scope, io, receipt_id, saved.row.digest, index, "started", "acknowledged");
+      saved = transitionExecution(scope, io, receipt_id, saved.row.digest, index, "started", "acknowledged", assertFence);
     }
     refreshCanonProjectionFloor(scope, io, receipt_id);
     completed.push(receipt_id);

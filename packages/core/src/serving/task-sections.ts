@@ -1,10 +1,12 @@
+import { referenceScope } from "../world/ref-kinds/common";
+import { issueEventVersionRef } from "../world/ref-kinds/evidence";
 import { timingSafeEqual } from "node:crypto";
 import { sha256 } from "../agents/hash";
 import type { AuditDenial } from "../agents";
 import { identifier } from "./arguments";
 import { eventDecision, currentQuotedSource } from "./ledger";
 import { packetTokens } from "./packet-tokenizer";
-import { redactorOf } from "./redact";
+import { createRedactor, redactorOf } from "./redact";
 import { ServeError } from "./types";
 import type { QuotedChunk, ServeContext } from "./types";
 
@@ -38,7 +40,7 @@ export interface TaskAttachment {
     | "budget"
     | "bounds"
     | "unparsed";
-  /** SHA-256 of the current capture. Absent when the text is withheld. */
+  /** SHA-256 of the served projection for agents, raw capture for owners. Absent when withheld. */
   integrity?: string;
   sections?: Record<TaskKind, string[]>;
   omitted?: TaskKind[];
@@ -146,10 +148,11 @@ function pack(
   sections: Record<TaskKind, string[]>,
   soFar: string,
   budget: number,
+  scopedHeader?: string,
 ): { block: string; included: TaskKind[]; omitted: TaskKind[]; status: TaskAttachment["status"]; reason?: TaskAttachment["reason"] } {
   const fits = (block: string) => packetTokens(`${soFar}${block}`) <= budget;
   const recorded = TASK_KINDS.filter((kind) => sections[kind].length > 0);
-  const lead = header(eventId, integrity);
+  const lead = scopedHeader ?? header(eventId, integrity);
 
   if (sections.constraint.length === 0) {
     if (!fits(lead)) {
@@ -249,7 +252,10 @@ export function readTaskAttachment(
       withheld: [{ id: args.event_id, reason: decision.reason }],
     };
   }
-  const integrity = sha256(source.text);
+  // A valid task has at most 24 lines of 200 code points. Oversized records
+  // fail before parsing or secret scanning, including for the owner.
+  if (source.text.length > 16_384) return { task: { status: "incomplete", reason: "bounds" }, block: "", quoted: [], withheld: [] };
+  const integrity = sha256(ctx.principal.kind === "owner" ? source.text : createRedactor(ctx.principal, ctx.servingSecrets).text(source.text));
   if (args.integrity !== undefined && !sameDigest(args.integrity, integrity)) {
     return { task: { status: "unavailable" }, block: "", quoted: [], withheld: [] };
   }
@@ -270,12 +276,19 @@ export function readTaskAttachment(
   const redactor = redactorOf(ctx);
   const redacted = blankSections();
   for (const kind of TASK_KINDS) redacted[kind] = parsed.sections[kind].map((value) => redactor.text(value));
-  const packed = pack(args.event_id, integrity, redacted, soFar, budget);
+  const scopedHeader = ctx.scopedResponse === true ? ctx.db.transaction(() => {
+    const event = issueEventVersionRef(referenceScope(ctx), args.event_id);
+    if (event === null) throw new ServeError("not_found", "not found");
+    return `## task
+[event-version-ref:${event.token}] quoted captured task
+`;
+  }).immediate() : undefined;
+  const packed = pack(args.event_id, integrity, redacted, soFar, budget, scopedHeader);
   const sections = servedSections(redacted, packed.included);
   const task: TaskAttachment = {
     status: packed.status,
     ...(packed.reason === undefined ? {} : { reason: packed.reason }),
-    integrity,
+    ...(ctx.scopedResponse === true ? {} : { integrity }),
     ...(packed.block === "" ? {} : { sections }),
     ...(packed.omitted.length === 0 ? {} : { omitted: packed.omitted }),
   };

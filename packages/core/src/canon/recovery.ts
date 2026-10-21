@@ -1,4 +1,6 @@
+import { assertPositiveAuthorityMutationAllowed } from "./positive-authority";
 import { isErasedReceipt } from "./receipts";
+import { stampPageClasses, removePageClasses } from "./page-classes";
 import { eraseReceiptRow, insertErasedReceiptRow } from "./store";
 import { refreshDerivedPage, removeDerivedPage } from "../derived";
 import { parseFrontmatter } from "../vault/frontmatter";
@@ -9,7 +11,7 @@ import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-s
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationSync } from "./io";
 import { openWorldErasureReceiptStream, openOrdinaryRecoveryReceiptStream, type WorldErasureReceiptStream, type OrdinaryRecoveryReceiptStream } from "./receipt-stream";
 import { commitMachineByteIntent, recordMachineBodyImages } from "../ledger/event-origin";
-import { getClaim, markClaimReverted, minTimestamp, reinstateClaim, resupersedeClaim, supersessionsForReceipt } from "../claims/store";
+import { enqueueClaimRetrieval, getClaim, markClaimReverted, minTimestamp, reinstateClaim, resupersedeClaim, supersessionsForReceipt } from "../claims/store";
 import { tableExists } from "../ledger/schema";
 import { getCanonReceipt, type CanonReceipt } from "./receipts";
 import { insertReceiptRow, deletePageIndex, markReceiptReverted, upsertPageIndex, type CanonIo } from "./store";
@@ -83,8 +85,26 @@ function restoreClaimLifecycle(io: CanonIo, original: CanonReceipt, at: string):
     }
   } else {
     for (const id of original.claim_ids) markClaimReverted(io.db, id, at);
-    const prior = new Map(supersessionsForReceipt(io.db, original.receipt_id).map(row => [row.loser, row.prior_valid_to]));
-    for (const ref of original.superseded) reinstateClaim(io.db, ref.claim_id, prior.get(ref.claim_id) ?? null);
+    const prior = new Map(supersessionsForReceipt(io.db, original.receipt_id).map(row => [row.loser, row]));
+    for (const ref of original.superseded) {
+      const loser = getClaim(io.db, ref.claim_id);
+      const supersession = prior.get(ref.claim_id);
+      // The receipt retains every retirement, but only materialized source
+      // revisions belong to its before image. Queued edits stay retired.
+      if (supersession?.rule === "R3" && loser?.receipt_id === null &&
+          loser.producer === "deterministic" &&
+          typeof loser.frontmatter["x-connector"] === "string" &&
+          typeof loser.frontmatter["x-source-record-id"] === "string") continue;
+      reinstateClaim(io.db, ref.claim_id, supersession?.prior_valid_to ?? null);
+    }
+  }
+  // Queue in the same completion transaction, using the durable store binding
+  // even when recovery has not opened that port yet. The existing claim sweep
+  // reloads current lifecycle and authority before publishing or removing it.
+  const stores = new Set(original.retrieval_ops.map(op => op.store));
+  for (const id of new Set([...original.claim_ids, ...original.superseded.map(ref => ref.claim_id)])) {
+    const claim = getClaim(io.db, id);
+    if (claim !== null) for (const store of stores) enqueueClaimRetrieval(io.db, store, claim, at);
   }
 }
 function completeRows(scope:VaultMutationScope,io: CanonIo, intent: CanonWriteIntent): void {
@@ -122,6 +142,14 @@ function completeRows(scope:VaultMutationScope,io: CanonIo, intent: CanonWriteIn
     page_id: completion.page_id, rel_path: receipt.page_path, subject_key: completion.subject_key,
     last_receipt: receipt.receipt_id, last_hash: receipt.after_hash,
   });
+  if (completion.page_id !== null) {
+    const after = decodeCanonImage(intent.after_base64);
+    if (after === null) removePageClasses(io.db, completion.page_id);
+    else {
+      const page = parseFrontmatter(after.toString("utf8"));
+      stampPageClasses(io.db, { id: completion.page_id, contentHash: receipt.after_hash, ...page });
+    }
+  }
   enqueueCanonProjection(io.db, intent);
   io.db.query("DELETE FROM canon_write_intents WHERE singleton=1 AND receipt_id=?").run(receipt.receipt_id);
   advanceCanonReadGeneration(io.db);
@@ -141,6 +169,9 @@ function completeErasureRows(scope:VaultMutationScope,io:CanonIo,intent:WorldCan
     if(tableExists(io.db,"canon_write_reservations"))io.db.query("UPDATE canon_write_reservations SET page_path='',before_hash=NULL WHERE receipt_id=?").run(erased.receipt_id);
   }
   io.db.query("DELETE FROM canon_holds WHERE page_path=?").run(intent.receipt.page_path);
+  // Completion and projection share the transaction. The finished intent must
+  // stop holding its page before graph refresh, especially after deletion.
+  io.db.query("DELETE FROM canon_write_intents WHERE singleton=1 AND receipt_id=?").run(receipt.receipt_id);
   const after=decodeCanonImage(intent.after_base64),pageId=intent.completion.page_id;
   if(after===null) {
     deletePageIndex(io.db,intent.receipt.page_path);
@@ -153,12 +184,12 @@ function completeErasureRows(scope:VaultMutationScope,io:CanonIo,intent:WorldCan
     const page=parseFrontmatter(after.toString("utf8"));
     refreshDerivedPage(io.db,{id:pageId,path:join(io.vault_path,receipt.page_path),relPath:receipt.page_path,data:page.data,body:page.body,contentHash:receipt.after_hash},io.vault_path,scope);
   }
-  io.db.query("DELETE FROM canon_write_intents WHERE singleton=1 AND receipt_id=?").run(receipt.receipt_id);
   advanceCanonReadGeneration(io.db);
 }
 
 function finish(scope: VaultMutationScope, io: CanonIo, intent: CanonWriteIntent, stream: OrdinaryRecoveryReceiptStream | WorldErasureReceiptStream, recovered?: CanonStageRecoveryRecord[]): CanonReceipt {
   io.db.transaction(() => {
+    if (intent.receipt.kind !== "purge_rewrite") assertPositiveAuthorityMutationAllowed(io.db);
     assertCanonAdmission(io.db, intent);
     stream.verifyBinding();
     if (recovered !== undefined) {

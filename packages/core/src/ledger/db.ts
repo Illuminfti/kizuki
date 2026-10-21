@@ -1,3 +1,9 @@
+import { applyTypedRefs } from "../world/tables/refs";
+import { applyObservationHistoryErasure } from "../world/tables/observations";
+import { OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION } from "../world/tables/versions";
+import { applyForecasts } from "../world/tables/forecasts";
+import { applyAttention } from "../world/tables/attention";
+import { applyConsolidation } from "../world/tables/consolidation";
 import { applyWorldCanonV33 } from "../canon/world-schema";
 import { Database } from "bun:sqlite";
 import { manageDatabaseLifetime } from "./lifetime";
@@ -34,8 +40,14 @@ import { applyWorldTables } from "../world/schema";
 import { applyClaimV2TablesV31 } from "./migrations/claim-v2-v31";
 import { applyPurgeReingestV34 } from "./migrations/purge-reingest-v34";
 import { applyMachineBodies } from "./machine-body-schema";
+import { applyCanonClaimRetries } from "./canon-claim-retry-schema";
 import { applyCursorStoreV35 } from "./migrations/cursor-store-v35";
-import { CURSOR_STORE_MIGRATION_VERSION, PURGE_REINGEST_MIGRATION_VERSION, WORLD_MIGRATION_VERSIONS } from "../world/tables/versions";
+import { CANON_CLAIM_RETRY_MIGRATION_VERSION, SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION, CURSOR_STORE_MIGRATION_VERSION, PURGE_REINGEST_MIGRATION_VERSION, WORLD_MIGRATION_VERSIONS, LEDGER_MIGRATION_VERSIONS } from "../world/tables/versions";
+import { applyKnownRefs } from "../world/tables/known-refs";
+import { applyClaimHistorySchema } from "../world/tables/known";
+import { applyWorldViewTables } from "../world/tables/views";
+import { applyEventClassesMigration } from "./migrations/event-classes";
+import { applyScopedClaimIdempotency } from "../claims/scoped-idempotency";
 
 interface Migration {
   version: number;
@@ -233,6 +245,17 @@ const MIGRATIONS: readonly Migration[] = [
   { version: PURGE_REINGEST_MIGRATION_VERSION, apply: applyPurgeReingestV34 },
   { version: CURSOR_STORE_MIGRATION_VERSION, apply: applyCursorStoreV35 },
   { version: WORLD_MIGRATION_VERSIONS.machine_images, apply: applyMachineBodies },
+  { version: WORLD_MIGRATION_VERSIONS.view, apply: applyWorldViewTables },
+  { version: LEDGER_MIGRATION_VERSIONS.eventClasses, apply: applyEventClassesMigration },
+  { version: SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION, apply: applyScopedClaimIdempotency },
+  { version: WORLD_MIGRATION_VERSIONS.known, apply: applyClaimHistorySchema },
+  { version: WORLD_MIGRATION_VERSIONS.refs, apply: applyKnownRefs },
+  { version: WORLD_MIGRATION_VERSIONS.consol, apply: applyConsolidation },
+  { version: WORLD_MIGRATION_VERSIONS.attn, apply: applyAttention },
+  { version: WORLD_MIGRATION_VERSIONS.fcst, apply: applyForecasts },
+  { version: WORLD_MIGRATION_VERSIONS.typed_refs, apply: applyTypedRefs },
+  { version: CANON_CLAIM_RETRY_MIGRATION_VERSION, apply: applyCanonClaimRetries },
+  { version: OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION, apply: applyObservationHistoryErasure },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;
@@ -300,6 +323,7 @@ function migrate(db: Database, options: { includeStaging?: boolean } = {}): void
     db.transaction(() => {
       applyDerivedV10(db);
       repairClaimsCompatibility(db, options);
+      applyScopedClaimIdempotency(db);
     }).immediate();
     assertLedgerSchema(db, latest);
     return;
@@ -307,7 +331,7 @@ function migrate(db: Database, options: { includeStaging?: boolean } = {}): void
 
   // SQLite requires FK enforcement disabled outside a table-rebuild transaction.
   // The full FK oracle runs before commit; observers see either complete schema.
-  const rebuildReceipts = pending.some(migration => migration.version === 33);
+  const rebuildReceipts = pending.some(migration => migration.version === 33 || migration.version === WORLD_MIGRATION_VERSIONS.typed_refs);
   if (rebuildReceipts && db.inTransaction) throw new LedgerStoreError("corrupt", "typed canon migration requires an outer transaction");
   if (rebuildReceipts) db.exec("PRAGMA foreign_keys=OFF");
   try {
@@ -318,6 +342,7 @@ function migrate(db: Database, options: { includeStaging?: boolean } = {}): void
         writeSchemaVersion(db, migration.version);
       }
       repairClaimsCompatibility(db, options);
+      applyScopedClaimIdempotency(db);
       if (rebuildReceipts && db.query("PRAGMA foreign_key_check").get() !== null)
         throw new LedgerStoreError("corrupt", "typed canon migration violated foreign keys");
     }).immediate();

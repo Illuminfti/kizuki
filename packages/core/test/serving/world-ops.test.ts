@@ -31,13 +31,22 @@ afterAll(() => fixture.dispose());
 const DESCRIBE = { operation: "describe" };
 
 describe("the operation registry", () => {
-  test("registers the four shipped operations and describe, in a stable order", () => {
+  test("registers shipped reads and retained history in a stable order", () => {
     expect(WORLD_OPS.map((op) => op.name)).toEqual([
       "find_concepts",
       "find_situations",
       "concept",
       "situation",
       "describe",
+      "evidence",
+      "observation",
+      "history",
+      "share",
+      "resume",
+      "question", "find_questions", "frontier",
+      "person", "find_people", "procedure", "find_procedures", "skill", "framework",
+      "artifact_version", "find_artifacts", "outcome",
+      "diff", "slice", "attention", "forecast", "forecast_scores", "atlas",
     ]);
   });
 
@@ -201,6 +210,12 @@ describe("describe", () => {
       kinds: [
         { id: "concept", state: "shipped", population: "typed_extraction" },
         { id: "situation", state: "shipped", population: "typed_extraction" },
+        { id: "question", state: "dark", population: "extraction_off" },
+        { id: "skill", state: "dark", population: "extraction_off" },
+        { id: "framework", state: "dark", population: "extraction_off" },
+        { id: "procedure", state: "dark", population: "extraction_off" },
+        { id: "outcome", state: "shipped", population: "propose" },
+        { id: "artifact_version", state: "shipped", population: "connector_metadata" },
       ],
       operations: WORLD_OPS.map((op) => ({
         name: op.name,

@@ -41,7 +41,7 @@ function jaccard(left: string, right: string): number {
 
 /**
  * Scores two claim bodies in an embedding space. The fixture space is the
- * only space this lane ships; a different space is a hard mismatch.
+ * only calibrated space here; callers skip semantic dedup for other spaces.
  */
 export function scoreClaimPair(
   left: string,

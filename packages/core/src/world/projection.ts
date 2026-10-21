@@ -1,14 +1,22 @@
+import type { PersonCard } from "../contracts/person-card";
 import type {
   ConceptCard,
   ConceptCoverage,
 } from "../contracts/concept-card";
+import type { SituationCardV2 } from "../contracts/situation-card-v2";
 import type { SituationCard } from "../contracts/situation-card";
+import type { ProcedureCard } from "../contracts/procedure-card";
+import type { FrameworkCard } from "../contracts/framework-card";
+import type { SkillCard } from "../contracts/skill-card";
+import type { ArtifactCard } from "../contracts/artifact-card";
+import type { QuestionCard } from "../contracts/question-card";
 import type { WorldValidQuery } from "../serving/world-view";
 import type { ServeContext } from "../serving/types";
+import type { WorldDependencies } from "./dependencies";
 import {
   WORLD_DISCOVERY_SCAN_BUDGET,
 } from "./pipeline/collect";
-import { newReadFrame } from "./pipeline/frame";
+import { newReadFrame, type RecordedCutoff } from "./pipeline/frame";
 import { readWorldCard, readWorldMatches } from "./pipeline/read";
 import type { WireRef, WorldNamespace } from "./references";
 
@@ -33,13 +41,21 @@ export function projectWorldCard(
   ctx: ServeContext,
   ns: WorldNamespace,
   handle: string,
-  kind: "concept" | "situation",
+  kind: "concept" | "situation" | "question" | "person" | "skill" | "framework" | "procedure" | "artifact_version",
   valid: WorldValidQuery,
-): ConceptCard | SituationCard | null {
-  // The two shipped assemblers build exactly these cards.
-  return readWorldCard(newReadFrame(ctx, ns, valid), handle, kind) as
+  dependencies?: WorldDependencies,
+  cutoff?: RecordedCutoff,
+  cardSchema?: string,
+): ConceptCard | SituationCard | SituationCardV2 | QuestionCard | PersonCard | ProcedureCard | FrameworkCard | SkillCard | ArtifactCard | null {
+  // Each shipped assembler builds its declared card.
+  return readWorldCard(newReadFrame(ctx, ns, valid, dependencies, cutoff), handle, kind, cardSchema) as
     | ConceptCard
     | SituationCard
+    | SituationCardV2
+    | ArtifactCard
+    | QuestionCard
+    | PersonCard
+    | ProcedureCard | FrameworkCard | SkillCard
     | null;
 }
 
@@ -52,6 +68,7 @@ export function discoverWorld(
   valid: WorldValidQuery,
   after: string | null = null,
   scanBudget: number = WORLD_DISCOVERY_SCAN_BUDGET,
+  dependencies?: WorldDependencies,
 ): {
   schema: "kizuki.concept-matches/v1" | "kizuki.situation-matches/v1";
   matches: readonly { ref: WireRef<"object">; labels: readonly string[] }[];
@@ -59,7 +76,7 @@ export function discoverWorld(
   coverage: ConceptCoverage;
 } {
   return readWorldMatches(
-    newReadFrame(ctx, ns, valid),
+    newReadFrame(ctx, ns, valid, dependencies),
     kind,
     label,
     after,

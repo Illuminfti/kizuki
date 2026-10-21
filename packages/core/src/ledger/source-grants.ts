@@ -1,3 +1,4 @@
+import { assertPositiveAuthorityMutationAllowed } from "../canon/positive-authority";
 import { withControlWait } from "./busy";
 import {
   claimV2TablesPresent,
@@ -20,7 +21,8 @@ import {
   type SourceStoreStatus,
 } from "./source-stores";
 import type { Database } from "bun:sqlite";
-import { SENSITIVITY_ORDER } from "../agents/types";
+import { SENSITIVITY_ORDER, isEventClass } from "../agents/types";
+import type { EventClass } from "../agents/types";
 import type { CaptureEventInput, SensitivityHint } from "../contracts/event";
 import { raiseSensitivity } from "../contracts/event";
 import type { RetrievalPort } from "../contracts/retrieval";
@@ -28,7 +30,11 @@ import { sha256Hex } from "../util/hash";
 import { isUlid, ulid } from "../util/ulid";
 import { isRfc3339 } from "../util/time";
 import { isPlainObject } from "../util/validate";
-import { getConnectorSensitivity } from "../sensitivity/store";
+import { isOwnerMappedConnector } from "../sensitivity/policy";
+import { SensitivityError } from "../sensitivity/errors";
+import { getConnectorSensitivity, setGrantSensitivityDefault } from "../sensitivity/store";
+import { backfillCredentialClasses, classDenialSql, classesOfEvents, restampSourceClasses, stampRuleClasses } from "./event-classes";
+import type { ClassRule } from "./event-classes";
 import { getConnection } from "./connections";
 import { tableExists } from "./schema";
 
@@ -49,10 +55,32 @@ export const SOURCE_FIELDS = [
   "attachments",
   "metadata",
 ] as const;
+/**
+ * What the owner accepts a model destination to do with the text it receives, from strictest to
+ * loosest. `provider_managed` is the pre-classification value: it names no promise, so it accepts
+ * any destination and keeps every existing grant valid and its digest unchanged.
+ */
+export const DECLARED_RETENTION_CLASSES = ["zero_retention", "logged_no_training", "logged_and_trained"] as const;
+export const EXTERNAL_RETENTION_CLASSES = [...DECLARED_RETENTION_CLASSES, "provider_managed"] as const;
+export type ExternalRetention = (typeof EXTERNAL_RETENTION_CLASSES)[number];
+/** What a bound destination declares. An undeclared destination is the loosest promise, never the strictest. */
+export type DeclaredRetention = (typeof DECLARED_RETENTION_CLASSES)[number];
+/** True when a destination's declared class is within the class the grant accepts. */
+export function retentionAccepted(accepted: ExternalRetention, declared: DeclaredRetention | undefined): boolean {
+  const acceptedRank = EXTERNAL_RETENTION_CLASSES.indexOf(accepted);
+  const declaredRank = DECLARED_RETENTION_CLASSES.indexOf(declared ?? "logged_and_trained");
+  return acceptedRank >= 0 && declaredRank >= 0 && declaredRank <= acceptedRank;
+}
 export interface SourceModelEgress {
   model_endpoint: string;
   model: string;
-  external_retention: "provider_managed";
+  external_retention: ExternalRetention;
+  /**
+   * A second destination the same events may go to, such as a configured System One judge. Both keys
+   * are present or both absent, and an absent pair leaves the policy, and so its digest, as it was.
+   */
+  judge_endpoint?: string;
+  judge_model?: string;
 }
 export interface SourceGrantPolicy {
   purposes: SourcePurpose[];
@@ -60,6 +88,14 @@ export interface SourceGrantPolicy {
   retention: "persistent_owned_until_revoked";
   egress: "local_only" | SourceModelEgress;
   sensitivity_floor: SensitivityHint;
+  /**
+   * Owner-mapped importers only: the tier their per-page labels may lower an
+   * event to, never below the connector's floor. Absent keeps the connector
+   * default, so a regrant that omits it takes the labels away again.
+   */
+  sensitivity_default?: SensitivityHint;
+  /** Owner-declared path globs that stamp a content class on matching events. */
+  class_rules?: ClassRule[];
 }
 export interface SourceGrant {
   source_key: string;
@@ -178,20 +214,44 @@ function modelEndpoint(value: unknown): string {
 export { modelEndpoint as normalizeSourceModelEndpoint, modelName as normalizeSourceModelName };
 function egress(value: unknown): SourceGrantPolicy["egress"] {
   if (value === "local_only") return value;
-  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "external_retention,model,model_endpoint") {
+  const keys = isPlainObject(value) ? Object.keys(value).sort().join(",") : "";
+  if (!isPlainObject(value) || (keys !== "external_retention,model,model_endpoint" &&
+    keys !== "external_retention,judge_endpoint,judge_model,model,model_endpoint")) {
     fail("unsupported_egress");
   }
-  if (value.external_retention !== "provider_managed") fail("unsupported_retention");
+  const retention = value.external_retention;
+  if (typeof retention !== "string" || !(EXTERNAL_RETENTION_CLASSES as readonly string[]).includes(retention)) fail("unsupported_retention");
   return {
     model_endpoint: modelEndpoint(value.model_endpoint),
     model: modelName(value.model),
-    external_retention: "provider_managed",
+    external_retention: retention as ExternalRetention,
+    ...(Object.hasOwn(value, "judge_endpoint")
+      ? { judge_endpoint: modelEndpoint(value.judge_endpoint), judge_model: modelName(value.judge_model) }
+      : {}),
   };
 }
+const MAX_CLASS_RULES = 32;
+const MAX_GLOB_CHARS = 256;
+function classRules(value: unknown): ClassRule[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_CLASS_RULES) fail("invalid_source_policy");
+  const seen = new Set<string>();
+  return value.map((rule): ClassRule => {
+    if (!isPlainObject(rule) || Object.keys(rule).sort().join(",") !== "class,path_glob") fail("invalid_source_policy");
+    const glob = rule.path_glob;
+    if (typeof glob !== "string" || glob.length === 0 || glob.length > MAX_GLOB_CHARS || /\p{C}/u.test(glob) ||
+        glob.startsWith("/") || glob.split("/").includes("..") || !isEventClass(rule.class)) fail("invalid_source_policy");
+    try { new Bun.Glob(glob); } catch { fail("invalid_source_policy"); }
+    const key = `${rule.class}\0${glob}`;
+    if (seen.has(key)) fail("invalid_source_policy");
+    seen.add(key);
+    return { path_glob: glob, class: rule.class };
+  });
+}
+const OPTIONAL_POLICY_KEYS = ["sensitivity_default", "class_rules"];
 function policyOf(value: unknown): SourceGrantPolicy {
   if (
     !isPlainObject(value) ||
-    Object.keys(value).sort().join(",") !==
+    Object.keys(value).filter((key) => !OPTIONAL_POLICY_KEYS.includes(key)).sort().join(",") !==
       "allowed_fields,egress,purposes,retention,sensitivity_floor"
   )
     fail("invalid_source_policy");
@@ -203,6 +263,8 @@ function policyOf(value: unknown): SourceGrantPolicy {
     retention: value.retention,
     egress: egress(value.egress),
     sensitivity_floor: label(value.sensitivity_floor),
+    ...(value.sensitivity_default === undefined ? {} : { sensitivity_default: label(value.sensitivity_default) }),
+    ...(value.class_rules === undefined ? {} : { class_rules: classRules(value.class_rules) }),
   };
 }
 function requestOf(request: SourceGrantRequest): void {
@@ -408,6 +470,7 @@ export function setSourceGrant(
         policy_digest: sha256Hex(JSON.stringify(policy)),
       });
       if (prior !== null) return prior;
+      assertPositiveAuthorityMutationAllowed(db);
       const connection = db
         .query<{ connector_id: string }, [string]>(
           "SELECT connector_id FROM connections WHERE source_key=?",
@@ -424,6 +487,14 @@ export function setSourceGrant(
       if (current?.status === "denied") fail("source_purge_pending");
       if (current?.status === "purged")
         invalidateSourceStoreGeneration(db, request.source_key);
+      if (policy.sensitivity_default !== undefined && !isOwnerMappedConnector(connection.connector_id))
+        fail("invalid_source_policy");
+      try {
+        setGrantSensitivityDefault(db, { connector_id: connection.connector_id, source_key: request.source_key }, policy.sensitivity_default);
+      } catch (error) {
+        if (error instanceof SensitivityError) fail("sensitivity_default_below_floor");
+        throw error;
+      }
       const at = new Date().toISOString();
       const revision = request.expected_revision + 1;
       const policyDigest = sha256Hex(JSON.stringify(policy));
@@ -440,6 +511,9 @@ export function setSourceGrant(
         null,
         null,
       );
+      if (JSON.stringify(current?.policy.class_rules ?? []) !== JSON.stringify(policy.class_rules ?? [])) {
+        restampSourceClasses(db, request.source_key, policy.class_rules ?? []);
+      }
       return record(db, digest, {
         operation_id: request.operation_id,
         source_key: request.source_key,
@@ -452,6 +526,22 @@ export function setSourceGrant(
       });
     })
     .immediate());
+}
+/**
+ * Classes are derived from events and source policy, so a restore recomputes
+ * them instead of carrying them: the content class for every event, then each
+ * source's owner-declared rules. The caller owns the transaction.
+ */
+export function rebuildEventClasses(db: Database): void {
+  db.exec("DELETE FROM event_classes");
+  backfillCredentialClasses(db);
+  if (!tableExists(db, "source_grants")) return;
+  for (const row of db
+    .query<{ source_key: string; policy: string }, []>("SELECT source_key, policy FROM source_grants ORDER BY source_key")
+    .all()) {
+    const rules = policyOf(JSON.parse(row.policy)).class_rules;
+    if (rules !== undefined) restampSourceClasses(db, row.source_key, rules);
+  }
 }
 /** Commit denial independently of purge or canon lock acquisition. */
 export function revokeSourceGrant(
@@ -710,10 +800,14 @@ export function bindSourceEvent(
     source.expected_revision,
     grant.policy_digest,
   );
+  stampRuleClasses(db, eventId, grant.policy.class_rules ?? []);
 }
 
 const localPorts = new WeakSet<object>();
-const modelPorts = new WeakMap<object, Readonly<Pick<SourceModelEgress, "model_endpoint" | "model">>>();
+type ModelDestination = Readonly<Pick<SourceModelEgress, "model_endpoint" | "model"> & { retention?: DeclaredRetention }>;
+const modelPorts = new WeakMap<object, ModelDestination>();
+/** A second destination a producer sends the same events to, such as a configured System One judge. */
+const judgePorts = new WeakMap<object, ModelDestination>();
 /** A runtime that was selected only because the ledger was still epoch zero. */
 const epochZeroProducerPorts = new WeakSet<object>();
 /** Trusted host composition capability, not an event/config assertion or agent API. */
@@ -734,22 +828,46 @@ export function sourcePortBindingDigest(port: object | undefined): string {
   const model = port === undefined ? undefined : modelPorts.get(port);
   return sha256Hex(model === undefined
     ? "kizuki.source-port/v1\0unbound"
-    : `kizuki.source-port/v1\0model\0${model.model_endpoint}\0${model.model}`);
+    : `kizuki.source-port/v1\0model\0${destinationKey(model)}${judgeKey(port)}`);
 }
+const destinationKey = (to: ModelDestination): string => `${to.model_endpoint}\0${to.model}${to.retention === undefined ? "" : `\0${to.retention}`}`;
+const judgeKey = (port: object | undefined): string => {
+  const judge = port === undefined ? undefined : judgePorts.get(port);
+  return judge === undefined ? "" : `\0judge\0${destinationKey(judge)}`;
+};
+function destinationOf(binding: { model_endpoint: string; model: string; retention?: DeclaredRetention }): ModelDestination {
+  if (binding.retention !== undefined && !(DECLARED_RETENTION_CLASSES as readonly string[]).includes(binding.retention)) fail("unsupported_retention");
+  return Object.freeze({
+    model_endpoint: modelEndpoint(binding.model_endpoint),
+    model: modelName(binding.model),
+    ...(binding.retention === undefined ? {} : { retention: binding.retention }),
+  });
+}
+const sameDestination = (a: ModelDestination, b: ModelDestination): boolean =>
+  a.model_endpoint === b.model_endpoint && a.model === b.model && a.retention === b.retention;
 /** Trusted host capability for one concrete model transport destination. */
 export function bindSourceModelPort<T extends object>(
   port: T,
-  binding: { model_endpoint: string; model: string },
+  binding: { model_endpoint: string; model: string; retention?: DeclaredRetention },
 ): T {
-  const normalized = Object.freeze({
-    model_endpoint: modelEndpoint(binding.model_endpoint),
-    model: modelName(binding.model),
-  });
+  const normalized = destinationOf(binding);
   const prior = modelPorts.get(port);
-  if (prior !== undefined && (prior.model_endpoint !== normalized.model_endpoint || prior.model !== normalized.model)) {
-    fail("source_model_binding_conflict");
-  }
+  if (prior !== undefined && !sameDestination(prior, normalized)) fail("source_model_binding_conflict");
   modelPorts.set(port, prior ?? normalized);
+  return port;
+}
+/**
+ * Trusted host capability: the producer also sends the events it extracts from to this second
+ * destination. Source consent must then cover that destination too, or the events are not sent at all.
+ */
+export function bindSourceJudgePort<T extends object>(
+  port: T,
+  binding: { model_endpoint: string; model: string; retention?: DeclaredRetention },
+): T {
+  const normalized = destinationOf(binding);
+  const prior = judgePorts.get(port);
+  if (prior !== undefined && !sameDestination(prior, normalized)) fail("source_model_binding_conflict");
+  judgePorts.set(port, prior ?? normalized);
   return port;
 }
 /** Prevent a CLI runtime selected for a historical journal from crossing into a managed epoch. */
@@ -766,10 +884,31 @@ export function inheritSourcePortBindings<T extends object>(source: object, targ
   if (epochZeroProducerPorts.has(source)) epochZeroProducerPorts.add(target);
   const model = modelPorts.get(source);
   if (model !== undefined) modelPorts.set(target, model);
+  const judge = judgePorts.get(source);
+  if (judge !== undefined) judgePorts.set(target, judge);
   return target;
+}
+function consentsTo(egress: SourceGrantPolicy["egress"], to: ModelDestination): boolean {
+  return egress !== "local_only" && egress.model_endpoint === to.model_endpoint && egress.model === to.model &&
+    retentionAccepted(egress.external_retention, to.retention);
+}
+/**
+ * True when a grant consents to a judge destination: it names the judge as its own pair, or the
+ * judge is served from the very destination the grant already names for the model. Either way the
+ * judge's declared class must sit within the class the grant accepts.
+ */
+export function consentsToJudge(
+  egress: SourceGrantPolicy["egress"],
+  judge: Readonly<{ model_endpoint: string; model: string; retention?: DeclaredRetention }>,
+): boolean {
+  if (egress === "local_only") return false;
+  if (consentsTo(egress, judge)) return true;
+  return egress.judge_endpoint === judge.model_endpoint && egress.judge_model === judge.model &&
+    retentionAccepted(egress.external_retention, judge.retention);
 }
 export interface SourceReadScope {
   owner: boolean;
+  deny_classes?: readonly EventClass[];
   purpose?: SourcePurpose;
   port?: object;
   model?: boolean;
@@ -777,10 +916,12 @@ export interface SourceReadScope {
   grantOf?: (sourceKey: string) => SourceGrant | null;
 }
 /** Necessary source-level permission; record fields are still checked separately. */
-function grantAllowsScope(grant: SourceGrant | null, scope: SourceReadScope, model: { model_endpoint: string; model: string } | undefined): boolean {
+function grantAllowsScope(grant: SourceGrant | null, scope: SourceReadScope, model: ModelDestination | undefined): boolean {
+  const judge = scope.port === undefined ? undefined : judgePorts.get(scope.port);
   return grant !== null && grant.status === "active" && grant.policy.purposes.includes(scope.purpose ?? "recall")
     && (scope.purpose !== "extract" || grant.policy.allowed_fields.includes("text"))
-    && (model === undefined || (grant.policy.egress !== "local_only" && grant.policy.egress.model_endpoint === model.model_endpoint && grant.policy.egress.model === model.model));
+    && (model === undefined || consentsTo(grant.policy.egress, model))
+    && (judge === undefined || consentsToJudge(grant.policy.egress, judge));
 }
 
 /** True only when a validated source policy denies every record for this bound extraction port. */
@@ -796,7 +937,12 @@ export function sourceEventsAllowed(
   ids: readonly string[],
   scope: SourceReadScope,
 ): boolean {
-  if (sourcePolicyEpoch(db) === 0) return true;
+  const denied = scope.deny_classes ?? [];
+  if (denied.length > 0 && classesOfEvents(db, ids).some(
+    (name) => denied.includes(name),
+  )) return false;
+  // Historical compatibility supplies no consent for a configured judge.
+  if (sourcePolicyEpoch(db) === 0) return scope.port === undefined || !judgePorts.has(scope.port);
   const local = isLocalSourcePort(scope.port);
   const model = scope.port === undefined ? undefined : modelPorts.get(scope.port);
   if (scope.port !== undefined && !local && model === undefined) return false;
@@ -848,6 +994,29 @@ export function sourceEventsAllowed(
   return true;
 }
 
+/** Model-egress policy before a candidate LIMIT; text is still rechecked by sourceEventsAllowed before sending. */
+export function sourceExtractionSql(db: Database, port: object): { sql: string; bindings: (string | number)[] } {
+  const base = sourceServingSql(db, { owner: false, purpose: "extract" }, null);
+  const clauses = [base?.sql ?? "1"], bindings: (string | number)[] = [...base?.bindings ?? []];
+  // Catalog grounding is always source-bound, including historical epoch zero.
+  clauses.push(`EXISTS(SELECT 1 FROM source_event_bindings eb JOIN source_grants eg ON eg.source_key=eb.source_key
+    WHERE eb.event_id=events.event_id AND eg.status='active'
+      AND EXISTS(SELECT 1 FROM json_each(eg.policy,'$.allowed_fields') f WHERE f.value='text')`);
+  const model = modelPorts.get(port), judge = judgePorts.get(port);
+  if (!localPorts.has(port) && model === undefined) return { sql: "0", bindings: [] };
+  const destination = (value: ModelDestination, judgeMode: boolean): void => {
+    const primary = `(json_extract(eg.policy,'$.egress.model_endpoint')=? AND json_extract(eg.policy,'$.egress.model')=?)`;
+    clauses.push(`AND (${primary}${judgeMode ? " OR (json_extract(eg.policy,'$.egress.judge_endpoint')=? AND json_extract(eg.policy,'$.egress.judge_model')=?)" : ""})
+      AND json_extract(eg.policy,'$.egress.external_retention') IN (SELECT value FROM json_each(?))`);
+    bindings.push(value.model_endpoint, value.model, ...(judgeMode ? [value.model_endpoint, value.model] : []),
+      JSON.stringify(EXTERNAL_RETENTION_CLASSES.filter(retention => retentionAccepted(retention, value.retention))));
+  };
+  if (model !== undefined) destination(model, false);
+  if (judge !== undefined) destination(judge, true);
+  clauses.push(")");
+  return { sql: `(${clauses[0]} AND ${clauses.slice(1).join(" ")})`, bindings };
+}
+
 function allowedFieldSql(field: (typeof SOURCE_FIELDS)[number]): string {
   const empty =
     field === "text"
@@ -861,17 +1030,40 @@ function allowedFieldSql(field: (typeof SOURCE_FIELDS)[number]): string {
     ))`;
 }
 
+export interface SourceServingScope {
+  owner: boolean;
+  purpose?: SourcePurpose;
+  /** Content classes the reader may not see; withheld in the same SQL as the source policy. */
+  deny_classes?: readonly EventClass[];
+}
 /**
- * Serving-read source policy as a SQL predicate so LIMIT counts authorized
- * rows. Epoch 0 is a no-op. Missing grant tables deny every row.
+ * Serving-read source policy and class denial as one SQL predicate so LIMIT
+ * counts authorized rows. Epoch 0 has no source policy to apply, but a denied
+ * class still is. Missing grant tables deny every row.
  */
 export function sourceServingSql(
   db: Database,
-  scope: { owner: boolean; purpose?: SourcePurpose },
+  scope: SourceServingScope,
   ceiling: number | null,
 ): { sql: string; bindings: (string | number)[] } | null {
+  const policy = sourcePolicyServingSql(db, scope, ceiling);
+  const classes = classDenialSql(db, scope.deny_classes ?? []);
+  if (classes === null) return policy;
+  if (policy === null) return classes;
+  return { sql: `(${policy.sql} AND ${classes.sql})`, bindings: [...policy.bindings, ...classes.bindings] };
+}
+function sourcePolicyServingSql(
+  db: Database,
+  scope: SourceServingScope,
+  ceiling: number | null,
+): { sql: string; bindings: (string | number)[] } | null {
+  // Construct the same bounded policy proof before and after first enrollment.
+  // A hidden first source must not change a caller's statement/row footprint.
+  const bindingsPresent = tableExists(db, "source_event_bindings");
+  const grantsPresent = tableExists(db, "source_grants");
+  const nativePresent = tableExists(db, "native_owner_evidence");
   if (sourcePolicyEpoch(db) === 0) return null;
-  if (!tableExists(db, "source_event_bindings") || !tableExists(db, "source_grants")) {
+  if (!bindingsPresent || !grantsPresent) {
     return { sql: "0", bindings: [] };
   }
   const purpose = scope.purpose ?? "recall";
@@ -887,7 +1079,7 @@ export function sourceServingSql(
            WHEN 'private' THEN ${SENSITIVITY_ORDER.private}
            ELSE ${SENSITIVITY_ORDER.private}
          END <= ?`;
-  const native = tableExists(db, "native_owner_evidence")
+  const native = nativePresent
     ? ` OR EXISTS (
           SELECT 1 FROM native_owner_evidence AS n
           WHERE n.event_id = events.event_id AND n.origin = 'correction'

@@ -1,3 +1,5 @@
+import { inspectSourceCoverage, type SourceCoverageReport } from "@kizuki/core/world";
+import { sourceCoverageLines } from "../source-coverage";
 import { closeHostConnector } from "../connections";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -14,6 +16,7 @@ import {
   doctorVault,
   getCanonReceiptRecord,
   getCheckpoint,
+  massWithdrawalHoldOf,
   inspectLedgerHealth,
   inspectCanonRecoveryDetail,
   inspectPurgeHealth,
@@ -25,7 +28,7 @@ import {
   readHolds,
   readVaultId,
 } from "@kizuki/core";
-import type { CaptureFanoutCounts, ClaimStatus, LiveClaimProducers } from "@kizuki/core";
+import type { CaptureFanoutCounts, ClaimStatus, LiveClaimProducers, MassWithdrawalHold } from "@kizuki/core";
 import { readSqliteRuntime } from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
@@ -33,12 +36,15 @@ import { listHostConnections, loadConnector } from "../connections";
 import { withReadVault } from "../context";
 import type { ReadVaultContext } from "../context";
 import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
+import { RETENTION_MEANING } from "../egress-view";
+import { configuredJudgeDestination } from "../judge-destination";
 import { clean, errorText, jsonEnvelope } from "../output";
 import { embeddingConfigured } from "../retrieval-runtime";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
 import { serveTomlModeHint } from "../config-custody";
 import { configuredModelBinding, inspectModelBinding, type ModelBindingSummary } from "../serve-runtime";
 import { serveSupervisorHost } from "../service-host";
+import { withdrawalHoldLine } from "../withdrawal-hold";
 import { supervisorFailureLine } from "../service-custody";
 import { nextStep } from "./doctor-next";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
@@ -48,17 +54,18 @@ const HASH_DRIFT_CAP = 64;
 const DETAIL_CAP = 160;
 
 interface DoctorConnection {
+  coverage: SourceCoverageReport;
   connector_id: string;
   source_key: string;
   path: string;
-  state: "present" | "missing";
+  state: "present" | "missing" | "disconnected";
   health: string;
   checkpoint: string;
   stored: number;
   errors: number;
   /** Why the last run failed, first reason only; null when it did not. */
   last_error: string | null;
-  /** A backfill run reached its end. Only a backfill run sets it, so a source that is only synced keeps it false. */
+  /** Backfill or a history-covering sync reached its reported end. */
   backfill_complete: boolean;
   /**
    * The last run recorded no error. Not a claim about what is left upstream:
@@ -66,6 +73,12 @@ interface DoctorConnection {
    * answered, not that it has nothing more to give.
    */
   last_run_clean: boolean;
+  /**
+   * The last run withdrew nothing because it would have withdrawn most of the
+   * source. Restoring the source clears it; `sync --confirm-withdrawals`
+   * releases it.
+   */
+  hold: MassWithdrawalHold | null;
   problem: string | null;
 }
 
@@ -302,13 +315,15 @@ async function collect(
   ) as Record<ClaimStatus, number>;
 
   const connections: DoctorConnection[] = [];
-  for (const host of listHostConnections(ctx.db, ctx.store)) {
+  const coverage = new Map(inspectSourceCoverage(ctx.db).map(report => [report.source_key, report]));
+  for (const host of listHostConnections(ctx.db, ctx.store, undefined, { includeDisconnected: true })) {
     const checkpoint = getCheckpoint(
       ctx.db,
       host.connection.connector_id,
       host.connection.source_key,
     );
     const base = {
+      coverage: coverage.get(host.connection.source_key)!,
       connector_id: host.connection.connector_id,
       source_key: host.connection.source_key,
       checkpoint: checkpoint?.last_run_at ?? "never",
@@ -317,7 +332,12 @@ async function collect(
       last_error: scrubDetail(checkpoint?.last_result.errors[0] ?? null),
       backfill_complete: checkpoint?.backfill_complete === true,
       last_run_clean: checkpoint !== null && checkpoint.last_result.errors.length === 0,
+      hold: massWithdrawalHoldOf(ctx.db, host.connection.connector_id, host.connection.source_key),
     };
+    if (host.connection.disconnected_at !== null) {
+      connections.push({ ...base, path: "-", state: "disconnected", health: "disabled", problem: null });
+      continue;
+    }
     if (host.state === null) {
       connections.push({
         ...base,
@@ -417,7 +437,7 @@ async function collect(
     problems.push({ page: "-", error: errorText(error) });
   }
 
-  const unhealthy = connections.some((item) => item.health !== "ok");
+  const unhealthy = connections.some((item) => item.state !== "disconnected" && (item.health !== "ok" || item.hold !== null));
   const host = serveSupervisorHost(env, vaultPath);
   let boundModel: ModelBindingSummary | null = null;
   let modelConfigError: string | null = null;
@@ -444,6 +464,7 @@ async function collect(
     model_ref: boundModel?.model_ref ?? null,
     reasoning_effort: boundModel?.reasoning_effort ?? null,
     embedding_configured: embeddingConfigured(vaultPath),
+    judge: configuredJudgeDestination(vaultPath),
     ...(configuredModel === null ? {} : { configured_model_ref: configuredModel.model_ref }),
   });
   const ok =
@@ -524,7 +545,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   );
   const derived = report.serve.stores.derived;
   io.out(
-    `derived search=${derived.search.rebuilt_at ?? "never"} docs=${derived.search.doc_count} graph=${derived.graph.rebuilt_at ?? "never"} docs=${derived.graph.doc_count}`,
+    `derived search=${derived.search.rebuilt_at ?? "never"} docs=${derived.search.doc_count} watermark=${clean(derived.search.ledger_watermark ?? "none")} graph=${derived.graph.rebuilt_at ?? "never"} docs=${derived.graph.doc_count} watermark=${clean(derived.graph.ledger_watermark ?? "none")}`,
   );
   io.out(report.serve.stores.vector_layer.detail);
   const stores = report.serve.stores;
@@ -541,13 +562,20 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     io.out("canon walk truncated: the skipped-file list above may be incomplete");
   }
   if (stores.skipped_pages_total === 0 && stores.held_pages === 0) {
-    // Incremental refreshes do not restamp a layer, so a fixed page leaves the old stamp behind.
+    // Compatibility: a vault not yet visited by an incremental pass can retain an old stamp.
     for (const layer of ["search", "graph"] as const) {
       const stamp = derived[layer];
       if (stamp.status !== null && stamp.status !== "ok" && stamp.skipped_count > 0) {
-        io.out(`derived ${layer} stamp is ${stamp.status} with ${stamp.skipped_count} skipped, but no canon file is skipped or held now; the stamp may be stale; kizuki rebuild --layer ${layer} re-evaluates it`);
+        io.out(`derived ${layer} stamp is ${stamp.status} with ${stamp.skipped_count} skipped, but no canon file is skipped or held now; the stamp may be stale; the next incremental pass re-evaluates it`);
       }
     }
+  }
+  const capacity = report.serve.canon;
+  if (capacity !== null) {
+    io.out(
+      `canon pages live=${capacity.live} archived=${capacity.archived} ceiling=${capacity.ceiling} state=${capacity.state}` +
+        (capacity.next === null ? "" : ` next: ${capacity.next}`),
+    );
   }
   const writers = report.serve.stores.writers;
   io.out(
@@ -577,6 +605,8 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     const reason = item.last_error === null ? "" : ` last_error=${JSON.stringify(item.last_error)}`;
     const line = `connection ${item.connector_id} source=${item.source_key} path=${item.path} state=${item.state} health=${item.health} checkpoint=${item.checkpoint} stored=${item.stored} errors=${item.errors} last_run_clean=${item.last_run_clean ? "yes" : "no"}${reason}`;
     io.out(item.problem === null ? line : `${line} ${item.problem}`);
+    for (const detail of sourceCoverageLines(item.coverage)) io.out(detail);
+    if (item.hold !== null) io.out(`source-hold ${item.connector_id} source=${item.source_key} ${withdrawalHoldLine(item.connector_id, item.source_key, item.hold)}`);
   }
   io.out(`receipts=${report.receipts} orphans=${report.orphans.length}`);
   io.out(hashDriftCoverageLine(report.hash_drift));
@@ -596,8 +626,13 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(report.serve.supervisor.detail);
   io.out(report.serve.model.detail);
   io.out(report.serve.extraction.detail);
+  io.out(report.serve.consolidation.detail);
+  io.out(report.serve.attention.detail);
   for (const source of report.serve.egress) {
-    io.out(`egress source=${source.source_key} connector=${source.connector_id} host=${clean(source.endpoint_host)} model=${clean(source.model)} retention=${source.retention} (the provider keeps sent text under its own policy)`);
+    io.out(`egress source=${source.source_key} connector=${source.connector_id} host=${clean(source.endpoint_host)} model=${clean(source.model)} retention=${source.retention} (${RETENTION_MEANING[source.retention]})`);
+    if (source.judge !== null) {
+      io.out(`egress source=${source.source_key} judge host=${clean(source.judge.host)} model=${clean(source.judge.model)} retention=logged_and_trained (undeclared)${source.judge.consented ? "" : "; held: judge not consented; check egress judge_endpoint, judge_model and external_retention"}`);
+    }
   }
   if (report.model_config_error !== null) io.out(`model configuration invalid: ${report.model_config_error}`);
   io.out(report.serve.throughput.detail);
@@ -606,14 +641,17 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   for (const page of report.serve.quarantined.pages) {
     io.out(`quarantined ${page.path} handle=${page.handle} failed_passes=${page.attempts} until=${page.until} last_error=${JSON.stringify(page.reason)}`);
   }
+  for (const claim of report.serve.quarantined.claims ?? []) {
+    io.out(`unmaterialized claim=${JSON.stringify(claim.claim_id)} failed_passes=${claim.attempts} until=${claim.until} last_error=${JSON.stringify(claim.reason)}`);
+  }
   for (const rail of report.serve.rails) {
     const extra = rail.reason === null ? "" : ` ${rail.reason}`;
-    io.out(`rail ${rail.rail} status=${rail.status}${extra}`);
+    io.out(`rail ${rail.rail} status=${rail.status}${rail.rail === "verify-world" ? ` last_result=${rail.last_result ?? "never"} age_s=${rail.age_s ?? "unknown"}` : ""}${extra}`);
   }
   for (const failure of report.serve.failures) {
     io.out(`serve-failure ${supervisorFailureLine(failure, report.serve.supervisor, report.serve.supervisor_exit, report.vault)}`);
   }
   io.out(`status=${report.ok ? "ok" : "failed"}`);
-  const next = nextStep(report);
+  const next = nextStep({ ...report, held: report.connections.flatMap((item) => item.hold === null ? [] : [{ connector_id: item.connector_id, source_key: item.source_key, hold: item.hold }]) });
   if (next !== null) io.out(next);
 }

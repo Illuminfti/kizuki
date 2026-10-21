@@ -8,7 +8,7 @@ import { checksumManifest } from "./release-artifacts";
 import { nativeReleaseTarget } from "./release-targets";
 import {
   mapImportedEvidence, persistedReference, runNativeQuality, verifyNativeArtifact,
-  inspectRequest, referenceSubject, scriptedV2Response, type Replay,
+  inspectRequest, referenceSubject, scriptedV2Response, canonSupportsExpectedClaim, type Replay,
 } from "./extraction-quality-native";
 
 import { buildExtractionV2Messages } from "../packages/core/src/producer/prompt-v2";
@@ -25,6 +25,28 @@ test("persisted reference uses observation time for raw null, preserving explici
   expect(persisted.cases[0]?.expected[0]?.valid_from).toBe("2026-08-02T10:00:00.000Z");
   expect(persisted.cases[1]?.expected[0]?.valid_from).toBe("2026-01-01T00:00:00.000Z");
   expect(persisted.cases[1]?.expected[0]?.valid_to).toBe("2026-05-01T00:00:00.000Z");
+});
+
+test("native canon matching requires qualified typed meaning on a current model page", () => {
+  const expected = corpus.cases[0]!.expected[0]!;
+  const hit = { doc_id: "page:current-model", scope: "canon" as const, authority: "model_inference" as const,
+    taint: "quoted" as const, snippet: "employment.role: Orchard library coordinator\n(positive; uncertain; inferred interpretation; valid from unknown until unknown; unknown time basis)\n" };
+  expect(canonSupportsExpectedClaim(hit, expected, [hit.doc_id])).toBe(true);
+  expect(canonSupportsExpectedClaim(hit, expected, [])).toBe(false);
+  for (const changed of [
+    { scope: "ledger" as const }, { authority: "connector_evidence" as const }, { taint: "clean" as const },
+    { doc_id: "page:stale" }, { snippet: expected.bodies[0]! },
+    { snippet: "employment.role: Orchard library coordinator\n" },
+    { snippet: hit.snippet.replace("positive", "negative") },
+    { snippet: hit.snippet.replace("uncertain", "asserted") },
+    { snippet: hit.snippet.replace("inferred interpretation", "explicit interpretation") },
+    { snippet: hit.snippet.replace("from unknown", "from 2026-01-01T00:00:00.000Z") },
+  ]) expect(canonSupportsExpectedClaim({ ...hit, ...changed }, expected, [hit.doc_id])).toBe(false);
+  const dated = corpus.cases[1]!.expected[0]!;
+  const literalHit = { ...hit, snippet: "employment.works_at: Meadow Studio\n(positive; asserted; explicit interpretation; valid from 2026-01-01T00:00:00.000Z until 2026-05-01T00:00:00.000Z; explicit time basis)\n" };
+  expect(canonSupportsExpectedClaim(literalHit, dated, [hit.doc_id])).toBe(true);
+  expect(canonSupportsExpectedClaim({ ...literalHit, snippet: literalHit.snippet.replace("asserted", "uncertain") }, dated, [hit.doc_id])).toBe(false);
+  expect(canonSupportsExpectedClaim(hit, { ...expected, id: "unreviewed" }, [hit.doc_id])).toBe(false);
 });
 
 test("evidence binding refuses fabricated records, missing roles and omitted records", () => {

@@ -43,14 +43,19 @@ export function worldSuccessor(
   if (world.mode === "reclassify_mode" && prior.perspective.mode === world.to) {
     throw refused(`reclassify_mode: the claim is already ${world.to}`);
   }
+  const identity = world.mode === "merge_identity" || world.mode === "separate_identity";
+  if (identity && (prior.predicate !== "world.kind" || prior.object.kind !== "vocabulary" || prior.object.ref.id !== "world/concept" || prior.polarity !== "positive" || prior.context.length !== 0 || prior.perspective.mode !== "asserted" || prior.perspective.holder !== null || prior.perspective.speaker !== null || prior.perspective.addressee !== null))
+    throw refused("identity correction requires a Concept classification claim");
+  if (identity && rawSubjectRefKey(prior.subject) === rawSubjectRefKey(world.object.ref))
+    throw refused("identity correction requires two different concepts");
   const anchor = { event_id: eventId, start_utf16: 0, end_utf16: statement.length };
   const object: ClaimV2Object =
-    world.mode === "replace_object" ? (world.object ?? { kind: "literal", value: statement }) : prior.object;
+    identity ? world.object : world.mode === "replace_object" ? (world.object ?? { kind: "literal", value: statement }) : prior.object;
   return {
     schema: CLAIM_V2_SCHEMA,
     discriminator: "assertion",
     subject: prior.subject,
-    predicate: prior.predicate,
+    predicate: identity ? "concept.same_as" : prior.predicate,
     object,
     perspective: {
       holder: null,
@@ -61,7 +66,7 @@ export function worldSuccessor(
       anchors: [],
     },
     context: prior.context,
-    polarity: world.mode === "retract" ? "negative" : prior.polarity,
+    polarity: world.mode === "retract" || world.mode === "separate_identity" ? "negative" : identity ? "positive" : prior.polarity,
     valid_from: at,
     valid_to: null,
     temporal_basis: "observed",
@@ -102,6 +107,7 @@ function knownEndpoint(db: Database, ref: RawSubjectRef): boolean {
 }
 
 export interface WorldPlan {
+  readonly draft: ClaimV2Assertion;
   readonly world: WorldCorrection;
   readonly prior: ClaimMeaning;
   /** The endpoints beyond the subject that the native evidence attests. */
@@ -140,5 +146,5 @@ export function planWorldCorrection(
   for (const ref of endpoints) {
     if (!held.has(rawSubjectRefKey(ref)) && !knownEndpoint(db, ref)) throw refused("object: names no known node");
   }
-  return { world, prior, endpoints, build };
+  return { world, prior, endpoints, draft, build };
 }

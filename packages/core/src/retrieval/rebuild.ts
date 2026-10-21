@@ -1,6 +1,6 @@
 import { recordSourceStoreWrite } from "../ledger/source-stores";
 import { assertVaultMutationScope, VaultMutationError, withVaultMutationAsync, type VaultMutationScope } from "../vault/mutation-scope";
-import { sourcePolicyEpoch, isLocalSourcePort, sourceSensitivity, requireSourceEvents, sourceEventsAllowed, invalidateLocalSourcePort } from "../ledger/source-grants";
+import { sourcePolicyEpoch, isLocalSourcePort, bindLocalSourcePort, sourceSensitivity, requireSourceEvents, sourceEventsAllowed, invalidateLocalSourcePort } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
 import { lstatSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -222,6 +222,7 @@ async function rebuildUnderFence(
   vaultPath: string,
   port: RetrievalPort | undefined,
   expired: () => boolean,
+  signal: AbortSignal,
   layer: RebuildLayer,
   budget: RebuildBudget,
 ) {
@@ -247,9 +248,24 @@ async function rebuildUnderFence(
     throw new PortError("not_supported", "configured retrieval does not support atomic authoritative rebuild", false);
   }
   const store = port.descriptor.id;
+  // Preserve locality only for settlement policy checks. A timed-out live port
+  // remains poisoned and must be freshly composed before it can serve again.
+  const settlementAuthority = isLocalSourcePort(port) ? bindLocalSourcePort({}) : port;
   recordSourceStoreWrite(db, port, docs.flatMap(doc => doc.provenance));
   let failure: unknown;
-  try { await port.rebuildFromDocuments(structuredClone(docs)); } catch (error) { failure = error; }
+  const assertCurrent = (): void => {
+    signal.throwIfAborted();
+    const current = readRebuildSnapshot(db, vaultPath, budget);
+    if (port.descriptor.id !== store || current.epoch !== snapshot.epoch || current.revisions.size !== snapshot.revisions.size ||
+      docs.some(doc => current.revisions.get(doc.doc_id) !== snapshot.revisions.get(doc.doc_id) ||
+        !sourceEventsAllowed(db, doc.provenance, { owner: true, purpose: "derive", port }))) {
+      throw new PortError("unavailable", "source authorization changed during rebuild; current evidence must be rebuilt", true);
+    }
+  };
+  try { await port.rebuildFromDocuments(structuredClone(docs), { signal, assertCurrent, snapshot_id: sha256Hex(JSON.stringify([snapshot.epoch, [...snapshot.revisions].sort()])) }); } catch (error) { failure = error; }
+  // A cancellation acknowledged by the port preserves its prior active generation
+  // and private stage. Uncooperative late writes still require complete cleanup.
+  const canceled = signal.aborted && failure === signal.reason;
   // Keep final admission and the floor rebuild in one synchronous continuation.
   const remaining = new Map(snapshot.docs.map(doc => [doc.doc_id, doc]));
   let refused = false;
@@ -258,11 +274,11 @@ async function rebuildUnderFence(
     let current: RebuildSnapshot | undefined;
     try { current = readRebuildSnapshot(db, vaultPath, budget); }
     catch (error) { unreadable = error; }
-    const discardAll = expired() || port.descriptor.id !== store || current === undefined;
+    const discardAll = (expired() && !canceled) || port.descriptor.id !== store || current === undefined;
     if (discardAll || snapshot.epoch !== current?.epoch) refused = true;
     const invalid = [...remaining.values()].filter(doc => discardAll ||
       current!.revisions.get(doc.doc_id) !== snapshot.revisions.get(doc.doc_id) ||
-      !sourceEventsAllowed(db, doc.provenance, { owner: true, purpose: "derive", port }));
+      !sourceEventsAllowed(db, doc.provenance, { owner: true, purpose: "derive", port: canceled ? settlementAuthority : port }));
     if (invalid.length === 0) break;
     refused = true;
     const ids = invalid.slice(0, 100).map(doc => doc.doc_id);
@@ -324,10 +340,11 @@ export async function rebuildRetrieval(
     throw new PortError("config_invalid", "rebuild supports --layer all, search, or graph only", false);
   }
   let timedOut = false;
+  const stop = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const configured = port?.descriptor?.method_timeouts_ms?.["rebuildFromDocuments"];
   const deadline = typeof configured === "number" && Number.isFinite(configured) && configured > 0 ? Math.min(configured, 30_000) : 30_000;
-  const operation = withVaultMutationAsync({ db, vault_path: vaultPath }, scope => rebuildUnderFence(scope, db, vaultPath, port, () => timedOut, layer, budget))
+  const operation = withVaultMutationAsync({ db, vault_path: vaultPath }, scope => rebuildUnderFence(scope, db, vaultPath, port, () => timedOut, stop.signal, layer, budget))
     .catch(error => {
       if (error instanceof VaultMutationError && error.code === "writer_busy") {
         throw new PortError("unavailable", "canon writer is busy; retry rebuild", true);
@@ -337,6 +354,7 @@ export async function rebuildRetrieval(
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       timedOut = true;
+      stop.abort();
       if (port !== undefined) invalidateLocalSourcePort(port);
       reject(new PortError("unavailable", "rebuild timed out; writer remains fenced until settlement", true));
     }, deadline);

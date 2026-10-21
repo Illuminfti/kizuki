@@ -59,8 +59,10 @@ test("scheduled attempts adopt settings without restart, pin credentials in flig
     writeFileSync(configPath, contents, { mode: 0o600 });
     chmodSync(configPath, 0o600);
   };
+  // This fixture measures extraction runtime adoption. Summary generation has
+  // its own protocol and gates; keep its configured call budget at zero here.
   const configure = (baseUrl: string, model: string) => writeConfig(
-    `[ports.llm]\nid="kizuki.llm.openai-compatible"\nbase_url=${JSON.stringify(baseUrl)}\nmodel=${JSON.stringify(model)}\nsecret_ref=${JSON.stringify(`file:${secretPath}`)}\ntimeout_ms=1000\nmax_retries=0\n`);
+    `[consolidation]\nmax_calls_per_pass=0\n[ports.llm]\nid="kizuki.llm.openai-compatible"\nbase_url=${JSON.stringify(baseUrl)}\nmodel=${JSON.stringify(model)}\nsecret_ref=${JSON.stringify(`file:${secretPath}`)}\ntimeout_ms=1000\nmax_retries=0\n`);
   const grant = (baseUrl: string, model: string, revision: number) => setSourceGrant(db, {
     source_key: source.source_key, expected_revision: revision, operation_id: `fixture-runtime-grant-${revision}`,
     policy: { purposes: ["capture", "recall", "session", "derive", "extract", "export"],

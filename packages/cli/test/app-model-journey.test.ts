@@ -79,9 +79,16 @@ test.each(['Kizuki', 'My Kizuki Vault'])('authenticated first use in %s separate
         expect(localOnly.result.run.claims_extracted).toBe(0);
         const localDb = openLedger(join(vault, '.kizuki/kizuki.db'));
         try {
-            const localClaims = localDb.query('SELECT producer,model_ref,authority,taint FROM claims').all();
+            const localClaims = localDb.query<{ producer: string; model_ref: string | null; authority: string; taint: string; confidence: number }, []>(
+                'SELECT producer,model_ref,authority,taint,confidence FROM claims').all();
             expect(localClaims.length).toBeGreaterThan(0);
-            for (const claim of localClaims) expect(claim).toMatchObject({ producer: 'deterministic', model_ref: null, authority: 'connector_evidence', taint: 'quoted' });
+            for (const claim of localClaims) {
+                expect(claim).toMatchObject({ producer: 'deterministic', model_ref: null, taint: 'quoted' });
+                // Epistemic authority is distinct from provider use: a single
+                // untrusted source is capped as inference even on the local floor.
+                expect(['connector_evidence', 'model_inference']).toContain(claim.authority);
+                if (claim.authority === 'model_inference') expect(claim.confidence).toBeLessThanOrEqual(0.5);
+            }
         } finally { localDb.close(); }
         expect(endpoint.requests).toHaveLength(1);
         expect((await call('sources')).data.sources[0].model_consent).toBe('local_only');

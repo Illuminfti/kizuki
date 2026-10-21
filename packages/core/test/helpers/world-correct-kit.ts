@@ -10,7 +10,7 @@
  * event that anchors it, which is what source admission requires.
  */
 import type { Database } from "bun:sqlite";
-import { OWNER } from "../../src/agents";
+import { OWNER, type Sensitivity } from "../../src/agents";
 import { applyCanonWrite } from "../../src/canon/apply";
 import { worldCanonTarget } from "../../src/canon/world-materialization";
 import { getClaim, insertClaim } from "../../src/claims/store";
@@ -52,6 +52,7 @@ export interface AssertionSpec {
   readonly speaker?: string;
   readonly addressee?: string;
   readonly context?: readonly string[];
+  readonly sensitivity?: Sensitivity;
 }
 
 export interface WorldRef {
@@ -101,8 +102,8 @@ function valid(): Record<string, unknown> {
 
 /** The unwrapped data of a current or incomplete world_view answer. */
 export function worldData(result: WorldReadResult): Record<string, any> {
-  if ("status" in result || result.result.status === "unavailable")
-    throw new Error("world view unavailable");
+  if ("status" in result || (result.result.status !== "current" && result.result.status !== "incomplete"))
+    throw new Error("world view has no data");
   return result.result.data as unknown as Record<string, any>;
 }
 
@@ -142,7 +143,7 @@ export function correctionKit(db: Database, vaultPath: string, options: Correcti
         source_record_id: ulid(),
         kind: "note",
         text: TEXT,
-        sensitivity_hint: "public",
+        sensitivity_hint: spec.sensitivity ?? "public",
         subjects: ids.map((subject_id) => ({
           subject_id,
           role: "about" as const,
@@ -195,7 +196,7 @@ export function correctionKit(db: Database, vaultPath: string, options: Correcti
         provenance: [accepted.event.event_id],
         producer: "deterministic",
         confidence: 0.8,
-        sensitivity: "public",
+        sensitivity: spec.sensitivity ?? "public",
         subjects: [spec.subject],
         semantic,
         world_admission: {
@@ -208,7 +209,7 @@ export function correctionKit(db: Database, vaultPath: string, options: Correcti
         },
       },
     );
-    if (stored.outcome !== "stored")
+    if (stored.outcome !== "stored" && stored.outcome !== "duplicate")
       throw new Error(`${spec.predicate} was ${stored.outcome}`);
     bySubject.set(spec.subject, [
       ...(bySubject.get(spec.subject) ?? []),

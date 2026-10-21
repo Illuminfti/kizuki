@@ -1,7 +1,7 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { OWNER_AGENT_GRANT, addAgent, authenticate, type Tool } from "../../src/agents";
+import { OWNER_AGENT_GRANT, addAgent, authenticate, setGrant, revokeAgent, type Tool } from "../../src/agents";
 import { undoReceipt } from "../../src/canon/undo";
 import {
   worldCanonPath,
@@ -12,8 +12,10 @@ import { getClaim } from "../../src/claims/store";
 import { exportVault, restoreVault } from "../../src/export";
 import { openLedger } from "../../src/ledger/db";
 import { purgeEvents } from "../../src/ledger/purge";
+import { revokeSourceGrant } from "../../src/ledger/source-grants";
 import { sourceRecordId } from "../../src/correction/parse";
 import { serveCorrect } from "../../src/serving/correct";
+import { serveGetPage } from "../../src/serving/page";
 import type { CorrectArgs } from "../../src/serving/correct";
 import { assertWorldState } from "../../src/world/integrity";
 import {
@@ -87,6 +89,30 @@ const nativeEvidence = (s: Scene) =>
   s.db
     .query<{ n: number }, []>("SELECT count(*) AS n FROM native_owner_evidence")
     .get()!.n;
+
+test("typed correction hides page diffs when produced canon becomes credential-shaped", async () => {
+  const s = await scene();
+  try {
+    const enrolled = addAgent(s.db, "class-reader", { ...OWNER_AGENT_GRANT });
+    const principal = authenticate(s.db, enrolled.token);
+    if (principal === null) throw new Error("fixture principal");
+    const ctx = { ...s.kit.ctx, principal };
+    const card = s.kit.card(ctx, "concept", s.kit.find(ctx, "concept", "Bayesian"));
+    const path = worldCanonPath(worldClaimHandle(s.db, s.definition)!);
+    expect(serveGetPage(ctx, { path }).canon).toHaveLength(1);
+    const statement = "The synthetic password = synthetic-canary-482 is recorded here.";
+    const corrected = await serveCorrect(ctx, {
+      statement, mode: "replace_object", object: { kind: "literal", value: "Updated definition" },
+      target: { world_claim: definitionRef(card) },
+    });
+    expect(corrected.data?.rewritten).toEqual([]);
+    expect(corrected.data?.receipt_id).toBeNull();
+    expect(JSON.stringify(corrected)).not.toContain(path);
+    expect(JSON.stringify(corrected)).not.toContain(statement);
+    expect(serveGetPage(ctx, { path }).canon).toEqual([]);
+    expect(serveGetPage(s.kit.ctx, { path }).canon[0]?.excerpt).toContain(statement);
+  } finally { s.dispose(); }
+});
 
 test.each([
   { mode: "quoted", speaker: "person:sam" },
@@ -633,6 +659,8 @@ test("a relaying agent corrects, a node token from another principal is refused,
       target: { world_claim: edge["claim"] },
     });
     expect(done.data!.claim_id).toBeString();
+    expect(done.data!.receipt_id).toBeString();
+    expect(done.data!.rewritten).toHaveLength(1);
     const seen = s.kit.card(
       reader,
       "concept",
@@ -651,13 +679,51 @@ test("a relaying agent corrects, a node token from another principal is refused,
   }
 });
 
-test("a retired claim takes no second correction, and a mode is part of a correction's identity", async () => {
+test("a scoped typed correction does not materialize or receipt an unreadable unpublished claim", async () => {
+  const s = await scene();
+  try {
+    const hidden = await s.kit.write({ subject: "topic:bayes", predicate: "concept.counterexample",
+      object: { literal: "Unpublished restricted example" }, sensitivity: "private" });
+    const prior = getClaim(s.db, hidden);
+    const relay = { ...s.kit.ctx, principal: authenticate(s.db, addAgent(s.db, "public-relay", {
+      ...OWNER_AGENT_GRANT, ceiling: "public", relay_owner_corrections: true,
+      tools: ["world_view", "correct"],
+    }).token)! };
+    const card = s.kit.card(relay, "concept", s.kit.find(relay, "concept", "Bayesian"));
+    expect(JSON.stringify(card)).not.toContain("Unpublished restricted example");
+    const pageBefore = s.page();
+    const done = await serveCorrect(relay, { statement: "Update using public evidence.", mode: "replace_object",
+      target: { world_claim: definitionRef(card) } });
+    // The new native evidence is private, so the public relay receives no
+    // page diff or receipt metadata even though its scoped write commits.
+    expect(done.data?.rewritten).toEqual([]);
+    expect(done.data?.receipt_id).toBeNull();
+    expect(JSON.stringify(done)).not.toContain(hidden);
+    expect(JSON.stringify(done)).not.toContain("Unpublished restricted example");
+    expect(getClaim(s.db, hidden)).toEqual(prior);
+    expect(s.page()).not.toContain("Unpublished restricted example");
+    expect(s.page()).toContain("Update using public evidence.");
+    expect(s.db.query<{ sensitivity_hint: string }, [string]>(
+      "SELECT sensitivity_hint FROM events WHERE event_id=?",
+    ).get(done.data!.event_id!)?.sensitivity_hint).toBe("private");
+    const receipt = getClaim(s.db, done.data!.claim_id!)?.receipt_id;
+    expect(receipt).toBeString();
+    await undoReceipt({ db: s.db, vault_path: s.vault.path }, receipt!);
+    expect(s.page()).toBe(pageBefore);
+    expect(getClaim(s.db, hidden)).toEqual(prior);
+  } finally { s.dispose(); }
+});
+
+test("a retired claim replays its exact correction but refuses a different intent", async () => {
   const s = await scene();
   try {
     const target = { world_claim: definitionRef(s.card()) };
-    await serveCorrect(s.kit.ctx, { statement: "Not so.", mode: "retract", target });
+    const first = await serveCorrect(s.kit.ctx, { statement: "Not so.", mode: "retract", target });
     expect(nativeEvidence(s)).toBe(1);
-    for (const args of [{ mode: "retract" as const }, { mode: "reclassify_mode" as const, perspective_mode: "suggested" as const }]) {
+    const replay = await serveCorrect(s.kit.ctx, { statement: "Not so.", mode: "retract", target });
+    expect(replay.data?.receipt_id).toBe(first.data?.receipt_id);
+    expect(replay.data?.claim_id).toBe(first.data?.claim_id);
+    for (const args of [{ mode: "replace_object" as const }, { mode: "reclassify_mode" as const, perspective_mode: "suggested" as const }]) {
       await expect(serveCorrect(s.kit.ctx, { statement: "Not so.", target, ...args })).rejects.toThrow("names no live claim");
     }
     expect(nativeEvidence(s)).toBe(1);
@@ -674,6 +740,71 @@ test("a retired claim takes no second correction, and a mode is part of a correc
   } finally {
     s.dispose();
   }
+});
+
+test("typed replay preserves the recorded identity and reauthorizes the source and current principal", async () => {
+  const s = await scene();
+  try {
+    const agent = addAgent(s.db, "typed-replay", { ...OWNER_AGENT_GRANT, relay_owner_corrections: true });
+    const ctx = { ...s.kit.ctx, principal: authenticate(s.db, agent.token)! };
+    const target = { world_claim: definitionRef(s.kit.card(ctx, "concept", s.kit.find(ctx, "concept", "Bayesian"))) };
+    const request: CorrectArgs = { statement: "Use the posterior after observing evidence.", target,
+      mode: "replace_object", object: { kind: "literal", value: "Posterior belief" } };
+    const first = await serveCorrect(ctx, request);
+    const before = s.page();
+    const counts = () => ["events", "native_owner_evidence", "claims", "canon_receipts", "claim_supersessions"]
+      .map(table => s.db.query<{ n: number }, []>(`SELECT count(*) AS n FROM ${table}`).get()!.n);
+    const recorded = counts();
+    const replay = await serveCorrect(ctx, request);
+    expect(replay.data?.receipt_id).toBe(first.data?.receipt_id);
+    expect(replay.data?.event_id).toBe(first.data?.event_id);
+    expect(replay.data?.claim_id).toBe(first.data?.claim_id);
+    expect(counts()).toEqual(recorded);
+    expect(s.page()).toBe(before);
+    await expect(serveCorrect(ctx, { ...request, statement: "Different statement." })).rejects.toThrow("names no live claim");
+    await expect(serveCorrect(ctx, { ...request, object: { kind: "literal", value: "Different object" } })).rejects.toThrow("names no live claim");
+    await expect(serveCorrect(ctx, { ...request, dry_run: true })).rejects.toThrow("names no live claim");
+    await expect(serveCorrect(s.kit.ctx, request)).rejects.toThrow("names no live claim");
+    setGrant(s.db, "typed-replay", { ...OWNER_AGENT_GRANT, relay_owner_corrections: false });
+    await expect(serveCorrect(ctx, request)).rejects.toThrow();
+    revokeAgent(s.db, "typed-replay");
+    await expect(serveCorrect(ctx, request)).rejects.toThrow();
+    expect(counts()).toEqual(recorded);
+    expect(s.page()).toBe(before);
+  } finally { s.dispose(); }
+});
+
+test("typed replay acknowledges the original operation after a later correction without resurrecting it", async () => {
+  const s = await scene();
+  try {
+    const request: CorrectArgs = { statement: "First owner correction.", target: { world_claim: definitionRef(s.card()) } };
+    const first = await serveCorrect(s.kit.ctx, request);
+    const later = await serveCorrect(s.kit.ctx, { statement: "Current owner correction.", target: { world_claim: definitionRef(s.card()) } });
+    const before = s.page();
+    const replay = await serveCorrect(s.kit.ctx, request);
+    expect(replay.data?.receipt_id).toBe(first.data?.receipt_id);
+    expect(replay.data?.event_id).toBe(first.data?.event_id);
+    expect(replay.data?.claim_id).toBe(first.data?.claim_id);
+    expect(getClaim(s.db, first.data!.claim_id!)!.status).toBe("superseded");
+    expect(getClaim(s.db, later.data!.claim_id!)!.status).toBe("live");
+    expect(s.card()["definitions"].map((row: any) => row.object.value)).toEqual(["Current owner correction."]);
+    expect(s.page()).toBe(before);
+    expect(nativeEvidence(s)).toBe(2);
+  } finally { s.dispose(); }
+});
+
+test("typed owner replay cannot disclose a correction after its original source is withdrawn", async () => {
+  const s = await scene();
+  try {
+    const request: CorrectArgs = { statement: "Evidence updates belief.", target: { world_claim: definitionRef(s.card()) } };
+    const first = await serveCorrect(s.kit.ctx, request);
+    expect((await serveCorrect(s.kit.ctx, request)).data?.receipt_id).toBe(first.data?.receipt_id);
+    const before = s.page();
+    revokeSourceGrant(s.db, { source_key: s.kit.sourceKey, expected_revision: 1, operation_id: "typed-replay-withdraw" });
+    await expect(serveCorrect(s.kit.ctx, request)).rejects.toThrow("source authorization does not permit");
+    expect(nativeEvidence(s)).toBe(1);
+    expect(s.page()).toBe(before);
+  } finally { s.dispose(); }
 });
 
 test("refresh_world returns the corrected card, and a refresh that fails leaves the committed correction standing", async () => {

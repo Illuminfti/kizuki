@@ -1,5 +1,8 @@
+import { attentionDoctor } from "./doctor-attention";
+import { consolidationDoctor } from "./doctor-consolidation";
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
+import { loadConfiguredRetrieval, readRetrievalEngineRefusal } from "../retrieval/config";
 import { embeddingThroughputFromReceipts } from "../retrieval/reembed";
 import { inspectPageIndex } from "../canon";
 import { staleCanonIntentFailure } from "./canon-intent-health";
@@ -7,12 +10,14 @@ import { isMachineOriginPath } from "../canon/origin";
 import { formatProducerDiagnostic } from "../producer/diagnostics";
 import { SINGLE_SOURCE_CAP } from "../claims/authority";
 import { countPendingRetrievalOps } from "../claims/store";
+import { derivedPageSkips } from "../derived-health";
 import { readDerivedMeta } from "../derived-meta";
 import { readDerivedHolds } from "../derived-holds";
 import { inspectConnectionStateRecovery } from "../ledger/connection-state";
 import { inspectCheckpoints, inspectConnections } from "../ledger/connections";
 import { tableExists } from "../ledger/schema";
 import { inspectPurgeHealth } from "../ledger/purge";
+import { canonCapacity, loadCanonLimits } from "../vault/canon-limits";
 import { listCanonPagesReport, type CanonPageReport } from "../vault/pages";
 import { loadConfiguredModelRef, loadEmbeddingSelection, loadServeConfig, type EmbeddingSelection } from "./config";
 import { ageSeconds, railDoctor, syncPassWait } from "./doctor-rails";
@@ -21,16 +26,16 @@ import { readServeIntent } from "./intent";
 import { serviceFile } from "./service-files";
 import { isRedactedModelReference, listRunReceipts, orphanJournalReceipts, readEmbeddingReceipts, readModelRunHistory, readPendingRunReceipts, redactReceiptText, type ModelRunHistory } from "./receipts";
 import { sha256Hex } from "../util/hash";
+import { listRails } from "./rail-registry";
 import { listSchedules } from "./schema";
 import { countOversizedRecords, RETRY_SKIPPED_COMMAND } from "./extract-oversized";
-import { listQuarantinedPages } from "./write-quarantine";
+import { listQuarantinedPages, listQuarantinedClaims } from "./write-quarantine";
 import type { SupervisorHost } from "./supervisor";
 import { queryServeService } from "./supervisor";
 import { ensureVaultId } from "./vault-id";
 import {
   CALIBRATION_BAND,
   CONFIDENCE_SPREAD_MIN,
-  DEFAULT_RAILS,
   DOCTOR_RAIL_RECEIPTS,
   DOCTOR_SKIPPED_PAGES,
   DOCTOR_SYNC_RECEIPTS,
@@ -67,6 +72,8 @@ export interface ServeDoctorOptions {
   readonly configured_model_ref?: string | null;
   /** True when an embedding port is configured; only then does embed-backfill have work to judge. */
   readonly embedding_configured?: boolean;
+  /** The destination a configured System One judge sends extraction text to; each egress line then says whether its grant consents to it. */
+  readonly judge?: { readonly model_endpoint: string; readonly model: string } | null;
   /**
    * False skips the walk of every canon page. The walk parses each page, so a
    * caller inside the daemon's event loop or one that reads a single field
@@ -394,11 +401,26 @@ function countOriginPages(report: CanonPageReport): StoreDoctor["origin"] {
   return { machine, human };
 }
 
-function vectorLayer(embedding: EmbeddingSelection): StoreDoctor["vector_layer"] {
+function vectorLayer(embedding: EmbeddingSelection, vaultPath: string): StoreDoctor["vector_layer"] {
   switch (embedding.state) {
     case "off": return { state: "off", detail: "vector layer: off (no embedding model configured)" };
-    case "configured": return { state: "configured", detail: `vector layer: configured (${embedding.id})` };
     case "invalid": return { state: "invalid", detail: `vector layer: invalid (${embedding.message})` };
+    case "configured": {
+      let retrieval: string;
+      try { retrieval = loadConfiguredRetrieval(vaultPath).id; }
+      catch { return { state: "configured", detail: `vector layer: configured (${embedding.id})` }; }
+      if (retrieval !== "kizuki.retrieval.embedded-pg") {
+        return { state: "unbound", detail: `vector layer: not in use (${embedding.id} is configured, but retrieval is ${retrieval}; select kizuki.retrieval.embedded-pg to rank by vector)` };
+      }
+      const refusal = readRetrievalEngineRefusal(vaultPath, retrieval);
+      if (refusal !== null) {
+        return {
+          state: "refused",
+          detail: `vector layer: refused (last index update exceeded ${refusal.resource ?? "text_bytes"}: ${refusal.requested ?? refusal.corpus_bytes} > ${refusal.limit ?? refusal.limit_bytes}; the prior index is preserved, and the lexical floor remains available. Use a smaller corpus; raise max_text_bytes only with sufficient memory)`,
+        };
+      }
+      return { state: "configured", detail: `vector layer: configured (${embedding.id})` };
+    }
   }
 }
 
@@ -445,7 +467,8 @@ function storeDoctor(
   // Skipped and held documents are what make an index degraded; a stamp that
   // says so after the last of them was fixed is stale, and both are empty.
   const held = readDerivedHolds(db).paths.size;
-  if (pages.skipped.length > 0 || held > 0) degraded.push("index-degraded");
+  const skippedPages = derivedPageSkips(db, pages);
+  if (skippedPages.length > 0 || held > 0) degraded.push("index-degraded");
   if (pages.truncated) degraded.push("canon-walk-truncated");
   const search = readDerivedMeta(db, "search");
   const graph = readDerivedMeta(db, "graph");
@@ -455,7 +478,7 @@ function storeDoctor(
     pending_purge_ops: pendingPurge,
     oldest_purge_op_age_s: ageSeconds(oldestPurge, now),
     embedding_throughput_docs_per_s: embeddingThroughputFromReceipts(embeddingReceipts),
-    vector_layer: vectorLayer(embedding),
+    vector_layer: vectorLayer(embedding, vaultPath),
     orphan_run_receipts: orphanJournalReceipts(db, vaultPath),
     derived: {
       search: {
@@ -463,16 +486,18 @@ function storeDoctor(
         doc_count: search?.doc_count ?? 0,
         status: search?.status ?? null,
         skipped_count: search?.skipped_count ?? 0,
+        ledger_watermark: search?.ledger_watermark ?? null,
       },
       graph: {
         rebuilt_at: graph?.rebuilt_at ?? null,
         doc_count: graph?.doc_count ?? 0,
         status: graph?.status ?? null,
         skipped_count: graph?.skipped_count ?? 0,
+        ledger_watermark: graph?.ledger_watermark ?? null,
       },
     },
-    skipped_pages: pages.skipped.slice(0, DOCTOR_SKIPPED_PAGES).map((page) => ({ path: page.relPath, reason: page.code })),
-    skipped_pages_total: pages.skipped.length,
+    skipped_pages: skippedPages.slice(0, DOCTOR_SKIPPED_PAGES),
+    skipped_pages_total: skippedPages.length,
     held_pages: held,
     pages_truncated: pages.truncated,
     writers: countWriterRoles(db),
@@ -522,7 +547,7 @@ export function inspectServeDoctor(
   const pendingReceipts = readPendingRunReceipts(db, vaultPath);
   const railHistory = (rail: RailId): RunReceipt[] => {
     const limit = rail === "sync" ? DOCTOR_SYNC_RECEIPTS : DOCTOR_RAIL_RECEIPTS;
-    const persisted = rail === "sync" ? syncReceipts : listRunReceipts(db, { rail, since, limit });
+    const persisted = rail === "sync" ? syncReceipts : listRunReceipts(db, { rail, ...(rail === "verify-world" ? {} : { since }), limit });
     const runs = new Map(pendingReceipts.filter(receipt => receipt.rail === rail && receipt.finished_at >= since)
       .map(receipt => [receipt.run_id, receipt]));
     for (const receipt of persisted) runs.set(receipt.run_id, receipt);
@@ -531,15 +556,15 @@ export function inspectServeDoctor(
       .slice(-limit);
   };
   const work = { db, model_configured: modelConfigured, embedding_configured: options.embedding_configured ?? embedding.state === "configured" };
-  const rails = DEFAULT_RAILS.map((spec) => railDoctor(
-    spec.rail,
-    railHistory(spec.rail),
-    schedules.get(spec.rail)?.period_s ?? spec.period_s,
+  const rails = listRails().map((rail) => railDoctor(
+    rail.id,
+    railHistory(rail.id),
+    schedules.get(rail.id)?.period_s ?? rail.period_s,
     now,
     expectLive,
     syncPassWait(config.extraction),
     work,
-    schedules.get(spec.rail)?.last_run_at ?? null,
+    schedules.get(rail.id)?.last_run_at ?? null,
   ));
   const usedToday = syncReceipts
     .filter((receipt) => receipt.finished_at.startsWith(now.slice(0, 10)))
@@ -561,13 +586,14 @@ export function inspectServeDoctor(
   const oversized = oversizedDoctor(db);
   const pages: CanonPageReport =
     options.page_walk === false
-      ? { pages: [], skipped: [], truncated: false, signatures: new Map() }
+      ? { pages: [], skipped: [], truncated: false, signatures: new Map(), scanned_files: 0, scanned_bytes: 0 }
       : listCanonPagesReport(vaultPath);
   const quarantined = quarantineDoctor(db, now);
+  const canon = options.page_walk === false ? null : canonCapacity(pages.pages, pages.truncated, loadCanonLimits(vaultPath), pages);
   const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
   const cal = calibration(db, syncReceipts, now);
   const extraction = extractionDoctor(db, syncReceipts, model.canon_writing !== "off");
-  const { egress, failures: egressFailures } = egressDoctor(db);
+  const { egress, failures: egressFailures } = egressDoctor(db, options.judge ?? null);
   const found: { text: string; top: TopFailure }[] = [];
   const fail = (text: string, kind: TopFailure["kind"] = "other", rail: RailId | null = null): void => {
     found.push({ text, top: { kind, rail } });
@@ -591,6 +617,9 @@ export function inspectServeDoctor(
     if (supervisor.state !== "active" && supervisor.unit !== null && options.supervisor?.lastExit !== undefined) {
       try { supervisorExit = options.supervisor.lastExit(ensureVaultId(vaultPath)); } catch { supervisorExit = null; }
     }
+  }
+  if (canon !== null && canon.state !== "ok") {
+    fail(`canon ${canon.state}: ${canon.live} live pages of ${canon.ceiling}, ${canon.archived} archived; ${canon.state === "scan_limited" ? (pages.truncated ? "counts are incomplete; scan resource budget reached" : "scan resource budget reached; new pages are held, reads continue") : canon.state === "full" ? "new pages are held, reads continue" : "approaching the ceiling"}; next: ${canon.next}`);
   }
   for (const rail of rails) {
     if (rail.status === "down" && rail.reason !== null) {
@@ -637,11 +666,14 @@ export function inspectServeDoctor(
     rails,
     model,
     extraction,
+    attention: attentionDoctor(db, vaultPath, now),
+    consolidation: consolidationDoctor(db, now, model.canon_writing !== "off", config.consolidation),
     egress,
     throughput,
     oversized,
     quarantined,
     stores,
+    canon,
     calibration: cal,
     ok: failures.length === 0,
     failures,
@@ -660,7 +692,10 @@ function oversizedDoctor(db: Database): OversizedDoctor {
 /** A set-aside page is the writer's own decision, retried after a day; it is listed, not a failure. */
 function quarantineDoctor(db: Database, now: string): QuarantineDoctor {
   const pages = listQuarantinedPages(db, now).map(({ handle, path, attempts, reason, until }) => ({ handle, path, attempts, reason, until }));
-  return { pages, detail: `quarantined typed pages=${pages.length}` };
+  const held = listQuarantinedClaims(db, now);
+  const claims = held.claims.map(({ claim_id, attempts, reason, until }) => ({ claim_id, attempts, reason, until }));
+  return { pages, ...(claims.length === 0 ? {} : { claims }), ...(held.truncated ? { claims_truncated: true } : {}),
+    detail: `quarantined typed pages=${pages.length}${claims.length === 0 && !held.truncated ? "" : ` unmaterialized legacy claims${held.truncated ? " shown" : ""}=${claims.length}${held.truncated ? " (truncated)" : ""}`}` };
 }
 
 function throughputDoctor(config: ServeConfig, syncPeriod: number, recordsSkipped: number): ThroughputDoctor {

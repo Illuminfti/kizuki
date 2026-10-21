@@ -40,6 +40,11 @@ export const PREDICATE_REGISTRY: readonly PredicateSpec[] = [
   { id: "outcome.reached", cardinality: "multi", value_kind: "string", subject_kinds: ["person", "project"] },
   { id: "outcome.missed", cardinality: "multi", value_kind: "string", subject_kinds: ["person", "project"] },
   // slot: outcome
+  { id: "outcome.self_report", cardinality: "multi", value_kind: "string", subject_kinds: ["person", "project", "procedure"] },
+  { id: "outcome.provider_ack", cardinality: "multi", value_kind: "string", subject_kinds: ["person", "project", "procedure"] },
+  { id: "outcome.observation", cardinality: "multi", value_kind: "string", subject_kinds: ["person", "project", "procedure"] },
+  { id: "outcome.review", cardinality: "multi", value_kind: "string", subject_kinds: ["person", "project", "procedure"] },
+
   // slot: ident-predicate
 ];
 

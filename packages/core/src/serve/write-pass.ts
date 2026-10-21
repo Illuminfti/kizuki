@@ -1,5 +1,8 @@
+import type { LlmPort } from "../contracts/llm";
+import type { ConsolidationConfig, ConsolidationRunReport } from "../contracts/consolidation";
 import { pendingWorldCanonClaims, worldCanonPath, worldCanonTarget } from "../canon/world-materialization";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
+import { restoreReturnedSources, returnedSourceArchives } from "../canon/source-restore";
 import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
 import { addDailyBudget, budgetDay, readDailyBudget, settleWriteReservations } from "./budget-ledger";
@@ -17,6 +20,7 @@ import {
 } from "../canon";
 import type { CanonIo } from "../canon";
 import { applyCanonWriteOwned } from "../canon/apply";
+import { CanonWriteError } from "../canon/errors";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { machineOriginPath } from "../canon/origin";
@@ -32,6 +36,8 @@ import {
   retryRetrievalOps,
   listUnwrittenLiveClaims,
   reviveUncontestedSkipped,
+  skipUnwrittenClaim,
+  supersedePageRevisions,
 } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
 import {
@@ -53,7 +59,7 @@ import { isProducerV2, type ExtractionProducerPort } from "./extract-v2";
 import { backoffRemaining, readRejections, recordRejection, writeRejections } from "./extract-rejections";
 import { redactReceiptError } from "./receipts";
 import { runWorldJobs } from "./world-jobs";
-import { clearStuckPage, listQuarantinedPages, recordStuckPage } from "./write-quarantine";
+import { clearStuckPage, listQuarantinedPages, recordStuckPage, clearStuckClaim, recordStuckClaim } from "./write-quarantine";
 import { reconcileCanonGraph } from "../canon/graph-maintenance";
 
 /**
@@ -81,12 +87,15 @@ const SETTLE_POLL_MS = 25;
 const PAGE_GAP_MS = 2 * SETTLE_POLL_MS;
 
 export interface WritePassResult {
+  readonly consolidation?: ConsolidationRunReport;
   readonly revived: number;
   readonly claims_extracted: number;
   readonly claims_written: number;
   readonly claims_written_extracted: number;
   readonly claims_deduped: number;
   readonly claims_superseded: number;
+  /** Claims the writer ended without a page write, by reason. Each is a stable snake_case reason; the run receipt keeps it. */
+  readonly claims_skipped: Readonly<Record<string, number>>;
   /** Records extraction passed over for good without claims; each has its reason in `errors`. */
   readonly records_skipped: number;
   /** Records passed over before any request because they carry no extractable content, by reason. */
@@ -103,13 +112,13 @@ export interface WritePassResult {
 
 /** A pass's totals, kept across its short writer holds. */
 type PassTally = {
-  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "model" | "oversized" | "errors" | "records_prefiltered" | "canon_quarantined">]: WritePassResult[K];
-} & { readonly oversized: { segments: number; skipped: number }; readonly records_prefiltered: Record<string, number>; readonly errors: string[]; readonly canon_quarantined: CanonQuarantineNotice[] };
+  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "claims_skipped" | "model" | "oversized" | "errors" | "records_prefiltered" | "canon_quarantined" | "consolidation">]: WritePassResult[K];
+} & { consolidation?: ConsolidationRunReport; readonly oversized: { segments: number; skipped: number }; readonly claims_skipped: Record<string, number>; readonly records_prefiltered: Record<string, number>; readonly errors: string[]; readonly canon_quarantined: CanonQuarantineNotice[] };
 
 function emptyTally(): PassTally {
   return {
     revived: 0, claims_extracted: 0, claims_written: 0, claims_written_extracted: 0, claims_deduped: 0,
-    claims_superseded: 0, records_skipped: 0, records_prefiltered: {}, canon_writes: 0, canon_quarantined: [], oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
+    claims_superseded: 0, claims_skipped: {}, records_skipped: 0, records_prefiltered: {}, canon_writes: 0, canon_quarantined: [], oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
   };
 }
 
@@ -258,6 +267,8 @@ export interface WritePassOptions {
   readonly budget: BudgetTracker;
   /** Owner throughput settings; absent keeps the one-request pass. */
   readonly extraction?: ExtractionConfig;
+  readonly consolidation?: ConsolidationConfig;
+  readonly llm?: LlmPort;
   /** Read before every extraction step; true ends the pass there as `serve:stop_requested`. */
   readonly stopRequested?: () => boolean;
   readonly run_id?: string;
@@ -345,7 +356,7 @@ export async function runWritePass(
   vaultPath: string,
   options: WritePassOptions,
 ): Promise<WritePassResult> {
-  const { budget, extraction, stopRequested, run_id, model_ref, producer, claims, now } = options;
+  const { budget, extraction, consolidation, llm, stopRequested, run_id, model_ref, producer, claims, now } = options;
   let capturedClaims: ClaimsIo | undefined;
   if (claims !== undefined) {
     const { db: claimsDb, retrieval, vault_path, now: claimsNow, historical_source_write } = claims;
@@ -358,6 +369,8 @@ export async function runWritePass(
   }
   options = Object.freeze({ budget,
     ...(extraction === undefined ? {} : { extraction }),
+    ...(consolidation === undefined ? {} : { consolidation }),
+    ...(llm === undefined ? {} : { llm }),
     ...(stopRequested === undefined ? {} : { stopRequested }),
     ...(run_id === undefined ? {} : { run_id }),
     ...(model_ref === undefined ? {} : { model_ref }),
@@ -374,7 +387,7 @@ export async function runWritePass(
   const tally = emptyTally();
   const metrics = emptyMetrics();
   const result = (): WritePassResult => ({
-    ...tally, oversized: { ...tally.oversized }, records_prefiltered: { ...tally.records_prefiltered }, ...metricResult(metrics),
+    ...tally, claims_skipped: { ...tally.claims_skipped }, oversized: { ...tally.oversized }, records_prefiltered: { ...tally.records_prefiltered }, ...metricResult(metrics),
   });
 
   const opened = await holdWriter(io, (_scope, owned) => { tally.revived = reviveUncontestedSkipped(owned.db); });
@@ -387,13 +400,51 @@ export async function runWritePass(
   const jobs = await runWorldJobs({
     db, vaultPath, now: options.now ?? (() => new Date().toISOString()),
     stopRequested: options.stopRequested ?? (() => false), modelConfigured: modelConfigured(options),
+    ...(options.llm === undefined ? {} : { llm: options.llm }),
+    ...(options.consolidation === undefined ? {} : { consolidation: options.consolidation }),
   });
+  if (jobs.consolidation !== undefined) tally.consolidation = jobs.consolidation;
   tally.errors.push(...jobs.errors);
-  if (jobs.stopped) { tally.stopped = STOP_REQUESTED; return result(); }
+  if (jobs.stopped) { tally.stopped = jobs.reason ?? STOP_REQUESTED; return result(); }
   // No model configured: claims stay live and unwritten; doctor says so.
   if (!modelConfigured(options)) return result();
+  const errorsBeforeRestore = tally.errors.length;
+  const stoppedBeforeRestore = tally.stopped;
+  await restoreSourcePages(io, options, tally);
+  if (tally.stopped !== stoppedBeforeRestore || tally.errors.length > errorsBeforeRestore) return result();
   await writeCanon(io, options, tally);
   return result();
+}
+
+/** Returned source pages use the same short writer holds as newly written pages. */
+async function restoreSourcePages(io: CanonIo, options: WritePassOptions, tally: PassTally): Promise<void> {
+  const limit = Math.max(WRITE_PASS_LIMIT, options.budget.usage().canon_writes_per_run.limit);
+  // Bound work to the inventory observed for this pass. The durable cursor
+  // advances past edited archives; a short inventory is not scanned repeatedly.
+  const attempts = returnedSourceArchives(io.db, Math.max(WRITE_PASS_SCAN, limit)).length;
+  const errorsBeforeRestore = tally.errors.length;
+  const stoppedBeforeRestore = tally.stopped;
+  for (let attempt = 0; attempt < attempts && tally.canon_writes < limit; attempt++) {
+    if (options.stopRequested?.() === true) { tally.stopped = STOP_REQUESTED; return; }
+    const step = await holdWriter(io, async (scope, owned) => {
+      try {
+        settleWriteReservations(owned.db, owned.vault_path);
+        const outcome = await restoreReturnedSources(scope, owned, 1, options.budget, 1);
+        tally.canon_writes += outcome.restored;
+        if (outcome.stopped !== undefined) tally.stopped = outcome.stopped;
+        return outcome.restored + outcome.kept;
+      } catch (error) {
+        tally.errors.push(redactReceiptError(error));
+        return 0;
+      } finally {
+        settleWriteReservations(owned.db, owned.vault_path);
+      }
+    }, SETTLE_WAIT_MS);
+    if (!step.held) { tally.stopped = step.stopped; return; }
+    if (tally.stopped !== stoppedBeforeRestore || tally.errors.length > errorsBeforeRestore || step.value === 0) return;
+    if (inspectCanonRecovery(io.db).pending) { tally.stopped = "recovery:held"; return; }
+    await new Promise(resolve => setTimeout(resolve, PAGE_GAP_MS));
+  }
 }
 
 type Page = "wrote" | "failed" | "done";
@@ -409,13 +460,14 @@ async function writeCanon(io: CanonIo, options: WritePassOptions, tally: PassTal
   const limit = Math.max(WRITE_PASS_LIMIT, options.budget.usage().canon_writes_per_run.limit);
   const now = options.now ?? (() => new Date().toISOString());
   const attempted = new Set<string>();
+  const capacity = { ceilingHeld: false };
   for (let attempts = 0; attempts < limit && tally.canon_writes < limit; attempts++) {
     if (options.stopRequested?.() === true) { tally.stopped = STOP_REQUESTED; return; }
     reconcileCanonGraph(io.db, io.vault_path);
     const step = await holdWriter(io, (scope, owned) => {
       try {
         settleWriteReservations(owned.db, owned.vault_path);
-        return writeNextPage(scope, owned, options.budget, tally, attempted, now());
+        return writeNextPage(scope, owned, options.budget, tally, attempted, now(), capacity);
       } finally {
         settleWriteReservations(owned.db, owned.vault_path);
       }
@@ -440,9 +492,16 @@ function writeNextPage(
   tally: PassTally,
   attempted: Set<string>,
   now: string,
+  capacity: { ceilingHeld: boolean },
 ): Page {
   const { db } = io;
-  const typed = pendingWorldCanonClaims(db, 1, new Set([...attempted, ...listQuarantinedPages(db, now).map(page => page.handle)]))[0];
+  const holdNewPages = (error: unknown): boolean => {
+    if (!(error instanceof CanonWriteError) || error.code !== "canon_ceiling") return false;
+    if (!capacity.ceilingHeld) tally.errors.push(redactReceiptError(error));
+    capacity.ceilingHeld = true;
+    return true;
+  };
+  const typed = pendingWorldCanonClaims(db, 1, new Set([...attempted, ...listQuarantinedPages(db, now).map(page => page.handle)]), capacity.ceilingHeld)[0];
   if (typed !== undefined) {
     const { handle, claims: typedClaims } = typed;
     attempted.add(handle);
@@ -458,6 +517,7 @@ function writeNextPage(
     } catch (error) {
       if (!(error instanceof BudgetExhausted)) tally.canon_writes += newOccupyingWrites(before, occupyingWriteIds(db, receiptBoundary));
       if (error instanceof BudgetExhausted) { tally.stopped = error.stopped; return "done"; }
+      if (holdNewPages(error)) return "failed";
       const reason = redactReceiptError(error);
       tally.errors.push(`${reason} (page ${handle} at ${path})`);
       // A recovery hold is the writer's state, not this page's fault.
@@ -472,14 +532,21 @@ function writeNextPage(
     }
   }
 
-  for (const claim of listUnwrittenLiveClaims(db, WRITE_PASS_SCAN)) {
+  const retry = { excluded: [...attempted], now };
+  db.transaction(() => {
+    for (const claim of listUnwrittenLiveClaims(db, WRITE_PASS_SCAN, false, retry).reverse()) {
+      supersedePageRevisions(db, claim.claim_id, claim.created_at);
+    }
+  })();
+  const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN, true, retry);
+  for (const claim of pending) {
     if (attempted.has(claim.claim_id)) continue;
     attempted.add(claim.claim_id);
     try {
       if (requiresSourceTombstoneBinding(db, claim)) requireSourceTombstoneProposal(db, claim, io);
       else requireExternalEvents(db, claim.provenance);
       const decision = segregateLoopDecision(resolveTarget(io, claim));
-      if (decision.action === "skip") continue;
+      if (decision.action === "skip" || (capacity.ceilingHeld && decision.action === "create")) continue;
       const receiptBoundary = lastReceiptRow(db);
       const before = occupyingWriteIds(db, receiptBoundary);
       try {
@@ -487,6 +554,7 @@ function writeNextPage(
         tally.canon_writes += 1;
         tally.claims_written += 1;
         if (claim.producer === "model") tally.claims_written_extracted += 1;
+        clearStuckClaim(db, claim.claim_id);
         return "wrote";
       } catch (error) {
         // File/JSONL can land before the receipt row; count the SQLite slot.
@@ -498,12 +566,26 @@ function writeNextPage(
         throw error;
       }
     } catch (error) {
-      if (error instanceof SelfOriginError) continue;
+      if (error instanceof SelfOriginError || holdNewPages(error)) continue;
+      // The writer validates provenance before refusing a create over an existing file.
+      // This terminal outcome consumes no canon write and must not retry forever.
+      if (error instanceof CanonWriteError && error.code === "page_exists") {
+        if (skipUnwrittenClaim(db, claim.claim_id, io.now?.() ?? new Date().toISOString())) {
+          tally.claims_skipped["page_exists"] = (tally.claims_skipped["page_exists"] ?? 0) + 1;
+        }
+        continue;
+      }
       if (error instanceof BudgetExhausted) {
         tally.stopped = error.stopped;
         return "done";
       }
-      tally.errors.push(redactReceiptError(error));
+      const reason = redactReceiptError(error);
+      tally.errors.push(reason);
+      // Recovery is shared writer state; do not blame or delay an individual claim for it.
+      if (!(error instanceof CanonRecoveryError)) {
+        const held = recordStuckClaim(db, claim.claim_id, error instanceof CanonWriteError ? error.code : "canon_write_failed", now);
+        if (held !== null) tally.errors.push(`legacy claim set aside until ${held.until} after ${held.attempts} failed passes; see doctor`);
+      }
       return "failed";
     }
   }

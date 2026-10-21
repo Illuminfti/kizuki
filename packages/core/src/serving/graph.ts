@@ -1,16 +1,25 @@
+import { readScopedGraph } from "./v2/graph";
+import { normalizeReadArgs, type GraphArgsV2 } from "./v2/read-input";
+import { stringArray } from "../vault/pages";
+import { bareRetrievalId } from "../retrieval/ids";
+import { visibleIndexDegraded } from "./index-health";
+import { authorize } from "../agents";
+import { linkIndexFromPages, resolveWikilink } from "../graph/resolve";
 import type { AuditDenial, Grant } from "../agents";
-import { neighbors } from "../graph/graph";
+import { neighbors, neighborsForServing, wikilinks } from "../graph/graph";
 import type { GraphEdge, GraphEdgeKind } from "../graph/graph";
 import { enumOf, identifier } from "./arguments";
-import { eligible, loadCanon, pageDecision } from "./canon";
+import { eligible, loadCanon, pageDecision, pageScope } from "./canon";
 import type { CanonIndex } from "./canon";
 import { auditArguments, gateAsync } from "./gate";
 import type { Served } from "./gate";
 import { eventDecision, readServableEvents } from "./ledger";
 import type { ServableEvent } from "./ledger";
 import { retrievalGraphEdges } from "./retrieval";
+import { graphServingScope, requiresClassScopedGraph } from "./graph-scope";
 import { ServeError } from "./types";
-import type { Envelope, ServeContext } from "./types";
+import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA } from "./types";
 
 const GRAPH_EDGE_KINDS = ["wikilink", "subject", "source"] as const;
 
@@ -24,9 +33,13 @@ export interface GraphArgs {
 }
 
 export interface GraphData {
+  scoped?: import("../contracts/scoped-tools").GraphDataV2;
+  /** Internal typed request anchor, projected explicitly for v2. */
+  anchor?: import("../contracts/scoped-tools").GraphAnchorV2;
   id: string;
   edges: GraphEdge[];
   truncated: boolean;
+  degraded?: string[];
 }
 
 function depthOf(value: unknown): 1 | 2 {
@@ -145,22 +158,27 @@ function classifyGraph(
   return { kept, withheld };
 }
 
-export async function serveGraph(
+export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
-  args: GraphArgs,
-): Promise<Envelope<GraphData>> {
+  args: GraphArgs | GraphArgsV2,
+  contract: C = ENVELOPE_SCHEMA as C,
+): Promise<ResponseEnvelope<GraphData, C, import("../contracts/scoped-tools").GraphDataV2>> {
   return gateAsync(
     ctx,
     "graph_neighbors",
     auditArguments(args),
     async ({ ctx }): Promise<Served<GraphData>> => {
+    const normalized = normalizeReadArgs(ctx, "graph_neighbors", args, contract);
+    ctx = normalized.ctx;
+    const request = normalized.args as unknown as GraphArgs;
       const grant: Grant = ctx.principal.grant;
-      const id = identifier("id", args.id);
-      const depth = depthOf(args.depth);
-      const kinds = kindsOf(args.kinds);
+      const depth = depthOf(request.depth);
+      const kinds = kindsOf(request.kinds);
+      if (normalized.anchor !== undefined) return readScopedGraph(ctx, normalized.anchor, depth, kinds);
+      const id = identifier("id", request.id);
 
       const walked =
-        kinds === undefined
+        kinds === undefined && !requiresClassScopedGraph(ctx)
           ? await retrievalGraphEdges(ctx, id, {
               hops: depth,
               limit: MAX_EDGES,
@@ -176,7 +194,7 @@ export async function serveGraph(
             canon: [],
             quoted: [],
             withheld: [],
-            data: { id, edges: [], truncated: false },
+            data: { ...(normalized.anchor === undefined ? {} : { anchor: normalized.anchor }), id, edges: [], truncated: false },
           };
         }
         const decision = pageDecision(index, grant, root);
@@ -185,7 +203,9 @@ export async function serveGraph(
             canon: [],
             quoted: [],
             withheld: [{ id: root.id, reason: decision.reason }],
-            data: { id, edges: [], truncated: false },
+            data: { ...(normalized.anchor === undefined ? {} : { anchor: normalized.anchor }), id, edges: [], truncated: false,
+              ...(visibleIndexDegraded(index, grant, "graph", [root]) ? { degraded: ["index-degraded"] } : {}),
+            },
           };
         }
       }
@@ -195,18 +215,35 @@ export async function serveGraph(
         limit: MAX_EDGES,
         ...(kinds === undefined ? {} : { kinds }),
       };
+      const authorizedDecisions = new Map<string, PageDecision>();
+      const authorizedDenials: AuditDenial[] = [];
+      const accept = (edge: GraphEdge): boolean => {
+        const facts = readServableEvents(ctx.db, edge.kind === "source" ? [edge.dst] : []);
+        const classified = classifyGraph([edge], index, grant, facts, new Set(), true, authorizedDecisions, true);
+        const allow = classified.kept.length > 0;
+        if (authorizedDenials.length < MAX_EDGES) authorizedDenials.push(...classified.withheld);
+        return allow;
+      };
+      let scopedTruncated = false;
+      const scopedFloor = () => {
+        const result = neighborsForServing(ctx.db, id, { ...query, ceiling: grant.ceiling, filter: accept }, graphServingScope(index, grant));
+        scopedTruncated ||= result.truncated;
+        return result;
+      };
       const found = walked.ok
         ? {
             id,
             edges: walked.edges,
             truncated: walked.truncated,
           }
-        : neighbors(ctx.db, id, { ...query, ceiling: grant.ceiling });
+        : ctx.principal.kind === "owner"
+          ? neighbors(ctx.db, id, { ...query, ceiling: grant.ceiling })
+          : scopedFloor();
       const foundKeys = new Set(found.edges.map(edgeKey));
       // Ceiling shapes the served cap on the local floor. A configured
       // engine already applied the requested ceiling; core still authorizes.
       const auditEdges =
-        walked.ok || grant.ceiling === undefined
+        ctx.principal.kind !== "owner" || walked.ok || grant.ceiling === undefined
           ? []
           : neighbors(ctx.db, id, query).edges.filter(
               (edge) => !foundKeys.has(edgeKey(edge)),
@@ -229,6 +266,16 @@ export async function serveGraph(
         decisions,
         !walked.ok,
       );
+      // Supplement every agent traversal, independently of the provider's raw
+      // overflow flag. Only the scoped floor can prove authorized overflow.
+      if (walked.ok && ctx.principal.kind !== "owner") {
+        const floor = scopedFloor();
+        const extra = classifyGraph(floor.edges, index, grant,
+          readServableEvents(ctx.db, floor.edges.filter(edge => edge.kind === "source").map(edge => edge.dst)),
+          seen, true, decisions, true);
+        served.kept.push(...extra.kept);
+        served.withheld.push(...extra.withheld);
+      }
       const hidden = classifyGraph(
         auditEdges,
         index,
@@ -240,16 +287,35 @@ export async function serveGraph(
         !walked.ok,
       );
 
+      // Empty replies can still omit authorized subject, source or prose links.
+      // Select the root's permitted corpus before reconstructing its health.
+      const permitted = index.pages.filter(page => authorize(grant, pageScope(index.sourceContext, page)).allow);
+      const links = linkIndexFromPages(permitted);
+      const related = root === undefined ? permitted.filter(page =>
+        ((kinds === undefined || kinds.includes("subject"))
+          && (grant.subjects === null || grant.subjects.includes(id)) && stringArray(page.data["subjects"]).includes(id))
+        || ((kinds === undefined || kinds.includes("source"))
+          && stringArray(page.data["sources"]).some(source => bareRetrievalId(source) === bareRetrievalId(id)))
+        || ((kinds === undefined || kinds.includes("wikilink"))
+          && wikilinks(page.body).some(target => (resolveWikilink(links, target) ?? target) === id))) : permitted;
       return {
         canon: [],
         quoted: [],
-        withheld: [...served.withheld, ...hidden.withheld],
+        withheld: [...served.withheld, ...hidden.withheld, ...authorizedDenials],
+        authorization: {
+          pages: [...new Set(served.kept.flatMap((edge) => [edge.src, ...(edge.kind === "wikilink" && index.byId.has(edge.dst) ? [edge.dst] : [])]))]
+            .map((id) => ({ id, hash: index.byId.get(id)!.contentHash })),
+          events: served.kept.filter((edge) => edge.kind === "source").map((edge) => ({ id: edge.dst })),
+        },
         data: {
+          ...(normalized.anchor === undefined ? {} : { anchor: normalized.anchor }),
           id,
           edges: served.kept.slice(0, MAX_EDGES),
-          truncated: found.truncated || served.kept.length > MAX_EDGES,
+          truncated: (ctx.principal.kind === "owner" ? found.truncated : scopedTruncated) || served.kept.length > MAX_EDGES,
+          ...(visibleIndexDegraded(index, grant, "graph", related) ? { degraded: ["index-degraded"] } : {}),
         },
       };
     },
+    contract,
   );
 }

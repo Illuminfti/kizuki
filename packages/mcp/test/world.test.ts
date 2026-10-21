@@ -1,3 +1,4 @@
+import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../core/src/agents";
 import { afterEach, expect, test } from "bun:test";
 import { worldFixture } from "../../core/test/serving/world-fixture";
 import { call, connectClient, envelopeOf } from "./client";
@@ -58,6 +59,34 @@ test("listed MCP client discovers and reads real supported Concept and Situation
   expect(malformed.isError).toBe(true);
 });
 
+test("MCP validates issued views, unchanged, share and cross-client resume against the full grammar", async () => {
+  fixture = mcpFixture();
+  const seeded = await worldFixture(fixture.db, { completeSummary: true });
+  const owner = await connectClient(fixture.owner(), open);
+  const fullReader = addAgent(fixture.db, "full-view-peer", { ...OWNER_AGENT_GRANT, deny_classes: [] });
+  const peer = await connectClient({ ...fixture.owner(), principal: authenticate(fixture.db, fullReader.token)! }, open);
+  const input = { operation: "concept", concept: seeded.ref, valid: { kind: "all" }, knownAt: { kind: "current" } };
+  // Exercise discovery through the same client that will share the object.
+  const discovered = envelopeOf(await call(owner, "world_view", { operation: "find_concepts", label: "", valid: input.valid, knownAt: input.knownAt })).data as any;
+  input.concept = discovered.result.data.matches[0].ref;
+  const first = await call(owner, "world_view", input);
+  expect(first.isError ?? false).toBe(false);
+  const baseline = (envelopeOf(first).data as any).result;
+  expect(baseline.view.kind).toBe("view");
+  const second = await call(owner, "world_view", { ...input, priorView: baseline.view });
+  expect(second.isError ?? false).toBe(false);
+  expect((envelopeOf(second).data as any).result).toEqual({ status: "unchanged", view: baseline.view, validUntil: baseline.validUntil });
+  const shared = await call(owner, "world_view", { operation: "share", of: { operation: "concept", concept: input.concept }, valid: input.valid, knownAt: input.knownAt });
+  expect(shared.isError ?? false).toBe(false);
+  const handle = (envelopeOf(shared).data as any).result.data.handle;
+  const resumed = await call(peer, "world_view", { operation: "resume", handle });
+  expect(resumed.isError ?? false).toBe(false);
+  const data = (envelopeOf(resumed).data as any).result;
+  expect(data.status).toBe("current"); expect(data.data.concept.ref.token).not.toBe(input.concept.token);
+  const absent = await call(peer, "world_view", { operation: "resume", handle: "A".repeat(43) });
+  expect((envelopeOf(absent).data as any).result).toEqual({ status: "new_view_required" });
+});
+
 test("MCP world_view pages label discovery with the returned cursor", async () => {
   fixture = mcpFixture();
   const first = await worldFixture(fixture.db, { label: "Topic 00", subject: "topic:0" });
@@ -96,3 +125,16 @@ test("MCP world_view pages label discovery with the returned cursor", async () =
   });
   expect(bad.isError).toBe(true);
 }, 60_000);
+
+
+test("MCP consumes typed retained history and reuses its opaque cutoff for a Concept card",async()=>{
+ fixture=mcpFixture();fixture.db.query("UPDATE claim_history_clock SET last_recorded_at=?").run("2030-01-09T00:00:00.000Z");await worldFixture(fixture.db);
+ const client=await connectClient(fixture.owner(),open);
+ const found=envelopeOf(await call(client,"world_view",{operation:"find_concepts",label:"Bayesian"})).data as any;
+ const ref=found.result.data.matches[0].ref;
+ const result=await call(client,"world_view",{operation:"history",concept:ref,knownAt:{kind:"time",at:"2030-01-09T00:00:00.000Z"}});
+ expect(result.isError??false).toBe(false);const page=(envelopeOf(result).data as any).result.data;
+ expect(page.schema).toBe("kizuki.world-history/v1");expect(page.transitions).toHaveLength(3);
+ const card=await call(client,"world_view",{operation:"concept",concept:ref,knownAt:{kind:"snapshot",ref:page.snapshot}});
+ expect(card.isError??false).toBe(false);expect((envelopeOf(card).data as any).result.data.knownAt.ref).toEqual(page.snapshot);
+});

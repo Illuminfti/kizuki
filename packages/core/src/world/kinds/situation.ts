@@ -6,6 +6,7 @@ import { sealCard, type KindAssembler } from "./kit";
 
 export const situationAssembler: KindAssembler = {
   kind: "situation",
+  sliceConstraint: relation => ["situation.blocker", "situation.commitment"].includes(relation.predicate),
   assemble({ node, own, summary, coverage }) {
     const select = (predicate: string) =>
       own.filter((item) => item.predicate === predicate);

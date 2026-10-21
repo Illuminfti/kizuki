@@ -4,7 +4,7 @@ import {
   OWNER, addAgent, authenticate, bindSourceModelPort, createBudgetTracker,
   createModelProducerV2Port, initAgents, readSince, registerConnection,
   rebuildRetrieval, runBackfill, runWritePass, seedConnectorSensitivity, serveCorrect, servePropose,
-  serveWorldView, setSourceGrant, ulid,
+  serveWorldView, setSourceGrant, revokeSourceGrant, ulid,
 } from "../../../packages/core/src/index";
 import type { LlmPort, ServeContext } from "../../../packages/core/src/index";
 import { openLedger } from "../../../packages/core/src/testing";
@@ -71,14 +71,14 @@ function scriptedModel(records: RecordSpec[]): LlmPort {
 }
 
 export function discoveredCards(ctx: ServeContext, kind: "concept" | "situation", label: string) {
-  const query = { valid: { kind: "all" }, knownAt: { kind: "current" } };
+  const query = { valid: { kind: "all" }, knownAt: { kind: "current" as const } };
   const discovery = serveWorldView(ctx, { ...query, operation: kind === "concept" ? "find_concepts" : "find_situations", label });
   const result = discovery.data;
   if ("status" in result || result.result.status === "unavailable" || !("matches" in result.result.data)) return [discovery];
   return [discovery, ...result.result.data.matches.map(match => serveWorldView(ctx, { ...query, operation: kind, [kind]: match.ref }))];
 }
 
-export async function generateVault(root: string, size: PersonaSize) {
+export async function generateVault(root: string, size: PersonaSize, options: { baseline?: boolean } = {}) {
   assertLogicalClock();
   const scenario = persona(size), vaultPath = join(root, "vault");
   const initialized = await initCommand.run({ env: { KIZUKI_CONFIG: join(root, "unused-config.toml") },
@@ -101,6 +101,7 @@ export async function generateVault(root: string, size: PersonaSize) {
     };
     writeFileSync(join(inputs, "mapping.json"), JSON.stringify(mapping));
     const importReceipts = [];
+    let sharedSource = "";
     for (const group of ["shared", "scope", "ceiling", "withheld"] as const) {
       const selected = scenario.records.filter(record =>
         (record.withheld ? "withheld" : record.sensitivity === "private" ? "ceiling" : record.subject === "family" ? "scope" : "shared") === group);
@@ -109,6 +110,7 @@ export async function generateVault(root: string, size: PersonaSize) {
         label: record.label, text: recordText(record), sensitivity: record.sensitivity ?? "personal" })).join("\n") + "\n");
       const connector = new LegacyEventsConnector({ path, format: "jsonl", mapping: join(inputs, "mapping.json") });
       const sourceKey = ulid();
+      if (group === "shared") sharedSource = sourceKey;
       registerConnection(db, CONNECTOR, sourceKey);
       // Host policy from the synthetic source class; the model cannot lower it.
       seedConnectorSensitivity(db, { connector_id: CONNECTOR, source_key: sourceKey }, {
@@ -139,15 +141,18 @@ export async function generateVault(root: string, size: PersonaSize) {
       if (step === 31) throw new Error("fixture extraction did not settle");
     }
     const ctx = { db, vaultPath, principal: OWNER };
-    const event = readSince(db, null, 1000).events.find(item => item.source_record_id === "identity");
-    if (event === undefined) throw new Error("fixture identity missing");
-    const proposer = addAgent(db, "fixture-proposer", { ceiling: "personal", subjects: ["persona:ada"],
+    const evidence = readSince(db, null, 1000).events;
+    const event = evidence.find(item => item.source_record_id === "identity");
+    const privateContext = evidence.find(item => item.source_record_id === "ceiling-decoy");
+    if (event === undefined || privateContext === undefined) throw new Error("fixture proposal evidence missing");
+    // Private provenance keeps the proposed fact within the owner-only oracle.
+    const proposer = addAgent(db, "fixture-proposer", { ceiling: "private", subjects: ["persona:ada", "persona:orchard"],
       types: null, tools: ["propose"], rate_limit_per_minute: 1000, relay_owner_corrections: false });
     const proposalPrincipal = authenticate(db, proposer.token);
     if (proposalPrincipal === null) throw new Error("fixture proposer authentication failed");
     const relationship = scenario.facts.find(fact => fact.id === "proposed-relationship")!;
     const proposed = await servePropose({ ...ctx, principal: proposalPrincipal }, { kind: "claim", body: `${relationship.value}.`,
-      subject: "persona:ada", subjects: ["persona:ada"], predicate: "relation.knows", object: relationship.value, provenance: [event.event_id] });
+      subject: "persona:ada", subjects: ["persona:ada"], predicate: "relation.knows", object: relationship.value, provenance: [event.event_id, privateContext.event_id] });
     if (proposed.data?.outcome !== "stored") throw new Error("fixture proposal failed");
     const cards = discoveredCards(ctx, "situation", "Orchard");
     const blocker = cards.flatMap(envelope => "result" in envelope.data && envelope.data.result.status !== "unavailable" &&
@@ -155,17 +160,22 @@ export async function generateVault(root: string, size: PersonaSize) {
       .find(relation => relation?.predicate === "situation.blocker" && relation.object.kind === "literal" &&
         relation.object.value === "waiting for the paint samples");
     if (blocker === undefined || blocker === null) throw new Error("fixture blocker missing");
-    const corrected = await serveCorrect(ctx, { statement: "waiting for the load test", object: "waiting for the load test", target: { world_claim: blocker.claim } });
-    if (corrected.data?.claim_id === null || corrected.data?.claim_id === undefined) throw new Error("fixture correction failed");
+    const applyCorrection = async () => {
+      const corrected = await serveCorrect(ctx, { statement: "waiting for the load test", object: "waiting for the load test", target: { world_claim: blocker.claim } });
+      if (corrected.data?.claim_id === null || corrected.data?.claim_id === undefined) throw new Error("fixture correction failed");
+    };
+    if (!options.baseline) await applyCorrection();
     await producer.close();
     producer = undefined;
     await rebuildRetrieval(db, vaultPath, undefined, { layer: "search" });
     const { token } = addAgent(db, "fresh-agent", { ceiling: "personal", subjects: ["persona:ada", "persona:grace", "persona:orchard", "persona:bayes"],
-      types: null, tools: ["search", "context_packet", "world_view"], rate_limit_per_minute: 1000, relay_owner_corrections: false });
+      types: null, tools: ["search", "context_packet", "world_view", ...(options.baseline ? ["timeline" as const] : [])], rate_limit_per_minute: 1000, relay_owner_corrections: false });
     const principal = authenticate(db, token);
     if (principal === null) throw new Error("fixture authentication failed");
-    return { ...scenario, db, vaultPath, token, principal, build: { imports: importReceipts, extraction: passes,
-      propose: proposed.data.outcome, correct: "committed" as const } };
+    return { ...scenario, db, vaultPath, token, principal, applyCorrection,
+      revokeSharedSource: () => revokeSourceGrant(db, { source_key: sharedSource, expected_revision: 1, operation_id: "baseline-revoke-shared" }),
+      build: { imports: importReceipts, extraction: passes, propose: proposed.data.outcome,
+        correct: options.baseline ? "deferred" as const : "committed" as const } };
   } catch (error) {
     await producer?.close();
     db.close();

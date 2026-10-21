@@ -1,3 +1,5 @@
+import { createRedactor } from "../../serving/redact";
+import { issuedOpaqueFields } from "../../util/issued-opaque";
 import type {
   ConceptCoverage,
   ViewGap,
@@ -29,7 +31,7 @@ export function coverageOf(
 ): ConceptCoverage {
   const gaps = [
     ...new Set<ViewGap>([
-      ...sourceCoverage(frame.ctx),
+      ...sourceCoverage(frame.ctx, frame.dependencies),
       ...(overflow ? (["traversal_limit"] as const) : []),
       ...extra,
     ]),
@@ -38,7 +40,7 @@ export function coverageOf(
     status: gaps.length === 0 ? "complete_for_query" : "partial",
     gaps,
     validWindow: frame.valid,
-    history: "unavailable",
+    history: frame.cutoff.kind === "current" ? "unavailable" : frame.historyBaseline ? "baseline_only" : "retained_for_query",
   };
 }
 
@@ -74,6 +76,7 @@ export function assembleCard(
     }));
   return assembler.assemble({
     frame,
+    ...(body.situationV2 === undefined ? {} : { situationV2: body.situationV2 }),
     node: {
       schema: "kizuki.knowledge-node/v1",
       ref,
@@ -87,11 +90,14 @@ export function assembleCard(
     own,
     relations,
     summary: body.summary,
-    coverage: coverageOf(frame, collection.overflow, body.gaps),
+    learning: body.learning ?? [],
+    outcomeUsefulness: body.outcomeUsefulness,
+    independentSkillClaims: body.independentSkillClaims,
+    coverage: coverageOf(frame, collection.overflow || cluster.overflow === true, body.gaps),
   });
 }
 
-export interface WorldMatches<Schema extends string = string> {
+export type WorldMatches<Schema extends string = string> = {
   readonly schema: Schema;
   readonly matches: readonly {
     ref: WireRef<"object">;
@@ -99,7 +105,7 @@ export interface WorldMatches<Schema extends string = string> {
   }[];
   readonly cursor: string | null;
   readonly coverage: ConceptCoverage;
-}
+};
 
 /**
  * One page of discovery. An empty first page for a kind no build path can
@@ -119,13 +125,14 @@ export function assembleMatches<Schema extends string>(
     ref: issueWorldRef(db, frame.ns, "object", handle),
     labels,
   }));
+  const preview = createRedactor(frame.ctx.principal);
   matches.sort(
     (a, b) =>
-      (a.labels[0] ?? "").localeCompare(b.labels[0] ?? "") ||
+      preview.text(a.labels[0] ?? "").localeCompare(preview.text(b.labels[0] ?? "")) ||
       a.ref.token.localeCompare(b.ref.token),
   );
   const dark = first && scan.visibleHandles === 0 && !populationEnabled(kind);
-  return {
+  const result = {
     schema,
     matches,
     cursor:
@@ -134,4 +141,5 @@ export function assembleMatches<Schema extends string>(
         : issueWorldRef(db, frame.ns, "object", scan.resumeAfter).token,
     coverage: coverageOf(frame, scan.cut, dark ? ["coverage"] : []),
   };
+  return result.cursor === null ? result : issuedOpaqueFields(result, ["cursor"]);
 }

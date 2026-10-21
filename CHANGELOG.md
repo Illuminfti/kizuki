@@ -2,7 +2,27 @@
 
 ## Unreleased
 
+- Make session hooks require a scoped credential or explicit `--owner`, scrub
+  every principal's output, bypass proxies on loopback, isolate fallback startup
+  and environment, remove terminal controls, cap output at 64 KiB, and keep
+  vault argument errors silent with accurate timeout diagnostics.
+- Unify session-capture and serving credential scrubbing, including Kizuki
+  tokens, wrapped and encoded credentials, JSON/YAML fields and common API keys.
+  Neutralize harness tags for every principal and remove transcript scaffolding
+  while keeping owner words. Bound serving scans, prevent envelope recounts,
+  and bind agent evidence integrity to the scrubbed projection.
+- Disclose per-source coverage and blind spots in doctor and connection status;
+  persist complete folder sync passes and their last successful pass time.
+
 ### Fixed
+
+- Agent proposals and corrections compare and retire only readable claims, and
+  unreadable canon pages remain untouched and unnamed. Search and entity labels
+  match served redacted text; graph limits count authorized edges.
+- Repeated legacy canon failures wait a day after three failed passes, allowing
+  later writable claims through. Doctor lists the unmaterialized claims and
+  retry times. Their full provenance remains intact; the 100-source page limit
+  is unchanged, and quarantine does not count as a successful write.
 
 - World discovery and cards exclude held claims before their candidate bounds,
   so a held prefix cannot hide an eligible label or definition. Visible
@@ -15,6 +35,27 @@
   another connection can start.
 - Extraction prefilter counts obey current source permission, including journal
   replay. Denied text cannot change skip counters or extraction step usage.
+- Authorize claim windows before their limits, retain recent contradictions and
+  readable coverage gaps in large vaults, rank recall by relevance and recency,
+  skip oversized packet pieces, and scope health connections to exact sources.
+- Standing HTTP refuses oversized bodies, malformed UTF-8, excessive JSON
+  nesting and non-object argument containers before tool dispatch. Its body
+  reader shares the app endpoint's time limit and uses a 1 MiB byte limit
+  to fit Unicode proposals; the app retains its 128 KiB limit. Legacy JSONL import
+  refuses symlinks and non-regular files through the open descriptor.
+- Google Calendar refuses invalid all-day dates with a typed connector error
+  instead of throwing `RangeError`; valid leap-day dates remain accepted.
+- A seeded hostile-input fuzz campaign covers parser, file-reader, MCP and
+  HTTP boundaries with isolated workers, resource watchdogs and a replayable
+  synthetic corpus; see `scripts/fuzz/README.md` for CI and long local modes
+  and the enabled packet-rendering regression.
+- Beeper response reads use fixed storage and one deadline, refuse an oversized
+  body without waiting for the provider to settle stream cancellation, and
+  report a stalled body as unavailable. The local app reports malformed JSON,
+  invalid source-policy fields, refused correction and world-view input, an
+  unknown undo receipt and an unsupported calendar id as `invalid_request`
+  rather than `unavailable`, and a missing Google client configuration as
+  `misconfigured`.
 
 - Purge is physically total. After it, the purged text is gone from claim and
   proposal payloads (ids, provenance and receipts stay), from archive copies
@@ -51,6 +92,99 @@
   `capture fan-out` line (JSON `claims.capture_fanout`), apart from unwritten
   claims, names `kizuki serve run doctor-sweep` while any are pending, and no
   longer lists them among leftover skipped rows.
+- An edited page from the wiki importer now replaces its canon page instead of
+  being appended to it. Page candidates carry a claim key per source record, so
+  a newer revision supersedes the older claim: the page keeps the newest body
+  once and takes the newest frontmatter fields, and a frontmatter-only edit no
+  longer repeats the body. A claim imported before pages carried a key is
+  superseded by the first edit that follows, and undoing that write brings the
+  previous revision back. A revision that fits no longer inherits the
+  `x-body-truncated` marker of a longer earlier one.
+- A create that lands on a file the writer cannot bind to a page (no readable
+  page id) ends as a skip with reason `page_exists`, counted in
+  `claims_skipped` on the run receipt, instead of failing every pass.
+
+### Model configuration and consent
+
+- Source consent now states a retention class. `egress.external_retention`
+  accepts `zero_retention`, `logged_no_training`, `logged_and_trained` (strictest
+  to loosest) and `provider_managed`. A grant names the loosest class it accepts,
+  the configured model declares its class in `[ports.llm] retention`, and text is
+  sent only when the declared class is at least as strict as the accepted one. An
+  undeclared model counts as `logged_and_trained`. Existing `provider_managed`
+  grants keep working and keep their digests. `kizuki connect status`, its
+  `--json` (`egress.declared_retention`) and `kizuki doctor` show the class next
+  to each egress line.
+- `[ports.llm]` accepts `temperature` (0 to 2), `json_mode` (sends
+  `response_format` `json_object`) and `retention`; each is sent or applied only
+  when configured, so the default request body is unchanged. `retention =
+  "zero_retention"` is refused unless `[ports.llm.provider]` sets `zdr = true` and
+  `allow_fallbacks = false` (or the endpoint is loopback);
+  `logged_no_training` needs `data_collection = "deny"` or `zdr = true`.
+- The llm transport turns off Bun's five-minute fetch cutoff, so `timeout_ms`
+  above 300000 is honoured.
+- The typed extraction prompt keeps its fixed instructions and the predicate and
+  vocabulary registry in one system message that is identical across requests;
+  the user message holds only per-request fenced data, so serving models can
+  reuse the shared prefix.
+- A configured System One judge is model egress: events are sent only when the
+  source grant names the judge as its own optional `judge_endpoint` and
+  `judge_model` beside the extraction model, and are held otherwise. `kizuki
+  doctor` and `connect status` name the hold. `connect grant --policy FILE`
+  accepts the pair; the app's model-only permit action does not grant judge
+  access. A grant without the pair keeps its form and digest.
+- Saving another endpoint or model in the app no longer carries over the earlier
+  `retention` and `provider` declarations; a new destination starts undeclared.
+- `scripts/evaluate-extraction-model.ts` scores a real model on the synthetic
+  fixture, refuses a non-loopback endpoint without `--allow-remote`, and labels
+  the result as a fixture measurement, never a model-quality claim.
+
+### Source mirrors follow source truth
+
+- A markdown-folder or wiki sync that would withdraw more than the larger of 20
+  records and 20 percent of the source no longer tombstones the vault. It emits
+  no tombstones, ends `unavailable` with `mass_withdrawal_held: N of M`, and shows
+  that typed state as `hold` in `connect status` and `doctor` (which fails).
+  Restoring the source clears it; `kizuki sync CONNECTOR --source KEY
+  --confirm-withdrawals N` releases it once.
+- A record deleted and later restored, or edited and later reverted, is a new
+  revision (`revision_epoch`) instead of a swallowed duplicate, and the next
+  sync emits nothing. A staged wiki page carries `x-source-revision`, and the
+  sync pass reverts the archive receipt of a page whose source record came back,
+  while the page still holds the bytes the archive left.
+- A rename is one event with `moved_from` and no tombstone for the old path;
+  wiki pages retain their planned target. A wiki mapping edit, and its revert, re-emit only
+  pages whose planned output changed (`plan_sha256`); the mapping hash no longer
+  makes every page a new event.
+- The markdown-folder cursor no longer pins device and inode, so a disk
+  migration, a restore or a recreated folder resumes from the ledger's committed
+  files. A successful capture drain walks the tree once, revalidates emitted
+  folder files, and defaults to 1,000 files per page. Wiki drains reuse their
+  bounded plan until exhaustion; a later sync scans again.
+  Folder scans hash current bytes even when restored file metadata is unchanged.
+- Filing a proposal no longer reads the whole proposals and claims tables: two
+  content-hash indexes (created on open for existing ledgers) make a
+  5,000-file backfill cost work proportional to its size, not to its square.
+- Folder moves retain their original subject digest across further moves, edits
+  and ledger-backed restores. Automatic archive reversal respects the loop's
+  canon budgets and resumes past edited archives after a ledger restart.
+  Canon body replacement remains incomplete in the compatibility writer; these
+  mirror changes establish capture state and archive reversal.
+
+### Canon capacity
+
+- The fixed 10,000-file limit on the canon walk is gone. `[canon] max_live_pages`
+  in `serve.toml` (default 20,000; 100 to 250,000) sets a ceiling on pages that
+  are not archived. Independent scan file and byte budgets scale with larger
+  ceilings and can be configured for available resources.
+  Archived pages are counted apart and no longer count against the ceiling, so
+  a vault past 10,000 files keeps answering query and context and keeps
+  rebuild, export and purge working.
+- Doctor prints `canon pages live=N archived=M ceiling=C state=...` (JSON:
+  `serve.canon`) and fails at `near` (80 percent) and `full` with the next
+  step. At `full` the writer holds new pages under the named state
+  `canon_ceiling`; reads, edits within scan budgets, undo and purge continue, and
+  held claims stay live. Details in `docs/canon-capacity.md`.
 
 ### Operator safety
 
@@ -122,8 +256,8 @@
   documented heuristic, not a guarantee. It covers the `[ports.llm]` extraction
   path and the text its admission judge receives. A configured
   `[ports.systemone]` judge is a separate destination at its own `base_url`: it
-  is not named by source consent, not covered by `[ports.llm.provider]`, and not
-  shown by `connect status` or `--json` egress. The judge the reflex path uses
+  is not covered by `[ports.llm.provider]`, and source consent covers it only
+  when the grant names it. The judge the reflex path uses
   is not scrubbed.
 - `[ports.llm.provider]` passes an allow-listed `provider` object
   (`data_collection`, `zdr`, `order`, `only`, `ignore`, `allow_fallbacks`) to
@@ -205,6 +339,22 @@
   survive a cut and the token budget stays exact. The owner keeps raw text. The
   scrubber is a heuristic; see [what an agent is served](docs/agent-enrollment.md#what-an-agent-is-served).
 
+- A source policy for an owner-mapped importer (`import-legacy-wiki`,
+  `import-legacy-events`) may set `sensitivity_default`, so the labels its
+  mapping wrote decide the tier once you regrant: a page labelled `personal` is
+  stored `personal`, and unlabelled or unreadable pages stay `private`. Nothing
+  changes for an existing grant until you regrant.
+- A source policy may carry `class_rules` (path globs marked `machine_exhaust`
+  or `credential`), and capture stamps a `credential` class on evidence that
+  matches the shared secret patterns. Agent grants gain the optional
+  `deny_classes`; when absent it denies `credential`, so existing agents lose
+  credential-shaped material and nothing else. `agent list` shows the effective
+  list. Ledger migration 38 adds the class table and stamps stored events.
+- Grants may name subject ids with spaces and other printable characters, as
+  importer subject mappings produce them.
+- `system_health` reports `pages.withheld` and, to the owner, the path of each
+  page file that could not be read.
+
 ### Fixed
 
 - Export no longer refuses because of a disconnected source that holds no
@@ -263,6 +413,9 @@
   `| jq` or a hook truncated and unparseable. Every command's stdout and stderr
   now go out with a synchronous write that waits for a slow reader; a reader
   that closes early ends the output quietly.
+- `correct` now applies a grant's class denial on every ledger, including one
+  with no source grants: a claim whose evidence carries a withheld class is
+  absent to that agent, dry run or not.
 - A long `kizuki backfill`, `sync` or `import` can no longer take the always-on
   daemon down. The daemon treats a ledger held by another writer as a skipped
   pass: the receipt stops as `ledger:lease_held` and names the holder, the rail
@@ -433,6 +586,13 @@
   loaded machine does not fail tests at Bun's 5-second default. A test's own
   explicit timeout is unchanged. The CLI test helper kills a child process that
   has not exited after 90 seconds and fails that test with a clear message.
+- Claims take their sensitivity from the sources of their own provenance
+  events, not from every source of their connector, so one private source no
+  longer raises the claims of its siblings.
+- A canon page is readable to a time-scoped grant when every source it cites is
+  inside the window; before, no page was.
+- One unreadable or symlinked canon page file no longer fails every canon read
+  with `serving failed`; it is skipped and named by `system_health`.
 - After graph registry initialization, a canon write assesses only the written
   page's evidence and refreshes its edges and affected incoming links through
   indexed page names. Ordinary refresh and rebuild reconcile unrelated disk
@@ -496,6 +656,72 @@
   passes over thousands per pass, still bounded by `max_pass_seconds`. The
   records stay in the ledger for search, timeline and context. Older deferred
   records use the same prefilter under their current extraction grant.
+
+### Retrieval quality
+
+- `query`, `search` and `context --query` answer natural-language questions. A
+  question of three or more words that matches fewer than three records
+  literally is retried on its content words (stopwords dropped, stem
+  matching), keeping results that hold at least 60% of them. The result is
+  labelled `query-relaxed` and each hit carries a `coverage` share; a question
+  nothing answers reports `query-no-match`. `kizuki query --json` exposes
+  `coverage`.
+- A page titled exactly the query ranks first, and loop-written pages
+  (`auto/`, daily briefs, `rollup`) rank below owner pages at close relevance.
+- `context --query` selects captures within the window by the query instead of
+  by recency (named subjects still add their recent captures after the
+  matches). A canon page and the capture it cites are returned once, and an
+  edited record is searchable only by its current capture. A query nothing
+  matches reports `query-no-match`.
+- A page edited after its first import is dated by the edit when the wiki
+  importer re-emits it, so timeline and "what changed recently" windows find
+  the revision instead of the created date.
+- Search caps its owner audit scan at 500 candidate identities and reports
+  `scan-bound`. Authorized matches are selected separately, so withheld evidence
+  cannot change agent relaxation, ranking or diagnostics.
+- `bun run eval:retrieval` scores a synthetic golden set (keyword, paraphrase,
+  decision and unanswerable questions) with hit@1/5/20, MRR and abstention, and
+  exits 1 under its pinned minimums. See `docs/retrieval-quality.md`.
+
+### Semantic retrieval
+
+- New optional embedding port `kizuki.embedding.local-http` (`@kizuki/embed-local-http`)
+  sends text to an OpenAI-compatible `/v1/embeddings` or ollama-compatible
+  `/api/embed` server on a loopback address. Only IPv4 loopback and `[::1]`
+  address literals over plain `http` are accepted; a hostname, another address,
+  credentials, a path or a redirect is refused, and the port opens its own
+  socket so `HTTP_PROXY` cannot reroute the text. Model, width and context
+  window are pinned in `[ports.embedding]`; prompts, chunk size, batch size and
+  timeout are optional. The space id covers the model, width, prompts and
+  tokenizer, so a prompt change is a new space. It is off unless configured,
+  and Kizuki does not start or download a server or a model.
+- `query`, `context`, MCP `search` and `context_packet` ask the embedded engine
+  for hybrid ranking whenever it can rank by vector, in the CLI, the MCP stdio
+  host and the daemon (which now bind the vault's embedding port with the
+  engine). `query` and `context` bind it when an embedding port is selected
+  and its lease is free. An answer
+  that was not vector-ranked although an embedding port is configured carries
+  `retrieval-vector-unavailable`, and one that covers only part of the permitted corpus
+  carries `retrieval-vector-partial`. A dead or slow embedding server leaves
+  keyword ranking and the label; hybrid never fails with the server.
+- The `embed-backfill` rail embeds up to 200 chunks per run, newest documents
+  first, and receipts the documents embedded and the backlog left. It replaces
+  the unwired backlog hook. A write embeds the documents it wrote and leaves an
+  older backlog to the rail; a refresh embeds only documents that changed.
+- Embedding recipe fixes: the document title (not its id) is framed into every
+  chunk and is no longer part of the chunk text; the GGUF table embedder's
+  prompts are slots only, so no prompt word is averaged into its vectors; chunk
+  sizes are counted with the embedding port's tokenizer when it has one
+  (`EmbeddingPort.countTokens`, complete spans), an over-long unbroken run is cut to
+  fit, and chunks written before an embedder was bound are cut again for it.
+  The GGUF space's prompts changed, so a vault using the fixture embedder needs
+  `kizuki rebuild --confirm`.
+- The embedded engine bounds text (default 4 MiB), serialized metadata
+  (16 MiB), documents (5,000), chunks (10,000) and subject links (20,000),
+  checking a rebuild before embedding or replacing the active index. Doctor
+  reports the resource that refused the last index update; the prior index is
+  preserved, and only a successful authoritative rebuild clears the refusal. Doctor also prints `not in use` when an embedding port
+  is configured but retrieval is not the embedded engine.
 
 ## 1.0.2 (2026-09-24)
 

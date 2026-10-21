@@ -86,12 +86,12 @@ describe("RFC 0002 §16.4 purge and undo", () => {
       return;
     }
 
-    // Include the two deterministic import claims even when this test did
+    // Include the three deterministic import claims even when this test did
     // not explicitly index them. Purge proves absence for the whole closure.
     const targetClaims = db.query<{ claim_id: string }, [string]>(
       "SELECT claim_id FROM claims c WHERE EXISTS (SELECT 1 FROM json_each(c.provenance) p WHERE p.value=?) ORDER BY claim_id",
     ).all(target.event_id).map(row => `claim:${row.claim_id}`);
-    expect(targetClaims).toHaveLength(3);
+    expect(targetClaims).toHaveLength(4);
     expect(targetClaims).toContain(`claim:${claim.claim.claim_id}`);
 
     const port = createVaultFts5Port(setup.vault);
@@ -169,9 +169,9 @@ describe("RFC 0002 §16.4 purge and undo", () => {
         `event:${target.event_id}`, "page:page-grace", ...targetClaims,
       ].sort());
     } finally { proofDb.close(); }
-    // Event, page and all three claims are checked, including absent docs.
+    // Event, page and all four claims are checked, including absent docs.
     expect(verified.stdout).toMatch(
-      /kizuki\.retrieval\.fts5\s+checked 5\s+found 0\s+done/,
+      /kizuki\.retrieval\.fts5\s+checked 6\s+found 0\s+done/,
     );
     expect(verified.stdout).toMatch(/canon\s+pages rewritten 1\s+hold lifted/);
   });

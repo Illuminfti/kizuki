@@ -1,10 +1,11 @@
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 /**
  * The seams of the staged projection: a new enricher, collector, grouper or
  * kind is a registration, and none of them can widen what a reader may see.
  * Reads go through `world_view`; the stage lists are swapped with
  * `withWorldPipeline`, which restores them when the read is done.
  */
-import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, setSystemTime, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateConceptCard } from "../../src/contracts/concept-card";
@@ -13,7 +14,7 @@ import type { Enricher } from "../../src/world/pipeline/enrich";
 import type { Collector } from "../../src/world/pipeline/collect";
 import type { Grouper } from "../../src/world/pipeline/group";
 import { withWorldPipeline } from "@kizuki/core/testing";
-import { readWorldView } from "@kizuki/core/world";
+import { readWorldView, type WorldReadResult } from "@kizuki/core/world";
 import { WORLD_REGISTRY } from "../../src/contracts/world-vocabulary";
 import { KIND_ASSEMBLERS } from "../../src/world/kinds";
 import {
@@ -28,9 +29,11 @@ setDefaultTimeout(120_000);
 
 let scene: GoldenScene;
 beforeAll(async () => {
-  scene = await goldenScene();
+  setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+  scene = await goldenScene({ model: EMPTY_SUMMARY_MODEL });
+  await completeEmptyWorldSummaries(scene.db, scene.vaultPath);
 });
-afterAll(() => scene.dispose());
+afterAll(() => { scene.dispose(); setSystemTime(); });
 
 interface CardRead {
   status: string;
@@ -85,7 +88,7 @@ describe("enrichers", () => {
     expect(injected.reasons).toEqual(["stale_dependencies"]);
     expect(injected.card.coverage.gaps).toEqual(["stale_dependencies"]);
     expect(injected.card.definitions.map((relation) => relation.conflict)).toEqual(["present"]);
-    expect(injected.card.relations.every((relation) => relation.conflict === "unknown")).toBe(true);
+    expect(injected.card.relations.map((relation) => relation.conflict)).toEqual(before.card.relations.map((relation) => relation.conflict));
     expect(injected.text).not.toBe(before.text);
     expect(conceptCard().text).toBe(before.text);
   });
@@ -174,7 +177,7 @@ describe("groupers", () => {
 });
 
 describe("the recorded cutoff", () => {
-  test("a known-at time or snapshot is still unavailable(history) on every operation", () => {
+  test("card history distinguishes a pre-admission cutoff from an unknown snapshot; discovery remains unavailable", () => {
     const reader = goldenReader(scene.owner);
     const concept = reader.find("concepts", "find_concepts", "Bayesian updating")[0]!.ref;
     const situation = reader.find("situations", "find_situations", "Launch")[0]!.ref;
@@ -187,11 +190,11 @@ describe("the recorded cutoff", () => {
     ];
     for (const knownAt of [{ kind: "time", at: "2026-06-01T00:00:00.000Z" }, { kind: "snapshot", ref: snapshot }]) {
       for (const input of operations) {
-        expect(readWorldView(scene.owner, { ...input, valid: { kind: "all" }, knownAt })).toEqual({
-          schema: "kizuki.world-view/v1",
-          operation: input.operation,
-          result: { status: "unavailable", reason: "history" },
-        });
+        const expected: WorldReadResult = input.operation.startsWith("find_")
+          ? { schema: "kizuki.world-view/v1", operation: input.operation, result: { status: "unavailable", reason: "history" } }
+          : knownAt.kind === "time" ? { status: "not_found" }
+          : { schema: "kizuki.world-view/v1", operation: input.operation, result: { status: "new_view_required" } };
+        expect(readWorldView(scene.owner, { ...input, valid: { kind: "all" }, knownAt })).toEqual(expected);
       }
     }
   });
@@ -205,17 +208,23 @@ describe("the stage lists", () => {
     expect(conceptCard().status).toBe("current");
   });
 
-  test("each shipped assembler serves one registered kind, once", () => {
-    const ids = KIND_ASSEMBLERS.map((assembler) => assembler.kind);
-    expect(new Set(ids).size).toBe(ids.length);
-    for (const id of ids) expect(WORLD_REGISTRY.kind(id)).toBeDefined();
+  test("each shipped assembler serves one registered kind and card variant, once", () => {
+    const variants = KIND_ASSEMBLERS.map(({ kind, cardSchema }) =>
+      JSON.stringify([kind, cardSchema ?? null]));
+    expect(new Set(variants).size).toBe(variants.length);
+    for (const assembler of KIND_ASSEMBLERS)
+      expect(WORLD_REGISTRY.kind(assembler.kind)).toBeDefined();
+    const defaults = KIND_ASSEMBLERS.filter(({ cardSchema }) => cardSchema === undefined);
+    expect(new Set(defaults.map(({ kind }) => kind)).size).toBe(defaults.length);
+    expect(new Set(defaults.map(({ kind }) => kind))).toEqual(
+      new Set(KIND_ASSEMBLERS.map(({ kind }) => kind)));
   });
 
   test("every slot marker appears exactly once in the file that owns its list", () => {
     const root = join(import.meta.dir, "../../src/world");
     const markers = (file: string) =>
       [...readFileSync(join(root, file), "utf8").matchAll(/^\s*\/\/ slot: (\w+)\s*$/gm)].map((match) => match[1]!);
-    expect(markers("pipeline/enrichers.ts")).toEqual(["card", "consol"]);
+    expect(markers("pipeline/enrichers.ts")).toEqual(["card", "skill", "consol"]);
     expect(markers("pipeline/collect.ts")).toEqual(["ident"]);
     expect(markers("pipeline/group.ts")).toEqual(["ident"]);
     expect(markers("kinds/index.ts")).toEqual(["quest", "people", "skill", "sit2", "art"]);

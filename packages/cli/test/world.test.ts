@@ -35,7 +35,8 @@ describe("world", () => {
     const setup = tempVault();
     const result = runCli(setup.env, "world", "--operation", "find_concepts");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.trim()).toBe("No admitted matches in your current scope.");
+    expect(result.stdout.split("\n")[0]).toBe("No admitted matches in your current scope.");
+    expect(result.stdout).toMatch(/View: [A-Za-z0-9_-]{43} \(valid until .+\)/);
     expect(result.stderr).toContain("kizuki doctor");
   });
 
@@ -81,7 +82,7 @@ describe("world", () => {
       [["world"], "usage: kizuki world"],
       [["world", "--operation", "situation"], "usage: kizuki world"],
       [["world", "--operation", "situation", "--ref"], "missing value for --ref"],
-      [["world", "--operation", "history", "--ref", OBJECT], "usage: kizuki world"],
+      [["world", "--operation", "future_history", "--ref", OBJECT], "usage: kizuki world"],
       [["world", "--operation", "situation", "--ref", "nope"], "usage: kizuki world"],
       [["world", "--operation", "situation", "--ref", OBJECT, "extra"], "usage: kizuki world"],
     ] as const) {
@@ -157,7 +158,11 @@ test("CLI renders a situation card with human item labels", async () => {
   const found = JSON.parse(runCli(setup.env, "world", "--operation", "find_situations", "--label", "Harbor", "--json").stdout);
   const read = runCli(setup.env, "world", "--operation", "situation", "--ref", found.data.data.result.data.matches[0].ref.token);
   expect(read.exitCode).toBe(0);
-  expect(read.stdout).toContain("Harbor rollout\nObjective: Revise beliefs using evidence\n");
+  expect(read.stdout).toStartWith("Harbor rollout\nIdentity: distinct;");
+  expect(read.stdout).toContain("\nObjective: Revise beliefs using evidence; polarity: positive; claim: ");
+  expect(read.stdout).toContain("\nAttribution: asserted; explicit;");
+  expect(read.stdout).toContain("\nUncertainty: conflict none_observed;");
+  expect(read.stdout).toContain("kizuki world --operation evidence --admission ");
   expect(read.stdout).not.toContain("situation.objective");
 });
 
@@ -211,3 +216,16 @@ test("CLI empty discovery with an unconsumed extraction backlog says partial, no
   expect(result.stdout).toContain("No admitted matches in your current scope.");
   expect(result.stdout).toContain("Coverage: partial (pending_consolidation); history: unavailable.");
 }, 60_000);
+
+
+test("CLI reads retained world history and accepts exact snapshot and valid-time flags",async()=>{
+ const setup=tempVault(),db=openLedger(join(setup.vault,".kizuki/kizuki.db"));
+ try {db.query("UPDATE claim_history_clock SET last_recorded_at=?").run("2030-01-09T00:00:00.000Z");await worldFixture(db);}finally{db.close();}
+ const found=runCli(setup.env,"world","--operation","find_concepts","--label","Bayesian","--json");
+ const ref=JSON.parse(found.stdout).data.data.result.data.matches[0].ref.token;
+ const history=runCli(setup.env,"world","--operation","history","--ref",ref,"--known-at","2030-01-09T00:00:00.000Z","--json");
+ expect(history.exitCode).toBe(0);const page=JSON.parse(history.stdout).data.data.result.data;expect(page.schema).toBe("kizuki.world-history/v1");expect(page.transitions.length).toBe(3);
+ const card=runCli(setup.env,"world","--operation","concept","--ref",ref,"--snapshot",page.snapshot.token,"--json");
+ expect(card.exitCode).toBe(0);expect(JSON.parse(card.stdout).data.data.result.data.knownAt.ref).toEqual(page.snapshot);
+ expect(runCli(setup.env,"world","--operation","history","--ref",ref,"--snapshot",page.snapshot.token,"--known-at","2030-01-09T00:00:00.000Z").exitCode).toBe(2);
+});

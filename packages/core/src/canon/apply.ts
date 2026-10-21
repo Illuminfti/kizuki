@@ -1,6 +1,8 @@
+import { assertPositiveAuthorityMutationAllowed } from "./positive-authority";
+import { ATTENTION_SOURCES, attentionDeliveryBody, attentionDeliveryLine } from "../contracts/attention";
 import { completedEventPurgeProofs } from "../ledger/purge";
 import { canonicalJson, sha256Hex } from "../util/hash";
-import { worldBasisMetadata, selectWorldMaterialization, worldClaimHandle, worldCanonPath, assertWorldBasis } from "./world-materialization";
+import { worldBasisMetadata, selectWorldMaterialization, worldClaimHandle, worldCanonPath, assertWorldBasis, assertRetainedWorldBasis } from "./world-materialization";
 import { eraseWorldReceipt, isWorldCanonReceipt, type RetainedWorldCanonReceipt, type WorldCanonBasis } from "./world-receipt";
 import { isErasedReceipt, rowToReceiptRecord, type CanonReceiptRow, latestWorldReceiptRecord } from "./receipts";
 import { stageSourceErasureIntent, readSourceErasureIntent, appendSourceErasureReceipt, isLiveSourceSurvivorPath, isLiveSourceSurvivorReceipt, type SourceErasureIntent } from "./source-erasure-intent";
@@ -41,6 +43,7 @@ import { assertPageRelPath, assertReceiptPaths, assertStoredPageRelPath } from "
 import { cloneExactJson } from "../util/validate";
 import type { TargetDecision } from "./arbiter";
 import { chargeCanonWrite, type BudgetTracker } from "./budget";
+import { requireCanonWriteCapacity } from "./capacity";
 import { CanonWriteError } from "./errors";
 import { getCanonReceipt, type CanonReceipt, type PageAction, type RetrievalOpRef } from "./receipts";
 import { initCanon } from "./schema";
@@ -55,10 +58,13 @@ import {
   upsertPageIndex,
 } from "./store";
 import type { CanonIo, ExistingPage } from "./store";
+import type { WorldMaterializationScope } from "./world-materialization";
 
 export interface ApplyCanonWriteOptions {
   writer: Writer;
   budget: BudgetTracker;
+  /** Trusted caller read scope for typed page rematerialization. */
+  readScope?: WorldMaterializationScope;
 }
 
 /** Set by the writer; a producer that supplies one is refused (§4.4). */
@@ -372,6 +378,10 @@ function prepareRevision(
     delete data["x-contested"];
   }
   if (decision.action === "conflict") data["x-ambiguous"] = true;
+  // The cut marker describes the body just replaced; a revision that fits does not inherit it.
+  if (decision.action === "supersede" && !("x-body-truncated" in extra)) {
+    delete data["x-body-truncated"];
+  }
   return { page: { data, body }, action, taint, sensitivity };
 }
 
@@ -379,10 +389,14 @@ function supersededRefs(io: CanonIo, decision: TargetDecision): CanonReceipt["su
   if (decision.action !== "supersede") return [];
   return decision.superseded.map((claimId) => {
     const loser = getClaim(io.db, claimId);
-    if (loser === null || loser.claim_key === null) {
-      throw new CanonWriteError("decision_stale", `superseded claim ${claimId} has no conflict key`);
+    const key = loser?.claim_key ?? (loser?.superseded_by === null || loser?.superseded_by === undefined
+      ? null : getClaim(io.db, loser.superseded_by)?.claim_key);
+    if (loser === null) {
+      throw new CanonWriteError("decision_stale", `superseded claim ${claimId} is gone`);
     }
-    return { claim_id: claimId, claim_key: loser.claim_key };
+    // Exact legacy corrections have no conflict key; preserve that fact in the
+    // durable receipt instead of inventing a group identity.
+    return { claim_id: claimId, claim_key: key ?? null };
   });
 }
 
@@ -418,7 +432,8 @@ export function applyCanonWriteOwned(
   requireCanonFiles(scope, io);
   claim = snapshotByteInput(claim);
   decision = snapshotByteInput(decision);
-  opts = Object.freeze({ writer: opts.writer, budget: opts.budget });
+  const { writer, budget, readScope } = opts;
+  opts = Object.freeze({ writer, budget, ...(readScope === undefined ? {} : { readScope }) });
   if (!isWriter(opts.writer)) {
     throw new CanonWriteError("writer_invalid", "writer must be loop, correction, revert or import");
   }
@@ -434,7 +449,7 @@ export function applyCanonWriteOwned(
   const primary = assertBatch(persisted, typed);
   let claims: readonly Claim[] = persisted;
   const handle = typed ? worldClaimHandle(io.db, primary.claim_id) : null;
-  const materialization = handle === null ? null : selectWorldMaterialization(io.db, handle);
+  const materialization = handle === null ? null : selectWorldMaterialization(io.db, handle, opts.readScope);
   if (typed) {
     if (handle === null || materialization === null || target.rel_path !== worldCanonPath(handle) || persisted.some(item => worldClaimHandle(io.db,item.claim_id) !== handle || !materialization.basis.some(basis => basis.claim_id === item.claim_id))) throw new CanonWriteError("decision_stale", "typed canon requires its exact admitted world handle");
     claims = materialization.claims;
@@ -458,7 +473,7 @@ export function applyCanonWriteOwned(
     worldPriorId = previous?.receipt_id ?? null;
     if (existing !== null && (previous === null || isErasedReceipt(previous) || !isWorldCanonReceipt(previous) || previous.after_hash !== existing.hash)) throw new CanonWriteError("decision_stale", "typed canon predecessor is not recorded");
     worldBasis = {schema:"kizuki.world-canon-basis/v1",before:previous !== null && !isErasedReceipt(previous) && isWorldCanonReceipt(previous) ? previous.basis.after : null,after:materialization.basis};
-    assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after);
+    assertRetainedWorldBasis(io.db,worldBasis.before);assertWorldBasis(io.db,worldBasis.after);
   }
   assertProvenance(io, provenance);
 
@@ -487,6 +502,11 @@ export function applyCanonWriteOwned(
   requireSourceEvents(io.db, Array.isArray(prepared.page.data["sources"]) ? prepared.page.data["sources"].filter((id): id is string => typeof id === "string") : [], { owner: true, purpose: "derive" });
   prepared.sensitivity = sourceSensitivity(io.db, provenance, prepared.sensitivity);
   prepared.page.data["sensitivity"] = prepared.sensitivity;
+  // Reserve positive inventory growth for every forward mutation, including
+  // edits and archive transitions. Only creation/reactivation needs a live slot.
+  const newLivePage = (existing === null || existing.page.data["status"] === "archived") && prepared.page.data["status"] !== "archived";
+  requireCanonWriteCapacity(io.vault_path, newLivePage, existing === null ? 1 : 0,
+    Buffer.byteLength(serializePage(prepared.page)) - (existing?.byte_length ?? 0));
   const superseded = typed ? io.db.query<{claim_id:string;claim_key:string},[string]>("SELECT s.loser AS claim_id,m.semantic_key AS claim_key FROM claim_supersessions s JOIN claim_v2_semantics m ON m.claim_id=s.loser WHERE s.winner IN (SELECT value FROM json_each(?)) ORDER BY s.loser").all(JSON.stringify(ownedClaims.map(item=>item.claim_id))) : supersededRefs(io, decision);
   const retrievalOps: RetrievalOpRef[] =
     io.retrieval_store === undefined
@@ -495,6 +515,7 @@ export function applyCanonWriteOwned(
 
   const expectedAfter = hashBytes(Buffer.from(serializePage(prepared.page)));
   const admit = (): void => {
+    assertPositiveAuthorityMutationAllowed(io.db);
     persistedClaims(io, persisted, typed);
     if (worldBasis !== null) {
       const current = latestWorldReceiptRecord(io.db, target.rel_path);
@@ -504,7 +525,7 @@ export function applyCanonWriteOwned(
           : !isWorldCanonReceipt(current) || current.after_hash !== (existing?.hash ?? ABSENT_PAGE_HASH) || canonicalJson(current.basis.after) !== canonicalJson(worldBasis.before))) {
         throw new CanonWriteError("decision_stale", "typed canon predecessor changed before byte admission");
       }
-      assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after);
+      assertRetainedWorldBasis(io.db,worldBasis.before);assertWorldBasis(io.db,worldBasis.after);
     }
     assertProvenance(io, provenance);
     requireSourceEvents(io.db, existingSources(prepared.page), { owner: true, purpose: "derive" });
@@ -715,12 +736,26 @@ export function applyPurgeRewrite(
   }
   const prior = existingSources(existing.page);
   const purgedEvents = new Set(input.purged_event_ids.map(eventIdFromReference));
-  const remainingSources = prior.filter(
+  // A deterministic cue describes one exact evidence basis. Removing any of
+  // that basis invalidates the entire delivery, including its opaque cue key;
+  // generic claim-fragment redaction cannot reconstruct a remaining cue.
+  const attentionKey = existing.page.data["x-attention-cue"];
+  const eraseAttention = typeof attentionKey === "string" && /^[A-Za-z0-9_-]{43}$/.test(attentionKey) &&
+    existing.page.data["x-attention-producer"] === "deterministic" && existing.page.data["type"] === "rollup" &&
+    existing.page.data["id"] === `rollup:attention-${attentionKey}` && input.rel_path === `dashboards/attention-${attentionKey}.md` &&
+    prior.some(source => purgedEvents.has(eventIdFromReference(source)));
+  const remainingSources = eraseAttention ? [] : prior.filter(
     (source) => !purgedEvents.has(eventIdFromReference(source)),
   );
   const body =
     input.source_erasure === undefined
-      ? redactBody(existing.page.body, input.purged_claim_bodies)
+      ? redactBody(existing.page.body, eraseAttention ? [
+        // Remove only the generated block. Owner additions survive, including
+        // notes inserted between its heading and bullet; the cue key cannot.
+        ...ATTENTION_SOURCES.map(source => attentionDeliveryBody(source, attentionKey)),
+        ...ATTENTION_SOURCES.map(source => attentionDeliveryLine(source, attentionKey)),
+        ...input.purged_claim_bodies, attentionKey,
+      ] : input.purged_claim_bodies)
       : (input.source_erasure.page?.body ?? "");
   const nothingRemains =
     input.source_erasure === undefined
@@ -737,6 +772,7 @@ export function applyPurgeRewrite(
       ? remainingSources
       : (input.source_erasure.page?.data["sources"] ?? []);
   if (nothingRemains) data["status"] = "archived";
+  if (eraseAttention) { delete data["x-attention-cue"]; delete data["x-attention-producer"]; }
 
   const priorSensitivity = existing.page.data["sensitivity"];
   const sensitivity = isSensitivity(priorSensitivity)
@@ -963,7 +999,7 @@ function applySourcePurgeWrite(scope: VaultMutationScope, io: CanonIo, input: So
         provenance: next === null ? [...input.purged_event_ids] : existingSources(next),
         superseded: [], candidates: [], retrieval_ops: [], reverts: null, reverted_by: null, at: nowOf(io),
     };
-    const intent = stageSourceErasureIntent(io, input.source_erasure.source_key, input.purged_event_ids, receipt, pageId);
+    const intent = io.db.transaction(() => stageSourceErasureIntent(scope, io, input.source_erasure.source_key, input.purged_event_ids, receipt, pageId)).immediate();
     commitMachineByteIntent(io.db, intent.receipt, () => {
       if (input.purged_event_ids.some(id => io.db.query(
         "SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'",

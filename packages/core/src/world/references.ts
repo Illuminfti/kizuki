@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
 import type { Principal } from "../agents";
 import { canonicalJson } from "../util/hash";
+import { issuedOpaqueFields } from "../util/issued-opaque";
 
 export type WireKind =
   | "object"
@@ -16,6 +17,17 @@ export type WireRef<K extends WireKind = WireKind> = {
 export interface WorldNamespace {
   readonly id: string;
   readonly principalId: string;
+}
+
+type PreviewReferences = { namespaces: Map<string, WorldNamespace>; tokens: Map<string, string>; objects: Map<string, string> };
+const previews = new WeakMap<Database, PreviewReferences>();
+/** Internal diagnostics only: reuse existing refs and allocate missing ones only
+ * for this synchronous projection. These unissued refs must never be returned
+ * to a consumer. The diagnostic caller returns counts, not cards or handles. */
+export function withUnissuedWorldReferences<T>(db: Database, read: () => T): T {
+  if (previews.has(db)) throw new Error("world reference preview cannot nest");
+  previews.set(db, { namespaces: new Map(), tokens: new Map(), objects: new Map() });
+  try { return read(); } finally { previews.delete(db); }
 }
 
 /** Only current authenticated authority establishes the namespace. No source/global epoch enters it. */
@@ -53,6 +65,12 @@ export function worldNamespace(
     .get(principalId);
   if (existing !== null && existing.authorization === authorization)
     return { id: existing.namespace_id, principalId };
+  const preview = previews.get(db);
+  if (preview !== undefined) {
+    let ns = preview.namespaces.get(principalId);
+    if (ns === undefined) { ns = { id: randomBytes(16).toString("hex"), principalId }; preview.namespaces.set(principalId, ns); }
+    return ns;
+  }
   if (existing !== null)
     db.query(
       "DELETE FROM world_authorization_namespaces WHERE namespace_id=?",
@@ -97,7 +115,17 @@ export function issueWorldRef<K extends WireKind>(
       [string, string]
     >(`SELECT wire_ref FROM ${table} WHERE namespace_id=? AND ${column}=?`)
     .get(ns.id, target);
-  if (existing !== null) return { kind, token: existing.wire_ref };
+  if (existing !== null) return issuedOpaqueFields({ kind, token: existing.wire_ref }, ["token"]);
+  const preview = previews.get(db);
+  if (preview !== undefined) {
+    const key = canonicalJson([ns.id, kind, target]);
+    let token = preview.tokens.get(key);
+    if (token === undefined) {
+      token = randomBytes(32).toString("base64url"); preview.tokens.set(key, token);
+      if (kind === "object") preview.objects.set(canonicalJson([ns.id, token]), target);
+    }
+    return { kind, token };
+  }
   let token: string;
   do {
     token = randomBytes(32).toString("base64url");
@@ -144,7 +172,7 @@ export function issueWorldRef<K extends WireKind>(
       `INSERT INTO ${table}(namespace_id,wire_ref,${column}) VALUES (?,?,?)`,
     ).run(ns.id, token, target);
   }
-  return { kind, token };
+  return issuedOpaqueFields({ kind, token }, ["token"]);
 }
 
 export function resolveWorldObject(
@@ -159,7 +187,7 @@ export function resolveWorldObject(
     JOIN world_wire_refs r USING(namespace_id,wire_ref)
     WHERE t.namespace_id=? AND t.wire_ref=? AND r.ref_kind='object'`,
       )
-      .get(ns.id, token)?.handle_id ?? null
+      .get(ns.id, token)?.handle_id ?? previews.get(db)?.objects.get(canonicalJson([ns.id, token])) ?? null
   );
 }
 

@@ -74,6 +74,23 @@ async function concept(client: Client, ref: WorldRef): Promise<Card> {
 }
 
 describe("the correct tool", () => {
+  test("identity correction groups concepts through the actual MCP client", async () => {
+    const { running, kit, ref, logic } = await seeded();
+    const client = await connectClient(running.owner(), open);
+    const before = await concept(client, ref) as Card & { concept: { classificationClaims: ClaimRef[] } };
+    const result = await call(client, "correct", {
+      target: { world_claim: before.concept.classificationClaims[0] }, mode: "merge_identity",
+      object: { kind: "node", ref: logic }, statement: "These two labels name the same concept.",
+    });
+    expect(result.isError ?? false).toBe(false);
+    const merged = await concept(client, ref) as Card & { concept: { resolution: string; labels: { text: string }[] } };
+    expect(merged.concept.resolution).toBe("resolved");
+    expect(merged.concept.labels.map(x => x.text).sort()).toEqual(["Bayesian updating", "Formal logic"]);
+    const found = await call(client, "world_view", { operation: "find_concepts", label: "" });
+    expect((envelopeOf(found).data as any).result.data.matches).toHaveLength(2);
+    expect(kit.card(kit.ctx, "concept", ref).concept.resolution).toBe("resolved");
+  });
+
   test("names exactly ten tools and exactly two of them write", async () => {
     const { running } = await seeded();
     const client = await connectClient(running.owner(), open);
@@ -95,7 +112,9 @@ describe("the correct tool", () => {
       "mode",
       "object",
       "perspective_mode",
+      "refreshWorld",
       "refresh_world",
+      "response_contract",
       "statement",
       "target",
     ]);
@@ -103,6 +122,8 @@ describe("the correct tool", () => {
       "replace_object",
       "retract",
       "reclassify_mode",
+      "merge_identity",
+      "separate_identity",
     ]);
   });
 

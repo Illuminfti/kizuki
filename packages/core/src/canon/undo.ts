@@ -1,6 +1,7 @@
+import { assertPositiveAuthorityMutationAllowed } from "./positive-authority";
 import { isSensitivity } from "../agents/types";
 import { isWorldCanonReceipt } from "./world-receipt";
-import { assertWorldReceiptBasis, worldBasisMetadata } from "./world-materialization";
+import { assertWorldBasis, assertWorldReceiptBasis, worldBasisMetadata } from "./world-materialization";
 import { canonicalJson } from "../util/hash";
 import { getCanonReceiptRecord, isErasedReceipt, latestWorldReceiptRecord } from "./receipts";
 import { requireSourceEvents } from "../ledger/source-grants";
@@ -17,6 +18,7 @@ import { assertArchiveRelPath, assertPageRelPath, assertReceiptPaths } from "./p
 import { canonFilesFor, requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "./io";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
 import { UndoError } from "./errors";
+import { chargeCanonWrite, type BudgetTracker } from "./budget";
 import {
   getCanonReceipt,
   laterReceiptsForPage,
@@ -26,6 +28,7 @@ import {
   mintId,
   nowOf,
   pageIndexByPath,
+  pageSubjectKey,
 } from "./store";
 import type { CanonIo } from "./store";
 
@@ -100,11 +103,6 @@ function pageIdOf(page: VaultPage | null, fallback: string | null): string | nul
   return fallback;
 }
 
-function subjectOf(page: VaultPage | null): string | null {
-  const raw = page?.data["x-subject-id"];
-  return typeof raw === "string" && raw.length > 0 ? raw : null;
-}
-
 const reversing = new Set<string>();
 
 /**
@@ -133,7 +131,7 @@ export async function undoReceiptOwned(
   scope: VaultMutationScope,
   io: CanonIo,
   receiptId: string,
-  opts: UndoReceiptOptions = {},
+  opts: UndoReceiptOptions & { readonly budget?: BudgetTracker } = {},
 ): Promise<UndoReceiptResult> {
   requireCanonFiles(scope, io);
   if (io.db.inTransaction) recoveryFailure("nested_transaction");
@@ -144,13 +142,19 @@ export async function undoReceiptOwned(
     if (readCanonWriteIntent(io.db) !== null) recoveryFailure("authority_changed", pending.receipt.receipt_id);
     return finishUndoProjection(scope, io, pending.receipt);
   }
+  io.db.transaction(() => assertPositiveAuthorityMutationAllowed(io.db)).immediate();
   const record = getCanonReceiptRecord(io.db, receiptId);
   if (record !== null && isErasedReceipt(record)) throw new UndoError("erased", "undo: receipt was erased with its source evidence");
   const original = getCanonReceipt(io.db, receiptId);
   if (original === null) {
     throw new UndoError("receipt_unknown", `undo: receipt ${receiptId} is unknown`);
   }
-  if (isWorldCanonReceipt(original)) assertWorldReceiptBasis(io.db,original,{historical:true});
+  if (isWorldCanonReceipt(original)) {
+    assertWorldReceiptBasis(io.db,original,{proof:"receipt_custody"});
+    // Integrity of retained history does not authorize bringing deleted meaning back.
+    assertWorldBasis(io.db,original.basis.before,true);
+    assertWorldBasis(io.db,original.basis.after,true);
+  }
   assertReceiptPaths(original);
   assertPageRelPath(original.page_path);
   // Settle an older acknowledged/scheduled projection before admitting a successor.
@@ -182,7 +186,7 @@ export async function undoReceiptOwned(
   }
   reversing.add(receiptId);
   try {
-    return await applyUndo(scope, io, original, current);
+    return await applyUndo(scope, io, original, current, opts.budget);
   } finally {
     reversing.delete(receiptId);
   }
@@ -199,7 +203,7 @@ async function finishUndoProjection(scope: VaultMutationScope, io: CanonIo, rece
     ? receipt : { ...receipt, projection_pending: true };
 }
 
-async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: CanonReceipt, current: string): Promise<UndoReceiptResult> {
+async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: CanonReceipt, current: string, budget?: BudgetTracker): Promise<UndoReceiptResult> {
   const revertId = mintId(io), at = nowOf(io);
   const typedMetadata=isWorldCanonReceipt(original)?worldBasisMetadata(io.db,original.basis.before??original.basis.after,true):null;
   const authority = typedMetadata?.authority??new CanonAuthorityResolver(io.db, [original.page_path]).before(original.receipt_id);
@@ -230,9 +234,19 @@ async function applyUndo(scope: VaultMutationScope, io: CanonIo, original: Canon
     reverts: original.receipt_id, reverted_by: null, at,
     ...(isWorldCanonReceipt(original) ? {schema:original.schema,state:original.state,own_id_origin:original.own_id_origin,prior_receipt_id:latestWorldReceiptRecord(io.db,original.page_path)?.receipt_id??null,basis:{schema:original.basis.schema,before:original.basis.after,after:original.basis.before}} : {}),
   };
+  // Automatic source restoration spends the loop's budget. Owner undo keeps
+  // its model-free, unmetered path by omitting this internal tracker.
+  if (budget !== undefined) chargeCanonWrite(io, budget, {
+    receipt_id: revertId, page_path: original.page_path, before_hash: original.after_hash, at,
+  });
   commitCanonWrite(scope, io, { receipt: revert, before, after,
-    completion: { mode: "revert", claim_kind: "revert", page_id: pageId, subject_key: subjectOf(page), original_receipt_id: original.receipt_id },
-  }, () => requireSourceEvents(io.db, page === null ? original.provenance : stringArray(page.data["sources"]), { owner: true, purpose: "derive" }));
+    completion: { mode: "revert", claim_kind: "revert", page_id: pageId,
+      subject_key: page === null ? null : pageSubjectKey(io.db, original.page_path, revert.after_hash, page.data, original),
+      original_receipt_id: original.receipt_id },
+  }, () => {
+    assertPositiveAuthorityMutationAllowed(io.db);
+    requireSourceEvents(io.db, page === null ? original.provenance : stringArray(page.data["sources"]), { owner: true, purpose: "derive" });
+  });
   return finishUndoProjection(scope, io, revert);
 }
 

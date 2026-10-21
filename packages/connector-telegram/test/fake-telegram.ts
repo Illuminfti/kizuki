@@ -1,6 +1,7 @@
 import { expect, mock } from "bun:test";
 import { FIXTURE_CREDENTIALS } from "../src/fixture";
 import type { TelegramApi } from "../src/api";
+import { createRealApi } from "../src/client";
 
 /**
  * A stand-in for GramJS so the one file that talks to Telegram can be driven
@@ -186,8 +187,6 @@ if (OFFLINE) {
   }));
   mock.module("telegram/errors/index.js", () => ({ FloodWaitError, RPCError }));
 }
-
-const { createRealApi } = await import("../src/client");
 
 /** A client over the stand-in, holding a session recognisable in a saved one. */
 export function api(session = "session"): TelegramApi {

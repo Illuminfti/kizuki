@@ -12,6 +12,15 @@ import { eventIdFromReference } from "../retrieval/ids";
 import { isLiveCanonPage, type CanonPage } from "./pages";
 import { parsePageSources } from "./schema";
 
+/** Administrative daemon summaries have no event basis and are outside evidence indexes. */
+export function isDeterministicBrief(page: CanonPage): boolean {
+  return /^dashboards\/brief-\d{4}-\d{2}-\d{2}\.md$/.test(page.relPath)
+    && page.id === `rollup:${page.relPath.slice("dashboards/".length, -3)}`
+    && page.data["type"] === "rollup"
+    && page.data["x-brief-producer"] === "deterministic"
+    && Array.isArray(page.data["sources"]) && page.data["sources"].length === 0;
+}
+
 export type LivePageEvidence =
   | { admitted: true; sourceIds: string[]; revision: CanonRevisionBasis }
   | { admitted: false; reason: "inactive" | "sources_unavailable" | "revision_unrecorded" | "recovery_pending" };
@@ -22,8 +31,9 @@ export function assessLivePageEvidence(
   page: CanonPage,
   resolver?: CanonAuthorityResolver,
   context?: ServeContext,
+  historicalSnapshot = false,
 ): LivePageEvidence {
-  if (!isLiveCanonPage(page)) return { admitted: false, reason: "inactive" };
+  if (!isLiveCanonPage(page) && !(historicalSnapshot && page.data["status"] === "archived")) return { admitted: false, reason: "inactive" };
   if (canonPageRecoveryPending(db, page.relPath)) return { admitted: false, reason: "recovery_pending" };
   const sources = parsePageSources(page.data);
   if (!sources.ok) return { admitted: false, reason: "sources_unavailable" };
@@ -37,7 +47,10 @@ export function assessLivePageEvidence(
     // before typed receipts; only a recorded typed revision skips that check.
     const receipt = revision === null ? null : getCanonReceipt(db,revision.receipt_id);
     if (revision !== null && receipt !== null && isWorldCanonReceipt(receipt)) {
-      if (receipt.basis.after === null || !worldBasisAllowed(context ?? {db,vaultPath:"",principal:OWNER,sourcePurpose:"derive"},receipt.basis.after)) return {admitted:false,reason:"sources_unavailable"};
+      // A correction diff can include an archived after image, whose retained
+      // body belongs to the before basis. Normal serving admits only live after bases.
+      const basis = receipt.basis.after ?? (historicalSnapshot ? receipt.basis.before : null);
+      if (basis === null || !worldBasisAllowed(context ?? {db,vaultPath:"",principal:OWNER,sourcePurpose:"derive"},basis,historicalSnapshot)) return {admitted:false,reason:"sources_unavailable"};
       return {admitted:true,sourceIds,revision};
     }
     for (const id of sourceIds) {

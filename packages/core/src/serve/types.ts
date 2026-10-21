@@ -1,5 +1,10 @@
+import type { AttentionDoctor } from "./doctor-attention";
+import { DEFAULT_CONSOLIDATION_CONFIG, type ConsolidationConfig, type ConsolidationRunReport } from "../contracts/consolidation";
+import type { ConsolidationDoctor } from "./doctor-consolidation";
 import type { ProducerDiagnostic } from "../contracts/producer";
+import type { ExternalRetention } from "../ledger/source-grants";
 import { MAX_V2_EVENTS, MAX_V2_OUTPUT_TOKENS } from "../contracts/producer-v2";
+import type { CanonCapacity } from "../vault/canon-limits";
 
 /**
  * RFC 0002 §4.6 / §11: daemon rails, leases, run receipts and doctor.
@@ -71,16 +76,8 @@ export const LEDGER_HELD_BACKOFF_MAX_MS = 30_000;
 /** How often a running rail looks for a queued `serve stop`. */
 export const STOP_WATCH_MS = 500;
 
-export const RAIL_IDS = [
-  "sync",
-  "retrieval-sweep",
-  "purge-sweep",
-  "embed-backfill",
-  "brief",
-  "doctor-sweep",
-  "journal-prune",
-] as const;
-export type RailId = (typeof RAIL_IDS)[number];
+/** Any registered rail's id. `isRailId` in `rail-registry.ts` says whether one is registered. */
+export type RailId = string;
 
 export const RUN_STATUSES = ["ok", "degraded", "stopped", "failed"] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
@@ -113,16 +110,6 @@ export interface RailSpec {
   readonly jitter_s: number;
   readonly enabled: boolean;
 }
-
-export const DEFAULT_RAILS: readonly RailSpec[] = [
-  { rail: "sync", period_s: DEFAULT_SYNC_PERIOD_S, jitter_s: 90, enabled: true },
-  { rail: "retrieval-sweep", period_s: 5 * 60, jitter_s: 0, enabled: true },
-  { rail: "purge-sweep", period_s: 10 * 60, jitter_s: 0, enabled: true },
-  { rail: "embed-backfill", period_s: 60, jitter_s: 0, enabled: true },
-  { rail: "brief", period_s: 24 * 60 * 60, jitter_s: 0, enabled: true },
-  { rail: "doctor-sweep", period_s: 60 * 60, jitter_s: 0, enabled: true },
-  { rail: "journal-prune", period_s: 24 * 60 * 60, jitter_s: 0, enabled: true },
-];
 
 export interface ScheduleRow {
   readonly rail: RailId;
@@ -206,6 +193,7 @@ export interface CanonQuarantineNotice {
 }
 
 export interface RunReceipt {
+  readonly consolidation?: ConsolidationRunReport;
   /** Durable scheduler compare-and-advance intent, replayed with the receipt row. */
   readonly schedule_transition?: RunScheduleTransition;
   /** Legacy receipts omit this and cannot prove automatic artifact-bound execution. */
@@ -233,6 +221,12 @@ export interface RunReceipt {
   readonly claims_deduped: number;
   readonly claims_superseded: number;
   readonly claims_rejected: Readonly<Record<string, number>>;
+  /**
+   * Claims the writer ended without a page write, by reason (`page_exists`: a
+   * file already sat where the page would be created and could not be bound).
+   * Absent when none.
+   */
+  readonly claims_skipped?: Readonly<Record<string, number>>;
   /**
    * Records extraction passed over without claims: too large for one request,
    * or rejected on their own twice in a row. Absent on older receipts.
@@ -319,6 +313,7 @@ export interface ServeConfig {
   /** Batches one connection may drain in one sync pass. */
   readonly connector_drain_batches: number;
   readonly extraction: ExtractionConfig;
+  readonly consolidation?: ConsolidationConfig;
 }
 
 /** Inclusive bounds; an out-of-range or non-integer value keeps its default. */
@@ -342,6 +337,7 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   connector_drain_seconds: 120,
   connector_drain_batches: 100,
   extraction: DEFAULT_EXTRACTION_CONFIG,
+  consolidation: DEFAULT_CONSOLIDATION_CONFIG,
 };
 
 export interface SupervisorStatus {
@@ -364,6 +360,7 @@ export interface SupervisorLastExit {
 
 export interface RailDoctor {
   readonly rail: RailId;
+  readonly last_result: RunStatus | null;
   readonly last_receipt_at: string | null;
   readonly age_s: number | null;
   readonly period_s: number;
@@ -423,11 +420,15 @@ export interface EgressDoctor {
   readonly connector_id: string;
   readonly endpoint_host: string;
   readonly model: string;
-  readonly retention: "provider_managed";
+  /** The loosest class of destination the source's grant accepts. */
+  readonly retention: ExternalRetention;
+  /** The configured System One judge and whether this source's grant consents to it; null when no judge is configured. A source that does not consent is held. */
+  readonly judge: { readonly host: string; readonly model: string; readonly consented: boolean } | null;
 }
 
-/** One derived layer as its last rebuild stamped it. */
+/** One derived layer as its last indexing pass stamped it. */
 export interface DerivedDoctor {
+  readonly ledger_watermark: string | null;
   readonly rebuilt_at: string | null;
   readonly doc_count: number;
   /** The stamp's status; null when the layer was never stamped. */
@@ -443,8 +444,12 @@ export interface StoreDoctor {
   readonly oldest_purge_op_age_s: number | null;
   /** Successful embed-backfill docs/s, or null when doctor has no measured throughput. */
   readonly embedding_throughput_docs_per_s: number | null;
-  /** Whether an embedding port is configured; the vector layer is off without one and invalid when the selection cannot bind. */
-  readonly vector_layer: { readonly state: "off" | "configured" | "invalid"; readonly detail: string };
+  /**
+   * Whether an embedding port is configured; the vector layer is off without one and invalid when the selection
+   * cannot bind. A configured port that ranks nothing says why: `unbound` when the vault's retrieval is not the
+   * embedded engine, `refused` when the engine turned the corpus away as over its memory bound.
+   */
+  readonly vector_layer: { readonly state: "off" | "configured" | "invalid" | "unbound" | "refused"; readonly detail: string };
   readonly orphan_run_receipts: string[];
   readonly derived: {
     readonly search: DerivedDoctor;
@@ -531,8 +536,15 @@ export interface TopFailure {
   readonly rail: RailId | null;
 }
 
-/** Typed pages the canon writer set aside after repeated failures; not a failure of the service. */
+/** Unmaterialized work set aside after repeated failures; not a failure of the service. */
 export interface QuarantineDoctor {
+  readonly claims_truncated?: boolean;
+  readonly claims?: readonly {
+    readonly claim_id: string;
+    readonly attempts: number;
+    readonly reason: string;
+    readonly until: string;
+  }[];
   readonly pages: readonly {
     readonly handle: string;
     readonly path: string;
@@ -551,11 +563,15 @@ export interface ServeDoctorReport {
   readonly rails: RailDoctor[];
   readonly model: ModelDoctor;
   readonly extraction: ExtractionDoctor;
+  readonly consolidation: ConsolidationDoctor;
+  readonly attention: AttentionDoctor;
   readonly egress: EgressDoctor[];
   readonly throughput: ThroughputDoctor;
   readonly oversized: OversizedDoctor;
   readonly quarantined: QuarantineDoctor;
   readonly stores: StoreDoctor;
+  /** Live and archived canon page counts against the configured ceiling; null when the page walk was skipped. */
+  readonly canon: CanonCapacity | null;
   readonly calibration: CalibrationDoctor;
   readonly ok: boolean;
   readonly failures: string[];
@@ -629,10 +645,6 @@ export function emptyRunTotals(): Pick<
     budget: {},
     errors: [],
   };
-}
-
-export function isRailId(value: string): value is RailId {
-  return (RAIL_IDS as readonly string[]).includes(value);
 }
 
 export function isCrashPoint(value: string): value is CrashPoint {

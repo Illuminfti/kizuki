@@ -22,16 +22,16 @@ import { newReadFrame } from "../../src/world/pipeline/frame";
 import { readWorldCard, readWorldMatches } from "../../src/world/pipeline/read";
 import { worldNamespace } from "../../src/world/references";
 import { testKind } from "../helpers/world-kinds";
-import { questionAssembler, validateQuestionCard, type QuestionCard } from "../helpers/question-card";
+import { probeAssembler, validateProbeCard, type ProbeCard } from "../helpers/probe-card";
 import { worldSeed } from "../helpers/world-seed";
 
 setDefaultTimeout(120_000);
 
-const text = worldPredicate({ predicate: "question.text", subject: "concept", objects: ["literal"] });
-const answer = worldPredicate({ predicate: "question.candidate_answer", subject: "concept", objects: ["literal"] });
+const text = worldPredicate({ predicate: "probe.text", subject: "concept", objects: ["literal"] });
+const answer = worldPredicate({ predicate: "probe.candidate_answer", subject: "concept", objects: ["literal"] });
 
 const registryFor = (over: Parameters<typeof testKind>[1] = {}): WorldRegistry =>
-  createWorldRegistry([...WORLD_VOCABULARY_MODULES, testKind("question", over, [text, answer])]);
+  createWorldRegistry([...WORLD_VOCABULARY_MODULES, testKind("probe", over, [text, answer])]);
 
 /** One read as the owner, inside the transaction the reader opens. */
 function read<T>(db: ReturnType<typeof openLedger>, run: (open: () => ReturnType<typeof newReadFrame>) => T): T {
@@ -51,24 +51,24 @@ test("a kind registered as data is discovered and read as a card of its own code
   const db = openLedger(":memory:");
   try {
     await withWorldRegistry(registryFor(), () =>
-      withWorldPipeline({ assemblers: [questionAssembler] }, async () => {
+      withWorldPipeline({ assemblers: [probeAssembler] }, async () => {
         await worldSeed(db, {
-          kind: "question",
-          subject: "question:idempotency",
+          kind: "probe",
+          subject: "probe:idempotency",
           label: "What is idempotency?",
           predicates: [
-            { predicate: "question.text", object: { kind: "literal", value: "What does idempotent mean?" } },
-            { predicate: "question.candidate_answer", object: { kind: "literal", value: "Repeating it changes nothing" } },
+            { predicate: "probe.text", object: { kind: "literal", value: "What does idempotent mean?" } },
+            { predicate: "probe.candidate_answer", object: { kind: "literal", value: "Repeating it changes nothing" } },
           ],
         });
-        const found = read(db, (open) => readWorldMatches(open(), "question", "idempot", null, 100));
-        expect(found.schema).toBe("kizuki.question-matches/v1");
+        const found = read(db, (open) => readWorldMatches(open(), "probe", "idempot", null, 100));
+        expect(found.schema).toBe("kizuki.probe-matches/v1");
         expect(found.matches.map((match) => match.labels)).toEqual([["What is idempotency?"]]);
         expect(found.coverage.status).toBe("complete_for_query");
-        const card = read(db, (open) => readWorldCard(open(), handleOf(db, "question:idempotency"), "question")) as QuestionCard;
-        expect(validateQuestionCard(card).ok).toBe(true);
-        expect(card.question.kind).toBe("question");
-        expect(card.question.labels.map((label) => label.text)).toEqual(["What is idempotency?"]);
+        const card = read(db, (open) => readWorldCard(open(), handleOf(db, "probe:idempotency"), "probe")) as ProbeCard;
+        expect(validateProbeCard(card).ok).toBe(true);
+        expect(card.probe.kind).toBe("probe");
+        expect(card.probe.labels.map((label) => label.text)).toEqual(["What is idempotency?"]);
         expect(card.text?.object).toEqual({ kind: "literal", value: "What does idempotent mean?" });
         expect(card.answers.map((relation) => relation.object)).toEqual([{ kind: "literal", value: "Repeating it changes nothing" }]);
         expect(card.coverage.status).toBe("complete_for_query");
@@ -83,9 +83,9 @@ test("a registered kind with no assembler has no card, and the shipped kinds are
   const db = openLedger(":memory:");
   try {
     await withWorldRegistry(registryFor(), async () => {
-      await worldSeed(db, { kind: "question", subject: "question:a", label: "Why?", predicates: [] });
-      const handle = handleOf(db, "question:a");
-      expect(read(db, (open) => readWorldCard(open(), handle, "question"))).toBeNull();
+      await worldSeed(db, { kind: "probe", subject: "probe:a", label: "Why?", predicates: [] });
+      const handle = handleOf(db, "probe:a");
+      expect(read(db, (open) => readWorldCard(open(), handle, "probe"))).toBeNull();
       expect(read(db, (open) => readWorldCard(open(), handle, "concept"))).toBeNull();
     });
   } finally {
@@ -107,7 +107,7 @@ test("only a kind some path can fill may report an empty page as complete", asyn
   const db = openLedger(":memory:");
   try {
     const firstPage = (over: Parameters<typeof testKind>[1]) =>
-      withWorldRegistry(registryFor(over), () => read(db, (open) => readWorldMatches(open(), "question", "", null, 10)));
+      withWorldRegistry(registryFor(over), () => read(db, (open) => readWorldMatches(open(), "probe", "", null, 10)));
     const dark = firstPage({});
     expect(dark.matches).toEqual([]);
     expect(dark.coverage).toMatchObject({ status: "partial", gaps: ["coverage"] });
@@ -117,7 +117,7 @@ test("only a kind some path can fill may report an empty page as complete", asyn
     expect(firstPage({ population: ["derived"] }).coverage.gaps).toEqual([]);
     // Past the first page an empty tail says nothing about the kind.
     const tail = withWorldRegistry(registryFor(), () =>
-      read(db, (open) => readWorldMatches(open(), "question", "", "f".repeat(32), 10)),
+      read(db, (open) => readWorldMatches(open(), "probe", "", "f".repeat(32), 10)),
     );
     expect(tail.coverage.gaps).toEqual([]);
   } finally {
@@ -129,11 +129,11 @@ test("a dark kind that holds claims is complete, and its label filter is honest 
   const db = openLedger(":memory:");
   try {
     await withWorldRegistry(registryFor(), async () => {
-      await worldSeed(db, { kind: "question", subject: "question:a", label: "Why is the sky blue?", predicates: [] });
-      const all = read(db, (open) => readWorldMatches(open(), "question", "", null, 10));
+      await worldSeed(db, { kind: "probe", subject: "probe:a", label: "Why is the sky blue?", predicates: [] });
+      const all = read(db, (open) => readWorldMatches(open(), "probe", "", null, 10));
       expect(all.matches).toHaveLength(1);
       expect(all.coverage.gaps).toEqual([]);
-      const none = read(db, (open) => readWorldMatches(open(), "question", "zzzz", null, 10));
+      const none = read(db, (open) => readWorldMatches(open(), "probe", "zzzz", null, 10));
       expect(none.matches).toEqual([]);
       expect(none.coverage.gaps).toEqual([]);
     });

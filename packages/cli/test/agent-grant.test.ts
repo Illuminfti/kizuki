@@ -128,3 +128,38 @@ test("a running MCP client is denied world_view, then served it after the owner 
   expect(served.result?.isError ?? false).toBe(false);
   expect(JSON.stringify(served.result?.structuredContent)).toContain("kizuki.envelope/v2");
 });
+
+test("deny_classes is optional on a grant, listed as the effective denial, and validated", () => {
+  const f = setup();
+  // A grant that never named the field takes the default denial.
+  expect(f.cli("agent", "list").stdout).toContain("deny=credential");
+
+  const named: Grant = { ...READER, deny_classes: ["credential", "machine_exhaust"] };
+  const amended = json(f.cli("agent", "grant", "helper", "--grant", f.write("named.json", named), "--operation-id", "helper-classes-1", "--json"));
+  expect(amended.data).toMatchObject({ grant_epoch: 2, grant: { deny_classes: ["credential", "machine_exhaust"] } });
+  expect(f.cli("agent", "list").stdout).toContain("deny=credential,machine_exhaust");
+
+  const open = json(f.cli("agent", "grant", "helper", "--grant", f.write("open.json", { ...READER, deny_classes: [] }), "--operation-id", "helper-classes-2", "--json"));
+  expect(open.data.grant.deny_classes).toEqual([]);
+  expect(f.cli("agent", "list").stdout).toContain("deny=none");
+
+  for (const [index, bad] of [["nope"], "credential", null, ["credential", "credential"]].entries()) {
+    const refused = json(f.cli("agent", "grant", "helper", "--grant", f.write(`bad-${index}.json`, { ...READER, deny_classes: bad }),
+      "--operation-id", `helper-classes-bad-${index}`, "--json"), 2);
+    expect(refused.error?.code).toBe("invalid_grant");
+  }
+  // Omitting the field on a later grant returns the agent to the default.
+  const reset = json(f.cli("agent", "grant", "helper", "--grant", f.write("reset.json", READER), "--operation-id", "helper-classes-3", "--json"));
+  expect(reset.data.grant).not.toHaveProperty("deny_classes");
+  expect(f.cli("agent", "list").stdout).toContain("deny=credential");
+});
+
+test("a grant may name a subject id with spaces, as an importer mapping writes it", () => {
+  const f = setup();
+  const grant: Grant = { ...READER, subjects: ["legacy-wiki:tessa vale"] };
+  const amended = json(f.cli("agent", "grant", "helper", "--grant", f.write("spaced.json", grant), "--operation-id", "helper-subject-1", "--json"));
+  expect(amended.data.grant.subjects).toEqual(["legacy-wiki:tessa vale"]);
+  const refused = json(f.cli("agent", "grant", "helper", "--grant", f.write("padded.json", { ...READER, subjects: ["legacy-wiki:tessa  vale"] }),
+    "--operation-id", "helper-subject-2", "--json"), 2);
+  expect(refused.error?.code).toBe("invalid_grant");
+});

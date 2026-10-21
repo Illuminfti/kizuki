@@ -6,8 +6,8 @@
 
 For each query in the file it does two things in order.
 
-1. Asks Kizuki for a recall context packet with the owner principal (the same read as `kizuki context --purpose recall`, budget 2000). The chunks in the packet are the Kizuki side, best first, cut to `--k`.
-2. Runs the `--estate-cmd` argv once as a local child process. The query replaces `{query}` in any argument, or is appended last. There is no shell and no stdin. stdout is read up to 1 MiB and must hold one source key per line; stderr is discarded. The whole run is killed at `--timeout-ms`.
+1. Asks Kizuki for a recall context packet with the owner principal (the same read as `kizuki context --purpose recall`, budget 2000). The chunks in the packet are the Kizuki side, best first, cut to `--k`. The read runs in an owned child through the public `context --json` command, with the same authorization and audit path.
+2. Runs the `--estate-cmd` argv once as a local child process. The query replaces `{query}` in any argument, or is appended last. There is no shell and no stdin. stdout is read up to 1 MiB and must hold one source key per line; stderr is discarded. Each side has its own `--timeout-ms` deadline, including Kizuki startup; one query therefore takes at most two deadlines plus process cleanup. Both commands have a 1 MiB stdout limit. A deadline kills the owned process group and reaps the child before the next query.
 
 A source key is compared as plain text. A stack key is shared when it equals a canon page path, a source reference listed on a canon page, or a ledger event id of any returned Kizuki chunk. Overlap for a query is shared keys over the stack's keys (the stack is the baseline being matched). The run's mean is the average over queries that could be compared.
 
@@ -20,6 +20,7 @@ A source key is compared as plain text. A stack key is shared when it equals a c
 | 2 | usage error, raised before any vault is opened; no query text is echoed |
 | 3 | the external command failed for at least one query (recorded, the run continues) |
 | 4 | mean overlap below `--min-overlap`, or fewer than half the queries had a comparable answer |
+| 130 / 143 | interrupted by SIGINT / SIGTERM after cancelling and reaping owned work; no completed receipt |
 
 When several apply, a Kizuki failure (1) outranks a stack failure (3), which outranks a parity miss (4), because a failing side makes the measured overlap unreliable. A run where fewer than half of the queries are comparable (the stack printed no key, or a side failed) has verdict `not_measured` and exits 4, whatever the mean of the few compared queries is. The summary counts `estate_empty` (clean runs that printed no key) and `coverage` (compared over queries) so the gap is visible. It is never scored as met on partial coverage.
 
@@ -31,7 +32,7 @@ When several apply, a Kizuki failure (1) outranks a stack failure (3), which out
 - `queries[]`: index, query digest (full SHA-256), for each side a status, error class, latency and result count, and `overlap` with shared count, ratio, and short digests (16 hex characters) of the keys only one side returned, at most `k` each.
 - `summary`: compared count, empty-answer count, coverage, mean overlap, verdict, failure counts and the exit code.
 
-Error classes for the stack: `spawn_failed`, `timeout`, `nonzero_exit` (with the exit code), `output_too_large`. For Kizuki: `context_incomplete`, `kizuki_error`. A retrieval fallback to the lexical floor shows up as `kizuki.degraded`.
+Error classes for the stack: `spawn_failed`, `timeout`, `nonzero_exit` (with the exit code), `output_too_large`, `io_error`, `cancelled`. For Kizuki: `context_incomplete`, `kizuki_error`, `timeout`, `output_too_large`. A retrieval fallback to the lexical floor shows up as `kizuki.degraded`.
 
 A receipt holds no query text, no result text and no source name in the clear. The vault's audit trail is a separate record: each Kizuki read is an ordinary audited owner read and is logged with its arguments, as `kizuki context` is. Every digest, the query id and the 16-character source digests alike, is unsalted so it stays stable across runs. A reader of the file can therefore confirm a guessed query, or a guessed page path such as one named after a person or project, by hashing it with the public domain string. Purge and prune do not touch parity receipts: a digest of a purged page stays in every earlier receipt until the owner deletes those files. Receipts are not pruned by the command.
 
@@ -44,13 +45,13 @@ A receipt holds no query text, no result text and no source name in the clear. T
 
 ## Where it is tested
 
-`packages/cli/test/parity.test.ts` drives the real CLI against two fake stacks (one that mirrors Kizuki's own sources, one that is unrelated) and covers usage errors, hashed-only receipts with a sentinel-string check, unchanged state, failing, hanging, missing and flooding stacks, the coverage floor, process-group cleanup after a timeout, exit-code precedence, Kizuki-side failures and the threshold exit codes.
+`packages/cli/test/parity.test.ts` drives the real CLI against two fake stacks (one that mirrors Kizuki's own sources, one that is unrelated) and covers usage errors, hashed-only receipts with a sentinel-string check, unchanged state, failing, hanging, missing and flooding stacks, the coverage floor, process-group cleanup after a timeout, exit-code precedence, Kizuki-side failures and the threshold exit codes. `parity-process.test.ts` also checks an actual Kizuki timeout followed by a healthy query and cleanup after SIGINT, including grandchildren.
 
 ## Known limits
 
 - The query is an argument of the stack command, so it is visible in the local process list while that command runs. A query that starts with `-` can be read as an option by the stack command; the wrapper should put `--` before it.
 - The stack command inherits the caller's environment. It is the owner's own command; nothing is filtered.
-- On timeout or overflow the stack command's whole process group is killed (it runs detached as its own group leader). A descendant that changes its own process group escapes that, and a Ctrl-C in the terminal does not reach the detached command.
-- The per-query timeout bounds the stack command. The in-process Kizuki read has no separate bound.
+- On timeout or overflow the stack command's whole process group is killed (it runs detached as its own group leader). A descendant that changes its own process group escapes that, and cannot be contained by a process-group supervisor. SIGINT and SIGTERM are forwarded as cancellation by the parent, which kills and reaps its owned group.
+- The configured deadline includes each side's startup. A very short timeout can classify a healthy cold Kizuki process as timed out; this remains a Kizuki failure, never a successful comparison.
 - Source keys are matched as exact text, so the stack must emit keys in Kizuki's vocabulary (page paths, page source references or ledger event ids). Mapping a stack's own identifiers to those is the job of the wrapper command, which lives outside the repository.
 - Receipts accumulate one file per run.

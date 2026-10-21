@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setSystemTime, test } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { openLedger } from "../../src/ledger/db";
 import { readWorldView, serveWorldView } from "../../src/serving/world-view";
@@ -46,7 +46,10 @@ test("worldSeed stores what worldFixture stores for a concept and for a situatio
       expect(seed.ref).not.toBeNull();
       const card = (ctx: typeof fixture.ctx, ref: { kind: "object"; token: string }) =>
         canonicalTokens(JSON.stringify(serveWorldView(ctx, lookup(ref, kind)).data));
-      expect(card(seed.ctx, seed.ref!)).toBe(card(fixture.ctx, fixture.ref));
+      // Compare the entire response at the same issuance instant, including TTL.
+      setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+      try { expect(card(seed.ctx, seed.ref!)).toBe(card(fixture.ctx, fixture.ref)); }
+      finally { setSystemTime(); }
       assertWorldState(b);
     } finally {
       a.close();
@@ -123,7 +126,10 @@ test("a new kind seeded with an explicit predicate list stores exactly those pre
       .query<{ predicate: string }, []>("SELECT predicate FROM claim_v2_semantics ORDER BY predicate")
       .all()
       .map((row) => row.predicate);
-    expect(predicates).toEqual(["question.label", "question.text", "world.kind"]);
+    // question.text is both its registered label and this explicit detail;
+    // identical admission is idempotent, not a fabricated question.label row.
+    expect(new Set(seed.claims).size).toBe(2);
+    expect(predicates).toEqual(["question.text", "world.kind"]);
   } finally {
     db.close();
   }

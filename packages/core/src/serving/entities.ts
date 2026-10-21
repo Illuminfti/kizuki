@@ -1,10 +1,12 @@
+import { normalizeReadArgs } from "./v2/read-input";
+import { createRedactor } from "./redact";
+import type { Redactor } from "./redact";
 import type { AuditDenial, AuditItem } from "../agents";
 import { compareText } from "../util/order";
 import type { CanonPage } from "../vault/pages";
 import { enumOf, limit, text } from "./arguments";
 import {
   canonChunk,
-  collapseWhitespace,
   eligible,
   excerptOf,
   loadCanon,
@@ -13,7 +15,9 @@ import {
 } from "./canon";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
-import type { CanonChunk, Envelope, ServeContext, SubjectLabelDegradation } from "./types";
+import type { ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA } from "./types";
+import type { CanonChunk, ServeContext, SubjectLabelDegradation } from "./types";
 import { attachSubjectLabels, canonSubjects, labelsFor, projectSubjectLabels } from "./subject-labels";
 
 export const ENTITY_TYPES = [
@@ -35,21 +39,22 @@ export interface EntitiesArgs {
   limit?: number;
 }
 
-function matchesName(page: CanonPage, needle: string): boolean {
+function matchesName(page: CanonPage, needle: string, redactor: Redactor): boolean {
   return (
-    (stringField(page, "title") ?? "").toLowerCase().includes(needle) ||
-    (stringField(page, "x-handle") ?? "").toLowerCase().includes(needle)
+    redactor.text(stringField(page, "title") ?? "").toLowerCase().includes(needle) ||
+    redactor.text(stringField(page, "x-handle") ?? "").toLowerCase().includes(needle)
   );
 }
 
 export interface EntitiesData { degraded: SubjectLabelDegradation[] }
 
-export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope<EntitiesData> {
+export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(ctx: ServeContext, args: EntitiesArgs, contract: C = ENVELOPE_SCHEMA as C): ResponseEnvelope<EntitiesData, C, null> {
   return gate(
     ctx,
     "query_entities",
     auditArguments(args),
     ({ ctx, at }): Served<EntitiesData> => {
+      normalizeReadArgs(ctx, "query_entities", args, contract);
       const type =
         args.type === undefined
           ? undefined
@@ -61,6 +66,8 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope<E
       const rows = limit("limit", args.limit, MAX_LIMIT, DEFAULT_LIMIT);
 
       const index = loadCanon(ctx);
+      // Matching and ordering use served labels without tallying discarded candidates.
+      const preview = createRedactor(ctx.principal);
       const candidates = index.pages
         .filter((page) => {
           if (!eligible(page)) return false;
@@ -74,8 +81,8 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope<E
         .sort(
           (left, right) =>
             compareText(
-              (stringField(left, "title") ?? ""),
-              (stringField(right, "title") ?? ""),
+              preview.text(stringField(left, "title") ?? ""),
+              preview.text(stringField(right, "title") ?? ""),
             ) || compareText(left.id, right.id),
         );
 
@@ -84,7 +91,7 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope<E
       const admitted = candidates.flatMap(page => {
         const decision = pageDecision(index, ctx.principal.grant, page);
         if (!decision.allow) {
-          if (name === undefined || matchesName(page, name)) withheld.push({ id: page.id, reason: decision.reason });
+          if (name === undefined || matchesName(page, name, preview)) withheld.push({ id: page.id, reason: decision.reason });
           return [];
         }
         return [{ page, decision, subjects: canonSubjects(index, page) }];
@@ -93,15 +100,16 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope<E
       const audit = new Map<string, AuditItem>();
       for (const { page, decision, subjects } of admitted) {
         const labels = labelsFor(projection, subjects);
-        if (name !== undefined && !matchesName(page, name) && !labels.some(label =>
-          [label.display_name, ...label.handles].some(value => value?.toLowerCase().includes(name)))) continue;
+        if (name !== undefined && !matchesName(page, name, preview) && !labels.some(label =>
+          [label.display_name, ...label.handles].some(value => value !== null && preview.text(value).toLowerCase().includes(name)))) continue;
         // The scan runs past the limit so a match withheld further down the
         // order is still counted; only the served rows stop at the limit.
         if (canon.length === rows) continue;
         const { excerpt, truncated } = excerptOf(
-          collapseWhitespace(page.body),
+          page.body,
           EXCERPT_CHARS,
           ctx,
+          "inline",
         );
         const chunk = canonChunk(index, page, decision, excerpt, truncated);
         for (const item of attachSubjectLabels(projection, chunk, subjects)) audit.set(item.id, item);
@@ -111,5 +119,6 @@ export function serveEntities(ctx: ServeContext, args: EntitiesArgs): Envelope<E
       return { canon, quoted: [], withheld, audit_served: [...audit.values()],
         ...(projection.degraded.length === 0 ? {} : { data: { degraded: projection.degraded } }) };
     },
+    contract,
   );
 }

@@ -1,40 +1,69 @@
-import { resolvePrincipal, toolAllowed } from "../agents";
+import type { Forecast, ForecastScores } from "../contracts/forecast";
+import type { Attention } from "../contracts/attention";
+import type { Atlas, AtlasPanelName, AtlasObjectOperation } from "../contracts/atlas";
+import type { WorldSlice } from "../contracts/world-slice";
+import type { PersonCard } from "../contracts/person-card";
+import type { WorldDiff } from "../contracts/world-diff";
+import { compareWorldViews } from "../world/views/diff";
+import { resolvePrincipal, toolAllowed, type Principal } from "../agents";
 import { tableExists } from "../ledger/schema";
+import type { HistoryPage } from "../contracts/world-history";
+import type { ProcedureCard } from "../contracts/procedure-card";
+import type { FrameworkCard } from "../contracts/framework-card";
+import type { SkillCard } from "../contracts/skill-card";
+import type { OutcomeCard } from "../contracts/outcome-card";
+import type { ArtifactCard } from "../contracts/artifact-card";
+import type { QuestionCard } from "../contracts/question-card";
+import type { Frontier } from "../world/ops/frontier";
+import type { WorldMatches } from "../world/pipeline/assemble";
+import { WorldHistoryUnavailable } from "../world/known/cutoff";
 import { WorldProjectionBudgetError } from "../world/projection";
+import { beginWorldClaimProjection } from "../world/pipeline/eligible";
+import type { ReadBudget } from "../world/pipeline/frame";
 import type { discoverWorld } from "../world/projection";
 import type { WorldDescribe } from "../world/ops/describe";
 import type { ConceptCard } from "../contracts/concept-card";
+import type { SituationCardV2 } from "../contracts/situation-card-v2";
 import type { SituationCard } from "../contracts/situation-card";
-import { hasWorldKeys, parseWorldKnownAt, parseWorldValid } from "../world/ops/parse";
+import { hasWorldKeys, parseWorldKnownAt, parseWorldRef, parseWorldValid } from "../world/ops/parse";
 import { activeWorldOps, findWorldOp } from "../world/ops/registry";
 import { WorldViewError, worldOpKeys } from "../world/ops/types";
 import type {
+  ViewToken,
   WorldKnownAt,
   WorldObjectRef,
   WorldOp,
   WorldOpOutcome,
   WorldOpRegistry,
+  WorldRecord,
   WorldSnapshotRef,
   WorldUnavailableReason,
   WorldValidQuery,
   WorldViewResult,
 } from "../world/ops/types";
 import {
-  issueWorldRef,
   worldNamespace,
   type WireRef,
 } from "../world/references";
+import { openView, settleView } from "../world/views/session";
+import type { ViewSession } from "../world/views/session";
+import { worldDependencies, worldDependenciesCurrent, type WorldDependencies } from "../world/dependencies";
+import { wireDigest } from "../world/views/store";
+import { lookupResume, type ShareData } from "../world/views/resume";
 import { isPlainObject } from "../util/validate";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
 import type { RedactionCounts } from "./redact";
-import { clampWorldData } from "./world-clamp";
-import { ServeError } from "./types";
+import { clampWorldData, worldViewProjection } from "./world-clamp";
+import { ENVELOPE_V2_SCHEMA, ServeError } from "./types";
+import type { ConceptEvidenceRef } from "../contracts/concept-card";
+import type { WorldEvidenceData, WorldEvidenceSource, WorldQuotedEvidence } from "../world/ops/evidence-types";
 import type { ServeContext } from "./types";
 
 export { WorldViewError } from "../world/ops/types";
 export { isWorldWireToken } from "../world/ops/parse";
 export type {
+  ViewToken,
   WorldKnownAt,
   WorldObjectRef,
   WorldSnapshotRef,
@@ -43,6 +72,17 @@ export type {
 
 /** The typed request of the shipped operations; the reader itself takes `unknown` and the registry decides. */
 export type WorldReadInput =
+  | { readonly operation: "observation"; readonly ref: import("../contracts/scoped-refs").ScopedRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
+  | { readonly operation:"forecast"; readonly commitment:WorldObjectRef; readonly valid:WorldValidQuery; readonly knownAt:WorldKnownAt }
+  | { readonly operation:"forecast_scores"; readonly valid:WorldValidQuery; readonly knownAt:WorldKnownAt }
+  | { readonly operation: "diff"; readonly of: WorldRecord; readonly priorView: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
+  | { readonly operation: "attention"; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
+  | { readonly operation: "atlas"; readonly panel?: AtlasPanelName; readonly focus?: { readonly operation: AtlasObjectOperation; readonly ref: WorldObjectRef; readonly card?: "kizuki.situation-card/v2" }; readonly baselineView?: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
+  | { readonly operation: "slice"; readonly task: string; readonly kinds?: readonly string[]; readonly budgetTokens: number; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "person"; readonly person: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "find_people"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "artifact_version"; readonly artifact: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "find_artifacts"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | {
       readonly operation: "find_concepts" | "find_situations";
       readonly label: string;
@@ -50,27 +90,85 @@ export type WorldReadInput =
       readonly cursor?: string;
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
+      /** The view a previous complete read issued, to be told whether anything visible moved. */
+      readonly priorView?: ViewToken;
     }
   | {
       readonly operation: "situation";
       readonly situation: WorldObjectRef;
+      readonly card?: "kizuki.situation-card/v2";
+      readonly valid: WorldValidQuery;
+      readonly knownAt: WorldKnownAt;
+      readonly priorView?: ViewToken;
+    }
+  | {
+      readonly operation: "concept" | "history";
+      readonly concept: WorldObjectRef;
+      readonly valid: WorldValidQuery;
+      readonly knownAt: WorldKnownAt;
+      readonly priorView?: ViewToken;
+    }
+  | {
+      readonly operation: "evidence";
+      readonly evidence: ConceptEvidenceRef;
+      readonly valid: WorldValidQuery;
+      readonly knownAt: WorldKnownAt;
+    }
+  | { readonly operation: "find_procedures"; readonly label?: string; readonly cursor?: string; readonly about?: WorldObjectRef;
+      readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "procedure"; readonly procedure: WorldObjectRef;
+      readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "skill"; readonly skill: WorldObjectRef;
+      readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "framework"; readonly framework: WorldObjectRef;
+      readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "outcome"; readonly subject: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
+  | { readonly operation: "describe" }
+  | {
+      readonly operation: "share";
+      readonly of:
+        | { readonly operation: "concept"; readonly concept: WorldObjectRef }
+        | { readonly operation: "situation"; readonly situation: WorldObjectRef }
+        | { readonly operation: "procedure"; readonly procedure: WorldObjectRef }
+        | { readonly operation: "skill"; readonly skill: WorldObjectRef }
+        | { readonly operation: "framework"; readonly framework: WorldObjectRef }
+        | { readonly operation: "artifact_version"; readonly artifact: WorldObjectRef };
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
     }
   | {
-      readonly operation: "concept";
-      readonly concept: WorldObjectRef;
+      readonly operation: "resume";
+      readonly handle: string;
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
-    }
-  | { readonly operation: "describe" };
+      readonly priorView?: ViewToken;
+    };
 
 /** The bodies the shipped operations return; each operation's `dataSchemas` say which one it is. */
 export type WorldData =
+  | import("../contracts/observation").Observation
+  | Forecast | ForecastScores
+  | WorldDiff
+  | Attention
+  | Atlas
+  | WorldSlice
   | ConceptCard
+  | PersonCard
+  | ArtifactCard
+  | WorldMatches<"kizuki.artifact_version-matches/v1">
+  | QuestionCard
+  | ProcedureCard | FrameworkCard | SkillCard | OutcomeCard
+  | WorldMatches<"kizuki.procedure-matches/v1">
+  | Frontier
+  | WorldMatches<"kizuki.person-matches/v1">
+  | WorldMatches<"kizuki.question-matches/v1">
+  | HistoryPage
   | SituationCard
+  | SituationCardV2
   | ReturnType<typeof discoverWorld>
-  | WorldDescribe;
+  | WorldDescribe
+  | ShareData
+  | WorldEvidenceData;
 export type WorldReadResult =
   | { readonly status: "not_found" }
   | {
@@ -78,16 +176,36 @@ export type WorldReadResult =
       readonly operation: string;
       readonly result: WorldViewResult<WorldData>;
     };
-export type WorldViewEnvelope = {
+/**
+ * What a read that names no earlier capability can answer. A retained view,
+ * resume handle or known-at snapshot can require a new view; fresh current
+ * and timestamp reads always return a body, absence or explicit unavailability.
+ */
+export type WorldFreshInput = {
+  readonly operation: string;
+  readonly priorView?: undefined;
+  readonly handle?: undefined;
+  readonly knownAt?: Exclude<WorldKnownAt, { readonly kind: "snapshot" }>;
+};
+/** A record of unknown keys may carry a baseline at run time, so only an object of known keys is fresh. */
+type KnownKeys<Input> = string extends keyof Input ? never : Input;
+export type WorldFreshReadResult =
+  | { readonly status: "not_found" }
+  | {
+      readonly schema: "kizuki.world-view/v1";
+      readonly operation: string;
+      readonly result: Exclude<WorldViewResult<WorldData>, { readonly status: "unchanged" | "new_view_required" }>;
+    };
+export type WorldViewEnvelope<Read extends WorldReadResult = WorldReadResult> = {
   readonly schema: "kizuki.envelope/v2";
   readonly tool: "world_view";
   readonly principal: WireRef<"principal">;
   readonly at: string;
   readonly canon: readonly [];
-  readonly quoted: readonly [];
+  readonly quoted: readonly WorldQuotedEvidence[];
   /** Credential-shaped spans replaced in this response, per kind. Never the values. */
   readonly redacted?: RedactionCounts;
-  readonly data: WorldReadResult;
+  readonly data: Read;
 };
 
 const MAX_RESPONSE_BYTES = 256 * 1024;
@@ -108,42 +226,84 @@ function unavailable(
   return answer(operation, { status: "unavailable", reason });
 }
 
-/** Maps what an operation found to the result the reader serves; a body over the response bound is never partly served. */
-function present(op: WorldOp, outcome: WorldOpOutcome): WorldReadResult {
-  if (outcome.status === "not_found") return { status: "not_found" };
+/**
+ * Maps what an operation found to the result the reader serves; a body over the
+ * response bound is never partly served. A read that may issue a view carries
+ * its session, and a complete answer takes the state that session decides.
+ */
+interface WorldResponse {
+  readonly data: WorldReadResult;
+  readonly quoted: readonly WorldEvidenceSource[];
+}
+const withoutQuotes = (data: WorldReadResult): WorldResponse => ({ data, quoted: [] });
+
+function present(op: WorldOp, outcome: WorldOpOutcome, view: ViewSession | null, ctx: ServeContext, dependencies: WorldDependencies): WorldResponse {
+  if (outcome.status === "not_found") {
+    if (view?.prior === undefined || view.prior === null) return withoutQuotes({ status: "not_found" });
+    ctx.db.query("DELETE FROM world_view_tokens WHERE token_hash=?").run(wireDigest(view.prior.token));
+    return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+  }
   if (outcome.status === "unavailable")
-    return unavailable(op.name, outcome.reason);
+    return withoutQuotes(unavailable(op.name, outcome.reason));
+  if (outcome.status === "new_view_required")
+    return withoutQuotes(answer(op.name, { status: "new_view_required" }));
   const { gaps } = outcome;
-  if (Buffer.byteLength(JSON.stringify(outcome.data), "utf8") > MAX_RESPONSE_BYTES)
+  const bytes = Buffer.byteLength(JSON.stringify(outcome.data), "utf8") +
+    (outcome.quoted === undefined ? 0 : Buffer.byteLength(JSON.stringify(outcome.quoted), "utf8"));
+  if (bytes > MAX_RESPONSE_BYTES)
     throw new WorldProjectionBudgetError();
   // Every adapter states a grammar per declared schema; a body outside them is a defect, never served.
   if (!op.dataSchemas.includes(outcome.data.schema))
     throw new ServeError("error", "serving failed");
   // The registry is open and `WorldData` names the shipped bodies; the check above ties `data` to a declared schema.
   const data = outcome.data as WorldData;
-  return answer(
-    op.name,
-    gaps === null
-      ? { status: "current", view: { status: "not_issued" }, data }
-      : { status: "incomplete", data, reasons: gaps },
-  );
+  if (gaps !== null) return { quoted: outcome.quoted ?? [], data: answer(op.name, { status: "incomplete", data, reasons: gaps }) };
+  if (view === null) return { quoted: outcome.quoted ?? [], data: answer(op.name, { status: "current", view: { status: "not_issued" }, data }) };
+  // Compare and retain the final served projection. The gate redacts the raw
+  // body once for output and counts, including after a bounded reprojection.
+  const projection = worldViewProjection(ctx, data);
+  let responseData: WorldData = data;
+  if (op.name === "diff") {
+    if (view.baseline === null) return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+    let retained: unknown;
+    try { retained = JSON.parse(Buffer.from(view.baseline.projection).toString("utf8")); }
+    catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+    }
+    if (!isPlainObject(retained) || retained.operation !== view.operation || !isPlainObject(retained.data))
+      return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+    responseData = compareWorldViews(retained.data, projection);
+    if (responseData.truncated) return withoutQuotes(answer(op.name, { status: "incomplete", data: responseData, reasons: ["traversal_limit"] }));
+  }
+  const result = settleView(ctx.db, view, view.operation, projection, dependencies);
+  return { quoted: outcome.quoted ?? [], data: answer(op.name, "data" in result ? { ...result, data: responseData } : result) };
 }
 
 /**
  * Fresh model-free projection through the registered operation the input
  * names. References carry lookup identity, never authority.
  */
+export function readWorldView<Input extends WorldFreshInput>(ctx: ServeContext, input: KnownKeys<Input>, registry?: WorldOpRegistry): WorldFreshReadResult;
+export function readWorldView(ctx: ServeContext, input: unknown, registry?: WorldOpRegistry): WorldReadResult;
 export function readWorldView(
   ctx: ServeContext,
   input: unknown,
   registry: WorldOpRegistry = activeWorldOps(),
 ): WorldReadResult {
+  return read(ctx, input, registry, worldDependencies()).data;
+}
+
+function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, dependencies: WorldDependencies, depth = 0, retain = true): WorldResponse {
   const principal = resolvePrincipal(ctx.db, ctx.principal);
   if (principal === null)
     throw new ServeError("unknown_agent", "unknown agent");
   if (!toolAllowed(principal.grant, "world_view"))
     throw new ServeError("tool_not_granted", "tool not granted");
-  ctx = { ...ctx, principal, sourcePurpose: "recall" };
+  const budget: ReadBudget = ctx.worldReadBudget ?? { bytes: 0 };
+  // Reprojection after a publication-fence change must prove the new snapshot.
+  if (depth === 0) beginWorldClaimProjection(budget);
+  ctx = { ...ctx, principal, sourcePurpose: ctx.sourcePurpose ?? "recall", worldReadBudget: budget };
   if (!isPlainObject(input)) throw new WorldViewError();
   const op = findWorldOp(registry, input.operation);
   if (op === undefined) throw new WorldViewError();
@@ -154,36 +314,65 @@ export function readWorldView(
       const valid = Object.hasOwn(input, "valid") ? parseWorldValid(input.valid) : ALL_VALID,
         knownAt = Object.hasOwn(input, "knownAt") ? parseWorldKnownAt(input.knownAt) : CURRENT;
       if (valid === null || knownAt === null) throw new WorldViewError();
-      if (knownAt.kind !== "current") return unavailable(op.name, "history");
-      return present(op, op.run(registry));
+      if (knownAt.kind !== "current") return withoutQuotes(unavailable(op.name, "history"));
+      return present(op, op.run(registry), null, ctx, dependencies);
     }
     const query = op.parse(input),
       valid = parseWorldValid(input.valid),
-      knownAt = parseWorldKnownAt(input.knownAt);
-    if (query === null || valid === null || knownAt === null)
+      knownAt = parseWorldKnownAt(input.knownAt),
+      prior = op.views === true && Object.hasOwn(input, "priorView") ? parseWorldRef(input.priorView, "view") : null;
+    if (query === null || valid === null || knownAt === null || (Object.hasOwn(input, "priorView") && prior === null))
       throw new WorldViewError();
-    if (knownAt.kind !== "current") return unavailable(op.name, "history");
+    if (knownAt.kind !== "current" && op.knownAt !== true) return withoutQuotes(unavailable(op.name, "history"));
     if (!tableExists(ctx.db, "world_authorization_namespaces"))
-      return unavailable(op.name, "storage");
+      return withoutQuotes(unavailable(op.name, "storage"));
     // A nested transaction is a savepoint: failed/budgeted projections issue no refs.
     return ctx.db
-      .transaction(() =>
-        present(
-          op,
-          op.run({ ctx, ns: worldNamespace(ctx.db, principal) }, query, {
-            valid,
-            knownAt,
-          }),
-        ),
-      )
+      .transaction(() => {
+        // Admission can precede a grant amendment. Read authority and evidence
+        // from the same snapshot, including discovery without an issued ref.
+        const current = resolvePrincipal(ctx.db, ctx.principal);
+        if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+        if (!toolAllowed(current.grant, "world_view")) throw new ServeError("tool_not_granted", "tool not granted");
+        const live = { ...ctx, principal: current };
+        const ns = worldNamespace(ctx.db, current);
+        // The baseline is judged before any projection work, so an unusable one costs the same for every cause.
+        const viewInput = op.name === "diff" ? { ...(query as WorldRecord), valid, knownAt } : input;
+        const view = op.views === true && retain ? openView(live, ns, viewInput, prior) : null;
+        if (view?.stale === true) return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+        if (view !== null && prior !== null) dependencies.priorView = {
+          current: reader => !openView(reader, worldNamespace(reader.db, reader.principal), viewInput, prior).stale,
+        };
+        const compose = (input: import("../world/ops/types").WorldRecord, options: { readonly retain: boolean } = { retain: false }): WorldResponse => {
+          if (!options.retain && Object.hasOwn(input, "priorView")) throw new WorldViewError();
+          if (depth >= 2 || dependencies.children.length >= 32) throw new WorldProjectionBudgetError();
+          const child = worldDependencies();
+          dependencies.children.push(child);
+          const response = read(live, input, registry, child, depth + 1, options.retain);
+          if ("result" in response.data && response.data.result.status === "unavailable" && response.data.result.reason === "budget") throw new WorldProjectionBudgetError();
+          return response;
+        };
+        return present(op, op.run({ ctx: live, ns, registry, dependencies, read: compose, ...(view === null ? {} : { view }) }, query, { valid, knownAt }), view, live, dependencies);
+      })
       .immediate();
   } catch (error) {
+    if (error instanceof WorldHistoryUnavailable) return withoutQuotes(unavailable(op.name, "history"));
     if (error instanceof WorldProjectionBudgetError)
-      return unavailable(op.name, "budget");
+      return withoutQuotes(unavailable(op.name, "budget"));
     throw error;
   }
 }
 
+export function serveWorldView<Args extends WorldFreshInput>(
+  ctx: ServeContext,
+  args: KnownKeys<Args>,
+  registry?: WorldOpRegistry,
+): WorldViewEnvelope<WorldFreshReadResult>;
+export function serveWorldView(
+  ctx: ServeContext,
+  args: Record<string, unknown>,
+  registry?: WorldOpRegistry,
+): WorldViewEnvelope;
 export function serveWorldView(
   ctx: ServeContext,
   args: Record<string, unknown>,
@@ -193,44 +382,67 @@ export function serveWorldView(
   // inside one, and the audit row and rate reservation of a denied call must
   // outlive the refusal. The projection opens its own transaction, so a failed
   // projection still issues no references.
-  const envelope = gate(
+  let readPrincipal: Principal | undefined;
+  let dependencies = worldDependencies();
+  const budget: ReadBudget = ctx.worldReadBudget ?? { bytes: 0 };
+  const project = (live: ServeContext): Served<WorldReadResult> => {
+    // A gate recheck may reproject authority; it must not resolve the requested
+    // recorded timestamp again and admit a later clock-clamped transaction.
+    const cutoff = dependencies.cutoff;
+    dependencies = worldDependencies();
+    if (cutoff !== undefined) dependencies.cutoff = cutoff;
+    try {
+      return ctx.db.transaction(() => {
+        const response = read({ ...live, worldReadBudget: budget }, args, registry, dependencies);
+        const principal = resolvePrincipal(ctx.db, live.principal);
+        if (principal === null) throw new ServeError("unknown_agent", "unknown agent");
+        readPrincipal = principal;
+        return { canon: [], quoted: [...response.quoted], withheld: [], data: response.data };
+      }).immediate();
+    } catch (error) {
+      if (error instanceof WorldViewError)
+        throw new ServeError("invalid_arguments", "invalid arguments: world_view");
+      throw error;
+    }
+  };
+  const envelope = gate<WorldReadResult, typeof ENVELOPE_V2_SCHEMA, WorldReadResult, readonly WorldQuotedEvidence[]>(
+
     ctx,
     "world_view",
     auditArguments(args),
-    ({ ctx: live }): Served<WorldReadResult> => {
-      try {
-        return {
-          canon: [],
-          quoted: [],
-          withheld: [],
-          data: readWorldView(live, args, registry),
-        };
-      } catch (error) {
-        if (error instanceof WorldViewError)
-          throw new ServeError(
-            "invalid_arguments",
-            "invalid arguments: world_view",
-          );
-        throw error;
+    ({ ctx: live }) => project(live),
+    ENVELOPE_V2_SCHEMA,
+    ({ ctx: live }, served) => {
+      // Revalidate evidence, coverage and resume validity in the output snapshot,
+      // so unrelated hidden policy or purge changes alter neither bytes nor work.
+      const current = resolvePrincipal(live.db, live.principal);
+      if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+      if (!toolAllowed(current.grant, "world_view")) throw new ServeError("tool_not_granted", "tool not granted");
+      const changed = readPrincipal?.kind === "agent" && current.kind === "agent" && readPrincipal.grant_epoch !== current.grant_epoch;
+      const fresh = { ...live, principal: current };
+      const resumeValid = args.operation !== "resume" || (typeof args.handle === "string" && lookupResume(fresh, args.handle) !== null);
+      if (!changed && resumeValid && worldDependenciesCurrent(fresh, dependencies)) return served;
+      const data = served.data;
+      // Only a newly issued token is pending output. An unchanged baseline
+      // must remain available when reprojection becomes incomplete.
+      if (data !== undefined && "result" in data && data.result.status === "current" && "kind" in data.result.view) {
+        live.db.query("DELETE FROM world_view_tokens WHERE token_hash=?").run(wireDigest(data.result.view.token));
       }
+      return project(fresh);
     },
   );
-  return ctx.db
-    .transaction((): WorldViewEnvelope => {
-      const principal = resolvePrincipal(ctx.db, ctx.principal);
-      if (principal === null)
-        throw new ServeError("unknown_agent", "unknown agent");
-      const ns = worldNamespace(ctx.db, principal);
-      return {
-        schema: "kizuki.envelope/v2",
-        tool: "world_view",
-        principal: issueWorldRef(ctx.db, ns, "principal", ns.principalId),
-        at: envelope.at,
-        canon: [],
-        quoted: [],
-        ...(envelope.redacted === undefined ? {} : { redacted: envelope.redacted }),
-        data: clampWorldData(envelope.data!),
-      };
-    })
-    .immediate();
+  return {
+    schema: "kizuki.envelope/v2", tool: "world_view", principal: envelope.principal,
+    at: envelope.at, canon: [],
+    quoted: envelope.quoted.map((chunk): WorldQuotedEvidence => {
+      // The final gate snapshot already revalidated and redacted these sources.
+      // This pure projection removes raw source identities without issuing refs.
+      const source = chunk;
+      return { evidence: source.evidence, text: source.text, tainted: true,
+        integrity: source.integrity, slice_integrity: source.slice_integrity,
+        offset: source.offset, returned: source.returned, total: source.total,
+        truncated: source.truncated === true };
+    }),
+    data: clampWorldData(envelope.data!),
+  };
 }

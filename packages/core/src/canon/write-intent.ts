@@ -1,7 +1,7 @@
 import { completedEventPurgeProofs, type CompletedEventPurgeProof } from "../ledger/purge";
 import { isErasedReceipt, rowToReceiptRecord, type CanonReceiptRow } from "./receipts";
 import { CANON_RECEIPT_V1_KEYS, isWorldCanonReceipt, parseWorldCanonReceipt, type RetainedWorldCanonReceipt, type WorldCanonReceiptRecord, type ErasedWorldCanonReceipt, eraseWorldReceipt } from "./world-receipt";
-import { assertWorldBasis, assertWorldCanonPage, selectWorldMaterialization } from "./world-materialization";
+import { assertRetainedWorldBasis, assertWorldBasis, assertWorldCanonPage, selectWorldMaterialization } from "./world-materialization";
 import { validateRetainedReceipt } from "./receipt-validation";
 import type { Database } from "bun:sqlite";
 import { requireSourceEvents, sourcePolicyEpoch } from "../ledger/source-grants";
@@ -282,9 +282,9 @@ export function assertCanonAdmission(db: Database, intent: CanonWriteIntent): vo
   if (isWorldCanonReceipt(intent.receipt)) {
     if ((latestWorldReceiptRecord(db,intent.receipt.page_path)?.receipt_id??null)!==intent.receipt.prior_receipt_id) recoveryFailure("predecessor_changed",intent.receipt.receipt_id);
     try {
-      if(intent.version!==3)assertWorldBasis(db, intent.receipt.basis.before, true);
+      if(intent.version!==3)assertRetainedWorldBasis(db, intent.receipt.basis.before);
       assertWorldBasis(db, intent.receipt.basis.after, intent.completion.mode === "revert");
-      if(intent.version!==3){assertWorldCanonPage(db,intent.receipt,decodeCanonImage(intent.before_base64),"before");assertWorldCanonPage(db,intent.receipt,decodeCanonImage(intent.after_base64),"after");}
+      if(intent.version!==3){assertWorldCanonPage(db,intent.receipt,decodeCanonImage(intent.before_base64),"before","receipt_custody");assertWorldCanonPage(db,intent.receipt,decodeCanonImage(intent.after_base64),"after");}
     } catch { recoveryFailure("authority_changed", intent.receipt.receipt_id); }
   }
   if(intent.version===3) {
@@ -304,7 +304,15 @@ export function assertCanonAdmission(db: Database, intent: CanonWriteIntent): vo
     for(const record of affected)if(record.archive_path!==null&&record.before_hash!==null){const existing=archives.get(record.archive_path);if(existing!==undefined&&existing!==record.before_hash)recoveryFailure("archive_changed",intent.receipt.receipt_id);archives.set(record.archive_path,record.before_hash);}
     if(digest([...archives].map(([path,hash])=>({path,hash})))!==digest(intent.erasure.archives))recoveryFailure("archive_changed",intent.receipt.receipt_id);
     const selected=intent.receipt.before_hash===ABSENT_PAGE_HASH?null:selectWorldMaterialization(db,match[1]!);
-    if(digest(selected?.basis??null)!==digest(intent.receipt.basis.after))recoveryFailure("authority_changed",intent.receipt.receipt_id);
+    // An unfinished older intent must keep its recorded rendering, not adopt
+    // new prose during recovery. All semantic/support identities still match,
+    // and the stored image below is reconstructed using its exact discriminator.
+    const selectedBasis=selected?.basis.map(item=>{
+      const expected=intent.receipt.basis.after?.find(prior=>prior.claim_id===item.claim_id);
+      if(expected?.rendering!==undefined)return item;
+      const {rendering:_rendering,...legacy}=item;return legacy;
+    })??null;
+    if(digest(selectedBasis)!==digest(intent.receipt.basis.after))recoveryFailure("authority_changed",intent.receipt.receipt_id);
     const final=intent.erasure.final_receipt,after=decodeCanonImage(intent.after_base64);
     if(isErasedReceipt(final)&&(after!==null||intent.receipt.after_hash!==ABSENT_PAGE_HASH||intent.receipt.basis.after!==null))recoveryFailure("intent_invalid",intent.receipt.receipt_id);
     if(!isErasedReceipt(final)){try{assertWorldCanonPage(db,final,after,"after");}catch{recoveryFailure("authority_changed",intent.receipt.receipt_id);}}

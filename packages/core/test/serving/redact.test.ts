@@ -3,6 +3,7 @@ import { getClaim } from "../../src/claims/store";
 import { dispatchServeTool } from "../../src/serving/dispatch";
 import { packetTokens } from "../../src/serving/packet-tokenizer";
 import { readServableEvents } from "../../src/serving/ledger";
+import { bindSourceEvent, setSourceGrant, sourceCaptureAdmission } from "../../src/ledger/source-grants";
 import {
   FORGED_STAMP,
   KINDS_PRESENT,
@@ -127,8 +128,8 @@ test("timeline previews and expansions are redacted before they are cut", async 
     event_id: fixture.secretEvent,
     span: 2000,
   });
-  // The integrity digest is the raw capture's, identical for both readers.
-  expect(data.integrity).toBe((owner.data as { integrity: string }).integrity);
+  // Agent integrity binds the served projection; owner integrity binds the capture.
+  expect(data.integrity).not.toBe((owner.data as { integrity: string }).integrity);
   let served = "";
   for (let offset = 0; offset < data.total; offset += 40) {
     const window = await serve("reader-public", "timeline", {
@@ -253,7 +254,7 @@ test("ids, hashes and etags are not touched, and the packet hash is that of the 
   expect(first.canon.map((chunk) => chunk.sources)).toEqual(owner.canon.map((chunk) => chunk.sources));
   const raw = await serve("owner", "timeline", { event_id: fixture.secretEvent });
   const served = await serve("reader-public", "timeline", { event_id: fixture.secretEvent });
-  expect((served.data as { integrity: string }).integrity).toBe((raw.data as { integrity: string }).integrity);
+  expect((served.data as { integrity: string }).integrity).not.toBe((raw.data as { integrity: string }).integrity);
 });
 
 test("a page or capture that imitates a stamp line is quoted, and hidden characters are gone for everyone", async () => {
@@ -334,6 +335,30 @@ test("the claim line's object is redacted whole, quotes and all", async () => {
 });
 
 test("system_health shows an agent only what it can read", async () => {
+  // Connection visibility requires exact source evidence, not a connector guess.
+  for (const connector of ["fixture", "hidden-connector"]) {
+    const connection = fixture.db.query<{ source_key: string }, [string]>(
+      "SELECT source_key FROM connections WHERE connector_id=?",
+    ).get(connector);
+    if (connection === null) throw new Error("missing fixture connection");
+    setSourceGrant(fixture.db, {
+      source_key: connection.source_key,
+      expected_revision: 0,
+      operation_id: `health-source-${connector}`,
+      policy: {
+        purposes: ["capture", "derive", "recall", "session", "correction", "export"],
+        allowed_fields: ["text", "subjects", "metadata", "attachments"],
+        retention: "persistent_owned_until_revoked",
+        egress: "local_only",
+        sensitivity_floor: connector === "fixture" ? "public" : "private",
+      },
+    });
+    const admission = sourceCaptureAdmission(fixture.db, connector, connection.source_key);
+    if (admission === null) throw new Error("missing fixture source admission");
+    for (const { event_id } of fixture.db.query<{ event_id: string }, [string]>(
+      "SELECT event_id FROM events WHERE connector_id=?",
+    ).all(connector)) bindSourceEvent(fixture.db, event_id, admission);
+  }
   const owner = (await serve("owner", "system_health", {})).data as Record<
     string,
     any

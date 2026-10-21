@@ -1,16 +1,32 @@
+import { withScopedClaimMutation } from "./v2/writer-refusal";
+import { normalizeMutationArgs, type ProposeArgsV2 } from "./v2/mutation-input";
+import type { ArtifactCard } from "../contracts/artifact-card";
+import { outcomeArtifactBinding } from "../world/outcome-binding";
+import { readWorldCard } from "../world/pipeline/read";
+import { newReadFrame } from "../world/pipeline/frame";
+import { anchorOf } from "../world/pipeline/collect";
+import { worldNamespace, resolveWorldObject } from "../world/references";
+import { readableWorldNode } from "../world/endpoint-access";
+import { resolvePrincipal } from "../agents";
+import { rawSubjectRefKey } from "../contracts/claim-v2";
+import { canonicalJson, sha256Hex } from "../util/hash";
+import { OUTCOME_PREDICATES, parseOutcomeSubmission } from "../contracts/outcome-card";
 import type { AuditDenial, Grant } from "../agents";
 import { isRegisteredPredicate } from "../claims/predicates";
-import { insertClaim } from "../claims/store";
+import { prepareClaimInsert, retryRetrievalOps } from "../claims/store";
+import { initClaims } from "../claims/init";
 import { CLAIM_POLARITIES } from "../contracts/proposal";
 import type { ClaimPolarity, FrontmatterValue } from "../contracts/proposal";
 import { isPlainObject } from "../util/validate";
 import { PAGE_TYPES } from "../vault/schema";
-import { enumOf, identifier, idList, text } from "./arguments";
+import { enumOf, identifier, idList, resolvedSubjectIdentifier, text } from "./arguments";
 import { auditArguments, claimsIo, gateAsync } from "./gate";
 import type { Served } from "./gate";
 import { eventDecision, readServableEvents } from "./ledger";
 import { ServeError } from "./types";
-import type { Envelope, ServeContext } from "./types";
+import { authorizedEventSql } from "../world/policy-sql";
+import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
+import { ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA } from "./types";
 
 /** `purge_review` is filed by purge itself, never by a producer. */
 const PROPOSE_KINDS = [
@@ -201,9 +217,10 @@ function subjectOf(
   grant: Grant,
   requestedSubject: string | undefined,
   subjects: string[] | undefined,
+  parseIdentifier: typeof identifier,
 ): string | undefined {
   if (requestedSubject === undefined) return subjects?.[0];
-  const subject = identifier("subject", requestedSubject);
+  const subject = parseIdentifier("subject", requestedSubject);
   if (grant.subjects !== null && !grant.subjects.includes(subject)) {
     throw new ServeError("subject_out_of_scope", "subject outside the grant");
   }
@@ -238,8 +255,17 @@ function predicateOf(
  * of the message, and so does the reason: an id that is absent and one that is
  * unreadable are refused identically.
  */
-function validateProvenance(ctx: ServeContext, provenance: string[]): void {
-  const facts = readServableEvents(ctx.db, provenance);
+function validateProvenance(ctx: ServeContext, provenance: string[], contract: ResponseContract): void {
+  // Preserve v1's owner-audit diagnostics. V2 must not materialize hidden
+  // provenance just to explain a refusal that stays generic on the wire.
+  let selected = provenance;
+  if (contract === ENVELOPE_V2_SCHEMA) {
+    const policy = authorizedEventSql(ctx);
+    selected = ctx.db.query<{ event_id: string }, (string | number)[]>(
+      `SELECT event_id FROM events WHERE event_id IN (SELECT value FROM json_each(?)) AND ${policy.clauses.join(" AND ")}`,
+    ).all(JSON.stringify(provenance), ...policy.bindings).map((row) => row.event_id);
+  }
+  const facts = readServableEvents(ctx.db, selected);
   const denials: AuditDenial[] = [];
   let refused = false;
   for (const id of provenance) {
@@ -261,15 +287,21 @@ function validateProvenance(ctx: ServeContext, provenance: string[]): void {
   }
 }
 
-export async function servePropose(
+export async function servePropose<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
-  args: ProposeArgs,
-): Promise<Envelope<ProposeData>> {
+  args: ProposeArgs | ProposeArgsV2,
+  contract: C = ENVELOPE_SCHEMA as C,
+): Promise<ResponseEnvelope<ProposeData, C, import("../contracts/scoped-tools").ProposeDataV2>> {
   return gateAsync(
     ctx,
     "propose",
     auditArguments(args),
     async ({ ctx }): Promise<Served<ProposeData>> => {
+    const perform = async (): Promise<Served<ProposeData>> => {
+    const originalSelection = ctx.selection;
+    const normalized = normalizeMutationArgs(ctx, "propose", args, contract);
+    ctx = normalized.ctx;
+    const request = normalized.args;
     const principal = ctx.principal;
     // A proposal has to carry a distinct identity in `producer`: agents
     // propose claims, and the owner speaks as the owner elsewhere.
@@ -281,24 +313,25 @@ export async function servePropose(
     }
     const grant = principal.grant;
 
-    const kind = enumOf("kind", args.kind, PROPOSE_KINDS);
-    const body = text("body", args.body, MAX_BODY_CHARS);
+    const kind = enumOf("kind", request.kind, PROPOSE_KINDS);
+    const body = text("body", request.body, MAX_BODY_CHARS);
     const target =
-      args.target === undefined || args.target === null
+      request.target === undefined || request.target === null
         ? null
-        : text("target", args.target, MAX_TARGET_CHARS);
-    const provenance = idList("provenance", args.provenance, MAX_PROVENANCE);
+        : text("target", request.target, MAX_TARGET_CHARS);
+    const provenance = idList("provenance", request.provenance, MAX_PROVENANCE);
     if (provenance.length === 0) {
       throw refuse("provenance", "must name at least one event");
     }
     const frontmatter = validateFrontmatter(
       grant,
-      args.frontmatter === undefined ? {} : args.frontmatter,
+      request.frontmatter === undefined ? {} : request.frontmatter,
     );
+    const parseSubject = contract === ENVELOPE_V2_SCHEMA ? resolvedSubjectIdentifier : identifier;
     const requested =
-      args.subjects === undefined
+      request.subjects === undefined
         ? undefined
-        : idList("subjects", args.subjects, MAX_SUBJECTS);
+        : idList("subjects", request.subjects, MAX_SUBJECTS, parseSubject);
     if (
       grant.subjects !== null &&
       (requested === undefined || requested.length === 0)
@@ -316,14 +349,66 @@ export async function servePropose(
         );
       }
     }
-    const confidence = confidenceOf(args.confidence);
-    const subject = subjectOf(grant, args.subject, requested);
-    const predicate = predicateOf(args.predicate, subject);
+    const confidence = confidenceOf(request.confidence);
+    const subject = subjectOf(grant, request.subject, requested, parseSubject);
+    const predicate = predicateOf(request.predicate, subject);
 
-    validateProvenance(ctx, provenance);
+    let provenanceContext = ctx;
+    let checkOutcomeBinding: (() => { subjectRef: string; artifactVersion: unknown }) | undefined;
+    let object = request.object === undefined ? undefined : text("object", request.object, MAX_OBJECT_CHARS);
+    if (predicate !== undefined && OUTCOME_PREDICATES.includes(predicate as typeof OUTCOME_PREDICATES[number])) {
+      const evidence = parseOutcomeSubmission(predicate, object);
+      if (kind !== "claim" || evidence === null) throw refuse("object", "must contain bounded outcome evidence");
+      // Lookup identity is not authority. Check current readable evidence both
+      // before preparation and in the transaction that files the claim.
+      checkOutcomeBinding = () => {
+        const current = resolvePrincipal(ctx.db, principal);
+        if (current === null || current.kind !== "agent" || current.grant_epoch !== principal.grant_epoch)
+          throw refuse("object", "authority changed during outcome filing; retry");
+        const live = { ...ctx, principal: current }, ns = worldNamespace(ctx.db, current);
+        let subjectRef = "none";
+        if (evidence.subjectRef !== "none") {
+          const anchor = readableWorldNode(live, ns, evidence.subjectRef);
+          if (anchor === null || anchor.id !== subject ||
+              contract === ENVELOPE_V2_SCHEMA && (normalized.subjectIdentity === undefined ||
+                rawSubjectRefKey(anchor) !== rawSubjectRefKey(normalized.subjectIdentity))) throw refuse("object", "subjectRef must be a current object token for the subject, or none");
+          subjectRef = sha256Hex(rawSubjectRefKey(anchor));
+        }
+        let artifactVersion: unknown = evidence.artifactVersion;
+        if (typeof evidence.artifactVersion !== "string") {
+          const handle = resolveWorldObject(ctx.db, ns, evidence.artifactVersion.token);
+          const frame = newReadFrame(live, ns, { kind: "all" });
+          const card = handle === null ? null : readWorldCard(frame, handle, "artifact_version");
+          const artifact = card?.schema === "kizuki.artifact-card/v1" ? card as ArtifactCard : null;
+          const anchor = handle === null ? null : anchorOf(ctx.db, handle);
+          if (artifact === null || anchor === null ||
+              artifact.content.sha256 === null || anchor.id !== `artifact:sha256:${artifact.content.sha256}`)
+            throw refuse("object", "artifactVersion must name a current readable ArtifactVersion");
+          artifactVersion = { kind: "artifact_binding", digest: outcomeArtifactBinding(anchor) };
+        }
+        return { subjectRef, artifactVersion };
+      };
+      // Persist a stable digest, never a principal-local capability or raw namespace.
+      const binding = ctx.db.transaction(checkOutcomeBinding).immediate();
+      object = canonicalJson({ ...evidence, ...binding });
+      if (contract === ENVELOPE_V2_SCHEMA && binding.subjectRef !== "none") {
+        // An exact object binding relates independently recorded outcomes to
+        // the subject. Their evidence need not repeat that object occurrence.
+        // Retain the gate selection and current normalized authority instead
+        // of treating the mutation's added subject selection as permission.
+        provenanceContext = { ...ctx };
+        delete provenanceContext.selection;
+        if (originalSelection !== undefined) provenanceContext.selection = originalSelection;
+      }
+      if (object.length > MAX_OBJECT_CHARS) throw refuse("object", "normalized outcome evidence is too large");
+    }
+    validateProvenance(provenanceContext, provenance, contract);
 
-    const filed = await insertClaim(
-      claimsIo(ctx),
+    if (ctx.db.inTransaction) throw new Error("claim insertion requires a top-level transaction");
+    initClaims(ctx.db);
+    const io = claimsIo(ctx);
+    const prepared = await prepareClaimInsert(
+      io,
       {
         kind,
         target,
@@ -339,16 +424,25 @@ export async function servePropose(
         taint: "quoted",
         ...(subject === undefined ? {} : { subject }),
         ...(predicate === undefined ? {} : { predicate }),
-        ...(args.object === undefined
-          ? {}
-          : { object: text("object", args.object, MAX_OBJECT_CHARS) }),
-        ...(args.polarity === undefined
+        ...(object === undefined ? {} : { object }),
+        ...(request.polarity === undefined
           ? {}
           : {
-              polarity: enumOf("polarity", args.polarity, CLAIM_POLARITIES),
+              polarity: enumOf("polarity", request.polarity, CLAIM_POLARITIES),
             }),
       },
     );
+
+    if (ctx.db.inTransaction) throw new Error("claim insertion requires a top-level transaction");
+    const filed = ctx.db.transaction(() => {
+      normalized.assertCurrent?.();
+      if (checkOutcomeBinding !== undefined) {
+        checkOutcomeBinding();
+        validateProvenance(provenanceContext, provenance, contract);
+      }
+      return prepared.apply();
+    }).immediate();
+    await retryRetrievalOps(io);
 
     const claim =
       filed.outcome === "contested" ? filed.incoming : filed.claim;
@@ -367,6 +461,9 @@ export async function servePropose(
       data,
       audit_ids: { claim_ids: [claim.claim_id] },
     };
+    };
+    return contract === ENVELOPE_V2_SCHEMA ? withScopedClaimMutation(ctx.db, ctx.vaultPath, perform) : perform();
   },
+  contract,
   );
 }

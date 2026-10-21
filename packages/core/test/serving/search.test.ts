@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setGrant } from "../../src/agents";
 import { MAX_RETRIEVAL_LIMIT } from "../../src/contracts/retrieval";
 import { rebuildDerived } from "../../src/derived";
 import { stampDerived } from "../../src/derived-meta";
@@ -58,10 +59,9 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
       query: "kettle",
     }));
     expect(pageIds(priv)).toContain("fact:kettle");
-    // The shared fixture keeps unlabeled and unstamped notes so those
-    // withhold paths stay covered; the scan reports them and search names
-    // the incomplete index instead of pretending the walk was clean.
-    expect(priv.data).toEqual({ degraded: ["index-degraded"] });
+    // Unlabeled pages and pages with unavailable evidence cannot be read by
+    // this principal, so they do not disclose a vault-wide health flag.
+    expect(priv.data).toBeUndefined();
   });
 
   test("an unlabeled page is withheld from every principal, owner included", async () => {
@@ -740,6 +740,7 @@ describe("serveSearch bounds captured text to an excerpt", () => {
   test("agent excerpts redact a token across the cut and full_text keeps redaction", async () => {
     const live = await serveFixture();
     try {
+      setGrant(live.db, "reader-public", { deny_classes: [] });
       const token = `sk-${"Q".repeat(48)}`;
       const text = `${TOKEN} ${".".repeat(580 - TOKEN.length - 1)}${token}${".".repeat(200)}`;
       const id = storeEvent(live.db, "rec-secret-boundary", "2026-02-28T12:00:00Z", text, "person:ada", "public");

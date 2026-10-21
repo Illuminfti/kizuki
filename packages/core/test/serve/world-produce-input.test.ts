@@ -7,9 +7,9 @@ import { ulid } from "../../src/util/ulid";
 
 test("the model input for the shipped kinds is byte-identical to the pinned prompt surface", () => {
   const input = worldProduceInput([], [], DEFAULT_EXTRACTION_CONFIG);
-  expect(sha256Hex(canonicalJson(input))).toBe("9402c4449255e35f3b81284048057654c835eb9704c268ca8899dd64ca475c88");
+  expect(sha256Hex(canonicalJson(input))).toBe("45463cb9551a4bf1f00aa5d9379b9ec950e9aa14c4637fd418a9f32461ca9542");
   expect(input.vocabulary_refs).toEqual(["learning/assisted", "learning/unassisted", "world/concept", "world/situation"]);
-  expect(input.predicates).toHaveLength(44);
+  expect(input.predicates).toHaveLength(49);
 });
 
 test("the shipped model input leaves most of the extraction budget to the records", () => {

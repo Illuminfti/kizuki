@@ -2,7 +2,8 @@ import { expect, test, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MODEL_PHASE_IDS, modelPhasePassed, modelFailureDiagnostic, readStrictNativeQuery, runNativeModelMatrix, startNativeModelEndpoint, type NativeModelEvidence, type NativeModelPhase } from "./native-model-matrix";
+import { Database } from "bun:sqlite";
+import { MODEL_PHASE_IDS, modelPhasePassed, modelFailureDiagnostic, countNativeModelCanonReceipts, nativeModelPageIds, nativeModelOutputReadable, readStrictNativeQuery, runNativeModelMatrix, startNativeModelEndpoint, type NativeModelEvidence, type NativeModelPhase } from "./native-model-matrix";
 import { syntheticModelReply } from "./native-model-endpoint";
 
 // These tests spawn real processes; bound them for a loaded host.
@@ -28,6 +29,50 @@ test("negative model phases refuse any model authority or readable model output"
     for (const changed of [{ model_claims: 1 }, { model_canon_receipts: 1 }, { model_output_readable: true }])
       expect(modelPhasePassed(id, { ...negative, ...changed })).toBe(false);
   }
+});
+test("native model attribution follows producer lineage, including retained typed basis, instead of authority ceiling", () => {
+  const db = new Database(":memory:");
+  try {
+    db.exec("CREATE TABLE claims(claim_id TEXT PRIMARY KEY, producer TEXT); CREATE TABLE canon_receipts(producer TEXT, model_ref TEXT, authority TEXT, claim_ids TEXT, world_basis TEXT)");
+    db.query("INSERT INTO claims VALUES (?,?)").run("connector-claim", "deterministic");
+    db.query("INSERT INTO claims VALUES (?,?)").run("model-claim", "model");
+    const insert = db.query("INSERT INTO canon_receipts VALUES (?,?,?,?,?)");
+    insert.run("deterministic", null, "model_inference", '["connector-claim"]', null);
+    expect(countNativeModelCanonReceipts(db)).toBe(0);
+    insert.run("model", null, "connector_evidence", "[]", null);
+    expect(countNativeModelCanonReceipts(db)).toBe(1);
+    insert.run("deterministic", "synthetic-model", "connector_evidence", "[]", null);
+    expect(countNativeModelCanonReceipts(db)).toBe(2);
+    insert.run("deterministic", null, "model_inference", '["model-claim"]', null);
+    expect(countNativeModelCanonReceipts(db)).toBe(3);
+    insert.run("deterministic", null, "model_inference", '["connector-claim"]', JSON.stringify({ after: [{ claim_id: "model-claim" }] }));
+    expect(countNativeModelCanonReceipts(db)).toBe(4);
+  } finally { db.close(); }
+});
+test("readable model output requires the exact typed assertion, qualifiers and current model page", () => {
+  const hit = { doc_id: "page:model", scope: "canon", authority: "model_inference",
+    snippet: "employment.role: Orchard library coordinator\n(positive; uncertain; inferred interpretation; valid from unknown until unknown; unknown time basis)\n" };
+  expect(nativeModelOutputReadable([hit], [hit.doc_id])).toBe(true);
+  expect(nativeModelOutputReadable([hit], [])).toBe(false);
+  for (const changed of [{ scope: "ledger" }, { doc_id: "page:unrelated" }, { authority: "connector_evidence" },
+    { snippet: "Ada is the coordinator for Orchard library.\n" }, { snippet: "Ada coordinates Orchard library operations." },
+    { snippet: "employment.role: Orchard library coordinator\n" }, { snippet: hit.snippet.replace("uncertain", "asserted") }])
+    expect(nativeModelOutputReadable([{ ...hit, ...changed }], [hit.doc_id])).toBe(false);
+});
+test("model output lineage follows the current retained receipt and excludes stale or detached basis", () => {
+  const db = new Database(":memory:");
+  try {
+    db.exec("CREATE TABLE claims(claim_id TEXT PRIMARY KEY, producer TEXT, status TEXT); CREATE TABLE page_index(page_id TEXT, rel_path TEXT, last_receipt TEXT, last_hash TEXT); CREATE TABLE canon_receipts(receipt_id TEXT, page_path TEXT, after_hash TEXT, record_codec TEXT, receipt_state TEXT, world_basis TEXT)");
+    db.query("INSERT INTO claims VALUES (?,?,?)").run("model-claim", "model", "live");
+    db.query("INSERT INTO page_index VALUES (?,?,?,?)").run("model-page", "auto/world/model.md", "receipt", "page-hash");
+    db.query("INSERT INTO canon_receipts VALUES (?,?,?,?,?,?)").run("receipt", "auto/world/model.md", "page-hash", "kizuki.canon-receipt/v2", "retained", JSON.stringify({ after: [{ claim_id: "model-claim" }] }));
+    expect(nativeModelPageIds(db)).toEqual(["page:model-page"]);
+    for (const sql of ["UPDATE claims SET producer='deterministic'", "UPDATE claims SET status='superseded'",
+      "UPDATE page_index SET last_receipt='other'", "UPDATE page_index SET last_hash='changed'", "UPDATE page_index SET rel_path='other.md'",
+      "UPDATE canon_receipts SET receipt_state='erased'", "UPDATE canon_receipts SET world_basis='{}'"]) {
+      db.exec("SAVEPOINT changed"); db.exec(sql); expect(nativeModelPageIds(db)).toEqual([]); db.exec("ROLLBACK TO changed; RELEASE changed");
+    }
+  } finally { db.close(); }
 });
 test("offline recovery requires the restored dependency and a distinct installed receipt", () => {
   const recovery = { stop_confirmed: true, receipt_trigger: "scheduled", receipt_due_at: "2026-09-07T00:00:00.000Z", scheduling_override: { rail: "sync" as const, old: "2026-09-07T00:15:00.000Z", next: "2026-09-07T00:00:00.000Z", reason: "synthetic-due-time-for-recovery" as const }, trigger: "service-restart" as const, unit: base.unit, pid: 456, instance_id: "recovered-instance", started_at: "2026-09-07T00:00:01.000Z",
@@ -61,7 +106,7 @@ test("failed receipt diagnostics bound and redact both attempts without serializ
   expect(modelFailureDiagnostic({ ...phase, passed: true }, original, recovery, key)).toBeNull();
 });
 test("strict native query refuses exit-zero degradation, warnings, stderr and malformed hits", () => {
-  const body = { schema: "kizuki.cli.query/v1", status: "ok", degraded: [], warnings: [], data: { withheld: 0, hits: [{ scope: "ledger", authority: "connector_evidence", snippet: "synthetic" }] } };
+  const body = { schema: "kizuki.cli.query/v1", status: "ok", degraded: [], warnings: [], data: { withheld: 0, hits: [{ doc_id: "event:synthetic", scope: "ledger", authority: "connector_evidence", snippet: "synthetic" }] } };
   const result = { exit_code: 0, stderr: "", stdout: JSON.stringify(body) };
   expect(readStrictNativeQuery(result)).toEqual(body.data.hits);
   for (const changed of [{ status: "degraded" }, { degraded: ["index-behind-ledger"] }, { warnings: ["warning"] }, { error: { code: "unavailable" } }, { schema: "foreign" }, { data: { withheld: 1, hits: [] } }, { data: { withheld: 0, hits: [null] } }])
@@ -127,7 +172,7 @@ for (const configuredKeyMissing of [false, true]) test(`the full model matrix ${
       ...{ diagnostic: (value: typeof diagnostics[number]) => diagnostics.push(value) },
     });
     expect(phases.map(p => p.id)).toEqual([...MODEL_PHASE_IDS]);
-    expect(phases.map(p => ({id:p.id,passed:p.passed}))).toEqual(MODEL_PHASE_IDS.map(id => ({id,passed: !(configuredKeyMissing && id === "model-configured")})));
+    expect(phases.map(p => ({id:p.id,passed:p.passed})), JSON.stringify({ phases: phases.filter(p => !p.passed), diagnostics })).toEqual(MODEL_PHASE_IDS.map(id => ({id,passed: !(configuredKeyMissing && id === "model-configured")})));
     if (configuredKeyMissing) {
       expect(diagnostics).toEqual([{ phase_id: "model-configured", unit: "direct-child-model-fixture",
         original: { receipt_run_id: phases.find(p => p.id === "model-configured")!.evidence.receipt_run_id, errors: ["model configuration unavailable"] }, recovery: null }]);

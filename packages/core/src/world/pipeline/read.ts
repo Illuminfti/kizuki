@@ -1,3 +1,6 @@
+import { collectSituationDetails } from "../situation-v2";
+import { SITUATION_CARD_V2_SCHEMA } from "../../contracts/situation-card-v2";
+import { assertFrameworkAcyclic } from "../framework-cycles";
 import type { WorldKindSpec } from "../../contracts/world-kinds";
 import { activeWorldRegistry } from "../../contracts/world-vocabulary";
 import { KIND_ASSEMBLERS } from "../kinds";
@@ -12,6 +15,7 @@ import {
   collectCard,
   scanMatches,
   type Collector,
+  type MatchFilter,
 } from "./collect";
 import { enrich, type Enricher } from "./enrich";
 import { ENRICHERS } from "./enrichers";
@@ -27,10 +31,12 @@ export interface PipelineStages {
 }
 
 const SHIPPED: PipelineStages = Object.freeze({
-  groupers: GROUPERS,
-  collectors: COLLECTORS,
-  enrichers: ENRICHERS,
-  assemblers: KIND_ASSEMBLERS,
+  // Stage modules share frame contracts with recursive readers and writers.
+  // Resolve every list at read time so any public entry point can initialize first.
+  get groupers() { return GROUPERS; },
+  get collectors() { return COLLECTORS; },
+  get enrichers() { return ENRICHERS; },
+  get assemblers() { return KIND_ASSEMBLERS; },
 });
 let active: PipelineStages = SHIPPED;
 
@@ -80,15 +86,20 @@ export function readWorldCard(
   frame: ReadFrame,
   handle: string,
   kindId: string,
+  cardSchema?: string,
 ): AssembledCard | null {
   const kind = kindSpec(kindId);
   const stages = active;
-  const assembler = stages.assemblers.find((one) => one.kind === kind.id);
+  const assembler = stages.assemblers.find((one) => one.kind === kind.id && one.cardSchema === cardSchema);
   if (assembler === undefined) return null;
   const cluster = group(frame, handle, stages.groupers);
   const collection = collectCard(frame, cluster, kind, stages.collectors);
   if (collection === null) return null;
-  const body = enrich(frame, collection.items, stages.enrichers);
+  if (kindId === "framework") assertFrameworkAcyclic(frame, handle);
+  let body = enrich(frame, collection.items, stages.enrichers, collection.overflow,
+    assembler.consolidation === false || frame.projection === "relations" ? undefined : { cluster, kind: kind.id });
+  if (kindId === "situation" && cardSchema === SITUATION_CARD_V2_SCHEMA)
+    body = { ...body, situationV2: collectSituationDetails(frame,cluster,body) };
   return assembleCard(frame, kind, assembler, cluster, collection, body);
 }
 
@@ -99,8 +110,10 @@ export function readWorldMatches<KindId extends string>(
   label: string,
   after: string | null,
   scanBudget: number,
+  filter?: MatchFilter,
+  subjects?: readonly string[],
 ): WorldMatches<`kizuki.${KindId}-matches/v1`> {
   const kind = kindSpec(kindId);
-  const scan = scanMatches(frame, kind, label, after, scanBudget, active.groupers);
+  const scan = scanMatches(frame, kind, label, after, scanBudget, active.groupers, filter, subjects);
   return assembleMatches(frame, `kizuki.${kindId}-matches/v1`, kind, scan, after === null);
 }

@@ -70,10 +70,7 @@
       "schema": "kizuki.world-view/v1",
       "operation": "concept",
       "result": {
-        "status": "current",
-        "view": {
-          "status": "not_issued"
-        },
+        "status": "incomplete",
         "data": {
           "schema": "kizuki.concept-card/v1",
           "concept": {
@@ -161,7 +158,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "independent",
                   "evidence": [
                     {
                       "admission": {
@@ -181,7 +178,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             }
           ],
           "relations": [
@@ -244,7 +241,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "dependent",
                   "evidence": [
                     {
                       "admission": {
@@ -264,7 +261,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             },
             {
               "schema": "kizuki.relation/v1",
@@ -325,7 +322,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "independent",
                   "evidence": [
                     {
                       "admission": {
@@ -345,7 +342,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             },
             {
               "schema": "kizuki.relation/v1",
@@ -390,7 +387,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "dependent",
                   "evidence": [
                     {
                       "admission": {
@@ -410,7 +407,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             },
             {
               "schema": "kizuki.relation/v1",
@@ -458,7 +455,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "independent",
                   "evidence": [
                     {
                       "admission": {
@@ -478,7 +475,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             },
             {
               "schema": "kizuki.relation/v1",
@@ -523,7 +520,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "dependent",
                   "evidence": [
                     {
                       "admission": {
@@ -543,7 +540,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             }
           ],
           "learning": [
@@ -595,7 +592,7 @@
                       "kind": "known",
                       "value": 0.5
                     },
-                    "independence": "unknown",
+                    "independence": "independent",
                     "evidence": [
                       {
                         "admission": {
@@ -615,7 +612,7 @@
                     ]
                   }
                 ],
-                "conflict": "unknown"
+                "conflict": "none_observed"
               },
               "assistance": "unknown",
               "assistanceEvidence": []
@@ -625,24 +622,26 @@
             "kind": "current"
           },
           "coverage": {
-            "status": "complete_for_query",
-            "gaps": [],
+            "status": "partial",
+            "gaps": [
+              "pending_consolidation"
+            ],
             "validWindow": {
               "kind": "all"
             },
             "history": "unavailable"
           }
-        }
+        },
+        "reasons": [
+          "pending_consolidation"
+        ]
       }
     },
     "situation": {
       "schema": "kizuki.world-view/v1",
       "operation": "situation",
       "result": {
-        "status": "current",
-        "view": {
-          "status": "not_issued"
-        },
+        "status": "incomplete",
         "data": {
           "schema": "kizuki.situation-card/v1",
           "situation": {
@@ -713,7 +712,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -733,7 +732,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           "participants": [
             {
@@ -785,7 +784,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "dependent",
                   "evidence": [
                     {
                       "admission": {
@@ -805,7 +804,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             },
             {
               "schema": "kizuki.relation/v1",
@@ -850,7 +849,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "dependent",
                   "evidence": [
                     {
                       "admission": {
@@ -870,7 +869,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             }
           ],
           "blocker": {
@@ -916,7 +915,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -936,7 +935,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           "recentChange": {
             "schema": "kizuki.relation/v1",
@@ -981,7 +980,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -1001,21 +1000,26 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           "uncertainty": [],
           "knownAt": {
             "kind": "current"
           },
           "coverage": {
-            "status": "complete_for_query",
-            "gaps": [],
+            "status": "partial",
+            "gaps": [
+              "pending_consolidation"
+            ],
             "validWindow": {
               "kind": "all"
             },
             "history": "unavailable"
           }
-        }
+        },
+        "reasons": [
+          "pending_consolidation"
+        ]
       }
     }
   },
@@ -1090,10 +1094,7 @@
       "schema": "kizuki.world-view/v1",
       "operation": "concept",
       "result": {
-        "status": "current",
-        "view": {
-          "status": "not_issued"
-        },
+        "status": "incomplete",
         "data": {
           "schema": "kizuki.concept-card/v1",
           "concept": {
@@ -1181,7 +1182,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "independent",
                   "evidence": [
                     {
                       "admission": {
@@ -1201,7 +1202,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             }
           ],
           "relations": [
@@ -1264,7 +1265,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "dependent",
                   "evidence": [
                     {
                       "admission": {
@@ -1284,7 +1285,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             },
             {
               "schema": "kizuki.relation/v1",
@@ -1345,7 +1346,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "independent",
                   "evidence": [
                     {
                       "admission": {
@@ -1365,7 +1366,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             },
             {
               "schema": "kizuki.relation/v1",
@@ -1410,7 +1411,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "dependent",
                   "evidence": [
                     {
                       "admission": {
@@ -1430,7 +1431,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             },
             {
               "schema": "kizuki.relation/v1",
@@ -1478,7 +1479,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "independent",
                   "evidence": [
                     {
                       "admission": {
@@ -1498,7 +1499,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             }
           ],
           "learning": [
@@ -1550,7 +1551,7 @@
                       "kind": "known",
                       "value": 0.5
                     },
-                    "independence": "unknown",
+                    "independence": "independent",
                     "evidence": [
                       {
                         "admission": {
@@ -1570,7 +1571,7 @@
                     ]
                   }
                 ],
-                "conflict": "unknown"
+                "conflict": "none_observed"
               },
               "assistance": "unknown",
               "assistanceEvidence": []
@@ -1580,24 +1581,26 @@
             "kind": "current"
           },
           "coverage": {
-            "status": "complete_for_query",
-            "gaps": [],
+            "status": "partial",
+            "gaps": [
+              "pending_consolidation"
+            ],
             "validWindow": {
               "kind": "all"
             },
             "history": "unavailable"
           }
-        }
+        },
+        "reasons": [
+          "pending_consolidation"
+        ]
       }
     },
     "situation": {
       "schema": "kizuki.world-view/v1",
       "operation": "situation",
       "result": {
-        "status": "current",
-        "view": {
-          "status": "not_issued"
-        },
+        "status": "incomplete",
         "data": {
           "schema": "kizuki.situation-card/v1",
           "situation": {
@@ -1668,7 +1671,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -1688,7 +1691,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           "participants": [
             {
@@ -1740,7 +1743,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "dependent",
                   "evidence": [
                     {
                       "admission": {
@@ -1760,7 +1763,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             },
             {
               "schema": "kizuki.relation/v1",
@@ -1805,7 +1808,7 @@
                     "kind": "known",
                     "value": 0.5
                   },
-                  "independence": "unknown",
+                  "independence": "dependent",
                   "evidence": [
                     {
                       "admission": {
@@ -1825,7 +1828,7 @@
                   ]
                 }
               ],
-              "conflict": "unknown"
+              "conflict": "none_observed"
             }
           ],
           "blocker": {
@@ -1871,7 +1874,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -1891,7 +1894,7 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           "recentChange": {
             "schema": "kizuki.relation/v1",
@@ -1936,7 +1939,7 @@
                   "kind": "known",
                   "value": 0.5
                 },
-                "independence": "unknown",
+                "independence": "independent",
                 "evidence": [
                   {
                     "admission": {
@@ -1956,21 +1959,26 @@
                 ]
               }
             ],
-            "conflict": "unknown"
+            "conflict": "none_observed"
           },
           "uncertainty": [],
           "knownAt": {
             "kind": "current"
           },
           "coverage": {
-            "status": "complete_for_query",
-            "gaps": [],
+            "status": "partial",
+            "gaps": [
+              "pending_consolidation"
+            ],
             "validWindow": {
               "kind": "all"
             },
             "history": "unavailable"
           }
-        }
+        },
+        "reasons": [
+          "pending_consolidation"
+        ]
       }
     }
   }

@@ -15,6 +15,7 @@ import {
   readBootId,
   readLease,
   readRunReceiptsLog,
+  RAIL_IDS,
   setSourceGrant,
 } from "@kizuki/core";
 import type { RunReceipt } from "@kizuki/core";
@@ -83,6 +84,11 @@ async function until<T>(
 const ledger = (setup: Setup): string =>
   join(setup.vault, ".kizuki", "kizuki.db");
 
+const allRailsHaveRun = (db: ReturnType<typeof openLedger>): boolean => {
+  const observed = new Set(listRunReceipts(db).map(receipt => receipt.rail));
+  return RAIL_IDS.every(rail => observed.has(rail));
+};
+
 function readLedger<T>(
   setup: Setup,
   read: (db: ReturnType<typeof openLedger>) => T,
@@ -133,7 +139,7 @@ test("a daemon outlives a writer that holds the ledger past every wait, skips th
   await until(
     "the first pass of every rail",
     60_000,
-    () => readLedger(setup, (db) => listRunReceipts(db).length >= 7) || null,
+    () => readLedger(setup, allRailsHaveRun) || null,
   );
   recordIngestHolder(setup);
   // Make every rail due while the writer holds the ledger.
@@ -226,7 +232,7 @@ for (const stopMode of ["SIGTERM", "serve stop"] as const) {
     const setup = tempVault();
     const daemon = startDaemon(setup);
     await until("the first pass of every rail", 60_000,
-      () => readLedger(setup, db => listRunReceipts(db).length >= 7) || null);
+      () => readLedger(setup, allRailsHaveRun) || null);
     const holder = await holdLedger(setup, 100_000);
     const started = Date.now();
     if (stopMode === "SIGTERM") daemon.kill("SIGTERM");

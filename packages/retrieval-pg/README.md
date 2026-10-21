@@ -80,8 +80,9 @@ The registration descriptor lists capabilities available from this implementatio
 Each bound instance reports `vector` only when an embedding port was supplied.
 Without one, hybrid reads declare `vector-skipped`, and claim insertion and owner
 correction use structural deduplication while still updating the SQL index. The
-current CLI and MCP composition binds lexical retrieval; it does not configure a
-production embedding model or claim calibrated vector deduplication.
+CLI and MCP can bind an explicitly configured local embedding port; the default
+remains lexical. Configuration is not model-quality qualification or calibrated
+vector deduplication.
 
 Native source-revocation maintenance may discard the entire owned `store/`
 generation after SQL shutdown while retaining the writer lease. It seals the
@@ -122,3 +123,43 @@ writes holder, heartbeat or receipt files. Legacy live owners and fresh
 ownership diagnostics still block maintenance. A missing compatible lock
 leaves erasure pending. The separate FTS recovery path uses the same
 existing-inode rule; ordinary engine startup retains its existing protocol.
+
+
+## Scoped semantic reads
+
+The `document-scope/v1` capability accepts an optional bounded set of exact
+current document revisions. Core constructs it after source, class, type, time
+and principal authorization. Each entry binds the document identity, hashes of
+the indexed title/body and complete retrieval metadata/provenance. SQL applies
+that domain before lexical/vector ranking, candidate limits, scoped edges and
+vector backlog/space diagnostics. A stale index row cannot nominate a newer
+revision that happens to share its document ID.
+
+For agents, semantic nomination is available only when the entire indexed
+text equals the text the caller can receive. Redacted or excerpt-truncated
+records retain the existing lexical floor. Only engine-nominated IDs can bypass
+the literal matcher, and Core checks their current revision again after the
+engine await. Envelope v2 also revalidates the complete authorized domain in its
+final publication transaction, including responses containing only diagnostics.
+
+The domain is limited to 5,000 entries, 4 MiB of serialized metadata and 4 MiB
+of admitted content. Overflow reports `retrieval-domain-unavailable`; excluded
+semantic content reports `retrieval-domain-partial`. Ports lacking this
+capability retain lexical fallback with `retrieval-vector-unavailable` when a
+vector lane was requested. These bounds are explicit limits, not a corpus-scale
+performance qualification.
+
+`test/authorized-domain.test.ts` and `test/domain-revocation.test.ts` cover stale
+same-ID revisions, denied-source/class ranking and diagnostics, redacted/prefix
+probes and in-flight revocation. Core's `semantic-domain.test.ts` covers empty
+engine nominations and final-publication revision controls; the MCP embedding
+tests exercise actual scoped transport consumption.
+
+SQL migration 3 adds private rebuild staging. A complete snapshot is keyed by
+its documents, caller-supplied source revision/policy identity, embedding space,
+and chunk settings. Successful batches survive restart; incomplete staging is
+never read by search. Repeating an interrupted rebuild resumes only that exact
+snapshot. Document and provenance erasure include staged rows and vectors, and
+owned-generation erasure removes their physical store. Activation checks the
+caller's current-source fence and atomically replaces the active index only
+when every chunk has a vector.

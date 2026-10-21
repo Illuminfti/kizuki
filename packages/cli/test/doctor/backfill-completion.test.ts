@@ -53,7 +53,7 @@ function doctorConnection(env: Record<string, string | undefined>, flag?: "--jso
   }
   const match = result.stdout.match(/last_run_clean=(yes|no)/);
   expect(match).not.toBeNull();
-  expect(result.stdout).not.toContain("backfill_complete=");
+  expect(result.stdout).toContain("backfill_complete=");
   return match![1] === "yes";
 }
 
@@ -76,14 +76,14 @@ test("doctor says a clean sync-only source had a clean last run, and keeps backf
   // Never run: not clean.
   expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: false, last_run_clean: false });
 
-  // Only ever synced, and clean: no backfill ever ran, and the last run recorded no error.
+  // Folder sync covers history: exhaustion completes backfill, with a clean last run.
   const synced = helpers.runCli(setup.env, "sync", "markdown-folder");
   expect(synced.exitCode, synced.stderr).toBe(0);
-  expect(checkpointFields(setup.vault).backfill_complete).toBe(false);
+  expect(checkpointFields(setup.vault).backfill_complete).toBe(true);
   expect(doctorConnection(setup.env)).toBe(true);
-  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: false, last_run_clean: true });
+  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: true, last_run_clean: true });
   const afterSync = checkpointFields(setup.vault);
-  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: false, last_run_clean: true });
+  expect(doctorConnection(setup.env, "--json")).toMatchObject({ backfill_complete: true, last_run_clean: true });
   expect(checkpointFields(setup.vault)).toEqual(afterSync);
 
   // A completed backfill is still reported, and a failed run is not clean.

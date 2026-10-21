@@ -1,4 +1,5 @@
 import type { WorldOpData } from "@kizuki/core/world";
+import type { WorldQuotedEvidence } from "@kizuki/core/world";
 
 /** How `kizuki world` takes and prints one registered operation. */
 export interface WorldCliOp<Data extends WorldOpData = WorldOpData> {
@@ -10,7 +11,7 @@ export interface WorldCliOp<Data extends WorldOpData = WorldOpData> {
   readonly bounds: Readonly<Record<string, string>>;
   /** The complete world_view input for the options given, or null when they are not a valid call. */
   buildInput(options: ReadonlyMap<string, string>): Record<string, unknown> | null;
-  render(data: Data): readonly string[];
+  render(data: Data, quoted?: readonly WorldQuotedEvidence[]): readonly string[];
   /** A hint for stderr that follows the output, when the answer warrants one. */
   notice?(data: Data): string | null;
 }

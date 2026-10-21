@@ -99,6 +99,7 @@ describe("conversational events are evidence, not capture notes", () => {
         title: "Capture from kizuki.markdown-folder at 2026-02-28T10:30:00Z",
         "x-connector": "kizuki.markdown-folder",
         "x-capture-kind": kind,
+        ...(kind === "file" ? { "x-source-record-id": "rec-1" } : {}),
       });
     }
   });

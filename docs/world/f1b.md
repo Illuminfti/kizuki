@@ -23,7 +23,7 @@ Kinds come from the vocabulary registry. Discovery reads the label predicate and
 
 Every read opens a `ReadFrame`: the reader (`ctx`), its reference namespace, the valid window, the recorded cutoff, the parse budget and `stats`. `stats.rowsExamined` counts the rows the collect stage read from the ledger. `stats.claimsVerified` counts claims put through `eligibleWorldClaim`. Wall-clock time is not promised, so these counters are the timing proxy: they must not move when a reader cannot see the evidence that changed.
 
-The cutoff is `{kind: "current"}`. A `knownAt` time or snapshot is still refused before a frame exists, with `unavailable` and reason `history`. Known-at history widens the cutoff type and `claimVisibleSql`, the one place the pipeline names a claim status in SQL.
+The cutoff is current or an exact retained recorded position. [KNOWN](known.md) widens `claimVisibleSql` and the shared support/valid-time predicates for temporal card reads; operations without a recorded-time contract still return `unavailable/history`.
 
 ## Add to the pipeline
 
@@ -36,7 +36,7 @@ A collector returns candidate claim ids for a cluster. Add one line under `ident
 
 The built-in card collector prioritizes the requested anchor's classification and labels, then merges the remaining candidates by predicate priority and claim ID. Member order cannot let a saturated alias hide the requested card. Claims beyond the shared limit produce partial coverage with `traversal_limit`. Grouped discovery allows at most 256 combined labels per match; exceeding that wire bound returns `unavailable` with reason `budget` through Core and MCP.
 
-Discovery uses the same groupers. Proposed members must have an eligible asserted classification of the requested kind before their labels or handles influence the page. Claim type and asserted-time grant limits apply in SQL before candidate limits and work counters, as do support-event grants. Discovery counts eligible classifications before label filtering, so an unrelated label query does not make a populated kind look dark. A group has at most 128 authorized members; exceeding that bound returns the existing budget fallback. The smallest authorized handle represents a group consistently across pages, and a search can match any member's label. A grouper must return the same full component for each member under the same frame; directional membership hints do not define a discovery group. Groupers must derive membership from authorized evidence: returning hidden membership hints is not a substitute for passing the noninterference driver.
+Discovery uses the same groupers. Proposed members must have an eligible asserted classification of the requested kind before their labels or handles influence the page. Claim type and asserted-time grant limits apply in SQL before candidate limits and work counters, as do support-event grants. Discovery counts eligible classifications before label filtering, so an unrelated label query does not make a populated kind look dark. A group has at most 256 authorized members; exceeding that bound returns the existing budget fallback. The smallest authorized handle represents a group consistently across pages, and a search can match any member's label. A grouper must return the same full component for each member under the same frame; directional membership hints do not define a discovery group. Groupers must derive membership from authorized evidence: returning hidden membership hints is not a substitute for passing the noninterference driver.
 
 A kind needs its vocabulary module (see [the vocabulary registry note](f4.md)), a card file built on the card kit, and an assembler:
 
@@ -55,7 +55,7 @@ A registered kind with no assembler has no card to serve.
 ## Honest fallbacks
 
 - An empty first page of discovery for a registered kind that no build path can fill is `partial` with the gap `coverage`, never `complete_for_query`. A kind can be filled when it lists a path other than `extraction`, or lists `extraction` and is offered to the extraction model. The rule applies only when the reader can see no handle of that kind, so a kind that holds claims, or a page past the first, is not affected. Concept and situation are offered, so their pages are unchanged.
-- A `knownAt` time or snapshot returns `unavailable` with reason `history`, exactly as before.
+- A non-current cutoff is served only by an operation declaring retained known-at support; missing history remains explicitly unavailable.
 - A summary, conflict and independence stay `null` and `unknown` until an enricher that proves them is registered.
 
 ## Tests

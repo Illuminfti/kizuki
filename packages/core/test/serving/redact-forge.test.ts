@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { setGrant } from "../../src/agents";
 import { sha256 } from "../../src/agents/hash";
 import { listAudit } from "../../src/agents/audit";
 import { getClaim, insertClaim } from "../../src/claims/store";
@@ -18,6 +19,8 @@ setDefaultTimeout(60_000);
 let fixture: Fixture;
 beforeAll(async () => {
   fixture = await serveFixture();
+  // Positive redaction coverage runs after explicit credential-class access.
+  for (const name of ["reader-public", "reader-private"]) setGrant(fixture.db, name, { deny_classes: [] });
 });
 afterAll(() => fixture.dispose());
 
@@ -223,6 +226,7 @@ test("correct answers alike for every kind of hidden claim and audits why", asyn
     expect(await probe(reader, hidden)).toEqual(await probe(reader, missing));
   // A subject-scoped agent has no reach past person:ada.
   await same("subjected", { claim_id: keyed.claim_id }, { claim_id: absent });
+  await same("reader-public", { claim_id: keyed.claim_id }, { claim_id: absent });
   await same("subjected", { subject: "person:grace" }, { subject: "person:nobody" });
   await same("reader-public", { claim_key: keyed.claim_key! }, { claim_key: "0".repeat(64) });
   if (keylessId !== null) {

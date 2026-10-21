@@ -83,7 +83,7 @@ Kizuki should answer compactly, with provenance, freshness, uncertainty, sensiti
 
 ### World Slices
 
-The long-term signature primitive is a **World Slice**: a task-bounded compilation of the part of the owner's current world an authorized client needs.
+The signature primitive is a **World Slice**: a task-bounded compilation of the part of the owner's current world an authorized client needs. This checkout implements the bounded Slice reader; [its contract and limits](docs/world/slice.md) distinguish current behavior from the longer-term adaptive collaboration requirements.
 
 A coding agent should receive different context from a meeting assistant. A design agent should receive relevant taste exemplars and prior decisions. A research agent should receive the owner's knowledge frontier and unresolved questions. A larger token budget must never grant broader permission.
 
@@ -115,7 +115,7 @@ questions
   one reopened after contradictory evidence
 ```
 
-This is roadmap direction, not a claim that the current release already exposes a `world.diff` API.
+The diagram describes the intended experience. This checkout implements the `diff` operation through the existing world reader, with permission revalidation and explicit reset or incomplete results when a retained baseline cannot support a comparison. See [World Diff](docs/world/diff.md).
 
 ### The owner is part of the world model
 
@@ -153,11 +153,13 @@ That is how one successful task can improve the next agent's starting point with
 
 ## What runs today
 
-Kizuki 1.0.0 brings selected sources into an append-only ledger, extracts source-linked claims, searches them, compiles bounded context packets, writes model-produced canon through one receipted autonomous writer, corrects live claims, audits writes and undoes them.
+Kizuki brings selected sources into an append-only ledger, extracts source-linked claims, searches them, compiles bounded context packets, writes model-produced canon through one receipted autonomous writer, corrects live claims, audits writes and undoes them. The source inventory below does not identify which release is installed on a particular host.
 
 On top of that substrate, 1.0.0 ships the first world-model layer. With a configured model and a source grant that permits extraction, the sync rail runs typed extraction and admits source-anchored claims about **Concepts** and **Situations**. `kizuki world`, the MCP `world_view` tool, loopback HTTP `/v1/world_view` and the World views in `kizuki app` read the same cards, each with evidence, confidence, uncertainty and coverage. `kizuki tell --world-claim` and MCP `correct` correct a world claim with a receipt that undo reverses, and a second authorized client sees the correction on its next read.
 
-The rest of the architecture above is still direction. **No roadmap concept becomes a public feature until its implementation exists.** Owner decision D23 (2026-09-23) set the 1.0.0 launch bar at the world model as built and Telegram native sign-in.
+This checkout additionally implements evidence and history reads, shared/resumed views, World Slice and Diff, domain readers, captured ArtifactVersions, Outcomes, Attention, a frozen forecast baseline and Atlas through that same world reader. [Current implementation and limits](docs/CURRENT.md) lists the distinction between available operations and input population: extraction for Question, Person, Skill, Framework, Procedure, Commitment and Decision stays disabled until its real model qualification passes. Synthetic integration coverage is described in the [golden journey](docs/world/golden-journey.md); it is not a live-account or model-quality claim.
+
+Adaptive domain expansion and task-aware collaboration remain [explicit v2 requirements](docs/v2-adaptive-collaboration.md). **No roadmap concept becomes a public feature until its implementation exists.** Owner decision D23 (2026-09-23) set the 1.0.0 launch bar at the world model as built and Telegram native sign-in.
 
 > **1.0.0.** Autonomous canon writing and the world model require a usable model bound by the running host. Capture, search, context, audit and undo remain useful without one. The release package is an unsigned Linux x64 build; nothing is published to npm.
 

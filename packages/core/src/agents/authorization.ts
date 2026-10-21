@@ -1,5 +1,5 @@
 import { compareRfc3339, rfc3339Millis } from "./time";
-import { SENSITIVITY_ORDER } from "./types";
+import { SENSITIVITY_ORDER, denyClassesOf } from "./types";
 import type {
   DenyReason,
   Grant,
@@ -30,6 +30,13 @@ export function authorize(grant: Grant, item: Servable): Authorization {
     return { allow: false, reason: "above_ceiling" };
   }
 
+  if (item.classes !== undefined) {
+    const denied = denyClassesOf(grant);
+    if (item.classes.some((name) => (denied as readonly string[]).includes(name))) {
+      return { allow: false, reason: "class_denied" };
+    }
+  }
+
   if (
     grant.types !== null &&
     (item.type === undefined || !grant.types.includes(item.type))
@@ -47,19 +54,25 @@ export function authorize(grant: Grant, item: Servable): Authorization {
   }
 
   if (grant.since !== null || grant.until !== null) {
-    if (item.occurred_at === undefined) {
+    const span =
+      item.occurred_span ??
+      (item.occurred_at === undefined
+        ? undefined
+        : { from: item.occurred_at, to: item.occurred_at });
+    if (span === undefined) {
       return { allow: false, reason: "time_out_of_scope" };
     }
     try {
-      rfc3339Millis(item.occurred_at, "occurred_at");
+      rfc3339Millis(span.from, "occurred_at");
+      rfc3339Millis(span.to, "occurred_at");
     } catch {
       return { allow: false, reason: "time_out_of_scope" };
     }
     if (
       (grant.since !== null &&
-        compareRfc3339(item.occurred_at, "occurred_at", grant.since, "since") < 0) ||
+        compareRfc3339(span.from, "occurred_at", grant.since, "since") < 0) ||
       (grant.until !== null &&
-        compareRfc3339(item.occurred_at, "occurred_at", grant.until, "until") > 0)
+        compareRfc3339(span.to, "occurred_at", grant.until, "until") > 0)
     ) {
       return { allow: false, reason: "time_out_of_scope" };
     }

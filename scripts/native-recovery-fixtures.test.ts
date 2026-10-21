@@ -36,12 +36,13 @@ test("historical World migration preserves native uniqueness before and after op
   const quote = (column: string): string => `"${column.replaceAll('"', '""')}"`;
   const original = db.query<{claim_id: string}, []>("SELECT claim_id FROM claims WHERE status='live' AND is_world_typed=0 LIMIT 1").get()!;
   expect(original).not.toBeNull();
-  const clone = db.query(`INSERT INTO claims (${columns.map(quote).join(',')}) SELECT ${columns.map(column => column === "claim_id" || column === "is_world_typed" ? "?" : quote(column)).join(',')} FROM claims WHERE claim_id=?`);
+  const clone = db.query<{claim_id: string}, [string, number, string]>(`INSERT INTO claims (${columns.map(quote).join(',')}) SELECT ${columns.map(column => column === "claim_id" || column === "is_world_typed" ? "?" : quote(column)).join(',')} FROM claims WHERE claim_id=? RETURNING claim_id`);
   db.exec("SAVEPOINT uniqueness_probe");
   try {
-   expect(() => clone.run("legacy-duplicate", 0, original.claim_id)).toThrow("UNIQUE constraint failed");
-   expect(clone.run("typed-parent-one", 1, original.claim_id).changes).toBe(1);
-   expect(clone.run("typed-parent-two", 1, original.claim_id).changes).toBe(1);
+   expect(() => clone.all("legacy-duplicate", 0, original.claim_id)).toThrow("UNIQUE constraint failed");
+   // RETURNING counts inserted claims, excluding derived trigger writes.
+   expect(clone.all("typed-parent-one", 1, original.claim_id)).toEqual([{claim_id: "typed-parent-one"}]);
+   expect(clone.all("typed-parent-two", 1, original.claim_id)).toEqual([{claim_id: "typed-parent-two"}]);
   } finally {
    db.exec("ROLLBACK TO uniqueness_probe; RELEASE uniqueness_probe");
    clone.finalize();

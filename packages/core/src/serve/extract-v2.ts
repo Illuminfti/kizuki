@@ -1,3 +1,4 @@
+import { parseWorldAdmission } from "../contracts/world-admission";
 import type { CaptureEvent } from "../contracts/event";
 import { PREDICATE_REGISTRY } from "../claims/predicates";
 import { activeWorldRegistry } from "../contracts/world-vocabulary";
@@ -17,6 +18,7 @@ import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig } from "./types";
 import { canonicalJson } from "../util/hash";
 import { isPlainObject } from "../util/validate";
 import { isUlid } from "../util/ulid";
+import { PortError } from "../contracts/ports";
 
 export type ExtractionProducerPort = ProducerPort | ProducerV2Port;
 
@@ -31,13 +33,22 @@ const objectKinds = (objects: readonly string[]): ProduceInputV2["predicates"][n
 
 /** The legacy registry, then the world rows of every kind offered to the producer. */
 function worldPredicates(): ProduceInputV2["predicates"] {
-  return [...PREDICATE_REGISTRY.map(spec => ({
+  const rows = [...PREDICATE_REGISTRY.map(spec => ({
     id: spec.id,
     object_kinds: ["literal"] as const,
   })), ...activeWorldRegistry().offered.vocabulary.map(spec => ({
     id: spec.predicate,
     object_kinds: objectKinds(spec.objects),
   }))];
+  const byId = new Map<string, ProduceInputV2["predicates"][number]>();
+  for (const row of rows) {
+    const existing = byId.get(row.id);
+    if (existing !== undefined && canonicalJson(existing.object_kinds) !== canonicalJson(row.object_kinds)) {
+      throw new PortError("config_invalid", `incompatible producer predicate: ${row.id}`, false);
+    }
+    if (existing === undefined) byId.set(row.id, row);
+  }
+  return [...byId.values()];
 }
 
 /**
@@ -66,7 +77,6 @@ const DRAFT_KEYS = [
   "body", "confidence", "frontmatter", "kind", "model_ref", "producer",
   "provenance", "semantic", "sensitivity", "world_admission",
 ] as const;
-const ADMISSION_KEYS = ["authority", "confidence", "epistemicKind", "rendering", "schema", "semantic"] as const;
 const RENDERING_KEYS = ["body", "frontmatter"] as const;
 
 function exact(value: Record<string, unknown>, keys: readonly string[]): boolean {
@@ -94,9 +104,8 @@ function parseDraft(value: unknown, modelRef: string | null): WorldDraftInsert |
   if (!parsedSemantic.ok || parsedSemantic.value.discriminator !== "assertion") return null;
   const semantic = parsedSemantic.value;
   if (canonicalJson(value.provenance) !== canonicalJson(completeEventIds(semantic))) return null;
-  const admission = value.world_admission;
-  if (!isPlainObject(admission) || !exact(admission, ADMISSION_KEYS) ||
-      admission.schema !== "kizuki.world-admission/v1" || admission.authority !== "model_inference" ||
+  const admission = parseWorldAdmission(value.world_admission);
+  if (admission === null || admission.authority !== "model_inference" ||
       admission.epistemicKind !== "model_inference" || admission.confidence !== value.confidence ||
       canonicalJson(admission.semantic) !== canonicalJson(semantic) || !isPlainObject(admission.rendering) ||
       !exact(admission.rendering, RENDERING_KEYS) || admission.rendering.body !== value.body ||
@@ -113,14 +122,7 @@ function parseDraft(value: unknown, modelRef: string | null): WorldDraftInsert |
     confidence: value.confidence,
     sensitivity: value.sensitivity,
     semantic,
-    world_admission: {
-      schema: "kizuki.world-admission/v1",
-      semantic,
-      rendering: { body: value.body, frontmatter: {} },
-      authority: "model_inference",
-      confidence: value.confidence,
-      epistemicKind: "model_inference",
-    },
+    world_admission: admission,
   };
 }
 

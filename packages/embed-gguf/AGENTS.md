@@ -34,8 +34,13 @@ It does not write canon, own retrieval, or download weights on a read path.
   file and reports sha256; it verifies that digest only when
   `expected_sha256` is set. It does not fetch.
 - Transformer GGUF architectures are refused until a native runtime is
-  bound. Table-embedding GGUF files (including the test fixture) are the
-  supported local path.
+  bound. Table-embedding GGUF files (including the test fixture) are the only
+  format this package loads. It is a fixture for the port contract, not the
+  local model path: `@kizuki/embed-local-http` is, and docs must not point an
+  owner at this package to run a real model.
+- The recipe prompts are slots only. A table embedder averages every word it
+  is handed, so a literal word in a prompt would be averaged into every vector.
+  The document title comes from `Chunk.title`, never from the document id.
 - Keep fixtures synthetic. Do not vendor third-party model weights.
 
 ## Tests

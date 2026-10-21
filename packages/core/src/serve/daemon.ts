@@ -7,9 +7,10 @@ import { dirname, join } from "node:path";
 import nodeProcess from "node:process";
 import { LEDGER_LOOP_PROBE_TIMEOUT_MS } from "../ledger/limits";
 import { retryWhileBusy, withControlWait } from "../ledger/busy";
-import { embedBackfillPeriod, loadServeConfig } from "./config";
+import { loadServeConfig } from "./config";
 import { clearServeEndpoint, writeServeEndpoint } from "./endpoint";
 import { startServeHttp } from "./http";
+import { clearViewTokens } from "../world/views/store";
 import type { ServeHttpHandle } from "./http";
 import { asLeaseHeld, ledgerLeaseHolder } from "./lease-held";
 import {
@@ -24,6 +25,7 @@ import {
 import { getRunReceipt, recoverRunJournal } from "./receipts";
 import { dueRails, runRail, type RailHooks, type RailHooksV2, type RailRuntime, type RailRuntimeContext, type RailRuntimeV2 } from "./rails";
 import type { RetrievalPort } from "../contracts/retrieval";
+import { isRailId, listRails } from "./rail-registry";
 import { applyRailPeriod, initServe, listSchedules } from "./schema";
 import {
   LEDGER_HELD_BACKOFF_MAX_MS,
@@ -31,7 +33,6 @@ import {
   LEDGER_LEASE_HELD_STOP,
   STOP_WATCH_MS,
   ServeDaemonError,
-  isRailId,
   type CrashPoint,
   type RailId,
   type RunExecution,
@@ -172,6 +173,7 @@ export async function runServeDaemon(
   nodeProcess.once("SIGTERM", requestStop);
   nodeProcess.once("SIGINT", requestStop);
   try {
+  clearViewTokens(db);
   writePid(vaultPath, ownMarker);
   if (inspectCanonRecovery(db).pending) {
     try { recoverCanonWrites({ db, vault_path: vaultPath }); }
@@ -186,8 +188,9 @@ export async function runServeDaemon(
   const config = loadServeConfig(vaultPath);
   // The journal is replayed and the lease held, so no pending receipt still
   // expects the old period.
-  applyRailPeriod(db, "sync", config.sync_period_s, process.now());
-  applyRailPeriod(db, "embed-backfill", embedBackfillPeriod(vaultPath), process.now());
+  for (const rail of listRails()) {
+    if (rail.configured_period_s !== undefined) applyRailPeriod(db, rail.id, rail.configured_period_s(vaultPath), process.now());
+  }
   const httpEnabled = options.http ?? config.http;
   if (httpEnabled) {
     const retrieval = options.retrieval ?? options.hooks?.claims?.retrieval;
@@ -212,15 +215,8 @@ export async function runServeDaemon(
         (dueRails(db, process.now()).length > 0
           ? dueRails(db, process.now())
           : undefined);
-      const listed = rails ?? [
-        "sync",
-        "retrieval-sweep",
-        "purge-sweep",
-        "embed-backfill",
-        "brief",
-        "doctor-sweep",
-        "journal-prune",
-      ];
+      const enabled = new Set(listSchedules(db).filter((row) => row.enabled).map((row) => row.rail));
+      const listed = rails ?? listRails().map((rail) => rail.id).filter((id) => enabled.has(id));
       for (const rail of listed) {
         if (stopRequested()) break;
         if (!isRailId(rail)) continue;
@@ -230,6 +226,7 @@ export async function runServeDaemon(
       return { receipts, http };
     }
 
+    const retryAfter = new Map<RailId, number>();
     // A held ledger skips passes; it never ends the daemon. Consecutive
     // skips lengthen the wait until a pass runs again, and that says so.
     let held = 0;
@@ -253,13 +250,17 @@ export async function runServeDaemon(
         try { withControlWait(db, () => heartbeatLease(db, process), LEDGER_LOOP_PROBE_TIMEOUT_MS); }
         catch (error) { if (asLeaseHeld(vaultPath, error, db) === null) throw error; free = false; }
         if (free && unpublished) { recoverRunJournal(db, vaultPath); unpublished = false; }
-        const rail = dueRails(db, process.now())[0];
+        const at = process.now();
+        const rail = dueRails(db, at).find(one => (retryAfter.get(one) ?? -Infinity) <= Date.parse(at));
         if (rail !== undefined) {
           // A rail due while the ledger is held records its skipped pass, so doctor sees it.
           const receipt = await runRailUntilStopped(rail, { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
             due_at: listSchedules(db).find(row => row.rail === rail)?.next_run_at ?? process.now() }, !free);
           // A coalesced idle run advances the schedule and persists no receipt.
           if (getRunReceipt(db, receipt.run_id) !== null) receipts += 1;
+          if (receipt.status === "failed" && receipt.schedule_transition === undefined) {
+            retryAfter.set(rail, Date.parse(process.now()) + 60_000);
+          } else retryAfter.delete(rail);
           if (receipt.stopped === LEDGER_LEASE_HELD_STOP) await skipped();
           else writable();
           continue;

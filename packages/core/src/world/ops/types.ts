@@ -1,6 +1,9 @@
 import type { ViewGap } from "../../contracts/concept-card";
 import type { ServeContext } from "../../serving/types";
 import type { WorldNamespace } from "../references";
+import type { WorldDependencies } from "../dependencies";
+import type { ViewSession } from "../views/session";
+import type { WorldEvidenceSource } from "./evidence-types";
 
 /** Raised by any operation's parse or run; the gate audits it as invalid_arguments. */
 export class WorldViewError extends Error {
@@ -75,22 +78,10 @@ export type WorldOpData = {
   readonly [key: string]: unknown;
 };
 
-/** The subset of `ViewResult` the reader produces today. */
-export type WorldViewResult<T = WorldOpData> =
-  | {
-      readonly status: "current";
-      readonly view: { readonly status: "not_issued" };
-      readonly data: T;
-    }
-  | {
-      readonly status: "incomplete";
-      readonly data: T;
-      readonly reasons: readonly ViewGap[];
-    }
-  | {
-      readonly status: "unavailable";
-      readonly reason: WorldUnavailableReason;
-    };
+/** The subset of `ViewResult` the reader produces: every state but `denied`, which a missing grant reports as a refusal. */
+export type WorldViewResult<T = WorldOpData> = Exclude<ViewResult<T>,
+  { readonly status: "denied" } | { readonly status: "unavailable" }
+> | { readonly status: "unavailable"; readonly reason: WorldUnavailableReason };
 // A runtime state that is not an RFC state fails to compile here.
 export const worldViewResultIsViewResult = <T>(
   result: WorldViewResult<T>,
@@ -106,8 +97,15 @@ export interface WorldOpKeys {
 
 /** What an operation that reads claims runs against: the live principal and its authorization namespace. */
 export interface WorldFrame {
+  /** Core-only nested read sharing the parent gate, byte budget and independent dependency closures. */
+  readonly read?: (input: WorldRecord, options?: { readonly retain: boolean }) => { readonly data: import("../../serving/world-view").WorldReadResult; readonly quoted: readonly WorldEvidenceSource[] };
   readonly ctx: ServeContext;
   readonly ns: WorldNamespace;
+  /** The operations the reader dispatches over; `share` and `resume` look their target up here. */
+  readonly registry: WorldOpRegistry;
+  readonly dependencies?: WorldDependencies;
+  /** The already scoped conditional baseline, never a caller-provided projection. */
+  readonly view?: ViewSession;
 }
 
 export interface WorldWhen {
@@ -117,11 +115,15 @@ export interface WorldWhen {
 
 export type WorldOpOutcome =
   | { readonly status: "not_found" }
+  /** The read this one resumes is gone or was never readable: the caller must read afresh. */
+  | { readonly status: "new_view_required" }
   | {
       readonly status: "data";
       readonly data: WorldOpData;
       /** Null when the answer is complete; otherwise why it is not. */
       readonly gaps: readonly ViewGap[] | null;
+      /** Captured evidence remains in the envelope's quoted channel. */
+      readonly quoted?: readonly WorldEvidenceSource[];
     }
   | {
       readonly status: "unavailable";
@@ -143,6 +145,21 @@ interface WorldOpBase {
 export interface ClaimsOp<Query = unknown> extends WorldOpBase {
   readonly source: "claims";
   readonly keys: WorldOpKeys;
+  /**
+   * Set when a complete answer may be pinned as a view: the reader accepts the
+   * optional key `priorView`, issues a token for a principal with a reserved
+   * partition and answers `unchanged` when nothing visible moved.
+   */
+  readonly views?: true;
+  /** This operation implements retained recorded-time cutoffs. */
+  readonly knownAt?: true;
+  /**
+   * Set when the operation is a read of one object, which `share` can hand to
+   * another principal. Reads the object a semantic handle names for the
+   * frame's principal; `not_found` when that principal may read none of it,
+   * whatever the reason.
+   */
+  readonly readObject?: (frame: WorldFrame, handle: string, when: WorldWhen) => WorldOpOutcome;
   /** Closed parse of the operation's own keys; null refuses the input. */
   parse(input: WorldRecord): Query | null;
   run(frame: WorldFrame, query: Query, when: WorldWhen): WorldOpOutcome;
@@ -169,7 +186,7 @@ export function worldOpKeys(op: WorldOp): WorldOpKeys {
     ? { required: ["operation"], optional: ["valid", "knownAt"] }
     : {
         required: ["operation", ...op.keys.required, "valid", "knownAt"],
-        optional: op.keys.optional,
+        optional: op.views === true ? [...op.keys.optional, "priorView"] : op.keys.optional,
       };
 }
 

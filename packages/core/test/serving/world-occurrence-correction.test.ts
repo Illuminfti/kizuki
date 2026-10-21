@@ -32,8 +32,8 @@ test("opaque occurrence correction preserves its attested subject through source
   const db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
     initSearch(db); initGraph(db);
-    const f = await worldFixture(db, { occurrence: true });
-    const other = await worldFixture(db, { occurrence: true, label: "Independent concept" });
+    const f = await worldFixture(db, { completeSummary: true, occurrence: true });
+    const other = await worldFixture(db, { completeSummary: true, occurrence: true, label: "Independent concept" });
     const prior = readClaimV2Semantic(db, f.claims[2]!)!;
     if (prior.discriminator !== "assertion") throw new Error("missing assertion");
     expect(prior.subject.kind).toBe("occurrence");
@@ -89,7 +89,7 @@ test("opaque occurrence correction preserves its attested subject through source
 test("revoked occurrence targets refuse before recording native evidence", async () => {
   const vault = tempVault(), db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
-    const f = await worldFixture(db, { occurrence: true });
+    const f = await worldFixture(db, { completeSummary: true, occurrence: true });
     const target = { world_claim: definition(f) };
     revokeSourceGrant(db, { source_key: f.sourceKey, expected_revision: 1, operation_id: "occurrence-correction-revoke" });
     await expect(serveCorrect({ ...f.ctx, vaultPath: vault.path }, {

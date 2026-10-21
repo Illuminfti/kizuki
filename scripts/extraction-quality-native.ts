@@ -17,11 +17,12 @@ import { openLedger } from "../packages/core/src/ledger/db";
 import { verifyPackageDirectory } from "./release-artifacts";
 import { releaseTarget, requireNativeHost } from "./release-targets";
 import { parseBuildInfo } from "./stranger-proof";
+import { nativeModelPageIds } from "./native-model-matrix";
 import {
   canonicalJson, corpusDigest, loadCorpus, loadResponseSet,
   scoreExtraction, sha256, validateCorpus, validateResponseSet, writeQualityReport,
 } from "./evaluate-extraction";
-import type { QualityCase, QualityCorpus, QualityResponse, QualityResponseSet } from "./evaluate-extraction";
+import type { ExpectedClaim, QualityCase, QualityCorpus, QualityResponse, QualityResponseSet } from "./evaluate-extraction";
 
 const SOURCE_ROOT = resolve(import.meta.dir, "..");
 const PINNED_BUN = readFileSync(join(SOURCE_ROOT, ".bun-version"), "utf8").trim();
@@ -85,6 +86,37 @@ export function verifyNativeArtifact(path: string, sourceSha: string) {
 }
 
 interface QueryData { hits: SearchHit[]; withheld: number }
+
+// Frozen corpus oracle: rephrased role objects are interpretations; the other
+// selected literals occur verbatim in their cited source spans. This table is
+// independent of the production guard and cannot inherit a guard regression.
+const CANON_PERSPECTIVES: Readonly<Record<string, string>> = {
+  "q01-role": "uncertain; inferred interpretation",
+  "q02-old": "asserted; explicit interpretation",
+  "q02-negative": "asserted; explicit interpretation",
+  "q03-dated": "asserted; explicit interpretation",
+  "q04-atlas": "uncertain; inferred interpretation",
+  "q04-orion": "uncertain; inferred interpretation",
+  "q10-ada": "asserted; explicit interpretation",
+  "q11-tool": "asserted; explicit interpretation",
+  "q12-project": "asserted; explicit interpretation",
+};
+
+/** The corpus fixes typed meaning; its alternative body prose is not the canon renderer.
+ * Require the complete qualified assertion and current model receipt lineage. */
+export function canonSupportsExpectedClaim(
+  hit: Pick<SearchHit, "doc_id" | "scope" | "authority" | "taint" | "snippet">,
+  expected: ExpectedClaim,
+  currentModelPages: readonly string[],
+): boolean {
+  if (hit.scope !== "canon" || hit.authority !== "model_inference" || hit.taint !== "quoted" ||
+    !currentModelPages.includes(hit.doc_id)) return false;
+  const perspective = CANON_PERSPECTIVES[expected.id];
+  if (perspective === undefined) return false;
+  const qualifiers = `(${expected.polarity}; ${perspective}; valid from ${expected.valid_from ?? "unknown"} until ${expected.valid_to ?? "unknown"}; ${expected.valid_from === null ? "unknown" : "explicit"} time basis)`;
+  return expected.objects.some(object => hit.snippet.includes(`${expected.predicate}: ${object}\n${qualifiers}`));
+}
+
 interface CommandRecord { command: string; exit_code: number; wall_ms: number; output_sha256: string; output_kind: "stdout" | "canonical_tool_results" }
 interface ConsumerObservation {
   ledger_recalled: string[];
@@ -118,7 +150,7 @@ export function inspectRequest(replay: Replay, raw: string): { eventIds: string[
   assert(raw.length <= 100_000, "fixture request exceeds bound");
   const body = JSON.parse(raw) as { model?: unknown; messages?: { role?: unknown; content?: unknown }[]; tools?: unknown };
   assert(body.model === MODEL && body.tools === undefined && Array.isArray(body.messages) && body.messages.length === 2, "unexpected fixture model request");
-  assert(body.messages[0]?.role === "system" && body.messages[0].content === EXTRACTION_V2_SYSTEM_PROMPT && body.messages[1]?.role === "user" && typeof body.messages[1].content === "string", "native extraction prompt contract changed");
+  assert(body.messages[0]?.role === "system" && typeof body.messages[0].content === "string" && body.messages[0].content.startsWith(EXTRACTION_V2_SYSTEM_PROMPT) && body.messages[1]?.role === "user" && typeof body.messages[1].content === "string", "native extraction prompt contract changed");
   const prompt = body.messages[1].content;
   const sentIds = [...prompt.matchAll(/<<<KZ-QUOTE [0-9a-f]{32} event:([A-Za-z0-9:_.-]+)>>>/g)].map((match) => match[1]!);
   const expectedIds = Object.values(replay.ids).sort();
@@ -302,8 +334,17 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
       send({ jsonrpc: "2.0", method: "notifications/initialized" });
       const results: Envelope<unknown>[] = [];
       for (const call of calls) {
-        const result = await rpc("tools/call", call) as { isError?: boolean; structuredContent?: Envelope<unknown> };
-        assert(result.isError !== true && result.structuredContent !== undefined, "native MCP tool refused fixture request");
+        const result = await rpc("tools/call", call) as { isError?: boolean; structuredContent?: Envelope<unknown>; content?: { type: string; text?: string }[] };
+        if (result.isError === true || result.structuredContent === undefined) {
+          let reason = "unclassified refusal";
+          try {
+            const refusal = JSON.parse(result.content?.find(row => row.type === "text")?.text ?? "null");
+            if (refusal?.error === "invalid_arguments") reason = typeof refusal.message === "string" && refusal.message.includes("mandatory header requires")
+              ? "mandatory packet header exceeds requested budget" : "invalid arguments";
+            else if (refusal?.error === "forbidden") reason = "forbidden";
+          } catch { /* Never echo untrusted tool content into a qualification diagnostic. */ }
+          throw new Error(`native MCP ${call.name} refused fixture request: ${reason}`);
+        }
         results.push(result.structuredContent);
       }
       child.stdin.end();
@@ -394,7 +435,8 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
     const contextCitations = expected.every((id) => JSON.stringify(context).includes(ids[id]!));
     const publicDisclosures = publicResult.canon.length + publicResult.quoted.length + publicPacket.canon.length + publicPacket.quoted.length +
       Number(item.records.some((record) => JSON.stringify([publicResult, publicPacket]).includes(record.text)));
-    const canonMatches = expectedCanon.filter((claim) => canon.hits.some((hit) => hit.authority === "model_inference" && claim.bodies.some((body) => hit.snippet.includes(body)))).map((claim) => claim.id).sort();
+    const currentModelPages = withLedger(vault, nativeModelPageIds);
+    const canonMatches = expectedCanon.filter(claim => canon.hits.some(hit => canonSupportsExpectedClaim(hit, claim, currentModelPages))).map(claim => claim.id).sort();
     const failures: string[] = [];
     if (canonicalJson(ledgerRecalled) !== canonicalJson(expected)) failures.push("cli_ledger_relevance");
     if (canonicalJson(mcpRecalled) !== canonicalJson(expected)) failures.push("mcp_ledger_relevance");
@@ -470,8 +512,9 @@ export async function runNativeQuality(options: { artifact?: string } = {}) {
         await cli(fixture.vault, ["restore", "--from", backup, "--into", restored]);
         await cli(restored, ["rebuild", "--json"]);
         const restoredResult = await cli<QueryData>(restored, ["query", "Orchard", "--scope", "canon", "--json", "--degraded"]);
+        const restoredModelPages = withLedger(restored, nativeModelPageIds);
         recovery = { no_extra_model_calls: replay.requests.length === 1 && replay.errors.length === 0,
-          undo_restored_bytes: undoRestored, restored_recall: restoredResult.hits.some((hit) => hit.snippet.includes("Ada is the coordinator for Orchard library.") && hit.authority === "model_inference") };
+          undo_restored_bytes: undoRestored, restored_recall: restoredResult.hits.some(hit => canonSupportsExpectedClaim(hit, item.expected[0]!, restoredModelPages)) };
       }
       active = null;
     }

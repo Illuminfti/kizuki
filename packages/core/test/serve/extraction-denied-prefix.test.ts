@@ -1,7 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { accept, createBudgetTracker, registerConnection, setSourceGrant } from "../../src/index";
 import { openLedger } from "../../src/ledger/db";
 import { commitExtractCursor, journalExtractBatch, mineLiveDrafts, readExtractCursor } from "../../src/serve/extract";
+import * as extraction from "../../src/serve/extract";
+import { isProducerV2 } from "../../src/serve/extract-v2";
 import { bindSourceModelPort } from "../../src/ledger/source-grants";
 import { DEFAULT_EXTRACTION_CONFIG } from "../../src/serve/types";
 import { runWritePass, STOP_REQUESTED } from "../../src/serve/write-pass";
@@ -65,12 +67,23 @@ test("a frozen clock drains fresh denied pages and stops at the retained denied 
   expect(first.model.calls).toBe(1);
   expect(first.errors).toEqual([]);
   expect(deferredCount(f.db)).toBe(16);
-  let polls = 0;
-  const resumed = await f.pass({ now, stopRequested: () => { if (++polls > 3) throw Error("denied queue spun"); return false; } });
-  expect(resumed.model.calls).toBe(0);
-  expect(resumed.errors).toEqual([]);
-  expect(f.model.calls.map(call => call.event_ids)).toEqual([[f.ids[16]!]]);
-  expect(readExtractCursor(f.db)?.endsWith(f.ids[16]!)).toBe(true);
+  // Count extraction decisions, not stop polls from subsequent bounded world jobs.
+  const mine = extraction.mineLiveDrafts;
+  let decisions = 0;
+  const observed = spyOn(extraction, "mineLiveDrafts").mockImplementation((...args) => {
+    if (++decisions > 3) throw Error("denied queue spun");
+    const [db, producer, limits] = args;
+    return isProducerV2(producer) ? mine(db, producer, limits) : mine(db, producer, limits);
+  });
+  try {
+    const resumed = await f.pass({ now });
+    expect(decisions).toBeGreaterThan(0);
+    expect(decisions).toBeLessThanOrEqual(3);
+    expect(resumed.model.calls).toBe(0);
+    expect(resumed.errors).toEqual([]);
+    expect(f.model.calls.map(call => call.event_ids)).toEqual([[f.ids[16]!]]);
+    expect(readExtractCursor(f.db)?.endsWith(f.ids[16]!)).toBe(true);
+  } finally { observed.mockRestore(); }
 });
 
 test("replay with denied inputs retains the step cap and does not repeat a model request", async () => {

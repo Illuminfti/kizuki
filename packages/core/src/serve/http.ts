@@ -1,4 +1,4 @@
-import { withDeadline } from "../util/deadline";
+import { HttpBodyError, MAX_APP_HTTP_BODY_BYTES, parseRequestObject, readRequestText } from "./request-body";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -6,8 +6,11 @@ import { join } from "node:path";
 import { OWNER, TOOLS, authenticate } from "../agents";
 import type { Principal, Tool } from "../agents";
 import { initAgents } from "../agents/schema";
-import { ServeError, dispatchServeTool } from "../serving";
+import { ServeError, scopedWriterRefusal, dispatchServeTool } from "../serving";
+import { RESPONSE_CONTRACT_KEY } from "../serving/contract";
+import { ENVELOPE_V2_SCHEMA } from "../serving/types";
 import type { ServeContext } from "../serving";
+import { isPlainObject } from "../util/validate";
 import { SERVE_TOKEN_PATH, ServeDaemonError } from "./types";
 
 const LOOPBACK = new Set(["127.0.0.1", "::1"]);
@@ -45,7 +48,7 @@ export interface ServeHttpHandle {
 }
 
 function mintToken(): string {
-  return randomBytes(32).toString("base64url");
+  return `kzs_${randomBytes(32).toString("base64url")}`;
 }
 
 function writeToken(vaultPath: string, token: string): string {
@@ -87,7 +90,16 @@ function json(status: number, body: unknown): Response {
 }
 
 function refused(error: unknown): Response {
+  const writer = scopedWriterRefusal(error);
+  if (writer !== null) return json(503, writer);
   if (error instanceof ServeError) {
+    // The contract refusal is the same bytes for every cause, with no retry hint.
+    if (error.code === "unsupported_contract") {
+      return json(400, {
+        ok: false,
+        error: { code: error.code, message: error.message, retryable: false },
+      });
+    }
     const status = error.code === "rate_limited" ? 429 : error.code === "busy" ? 503 : 400;
     return json(status, {
       ok: false,
@@ -153,26 +165,35 @@ export function startServeHttp(options: ServeHttpOptions | AppHttpOptions): Serv
           error: { code: "not_found", message: "unknown tool", retryable: false },
         });
       }
-      let args: Record<string, unknown> = {};
+      let args: Record<string, unknown>;
+      // The adapter selects the safe default; explicit legacy remains supported.
+      let response_contract: unknown = principal.kind === "agent" ? ENVELOPE_V2_SCHEMA : undefined;
       try {
-        const body = await request.json();
-        if (body !== null && typeof body === "object" && !Array.isArray(body)) {
-          const record = body as Record<string, unknown>;
-          args = (record["args"] as Record<string, unknown> | undefined) ?? record;
-        }
-      } catch {
-        return json(400, {
+        const record = parseRequestObject(await readRequestText(request));
+        if (Object.hasOwn(record, RESPONSE_CONTRACT_KEY)) {
+          // Keep malformed selector wrappers whole so Core applies the same
+          // closed-contract refusal as every other transport.
+          response_contract = record[RESPONSE_CONTRACT_KEY];
+          const wrapped = Object.keys(record).length === 2 && isPlainObject(record["args"]);
+          args = wrapped ? record["args"] as Record<string, unknown> : record;
+        } else if (Object.hasOwn(record, "args")) {
+          if (!isPlainObject(record["args"])) throw new HttpBodyError(400);
+          args = record["args"] as Record<string, unknown>;
+        } else args = record;
+      } catch (error) {
+        return json(error instanceof HttpBodyError ? error.status : 400, {
           ok: false,
-          error: { code: "config_invalid", message: "body must be JSON", retryable: false },
+          error: { code: "config_invalid", message: "body must be bounded UTF-8 JSON object", retryable: false },
         });
       }
       try {
         const envelope = await dispatchServeTool(
-          { db: options.db, vaultPath: options.vaultPath, principal,
+          { db: options.db, vaultPath: options.vaultPath, principal, servingSecrets: [token],
             ...(options.retrieval === undefined ? {} : { retrieval: options.retrieval }),
           },
           tool as Tool,
           args,
+          { response_contract },
         );
         return json(200, { ok: true, value: envelope });
       } catch (error) {
@@ -219,18 +240,7 @@ async function appRequest(request: Request, origin: string, token: string, optio
   if (presented === null || !sameToken(presented, token)) return error(401, "unauthorized");
   if (request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return error(400, "invalid_request");
   try {
-    const reader = request.body?.getReader();
-    const chunks: Uint8Array[] = []; let size = 0;
-    const deadline = Date.now() + 5000;
-    if (reader) while (true) {
-      if (Date.now() >= deadline) { await reader.cancel(); return error(408, "invalid_request"); }
-      const next = await withDeadline(reader.read(), Math.max(1, deadline - Date.now()), "app body deadline"); if (next.done) break;
-      size += next.value.byteLength;
-      if (size > 128 * 1024) { await reader.cancel(); return error(413, "invalid_request"); }
-      chunks.push(next.value);
-    }
-    const bytes = Buffer.concat(chunks);
-    const body = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const body = await readRequestText(request, MAX_APP_HTTP_BODY_BYTES);
     return reply(await options.handle(new Request(url, { method: "POST", headers: request.headers, body })));
-  } catch { return error(400, "invalid_request"); }
+  } catch (cause) { return error(cause instanceof HttpBodyError ? cause.status : 400, "invalid_request"); }
 }

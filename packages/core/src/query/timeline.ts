@@ -1,11 +1,15 @@
+import { currentVersionSql } from "../search/versions";
+import { selectedEventSql, type EvidenceSelection } from "./selection";
 import type { Database } from "bun:sqlite";
 import { MAX_GRANT_SCOPE_ITEMS, type Sensitivity } from "../agents/types";
+import { tableExists } from "../ledger/schema";
 import { LIVE_PREDICATE } from "../ledger/ledger";
-import { sourceServingSql, type SourcePurpose } from "../ledger/source-grants";
+import { sourceServingSql, type SourceServingScope } from "../ledger/source-grants";
 import { placeholders } from "../util/sql";
 import { ceilingSql, instantBoundPair, instantPairSql, instantSecondSql, instantNanoSql, requireCeiling } from "./sql";
 
 export interface TimelineOptions {
+  selection?: EvidenceSelection;
   day?: string;
   since?: string;
   until?: string;
@@ -21,7 +25,11 @@ export interface TimelineOptions {
   /** Exclusive lower bound on `(occurred_at, event_id)` for bounded pages. */
   after?: { occurred_at: string; event_id: string };
   /** Push compatible source-policy into SQL before LIMIT. */
-  source?: { owner: boolean; purpose?: SourcePurpose };
+  source?: SourceServingScope;
+  /** Internal coverage check after policy and before the result cap. */
+  missingSearchIndex?: boolean;
+  /** Internal semantic domain: visible later revisions supersede before the cap. */
+  currentVersionsOnly?: boolean;
 }
 
 export interface TimelineEntry {
@@ -50,7 +58,7 @@ interface TimelineRow {
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const OCCURRED_AT_PAIR = instantPairSql("events.occurred_at");
 const OCCURRED_AT_ORDER = `${instantSecondSql("events.occurred_at")}, ${instantNanoSql("events.occurred_at")}`;
-const PREVIEW_CODE_POINTS = 160;
+export const PREVIEW_CODE_POINTS = 160;
 
 function dayWindow(day: string): { since: string; until: string } {
   if (!DAY.test(day)) {
@@ -121,8 +129,9 @@ function timelinePlan(
   if (subjects !== undefined && subjects.length === 0) return { tail: null, bindings: [] };
   if (kinds !== undefined && kinds.length === 0) return { tail: null, bindings: [] };
 
-  const clauses = [LIVE_PREDICATE];
-  const bindings: (string | number)[] = [];
+  const selected = selectedEventSql(opts.selection);
+  const clauses = [LIVE_PREDICATE, selected.sql];
+  const bindings: (string | number)[] = [...selected.bindings];
   if (opts.day !== undefined) {
     const window = dayWindow(opts.day);
     clauses.push(
@@ -175,6 +184,19 @@ function timelinePlan(
       clauses.push(source.sql);
       bindings.push(...source.bindings);
     }
+  }
+  if (opts.missingSearchIndex && tableExists(db, "search_documents") && tableExists(db, "search_docs")) {
+    clauses.push(`NOT EXISTS (
+      SELECT 1 FROM search_documents d JOIN search_docs f ON f.rowid=d.rowid AND f.doc_id=d.doc_id
+      WHERE d.doc_id='event:' || events.event_id AND d.scope='ledger'
+    )`);
+  }
+  if (opts.currentVersionsOnly) {
+    const current = currentVersionSql(db, { ceiling,
+      ...(kinds === undefined ? {} : { types: kinds }), ...(subjects === undefined ? {} : { subjects }),
+      ...(opts.since === undefined ? {} : { since: opts.since }), ...(opts.until === undefined ? {} : { until: opts.until }),
+      ...(opts.source === undefined ? {} : { source: opts.source }) });
+    clauses.push(current.sql); bindings.push(...current.bindings);
   }
   bindings.push(limit);
 

@@ -1,8 +1,16 @@
+import { TYPED_REF_TABLE_SPECS } from "./refs";
+import { FORECAST_TABLE_SPECS } from "./forecasts";
+import { ATTENTION_TABLE_SPECS } from "./attention";
+import { CONSOLIDATION_TABLE_SPECS } from "./consolidation";
+import { CANON_CLAIM_RETRY_TABLE } from "../../ledger/canon-claim-retry-schema";
 import { MACHINE_BODY_TABLE } from "../../ledger/machine-body-schema";
 import type { Database } from "bun:sqlite";
 import { LedgerStoreError } from "../../ledger/errors";
 import { tableColumns, tableExists } from "../../ledger/schema";
 import { WORLD_TABLE_COLUMNS, type WorldTable } from "../schema";
+import { WORLD_VIEW_TABLE_SPECS } from "./views";
+import { KNOWN_REF_TABLE_SPECS } from "./known-refs";
+import { KNOWN_TABLE_SPECS } from "./known";
 import { WORLD_MIGRATION_BASE } from "./versions";
 
 /**
@@ -91,14 +99,23 @@ const LEDGER_32_TABLES: readonly WorldTableSpec[] = (
 export const WORLD_TABLE_SPECS: readonly WorldTableSpec[] = [
   ...LEDGER_32_TABLES,
   // slot: view
+  ...WORLD_VIEW_TABLE_SPECS,
   // slot: known
+  ...KNOWN_TABLE_SPECS,
+  ...KNOWN_REF_TABLE_SPECS,
   // slot: consol
+  ...CONSOLIDATION_TABLE_SPECS,
   // slot: ident
   // slot: attn
+  ...ATTENTION_TABLE_SPECS,
   // slot: refs
+  // slot: typed_refs
+  ...TYPED_REF_TABLE_SPECS,
   // slot: fcst
+  ...FORECAST_TABLE_SPECS,
   // slot: machine_images
   MACHINE_BODY_TABLE,
+  CANON_CLAIM_RETRY_TABLE,
 ];
 
 /** Durable classes must reach purge; only derived and cache tables may opt out with `none`. */

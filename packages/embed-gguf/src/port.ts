@@ -99,7 +99,7 @@ export class GgufEmbeddingPort implements EmbeddingPort {
       if (this.closed) closed();
       this.assertBatch(chunks);
       const framed = chunks.map((chunk) =>
-        formatDoc(chunk.doc_id, chunk.text, this.resolved),
+        formatDoc(chunk.title ?? "", chunk.text, this.resolved),
       );
       const vectors = embedTable(this.table, framed, this.config);
       assertExactDims(vectors, this.resolved.dims);

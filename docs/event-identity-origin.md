@@ -60,6 +60,16 @@ line, and surrounding whitespace trimmed. Copies with stripped or rewritten
 frontmatter match that body registry. Normalization runs in linear time, even
 for long runs of hostile whitespace. Empty bodies never register.
 
+A body match alone does not turn a source's own previously admitted exact prose
+into machine output. A new revision may retain external origin when an earlier
+external capture has the same text hash, connector, record identity and trusted
+enrollment binding, its immutable admission binding validates, and the current
+source policy still permits capture. Capture authorization is checked in the
+same transaction. Unbound continuity is limited to the pre-policy legacy epoch.
+Different records or enrollments, and identities asserted only in metadata, do
+not inherit this exception. Exact copied canon images and the context marker
+remain self. Revisions remain one source witness, not independent corroboration.
+
 The body registry is durable bookkeeping, backed up as
 `world/canon_machine_body_images.jsonl` on ledgers that support it. Restore
 requires each row to refer to a retained loop receipt or pending byte intent;

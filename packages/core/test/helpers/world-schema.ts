@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { WORLD_TABLES } from "../../src/world/schema";
+import { WORLD_TABLE_SPECS } from "../../src/world/tables/registry";
 
 /** Test-only reconstruction of the actual pre32 schema; never used on a vault. */
 export function removeWorldSchema(db: Database): void {
@@ -7,11 +7,11 @@ export function removeWorldSchema(db: Database): void {
     .query<
       { name: string },
       []
-    >("SELECT name FROM sqlite_master WHERE type='trigger' AND (name GLOB 'world_*' OR name GLOB 'semantic_*')")
+    >("SELECT name FROM sqlite_master WHERE type='trigger' AND (name GLOB 'world_*' OR name GLOB 'semantic_*' OR name GLOB 'canon_body_*' OR name='canon_claim_retry_finished')")
     .all())
     db.exec(`DROP TRIGGER ${name}`);
-  for (const table of [...WORLD_TABLES].reverse())
-    db.exec(`DROP TABLE ${table}`);
+  for (const table of [...WORLD_TABLE_SPECS].reverse())
+    db.exec(`DROP TABLE ${table.name}`);
   db.exec(
     "DROP INDEX world_semantic_predicate; DROP INDEX world_semantic_object; DROP INDEX claims_idempotency; ALTER TABLE claims DROP COLUMN is_world_typed; ALTER TABLE claim_v2_support DROP COLUMN support_origin;",
   );

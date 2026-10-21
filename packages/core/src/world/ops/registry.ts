@@ -1,10 +1,31 @@
+import { observationOp } from "./observation";
+import { forecastOp, forecastScoresOp } from "./forecast";
+import { attentionOp } from "./attention";
+import { atlasOp } from "./atlas";
+import { sliceOp } from "./slice";
+import { personOp } from "./person";
+import { findPeopleOp } from "./find-people";
+import { skillOp } from "./skill";
+import { procedureOp } from "./procedure";
+import { frameworkOp } from "./framework";
+import { findProceduresOp } from "./find-procedures";
+import { outcomeOp } from "./outcome-read";
+import { artifactVersionOp, findArtifactsOp } from "./artifact";
+import { historyOp } from "./history";
 import { conceptOp } from "./concept";
 import { describeOp } from "./describe";
 import { discoverConceptsOp, discoverSituationsOp } from "./discover";
 import { situationOp } from "./situation";
+import { shareOp } from "./share";
+import { resumeOp } from "./resume";
+import { evidenceOp } from "./evidence";
+import { questionOp } from "./question";
+import { findQuestionsOp } from "./find-questions";
+import { frontierOp } from "./frontier";
+import { diffOp } from "./diff";
 import type { WorldOp, WorldOpRegistry } from "./types";
 
-const COMMON_KEYS = ["operation", "valid", "knownAt"];
+const COMMON_KEYS = ["operation", "valid", "knownAt", "priorView"];
 
 function assertWorldOp(op: WorldOp): void {
   const label = `world operation "${op.name}"`;
@@ -27,8 +48,18 @@ function assertWorldOp(op: WorldOp): void {
     throw new Error(`${label}: a key is declared twice`);
 }
 
+/**
+ * An operation defined in terms of the others, such as `resume`, which answers
+ * with the body of whichever object read was shared. It is handed the plain
+ * operations of the same registry, so a kind that registers later is included.
+ */
+export type WorldOpFactory = (registered: readonly WorldOp[]) => WorldOp;
+export type WorldOpSource = WorldOp | WorldOpFactory;
+
 /** The one place a registry is validated: each operation is whole, and no name repeats. */
-export function worldOpRegistry(ops: readonly WorldOp[]): WorldOpRegistry {
+export function worldOpRegistry(sources: readonly WorldOpSource[]): WorldOpRegistry {
+  const plain = sources.filter((source): source is WorldOp => typeof source !== "function");
+  const ops = sources.map((source) => (typeof source === "function" ? source(plain) : source));
   const seen = new Set<string>();
   for (const op of ops) {
     assertWorldOp(op);
@@ -36,7 +67,7 @@ export function worldOpRegistry(ops: readonly WorldOp[]): WorldOpRegistry {
       throw new Error(`world operation "${op.name}" is registered twice (duplicate name)`);
     seen.add(op.name);
   }
-  return Object.freeze([...ops]);
+  return Object.freeze(ops);
 }
 
 export function findWorldOp(
@@ -47,26 +78,43 @@ export function findWorldOp(
 }
 
 /** Explicit list; a workstream adds its operation on the line under its own marker. */
-export const WORLD_OPS: WorldOpRegistry = worldOpRegistry([
+const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   discoverConceptsOp,
   discoverSituationsOp,
   conceptOp,
   situationOp,
   describeOp,
   // slot: CARD
+  evidenceOp,
+  // slot: REFS
+  observationOp,
   // slot: KNOWN
+  historyOp,
   // slot: VIEW
+  shareOp, resumeOp,
   // slot: QUEST
+  questionOp, findQuestionsOp, frontierOp,
   // slot: PEOPLE
+  personOp, findPeopleOp,
   // slot: SKILL
+  procedureOp, findProceduresOp, skillOp, frameworkOp,
   // slot: ART
+  artifactVersionOp, findArtifactsOp,
   // slot: OUTCOME
+  outcomeOp,
   // slot: DIFF
+  diffOp,
   // slot: SLICE
+  sliceOp,
   // slot: ATTN
+  attentionOp,
   // slot: FCST
+  forecastOp, forecastScoresOp,
   // slot: ATLAS
-]);
+  atlasOp,
+];
+
+export const WORLD_OPS: WorldOpRegistry = worldOpRegistry(WORLD_OP_SOURCES);
 
 let active: WorldOpRegistry = WORLD_OPS;
 
@@ -85,7 +133,7 @@ export function activeWorldOps(): WorldOpRegistry {
 export function withWorldOps<T>(extra: readonly WorldOp[], run: () => T): T {
   if (active !== WORLD_OPS)
     throw new Error("withWorldOps is sequential-only: another use is still running");
-  active = worldOpRegistry([...WORLD_OPS, ...extra]);
+  active = worldOpRegistry([...WORLD_OP_SOURCES, ...extra]);
   const restore = () => {
     active = WORLD_OPS;
   };

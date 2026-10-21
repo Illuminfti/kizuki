@@ -1,0 +1,37 @@
+# Scoped concept identity
+
+Evidence date: 2026-10-21. This implementation adds owner identity assertions and bounded read projection. Cross-source model nominations now use a separately versioned, bounded grounding proof and require two independent witness roots through the ordinary extraction and writer path. It does not ratify RFC 0003 amendment 1 or introduce an identity-control table.
+
+## Owner assertions
+
+Obtain a Concept's `classificationClaims` token and a second Concept's object token from `world_view`. Call the existing `correct` tool with `target: {world_claim}`, `mode: "merge_identity"` or `"separate_identity"`, `object: {kind: "node", ref}`, and the owner's statement. CLI uses the same modes with `--world-claim` and `--object-ref`. An agent must already be authorized to relay owner corrections. A node token is not authority: both endpoints must remain readable for the correction purpose.
+
+The writer records an ordinary positive or negative `concept.same_as` assertion backed by immutable native owner evidence. The original classification stays live. Identity takes effect only after the existing canon writer has produced its receipt. Undo reverts the assertion through the existing receipt path. If the source Concept has no canon page yet, its already admitted source claims receive an ordinary baseline receipt first; the subsequent identity receipt owns the identity change, so its undo preserves the classification. Both writes share the existing reservation, recovery and budget machinery. A failed identity write leaves the assertion inactive and retry resumes the same statement.
+
+The three previous correction modes and legacy inputs retain their behavior. Identity modes require an unattributed, asserted, positive Concept classification and a distinct Concept endpoint. They do not replace arbitrary source text or make source instructions owner assertions. Ordinary correction clients without owner relay cannot invoke them.
+
+## Scoped reads
+
+Identity is computed from eligible claims under the current reader's grant, source consent, sensitivity and purpose. Cards retain the requested object ref as anchor and collect the component's labels and relations. Discovery returns one match per component. Raw references and stored source claims are never rewritten, and there is no global representative.
+
+A receipted native owner merge joins a component. A negative `concept.same_as` or positive `concept.distinguished_from` blocks the disputed component; readers see separate ambiguous nodes. Weak model nominations remain ambiguous. Name equality, co-occurrence and similarity do not join nodes. Hidden intermediate nodes and denied supporting claims contribute neither visible output nor counted work. Full endpoint classifications, edge support and retained receipt ownership are dependencies rechecked before publication. Historical reads use only claims, support and receipts recorded by their cutoff, preserve today's authorization and holds, and refuse an earlier period when any traversed member's retained history coverage is incomplete.
+
+Traversal is bounded at 256 members and 1,024 edges. Overflow yields singleton ambiguous results with partial coverage and `traversal_limit`; a proposed owner merge that would overflow is refused before recording evidence. Other existing card and byte limits continue to apply.
+
+Revocation removes ineligible edges on the next read. Purging evidence removes its dependent admission, and derived rebuild does not reconstruct it. Export and restore retain ordinary claim, support and receipt provenance.
+
+## Autonomous admission
+
+`kizuki.world-admission/v1` retains its exact decoder and single-source endpoint rules. The additive `kizuki.world-admission/v2` is restricted to asserted, unattributed binary `concept.same_as` or `concept.distinguished_from` model inferences. It adds exactly two endpoint grounding proofs, each pinning an existing v1 Concept classification and label by claim ID, support key, admission hash and immutable event hashes. Request-local model handles are never durable authority. Native owner assertions continue to use v1 and their receipted correction path.
+
+Before a whole-record extraction request, Core may nominate two previously evidenced Concepts whose labels occur in the witness text. The bounded catalog examines at most eight currently eligible label supports, contains at most four grounding events, and keeps the whole request within eight events and the existing token budget. Every quoted grounding field must satisfy extraction consent, the configured model and judge destination, and retention policy before sending. Denied candidates cannot consume catalog slots or change request identity. Oversized segmented extraction keeps its existing v1 behavior and does not receive a grounding catalog.
+
+The model nominates each endpoint through exactly one host-issued candidate handle on a witness mention. Handles bind the exact witness records, selected grounding proofs, destination, budgets and selected source revisions. Stale or ambiguous nominations cannot file identity. Grounding records are context, never witness claims; claims citing their text are declined. A conditional system instruction explains this distinction only when a catalog is present; no-catalog system bytes remain unchanged.
+
+The shared writer revalidates all raw grounding proofs and current consent at admission. Durable supports retain both witness and grounding events for erasure, but only witness sources and quoted witness spans contribute to independence. Copies, shared source roots and recorded transformations do not create another independent root. One valid witness remains ambiguous; two independent eligible witnesses converge. Current principal, source consent, holds and retained historical position still govern every read. Exact grounding support keys also enter the final publication and cached-view dependency closure, without requiring a legitimate old label claim to remain live after correction.
+
+Purge removes every dependent v2 admission and pending draft. Rebuild derives from retained admissions; export/restore validate the original pinned proof rather than reconstructing model authority. V2 uses existing claim, support, event and history stores and requires no schema migration. This bounded implementation does not claim arbitrary entity resolution, all-candidate search or guaranteed identity extraction from every record.
+
+## Verification
+
+Run `packages/core/test/serving/world-identity.test.ts` for owner merge/separation, replay/undo, hidden intermediate noninterference, denied relay, purge/rebuild, first page materialization, budget failure/retry, restore and edge overflow. The real adapter calls are in `packages/cli/test/tell-modes.test.ts` and `packages/mcp/test/correct-modes.test.ts`. Run `packages/core/test/serve/identity-grounding.test.ts` for the ordinary two-source producer/writer path, copied roots, stale/ambiguous handles, model egress, current and historical revocation, purge, recovery, backup restore and scoped noninterference. `packages/core/test/world/identity-grounding-bounds.test.ts` admits the full graph through the shared writer and verifies the separate component, byte and overflow bounds. These are synthetic model-port fixtures; a real configured-model extraction is a separate integration acceptance. The parent integration runs the combined repository gate.

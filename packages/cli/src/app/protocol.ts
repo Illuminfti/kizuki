@@ -113,6 +113,7 @@ export interface AppReceipt {
     reverted: boolean;
 }
 export interface AppProtocol {
+    attention_disposition: { request: { cue: string; action: "dismiss" | "snooze"; until?: string }; response: import("@kizuki/core/world").AttentionCandidate };
     world_view: { request: Record<string, unknown>; response: WorldReadResult };
     status: {
         request: {};

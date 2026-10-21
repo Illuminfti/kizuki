@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { accept, applyCanonWrite, createBudgetTracker, insertClaim, resolveTarget } from "@kizuki/core";
 import type { CaptureEventInput, Claim, InsertClaimInput } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
+import { worldFixture } from "../../core/test/serving/world-fixture";
 import { createHelpers } from "./helpers";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
@@ -89,6 +90,33 @@ async function writeGraceClaim(vault: string): Promise<string> {
 }
 
 describe("kizuki tell", () => {
+  test("tell v2 returns the shared correction envelope and preserves v1 explicitly", async () => {
+    const setup = tempVault();
+    const claimId = await writeGraceClaim(setup.vault);
+    const rejected = runCli(setup.env, "tell", "Grace now works at Initech.",
+      "--claim", claimId, "--dry-run", "--response-contract", "kizuki.envelope/v2", "--json");
+    expect(rejected.exitCode).toBe(2);
+    expect(rejected.stderr).toContain("use --world-claim TOKEN");
+    const db = openLedger(join(setup.vault, ".kizuki/kizuki.db"));
+    const world = await worldFixture(db); db.close();
+    const read = runCli(setup.env, "world", "--operation", "concept", `--ref=${world.ref.token}`, "--json");
+    expect(read.exitCode, read.stderr).toBe(0);
+    const target = JSON.parse(read.stdout).data.data.result.data.definitions[0].claim.token;
+    const result = runCli(setup.env, "tell", "Use prior odds and evidence.",
+      `--world-claim=${target}`, "--dry-run", "--response-contract", "kizuki.envelope/v2", "--json");
+    expect(result.exitCode, result.stderr).toBe(0);
+    const value = JSON.parse(result.stdout);
+    expect(Object.keys(value).sort()).toEqual(["command", "result", "schema"]);
+    expect(value.schema).toBe("kizuki.cli-result/v2");
+    expect(value.result.schema).toBe("kizuki.envelope/v2");
+    expect(value.result.tool).toBe("correct");
+    expect(Object.keys(value.result).sort()).toEqual(["at", "canon", "data", "principal", "quoted", "schema", "tool"]);
+    const legacy = runCli(setup.env, "tell", "Grace now works at Initech.",
+      "--claim", claimId, "--dry-run", "--response-contract", "kizuki.envelope/v1", "--json");
+    expect(legacy.exitCode, legacy.stderr).toBe(0);
+    expect(JSON.parse(legacy.stdout).schema).toBe("kizuki.cli.tell/v1");
+  });
+
   test("tell --claim corrects and rewrites without a model", async () => {
     const setup = tempVault();
     const claimId = await writeGraceClaim(setup.vault);

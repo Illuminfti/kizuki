@@ -14,6 +14,10 @@ import {
   setGrant,
   setSourceGrant,
 } from "@kizuki/core";
+import { referenceScope } from "../../core/src/world/ref-kinds/common";
+import { resolveRawSubjectRef } from "../../core/src/world/ref-kinds/raw-subject";
+import type { QuotedChunkV2, ProposeDataV2, CorrectDataV2 } from "../../core/src/contracts/scoped-tools";
+import { claimId as resolveClaimId, eventIds } from "./client";
 import type { Grant, Principal, ServeContext } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { createHelpers } from "../../cli/test/helpers";
@@ -56,10 +60,9 @@ function sameEnvelope(result: { content: { text: string }[]; structuredContent?:
 }
 
 function packet(result: ReturnType<typeof envelopeOf>) {
-  return result.data as {
-    packet_md: string; packet_hash: string; claims_epoch: number;
-    status: "current" | "superseded"; delivery: "full" | "unchanged";
-  };
+  const data = result.data as { result: { status: string; view?: unknown; data?: { packetMd: string } } };
+  if (data.result.data === undefined) throw new Error("expected a full packet");
+  return { ...data.result.data, status: data.result.status, view: data.result.view };
 }
 
 interface ContinuityClient {
@@ -264,19 +267,21 @@ async function stdioClient(vault: string, token: string): Promise<ContinuityClie
     expect(reply.result).toBeDefined();
     child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
     const listed = await request("tools/list", {});
-    const tools = (listed.result as { tools?: { name: string; outputSchema?: { properties?: object; required?: string[] } }[] } | undefined)?.tools;
+    type ListedSchema = { properties?: Record<string, unknown>; required?: string[]; anyOf?: ListedSchema[] };
+    const tools = (listed.result as { tools?: { name: string; outputSchema?: ListedSchema }[] } | undefined)?.tools;
     expect(tools?.length).toBeGreaterThan(0);
     for (const tool of tools ?? []) {
-      // world_view advertises its closed v2 envelope, which never carries these fields.
-      if (tool.name === "world_view") {
-        expect(tool.outputSchema?.properties).not.toHaveProperty("has_withheld");
-        expect(tool.outputSchema?.properties).not.toHaveProperty("source_policy");
-        continue;
+      if (tool.name === "system_health") {
+        expect(tool.outputSchema?.properties?.schema).toEqual({ const: "kizuki.envelope/v1" });
+      } else if (tool.name === "world_view") {
+        expect(Object.keys(tool.outputSchema?.properties ?? {}).sort()).toEqual(["at", "canon", "data", "principal", "quoted", "schema", "tool"]);
+      } else {
+        const v2 = tool.outputSchema?.anyOf?.find((branch) =>
+          (branch.properties?.schema as { const?: string } | undefined)?.const === "kizuki.envelope/v2");
+        expect(v2).toBeDefined();
+        expect(v2?.required).toContain("data");
+        for (const field of ["has_withheld", "source_policy", "denied", "redacted"]) expect(v2?.properties?.[field]).toBe(false);
       }
-      expect(tool.outputSchema?.properties).toHaveProperty("has_withheld");
-      expect(tool.outputSchema?.properties).toHaveProperty("source_policy");
-      expect(tool.outputSchema?.required ?? []).not.toContain("has_withheld");
-      expect(tool.outputSchema?.required ?? []).not.toContain("source_policy");
     }
     initialized = true;
     return {
@@ -300,49 +305,66 @@ async function proveContinuity(seed: SeededContinuity, a: ContinuityClient, b: C
   const { db, vault, notes, aToken, bToken, project, marker, controlMarker, selectedSubject, selectedSourceKey } = seed;
   const timeline = await a.call("timeline", {});
   sameEnvelope(timeline);
-  const quoted = envelopeOf(timeline).quoted as { event_id: string; text: string }[];
+  const aCtx = { db, vaultPath: vault, principal: principalFor(db, aToken) };
+  const quoted = envelopeOf(timeline).quoted as QuotedChunkV2[];
   const event = quoted.find((entry) => entry.text.includes(marker));
   const controlEvent = quoted.find((entry) => entry.text.includes(controlMarker));
   if (event === undefined || controlEvent === undefined) throw new Error("public timeline missing imported fixtures");
   expect(event.text).toContain("Project two-client-continuity is blocked.");
+  // The native importer exposes document and artifact subjects, not an inferred
+  // project identity. Keep the status attached to its actual source document,
+  // using each client's reference to the same exact subject.
+  const subjectFor = (ctx: ServeContext, row: QuotedChunkV2) => ctx.db.transaction(() => {
+    const scope = referenceScope(ctx);
+    const found = row.subjects.find(ref => resolveRawSubjectRef(scope, ref)?.id === selectedSubject);
+    expect(found).toBeDefined();
+    return found!;
+  }).immediate();
+  const aSubject = subjectFor(aCtx, event);
+  const bTimeline = await b.call("timeline", {});
+  sameEnvelope(bTimeline);
+  const bEvent = (envelopeOf(bTimeline).quoted as QuotedChunkV2[]).find(entry => entry.text.includes(marker))!;
+  const bSubject = subjectFor({ db, vaultPath: vault, principal: principalFor(db, bToken) }, bEvent);
+  expect(aSubject.token).not.toBe(bSubject.token);
   const filed = await a.call("propose", {
-    kind: "claim", target: "projects/two-client-continuity", body: "The project status is blocked.",
-    subject: project, subjects: [project], predicate: "project.status", object: "blocked",
-    provenance: [event.event_id],
+    kind: "claim", body: "The project status is blocked.",
+    subject: aSubject, subjects: [aSubject], predicate: "project.status", object: { kind: "literal", value: "blocked" },
+    provenance: [event.eventVersion],
   });
   sameEnvelope(filed);
-  const claimId = (envelopeOf(filed).data as { claim_id: string }).claim_id;
+  const claim = (envelopeOf(filed).data as ProposeDataV2).claim;
+  const claimId = resolveClaimId(aCtx, claim);
 
   const initial = await b.call("context_packet", {
-    subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
+    subjects: [bSubject], include: ["claims"], purpose: "correction", budget_tokens: 500,
   });
   sameEnvelope(initial);
-  expect(packet(envelopeOf(initial)).packet_md).toContain("blocked");
+  expect(packet(envelopeOf(initial)).packetMd).toContain("blocked");
 
   const correctionArgs = {
-    statement: "The project is active.", target: { claim_id: claimId }, object: "active",
+    statement: "The project is active.", target: claim, object: { kind: "literal", value: "active" },
   };
   const corrected = await a.call("correct", correctionArgs);
   sameEnvelope(corrected);
-  const correction = envelopeOf(corrected).data as { claim_id: string; event_id: string; superseded: { claim_id: string }[] };
-  expect(correction.superseded.map((entry) => entry.claim_id)).toEqual([claimId]);
-  expect(envelopeOf(corrected).data).toMatchObject({ receipt_id: null });
+  const correction = envelopeOf(corrected).data as CorrectDataV2;
+  expect(correction.superseded.map(ref => resolveClaimId(aCtx, ref))).toEqual([claimId]);
+  expect(correction.receipt).toBeNull();
   const retry = await a.call("correct", correctionArgs);
   sameEnvelope(retry);
-  expect(envelopeOf(retry).data).toMatchObject({ claim_id: correction.claim_id, event_id: correction.event_id });
+  expect(envelopeOf(retry).data).toMatchObject({ claim: correction.claim, eventVersion: correction.eventVersion });
 
-  for (const client of [a, b]) {
+  for (const [client, subject] of [[a, aSubject], [b, bSubject]] as const) {
     const refreshed = await client.call("context_packet", {
-      subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
+      subjects: [subject], include: ["claims"], purpose: "correction", budget_tokens: 500,
     });
     sameEnvelope(refreshed);
-    expect(packet(envelopeOf(refreshed)).packet_md).toContain("active");
-    expect(packet(envelopeOf(refreshed)).packet_md).toContain("owner_correction");
-    expect(packet(envelopeOf(refreshed)).packet_md).not.toContain("blocked");
+    expect(packet(envelopeOf(refreshed)).packetMd).toContain("active");
+    expect(packet(envelopeOf(refreshed)).packetMd).toContain("owner_correction");
+    expect(packet(envelopeOf(refreshed)).packetMd).not.toContain("blocked");
   }
   const privateValues = [
-    marker, project, "blocked", "active", selectedSubject, event.event_id,
-    claimId, correction.claim_id, correction.event_id, correctionArgs.statement,
+    marker, project, "blocked", "active", selectedSubject, ...eventIds(aCtx, envelopeOf(timeline)),
+    claimId, resolveClaimId(aCtx, correction.claim!), correctionArgs.statement,
     vault, notes, aToken, bToken,
   ];
   const assertPrivateValuesAbsent = (result: Parameters<typeof envelopeOf>[0]) => {
@@ -358,27 +380,27 @@ async function proveContinuity(seed: SeededContinuity, a: ContinuityClient, b: C
   assertPrivateValuesAbsent(forbidden);
 
   const latestB = await b.call("context_packet", {
-    subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
+    subjects: [bSubject], include: ["claims"], purpose: "correction", budget_tokens: 500,
   });
   const beforeNarrow = packet(envelopeOf(latestB));
-  expect(beforeNarrow.packet_md).toContain("active");
+  expect(beforeNarrow.packetMd).toContain("active");
   setGrant(db, "continuity-b", { subjects: [], tools: ["context_packet"] });
   const outOfScope = await b.call("context_packet", {
-    subjects: [project], include: ["claims"], purpose: "correction", budget_tokens: 500,
+    subjects: [bSubject], include: ["claims"], purpose: "correction", budget_tokens: 500,
   });
   expect(outOfScope.isError).toBe(true);
-  expect(errorOf(outOfScope).error).toBe("subject_out_of_scope");
-  expect(JSON.parse(outOfScope.content[0]!.text)).toEqual({ error: "subject_out_of_scope", message: "subjects outside the grant", retry_after_seconds: null });
+  expect(errorOf(outOfScope).error).toBe("not_found");
+  expect(JSON.parse(outOfScope.content[0]!.text)).toEqual({ error: "not_found", message: "not found", retry_after_seconds: null });
   assertPrivateValuesAbsent(outOfScope);
   const narrowed = await b.call("context_packet", {
     include: ["claims"], purpose: "correction", budget_tokens: 500,
-    capabilities: ["delta"], retain_prefix: true, prior_hash: beforeNarrow.packet_hash, epoch: beforeNarrow.claims_epoch,
+    priorView: beforeNarrow.view,
   });
   sameEnvelope(narrowed);
-  expect(packet(envelopeOf(narrowed)).delivery).toBe("full");
+  expect(packet(envelopeOf(narrowed)).status).toBe("current");
   assertPrivateValuesAbsent(narrowed);
-  const aStillAllowed = await a.call("context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
-  expect(packet(envelopeOf(aStillAllowed)).packet_md).toContain("active");
+  const aStillAllowed = await a.call("context_packet", { subjects: [aSubject], include: ["claims"], purpose: "correction", budget_tokens: 500 });
+  expect(packet(envelopeOf(aStillAllowed)).packetMd).toContain("active");
 
   const beforeReconnect = listAgents(db).map((agent) => agent.agent_id);
   await b.close();
@@ -386,24 +408,26 @@ async function proveContinuity(seed: SeededContinuity, a: ContinuityClient, b: C
   expect(listAgents(db).map((agent) => agent.agent_id)).toEqual(beforeReconnect);
   const reconnectedPacket = await reconnectedB.call("context_packet", { include: ["claims"], budget_tokens: 500 });
   sameEnvelope(reconnectedPacket);
-  expect(packet(envelopeOf(reconnectedPacket)).delivery).toBe("full");
+  expect(packet(envelopeOf(reconnectedPacket)).status).toBe("current");
   assertPrivateValuesAbsent(reconnectedPacket);
 
   revokeAgent(db, "continuity-b");
-  const revoked = await reconnectedB.call("context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
+  const revoked = await reconnectedB.call("context_packet", { subjects: [bSubject], include: ["claims"], budget_tokens: 500 });
   expect(revoked.isError).toBe(true);
   expect(errorOf(revoked).error).toBe("unknown_agent");
   expect(JSON.parse(revoked.content[0]!.text)).toEqual({ error: "unknown_agent", message: "unknown agent", retry_after_seconds: null });
   assertPrivateValuesAbsent(revoked);
 
   revokeSourceGrant(db, { source_key: selectedSourceKey, expected_revision: 1, operation_id: "two-client-source-revoke" });
-  const sourceDenied = await a.call("context_packet", { subjects: [project], include: ["claims"], budget_tokens: 500 });
-  sameEnvelope(sourceDenied);
+  const sourceDenied = await a.call("context_packet", { subjects: [aSubject], include: ["claims"], budget_tokens: 500 });
+  expect(sourceDenied.isError).toBe(true);
+  expect(errorOf(sourceDenied).error).toBe("not_found");
   assertPrivateValuesAbsent(sourceDenied);
   const controlTimeline = await a.call("timeline", {});
   sameEnvelope(controlTimeline);
   expect(JSON.stringify(envelopeOf(controlTimeline))).toContain(controlMarker);
-  expect(JSON.stringify(envelopeOf(controlTimeline))).toContain(controlEvent.event_id);
+  expect((envelopeOf(controlTimeline).quoted as QuotedChunkV2[]).some(chunk =>
+    chunk.eventVersion.token === controlEvent.eventVersion.token)).toBe(true);
 
   await a.close();
   await reconnectedB.close();

@@ -9,6 +9,7 @@ import { rebuildDerived } from "../../src/derived";
 import { ServeError } from "../../src/serving/types";
 import { recordedPage, serveFixture } from "./helpers";
 import type { Fixture } from "./helpers";
+import { neutralizeControlTags, sanitizeCapturedText } from "../../src/producer/scrub";
 
 // These tests spawn real processes; bound them for a loaded host.
 setDefaultTimeout(30_000);
@@ -67,7 +68,7 @@ for (const prose of [
   "مرحبا بالعالم नमस्ते दुनिया Привет мир",
   "<|endoftext|><|fim_prefix|><|fim_suffix|>",
 ]) {
-  test(`full packets count source text exactly: ${prose.slice(0, 12)}`, async () => {
+  test(`full packets count sanitized served text exactly: ${prose.slice(0, 12)}`, async () => {
     const f = await live();
     await recordedPage(f.db, f.vaultPath, "facts/token-test.md", {
       id: "fact:token-test", title: "Tokenizer fixture", type: "fact",
@@ -82,7 +83,7 @@ for (const prose of [
       expect(data.tokens_estimate).toBe(count(data.packet_md));
       expect(count(data.packet_md)).toBeLessThanOrEqual(budget);
       if (budget === 2000) {
-        expect(data.packet_md).toContain(prose.slice(0, 12));
+        expect(data.packet_md).toContain(neutralizeControlTags(sanitizeCapturedText(prose)).slice(0, 12));
         expect(data.truncated).toBe(false);
       }
       if (budget === 80) expect(data.truncated).toBe(true);

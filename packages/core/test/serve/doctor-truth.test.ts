@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { accept } from "../../src/ledger/ledger";
 import { setSourceGrant } from "../../src/ledger/source-grants";
 import { MODEL_PRODUCER_ID } from "../../src/producer";
 import { inspectServeDoctor } from "../../src/serve/doctor";
+import { egressDoctor } from "../../src/serve/doctor-extraction";
 import { runRail } from "../../src/serve/rails";
 import {
   persistRunReceipt,
@@ -17,7 +18,6 @@ import {
 } from "../../src/serve/receipts";
 import { writeServeIntent } from "../../src/serve/intent";
 import {
-  DEFAULT_RAILS,
   DOCTOR_RAIL_RECEIPTS,
   DOCTOR_SKIPPED_PAGES,
   emptyRunTotals,
@@ -25,6 +25,7 @@ import {
   type RunReceipt,
   type SupervisorStatus,
 } from "../../src/serve/types";
+import { DEFAULT_RAILS } from "../../src/serve/rail-registry";
 import type { SupervisorHost } from "../../src/serve/supervisor";
 import { initVault } from "../../src/vault/init";
 import { validEvent } from "../fixtures";
@@ -107,21 +108,26 @@ function capture(
   db: ReturnType<typeof openLedger>,
   count: number,
 ): { event_id: string; accepted_at: string }[] {
-  return Array.from({ length: count }, (_, index) => {
-    const stored = accept(db, {
-      ...validEvent(),
-      source_record_id: `truth-${serial}-${index}`,
+  // Ledger acceptance uses wall time; pin it before the synthetic run history
+  // without modifying append-only events or leaking a clock into later tests.
+  setSystemTime(new Date(minute(0)));
+  try {
+    return Array.from({ length: count }, (_, index) => {
+      const stored = accept(db, {
+        ...validEvent(),
+        source_record_id: `truth-${serial}-${index}`,
+      });
+      if (stored.status !== "stored") throw new Error("fixture capture failed");
+      return {
+        event_id: stored.event.event_id,
+        accepted_at: db
+          .query<{ accepted_at: string }, [string]>(
+            "SELECT accepted_at FROM events WHERE event_id=?",
+          )
+          .get(stored.event.event_id)!.accepted_at,
+      };
     });
-    if (stored.status !== "stored") throw new Error("fixture capture failed");
-    return {
-      event_id: stored.event.event_id,
-      accepted_at: db
-        .query<{ accepted_at: string }, [string]>(
-          "SELECT accepted_at FROM events WHERE event_id=?",
-        )
-        .get(stored.event.event_id)!.accepted_at,
-    };
-  });
+  } finally { setSystemTime(); }
 }
 
 function railOf(report: ReturnType<typeof inspectServeDoctor>, rail: RailId) {
@@ -638,8 +644,12 @@ describe("egress and skipped pages", () => {
         endpoint_host: new URL(ENDPOINT).host,
         model: MODEL,
         retention: "provider_managed",
+        judge: null,
       },
     ]);
+    // With a judge configured, each line says whether its grant consents to it.
+    const judge = { model_endpoint: "https://judge.example.test/v1/systemone", model: "synthetic-judge" };
+    expect(egressDoctor(db, judge).egress[0]!.judge).toEqual({ host: "judge.example.test", model: "synthetic-judge", consented: false });
     db.close();
   });
 
@@ -819,7 +829,9 @@ describe("the streak walk is bounded", () => {
     const spied = new Proxy(db, {
       get(target, property) {
         const value = Reflect.get(target, property, target) as unknown;
-        if (property !== "query" || typeof value !== "function") return value;
+        // Native SQLite methods require the actual Database receiver. Keep
+        // query observation while allowing the read-only attention transaction.
+        if (property !== "query" || typeof value !== "function") return typeof value === "function" ? value.bind(target) : value;
         return (sql: string) => {
           seen.push(sql);
           return (value as (text: string) => unknown).call(target, sql);

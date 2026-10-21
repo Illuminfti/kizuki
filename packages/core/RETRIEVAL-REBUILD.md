@@ -65,7 +65,17 @@ the flag that raises it. These bounded limits are explicit, not silent
 truncation.
 
 PostgreSQL stages documents and embeddings before one transactional replacement;
-source or embedding failure retains the old active index. FTS stages validated
+source or embedding failure retains the old active index. Its private SQL stage
+survives interruption and restart. Repeating the same command resumes completed
+vectors only when the entire authorized document snapshot, source-policy epoch,
+embedding space, and chunk configuration match. Staged rows never participate in
+search or graph reads, and document/provenance deletion and owned-generation
+erasure include them. A changed snapshot starts a fresh stage. The 30-second
+operation deadline is unchanged: an unfinished command fails and can be retried;
+only a complete generation becomes active. The port checks Core's current-source
+fence before activation and before transaction commit, and Core revalidates after
+settlement, removing any no-longer-authorized rows. This is not a distributed
+transaction across the ledger and retrieval store. FTS stages validated
 documents before its own SQLite replacement transaction. After a successful
 port replacement, rebuild proves the snapshot document identities are present
 before rebuilding the lexical floor. The legacy lexical floor prevalidates canon

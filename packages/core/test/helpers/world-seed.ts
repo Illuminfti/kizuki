@@ -17,6 +17,7 @@ import { mintOccurrenceId } from "../../src/claims/occurrences";
 import type { ClaimV2Assertion, ClaimV2Object } from "../../src/contracts/claim-v2";
 import type { RetrievalPort } from "../../src/contracts/retrieval";
 import { WORLD_ADMISSION_SCHEMA } from "../../src/contracts/world-admission";
+import { WORLD_REGISTRY } from "../../src/contracts/world-vocabulary";
 import { registerConnection } from "../../src/ledger/connections";
 import { accept } from "../../src/ledger/ledger";
 import { setSourceGrant } from "../../src/ledger/source-grants";
@@ -34,6 +35,9 @@ export interface SeedPredicate {
 }
 
 export interface WorldSeedOptions {
+  /** Explicit synthetic model consent at enrollment; never increments an existing grant. */
+  readonly model?: { model_endpoint: string; model: string; external_retention: "provider_managed" };
+  readonly purposes?: readonly import("../../src/ledger/source-grants").SourcePurpose[];
   /** Kind id. Concept and Situation are admitted today. */
   readonly kind?: string;
   readonly subject?: string;
@@ -91,6 +95,8 @@ export function enrollSource(
   connector: string,
   floor: "public" | "private",
   sourceKey: string = ulid(),
+  model?: WorldSeedOptions["model"],
+  purposes?: WorldSeedOptions["purposes"],
 ): string {
   registerConnection(db, connector, sourceKey);
   seedConnectorSensitivity(
@@ -103,10 +109,10 @@ export function enrollSource(
     expected_revision: 0,
     operation_id: `grant-${sourceKey}`,
     policy: {
-      purposes: ["capture", "derive", "recall", "correction", "export"],
+      purposes: [...(purposes ?? ["capture", "derive", "recall", "correction", "export"]), ...(model === undefined ? [] : ["extract" as const])],
       allowed_fields: ["text", "subjects", "metadata", "attachments"],
       retention: "persistent_owned_until_revoked",
-      egress: "local_only",
+      egress: model ?? "local_only",
       sensitivity_floor: floor,
     },
   });
@@ -120,7 +126,7 @@ export async function worldSeed(db: Database, options: WorldSeedOptions = {}): P
     floor = options.floor ?? "public",
     connector = options.connector ?? "world.fixture",
     sourceKey = options.sourceKey ?? ulid();
-  if (options.sourceKey === undefined) enrollSource(db, connector, floor, sourceKey);
+  if (options.sourceKey === undefined) enrollSource(db, connector, floor, sourceKey, options.model, options.purposes);
   const accepted = accept(
     db,
     {
@@ -139,7 +145,7 @@ export async function worldSeed(db: Database, options: WorldSeedOptions = {}): P
   const claims: string[] = [];
   const specs: readonly SeedPredicate[] = [
     { predicate: "world.kind", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: `world/${kind}` } } },
-    { predicate: `${kind}.label`, object: { kind: "literal", value: label } },
+    { predicate: WORLD_REGISTRY.kinds.find(entry => entry.id === kind)?.labelPredicate ?? `${kind}.label`, object: { kind: "literal", value: label } },
     ...(options.predicates ?? defaultPredicates(kind)),
   ];
   for (const { predicate, object, polarity } of specs) {

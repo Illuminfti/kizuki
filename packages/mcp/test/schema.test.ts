@@ -114,12 +114,18 @@ describe("the advertised output schema describes what the server sends", () => {
     const canon = (
       advertised?.outputSchema as {
         properties?: {
-          canon?: { items?: { required?: string[]; properties?: object } };
+          canon?: { items?: { anyOf?: { required?: string[]; properties?: object }[] } };
         };
       }
     ).properties?.canon?.items;
-    expect(canon?.required).toContain("taint");
-    expect(canon?.required).toContain("authority");
+    expect(canon?.anyOf).toHaveLength(2);
+    for (const arm of canon?.anyOf ?? []) {
+      expect(arm.required).toContain("taint");
+      expect(arm.required).toContain("authority");
+    }
+    const ownerCanon = canon?.anyOf?.find(arm => arm.required?.includes("page_id"));
+    expect(ownerCanon).toBeDefined();
+    expect(canon?.anyOf?.find(arm => arm.required?.includes("page"))).toBeDefined();
 
     const chunk = (
       envelopeOf(
@@ -130,7 +136,7 @@ describe("the advertised output schema describes what the server sends", () => {
     // Whatever the engine puts on a chunk is described; nothing is advertised
     // that the engine never sends.
     expect(Object.keys(chunk ?? {}).sort()).toEqual(
-      [...(canon?.required ?? [])].sort(),
+      [...(ownerCanon?.required ?? [])].sort(),
     );
     expect(chunk?.["page_id"]).toBe("person:schema-canon");
     expect(chunk?.["sources"]).toEqual(recorded.sourceIds);
@@ -203,22 +209,29 @@ describe("the advertised output schema describes what the server sends", () => {
     expect(text).toEqual(structured);
   });
 
-  test("legacy tools retain source_policy while world advertises its closed v2 envelope", async () => {
+  test("negotiated tools advertise implemented contracts and retain the health and world exceptions", async () => {
     const client = await connectClient(live().owner(), open);
     const tools = (await client.listTools()).tools;
     expect(tools.map((tool) => tool.name)).toEqual([...TOOLS]);
     for (const tool of tools) {
       const advertised = tool.outputSchema as {
         required?: string[];
-        properties?: { source_policy?: { required?: string[] } };
+        properties?: { source_policy?: { required?: string[] }; schema?: { const?: string } };
+        anyOf?: { required?: string[]; properties?: { schema?: { const?: string } } }[];
       };
       if(tool.name==="world_view") {
         expect(advertised.required?.slice().sort()).toEqual(["at","canon","data","principal","quoted","schema","tool"]);
-        expect(Object.keys(advertised.properties??{}).sort()).toEqual(["at","canon","data","principal","quoted","redacted","schema","tool"]);
+        expect(Object.keys(advertised.properties??{}).sort()).toEqual(["at","canon","data","principal","quoted","schema","tool"]);
+        continue;
+      }
+      if (tool.name === "system_health") {
+        expect(advertised.properties?.schema?.const).toBe("kizuki.envelope/v1");
+        expect(advertised.required).toContain("denied");
+        expect(advertised.anyOf).toBeUndefined();
         continue;
       }
       expect(advertised.required?.slice().sort()).toEqual(
-        ["at", "canon", "denied", "principal", "quoted", "schema", "tool"],
+        ["at", "canon", "principal", "quoted", "schema", "tool"],
       );
       expect(Object.keys(advertised.properties ?? {}).sort()).toEqual([
         "at",
@@ -233,9 +246,18 @@ describe("the advertised output schema describes what the server sends", () => {
         "source_policy",
         "tool",
       ]);
-      expect(advertised.properties?.source_policy?.required?.slice().sort()).toEqual(
-        ["epoch", "legacy_unbound", "mode"],
-      );
+      expect(advertised.anyOf?.map(arm => arm.properties?.schema?.const)).toEqual(["kizuki.envelope/v1", "kizuki.envelope/v2"]);
+      expect(advertised.anyOf?.[0]?.required).toContain("denied");
+      expect(advertised.anyOf?.[1]?.required).toContain("data");
+      if (tool.name === "get_page") {
+        expect(advertised.properties?.source_policy?.required?.slice().sort()).toEqual(
+          ["epoch", "legacy_unbound", "mode"],
+        );
+      } else {
+        // Discovery summarizes this owner-only object to bound tools/list.
+        // Runtime validation still uses the complete negotiated grammar.
+        expect(advertised.properties?.source_policy?.required).toBeUndefined();
+      }
     }
   });
 
@@ -310,7 +332,10 @@ test('a listed validating MCP client accepts real written identity evidence on c
   const search = await call(client, 'search', { query: 'orchard', scope: 'all' });
   expect(search.isError ?? false).toBe(false);
   const envelope = envelopeOf(search);
-  const quoted = (envelope['quoted'] as { event_id: string; subject_labels?: { display_name: string | null }[] }[]).find(chunk => chunk.event_id === written.event);
+  expect((envelope['canon'] as typeof canon).some(chunk => chunk.subject_labels?.[0]?.display_name === LABEL)).toBe(true);
+  expect((envelope['quoted'] as { event_id: string }[]).some(chunk => chunk.event_id === written.event)).toBe(false);
+  const capture = envelopeOf(await call(client, 'search', { query: 'orchard', scope: 'ledger' }));
+  const quoted = (capture['quoted'] as { event_id: string; subject_labels?: { display_name: string | null }[] }[]).find(chunk => chunk.event_id === written.event);
   expect(quoted?.subject_labels?.[0]?.display_name).toBe(LABEL);
   expect(JSON.parse(search.content[0]!.text)).toEqual(envelope);
 });

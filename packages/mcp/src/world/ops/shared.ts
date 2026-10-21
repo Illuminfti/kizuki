@@ -1,12 +1,17 @@
 import { z } from "zod";
+import { SCOPED_REF_KINDS } from "@kizuki/core/world";
 
 const TIME = z.string().min(20).max(40);
 export const WIRE_TOKEN = z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/);
+// Kind eligibility belongs to Core resolution, so a well-formed wrong kind
+// reaches the same unavailable result as an absent or inaccessible target.
+export const SCOPED_INPUT_REF = z.strictObject({ kind: z.enum(SCOPED_REF_KINDS), token: WIRE_TOKEN });
 export const WORLD_OBJECT_REF = z.strictObject({
   kind: z.literal("object"),
   token: WIRE_TOKEN,
 });
-const WORLD_SNAPSHOT_REF = z.strictObject({
+export const WORLD_CONCEPT_FIELD = WORLD_OBJECT_REF.optional();
+export const WORLD_SNAPSHOT_REF = z.strictObject({
   kind: z.literal("snapshot"),
   token: WIRE_TOKEN,
 });
@@ -28,7 +33,7 @@ export const CURSOR = WIRE_TOKEN.optional();
 
 export const worldRef = <K extends string>(kind: K) =>
   z.strictObject({ kind: z.literal(kind), token: WIRE_TOKEN });
-const worldEvidence = z.strictObject({
+export const worldEvidence = z.strictObject({
   admission: worldRef("admission"),
   eventVersion: worldRef("event_version"),
   span: z.union([
@@ -36,6 +41,7 @@ const worldEvidence = z.strictObject({
     z.strictObject({ kind: z.literal("metadata"), field: z.string().max(128) }),
   ]),
 });
+export const worldTextEvidence = worldEvidence.extend({ span: worldEvidence.shape.span.options[0] });
 export const worldRelation = z.strictObject({
   schema: z.literal("kizuki.relation/v1"),
   claim: worldRef("claim"),
@@ -97,6 +103,6 @@ export const worldNode = <K extends string>(kind: K) =>
 /** What every card carries beside its own fields. */
 export const worldCommon = {
   summary: z.strictObject({ text: z.string().max(1200), admissions: z.array(worldRef("admission")).max(256) }).nullable(),
-  knownAt: z.strictObject({ kind: z.literal("current") }),
+  knownAt: z.union([z.strictObject({ kind: z.literal("current") }), z.strictObject({ kind: z.literal("snapshot"), ref: WORLD_SNAPSHOT_REF })]),
   coverage: worldCoverage,
 };

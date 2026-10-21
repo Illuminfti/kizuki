@@ -19,13 +19,14 @@ import {
 } from "../util/validate";
 import type { ExactJsonLimits } from "../util/validate";
 import { isAuthorityTier } from "./proposal";
+import { isClaimLiteralText } from "./claim-v2";
 import type { AuthorityTier } from "./proposal";
 
 export const KNOWLEDGE_NODE_SCHEMA = "kizuki.knowledge-node/v1" as const;
 export const RELATION_SCHEMA = "kizuki.relation/v1" as const;
 
 export type WorldWireKind =
-  "object" | "claim" | "admission" | "event_version" | "snapshot";
+  "object" | "claim" | "admission" | "event_version" | "snapshot" | "receipt";
 export type WorldWireRef<K extends WorldWireKind = WorldWireKind> = {
   readonly kind: K;
   readonly token: string;
@@ -243,7 +244,7 @@ function predicate(value: unknown): value is string {
   );
 }
 
-function knownTime(value: unknown): value is KnownTime {
+export function knownTime(value: unknown): value is KnownTime {
   if (!isPlainObject(value) || typeof value.kind !== "string") return false;
   if (value.kind === "unknown") return exact(value, ["kind"]);
   if (value.kind !== "known" || !exact(value, ["kind", "from", "until"]))
@@ -282,7 +283,7 @@ function span(value: unknown): value is EvidenceSpan {
   );
 }
 
-function evidenceRef(value: unknown): value is EvidenceRef {
+export function evidenceRef(value: unknown): value is EvidenceRef {
   return (
     isPlainObject(value) &&
     exact(value, ["admission", "eventVersion", "span"]) &&
@@ -369,7 +370,7 @@ function relationObject(value: unknown): value is RelationObject {
     return exact(value, ["kind", "ref"]) && wireRef(value.ref, "object");
   }
   if (value.kind === "literal") {
-    return exact(value, ["kind", "value"]) && boundedText(value.value, 400);
+    return exact(value, ["kind", "value"]) && isClaimLiteralText(value.value);
   }
   return (
     value.kind === "vocabulary" &&

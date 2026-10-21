@@ -171,6 +171,8 @@ assert_required_helpers() {
     "$verify_script_dir/verify-network.ts" \
     "$verify_script_dir/verify-secrets.ts" \
     "$verify_script_dir/verify-rfc-tests.ts" \
+    "$verify_script_dir/verify-packet-seams.ts" \
+    "$verify_script_dir/world-verify.ts" \
     "$verify_script_dir/verify-dependencies.ts" \
     "$verify_script_dir/verify-workflows.ts" \
     "$verify_script_dir/verify-maestro.ts" \
@@ -295,6 +297,9 @@ main() {
   gate install
   bun "$verify_script_dir/verify-rfc-tests.ts"
   gate rfc-tests
+  bun "$verify_script_dir/verify-packet-seams.ts"
+  gate packet-seams
+  bun "$verify_script_dir/world-verify.ts" --registry-only
   bun run typecheck
   gate typecheck
   bun run test

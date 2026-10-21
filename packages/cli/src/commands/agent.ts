@@ -11,6 +11,7 @@ import {
   type AgentGrantResult,
   type AgentInventoryEntry,
   type Grant,
+  denyClassesOf,
 } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { configPath, readConfig } from "../config";
@@ -29,7 +30,7 @@ const MAX_GRANT_BYTES = 32 * 1024;
 
 const MESSAGES: Record<AgentEnrollmentErrorCode, string> = {
   invalid_request: "Use one explicit agent name, complete grant, private file reference and operation ID.",
-  invalid_grant: "The grant must contain exactly the eight supported fields with valid values.",
+  invalid_grant: "The grant must contain the eight required fields, and optionally deny_classes, with valid values.",
   vault_unavailable: "The selected vault is unavailable. Check the vault selection and its private custody.",
   unsupported_platform: "Private credential delivery requires qualified Linux x64 glibc custody.",
   credential_unsafe: "The credential destination must have a private owner-controlled parent and safe ancestry.",
@@ -38,6 +39,7 @@ const MESSAGES: Record<AgentEnrollmentErrorCode, string> = {
   name_conflict: "This agent name is already active or reserved. Preserve its setup and choose a different name.",
   migration_required: "Execution requires the current ledger migration. Preview left the existing vault unchanged.",
   enrollment_busy: "The vault is busy or preview requires a stable checkpoint without journal sidecars. Retry the same operation ID and request.",
+  erasure_pending: "Source erasure recovery is pending. Retry the same operation ID and request after recovery completes.",
   recovery_required: "Enrollment is incomplete and its credential is inactive. Preserve the file; revoke the pending name before using a new operation ID and destination.",
   enrollment_unavailable: "Enrollment could not be reconciled. Retry the same operation ID and request before starting another setup.",
   unknown_agent: "No active agent has this name. Revoked and unfinished setups cannot be amended; list agents to check the name.",
@@ -97,6 +99,7 @@ function summaryRow(agent: AgentInventoryEntry): string[] {
     `ceiling=${grant.ceiling}`, `tools=${grant.tools.length === 0 ? "none" : grant.tools.join(",")}`,
     `types=${scope(grant.types)}`, `subjects=${scope(grant.subjects)}`, `rate=${grant.rate_limit_per_minute}/min`,
     `relay=${grant.relay_owner_corrections ? "on" : "off"}`,
+    `deny=${scope(denyClassesOf(grant))}`,
   ])];
 }
 

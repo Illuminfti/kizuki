@@ -1,4 +1,5 @@
-import { SENSITIVITY_ORDER } from "../agents";
+import { selectedClaimSql, selectedEventSql } from "../query/selection";
+import { SENSITIVITY_ORDER, denyClassesOf } from "../agents";
 import { LIVE_PREDICATE } from "../ledger/ledger";
 import { sourceServingSql } from "../ledger/source-grants";
 import { ceilingSql, instantBoundPair, instantPairSql } from "../query/sql";
@@ -16,7 +17,11 @@ export function authorizedEventSql(ctx: ServeContext): {
   bindings.push(SENSITIVITY_ORDER[grant.ceiling]);
   const source = sourceServingSql(
     ctx.db,
-    { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" },
+    {
+      owner: ctx.principal.kind === "owner",
+      purpose: ctx.sourcePurpose ?? "recall",
+      deny_classes: denyClassesOf(grant),
+    },
     SENSITIVITY_ORDER[grant.ceiling],
   );
   if (source !== null) {
@@ -41,6 +46,8 @@ export function authorizedEventSql(ctx: ServeContext): {
     event.push(`${instantPairSql("events.occurred_at")} <= (?,?)`);
     bindings.push(...instantBoundPair(grant.until, "until"));
   }
+  const selected = selectedEventSql(ctx.selection);
+  event.push(selected.sql); bindings.push(...selected.bindings);
   return { clauses: event, bindings };
 }
 
@@ -51,13 +58,19 @@ export function authorizedSupportSql(
 ): { sql: string; bindings: (string | number)[] } {
   const grant = ctx.principal.grant;
   const { clauses: event, bindings } = authorizedEventSql(ctx);
-  event.push(`(( ${alias}.support_origin='source' AND EXISTS(SELECT 1 FROM source_event_bindings b WHERE b.event_id=events.event_id AND b.source_key=${alias}.source_key)) OR
+  event.push(`(( ${alias}.support_origin='source' AND EXISTS(SELECT 1 FROM source_event_bindings b WHERE b.event_id=events.event_id AND (b.source_key=${alias}.source_key OR
+      (json_extract(${alias}.admission,'$.schema')='kizuki.world-admission/v2' AND EXISTS(
+        SELECT 1 FROM json_each(json_extract(${alias}.admission,'$.grounding')) g
+        JOIN claim_v2_support basis ON basis.support_key IN (json_extract(g.value,'$.classification.support_key'),json_extract(g.value,'$.label.support_key'))
+        JOIN claim_v2_support_events be ON be.support_key=basis.support_key
+        WHERE basis.support_origin='source' AND basis.source_key=b.source_key AND be.event_id=events.event_id
+          AND be.event_content_hash=events.content_hash AND json_extract(basis.admission,'$.schema')='kizuki.world-admission/v1'))))) OR
     (${alias}.support_origin='native_owner' AND ${ctx.principal.kind === "owner" || grant.relay_owner_corrections ? "1" : "0"} AND ${alias}.source_key='native-owner' AND ${alias}.grant_revision=0 AND
       NOT EXISTS(SELECT 1 FROM source_event_bindings b WHERE b.event_id=events.event_id) AND
       EXISTS(SELECT 1 FROM native_owner_evidence n WHERE n.event_id=events.event_id AND n.event_content_hash=events.content_hash
         AND n.origin='correction' AND events.origin_binding_kind='native' AND events.connector_id='kizuki.owner')))`);
   const clauses = [
-    `length(${alias}.admission)<=524288 AND json_valid(${alias}.admission) AND json_extract(${alias}.admission,'$.schema')='kizuki.world-admission/v1'`,
+    `length(${alias}.admission)<=524288 AND json_valid(${alias}.admission) AND json_extract(${alias}.admission,'$.schema') IN ('kizuki.world-admission/v1','kizuki.world-admission/v2')`,
     `EXISTS(SELECT 1 FROM claim_v2_support_events se WHERE se.support_key=${alias}.support_key)`,
     `NOT EXISTS(SELECT 1 FROM claim_v2_support_events se LEFT JOIN events ON events.event_id=se.event_id
       WHERE se.support_key=${alias}.support_key AND (events.event_id IS NULL OR events.content_hash<>se.event_content_hash OR COALESCE((${event.join(" AND ")}),0)=0))`,
@@ -90,6 +103,8 @@ export function authorizedClaimSql(
     clauses.push(`${instantPairSql(`${alias}.asserted_at`)} <= (?,?)`);
     bindings.push(...instantBoundPair(grant.until, "until"));
   }
+  const selected = selectedClaimSql(ctx.selection, alias);
+  clauses.push(selected.sql); bindings.push(...selected.bindings);
   return { sql: clauses.join(" AND "), bindings };
 }
 export function validMeaningSql(

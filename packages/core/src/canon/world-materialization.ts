@@ -8,6 +8,7 @@ import type { Database } from "bun:sqlite";
 import { OWNER } from "../agents";
 import { SENSITIVITY_ORDER, isSensitivity } from "../agents/types";
 import { getClaim } from "../claims/store";
+import type { ClaimVisibility } from "../claims/visibility";
 import { semanticKey } from "../claims/claim-v2-keys";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { rawSubjectNamespace, type ClaimV2Assertion } from "../contracts/claim-v2";
@@ -17,11 +18,13 @@ import type { PageType } from "../vault/schema";
 import type { WorldAdmission } from "../contracts/world-admission";
 import { canonicalJson, sha256Hex } from "../util/hash";
 import { eligibleWorldClaim, type EligibleSupport, type ReadBudget } from "../world/projection";
+import { retainedWorldClaimForReceipt } from "../world/pipeline/eligible";
 import { authorizedSupportSql } from "../world/policy-sql";
 import { heldClaimSql } from "../world/corroboration";
 import type { ServeContext } from "../serving/types";
 import type { WorldClaimBasis } from "./world-receipt";
 import { CanonWriteError } from "./errors";
+import { renderWorldAssertion } from "./world-rendering";
 
 const MAX_PAGE_CLAIMS=64;
 /** Groups one scan reads; a queue longer than this is read a window at a time. */
@@ -51,29 +54,103 @@ function titleOf(semantic:ClaimV2Assertion,current:string):string {
  return activeWorldRegistry().isLabelPredicate(semantic.predicate)&&semantic.object.kind==="literal"?semantic.object.value:current;
 }
 function context(db:Database):ServeContext {return {db,vaultPath:"",principal:OWNER,sourcePurpose:"derive"};}
-function render(claim:Claim,support:EligibleSupport):Claim {
- return {...claim,body:support.admission.rendering.body,frontmatter:{},taint:support.row.support_origin==="native_owner"?claim.taint:"quoted",authority:support.admission.authority,confidence:support.admission.confidence,provenance:support.events.map(event=>event.event_id)};
+function semanticBody(semantic:ClaimV2Assertion,support:EligibleSupport):string {
+ const body=renderWorldAssertion(semantic);
+ // A native correction's explicit statement belongs to this current assertion.
+ // Connector/model prose may mention unrelated facts and remains evidence only.
+ return support.row.support_origin==="native_owner" && support.admission.rendering.body.trim().length>0
+  ? `${body}\nOwner statement: ${support.admission.rendering.body.trim()}` : body;
+}
+function render(claim:Claim,support:EligibleSupport,semantic:ClaimV2Assertion):Claim {
+ return {...claim,body:semanticBody(semantic,support),frontmatter:{},taint:support.row.support_origin==="native_owner"?claim.taint:"quoted",authority:support.admission.authority,confidence:support.admission.confidence,provenance:support.events.map(event=>event.event_id)};
 }
 export interface WorldMaterialization {
  readonly handle:string; readonly claims:readonly Claim[];readonly basis:readonly WorldClaimBasis[];
  readonly title:string;readonly pageType:PageType;
 }
-/** Select one complete admitted rendering per assertion; never pool partial or denied support. */
-export function selectWorldMaterialization(db:Database,handle:string):WorldMaterialization|null {
- const ctx=context(db),permitted=authorizedSupportSql(ctx),budget:ReadBudget={bytes:0};
- const held=heldClaimSql("c",permitted);
- const candidates=db.query<{claim_id:string},(string|number)[]>(`SELECT DISTINCT c.claim_id FROM claims c JOIN claim_v2_support s USING(claim_id) JOIN semantic_allocations a USING(support_key) JOIN semantic_bindings b USING(handle_id) JOIN claim_v2_semantics m ON m.claim_id=c.claim_id AND m.subject_kind=b.raw_kind AND m.subject_id=b.raw_id AND (b.raw_kind='occurrence' OR (json_extract(m.payload,'$.subject.namespace.connector_id')=json_extract(b.raw_namespace,'$.connector_id') AND json_extract(m.payload,'$.subject.namespace.source_key')=json_extract(b.raw_namespace,'$.source_key'))) WHERE c.is_world_typed=1 AND c.status='live' AND a.handle_id=? AND ${permitted.sql} AND NOT ${held.sql} ORDER BY c.claim_id LIMIT ?`).all(handle,...permitted.bindings,...held.bindings,MAX_PAGE_CLAIMS+1);
- const claims:Claim[]=[],basis:WorldClaimBasis[]=[];let title="Knowledge record",pageType:PageType=DEFAULT_PAGE_TYPE;
- for(const candidate of candidates) {
-  if(worldClaimHandle(db,candidate.claim_id)!==handle)continue;
-  const eligible=eligibleWorldClaim(ctx,candidate.claim_id,{kind:"all"},budget),support=eligible?.supports[0],claim=getClaim(db,candidate.claim_id);
-  if(eligible===null||support===undefined||claim===null)continue;
-  if(claims.length===MAX_PAGE_CLAIMS)throw new CanonWriteError("batch_too_large","world page exceeds its bounded materialization");
-  const semantic=eligible.semantic;
-  pageType=pageTypeOf(semantic,pageType);title=titleOf(semantic,title);
-  claims.push(render(claim,support));basis.push({claim_id:claim.claim_id,semantic_key:semanticKey(semantic),supports:[{support_key:support.row.support_key,admission_hash:worldAdmissionHash(support.admission)}]});
+export interface WorldMaterializationScope {
+  readonly context: ServeContext;
+  readonly claims: ClaimVisibility;
+  /** This pass's native statement is caller-owned input, even when recorded private. */
+  readonly correction?: { readonly claim_id: string; readonly event_id: string };
+}
+/** Select one complete admitted support per assertion; never pool partial or denied support. */
+export function selectWorldMaterialization(
+  db: Database,
+  handle: string,
+  readScope?: WorldMaterializationScope,
+): WorldMaterialization | null {
+  if (readScope !== undefined && readScope.context.db !== db)
+    throw new CanonWriteError("decision_stale", "typed canon read scope names another ledger");
+  const ctx = readScope?.context ?? context(db);
+  const visibility = readScope?.claims;
+  const permitted = authorizedSupportSql(ctx);
+  const held = heldClaimSql("claims", permitted);
+  const budget: ReadBudget = { bytes: 0 };
+  const candidates = db.query<{ claim_id: string }, (string | number)[]>(`
+    SELECT DISTINCT claims.claim_id FROM claims
+    JOIN claim_v2_support s USING(claim_id)
+    JOIN semantic_allocations a USING(support_key)
+    JOIN semantic_bindings b USING(handle_id)
+    JOIN claim_v2_semantics m ON m.claim_id=claims.claim_id
+      AND m.subject_kind=b.raw_kind AND m.subject_id=b.raw_id
+      AND (b.raw_kind='occurrence' OR (
+        json_extract(m.payload,'$.subject.namespace.connector_id')=json_extract(b.raw_namespace,'$.connector_id')
+        AND json_extract(m.payload,'$.subject.namespace.source_key')=json_extract(b.raw_namespace,'$.source_key')))
+    WHERE claims.is_world_typed=1 AND claims.status='live' AND a.handle_id=?
+      AND ${permitted.sql} AND NOT ${held.sql} ${visibility === undefined ? "" : `AND (${visibility.sql})`}
+    ORDER BY claims.claim_id LIMIT ?
+  `).all(handle, ...permitted.bindings, ...held.bindings, ...(visibility?.bindings ?? []), MAX_PAGE_CLAIMS + 1);
+  const correction = readScope?.correction;
+  if (correction !== undefined && !candidates.some(candidate => candidate.claim_id === correction.claim_id))
+    candidates.push({ claim_id: correction.claim_id });
+
+  const claims: Claim[] = [];
+  const basis: WorldClaimBasis[] = [];
+  let title = "Knowledge record", pageType: PageType = DEFAULT_PAGE_TYPE;
+  for (const candidate of candidates) {
+    if (worldClaimHandle(db, candidate.claim_id) !== handle) continue;
+    const own = correction?.claim_id === candidate.claim_id ? correction : undefined;
+    // Restrict the exemption to the exact newly recorded native statement, never
+    // other support attached to the assertion. All existing evidence uses ctx.
+    const supportKeys = own === undefined ? undefined : db.query<{ support_key: string }, [string, string, string]>(`
+      SELECT s.support_key FROM claim_v2_support s
+      WHERE s.claim_id=? AND s.support_origin='native_owner'
+        AND EXISTS(SELECT 1 FROM claim_v2_support_events se WHERE se.support_key=s.support_key AND se.event_id=?)
+        AND NOT EXISTS(SELECT 1 FROM claim_v2_support_events se WHERE se.support_key=s.support_key AND se.event_id<>?)
+    `).all(candidate.claim_id, own.event_id, own.event_id).map(row => row.support_key);
+    const eligible = eligibleWorldClaim(own === undefined ? ctx : context(db), candidate.claim_id,
+      { kind: "all" }, budget, supportKeys === undefined ? {} : { supportKeys });
+    const support = eligible?.supports[0];
+    const claim = getClaim(db, candidate.claim_id);
+    if (eligible === null || support === undefined || claim === null ||
+      (own === undefined && !(visibility?.canRead(claim) ?? true))) continue;
+    if (claims.length === MAX_PAGE_CLAIMS)
+      throw new CanonWriteError("batch_too_large", "world page exceeds its bounded materialization");
+    const semantic = eligible.semantic;
+    pageType = pageTypeOf(semantic, pageType);
+    title = titleOf(semantic, title);
+    claims.push(render(claim, support, semantic));
+    basis.push({ claim_id: claim.claim_id, semantic_key: semanticKey(semantic), rendering:"semantic/v1", supports: [{
+      support_key: support.row.support_key, admission_hash: worldAdmissionHash(support.admission),
+    }] });
+  }
+  return claims.length === 0 ? null : { handle, claims, basis, title, pageType };
+}
+type BasisProof = "current" | "historical" | "receipt_custody";
+function basisClaim(db:Database,item:WorldClaimBasis,budget:ReadBudget,proof:BasisProof) {
+ const supportKeys=item.supports.map(support=>support.support_key);
+ return proof==="receipt_custody"?retainedWorldClaimForReceipt(db,item.claim_id,budget,supportKeys):
+  eligibleWorldClaim(context(db),item.claim_id,{kind:"all"},budget,{...(proof==="historical"?{historical:true as const}:{}),supportKeys});
+}
+/** Retained bytes can prove custody after a tombstone, never permission to serve or undo them. */
+export function assertRetainedWorldBasis(db:Database,basis:readonly WorldClaimBasis[]|null):void {
+ const budget:ReadBudget={bytes:0};
+ for(const item of basis??[]) {
+  const eligible=basisClaim(db,item,budget,"receipt_custody");
+  if(eligible===null||semanticKey(eligible.semantic)!==item.semantic_key||!item.supports.every(expected=>eligible.supports.some(actual=>actual.row.support_key===expected.support_key&&worldAdmissionHash(actual.admission)===expected.admission_hash)))
+   throw new CanonWriteError("decision_stale","retained world support changed before canon admission");
  }
- return claims.length===0?null:{handle,claims,basis,title,pageType};
 }
 /** Exact selected historical support remains valid after supersession, but never after source loss. */
 export function worldBasisAllowed(ctx:ServeContext,basis:readonly WorldClaimBasis[]|null,historical=false):boolean {
@@ -96,35 +173,46 @@ export interface PendingWorldGroup { readonly handle:string; readonly claims:Cla
  * materializer. Groups whose handle is in `excluded` are passed over without
  * using up the window, so a page that cannot be written does not hide the ones behind it.
  */
-export function pendingWorldCanonClaims(db:Database,limit=32,excluded:ReadonlySet<string>=new Set()):PendingWorldGroup[] {
+export function pendingWorldCanonClaims(db:Database,limit=32,excluded:ReadonlySet<string>=new Set(),existingOnly=false):PendingWorldGroup[] {
  const ctx=context(db),permitted=authorizedSupportSql(ctx),window=MAX_PENDING_GROUPS*MAX_PAGE_CLAIMS;
  const held=heldClaimSql("c",permitted);
+ const existingPage=`EXISTS (SELECT 1 FROM claim_v2_semantics m JOIN semantic_bindings b ON
+  b.raw_kind=m.subject_kind AND b.raw_id=m.subject_id AND
+  (b.raw_kind='occurrence' OR (json_extract(b.raw_namespace,'$.connector_id')=json_extract(m.payload,'$.subject.namespace.connector_id') AND json_extract(b.raw_namespace,'$.source_key')=json_extract(m.payload,'$.subject.namespace.source_key')))
+  JOIN page_index p ON p.rel_path='auto/world/'||b.handle_id||'.md' WHERE m.claim_id=c.claim_id)`;
  const groups=new Map<string,Claim[]>();
- let after="";
- while(groups.size<limit) {
-  const ids=db.query<{claim_id:string},(string|number)[]>(`SELECT c.claim_id FROM claims c WHERE c.is_world_typed=1 AND c.status='live' AND c.receipt_id IS NULL AND c.claim_id>? AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql} ORDER BY c.claim_id LIMIT ?`).all(after,...permitted.bindings,...held.bindings,window);
-  for(const {claim_id} of ids) {
-   const handle=worldClaimHandle(db,claim_id),claim=getClaim(db,claim_id);if(handle===null||claim===null||excluded.has(handle))continue;
-   if(!groups.has(handle)&&groups.size===limit)continue;
-   const group=groups.get(handle)??[];
-   if(group.length===MAX_PAGE_CLAIMS)continue;
-   group.push(claim);groups.set(handle,group);
+ // Existing pages retain priority without losing the durable held-page exclusion
+ // or the keyset walk past a bounded window of unwriteable groups.
+ for(const priority of (existingOnly?[1]:[1,0])) {
+  let after="";
+  while(groups.size<limit) {
+   const ids=db.query<{claim_id:string},(string|number)[]>(`SELECT c.claim_id FROM claims c WHERE c.is_world_typed=1 AND c.status='live' AND c.receipt_id IS NULL AND c.claim_id>? AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql} AND ${existingPage}=? ORDER BY c.claim_id LIMIT ?`).all(after,...permitted.bindings,...held.bindings,priority,window);
+   for(const {claim_id} of ids) {
+    const handle=worldClaimHandle(db,claim_id),claim=getClaim(db,claim_id);if(handle===null||claim===null||excluded.has(handle))continue;
+    if(!groups.has(handle)&&groups.size===limit)continue;
+    const group=groups.get(handle)??[];
+    if(group.length===MAX_PAGE_CLAIMS)continue;
+    group.push(claim);groups.set(handle,group);
+   }
+   if(ids.length<window)break;
+   after=ids[ids.length-1]!.claim_id;
   }
-  if(ids.length<window)break;
-  after=ids[ids.length-1]!.claim_id;
  }
  return [...groups].map(([handle,claims])=>({handle,claims}));
 }
 
 /** Metadata belongs to the exact selected contributions, not caller-supplied receipt fields. */
 export function worldBasisMetadata(db:Database,basis:readonly WorldClaimBasis[]|null,historical=false):{authority:AuthorityTier;confidence:number;provenance:string[]}|null {
+ return basisMetadata(db,basis,historical?"historical":"current");
+}
+function basisMetadata(db:Database,basis:readonly WorldClaimBasis[]|null,proof:BasisProof):{authority:AuthorityTier;confidence:number;provenance:string[]}|null {
  if(basis===null)return null;
- assertWorldBasis(db,basis,historical);
- const ctx=context(db),budget:ReadBudget={bytes:0},provenance:string[]=[],confidences:number[]=[];
+ if(proof==="receipt_custody")assertRetainedWorldBasis(db,basis);else assertWorldBasis(db,basis,proof==="historical");
+ const budget:ReadBudget={bytes:0},provenance:string[]=[],confidences:number[]=[];
  let authority:AuthorityTier="owner_correction";
  for(const item of basis) {
   if(item.supports.length!==1)throw new Error("typed canon requires one complete selected support per assertion");
-  const eligible=eligibleWorldClaim(ctx,item.claim_id,{kind:"all"},budget,{...(historical?{historical:true as const}:{}),supportKeys:item.supports.map(support=>support.support_key)});
+  const eligible=basisClaim(db,item,budget,proof);
   const support=eligible?.supports.find(support=>support.row.support_key===item.supports[0]!.support_key);
   if(support===undefined)throw new Error("typed canon metadata support missing");
   if(AUTHORITY_TIERS[support.admission.authority]<AUTHORITY_TIERS[authority])authority=support.admission.authority;
@@ -134,7 +222,7 @@ export function worldBasisMetadata(db:Database,basis:readonly WorldClaimBasis[]|
  return {authority,confidence:Math.round(confidences.reduce((sum,value)=>sum+value,0)/confidences.length*1e4)/1e4,provenance};
 }
 function assertWorldReceiptMetadata(db:Database,receipt:RetainedWorldCanonReceipt):void {
- const before=worldBasisMetadata(db,receipt.basis.before,true),after=worldBasisMetadata(db,receipt.basis.after,true),metadata=after??before;
+ const before=basisMetadata(db,receipt.basis.before,"receipt_custody"),after=basisMetadata(db,receipt.basis.after,"receipt_custody"),metadata=after??before;
  if(metadata===null||receipt.authority!==metadata.authority||receipt.confidence!==metadata.confidence||receipt.producer!=="deterministic"||receipt.model_ref!==null)throw new Error("typed receipt metadata differs from admitted support");
  const provenance=[...new Set([...(before?.provenance??[]),...(after?.provenance??[])])].sort();
  if(canonicalJson([...receipt.provenance].sort())!==canonicalJson(provenance))throw new Error("typed receipt provenance differs from admitted support");
@@ -177,21 +265,21 @@ function assertWorldReceiptOwnership(db:Database,receipt:RetainedWorldCanonRecei
  }
 }
 
-/** Restore and reads share the same exact semantic-handle namespace check. */
-export function assertWorldReceiptBasis(db:Database,receipt:RetainedWorldCanonReceipt,options:{historical?:boolean}={}):void {
+/** Receipt integrity is distinct from permission to materialize either image. */
+export function assertWorldReceiptBasis(db:Database,receipt:RetainedWorldCanonReceipt,options:{historical?:boolean;proof?:"receipt_custody"}={}):void {
  if(!isWorldCanonReceipt(receipt))throw new Error("typed receipt required");
  assertWorldReceiptMetadata(db,receipt);
  assertWorldReceiptOwnership(db,receipt);
  for(const image of [receipt.basis.before,receipt.basis.after]) {
-  assertWorldBasis(db,image,options.historical??false);
+  if(options.proof==="receipt_custody")assertRetainedWorldBasis(db,image);else assertWorldBasis(db,image,options.historical??false);
   for(const item of image??[]) {
    const handle=worldClaimHandle(db,item.claim_id);
    if(handle===null||worldCanonPath(handle)!==receipt.page_path)throw new Error("typed receipt handle mismatch");
   }
  }
 }
-/** Reconstruct exact attributed prose rather than accepting rehashed backup text as evidence. */
-export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonReceipt,bytes:Uint8Array|null,image:"before"|"after"):void {
+/** Reconstruct the exact receipt-versioned text; rehashed backup prose is not evidence. */
+export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonReceipt,bytes:Uint8Array|null,image:"before"|"after",proof:"historical"|"receipt_custody"="historical"):void {
  assertWorldReceiptMetadata(db,receipt);
  const basis=receipt.basis[image],expected=image==="before"?receipt.before_hash:receipt.after_hash;
  if(bytes===null) {
@@ -200,16 +288,16 @@ export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonRecei
   return;
  }
  if(basis===null||hashBytes(bytes)!==expected)throw new Error("typed canon image differs from receipt");
- assertWorldBasis(db,basis,true);
- const ctx=context(db),budget:ReadBudget={bytes:0},bodies:string[]=[],sources:string[]=[];
+ if(proof==="receipt_custody")assertRetainedWorldBasis(db,basis);else assertWorldBasis(db,basis,true);
+ const budget:ReadBudget={bytes:0},bodies:string[]=[],sources:string[]=[];
  let title="Knowledge record",type:PageType=DEFAULT_PAGE_TYPE,minimumSensitivity=0,quoted=false;
  for(const item of basis) {
   const handle=worldClaimHandle(db,item.claim_id);if(handle===null||worldCanonPath(handle)!==receipt.page_path)throw new Error("typed receipt handle mismatch");
-  const eligible=eligibleWorldClaim(ctx,item.claim_id,{kind:"all"},budget,{historical:true,supportKeys:item.supports.map(support=>support.support_key)})!;
+  const eligible=basisClaim(db,item,budget,proof)!;
   const support=eligible.supports.find(support=>support.row.support_key===item.supports[0]!.support_key)!;
   const claim=getClaim(db,item.claim_id)!;
   minimumSensitivity=Math.max(minimumSensitivity,SENSITIVITY_ORDER[claim.sensitivity]);quoted ||= claim.taint==="quoted";
-  const body=support.admission.rendering.body.trim();if(body.length)bodies.push(body);
+  const body=(item.rendering==="semantic/v1"?semanticBody(eligible.semantic,support):support.admission.rendering.body).trim();if(body.length)bodies.push(body);
   for(const event of support.events)if(!sources.includes(event.event_id))sources.push(event.event_id);
   const semantic=eligible.semantic;
   type=pageTypeOf(semantic,type);title=titleOf(semantic,title);

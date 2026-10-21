@@ -1,9 +1,11 @@
+import { TYPED_REF_KINDS } from "./tables/refs";
+import { assertObservations } from "../claims/observations";
+import { groundingDigest, validateWorldAdmissionProofs, witnessEventIds } from "../claims/world-grounding";
 import { isUtf16TextBoundary } from "../contracts/producer-v2";
 import { rawSubjectNamespace } from "../contracts/claim-v2";
 import type { Database } from "bun:sqlite";
 import {
   validateStoredClaimOccurrences,
-  validateWorldEndpointProofs,
 } from "../claims/occurrences";
 import { semanticKey, supportKey } from "../claims/claim-v2-keys";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
@@ -20,6 +22,7 @@ import { tableExists } from "../ledger/schema";
 
 /** Restore/open validation: mappings are retained bookkeeping, never trusted imported authority. */
 export function assertWorldState(db: Database): void {
+  assertObservations(db);
   for (const table of WORLD_TABLES)
     if (!tableExists(db, table))
       throw new Error("world storage migration required");
@@ -38,7 +41,7 @@ export function assertWorldState(db: Database): void {
       },
       []
     >(
-      "SELECT * FROM claim_v2_support WHERE json_valid(admission) AND json_extract(admission,'$.schema')='kizuki.world-admission/v1'",
+      "SELECT * FROM claim_v2_support WHERE json_valid(admission) AND json_extract(admission,'$.schema') IN ('kizuki.world-admission/v1','kizuki.world-admission/v2')",
     )
     .iterate()) {
     const admission = parseWorldAdmission(JSON.parse(row.admission));
@@ -80,6 +83,7 @@ export function assertWorldState(db: Database): void {
         row.support_origin !== "native_owner") ||
       supportKey({
         support_origin: row.support_origin,
+        grounding_digest: groundingDigest(admission),
         semantic_key: semanticKey(admission.semantic),
         source_key: row.source_key,
         grant_revision: row.grant_revision,
@@ -88,6 +92,11 @@ export function assertWorldState(db: Database): void {
       }) !== row.support_key
     )
       throw new Error("world support identity mismatch");
+    const grounding = validateWorldAdmissionProofs(db, admission, row.support_origin === "native_owner" ? null : row.source_key, { restore: true });
+    if (admission.schema === "kizuki.world-admission/v2") {
+      const expected = new Set([...witnessEventIds(admission), ...grounding.map(e => e.event_id)]);
+      if (row.support_origin !== "source" || expected.size !== events.length || events.some(e => !expected.has(e.event_id))) throw new Error("world grounding dependency mismatch");
+    }
     for (const identity of events) {
       const event = readEvent(db, identity.event_id);
       const source = db
@@ -101,7 +110,7 @@ export function assertWorldState(db: Database): void {
         event.content_hash !== identity.event_content_hash ||
         event.origin !== "external" ||
         (row.support_origin === "source"
-          ? source?.source_key !== row.source_key
+          ? source?.source_key !== row.source_key && !grounding.some(e => e.event_id === identity.event_id && e.event_content_hash === identity.event_content_hash)
           : source !== null ||
             row.source_key !== "native-owner" ||
             row.grant_revision !== 0 ||
@@ -109,12 +118,6 @@ export function assertWorldState(db: Database): void {
       )
         throw new Error("world support event mismatch");
     }
-    validateWorldEndpointProofs(
-      db,
-      admission.semantic,
-      row.support_origin === "native_owner" ? null : row.source_key,
-      { restore: true },
-    );
     for (const anchor of anchors) {
       if (!events.some((event) => event.event_id === anchor.event_id))
         throw new Error("world support anchor missing");
@@ -209,7 +212,7 @@ export function assertWorldState(db: Database): void {
     .iterate()) {
     const table = `world_wire_${row.ref_kind}_targets`;
     if (
-      !WORLD_TABLES.includes(table as (typeof WORLD_TABLES)[number]) ||
+      (!WORLD_TABLES.includes(table as (typeof WORLD_TABLES)[number]) && !TYPED_REF_KINDS.some(kind => table === `world_wire_${kind}_targets`)) ||
       db
         .query(`SELECT 1 FROM ${table} WHERE namespace_id=? AND wire_ref=?`)
         .get(row.namespace_id, row.wire_ref) === null

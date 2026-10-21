@@ -212,3 +212,28 @@ test("absence is checked against the originally recorded descriptor identity", a
   await expect(rebuildRetrieval(f.db, f.vault, port)).rejects.toThrow("could not establish absence");
   expect(port.removed).toEqual([[`event:${event}`]]);
 });
+
+
+test("acknowledged rebuild cancellation retains same-snapshot progress and releases the writer", async () => {
+  const f = fixture();
+  capture(f, "atlas", 1);
+  const port = new SettlementPort();
+  Object.assign(port.descriptor, { method_timeouts_ms: { rebuildFromDocuments: 30 } });
+  const snapshots: string[] = [];
+  let completed = false;
+  port.rebuildFromDocuments = async (_docs: readonly RetrievalDoc[], options?: { signal?: AbortSignal; snapshot_id?: string }) => {
+    snapshots.push(options!.snapshot_id!);
+    try { await new Promise<void>((_resolve, reject) => {
+      options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), { once: true });
+    }); } finally { completed = true; }
+  };
+  await expect(rebuildRetrieval(f.db, f.vault, port)).rejects.toThrow("timed out");
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  expect(completed).toBe(true);
+  expect(port.removed).toEqual([]);
+  await expect(rebuildRetrieval(f.db, f.vault, port)).rejects.toThrow("timed out");
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+  expect(snapshots).toHaveLength(2);
+  expect(snapshots[0]).toMatch(/^[a-f0-9]{64}$/);
+  expect(snapshots[1]).toBe(snapshots[0]);
+});

@@ -197,9 +197,13 @@ export type {
 export {
   MAX_RETRIEVAL_LIMIT,
   RETRIEVAL_CAPABILITIES,
+  DOCUMENT_SCOPE_CAPABILITY,
+  MAX_RETRIEVAL_DOCUMENT_SCOPE,
+  retrievalDocumentScope,
   RETRIEVAL_CONTRACT,
   RETRIEVAL_CONTRACT_MINOR,
   PROVENANCE_ERASURE_CAPABILITY,
+  MUTATION_FENCE_CAPABILITY,
   RETRIEVAL_DOC_KINDS,
   requireRetrievalCapability,
   validateAbsenceProof,
@@ -215,6 +219,7 @@ export {
 export type {
   AbsenceProof,
   ProvenanceAbsenceProof,
+  EmbedProgress,
   EntityRef,
   GraphEdge as RetrievalGraphEdge,
   GraphQueryOptions,
@@ -225,10 +230,12 @@ export type {
   RetrievalDocKind,
   RetrievalHit,
   RetrievalMutationReport,
+  RetrievalMutationFence,
   RetrievalPort,
   RetrievalQuery,
   RetrievalResult,
   RetrievalScope,
+  RetrievalDocumentScope,
 } from "./contracts/retrieval";
 export {
   FTS5_RETRIEVAL_DESCRIPTOR,
@@ -650,6 +657,7 @@ export type {
   ScanFailureCode,
   SkippedPage,
 } from "./vault/pages";
+export type { CanonCapacity, CanonCapacityState } from "./vault/canon-limits";
 export { readDerivedMeta, stampDerived } from "./derived-meta";
 export type {
   DerivedLayer,
@@ -797,6 +805,16 @@ export {
   runToCompletion,
 } from "./ingest/run";
 export {
+  MASS_WITHDRAWAL_FLOOR,
+  MASS_WITHDRAWAL_SHARE,
+  MASS_WITHDRAWAL_STATE,
+  massWithdrawalDetail,
+  massWithdrawalHeld,
+  massWithdrawalHoldOf,
+  parseMassWithdrawalDetail,
+} from "./ingest/withdrawal-hold";
+export type { MassWithdrawalHold } from "./ingest/withdrawal-hold";
+export {
   DETERMINISTIC_PRODUCER_BUDGET,
   produceForEvent,
   proposalsForEvent,
@@ -843,7 +861,9 @@ export type { DiffLine } from "./util/diff";
 export {
   AGENT_SCHEMA_VERSION,
   AgentEnrollmentError,
+  DEFAULT_DENY_CLASSES,
   DEFAULT_GRANT,
+  EVENT_CLASSES,
   LIFECYCLE_ACTIONS,
   MAX_AUDIT_PAGE,
   MAX_RATE_LIMIT_PER_MINUTE,
@@ -859,6 +879,7 @@ export {
   authenticate,
   authorize,
   checkRate,
+  denyClassesOf,
   filterServable,
   getAgent,
   initAgents,
@@ -897,6 +918,7 @@ export type {
   AuditPage,
   AuditRow,
   DenyReason,
+  EventClass,
   Grant,
   LifecycleAction,
   Principal,
@@ -944,6 +966,7 @@ export {
   ENTITY_TYPES,
   ENVELOPE_SCHEMA,
   ServeError,
+  scopedWriterRefusal,
   dispatchServeTool,
   gate,
   PACKET_PURPOSES,
@@ -1145,7 +1168,8 @@ export type {
   WritePassResult,
 } from "./serve";
 
-export { loadConfiguredRetrieval, persistConfiguredRetrieval, readRetrievalPortState, readRetrievalEngineSpace, editRetrievalPortToml } from "./retrieval/config";
+export { bindConfiguredEmbedding } from "./retrieval/embedding-host";
+export { loadConfiguredRetrieval, persistConfiguredRetrieval, readRetrievalPortState, readRetrievalEngineSpace, readRetrievalEngineRefusal, editRetrievalPortToml } from "./retrieval/config";
 export type { ConfiguredRetrieval, RetrievalPortState } from "./retrieval/config";
 export { tryAdvisoryFileLock } from "./util/advisory-file-lock";
 export type { AdvisoryFileLock } from "./util/advisory-file-lock";
@@ -1179,8 +1203,8 @@ export { isLedgerBusy } from "./ledger/busy";
 export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./serve/qualification";
 export type { QualificationProfile, QualificationRail, QualificationReceipt, QualificationProcess, QualificationSample } from "./serve/qualification";
 
-export { SOURCE_PURPOSES, SOURCE_FIELDS, SourceGrantError, sourcePolicyEpoch, sourceCaptureAdmission, inspectSourceGrant, setSourceGrant, revokeSourceGrant, resumeSourceRevocation, bindLocalSourcePort, bindSourceModelPort, bindEpochZeroProducerPort } from "./ledger/source-grants";
-export type { SourcePurpose, SourceModelEgress, SourceGrantPolicy, SourceGrant, SourceGrantRequest, SourceGrantReceipt, SourceAdmission } from "./ledger/source-grants";
+export { DECLARED_RETENTION_CLASSES, EXTERNAL_RETENTION_CLASSES, retentionAccepted, consentsToJudge, SOURCE_PURPOSES, SOURCE_FIELDS, SourceGrantError, sourcePolicyEpoch, sourceCaptureAdmission, inspectSourceGrant, setSourceGrant, revokeSourceGrant, resumeSourceRevocation, bindLocalSourcePort, bindSourceModelPort, bindSourceJudgePort, bindEpochZeroProducerPort } from "./ledger/source-grants";
+export type { ExternalRetention, DeclaredRetention, SourcePurpose, SourceModelEgress, SourceGrantPolicy, SourceGrant, SourceGrantRequest, SourceGrantReceipt, SourceAdmission } from "./ledger/source-grants";
 
 export type { OwnedSourceRetrievalInventory, OwnedSourceRetrievalStore, SourceStoreStatus } from "./ledger/source-stores";
 

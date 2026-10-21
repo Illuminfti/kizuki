@@ -9,12 +9,15 @@ import { exportVault, restoreVault, type ExportManifest, type ExportManifestEntr
 import { accept } from "../../src/ledger/ledger";
 import { openLedger } from "../../src/ledger/db";
 import { purgeEvents } from "../../src/ledger/purge";
+import { planModelExtractionV2 } from "../../src/producer/model-v2";
+import { worldProduceInput } from "../../src/serve/extract-v2";
 import { escapeFenceText } from "../../src/producer/fence";
 import { inspectServeDoctor } from "../../src/serve/doctor";
 import { journalExtractBatch, mineLiveDrafts, readExtractCursor, retrySkippedRecords } from "../../src/serve/extract";
 import { listSkippedRecords, segmentEnd } from "../../src/serve/extract-oversized";
 import { runRail } from "../../src/serve/rails";
-import { DEFAULT_EXTRACTION_CONFIG } from "../../src/serve/types";
+import { readLease } from "../../src/serve/leases";
+import { DEFAULT_EXTRACTION_CONFIG, HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS, WRITER_LEASE } from "../../src/serve/types";
 import { runWritePass } from "../../src/serve/write-pass";
 import { withVaultMutationSync } from "../../src/vault/mutation-scope";
 import {
@@ -44,8 +47,8 @@ function vaultWith(texts: readonly string[], settings = SETTINGS) {
   return { ...vault, db };
 }
 
-const sync = (f: { db: Database; vault: string }, producer: ReturnType<typeof segmentModelProducer>["producer"]) =>
-  runRail(f.db, f.vault, "sync", { hooks: { producer, claims: { db: f.db }, model_ref: MODEL } });
+const sync = (f: { db: Database; vault: string }, producer: ReturnType<typeof segmentModelProducer>["producer"], now?: () => string) =>
+  runRail(f.db, f.vault, "sync", { ...(now === undefined ? {} : { now }), hooks: { producer, claims: { db: f.db }, model_ref: MODEL } });
 const endsAt = (cursor: string | null, eventId: string): boolean => cursor?.endsWith(`\t${eventId}`) === true;
 const modelClaims = (db: Database): number =>
   listClaims(db, { status: "live", limit: 1_000 }).filter((claim) => claim.producer === "model").length;
@@ -242,7 +245,11 @@ test("a kill between segments resumes at the next segment and never re-files a f
   expect(modelClaims(db)).toBe(2);
 
   const model = segmentModelProducer(f.vault);
-  const resumed = await sync({ db, vault: f.vault }, model.producer);
+  const lease = readLease(db, WRITER_LEASE)!;
+  expect((await sync({ db, vault: f.vault }, model.producer, () => lease.heartbeat_at)).status).toBe("failed");
+  expect(model.requests).toEqual([]);
+  const retryAt = new Date(Date.parse(lease.heartbeat_at) + HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS * 1000).toISOString();
+  const resumed = await sync({ db, vault: f.vault }, model.producer, () => retryAt);
   expect(resumed).toMatchObject({ status: "ok", errors: [], claims_extracted: 3, oversized: { segments: 2, skipped: 0 } });
   expect(model.requests.map((request) => request.event_ids)).toEqual([[e1], [e1], [e2]]);
   const rest = segmentsOf(model.requests, e1);
@@ -360,10 +367,13 @@ test("purge drops a record's segment progress; backup and restore keep progress 
 });
 
 test("a record whose segment no request can carry keeps a retry receipt, and a larger budget extracts it", async () => {
-  const f = vaultWith([recordText(0)], "[extraction]\nmax_calls_per_pass = 12\nmax_input_tokens = 2000\n");
+  const f = vaultWith([recordText(0)]);
   const [e0] = f.eventIds as [string];
-  // Forty named subjects at the head of the record: their supplied references
-  // alone outgrow a 2,000-token request, so no segment of it can be planned.
+  const ordinary = planModelExtractionV2(worldProduceInput([{ event_id: e0, text: recordText(0) } as never]));
+  if (ordinary.status !== "ready") throw new Error("ordinary fixture exceeds the shipped request budget");
+  writeServeToml(f.vault, `[extraction]\nmax_calls_per_pass = 12\nmax_input_tokens = ${ordinary.input_tokens}\n`);
+  // Reserve exactly enough for the ordinary record. Forty named subjects add
+  // supplied references that no segment can fit within the same request budget.
   const names = Array.from({ length: 40 }, (_, index) => `Name${String(index).padStart(2, "0")}x`);
   const crowded = `${names.join(" ")}\n\n${paragraphRecord(30_000)}`;
   const accepted = accept(f.db, { ...validEvent(), connector_id: "kizuki.fixture", source_record_id: "crowded", text: crowded,

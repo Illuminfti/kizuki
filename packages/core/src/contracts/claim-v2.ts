@@ -112,7 +112,7 @@ function exact(value: Record<string, unknown>, keys: readonly string[]): boolean
   return actual.length === keys.length && keys.every(key => Object.hasOwn(value, key));
 }
 
-function rawRef(value: unknown): value is RawSubjectRef {
+export function rawRef(value: unknown): value is RawSubjectRef {
   return isPlainObject(value) &&
     (exact(value,["kind","id"]) || (value.kind==="supplied" && exact(value,["kind","id","namespace"]) &&
       isPlainObject(value.namespace) && exact(value.namespace,["connector_id","source_key"]) &&
@@ -224,12 +224,17 @@ function validateAssertion(value: Record<string, unknown>): ClaimV2ValidationRes
   return { ok: true, value: value as unknown as ClaimV2Assertion };
 }
 
+/** Literal prose uses the assertion contract's UTF-16 bound, not identifier rules. */
+export function isClaimLiteralText(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 400;
+}
+
 function isObject(value: unknown): value is ClaimV2Object {
   if (!isPlainObject(value) || typeof value.kind !== "string") {
     return false;
   }
   if (value.kind === "literal") {
-    return exact(value, ["kind", "value"]) && typeof value.value === "string" && value.value.length > 0 && value.value.length <= 400;
+    return exact(value, ["kind", "value"]) && isClaimLiteralText(value.value);
   }
   if (value.kind === "subject") {
     return exact(value, ["kind", "ref"]) && rawRef(value.ref);

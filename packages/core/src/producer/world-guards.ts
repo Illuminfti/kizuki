@@ -1,3 +1,4 @@
+import { ARTIFACT_METADATA_PREDICATES } from "../contracts/artifact-metadata";
 import type { ClaimV2Assertion } from "../contracts/claim-v2";
 
 /**
@@ -83,9 +84,18 @@ export interface CitedEvidence {
  *   states such a fact through a correction.
  */
 export function guardClaim(semantic: ClaimV2Assertion, body: string, cited: CitedEvidence): ClaimV2Assertion | null {
+  if (semantic.subject.id.startsWith("artifact:sha256:") && semantic.predicate === "world.kind" && (semantic.object.kind !== "vocabulary" || semantic.object.ref.id !== "world/artifact_version")) return null;
+  if ((ARTIFACT_METADATA_PREDICATES as readonly string[]).includes(semantic.predicate)) return null;
   const quoted = semantic.perspective.mode === "quoted";
   const bodyRepeats = repeatsInstruction(body, cited.instructionSpans);
   if (!quoted && bodyRepeats) return null;
+  // Attention is evidence for an interest hypothesis, never a person's stated
+  // preference or competence. A subject-valued link cannot prove a declaration
+  // by literal grounding; only native owner correction may make it explicit.
+  if (semantic.predicate === "person.interest") {
+    if (semantic.subject.kind !== "supplied" || semantic.object.kind !== "subject" || bodyRepeats) return null;
+    return { ...semantic, perspective: { ...semantic.perspective, interpretation: "inferred", mode: "uncertain" } };
+  }
   if (semantic.object.kind !== "literal") return isPersonStatePredicate(semantic.predicate) ? null : semantic;
   const literalRepeats = repeatsInstruction(semantic.object.value, cited.instructionSpans);
   if (!quoted && literalRepeats) return null;

@@ -81,7 +81,8 @@ test("working claims and conflict identifiers honor the reader's ceiling", async
   expect(restricted).not.toContain("conflict key=");
   const audit = listAudit(f.db, "reader-personal", { kind: "access" })[0];
   expect(audit?.served).toContainEqual(expect.objectContaining({ id: sha256(visible.claim_id), sensitivity: "public" }));
-  expect(audit?.denied).toContainEqual({ id: sha256(secret.claim_id), reason: "above_ceiling" });
+  // Hidden claims are not selected, so they leave no access attempt or work.
+  expect(audit?.denied).toEqual([]);
   expect(JSON.stringify(audit)).not.toContain("private-orchard-plan");
 });
 
@@ -135,8 +136,8 @@ test("a denied prefix of live keyed claims cannot hide a later allowed claim", a
   }, at(3));
 
   const owner = await packet(f);
-  expect(owner.data?.packet_md).toContain("private-orchard-filler-0");
-  expect(owner.data?.packet_md).not.toContain("visible-lighthouse-plan");
+  expect(owner.data?.packet_md).toContain("private-orchard-filler-400");
+  expect(owner.data?.packet_md).toContain("visible-lighthouse-plan");
   expect(owner.source_policy?.mode).toBe("enforced");
 
   for (const reader of ["reader-public", "subjected", "typed"] as const) {
@@ -233,12 +234,16 @@ test("a hidden interval cannot create or disclose a validity gap", async () => {
   expect((await md(f, "reader-public"))).not.toContain("gap key=");
 });
 
-test("a private interval filling a hole is not removed to invent a public gap", async () => {
+test("a private interval cannot change the reader's visible coverage gap", async () => {
   const f = await fixture();
   await claim(f, "old-public", { valid_from: "2020-01-01T00:00:00Z", valid_to: "2021-01-01T00:00:00Z" });
-  await claim(f, "bridge-private", { sensitivity: "private", valid_from: "2021-01-01T00:00:00Z", valid_to: "2022-01-01T00:00:00Z" });
   await claim(f, "new-public", { valid_from: "2022-01-01T00:00:00Z" });
-  expect((await md(f, "reader-public"))).not.toContain("gap key=");
+  const before = await md(f, "reader-public");
+  expect(before).toContain("gap key=");
+  await claim(f, "bridge-private", { sensitivity: "private", valid_from: "2021-01-01T00:00:00Z", valid_to: "2022-01-01T00:00:00Z" });
+  const after = await md(f, "reader-public");
+  expect(after.replace(/ at=\S+/, " at=<at>")).toBe(before.replace(/ at=\S+/, " at=<at>"));
+  expect((await md(f))).not.toContain("gap key=");
 });
 
 test("packets carry no identity-authority flag and still serve model-free claims", async () => {
@@ -269,16 +274,14 @@ test("counterevidence supported by superseded claims is audited", async () => {
   expect(audit?.served).toContainEqual(expect.objectContaining({ id: sha256(old.claim_id) }));
 });
 
-test("an incomplete bounded history cannot assert a gap", async () => {
+test("unrelated claim keys do not truncate a complete readable history", async () => {
   const f = await fixture();
   await claim(f, "old", { valid_from: "2020-01-01T00:00:00Z", valid_to: "2021-01-01T00:00:00Z" });
   await claim(f, "current", { valid_from: "2022-01-01T00:00:00Z" });
   for (let index = 0; index < 400; index += 1) {
     await claim(f, `other-${index}`, { subject: `person:other-${index}`, subjects: [`person:other-${index}`] });
   }
-  // The two interesting rows precede the scan cap. A later interval could
-  // fill their hole, so a packet may not turn the partial scan into a fact.
-  expect((await md(f, "reader-public"))).not.toContain("gap key=");
+  expect((await md(f, "reader-public"))).toContain("gap key=");
 }, 20_000);
 
 

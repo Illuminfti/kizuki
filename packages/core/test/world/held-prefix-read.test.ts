@@ -1,3 +1,4 @@
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { openLedger } from "../../src/ledger/db";
 import { readWorldView } from "../../src/serving/world-view";
@@ -27,15 +28,16 @@ function card(ctx: ServeContext, ref: { kind: "object"; token: string }) {
   return { ...result.result, data: result.result.data as ConceptCard };
 }
 
-test("a held definition prefix cannot hide an eligible tail from public concept reads", async () => {
+test.each([0, 260])("a %i-claim held definition prefix cannot hide an eligible tail from public concept reads", async (heldCount) => {
   const db = openLedger(":memory:");
   try {
-    const seeded = await worldSeed(db, { label: "Orchard", discover: false, predicates: [
-      ...Array.from({ length: 260 }, (_, i) => ({ predicate: "concept.definition", object: { kind: "literal" as const, value: heldText(i) } })),
+    const seeded = await worldSeed(db, { label: "Orchard", model: EMPTY_SUMMARY_MODEL, discover: false, predicates: [
+      ...Array.from({ length: heldCount }, (_, i) => ({ predicate: "concept.definition", object: { kind: "literal" as const, value: heldText(i) } })),
       { predicate: "concept.definition", object: { kind: "literal", value: healthy } },
     ] });
-    expect(eligibleWorldClaim(seeded.ctx, seeded.claims[2]!, valid, { bytes: 0 })).toBeNull();
+    if (heldCount > 0) expect(eligibleWorldClaim(seeded.ctx, seeded.claims[2]!, valid, { bytes: 0 })).toBeNull();
     expect(eligibleWorldClaim(seeded.ctx, seeded.claims.at(-1)!, valid, { bytes: 0 })).not.toBeNull();
+    await completeEmptyWorldSummaries(db);
     const discovery = find(seeded.ctx, "Orchard");
     expect(discovery.status).toBe("current");
     expect(discovery.data.matches).toHaveLength(1);
@@ -43,7 +45,9 @@ test("a held definition prefix cannot hide an eligible tail from public concept 
     expect(read.result.status).toBe("current");
     expect(read.result.data.definitions.map((relation) => relation.object)).toEqual([{ kind: "literal", value: healthy }]);
     expect(JSON.stringify(read.result)).not.toContain("Standing policy");
-    expect(read.frames[0]!.stats).toEqual({ rowsExamined: 3, claimsVerified: 3 });
+    // CARD reads the three eligible predicates, their three exact basis pins, and the summary row.
+    // The held-prefix and zero-prefix controls perform exactly the same work.
+    expect(read.frames[0]!.stats).toEqual({ rowsExamined: 10, claimsVerified: 3 });
   } finally { db.close(); }
 });
 
@@ -75,6 +79,7 @@ test("healthy visible claims still obey the public relation limit", async () => 
     expect(read.result.status).toBe("incomplete");
     expect(read.result.data.coverage.gaps).toContain("traversal_limit");
     expect(read.result.data.definitions).toHaveLength(126);
-    expect(read.frames[0]!.stats).toEqual({ rowsExamined: 129, claimsVerified: 129 });
+    // The bounded relation query plus the three eligible lineage lookups.
+    expect(read.frames[0]!.stats).toEqual({ rowsExamined: 132, claimsVerified: 129 });
   } finally { db.close(); }
 });

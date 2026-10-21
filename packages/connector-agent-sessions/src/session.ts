@@ -3,19 +3,18 @@ import { EVENT_SCHEMA, isPlainObject } from "@kizuki/core";
 import type { CaptureEventInput } from "@kizuki/core";
 import type { SessionFlavor, SessionsConnectorId } from "./config";
 import { MAX_TEXT_BYTES, boundScan, redact, sanitize, truncateUtf8, wellFormed } from "./scrub";
+import { dropScaffolding } from "./scaffolding";
+import { boundScrubText } from "@kizuki/core/internal";
 
-/** Marker of a context packet Kizuki itself served into a session. */
-const SELF_CONTEXT_MARKER = "KIZUKI CONTEXT v1";
+/** Markers of a context packet Kizuki itself served into a session, one per packet contract. */
+const SELF_CONTEXT_MARKERS = ["KIZUKI CONTEXT v1", "KIZUKI CONTEXT v2"] as const;
+
+function carriesSelfContext(text: string): boolean {
+  return SELF_CONTEXT_MARKERS.some((marker) => text.includes(marker));
+}
 const OWN_TOOL_PREFIX = "mcp__kizuki__";
 /** Text a harness injects around the person's words; never theirs. */
 const HARNESS_TEXT = [
-  "<system-reminder>",
-  "<local-command-",
-  "<command-name>",
-  "<environment_context>",
-  "<user_instructions>",
-  "<permissions instructions>",
-  "<turn_aborted>",
   "# AGENTS.md instructions",
 ];
 const IDENTIFIER = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -31,6 +30,9 @@ export interface SessionOptions {
   /** Root-relative, forward slashes. */
   relpath: string;
   includeSubagents: boolean;
+  includeHeadless?: boolean;
+  /** Classification from the last committed complete line. */
+  initialHeadless?: boolean;
   excludeCwd: readonly string[];
   observedAt: string;
 }
@@ -73,6 +75,7 @@ interface RawTurn {
 /** Interprets the lines of one transcript file in order. */
 export class SessionReader {
   readonly #options: SessionOptions;
+  #headless = false;
   #meta = {
     sessionId: null as string | null,
     cwd: null as string | null,
@@ -81,7 +84,10 @@ export class SessionReader {
 
   constructor(options: SessionOptions) {
     this.#options = options;
+    this.#headless = options.initialHeadless ?? false;
   }
+
+  get headless(): boolean { return this.#headless; }
 
   /**
    * `emit` false reads a line for session context only, as a resumed Codex
@@ -104,6 +110,11 @@ export class SessionReader {
   }
 
   #claudeTurn(raw: Record<string, unknown>): Turn | { skip: string } {
+    const entrypoint = raw["entrypoint"];
+    if (typeof entrypoint === "string") {
+      this.#headless = ["print", "sdk", "sdk-cli", "sdk-ts", "sdk-py"].includes(entrypoint);
+    }
+    if (this.#headless && this.#options.includeHeadless === false) return { skip: "headless" };
     const type = raw["type"];
     if (type !== "user" && type !== "assistant")
       return { skip: "ignored_type" };
@@ -137,6 +148,7 @@ export class SessionReader {
     const payload = raw["payload"];
     if (raw["type"] === "session_meta" && isPlainObject(payload)) {
       const git = payload["git"];
+      this.#headless = payload["source"] === "exec" || payload["originator"] === "codex_exec";
       this.#meta = {
         sessionId: str(payload["id"]),
         cwd: str(payload["cwd"]),
@@ -151,6 +163,7 @@ export class SessionReader {
     ) {
       return { skip: "ignored_type" };
     }
+    if (this.#headless && this.#options.includeHeadless === false) return { skip: "headless" };
     const role = payload["role"];
     if (role !== "user" && role !== "assistant") return { skip: "other_role" };
     return this.#finish({
@@ -207,12 +220,11 @@ export class SessionReader {
     }
     const text = texts.join("\n\n");
     if (text.trim() === "") return { skip: "no_text" };
-    if (text.includes(SELF_CONTEXT_MARKER)) return { skip: "self_context" };
     const cwd = str(raw.cwd);
     if (
       cwd !== null &&
       this.#options.excludeCwd.some(
-        (prefix) => cwd === prefix || cwd.startsWith(`${prefix}/`),
+        (prefix) => cwd === prefix || cwd.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`),
       )
     ) {
       return { skip: "excluded_cwd" };
@@ -249,9 +261,11 @@ export class SessionReader {
   #event(turn: Turn, line: number): LineOutcome {
     const bounded = boundScan(turn.text);
     const sanitized = sanitize(bounded.text);
-    // A marker split by invisible characters only shows after sanitizing.
-    if (sanitized.text.includes(SELF_CONTEXT_MARKER)) return { skip: "self_context" };
-    const scrubbed = redact(sanitized.text);
+    const spoken = dropScaffolding(sanitized.text);
+    // Remove injected harness blocks first, preserving the person's words;
+    // both packet contracts still prevent feedback outside those blocks.
+    if (carriesSelfContext(spoken)) return { skip: "self_context" };
+    const scrubbed = redact(spoken);
     if (scrubbed.text.trim() === "") return { skip: "no_text" };
     const cut = truncateUtf8(scrubbed.text, MAX_TEXT_BYTES);
     const redactions = Object.values(scrubbed.redactions).reduce(
@@ -323,5 +337,5 @@ function basename(cwd: string): string {
 /** A short, inert label for display and metadata. */
 function label(value: string, max = MAX_LABEL_CHARS): string {
   // Cut before scanning: labels come from the transcript and may be huge.
-  return wellFormed(redact(sanitize(value.slice(0, MAX_LABEL_SCAN)).text).text.slice(0, max));
+  return wellFormed(redact(sanitize(boundScrubText(value, MAX_LABEL_SCAN).text).text).text.slice(0, max));
 }

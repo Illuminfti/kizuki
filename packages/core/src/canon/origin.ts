@@ -22,3 +22,25 @@ export function machineOriginPath(relPath: string): string {
   if (underAutoPrefix(relPath)) return relPath;
   return `${AUTO_CANON_PREFIX}/${relPath}`;
 }
+
+/**
+ * The first line of every context packet Kizuki serves, one per packet
+ * contract. Captured text that carries either marker is machine output fed
+ * back in, so ingress never treats it as a source.
+ */
+export const CONTEXT_PACKET_MARKERS = {
+  v1: "KIZUKI CONTEXT v1",
+  v2: "KIZUKI CONTEXT v2",
+} as const;
+
+export function hasContextPacketMarker(text: string): boolean {
+  return (
+    text.includes(CONTEXT_PACKET_MARKERS.v1) ||
+    text.includes(CONTEXT_PACKET_MARKERS.v2)
+  );
+}
+
+/** SQL twin of isMachineOriginPath for a trusted column reference. */
+export function machineOriginSql(column: string): string {
+  return `(${column} = '${AUTO_CANON_PREFIX}' OR ${column} GLOB '${AUTO_CANON_PREFIX}/*' OR ${column} GLOB 'dashboards/brief-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md')`;
+}

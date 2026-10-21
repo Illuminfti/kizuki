@@ -1,5 +1,6 @@
 import type { QualificationProfile, QualificationSample } from "../../src/serve/qualification";
-import { DEFAULT_RAILS, RAIL_IDS } from "../../src/serve/types";
+
+import { DEFAULT_RAILS, RAIL_IDS } from "../../src/serve/rail-registry";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync, statSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
