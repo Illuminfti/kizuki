@@ -1286,7 +1286,7 @@ export function supersedeExactClaim(
   supersedeExactLegacyClaim(io, winner, loserId, null, at);
 }
 
-/** An explicit keyed replacement may change a multi-valued predicate's key. */
+/** An explicit keyed replacement retires one value without its siblings. */
 export function supersedeExactKeyedClaim(
   io: Pick<ClaimsIo, "db" | "retrieval">,
   winner: Claim,

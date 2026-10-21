@@ -24,7 +24,8 @@ import { BudgetExhausted, createBudgetTracker } from "../canon/budget";
 import { CanonWriteError } from "../canon/errors";
 import type { CanonIo } from "../canon";
 import { getCanonReceipt } from "../canon/receipts";
-import { getClaim, isSourcePageClaim, insertClaim, prepareClaimInsert, retryRetrievalOps, listClaims, supersedeLiveGroup, supersedeExactClaim, supersedeExactWorldClaim } from "../claims/store";
+import { getClaim, isSourcePageClaim, insertClaim, prepareClaimInsert, retryRetrievalOps, listClaims, supersedeLiveGroup, supersedeExactClaim, supersedeExactKeyedClaim, supersedeExactWorldClaim } from "../claims/store";
+import { getPredicate } from "../claims/predicates";
 import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { CLAIM_MEANING_SCHEMA, type ClaimMeaning } from "../contracts/claim-v2";
 import type { Claim, FrontmatterValue, Producer } from "../contracts/proposal";
@@ -269,7 +270,8 @@ function loadExactGroup(io: ScopedCorrectIo, target: CorrectTarget, scope: Corre
     if (named.status !== "live") {
       throw new CorrectError("claim_not_live", `target claim is ${named.status}`);
     }
-    if (named.claim_key === null || isSourcePageClaim(io.db, named)) {
+    if (named.claim_key === null || isSourcePageClaim(io.db, named) ||
+        (named.predicate !== null && getPredicate(named.predicate)?.cardinality === "multi")) {
       return inScope(named, scope) ? [named] : [];
     }
     return listClaims(io.db, { status: "live", claim_key: named.claim_key,
@@ -630,6 +632,20 @@ async function insertCorrection(
       if (typedSemantic === undefined && live.claim_key === null && inserted.outcome === "stored") {
         supersedeExactClaim(io, inserted.claim, live.claim_id, at);
       }
+      if (inserted.outcome === "stored" || inserted.outcome === "duplicate") {
+        // A named multi-valued claim identifies one value. Explicit claim_key
+        // requests retain the existing whole-group correction semantics.
+        const exactMulti = typedSemantic === undefined && !pageCorrection &&
+          input.target?.claim_id === live.claim_id && live.claim_key !== null &&
+          live.predicate !== null && getPredicate(live.predicate)?.cardinality === "multi";
+        if (exactMulti) {
+          const current = getClaim(io.db, live.claim_id);
+          if (current?.superseded_by !== inserted.claim.claim_id)
+            supersedeExactKeyedClaim(io, inserted.claim, live.claim_id, live.claim_key!, at);
+        } else {
+          supersedeLiveGroup(io.db, inserted.claim, at, io.readScope?.claims);
+        }
+      }
       return inserted;
     }).immediate();
   } catch (error) {
@@ -812,6 +828,10 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
   if (group.length === 0) {
     throw new CorrectError("claim_unknown", "no live claims matched the target and scope");
   }
+  if (io.relay_owner_corrections === false && group.some(claim =>
+    claim.authority === "owner_correction" && claim.predicate !== null &&
+    getPredicate(claim.predicate)?.cardinality === "multi"))
+    throw new CorrectError("below_authority", "this grant cannot overturn an owner correction");
   const provenance = [...new Set(group.flatMap(claim => claim.provenance))];
   requireSourceEvents(io.db, provenance, { owner: !(io.producer ?? "owner").startsWith("agent:"), purpose: "correction" });
   const seed = seedClaim(group, input.target as CorrectTarget);
@@ -888,7 +908,6 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
   }
 
   const winner = await insertCorrection(io, input, seed, accepted.event_id, at, provenance, plan);
-  io.db.transaction(() => supersedeLiveGroup(io.db, winner, at, io.readScope?.claims)).immediate();
   const superseded = io.db
     .query<{ loser: string }, [string]>(
       "SELECT loser FROM claim_supersessions WHERE winner = ? ORDER BY at, loser",
