@@ -3,6 +3,7 @@ import { classesOfEvents } from "../ledger/event-classes";
 import { authorize } from "../agents";
 import type { AuditDenial, DenyReason, Grant, Servable } from "../agents";
 import { getClaim, listClaims } from "../claims/store";
+import { readClaimV2Semantic } from "../claims/claim-v2-commit";
 import { claimReader } from "./claims";
 import { authorizedClaimSql } from "./claim-policy-sql";
 import type { Claim } from "../contracts/proposal";
@@ -139,7 +140,10 @@ export function resolve(
     if (claim === null || claim.status !== "live" || !visible(claim)) {
       throw refuse("target.claim_id", "names no live claim", hidden);
     }
-    if (claim.claim_key === null) {
+    // A legacy importer claim has no key, so correction addresses it by its
+    // exact identity. Typed world claims are also keyless, but their support
+    // journal requires the typed correction path instead.
+    if (claim.claim_key === null && readClaimV2Semantic(ctx.db, claim.claim_id) !== null) {
       throw refuse(
         "target.claim_id",
         "names a claim with no predicate to correct",

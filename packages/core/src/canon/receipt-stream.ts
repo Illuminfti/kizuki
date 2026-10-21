@@ -84,7 +84,7 @@ function receiptId(line: string): string {
         !["loop", "correction", "revert", "import"].includes(row.writer) || !isProducer(row.producer) ||
         !nullableString(row.model_ref) || !isAuthorityTier(row.authority) || !Number.isFinite(row.confidence) || row.confidence < 0 || row.confidence > 1 ||
         !isSensitivity(row.sensitivity) || !["clean", "quoted"].includes(row.taint) || !nullableString(row.reverts) || !nullableString(row.reverted_by) ||
-        !isRfc3339(row.at) || !Array.isArray(row.superseded) || !row.superseded.every(item => nonempty(item.claim_id) && nonempty(item.claim_key)) ||
+        !isRfc3339(row.at) || !Array.isArray(row.superseded) || !row.superseded.every(item => nonempty(item.claim_id) && nullableString(item.claim_key)) ||
         !Array.isArray(row.candidates) || !row.candidates.every(item => nonempty(item.page_id) && nonempty(item.rel_path) && isAuthorityTier(item.authority) &&
           (item.created_at === "" || isRfc3339(item.created_at))) ||
         !Array.isArray(row.retrieval_ops) || !row.retrieval_ops.every(item => nonempty(item.store) && nonempty(item.doc) && ["upsert", "remove"].includes(item.op))) fail("receipt_invalid");
