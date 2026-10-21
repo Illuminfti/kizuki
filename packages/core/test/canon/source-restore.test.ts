@@ -13,7 +13,8 @@ import {
   proposalsForEvent,
 } from "../../src/staging/producers";
 import { fileProposal, listProposals } from "../../src/staging/proposals";
-import { parseFrontmatter } from "../../src/vault/frontmatter";
+import { parseFrontmatter, serializePage } from "../../src/vault/frontmatter";
+import { listCanonPagesReport } from "../../src/vault/pages";
 import { documentEvent } from "../fixtures";
 import { openLedger } from "../../src/ledger/db";
 import { tempVault } from "../helpers/vault";
@@ -111,6 +112,7 @@ describe("a returned source record un-archives its page", () => {
       type Row = Record<string, string | number | null>;
       const receiptRow = db.query<Row, [string]>("SELECT * FROM canon_receipts WHERE receipt_id = ?").get(first.receipt.receipt_id)!;
       const claimRow = db.query<Row, [string]>("SELECT * FROM claims WHERE claim_id = ?").get(first.claim)!;
+      const archivePage = parseFrontmatter(firstArchive);
       const insert = (table: "canon_receipts" | "claims", row: Row) => {
         db.query(`INSERT INTO ${table} (${Object.keys(row).join(",")}) VALUES (${Object.keys(row).map(() => "?").join(",")})`)
           .run(...Object.values(row));
@@ -123,9 +125,17 @@ describe("a returned source record un-archives its page", () => {
           insert("claims", { ...claimRow, claim_id: claimId, receipt_id: receiptId, target: pagePath.slice(0, -3), content_hash: "" });
           db.query("INSERT INTO page_index (page_id,rel_path,last_receipt,last_hash) VALUES (?,?,?,?)")
             .run(pageId, pagePath, receiptId, first.receipt.after_hash);
-          writeFileSync(join(fixture.vault, pagePath), `${firstArchive}\nOwner note ${index}.\n`, { mode: 0o600 });
+          writeFileSync(join(fixture.vault, pagePath), serializePage({
+            data: { ...archivePage.data, id: pageId },
+            body: `${archivePage.body}\nOwner note ${index}.\n`,
+          }), { mode: 0o600 });
         }
       })();
+      // The full inventory must be valid even when the optional notification
+      // cache is unavailable and a forward write takes the conservative scan.
+      const inventory = listCanonPagesReport(fixture.vault);
+      expect(inventory.skipped).toEqual([]);
+      expect(inventory.pages).toHaveLength(256);
       const untouched = archive("last").path;
       // Each invocation is bounded. Progress belongs to the ledger, so a new
       // IO snapshot (as after a restart) resumes beyond the edited prefix.
