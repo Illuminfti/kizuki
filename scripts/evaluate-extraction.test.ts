@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  corpusDigest, loadCorpus, loadResponseSet, scoreExtraction,
+  corpusDigest, loadCorpus, loadResponseSet, runnerObservedResponseSet, scoreExtraction,
   validateCorpus, validateResponseSet,
 } from "./evaluate-extraction";
 
@@ -163,5 +163,37 @@ describe("bounded and attributable input", () => {
     });
     expect(scoreExtraction(corpus, measured).usage).toMatchObject({ input_tokens: 0, output_tokens: 0, unknown_usage_cases: 0 });
     expect(scoreExtraction(corpus, reference).usage.input_tokens).toBeNull();
+  });
+});
+
+describe("runner-observed model runs", () => {
+  const provenance = { runner: "test", endpoint_host: "127.0.0.1:9", loopback: true, model: "synthetic", calls: 12, request_sha256: [], response_sha256: [] };
+  const observed = () => runnerObservedResponseSet({ corpus_sha256: corpusDigest(corpus), model_reference: "synthetic@127.0.0.1:9",
+    responses: reference.responses, provenance });
+
+  test("a set the runner built is scored as measured and keeps the provenance it observed", () => {
+    const result = scoreExtraction(corpus, observed());
+    expect(result.mode).toBe("runner_observed_model");
+    expect(result.qualification).toBe("synthetic_fixture_measured");
+    expect(result.model_quality_claim).toBe(false);
+    expect(result.usage.provenance).toBe("runner_observed_transport");
+    expect(result.provenance).toEqual(provenance);
+  });
+
+  test("a response file cannot self-attest a model run, even a copy of a runner-built set", () => {
+    const copy = JSON.parse(JSON.stringify(observed()));
+    expect(() => validateResponseSet(copy, corpus)).toThrow();
+    copy.provenance = undefined; delete copy.provenance;
+    expect(() => validateResponseSet(copy, corpus)).toThrow("recorded model provenance is unsupported");
+    const forged = JSON.parse(readFileSync(responsesPath, "utf8"));
+    forged.mode = "runner_observed_model"; forged.provenance = provenance;
+    expect(() => validateResponseSet(forged, corpus)).toThrow();
+  });
+
+  test("scripted responses keep their scripted label and no provenance", () => {
+    const result = scoreExtraction(corpus, reference);
+    expect(result.qualification).toBe("scripted_fixture_only");
+    expect(result.usage.provenance).toBe("scripted_transport_metadata");
+    expect("provenance" in result).toBe(false);
   });
 });

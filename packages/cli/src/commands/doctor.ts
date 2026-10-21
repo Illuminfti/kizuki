@@ -33,6 +33,8 @@ import { listHostConnections, loadConnector } from "../connections";
 import { withReadVault } from "../context";
 import type { ReadVaultContext } from "../context";
 import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
+import { RETENTION_MEANING } from "../egress-view";
+import { configuredJudgeDestination } from "../judge-destination";
 import { clean, errorText, jsonEnvelope } from "../output";
 import { embeddingConfigured } from "../retrieval-runtime";
 import { effectiveVaultConfig, loadVaultConfig } from "../vault-config";
@@ -444,6 +446,7 @@ async function collect(
     model_ref: boundModel?.model_ref ?? null,
     reasoning_effort: boundModel?.reasoning_effort ?? null,
     embedding_configured: embeddingConfigured(vaultPath),
+    judge: configuredJudgeDestination(vaultPath),
     ...(configuredModel === null ? {} : { configured_model_ref: configuredModel.model_ref }),
   });
   const ok =
@@ -597,7 +600,10 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(report.serve.model.detail);
   io.out(report.serve.extraction.detail);
   for (const source of report.serve.egress) {
-    io.out(`egress source=${source.source_key} connector=${source.connector_id} host=${clean(source.endpoint_host)} model=${clean(source.model)} retention=${source.retention} (the provider keeps sent text under its own policy)`);
+    io.out(`egress source=${source.source_key} connector=${source.connector_id} host=${clean(source.endpoint_host)} model=${clean(source.model)} retention=${source.retention} (${RETENTION_MEANING[source.retention]})`);
+    if (source.judge !== null) {
+      io.out(`egress source=${source.source_key} judge host=${clean(source.judge.host)} model=${clean(source.judge.model)} retention=logged_and_trained (undeclared)${source.judge.consented ? "" : "; held: judge not consented; check egress judge_endpoint, judge_model and external_retention"}`);
+    }
   }
   if (report.model_config_error !== null) io.out(`model configuration invalid: ${report.model_config_error}`);
   io.out(report.serve.throughput.detail);

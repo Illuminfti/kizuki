@@ -1,4 +1,4 @@
-import { sourcePolicyEpoch, sourceEventsAllowed, isEpochZeroProducerPort, isLocalSourcePort, sourcePortBindingDigest } from "../ledger/source-grants";
+import { sourcePolicyEpoch, sourceEventsAllowed, isEpochZeroProducerPort, sourcePortBindingDigest } from "../ledger/source-grants";
 import { createHash } from "node:crypto";
 import { hasContextPacketMarker } from "../canon/origin";
 import { parseExtractResponse } from "../producer/schema";
@@ -1052,7 +1052,7 @@ async function mineBatch(
   // Only the CLI's host-marked epoch-zero runtime is stale here. Other v1
   // ports remain an explicitly supported source-bound contract.
   if (source_epoch > 0 && isEpochZeroProducerPort(producer)) return denied();
-  if (source_epoch > 0 && !isLocalSourcePort(producer) && !sourceEventsAllowed(db, [], { owner: false, purpose: "extract", model: true, port: producer })) return denied();
+  if (!sourceEventsAllowed(db, [], { owner: false, purpose: "extract", model: true, port: producer })) return denied();
   const scope = { owner: false, purpose: "extract" as const, model: true, port: producer };
   let mode: "frontier" | "deferred" = "frontier";
   let cursor: LedgerCursor | null = null;
