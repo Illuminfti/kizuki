@@ -21,7 +21,11 @@ export const conflictEnricher: Enricher = (frame, body) => {
     for (const other of body.claims) {
       const b = other.relation;
       if (other === claim || a.predicate !== b.predicate || rawSubjectRefKey(claim.eligible.semantic.subject) !== rawSubjectRefKey(other.eligible.semantic.subject)) continue;
-      if (a.polarity === b.polarity && !((SINGLE.has(a.predicate) || isSingleValuedPredicate(a.predicate)) && JSON.stringify(a.object) !== JSON.stringify(b.object))) continue;
+      const sameObject = JSON.stringify(a.object) === JSON.stringify(b.object);
+      const negatesSameValue = a.polarity !== b.polarity && sameObject;
+      const competingValues = a.polarity === "positive" && b.polarity === "positive" &&
+        (SINGLE.has(a.predicate) || isSingleValuedPredicate(a.predicate)) && !sameObject;
+      if (!negatesSameValue && !competingValues) continue;
       const overlap = validOverlap(a.valid, b.valid);
       // Claim-v2 unknown validity conservatively overlaps a matching conflict scope.
       if (overlap !== false) { conflict = "present"; break; }

@@ -157,7 +157,11 @@ test("CLI renders a situation card with human item labels", async () => {
   const found = JSON.parse(runCli(setup.env, "world", "--operation", "find_situations", "--label", "Harbor", "--json").stdout);
   const read = runCli(setup.env, "world", "--operation", "situation", "--ref", found.data.data.result.data.matches[0].ref.token);
   expect(read.exitCode).toBe(0);
-  expect(read.stdout).toContain("Harbor rollout\nObjective: Revise beliefs using evidence\n");
+  expect(read.stdout).toStartWith("Harbor rollout\nIdentity: distinct;");
+  expect(read.stdout).toContain("\nObjective: Revise beliefs using evidence; polarity: positive; claim: ");
+  expect(read.stdout).toContain("\nAttribution: asserted; explicit;");
+  expect(read.stdout).toContain("\nUncertainty: conflict none_observed;");
+  expect(read.stdout).toContain("kizuki world --operation evidence --admission ");
   expect(read.stdout).not.toContain("situation.objective");
 });
 

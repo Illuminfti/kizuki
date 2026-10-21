@@ -33,6 +33,19 @@ test("nonoverlapping definitions have no observed conflict; incomplete source co
   } finally { f.dispose(); }
 });
 
+test("negating a different value does not manufacture a contradiction", async () => {
+  const f = await cardFixture();
+  try {
+    await f.write("concept.example", { kind: "literal", value: "Updating a weather forecast" });
+    await f.write("concept.example", { kind: "literal", value: "Ignoring new observations" }, { polarity: "negative" });
+    expect(f.card().relations.filter((r) => r.predicate === "concept.example").map((r) => r.conflict)).toEqual(["none_observed", "none_observed"]);
+
+    await f.write("concept.definition", { kind: "literal", value: "Keep every belief unchanged" }, { polarity: "negative" });
+    await f.write("concept.definition", { kind: "literal", value: "Discard every prior belief" }, { polarity: "negative" });
+    expect(f.card().definitions.map((r) => r.conflict)).toEqual(["none_observed", "none_observed", "none_observed"]);
+  } finally { f.dispose(); }
+});
+
 test("a private conflicting definition changes neither narrow card bytes nor visible conflict", async () => {
   const f = await cardFixture();
   try {

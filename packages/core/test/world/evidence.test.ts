@@ -16,7 +16,7 @@ test("evidence text travels only in the untrusted quoted channel with an integri
     const input = f.input("evidence", { evidence });
     const envelope = serveWorldView(f.ctx, input);
     expect(envelope.quoted).toHaveLength(1);
-    expect(envelope.quoted[0]).toMatchObject({ text: f.definition.event.text, tainted: true, evidence });
+    expect(envelope.quoted[0]).toMatchObject({ text: f.definition.event.text, tainted: true, evidence, truncated: false });
     expect(envelope.quoted[0]).toHaveProperty("integrity");
     expect(JSON.stringify(envelope.data)).not.toContain(f.definition.event.text);
     expect(envelope.canon).toEqual([]);
@@ -86,7 +86,7 @@ test("UTF-16 anchors map to code-point expansion; credentials are redacted and a
     const start = text.indexOf("The"), end = text.indexOf(" suffix");
     await f.write("concept.example", { kind: "literal", value: "Unicode span" }, { text, span: { start, end } });
     const evidence = f.card(reader).relations[0]!.assessments[0]!.evidence[0]!;
-    expect(serveWorldView(reader, f.input("evidence", { evidence })).quoted[0]!.text).toBe(text.slice(start, end));
+    expect(serveWorldView(reader, f.input("evidence", { evidence })).quoted[0]!).toMatchObject({ text: text.slice(start, end), truncated: false });
     await f.write("concept.counterexample", { kind: "literal", value: "Redacted capture" }, { text: "A record with secret=syntheticCredentialValue and a suffix." });
     const secret = f.card(reader).relations.find((r) => r.predicate === "concept.counterexample")!.assessments[0]!.evidence[0]!;
     const quote = serveWorldView(reader, f.input("evidence", { evidence: secret })).quoted[0]!;

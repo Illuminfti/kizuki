@@ -48,8 +48,12 @@ export const evidenceOp: ClaimsOp<ConceptEvidenceRef> = {
     const expanded = expandTimelineDetail(ctx, { event_id: target.event_id, integrity: target.text_hash, offset, span: Math.min(length, EXPAND_SPAN_MAX) });
     const quote = expanded.quoted[0];
     if (!quote || !expanded.data) return NOT_FOUND;
+    // The shared quote gate uses an optional true marker. Evidence reports
+    // truncation relative to this selected span, not the rest of its record.
+    const { truncated: _quoteTruncated, ...sourceQuote } = quote;
+    const { truncated: _recordTruncated, ...detail } = expanded.data;
     return { status: "data", data: { schema: "kizuki.world-evidence/v1", evidence }, gaps: null,
-      quoted: [{ ...quote, ...expanded.data, evidence, truncated: expanded.data.returned < length }],
+      quoted: [{ ...sourceQuote, ...detail, evidence, ...(detail.returned < length ? { truncated: true as const } : {}) }],
     };
   },
 };

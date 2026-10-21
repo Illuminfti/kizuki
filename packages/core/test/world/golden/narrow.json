@@ -2479,7 +2479,7 @@
                 ]
               }
             ],
-            "conflict": "present"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",
@@ -2544,7 +2544,7 @@
                 ]
               }
             ],
-            "conflict": "present"
+            "conflict": "none_observed"
           },
           {
             "schema": "kizuki.relation/v1",

@@ -4,8 +4,10 @@ Implemented: `world_view` derives relation conflict, support independence and
 learning assistance from the caller's currently permitted claims. Reads need no
 model. They do not change claim authority, confidence or learning achievement.
 
-Opposite polarities and differing definitions in overlapping valid windows
-remain visible as conflicting relations. Unknown validity conservatively
+Opposite polarities for the same value and differing positive definitions in
+overlapping valid windows remain visible as conflicting relations. Negating a
+different value does not conflict with an assertion or another negation.
+Unknown validity conservatively
 qualifies a conflict. `none_observed` means that this bounded read found none
 and source coverage has no gaps; incomplete source coverage or traversal remains
 `unknown`. Hidden conflicting claims do not affect a reader's answer or work

@@ -8,7 +8,7 @@ export type WorldEvidenceData = {
 };
 
 /** The source form is internal, so the gate can audit and redact ordinary captured text. */
-export type WorldEvidenceSource = QuotedChunk & TimelineExpandData & { readonly evidence: ConceptEvidenceRef };
+export type WorldEvidenceSource = QuotedChunk & Omit<TimelineExpandData, "truncated"> & { readonly evidence: ConceptEvidenceRef };
 /** Stage-one quoted grammar: existing wire kinds, with no raw source/event ids. */
 export type WorldQuotedEvidence = TimelineExpandData & {
   readonly evidence: ConceptEvidenceRef;
