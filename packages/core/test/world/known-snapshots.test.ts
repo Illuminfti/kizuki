@@ -41,9 +41,9 @@ test("a known snapshot retains a private cutoff and rejects a broader or differe
   );
   expect(ref).not.toBeNull();
   if (ref === null) throw new Error("snapshot was not issued");
-  expect(lookupKnownSnapshot(world.ctx, ns, ref, "semantic:bayes", VALID, NOW)).toEqual({ at: NOW, sequence: 7 });
+  expect(lookupKnownSnapshot(world.ctx, ns, ref, "semantic:bayes", VALID, NOW)).toEqual({ at: NOW, sequence: 7, consolidations: [] });
   expect(lookupKnownSnapshot(world.ctx, ns, ref, "semantic:other", VALID, NOW)).toBeNull();
-  expect(lookupKnownSnapshot(world.ctx, ns, ref, "semantic:bayes", { kind: "at", at: NOW }, NOW)).toEqual({ at: NOW, sequence: 7 });
+  expect(lookupKnownSnapshot(world.ctx, ns, ref, "semantic:bayes", { kind: "at", at: NOW }, NOW)).toEqual({ at: NOW, sequence: 7, consolidations: [] });
   expect(lookupKnownSnapshot({ ...world.ctx, sourcePurpose: "export" }, ns, ref, "semantic:bayes", VALID, NOW)).toBeNull();
 
   const at = { kind: "at" as const, at: NOW };
@@ -132,7 +132,7 @@ test("paired snapshot and view reserve two shared slots even when the cache cloc
     const view=issueView(db,partition,ns,"a".repeat(64),Buffer.from("{\"safe\":true}"),[],NOW);
     return {ref,view};
   })();
-  expect(paired.view).not.toBeNull();expect(lookupKnownSnapshot(world.ctx,ns,paired.ref,"semantic:bayes",VALID,NOW)).toEqual({at:NOW,sequence:99});
+  expect(paired.view).not.toBeNull();expect(lookupKnownSnapshot(world.ctx,ns,paired.ref,"semantic:bayes",VALID,NOW)).toEqual({at:NOW,sequence:99,consolidations:[]});
   expect(db.query<{n:number},[]>("SELECT count(*) AS n FROM world_view_tokens").get()!.n).toBe(16);
   expect(first).not.toBe("");
 });

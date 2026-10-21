@@ -1,6 +1,10 @@
-import { insertClaim } from "../../src/claims/store";
+import { readClaimV2Semantic } from "../../src/claims/claim-v2-commit";
+import type { ClaimV2Assertion } from "../../src/contracts/claim-v2";
+import type { LlmPort, LlmRequest } from "../../src/contracts/llm";
+import { runWorldJobs } from "../../src/serve/world-jobs";
+import { insertClaim, markClaimReverted } from "../../src/claims/store";
 import { readDurableExtractBatch } from "../../src/serve/extract";
-import { parseWorldAdmission } from "../../src/contracts/world-admission";
+import { parseWorldAdmission, WORLD_ADMISSION_SCHEMA } from "../../src/contracts/world-admission";
 import { extractionV2SystemContent, IDENTITY_GROUNDING_INSTRUCTION } from "../../src/producer/prompt-v2";
 import { mineLiveDrafts, journalExtractBatch } from "../../src/serve/extract";
 import { groundedWorldInput } from "../../src/serve/world-grounding";
@@ -17,7 +21,7 @@ import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
 import { bindSourceModelPort, bindLocalSourcePort, inspectSourceGrant, setSourceGrant, revokeSourceGrant } from "../../src/ledger/source-grants";
 import { runWritePass } from "../../src/serve/write-pass";
-import { readWorldView } from "../../src/serving/world-view";
+import { readWorldView, serveWorldView } from "../../src/serving/world-view";
 import { rebuildWorldLayer } from "../../src/derived";
 import { assertWorldState } from "../../src/world/integrity";
 import { ulid } from "../../src/util/ulid";
@@ -313,4 +317,93 @@ test("hidden grounded identity edges change no scoped card bytes or traversal wo
     expect(after.frames.map(frame => frame.stats)).toEqual(before.frames.map(frame => frame.stats));
     expect(after.frames.map(frame => frame.budget.bytes)).toEqual(before.frames.map(frame => frame.budget.bytes));
   } finally { f.close(); }
+});
+
+/** A storage fixture for a retained label proof whose event has no live claim. */
+async function separateGroundingLabel(f: Awaited<ReturnType<typeof fixture>>) {
+  const prior = readClaimV2Semantic(f.db, f.alpha.claims[1]!)!;
+  if (prior.discriminator !== "assertion") throw new Error("synthetic label is not an assertion");
+  const policy = inspectSourceGrant(f.db, f.alpha.sourceKey)!;
+  const accepted = accept(f.db, { ...validEvent(), connector_id: policy.connector_id,
+    source_record_id: ulid(), text: "Alpha is the label in this separate grounding record.",
+    subjects: [{ subject_id: prior.subject.id, role: "about" }], sensitivity_hint: "public" },
+    { source: { source_key: f.alpha.sourceKey, expected_revision: policy.revision } });
+  if (accepted.status !== "stored") throw new Error("synthetic grounding label capture failed");
+  const semantic: ClaimV2Assertion = { ...prior, schema: "kizuki.claim/v2", discriminator: "assertion",
+    valid_from: null, valid_to: null, temporal_basis: "unknown",
+    perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
+    anchors: [{ event_id: accepted.event.event_id, start_utf16: 0, end_utf16: 5 }] } as ClaimV2Assertion;
+  // Use the lifecycle mutator so the retained state has an honest history entry;
+  // neither retired label is reintroduced as live assertion authority.
+  f.db.transaction(() => markClaimReverted(f.db, f.alpha.claims[1]!, new Date().toISOString())).immediate();
+  const body = "The concept is labeled Alpha.";
+  const result = await insertClaim({ db: f.db }, { kind: "claim", body, provenance: [accepted.event.event_id],
+    producer: "deterministic", confidence: .8, sensitivity: "public", subjects: [prior.subject.id], semantic,
+    world_admission: { schema: WORLD_ADMISSION_SCHEMA, semantic, rendering: { body, frontmatter: {} },
+      authority: "model_inference", confidence: .5, epistemicKind: "model_inference" } });
+  if (result.outcome !== "stored") throw new Error("separate synthetic grounding label not stored");
+  return { claimId: result.claim.claim_id, eventId: accepted.event.event_id };
+}
+
+function afterGroundedProjection(db: ReturnType<typeof openLedger>, mutate: () => void) {
+  let fired = false;
+  return new Proxy(db, { get(target, key) {
+    const value = Reflect.get(target, key, target);
+    if (key === "transaction") return (run: () => unknown) => {
+      const tx = target.transaction(run), finish = (result: unknown) => {
+        if (!fired && !target.inTransaction && result !== null && typeof result === "object" && "withheld" in result) { fired = true; mutate(); }
+        return result;
+      };
+      return Object.assign(() => finish(tx()), { immediate: () => finish(tx.immediate()) });
+    };
+    return typeof value === "function" ? value.bind(target) : value;
+  } });
+}
+
+test("consolidation retains retired grounding proof and erasure wins before final publication", async () => {
+  for (const cause of ["revoke", "purge"] as const) {
+    const f = await fixture();
+    try {
+      const label = await separateGroundingLabel(f);
+      expect((await f.run()).errors).toEqual([]);
+      f.witness("Witness first equates Alpha with Beta."); expect((await f.run()).errors).toEqual([]);
+      f.witness("Witness second independently calls Beta the same concept as Alpha."); expect((await f.run()).errors).toEqual([]);
+      expect(f.matches()).toHaveLength(1);
+      const proof = f.db.query<{ support_key: string }, [string]>("SELECT support_key FROM claim_v2_support WHERE claim_id=?").get(label.claimId)!;
+      const v2 = f.db.query<{ admission: string }, []>("SELECT admission FROM claim_v2_support WHERE json_extract(admission,'$.schema')='kizuki.world-admission/v2'").all();
+      expect(v2).toHaveLength(2);
+      expect(v2.every(row => JSON.parse(row.admission).grounding.some((g: { label: { support_key: string } }) => g.label.support_key === proof.support_key))).toBe(true);
+      f.db.transaction(() => markClaimReverted(f.db, label.claimId, new Date().toISOString())).immediate();
+      expect(f.db.query("SELECT 1 FROM claims c JOIN claim_v2_support s USING(claim_id) JOIN claim_v2_support_events e USING(support_key) WHERE e.event_id=? AND c.status='live' AND json_extract(s.admission,'$.schema')='kizuki.world-admission/v1'").get(label.eventId)).toBeNull();
+      expect(f.matches()).toHaveLength(1);
+      const requests: LlmRequest[] = [], summary = "Two supported concept identifiers are currently grouped.";
+      const llm = bindLocalSourcePort<LlmPort>({ descriptor: { id: "identity.summary-fixture", kind: "llm", contract: "kizuki.llm/v1", contract_minor: 0, supports: ["chat"], requires_lease: false, optional_package: null },
+        model_ref: "fixture:identity-summary", health: async () => ({ status: "ready", detail: {} }), close: async () => {},
+        complete: async request => { requests.push(request); return { model: "identity-summary", text: JSON.stringify({ schema: "kizuki.consolidation-response/v1", status: "complete", summary }), usage: { input_tokens: 40, output_tokens: 16 } }; },
+      }, { store_id: "local:identity-summary-fixture" });
+      const result = await runWorldJobs({ db: f.db, vaultPath: f.vault.path, modelConfigured: true, llm, now: () => new Date().toISOString(), stopRequested: () => false });
+      expect(result.errors).toEqual([]); expect(requests.length).toBeGreaterThan(0);
+      expect(requests.every(request => request.messages.filter(message => message.role === "user").every(message => !message.content.includes(label.eventId)))).toBe(true);
+      expect(f.db.query("SELECT 1 FROM world_consolidation_basis b JOIN world_consolidation c USING(basis_digest) WHERE b.support_key=? AND c.status='complete'").get(proof.support_key)).not.toBeNull();
+      const ctx = { db: f.db, vaultPath: f.vault.path, principal: OWNER };
+      const input = { operation: "concept", concept: f.beta.ref, valid: { kind: "all" }, knownAt: { kind: "current" } };
+      const before = worldData(readWorldView(ctx, input));
+      expect(before.concept.resolution).toBe("resolved"); expect(before.summary?.text).toBe(summary);
+      expect(before.concept.labels.map((entry: { text: string }) => entry.text)).toEqual(["Beta"]);
+      const erase = () => {
+        if (cause === "revoke") revokeSourceGrant(f.db, { source_key: f.alpha.sourceKey, expected_revision: inspectSourceGrant(f.db, f.alpha.sourceKey)!.revision, operation_id: ulid() });
+        else purgeEvents(f.db, f.vault.path, { event_id: label.eventId }, "purge retained grounding label");
+      };
+      const published = serveWorldView({ ...ctx, db: afterGroundedProjection(f.db, erase) }, input);
+      expect(JSON.stringify(published)).not.toContain(summary);
+      expect(f.db.query("SELECT 1 FROM world_consolidation_basis WHERE support_key=?").get(proof.support_key)).toBeNull();
+      const after = worldData(readWorldView(ctx, input));
+      expect(after.summary).toBeNull(); expect(after.concept.resolution).toBe("distinct");
+      if (cause === "purge") {
+        expect(f.matches()).toHaveLength(2);
+        expect(f.db.query("SELECT 1 FROM claim_v2_support WHERE json_extract(admission,'$.schema')='kizuki.world-admission/v2'").get()).toBeNull();
+      }
+      assertWorldState(f.db);
+    } finally { f.close(); }
+  }
 });
