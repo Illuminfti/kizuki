@@ -35,6 +35,7 @@ const PINNED_ROWS = [
   ["gap.about", "question", "raw_subject", "positive,negative", null, null],
   ["person.label", "person", "literal", "positive,negative", 400, null],
   ["person.role", "person", "literal", "positive,negative", 400, null],
+  ["person.interest", "person", "concept", "positive,negative", null, null],
   ["relationship.with", "person", "raw_subject", "positive,negative", null, null],
   ["skill.label", "skill", "literal", "positive,negative", 400, null],
   ["skill.evidence", "skill", "vocabulary", "positive,negative", null, "skill/self_report,skill/exposure,skill/explanation,skill/application,skill/observed_outcome"],

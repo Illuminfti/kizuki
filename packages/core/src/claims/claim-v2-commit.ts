@@ -355,11 +355,11 @@ export function commitClaimV2(
     requireSourceEvents(db, input.support.events.map(e => e.event_id), input.scope);
   }
   if (suppliedWorld !== null && mapped.value.discriminator === "assertion") {
+    validateWorldAssertionAgainstRegistry(db, suppliedWorld.semantic);
     // Enforce the extraction guard again at the shared writer, including
     // replay and callers that do not pass through the model draft adapter.
     if (suppliedWorld.semantic.predicate === "person.interest" && !qualifiedPersonInterest(suppliedWorld.semantic, supportOrigin === "native_owner"))
       throw new ClaimError("schema_invalid", "source-derived interest must remain an uncertain interpretation");
-    validateWorldAssertionAgainstRegistry(db, suppliedWorld.semantic);
     assertSituationAcyclic(db, suppliedWorld.semantic, input.scope, input.visibility);
     if (suppliedWorld.schema === "kizuki.world-admission/v2") {
       if (supportOrigin !== "source" || input.accepted_world?.authority !== "model_inference") throw new ClaimError("schema_invalid", "grounded identity requires model inference");

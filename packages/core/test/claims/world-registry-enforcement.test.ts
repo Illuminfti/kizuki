@@ -6,7 +6,7 @@ import {
   type WorldVocabularySpec,
 } from "../../src/contracts/world-vocabulary";
 import { readWorldView } from "../../src/serving/world-view";
-import { worldWriter, type WorldObjectSpec } from "../helpers/world-writer";
+import { worldWriter, type WorldObjectSpec, type WorldWrite } from "../helpers/world-writer";
 
 const claimCount = (db: Database): number =>
   db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims").get()!.n;
@@ -228,6 +228,8 @@ describe("generated matrix over every registry row", () => {
   for (const spec of WORLD_VOCABULARY) {
     test(spec.predicate, async () => {
       const w = worldWriter();
+      const write = (input: WorldWrite) => w.write({ ...input, ...(spec.predicate === "person.interest"
+        ? { mode: "uncertain" as const, interpretation: "inferred" as const } : {}) });
       try {
         const classify = async (id: string, kind: string) => {
           await w.classify(id, `world/${kind}`);
@@ -243,7 +245,7 @@ describe("generated matrix over every registry row", () => {
           await classify(`${ok}:object`, "concept");
         expect(
           (
-            await w.write({
+            await write({
               subject: ok,
               predicate: spec.predicate,
               object: objectFor(spec, ok),
@@ -268,7 +270,7 @@ describe("generated matrix over every registry row", () => {
           const id = `${spec.predicate}:wrong-${kind}`;
           if (subjectKind !== null) await classify(id, subjectKind);
           await expect(
-            w.write({ subject: id, predicate: spec.predicate, object }),
+            write({ subject: id, predicate: spec.predicate, object }),
           ).rejects.toMatchObject({ code: "world_object_kind" });
         }
         // A closed value list refuses anything outside it.
@@ -276,7 +278,7 @@ describe("generated matrix over every registry row", () => {
           const id = `${spec.predicate}:value`;
           if (subjectKind !== null) await classify(id, subjectKind);
           await expect(
-            w.write({
+            write({
               subject: id,
               predicate: spec.predicate,
               object: { vocabulary: "world/unregistered" },
@@ -293,7 +295,7 @@ describe("generated matrix over every registry row", () => {
           if (spec.objects[0] === "concept")
             await classify(`${id}:object`, "concept");
           await expect(
-            w.write({
+            write({
               subject: id,
               predicate: spec.predicate,
               object: objectFor(spec, id),
@@ -305,7 +307,7 @@ describe("generated matrix over every registry row", () => {
           const id = `${spec.predicate}:second`;
           await classify(id, "concept");
           await expect(
-            w.write({ subject: id, predicate: spec.predicate, object: { vocabulary: "world/situation" } }),
+            write({ subject: id, predicate: spec.predicate, object: { vocabulary: "world/situation" } }),
           ).rejects.toMatchObject({ code: "world_endpoint_kind" });
         }
         // A concept object known to be another kind is refused.
@@ -317,7 +319,7 @@ describe("generated matrix over every registry row", () => {
           if (subjectKind !== null) await classify(id, subjectKind);
           await classify(`${id}:object`, "situation");
           await expect(
-            w.write({
+            write({
               subject: id,
               predicate: spec.predicate,
               object: { subject: `${id}:object` },
@@ -330,7 +332,7 @@ describe("generated matrix over every registry row", () => {
           const id = `${spec.predicate}:polarity`;
           if (subjectKind !== null) await classify(id, subjectKind);
           await expect(
-            w.write({
+            write({
               subject: id,
               predicate: spec.predicate,
               object: objectFor(spec, id),
