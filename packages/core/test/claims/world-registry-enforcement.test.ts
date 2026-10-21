@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { OWNER } from "../../src/agents";
+import { insertClaim } from "../../src/claims/store";
+import type { ClaimV2Assertion } from "../../src/contracts/claim-v2";
 import {
   WORLD_VOCABULARY,
   type WorldVocabularySpec,
 } from "../../src/contracts/world-vocabulary";
 import { readWorldView } from "../../src/serving/world-view";
+import { artifactFixture } from "../helpers/artifact-fixture";
 import { worldWriter, type WorldObjectSpec, type WorldWrite } from "../helpers/world-writer";
 
 const claimCount = (db: Database): number =>
@@ -216,6 +219,9 @@ describe("registry order independence", () => {
 });
 
 const objectFor = (spec: WorldVocabularySpec, id: string): WorldObjectSpec => {
+  if (spec.predicate === "world.kind") return { vocabulary: "world/concept" };
+  if (spec.predicate === "procedure.last_validated" || spec.predicate === "commitment.due")
+    return { literal: "2026-10-20T00:00:00.000Z" };
   const first = spec.objects[0]!;
   return first === "literal"
     ? { literal: "a bounded literal" }
@@ -224,9 +230,62 @@ const objectFor = (spec: WorldVocabularySpec, id: string): WorldObjectSpec => {
       : { subject: `${id}:object` };
 };
 
+/** Artifact identity is connector-attested; an arbitrary world.writer record is not a valid witness. */
+async function exerciseArtifactRow(spec: WorldVocabularySpec): Promise<void> {
+  const fixture = await artifactFixture();
+  try {
+    const artifact = await fixture.capture("Synthetic artifact registry evidence.", "public", undefined, false);
+    const { event, metadata, subject } = artifact;
+    const literal = (value: string): ClaimV2Assertion["object"] => ({ kind: "literal", value });
+    const vocabulary = (id: string): ClaimV2Assertion["object"] => ({ kind: "vocabulary", ref: { kind: "vocabulary", id } });
+    const write = (predicate: string, object: ClaimV2Assertion["object"], endpoint = subject) => {
+      const semantic: ClaimV2Assertion = {
+        schema: "kizuki.claim/v2", discriminator: "assertion", subject: endpoint, predicate, object,
+        perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
+        context: [], polarity: "positive", valid_from: null, valid_to: null, temporal_basis: "unknown",
+        anchors: [{ event_id: event.event_id, start_utf16: 0, end_utf16: event.text.length }],
+      };
+      const body = `${predicate}: synthetic registry witness`;
+      return insertClaim({ db: fixture.db }, { kind: "claim", body, provenance: [event.event_id], producer: "deterministic", confidence: 1, semantic,
+        world_admission: { schema: "kizuki.world-admission/v1", semantic, rendering: { body, frontmatter: {} }, authority: "model_inference", confidence: 1, epistemicKind: "model_inference" } });
+    };
+    const values: Record<string, ClaimV2Assertion["object"]> = {
+      "artifact.label": literal("Synthetic captured artifact"),
+      "artifact.content_sha256": literal(metadata.sha256),
+      "artifact.media_type": literal(metadata.mediaType),
+      "artifact.byte_length": literal(String(metadata.byteLength)),
+      "artifact.feedback": literal("Synthetic feedback"),
+    };
+    if (metadata.versionOf !== null)
+      values["artifact.version_of"] = { kind: "subject", ref: { ...subject, id: metadata.versionOf } };
+    const object = values[spec.predicate];
+    if (object === undefined) throw new Error(`missing connector-backed witness for ${spec.predicate}`);
+    expect((await write("world.kind", vocabulary("world/artifact_version"))).outcome).toBe("stored");
+    expect((await write(spec.predicate, object)).outcome).toBe("stored");
+    const before = claimCount(fixture.db);
+    const metadataBound = ["artifact.content_sha256", "artifact.media_type", "artifact.byte_length", "artifact.version_of"].includes(spec.predicate);
+    for (const wrong of [literal("wrong"), vocabulary("world/concept"), { kind: "subject", ref: subject } as const]) {
+      const allowed = wrong.kind === "subject" ? spec.objects.includes("raw_subject") : spec.objects.includes(wrong.kind);
+      if (allowed) continue;
+      // Immutable metadata is checked before registry shape; its stricter provenance refusal is required.
+      await expect(write(spec.predicate, wrong)).rejects.toMatchObject({ code: metadataBound ? "provenance_unresolved" : "world_object_kind" });
+      expect(claimCount(fixture.db)).toBe(before);
+    }
+    if (metadataBound) {
+      const wrong = spec.predicate === "artifact.version_of"
+        ? { kind: "subject" as const, ref: subject } : literal("not the captured metadata");
+      await expect(write(spec.predicate, wrong)).rejects.toMatchObject({ code: "provenance_unresolved" });
+    }
+    await expect(write("world.kind", vocabulary("world/situation"))).rejects.toMatchObject({ code: "world_endpoint_kind" });
+    await expect(write(spec.predicate, object, { ...subject, id: "situation:wrong" })).rejects.toMatchObject({ code: "provenance_unresolved" });
+    expect(claimCount(fixture.db)).toBe(before);
+  } finally { fixture.dispose(); }
+}
+
 describe("generated matrix over every registry row", () => {
   for (const spec of WORLD_VOCABULARY) {
     test(spec.predicate, async () => {
+      if (spec.subject === "artifact_version") return exerciseArtifactRow(spec);
       const w = worldWriter();
       const write = (input: WorldWrite) => w.write({ ...input, ...(spec.predicate === "person.interest"
         ? { mode: "uncertain" as const, interpretation: "inferred" as const } : {}) });
@@ -252,6 +311,12 @@ describe("generated matrix over every registry row", () => {
             })
           ).outcome,
         ).toBe("stored");
+        if (spec.predicate === "procedure.last_validated" || spec.predicate === "commitment.due") {
+          const before = claimCount(w.db);
+          await expect(write({ subject: ok, predicate: spec.predicate, object: { literal: "a bounded literal" } }))
+            .rejects.toMatchObject({ code: spec.predicate === "commitment.due" ? "world_object_kind" : "world_vocabulary_value" });
+          expect(claimCount(w.db)).toBe(before);
+        }
         // An object of a kind the row does not allow is refused.
         const kinds = {
           literal: spec.objects.includes("literal"),
