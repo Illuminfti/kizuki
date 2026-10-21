@@ -35,9 +35,9 @@ describe("world_view as a client sees it", () => {
     const tool = (await client.listTools()).tools.find((entry) => entry.name === "world_view");
     const schema = tool?.inputSchema as { properties?: Record<string, Property>; required?: string[] };
     expect(Object.keys(schema.properties ?? {}).sort()).toEqual(
-      ["about", "concept", "cursor", "evidence", "handle", "knownAt", "label", "of", "operation", "person", "priorView", "question", "response_contract", "situation", "valid"],
+      ["about", "artifact", "baselineView", "budgetTokens", "card", "concept", "cursor", "evidence", "focus", "framework", "handle", "kinds", "knownAt", "label", "of", "operation", "panel", "person", "priorView", "procedure", "question", "response_contract", "situation", "skill", "subject", "task", "valid"],
     );
-    expect(schema.properties?.["operation"]?.enum).toEqual(["find_concepts", "find_situations", "concept", "situation", "describe", "evidence", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people"]);
+    expect(schema.properties?.["operation"]?.enum).toEqual(["find_concepts", "find_situations", "concept", "situation", "describe", "evidence", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people", "procedure", "find_procedures", "skill", "framework", "artifact_version", "find_artifacts", "outcome", "diff", "slice", "attention", "atlas"]);
     expect(schema.required).toEqual(["operation"]);
     expect(schema.properties?.["label"]?.default).toBe("");
     expect(schema.properties?.["valid"]?.default).toEqual({ kind: "all" });

@@ -73,6 +73,13 @@ budget returns mandatory-context overflow without claiming completeness. This
 comparison uses compatible current-time semantics: unknown validity is not
 substituted for a known ongoing interval.
 
+The reported blocker also produces an uncertainty cue tied to the explicit
+objective. Owner CLI dismissal and App snooze change only attention preferences:
+claim confidence/status, support admission bytes, canon receipts and the public
+Situation card remain identical. The independent MCP principal keeps its own
+unchanged cue disposition. Historical attention is explicitly unavailable; grant
+narrowing hides the scoped cue and source erasure deletes its retained state.
+
 The model fixture deliberately misreads a tentative idea as decided. An exact
 owner mode correction moves it into uncertainty for both clients; receipt undo restores
 the original claim. Three separately enrolled agents capture distinct synthetic
@@ -84,11 +91,10 @@ its version value; this remains an exact correlation value, not a claim that the
 Outcome subsystem inspected the original file. The remaining rebuild, restore, revoke and physical erasure stages run
 in that same journey.
 
-## Remaining composed coverage
+## Evidence boundary
 
-The attention stages still require their final composed product revision.
-Candidate-registry integration may use the existing isolated test seam, with shipped offered flags unchanged;
-real held-out qualification is a separate prerequisite for activation.
-
-Do not count a static scenario, a skipped stage or an unexecuted fixture as
-completion. The final journey must contain no TODO or skipped acceptance stage.
+The executable stages above run without skipped acceptance cases in the composed
+product revision. Candidate-registry integration uses the existing isolated test
+seam, with shipped offered flags unchanged. Its scripted model responses prove
+protocol and consumer integration, not extraction quality. Real held-out
+qualification remains a separate prerequisite for producer activation.

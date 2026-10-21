@@ -1,3 +1,4 @@
+import { attentionCommand } from "./attention";
 import { appCommand } from "./app";
 import { agentCommand } from "./agent";
 import { auditCommand } from "./audit";
@@ -71,6 +72,7 @@ export const COMMANDS: readonly Command[] = [
   contextCommand,
   hookCommand,
   worldCommand,
+  attentionCommand,
   verifyCommand,
   doctorCommand,
   serveCommand,

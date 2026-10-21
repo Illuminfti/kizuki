@@ -1,3 +1,4 @@
+import { ATTENTION_TABLE_SPECS } from "./attention";
 import { CONSOLIDATION_TABLE_SPECS } from "./consolidation";
 import { MACHINE_BODY_TABLE } from "../../ledger/machine-body-schema";
 import type { Database } from "bun:sqlite";
@@ -103,6 +104,7 @@ export const WORLD_TABLE_SPECS: readonly WorldTableSpec[] = [
   ...CONSOLIDATION_TABLE_SPECS,
   // slot: ident
   // slot: attn
+  ...ATTENTION_TABLE_SPECS,
   // slot: refs
   // slot: fcst
   // slot: machine_images

@@ -21,3 +21,13 @@ test("an operation without a scenario or an obsolete scenario fails the matrix g
   expect(() => verifyOperationCoverage(["concept"], ["concept", "old_operation"])).toThrow("stale world scenario: old_operation");
   expect(() => verifyOperationCoverage(["concept"], ["concept", "concept"])).toThrow("duplicate");
 });
+
+test("the public registry gate starts in a fresh process without import-order prerequisites", () => {
+  const child = Bun.spawnSync([process.execPath, "scripts/world-verify.ts", "--registry-only"], {
+    cwd: new URL("..", import.meta.url).pathname,
+    stdin: "ignore", stdout: "pipe", stderr: "pipe",
+  });
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+  expect(child.stdout.toString()).toMatch(/^PASS world registry: [1-9][0-9]* operations,/);
+  expect(child.stderr.toString()).toBe("");
+});

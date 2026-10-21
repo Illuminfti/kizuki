@@ -1,5 +1,6 @@
 import { atlasCli } from "./atlas";
 import { sliceCli } from "./slice";
+import { attentionCli } from "./attention";
 import { personCli, findPeopleCli } from "./person";
 import { procedureCli, findProceduresCli, skillCli, frameworkCli, outcomeCli } from "./skills";
 import { historyCli } from "./history";
@@ -47,6 +48,7 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   // slot: SLICE
   { name: "slice", cli: sliceCli },
   // slot: ATTN
+  { name: "attention", cli: attentionCli },
   // slot: FCST
   // slot: ATLAS
   { name: "atlas", cli: atlasCli },

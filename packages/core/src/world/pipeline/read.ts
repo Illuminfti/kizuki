@@ -34,7 +34,9 @@ const SHIPPED: PipelineStages = Object.freeze({
   groupers: GROUPERS,
   collectors: COLLECTORS,
   enrichers: ENRICHERS,
-  assemblers: KIND_ASSEMBLERS,
+  // Assemblers share frame contracts with recursive card readers. Resolve the
+  // list at read time so either public entry point can initialize first.
+  get assemblers() { return KIND_ASSEMBLERS; },
 });
 let active: PipelineStages = SHIPPED;
 

@@ -1,3 +1,4 @@
+import { attentionDoctor } from "./doctor-attention";
 import { consolidationDoctor } from "./doctor-consolidation";
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
@@ -644,6 +645,7 @@ export function inspectServeDoctor(
     rails,
     model,
     extraction,
+    attention: attentionDoctor(db, vaultPath, now),
     consolidation: consolidationDoctor(db, now, model.canon_writing !== "off", config.consolidation),
     egress,
     throughput,

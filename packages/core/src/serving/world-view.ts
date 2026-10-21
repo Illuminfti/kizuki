@@ -1,5 +1,6 @@
 import type { Atlas, AtlasPanelName, AtlasObjectOperation } from "../contracts/atlas";
 import type { WorldSlice } from "../contracts/world-slice";
+import type { Attention } from "../contracts/attention";
 import type { PersonCard } from "../contracts/person-card";
 import type { WorldDiff } from "../contracts/world-diff";
 import { compareWorldViews } from "../world/views/diff";
@@ -71,6 +72,7 @@ export type WorldReadInput =
   | { readonly operation: "atlas"; readonly panel?: AtlasPanelName; readonly focus?: { readonly operation: AtlasObjectOperation; readonly ref: WorldObjectRef; readonly card?: "kizuki.situation-card/v2" }; readonly baselineView?: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "slice"; readonly task: string; readonly kinds?: readonly string[]; readonly budgetTokens: number; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "diff"; readonly of: WorldRecord; readonly priorView: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
+  | { readonly operation: "attention"; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "person"; readonly person: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "find_people"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "artifact_version"; readonly artifact: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
@@ -141,6 +143,7 @@ export type WorldData =
   | Atlas
   | WorldSlice
   | WorldDiff
+  | Attention
   | ConceptCard
   | PersonCard
   | ArtifactCard
