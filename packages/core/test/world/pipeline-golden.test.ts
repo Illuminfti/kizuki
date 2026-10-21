@@ -79,6 +79,9 @@ function readCore(ctx: ServeContext): Record<string, unknown> {
 async function withScene(run: (scene: GoldenScene) => void | Promise<void>): Promise<void> {
   const scene = await goldenScene();
   try {
+    // Keep the original projection goldens on the supported unreserved path.
+    // The VIEW tests cover reserved reads and their conditional lifetimes.
+    scene.db.query("DELETE FROM world_view_partitions").run();
     await run(scene);
   } finally {
     scene.dispose();
@@ -147,6 +150,7 @@ test("an unfinished import and unconsumed extraction make every answer partial",
 
 function freshOwner() {
   const db = openLedger(":memory:");
+  db.query("DELETE FROM world_view_partitions").run();
   const ctx: ServeContext = { db, vaultPath: "/tmp/world-golden", principal: OWNER };
   return { db, ctx, sourceKey: enrollSource(db, "world.fixture", "public") };
 }

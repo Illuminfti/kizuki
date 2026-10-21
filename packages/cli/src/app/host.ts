@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { CanonRecoveryError, getCanonReceipt, inspectCanonRecovery, OWNER, getClaimsEpoch, sourcePolicyEpoch, getCheckpoint, initAgents, inspectSourceGrant, installServeService, queryServeService, readServeIntent, readVaultId, listAuditReceipts, listConnections, resumeSourceRevocation, revokeSourceGrant, runBackfill, runSync, runRail, serveSearch, setSourceGrant, undoReceipt, withDeadline } from '@kizuki/core';
 import type { Connector, SourceGrantPolicy, ServeContext } from '@kizuki/core';
-import { activeWorldOps, serveWorldView, worldOpInputKeys } from '@kizuki/core/world';
+import { activeWorldOps, worldOpInputKeys, serveWorldView } from '@kizuki/core/world';
 import { createGmailConnector, inspectGmailState, assertSameGmailIdentity } from '@kizuki/connector-gmail';
 import { createGoogleCalendarConnector, inspectGoogleCalendarState, assertSameGoogleCalendarIdentity } from '@kizuki/connector-google-calendar';
 import { inspectXApiState } from '@kizuki/connectors';

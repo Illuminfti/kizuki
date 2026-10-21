@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openLedger } from "../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../src/ledger/db";
 import { commitMachineByteIntent } from "../src/ledger/event-origin";
 import { accept } from "../src/ledger/ledger";
 import { machineBodyHash } from "../src/ledger/machine-image";
@@ -49,7 +49,7 @@ test("upgrade from the previous ledger adds the registry without restamping prio
   old.close();
   const upgraded = openLedger(path);
   try {
-    expect(upgraded.query("SELECT version FROM schema_version").get()).toEqual({ version: WORLD_MIGRATION_VERSIONS.machine_images });
+    expect(upgraded.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });
     expect(upgraded.query("SELECT 1 FROM canon_machine_body_images").get()).toBeNull();
     commitMachineByteIntent(upgraded, { receipt_id: ulid(), before_hash: null, after_hash: sha256Hex(page) }, () => {}, { before: null, after: page });
     expect(upgraded.query("SELECT body_hash FROM canon_machine_body_images").get()).toEqual({ body_hash: machineBodyHash(page) });

@@ -5,6 +5,7 @@ import type {
 import type { SituationCard } from "../contracts/situation-card";
 import type { WorldValidQuery } from "../serving/world-view";
 import type { ServeContext } from "../serving/types";
+import type { WorldDependencies } from "./dependencies";
 import {
   WORLD_DISCOVERY_SCAN_BUDGET,
 } from "./pipeline/collect";
@@ -35,9 +36,10 @@ export function projectWorldCard(
   handle: string,
   kind: "concept" | "situation",
   valid: WorldValidQuery,
+  dependencies?: WorldDependencies,
 ): ConceptCard | SituationCard | null {
   // The two shipped assemblers build exactly these cards.
-  return readWorldCard(newReadFrame(ctx, ns, valid), handle, kind) as
+  return readWorldCard(newReadFrame(ctx, ns, valid, dependencies), handle, kind) as
     | ConceptCard
     | SituationCard
     | null;
@@ -52,6 +54,7 @@ export function discoverWorld(
   valid: WorldValidQuery,
   after: string | null = null,
   scanBudget: number = WORLD_DISCOVERY_SCAN_BUDGET,
+  dependencies?: WorldDependencies,
 ): {
   schema: "kizuki.concept-matches/v1" | "kizuki.situation-matches/v1";
   matches: readonly { ref: WireRef<"object">; labels: readonly string[] }[];
@@ -59,7 +62,7 @@ export function discoverWorld(
   coverage: ConceptCoverage;
 } {
   return readWorldMatches(
-    newReadFrame(ctx, ns, valid),
+    newReadFrame(ctx, ns, valid, dependencies),
     kind,
     label,
     after,

@@ -29,7 +29,7 @@ export function coverageOf(
 ): ConceptCoverage {
   const gaps = [
     ...new Set<ViewGap>([
-      ...sourceCoverage(frame.ctx),
+      ...sourceCoverage(frame.ctx, frame.dependencies),
       ...(overflow ? (["traversal_limit"] as const) : []),
       ...extra,
     ]),

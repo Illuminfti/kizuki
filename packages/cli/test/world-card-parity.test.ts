@@ -7,6 +7,17 @@ import { envelopeOf } from "../../mcp/test/client";
 import { createAppHost } from "../src/app/host";
 import { createHelpers } from "./helpers";
 
+/** Each fresh call issues its own view; compare meaning after checking that capability. */
+function currentMeaning(value: any) {
+  expect(value.result.status).toBe("current");
+  const { view, validUntil, ...result } = value.result;
+  expect(view.kind).toBe("view");
+  expect(view.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(Date.parse(validUntil) - Date.now()).toBeGreaterThan(0);
+  expect(Date.parse(validUntil) - Date.now()).toBeLessThanOrEqual(15 * 60 * 1000);
+  return { ...value, result };
+}
+
 test("one card and its evidence have the same meaning through Core, stdio MCP, HTTP, CLI and the App model", async () => {
   const clients = await twoClients({ seed: { subject: "topic:initial", label: "Initial topic" }, agent: { subjects: null } });
   const f = await cardFixture(clients.db), h = createHelpers();
@@ -23,20 +34,20 @@ test("one card and its evidence have the same meaning through Core, stdio MCP, H
     await f.write("learning.assistance", { kind: "vocabulary", ref: { kind: "vocabulary", id: "learning/assisted" } }, { subject: "task:one", context: ["person:ada"] });
     const input = f.input("concept", { concept: f.find(ctx) }), core = serveWorldView(ctx, input);
     const mcp = envelopeOf(await clients.owner.call("world_view", input));
-    expect(mcp.data).toEqual(core.data);
+    expect(currentMeaning(mcp.data)).toEqual(currentMeaning(core.data));
     const appCard = await app(input);
     expect(appCard.ok, JSON.stringify(appCard)).toBe(true);
-    expect(appCard.data).toEqual(core.data);
+    expect(currentMeaning(appCard.data)).toEqual(currentMeaning(core.data));
     const json = h.runCli(env, "--vault", clients.vaultPath, "world", "--operation", "concept", "--ref", f.find().token, "--json");
     expect(json.exitCode).toBe(0);
-    expect(JSON.parse(json.stdout).data.data).toEqual(core.data);
+    expect(currentMeaning(JSON.parse(json.stdout).data.data)).toEqual(currentMeaning(core.data));
     const text = h.runCli(env, "--vault", clients.vaultPath, "world", "--operation", "concept", "--ref", f.find().token);
     expect(text.exitCode).toBe(0);
     for (const meaning of ["Revise beliefs using evidence", "A worked observation", "reported", "application", "assisted", "Evidence:", "Uncertainty:", "Coverage:", "Known at: current"]) expect(text.stdout).toContain(meaning);
     http = await startLoopback(clients.db, clients.vaultPath);
     const reply = await http.post("world_view", input);
     expect(reply.status).toBe(200);
-    expect((reply.body as any).value.data).toEqual(core.data);
+    expect(currentMeaning((reply.body as any).value.data)).toEqual(currentMeaning(core.data));
     const card = f.card(ctx), evidence = card.definitions[0]!.assessments[0]!.evidence[0]!;
     const evidenceInput = f.input("evidence", { evidence }), source = serveWorldView(ctx, evidenceInput);
     expect(envelopeOf(await clients.owner.call("world_view", evidenceInput)).quoted).toEqual(source.quoted);

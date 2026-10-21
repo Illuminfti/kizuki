@@ -35,7 +35,8 @@ describe("world", () => {
     const setup = tempVault();
     const result = runCli(setup.env, "world", "--operation", "find_concepts");
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.trim()).toBe("No admitted matches in your current scope.");
+    expect(result.stdout.split("\n")[0]).toBe("No admitted matches in your current scope.");
+    expect(result.stdout).toMatch(/View: [A-Za-z0-9_-]{43} \(valid until .+\)/);
     expect(result.stderr).toContain("kizuki doctor");
   });
 

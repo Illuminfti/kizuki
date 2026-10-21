@@ -407,7 +407,10 @@ describe("derived tables linked by a foreign key", () => {
     child().create!(f.db);
     f.db.query("INSERT INTO world_synth_parent(id) VALUES ('p')").run();
     f.db.query("INSERT INTO world_synth_child(id,parent_id) VALUES ('c','p')").run();
-    expect(rebuildWorldLayer(f.db).tables).toEqual(["world_synth_parent", "world_synth_child"]);
+    expect(rebuildWorldLayer(f.db).tables.filter((name) => name.startsWith("world_synth_"))).toEqual([
+      "world_synth_parent",
+      "world_synth_child",
+    ]);
     expect(count(f.db, "world_synth_parent")).toBe(0);
     expect(count(f.db, "world_synth_child")).toBe(0);
   });

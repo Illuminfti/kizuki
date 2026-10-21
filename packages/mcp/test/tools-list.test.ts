@@ -35,9 +35,9 @@ describe("world_view as a client sees it", () => {
     const tool = (await client.listTools()).tools.find((entry) => entry.name === "world_view");
     const schema = tool?.inputSchema as { properties?: Record<string, Property>; required?: string[] };
     expect(Object.keys(schema.properties ?? {}).sort()).toEqual(
-      ["concept", "cursor", "evidence", "knownAt", "label", "operation", "response_contract", "situation", "valid"],
+      ["concept", "cursor", "evidence", "handle", "knownAt", "label", "of", "operation", "priorView", "response_contract", "situation", "valid"],
     );
-    expect(schema.properties?.["operation"]?.enum).toEqual(["find_concepts", "find_situations", "concept", "situation", "describe", "evidence"]);
+    expect(schema.properties?.["operation"]?.enum).toEqual(["find_concepts", "find_situations", "concept", "situation", "describe", "evidence", "share", "resume"]);
     expect(schema.required).toEqual(["operation"]);
     expect(schema.properties?.["label"]?.default).toBe("");
     expect(schema.properties?.["valid"]?.default).toEqual({ kind: "all" });

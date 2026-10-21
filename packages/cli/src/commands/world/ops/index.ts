@@ -2,6 +2,7 @@ import { conceptCli } from "./concept";
 import { describeCli } from "./describe";
 import { discoverCli } from "./discover";
 import { situationCli } from "./situation";
+import { shareCli, resumeCli } from "./resume";
 import { evidenceCli } from "./evidence";
 import type { WorldCliEntry } from "./types";
 
@@ -18,6 +19,7 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   { name: "evidence", cli: evidenceCli },
   // slot: KNOWN
   // slot: VIEW
+  { name: "share", cli: shareCli }, { name: "resume", cli: resumeCli },
   // slot: QUEST
   // slot: PEOPLE
   // slot: SKILL

@@ -88,7 +88,7 @@ describe("world_view as generated from the registry", () => {
     const { schema } = await listed(await connect());
     expect(schema.properties?.["operation"]?.enum).toEqual(WORLD_OPS.map((op) => op.name));
     expect(Object.keys(schema.properties ?? {}).sort()).toEqual(
-      ["concept", "cursor", "evidence", "knownAt", "label", "operation", "response_contract", "situation", "valid"],
+      ["concept", "cursor", "evidence", "handle", "knownAt", "label", "of", "operation", "priorView", "response_contract", "situation", "valid"],
     );
   });
 
@@ -119,7 +119,7 @@ describe("world_view as generated from the registry", () => {
   });
 
   test("the fragments name the same own keys as the core operations", () => {
-    const common = ["operation", "valid", "knownAt"];
+    const common = ["operation", "valid", "knownAt", "priorView"];
     for (const op of WORLD_OPS) {
       const fragment = MCP_WORLD_OPS.find((entry) => entry.name === op.name);
       const own = worldOpInputKeys(op).filter((key) => !common.includes(key));

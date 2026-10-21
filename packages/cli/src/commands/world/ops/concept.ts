@@ -6,7 +6,7 @@ import type { WorldCliOp } from "./types";
 import { relationLines } from "./relation-render";
 
 export const conceptCli: WorldCliOp<Extract<WorldData, { schema: "kizuki.concept-card/v1" }>> = {
-  usage: "--ref TOKEN",
+  usage: "--ref TOKEN [--prior-view TOKEN] [--share]",
   options: ["--ref"],
   bounds: { "--ref": "32-byte base64url object token" },
   buildInput: (options) => {

@@ -36,6 +36,7 @@ import { applyPurgeReingestV34 } from "./migrations/purge-reingest-v34";
 import { applyMachineBodies } from "./machine-body-schema";
 import { applyCursorStoreV35 } from "./migrations/cursor-store-v35";
 import { CURSOR_STORE_MIGRATION_VERSION, PURGE_REINGEST_MIGRATION_VERSION, WORLD_MIGRATION_VERSIONS } from "../world/tables/versions";
+import { applyWorldViewTables } from "../world/tables/views";
 
 interface Migration {
   version: number;
@@ -233,6 +234,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: PURGE_REINGEST_MIGRATION_VERSION, apply: applyPurgeReingestV34 },
   { version: CURSOR_STORE_MIGRATION_VERSION, apply: applyCursorStoreV35 },
   { version: WORLD_MIGRATION_VERSIONS.machine_images, apply: applyMachineBodies },
+  { version: WORLD_MIGRATION_VERSIONS.view, apply: applyWorldViewTables },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

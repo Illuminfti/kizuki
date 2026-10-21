@@ -414,9 +414,11 @@ export function gate<T, C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   args: Record<string, unknown>,
   run: (call: ServeCall) => Served<T>,
   contract: C = ENVELOPE_SCHEMA as C,
+  /** Reproject changed dependencies in the same snapshot that seals final output. */
+  recheck?: (call: ServeCall, served: Served<T>) => Served<T>,
 ): ResponseEnvelope<T, C> {
   try {
-    return gated(ctx, tool, args, run, contract);
+    return gated(ctx, tool, args, run, contract, recheck);
   } catch (error) {
     // Reserving and updating the audit row are writes outside `failed`.
     if (error instanceof ServeError || !isLedgerBusy(error)) throw error;
@@ -430,9 +432,26 @@ function gated<T, C extends ResponseContract>(
   args: Record<string, unknown>,
   run: (call: ServeCall) => Served<T>,
   contract: C,
+  recheck?: (call: ServeCall, served: Served<T>) => Served<T>,
 ): ResponseEnvelope<T, C> {
   const at = new Date().toISOString();
   const { live, audit_id } = enter(ctx, tool, args, at);
+  if (recheck !== undefined) {
+    try {
+      const served = run({ ctx: live, at });
+      return live.db.transaction(() => {
+        const current = liveContext(live);
+        if (current === null) throw new ServeError("unknown_agent", "unknown agent");
+        if (!toolAllowed(current.principal.grant, tool)) throw new ServeError("tool_not_granted", "tool not granted");
+        const fresh = { ...current, redactor: createRedactor(current.principal) };
+        const final = recheck({ ctx: fresh, at }, served);
+        validatePublication(fresh, tool, final);
+        return envelopeOf(fresh, tool, args, at, audit_id, final, contract);
+      }).immediate();
+    } catch (error) {
+      failed(live, tool, args, audit_id, error);
+    }
+  }
   if (contract === ENVELOPE_V2_SCHEMA) {
     try {
       return live.db.transaction(() => {

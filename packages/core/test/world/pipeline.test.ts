@@ -4,7 +4,7 @@
  * Reads go through `world_view`; the stage lists are swapped with
  * `withWorldPipeline`, which restores them when the read is done.
  */
-import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, setSystemTime, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateConceptCard } from "../../src/contracts/concept-card";
@@ -28,9 +28,10 @@ setDefaultTimeout(120_000);
 
 let scene: GoldenScene;
 beforeAll(async () => {
+  setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
   scene = await goldenScene();
 });
-afterAll(() => scene.dispose());
+afterAll(() => { scene.dispose(); setSystemTime(); });
 
 interface CardRead {
   status: string;

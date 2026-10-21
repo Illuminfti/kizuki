@@ -13,8 +13,8 @@ export const evidenceOp: ClaimsOp<ConceptEvidenceRef> = {
   source: "claims", name: "evidence", keys: { required: ["evidence"], optional: [] },
   dataSchemas: ["kizuki.world-evidence/v1"],
   parse: (input) => evidenceRef(input.evidence) && input.evidence.span.kind === "text" ? input.evidence : null,
-  run: ({ ctx, ns }, evidence, { valid }) => {
-    const frame = newReadFrame(ctx, ns, valid);
+  run: ({ ctx, ns, dependencies }, evidence, { valid }) => {
+    const frame = newReadFrame(ctx, ns, valid, dependencies);
     const permitted = authorizedSupportSql(ctx), claim = authorizedClaimSql(ctx), time = validMeaningSql(valid);
     // Push every policy restriction ahead of lookup/work accounting, even for
     // refs issued before revocation. A reference never confers authority.

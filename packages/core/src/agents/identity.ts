@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { timingSafeEqual } from "node:crypto";
 import { ulid } from "../util/ulid";
+import { reserveViewPartition } from "../world/views/partitions";
 import { recordLifecycle } from "./audit";
 import { sha256 } from "./hash";
 import { compareRfc3339, rfc3339Millis } from "./time";
@@ -386,6 +387,7 @@ export function addAgent(
        VALUES (?, ?, ?, ?)`,
     ).run(agent.agent_id, agent.name, tokenHash, agent.created_at);
     writeAgentGrant(db, agent.agent_id, grant, agent.created_at, 1);
+    reserveViewPartition(db, agent.agent_id, agent.created_at);
     recordLifecycle(db, agent.agent_id, "agent.create", {
       after: grant,
     }, agent.created_at);
@@ -602,6 +604,7 @@ export function setGrantInTransaction(
     },
     at,
   );
+  if (row.revoked_at === null) reserveViewPartition(db, row.agent_id, at);
   return grant;
 }
 

@@ -53,7 +53,7 @@ function objectLine(relation: { predicate: string; polarity: string; object: { k
 /** The corrected concept, as it reads now: what each claim says and how it is held. */
 function renderRefreshed(view: WorldReadResult): string[] {
   if ("status" in view) return ["Refreshed concept: not found."];
-  if (view.result.status === "unavailable") return [];
+  if (view.result.status !== "current" && view.result.status !== "incomplete") return [];
   const data = view.result.data;
   if (!("concept" in data)) return [];
   const label = clean(data.concept.labels.map((entry) => entry.text).join(" / ")) || "Concept";
@@ -128,7 +128,7 @@ export const tellCommand: Command = {
             ...(refresh === undefined ? {} : { refresh_world: { operation: "concept" as const, concept: { kind: "object" as const, token: refresh } } }),
             ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
           };
-          const served = await whileWriterBusy(() => contract === undefined
+          const served = await whileWriterBusy(async () => contract === undefined
             ? serveCorrect(serve, request)
             : serveV2(serve, "correct", request, contract));
           const data = served.data as CorrectData | undefined;
