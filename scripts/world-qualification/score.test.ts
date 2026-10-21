@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { startFakeEndpoint } from "../../packages/llm/test/fake-endpoint";
 import type { WorldRegistry } from "../../packages/core/src/contracts/world-kinds";
-import { RUNNER_FILES, runnerDigest, sourceProvenance } from "./fingerprint";
+import { RUNNER_FILES, SOURCE_FILES, runnerDigest, sourceProvenance } from "./fingerprint";
 import { extractionV2SystemContent } from "../../packages/core/src/producer/prompt-v2";
 
 /** A scorer control only. It never receives runner provenance or enables product flags. */
@@ -130,12 +130,20 @@ test("a clean surrounding Git commit cannot attest an untracked or modified runn
   try {
     expect(git("init").exitCode).toBe(0);
     expect(git("-c", "user.name=Synthetic Test", "-c", "user.email=synthetic@example.test", "commit", "--allow-empty", "-m", "Initialize synthetic provenance fixture").exitCode).toBe(0);
-    for (const path of RUNNER_FILES) { mkdirSync(dirname(join(directory, path)), { recursive: true }); writeFileSync(join(directory, path), "synthetic\n"); }
+    for (const path of SOURCE_FILES) { mkdirSync(dirname(join(directory, path)), { recursive: true }); writeFileSync(join(directory, path), "synthetic\n"); }
     expect(sourceProvenance(directory).source_clean).toBe(false);
-    expect(git("add", "--", ...RUNNER_FILES).exitCode).toBe(0);
+    expect(git("add", "--", ...SOURCE_FILES).exitCode).toBe(0);
     expect(sourceProvenance(directory).source_clean).toBe(false);
     expect(git("-c", "user.name=Synthetic Test", "-c", "user.email=synthetic@example.test", "commit", "-m", "Track synthetic provenance fixture").exitCode).toBe(0);
     expect(sourceProvenance(directory).source_clean).toBe(true);
+    const digest = runnerDigest(directory);
+    writeFileSync(join(directory, "scripts/world-qualification/approvals.ts"), "synthetic reviewed report and provider pins\n");
+    expect(runnerDigest(directory)).toBe(digest);
+    writeFileSync(join(directory, "scripts/world-qualification/registry.ts"), "changed verifier\n");
+    expect(runnerDigest(directory)).not.toBe(digest);
+    writeFileSync(join(directory, "scripts/world-qualification/registry.ts"), "synthetic\n");
+    writeFileSync(join(directory, "scripts/world-qualification/score.ts"), "changed scorer\n");
+    expect(runnerDigest(directory)).not.toBe(digest);
     writeFileSync(join(directory, RUNNER_FILES[0]), "changed\n");
     expect(sourceProvenance(directory).source_clean).toBe(false);
   } finally { rmSync(directory, { recursive: true, force: true }); }

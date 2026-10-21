@@ -86,7 +86,10 @@ partial kind never qualifies.
 Transport observation alone cannot prove provider identity: a local test
 server can return a response. Review must independently establish the actual
 configured service/provider, then pin both the exact report hash and the
-provider-evidence artifact hash in `REVIEWED_QUALIFICATIONS`. Never register a
+provider-evidence artifact hash in `REVIEWED_QUALIFICATIONS` in `approvals.ts`.
+This reviewed catalog is excluded from the evaluator fingerprint, so adding a
+review pin cannot invalidate the very run being approved. Verifier, scorer,
+corpus and producer code remain fingerprinted. Never register a
 scripted scorer or fake-endpoint control as a qualification. There are no
 reviewed report entries initially.
 
