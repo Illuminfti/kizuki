@@ -224,11 +224,11 @@ export class SqlStore {
       });
     }
   }
-  /** The next chunk without a vector, newest documents first; `only` narrows it to those documents. */
-  async pending(only?: readonly string[]): Promise<PendingRow | undefined> {
+  /** Pending chunks, newest documents first; `only` narrows them to those documents. */
+  async pending(limit: number, only?: readonly string[]): Promise<PendingRow[]> {
     return (await this.db.query<PendingRow>(`SELECT c.chunk_id,c.doc_id,d.title,c.body,c.chunk_index,c.revision FROM retrieval_chunks c
    JOIN retrieval_docs d USING(doc_id) WHERE c.embedding IS NULL AND ($1::text[] IS NULL OR c.doc_id=ANY($1::text[]))
-   ORDER BY d.updated_at DESC NULLS LAST,c.doc_id,c.chunk_index LIMIT 1`, [only === undefined ? null : [...only]])).rows[0];
+   ORDER BY d.updated_at DESC NULLS LAST,c.doc_id,c.chunk_index LIMIT $2`, [only === undefined ? null : [...only], limit])).rows;
   }
   /**
    * Copies the stored vectors of a document into the rebuild staging table when

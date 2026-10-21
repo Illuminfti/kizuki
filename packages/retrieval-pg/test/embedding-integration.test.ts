@@ -25,6 +25,7 @@ afterEach(async () => {
 /** Records what the engine hands the embedder. */
 class RecordingEmbedding extends FixtureEmbeddingPort {
   readonly chunks: Chunk[] = [];
+  readonly batches: Chunk[][] = [];
   failQueries = false;
   override async embedQuery(texts: readonly string[]): Promise<Float32Array[]> {
     if (this.failQueries)
@@ -37,6 +38,7 @@ class RecordingEmbedding extends FixtureEmbeddingPort {
   }
   override async embedDocs(chunks: readonly Chunk[]): Promise<Float32Array[]> {
     this.chunks.push(...chunks);
+    this.batches.push([...chunks]);
     return super.embedDocs(chunks);
   }
 }
@@ -344,6 +346,18 @@ describe("rebuild", () => {
         .join(" "),
     ).toContain("changed0");
     expect(rows.every((row) => row.embedding !== null)).toBe(true);
+  });
+
+  test("batches a bounded rebuild without changing its staged result", async () => {
+    const embedding = new RecordingEmbedding();
+    const { port } = await open(embedding, { chunk_tokens: 100, chunk_overlap: 0 });
+    const many = Array.from({ length: 17 }, (_, at) => doc(`page:batch-${at}`, `bounded rebuild record ${at}`));
+
+    await port.rebuildFromDocuments(many);
+
+    expect(embedding.chunks).toHaveLength(17);
+    expect(embedding.batches.map(batch => batch.length)).toEqual([16, 1]);
+    expect((await chunkRows(port)).every(row => row.embedding !== null)).toBe(true);
   });
 
   test("a vector-layer rebuild embeds every chunk again", async () => {

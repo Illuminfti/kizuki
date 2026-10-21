@@ -151,7 +151,7 @@ test("schema v1 migrates to nullable update dates without losing documents; unkn
     try {
       expect((await migrated.db.query("SELECT version FROM schema_migrations ORDER BY version")).rows).toEqual([{ version: 1 }, { version: 2 }]);
       expect((await migrated.db.query("SELECT updated_at FROM retrieval_docs WHERE doc_id='page:unknown'")).rows).toEqual([{ updated_at: null }]);
-      expect((await migrated.pending())?.doc_id).toBe("page:known");
+      expect((await migrated.pending(1))[0]?.doc_id).toBe("page:known");
       expect((await migrated.db.query("SELECT count(*)::integer AS n FROM retrieval_docs")).rows).toEqual([{ n: 2 }]);
     } finally { await migrated.close(); }
   } finally { fixture.cleanup(); }
