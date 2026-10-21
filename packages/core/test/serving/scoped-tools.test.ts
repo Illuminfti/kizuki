@@ -93,7 +93,7 @@ test("packet refs are rendered before budgeting while literal ID-looking capture
     expect(captured.status).toBe("stored");
     const packet = await serveContextPacketV2(f.ctx, { purpose: "recall", subjects: [f.refs.raw], since: "2020-01-01T00:00:00Z", until: "2040-01-01T00:00:00Z", budget_tokens: 2000 });
     const result = packet.data.result; if (!("data" in result)) throw Error("no packet");
-    expect(Object.keys(result.data).sort()).toEqual(["budgetTokens", "coverage", "packetMd", "purpose", "tokenizer", "tokens"]);
+    expect(Object.keys(result.data).sort()).toEqual(["budgetTokens", "coverage", "packetMd", "purpose", "servedUnits", "tokenizer", "tokens"]);
     expect(result.data.tokens).toBeLessThanOrEqual(2000);
     expect(result.data.packetMd).toContain("[event-version-ref:");
     expect(result.data.packetMd).toContain(`> ${literal}`);

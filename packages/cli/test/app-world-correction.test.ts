@@ -76,8 +76,11 @@ test.each([false, true])('authenticated App corrects a typed writer page and und
         expect(readFileSync(join(f.vault, f.path), 'utf8')).toContain(args.statement);
         expect(readFileSync(join(f.vault, f.path), 'utf8')).not.toContain('Revise beliefs using evidence');
         expect((await f.request('correction_preview', args)).ok).toBe(false);
-        const stale = await f.done((await f.request('correct', args)).data.operation_id);
-        expect(stale.state).toBe('failed');
+        const after = readFileSync(join(f.vault, f.path), 'utf8');
+        const replay = await f.done((await f.request('correct', args)).data.operation_id);
+        expect(replay.state).toBe('succeeded');
+        expect(replay.result.receipt_id).toBe(applied.result.receipt_id);
+        expect(readFileSync(join(f.vault, f.path), 'utf8')).toBe(after);
         expect(f.nativeEvents()).toBe(1);
         const undone = await f.done((await f.request('undo', { receipt_id: applied.result.receipt_id })).data.operation_id);
         expect(undone.state).toBe('succeeded');

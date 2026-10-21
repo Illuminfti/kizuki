@@ -1,8 +1,10 @@
 import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { listAgents, type AppAgentEnrollmentRequest } from "@kizuki/core";
+import { accept, listAgents, type AppAgentEnrollmentRequest } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
+import { validEvent } from "../../core/test/fixtures";
+import { enrollSource } from "../../core/test/helpers/world-seed";
 import { recordedPage } from "../../core/test/helpers/recorded-page";
 import { AppAgentSetupError, enrollAppAgentSetup, resolveAppAgentMcpRuntime, revokeAppAgent, type AppAgentMcpConfiguration } from "../src/app/agents";
 import { createHelpers } from "./helpers";
@@ -23,7 +25,7 @@ afterEach(async () => { for (const child of sessions.splice(0)) await child.clos
 const ENTRY = resolve(import.meta.dir, "../../mcp/src/bin.ts");
 const request: AppAgentEnrollmentRequest = {
   name: "app-scoped-reader", operation_id: "app-stdio-0001",
-  grant: { ceiling: "personal", types: ["fact"], subjects: ["person:ada"], since: null, until: null,
+  grant: { ceiling: "personal", types: ["fact", "message"], subjects: ["person:ada"], since: null, until: null,
     tools: ["search"], rate_limit_per_minute: 60, relay_owner_corrections: false },
 };
 
@@ -94,13 +96,30 @@ function denied(reply: Reply, code: string) {
 test("generated app setup launches the real scoped MCP and revokes access on that running process", async () => {
   const f = helpers.tempVault(); const db = openLedger(join(f.vault, ".kizuki/kizuki.db"));
   try {
+    const sourceKey = enrollSource(db, "fixture", "public");
     for (const page of [
       { path: "facts/allowed.md", id: "fact:allowed", type: "fact", sensitivity: "personal", subject: "person:ada", body: "orchard allowed synthetic note" },
       { path: "facts/private.md", id: "fact:private", type: "fact", sensitivity: "private", subject: "person:ada", body: "orchard PRIVATE_DENIED_CANARY" },
       { path: "facts/other-subject.md", id: "fact:other", type: "fact", sensitivity: "personal", subject: "person:grace", body: "orchard SUBJECT_DENIED_CANARY" },
       { path: "entities/other-type.md", id: "person:other", type: "person", sensitivity: "personal", subject: "person:ada", body: "orchard TYPE_DENIED_CANARY" },
-    ]) await recordedPage(db, f.vault, page.path, { id: page.id, title: page.id, type: page.type, sensitivity: page.sensitivity,
-      subjects: [page.subject], status: "active", taint: "clean" }, page.body);
+    ] as const) {
+      const captured = accept(db, { ...validEvent(), connector_id: "fixture", source_record_id: page.id,
+        text: page.body, sensitivity_hint: page.sensitivity, subjects: [{ subject_id: page.subject, role: "about" }] },
+        { source: { source_key: sourceKey, expected_revision: 1 } });
+      if (captured.status !== "stored") throw new Error("scoped App fixture capture failed");
+      await recordedPage(db, f.vault, page.path, { id: page.id, title: page.id, type: page.type, sensitivity: page.sensitivity,
+        subjects: [page.subject], status: "active", taint: "clean" }, page.body, [captured.event.event_id]);
+    }
+    // A readable page must not smuggle a source reference outside the grant.
+    const pageOnly = { ...request, name: "app-page-only-reader", operation_id: "app-page-only-0001",
+      grant: { ...request.grant, types: ["fact"] } };
+    const limited = enrollAppAgentSetup(f.vault, pageOnly);
+    const pageReader = session(limited.mcp!); await pageReader.initialize();
+    const refusal = await pageReader.call("search", { query: "orchard", scope: "canon" });
+    denied(refusal, "not_found");
+    expect(JSON.stringify(refusal)).not.toContain("orchard");
+    await pageReader.close();
+    expect(revokeAppAgent(f.vault, pageOnly.name).authority).toBe("revoked");
     const setup = enrollAppAgentSetup(f.vault, request);
     expect(setup.receipt).toMatchObject({ status: "completed", authority: "active", credential: "ready", grant: request.grant });
     expect(setup.mcp?.command).toBe(process.execPath);
@@ -127,7 +146,8 @@ test("generated app setup launches the real scoped MCP and revokes access on tha
     await consumer.close();
     const transcript = await consumer.transcript();
     expect([token, credential, f.vault, "PRIVATE_DENIED_CANARY", "SUBJECT_DENIED_CANARY", "TYPE_DENIED_CANARY"].some(value => transcript.includes(value)), "MCP output redaction").toBe(false);
-    expect(listAgents(db).map(agent => ({ name: agent.name, grant: agent.grant, revoked: agent.revoked_at !== null }))).toEqual([{ name: request.name, grant: request.grant, revoked: true }]);
+    expect(listAgents(db).map(agent => ({ name: agent.name, grant: agent.grant, revoked: agent.revoked_at !== null })).sort((a, b) => a.name.localeCompare(b.name)))
+      .toEqual([pageOnly, request].map(agent => ({ name: agent.name, grant: agent.grant, revoked: true })).sort((a, b) => a.name.localeCompare(b.name)));
   } finally { db.close(); }
 }, 30_000);
 

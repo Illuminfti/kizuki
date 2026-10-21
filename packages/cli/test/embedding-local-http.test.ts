@@ -10,6 +10,7 @@ import { startFakeServer } from "../../embed-local-http/test/helpers";
 import type { FakeServer } from "../../embed-local-http/test/helpers";
 import { openVaultDb } from "../src/context";
 import { openConfiguredRetrieval } from "../src/retrieval-runtime";
+import { recordedPage } from "../../core/test/helpers/recorded-page";
 import { createHelpers, fixtureConsent } from "./helpers";
 
 // Each test spawns real CLI processes and opens the embedded SQL engine.
@@ -138,7 +139,7 @@ timeout_ms = 5000
   );
 }
 
-async function golden() {
+async function golden(withCanon = false) {
   const f = helpers.tempVault();
   const notes = join(f.root, "golden");
   writeGolden(notes);
@@ -152,6 +153,17 @@ async function golden() {
       ...fixtureConsent(f.root),
     ).exitCode,
   ).toBe(0);
+  if (withCanon) {
+    // Packet semantic nomination ranks canon; the zero-model import correctly
+    // leaves the captured ledger alone. Seed an actual receipted page explicitly.
+    const db = openVaultDb(f.vault);
+    try {
+      const source = db.query<{ event_id: string }, [string]>("SELECT event_id FROM events WHERE text LIKE ?").all("%signed for the sedan%");
+      expect(source).toHaveLength(1);
+      await recordedPage(db, f.vault, "facts/vehicle.md", { id: "fact:vehicle", title: "Vehicle purchase", type: "fact",
+        sensitivity: "private", subjects: [], status: "active", taint: "clean" }, GOLDEN[0]!.text, [source[0]!.event_id]);
+    } finally { db.close(); }
+  }
   const server = semanticServer();
   configure(f.vault, server);
   const rebuilt = await helpers.runCliAsync(
@@ -230,20 +242,24 @@ test("hybrid retrieval recovers paraphrases that full-text search cannot, and ke
     expect(
       server.requests.every((request) => request.path === "/v1/embeddings"),
     ).toBe(true);
-
-    // Context packets take the same path.
-    const packet = await serveContextPacket(
-      { ...hybrid },
-      { query: "automobile", budget_tokens: 2_000 },
-    );
-    expect(JSON.stringify(packet)).toContain("sedan");
-    expect(packet.data?.retrieval_degraded ?? []).not.toContain(
-      "retrieval-vector-unavailable",
-    );
   } finally {
     await engine?.close();
     db.close();
   }
+});
+
+test("context packets rank authorized receipted canon through the configured embedding engine", async () => {
+  const { f } = await golden(true);
+  const db = openVaultDb(f.vault), engine = await openConfiguredRetrieval(f.vault);
+  try {
+    const packet = await serveContextPacket(
+      { db, vaultPath: f.vault, principal: OWNER, retrieval: engine! },
+      { purpose: "recall", include: ["canon"], query: "automobile", budget_tokens: 2_000 },
+    );
+    expect(packet.canon.some(chunk => chunk.excerpt.includes("sedan"))).toBe(true);
+    expect(packet.data?.packet_md).toContain("sedan");
+    expect(packet.data?.retrieval_degraded ?? []).not.toContain("retrieval-vector-unavailable");
+  } finally { await engine?.close(); db.close(); }
 });
 
 test("when the embedding server goes away the answer stays lexical and says so", async () => {
