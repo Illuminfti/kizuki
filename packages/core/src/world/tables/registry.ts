@@ -4,6 +4,7 @@ import { LedgerStoreError } from "../../ledger/errors";
 import { tableColumns, tableExists } from "../../ledger/schema";
 import { WORLD_TABLE_COLUMNS, type WorldTable } from "../schema";
 import { WORLD_VIEW_TABLE_SPECS } from "./views";
+import { KNOWN_TABLE_SPECS } from "./known";
 import { WORLD_MIGRATION_BASE } from "./versions";
 
 /**
@@ -94,6 +95,7 @@ export const WORLD_TABLE_SPECS: readonly WorldTableSpec[] = [
   // slot: view
   ...WORLD_VIEW_TABLE_SPECS,
   // slot: known
+  ...KNOWN_TABLE_SPECS,
   // slot: consol
   // slot: ident
   // slot: attn
