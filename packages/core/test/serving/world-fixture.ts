@@ -28,6 +28,7 @@ export async function worldFixture(
     retrieval?: RetrievalPort;
     occurrence?: boolean;
     purposes?: SourcePurpose[];
+    renderingBody?: string;
   } = {},
 ) {
   const sourceKey = options.sourceKey ?? ulid(),
@@ -139,7 +140,7 @@ export async function worldFixture(
           schema: WORLD_ADMISSION_SCHEMA,
           semantic,
           rendering: {
-            body: `${predicate}: ${JSON.stringify(object)}`,
+            body: options.renderingBody ?? `${predicate}: ${JSON.stringify(object)}`,
             frontmatter: {},
           },
           authority: "model_inference",

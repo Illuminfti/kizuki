@@ -130,6 +130,27 @@ receipt and file state before idempotent reconciliation. See the
 fence still refuse unknown-execution replay; a local caller lease alone does
 not establish that guarantee.
 
+## Typed canonical text and corrections
+
+New typed pages render the current admitted predicate and object, including
+polarity, perspective, context and time qualifiers. They do not repeat an entire
+source sentence for every classification or label: that could keep a corrected
+fact visible through another still-live assertion. Source events and original
+support renderings remain unchanged as provenance. A current native owner
+correction also retains its explicit owner statement beside the typed value.
+
+Each new `WorldClaimBasis` entry records the optional exact discriminator
+`rendering: "semantic/v1"`. Unknown values are refused. Historical entries
+without the field reconstruct their original support prose byte for byte.
+A correction can therefore have an unmarked historical before-image and a
+semantic after-image; backup, restore, undo and redo preserve the corresponding
+rendering choice. The enclosing receipt and basis schema identifiers remain
+unchanged. Reference qualifiers use stable local digests rather than displaying
+raw connector identifiers or source namespaces.
+
+Verify this boundary with `packages/core/test/canon/world-semantic-rendering.test.ts`
+and `packages/core/test/export-world-canon.test.ts`.
+
 ## CI
 
 `scripts/chaos/harness.test.ts` is discovered by the existing Bun test gate.
