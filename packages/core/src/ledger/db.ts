@@ -36,6 +36,7 @@ import { applyPurgeReingestV34 } from "./migrations/purge-reingest-v34";
 import { applyMachineBodies } from "./machine-body-schema";
 import { applyCursorStoreV35 } from "./migrations/cursor-store-v35";
 import { SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION, CURSOR_STORE_MIGRATION_VERSION, PURGE_REINGEST_MIGRATION_VERSION, WORLD_MIGRATION_VERSIONS, LEDGER_MIGRATION_VERSIONS } from "../world/tables/versions";
+import { applyKnownRefs } from "../world/tables/known-refs";
 import { applyClaimHistorySchema } from "../world/tables/known";
 import { applyWorldViewTables } from "../world/tables/views";
 import { applyEventClassesMigration } from "./migrations/event-classes";
@@ -241,6 +242,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: LEDGER_MIGRATION_VERSIONS.eventClasses, apply: applyEventClassesMigration },
   { version: SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION, apply: applyScopedClaimIdempotency },
   { version: WORLD_MIGRATION_VERSIONS.known, apply: applyClaimHistorySchema },
+  { version: WORLD_MIGRATION_VERSIONS.refs, apply: applyKnownRefs },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

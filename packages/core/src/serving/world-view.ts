@@ -1,5 +1,7 @@
 import { resolvePrincipal, toolAllowed, type Principal } from "../agents";
 import { tableExists } from "../ledger/schema";
+import type { HistoryPage } from "../contracts/world-history";
+import { WorldHistoryUnavailable } from "../world/known/cutoff";
 import { WorldProjectionBudgetError } from "../world/projection";
 import type { discoverWorld } from "../world/projection";
 import type { WorldDescribe } from "../world/ops/describe";
@@ -33,8 +35,7 @@ import { isPlainObject } from "../util/validate";
 import { auditArguments, gate } from "./gate";
 import type { Served } from "./gate";
 import type { RedactionCounts } from "./redact";
-import { createRedactor, redactValue } from "./redact";
-import { clampWorldData } from "./world-clamp";
+import { clampWorldData, worldViewProjection } from "./world-clamp";
 import { ENVELOPE_V2_SCHEMA, ServeError } from "./types";
 import type { ConceptEvidenceRef } from "../contracts/concept-card";
 import type { WorldEvidenceData, WorldEvidenceSource, WorldQuotedEvidence } from "../world/ops/evidence-types";
@@ -70,7 +71,7 @@ export type WorldReadInput =
       readonly priorView?: ViewToken;
     }
   | {
-      readonly operation: "concept";
+      readonly operation: "concept" | "history";
       readonly concept: WorldObjectRef;
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
@@ -102,6 +103,7 @@ export type WorldReadInput =
 /** The bodies the shipped operations return; each operation's `dataSchemas` say which one it is. */
 export type WorldData =
   | ConceptCard
+  | HistoryPage
   | SituationCard
   | ReturnType<typeof discoverWorld>
   | WorldDescribe
@@ -115,14 +117,15 @@ export type WorldReadResult =
       readonly result: WorldViewResult<WorldData>;
     };
 /**
- * What a read that names no earlier read can answer. A baseline (`priorView`)
- * or a handle is the only way to be told `unchanged` or `new_view_required`, so
- * a caller that sends neither is never handed a result without a body.
+ * What a read that names no earlier capability can answer. A retained view,
+ * resume handle or known-at snapshot can require a new view; fresh current
+ * and timestamp reads always return a body, absence or explicit unavailability.
  */
 export type WorldFreshInput = {
   readonly operation: string;
   readonly priorView?: undefined;
   readonly handle?: undefined;
+  readonly knownAt?: Exclude<WorldKnownAt, { readonly kind: "snapshot" }>;
 };
 /** A record of unknown keys may carry a baseline at run time, so only an object of known keys is fresh. */
 type KnownKeys<Input> = string extends keyof Input ? never : Input;
@@ -198,7 +201,7 @@ function present(op: WorldOp, outcome: WorldOpOutcome, view: ViewSession | null,
   if (view === null) return { quoted: outcome.quoted ?? [], data: answer(op.name, { status: "current", view: { status: "not_issued" }, data }) };
   // Compare and retain the final served projection. The gate redacts the raw
   // body once for output and counts, including after a bounded reprojection.
-  const projection = ctx.redactor === undefined ? data : clampWorldData(redactValue(createRedactor(ctx.principal, ctx.servingSecrets), data));
+  const projection = worldViewProjection(ctx, data);
   const result = settleView(ctx.db, view, op.name, projection, dependencies);
   return { quoted: outcome.quoted ?? [], data: answer(op.name, "data" in result ? { ...result, data } : result) };
 }
@@ -243,7 +246,7 @@ function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, depe
       prior = op.views === true && Object.hasOwn(input, "priorView") ? parseWorldRef(input.priorView, "view") : null;
     if (query === null || valid === null || knownAt === null || (Object.hasOwn(input, "priorView") && prior === null))
       throw new WorldViewError();
-    if (knownAt.kind !== "current") return withoutQuotes(unavailable(op.name, "history"));
+    if (knownAt.kind !== "current" && op.knownAt !== true) return withoutQuotes(unavailable(op.name, "history"));
     if (!tableExists(ctx.db, "world_authorization_namespaces"))
       return withoutQuotes(unavailable(op.name, "storage"));
     // A nested transaction is a savepoint: failed/budgeted projections issue no refs.
@@ -259,10 +262,11 @@ function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, depe
         // The baseline is judged before any projection work, so an unusable one costs the same for every cause.
         const view = op.views === true ? openView(live, ns, input, prior) : null;
         if (view?.stale === true) return withoutQuotes(answer(op.name, { status: "new_view_required" }));
-        return present(op, op.run({ ctx: live, ns, registry, dependencies }, query, { valid, knownAt }), view, live, dependencies);
+        return present(op, op.run({ ctx: live, ns, registry, dependencies, ...(view === null ? {} : { view }) }, query, { valid, knownAt }), view, live, dependencies);
       })
       .immediate();
   } catch (error) {
+    if (error instanceof WorldHistoryUnavailable) return withoutQuotes(unavailable(op.name, "history"));
     if (error instanceof WorldProjectionBudgetError)
       return withoutQuotes(unavailable(op.name, "budget"));
     throw error;
@@ -291,7 +295,11 @@ export function serveWorldView(
   let readPrincipal: Principal | undefined;
   let dependencies = worldDependencies();
   const project = (live: ServeContext): Served<WorldReadResult> => {
+    // A gate recheck may reproject authority; it must not resolve the requested
+    // recorded timestamp again and admit a later clock-clamped transaction.
+    const cutoff = dependencies.cutoff;
     dependencies = worldDependencies();
+    if (cutoff !== undefined) dependencies.cutoff = cutoff;
     try {
       return ctx.db.transaction(() => {
         const response = read(live, args, registry, dependencies);

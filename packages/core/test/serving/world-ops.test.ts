@@ -31,7 +31,7 @@ afterAll(() => fixture.dispose());
 const DESCRIBE = { operation: "describe" };
 
 describe("the operation registry", () => {
-  test("registers cards, evidence and shared views in a stable order", () => {
+  test("registers shipped reads and retained history in a stable order", () => {
     expect(WORLD_OPS.map((op) => op.name)).toEqual([
       "find_concepts",
       "find_situations",
@@ -39,6 +39,7 @@ describe("the operation registry", () => {
       "situation",
       "describe",
       "evidence",
+      "history",
       "share",
       "resume",
     ]);

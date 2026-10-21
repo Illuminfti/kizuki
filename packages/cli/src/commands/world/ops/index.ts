@@ -1,3 +1,4 @@
+import { historyCli } from "./history";
 import { conceptCli } from "./concept";
 import { describeCli } from "./describe";
 import { discoverCli } from "./discover";
@@ -18,6 +19,7 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   // slot: CARD
   { name: "evidence", cli: evidenceCli },
   // slot: KNOWN
+  { name: "history", cli: historyCli },
   // slot: VIEW
   { name: "share", cli: shareCli }, { name: "resume", cli: resumeCli },
   // slot: QUEST

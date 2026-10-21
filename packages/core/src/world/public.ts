@@ -2,6 +2,8 @@
  * The world-model API of `@kizuki/core`. New operations and their types are
  * exported here so `src/index.ts` never has to change for them.
  */
+export { validateHistoryPage } from "../contracts/world-history";
+export type { HistoryPage, StateTransition } from "../contracts/world-history";
 export { WORLD_DESCRIBE_SCHEMA } from "./ops/describe";
 export type { WorldDescribe } from "./ops/describe";
 export type { ShareData } from "./views/resume";

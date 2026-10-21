@@ -1,3 +1,4 @@
+import { historyOp } from "./history";
 import { conceptOp } from "./concept";
 import { describeOp } from "./describe";
 import { discoverConceptsOp, discoverSituationsOp } from "./discover";
@@ -69,6 +70,7 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   // slot: CARD
   evidenceOp,
   // slot: KNOWN
+  historyOp,
   // slot: VIEW
   shareOp, resumeOp,
   // slot: QUEST

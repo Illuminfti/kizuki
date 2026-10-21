@@ -7,8 +7,8 @@ import {
 } from "../../contracts/claim-v2";
 import type { WorldKindSpec } from "../../contracts/world-kinds";
 import { activeWorldRegistry } from "../../contracts/world-vocabulary";
-import { heldClaimSql } from "../corroboration";
-import { authorizedClaimSql, authorizedSupportSql, validMeaningSql } from "../policy-sql";
+import { authorizedClaimSql } from "../policy-sql";
+import { knownSupportSql, knownValidSql, knownHeldSql } from "../known/cutoff";
 import { recordWorldDependencies } from "../dependencies";
 import { eligibleWorldClaim, type Eligible } from "./eligible";
 import { claimVisibleSql, WorldProjectionBudgetError, type ReadFrame } from "./frame";
@@ -34,7 +34,7 @@ function labelMatches(text: unknown, wanted: string): boolean {
 /** One claim through `eligibleWorldClaim`, counted. Every claim a read serves comes through here. */
 export function verifyClaim(frame: ReadFrame, claimId: string): Eligible | null {
   frame.stats.claimsVerified += 1;
-  const item = eligibleWorldClaim(frame.ctx, claimId, frame.valid, frame.budget);
+  const item = eligibleWorldClaim(frame.ctx, claimId, frame.valid, frame.budget, frame.cutoff.kind === "current" ? {} : { cutoff: frame.cutoff });
   if (item !== null && frame.dependencies !== undefined)
     recordWorldDependencies(frame.dependencies, item);
   return item;
@@ -77,10 +77,10 @@ export type Collector = (frame: ReadFrame, cluster: Cluster) => readonly string[
 
 /** Live claims about members, with the anchor's classification and labels first. */
 const claimsAboutMembers: Collector = (frame, cluster) => {
-  const permitted = authorizedSupportSql(frame.ctx),
+  const permitted = knownSupportSql(frame.ctx, frame.cutoff.kind === "current" ? undefined : frame.cutoff),
     claim = authorizedClaimSql(frame.ctx),
-    time = validMeaningSql(frame.valid),
-    held = heldClaimSql("base", permitted);
+    time = knownValidSql(frame.valid, frame.cutoff.kind === "current" ? undefined : frame.cutoff);
+  const held = knownHeldSql(frame.ctx, "base", frame.cutoff.kind === "current" ? undefined : frame.cutoff);
   const candidates = frame.ctx.db.query<
     Binding & { claim_id: string; predicate: string },
     (string | number)[]
@@ -89,8 +89,7 @@ const claimsAboutMembers: Collector = (frame, cluster) => {
     FROM claim_v2_semantics c JOIN claims base USING(claim_id)
     WHERE discriminator='assertion' AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql} AND
     ((subject_kind=? AND subject_id=? AND coalesce(json_extract(payload,'$.subject.namespace'),'')=?) OR (json_extract(payload,'$.object.ref.kind')=? AND json_extract(payload,'$.object.ref.id')=? AND coalesce(json_extract(payload,'$.object.ref.namespace'),'')=?))
-    AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
-    AND NOT ${held.sql}
+    AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}
     ORDER BY CASE WHEN c.predicate='world.kind' THEN 0 WHEN c.predicate IN (SELECT value FROM json_each(?)) THEN 1 ELSE 2 END,c.claim_id LIMIT ?`);
   const labelPredicates = activeWorldRegistry().kinds.map((kind) => kind.labelPredicate);
   const labels = JSON.stringify(labelPredicates);
@@ -218,10 +217,10 @@ export function scanMatches(
   let visibleHandles = 0;
   let last: string | null = null;
   let position = after ?? "";
-  const permitted = authorizedSupportSql(ctx),
+  const permitted = knownSupportSql(ctx, frame.cutoff.kind === "current" ? undefined : frame.cutoff),
     claim = authorizedClaimSql(ctx),
-    time = validMeaningSql(valid),
-    held = heldClaimSql("base", permitted);
+    time = knownValidSql(valid, frame.cutoff.kind === "current" ? undefined : frame.cutoff);
+  const held = knownHeldSql(frame.ctx, "base", frame.cutoff.kind === "current" ? undefined : frame.cutoff);
   const joins = `FROM semantic_bindings b JOIN claim_v2_semantics c
     ON c.subject_kind=b.raw_kind AND c.subject_id=b.raw_id AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=b.raw_namespace
     JOIN claims base ON base.claim_id=c.claim_id`;
@@ -229,8 +228,7 @@ export function scanMatches(
     AND c.polarity='positive' AND json_extract(c.payload,'$.perspective.mode')='asserted'
     AND json_extract(c.payload,'$.object.kind')='vocabulary' AND json_extract(c.payload,'$.object.ref.id')=?
     AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
-    AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
-    AND NOT ${held.sql}`;
+    AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}`;
   const policyBindings = [kind.vocabularyId, ...claim.bindings, ...time.bindings, ...permitted.bindings, ...held.bindings];
   const scan = ctx.db.query<
     { handle_id: string },
@@ -242,8 +240,7 @@ export function scanMatches(
     `SELECT c.claim_id ${joins}
       WHERE b.handle_id=? AND c.discriminator='assertion' AND c.predicate IN ('world.kind',?)
       AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
-      AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
-      AND NOT ${held.sql}
+      AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}
       ORDER BY CASE c.predicate WHEN 'world.kind' THEN 0 ELSE 1 END,c.claim_id LIMIT ?`,
   );
   const cache = new Map<string, { labels: string[]; overflow: boolean } | null>();

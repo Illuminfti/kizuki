@@ -9,7 +9,7 @@ import type { WorldDependencies } from "./dependencies";
 import {
   WORLD_DISCOVERY_SCAN_BUDGET,
 } from "./pipeline/collect";
-import { newReadFrame } from "./pipeline/frame";
+import { newReadFrame, type RecordedCutoff } from "./pipeline/frame";
 import { readWorldCard, readWorldMatches } from "./pipeline/read";
 import type { WireRef, WorldNamespace } from "./references";
 
@@ -37,9 +37,10 @@ export function projectWorldCard(
   kind: "concept" | "situation",
   valid: WorldValidQuery,
   dependencies?: WorldDependencies,
+  cutoff?: RecordedCutoff,
 ): ConceptCard | SituationCard | null {
   // The two shipped assemblers build exactly these cards.
-  return readWorldCard(newReadFrame(ctx, ns, valid, dependencies), handle, kind) as
+  return readWorldCard(newReadFrame(ctx, ns, valid, dependencies, cutoff), handle, kind) as
     | ConceptCard
     | SituationCard
     | null;

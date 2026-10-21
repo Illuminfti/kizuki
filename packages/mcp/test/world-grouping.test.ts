@@ -39,7 +39,7 @@ for (const kind of ["concept", "situation"] as const) {
         .all().map((row) => row.handle_id);
       const args = {
         operation: `find_${kind}s`, label: "",
-        valid: { kind: "all" }, knownAt: { kind: "current" },
+        valid: { kind: "all" }, knownAt: { kind: "current" as const },
       };
       const refsBefore = db.query<{ count: number }, []>("SELECT count(*) AS count FROM world_wire_refs").get()!.count;
       await withWorldPipeline({ groupers: [(_frame, cluster) => ({ ...cluster, members, resolution: "resolved" })] }, async () => {

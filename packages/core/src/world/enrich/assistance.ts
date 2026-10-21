@@ -1,6 +1,7 @@
 import { rawSubjectNamespace, rawSubjectRefKey } from "../../contracts/claim-v2";
 import type { ConceptLearning, Relation } from "../../contracts/concept-card";
-import { authorizedClaimSql, authorizedSupportSql, validMeaningSql } from "../policy-sql";
+import { authorizedClaimSql } from "../policy-sql";
+import { knownSupportSql, knownValidSql, knownHeldSql } from "../known/cutoff";
 import { verifyClaim } from "../pipeline/collect";
 import { enrich, type Enricher } from "../pipeline/enrich";
 import { claimVisibleSql } from "../pipeline/frame";
@@ -11,7 +12,9 @@ import { independenceEnricher } from "./independence";
 export const assistanceEnricher: Enricher = (frame, body) => {
   const facets = body.claims.filter(({ relation: r }) => /^learning\.(exposure|explanation|application|demonstration)$/.test(r.predicate));
   if (facets.length === 0) return { ...body, learning: [] };
-  const permitted = authorizedSupportSql(frame.ctx), claim = authorizedClaimSql(frame.ctx), time = validMeaningSql(frame.valid);
+  const cutoff = frame.cutoff.kind === "current" ? undefined : frame.cutoff;
+  const permitted = knownSupportSql(frame.ctx, cutoff), claim = authorizedClaimSql(frame.ctx),
+    time = knownValidSql(frame.valid, cutoff), held = knownHeldSql(frame.ctx, "base", cutoff);
   const candidates = frame.ctx.db.query<{ claim_id: string }, (string | number)[]>(
     `SELECT c.claim_id FROM claim_v2_semantics c JOIN claims base USING(claim_id)
      WHERE c.discriminator='assertion' AND c.predicate='learning.assistance'
@@ -19,8 +22,9 @@ export const assistanceEnricher: Enricher = (frame, body) => {
        AND EXISTS(SELECT 1 FROM json_each(?) task WHERE c.subject_kind=json_extract(task.value,'$.kind')
          AND c.subject_id=json_extract(task.value,'$.id') AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=json_extract(task.value,'$.namespace'))
        AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql})
+       AND NOT ${held.sql}
      ORDER BY c.claim_id LIMIT 129`,
-  ).all(...claim.bindings, ...time.bindings, JSON.stringify(facets.flatMap(({ eligible }) => eligible.semantic.context.map((ref) => ({ kind: ref.kind, id: ref.id, namespace: rawSubjectNamespace(ref) })))), ...permitted.bindings);
+  ).all(...claim.bindings, ...time.bindings, JSON.stringify(facets.flatMap(({ eligible }) => eligible.semantic.context.map((ref) => ({ kind: ref.kind, id: ref.id, namespace: rawSubjectNamespace(ref) })))), ...permitted.bindings, ...held.bindings);
   frame.stats.rowsExamined += candidates.length;
   const overflow = candidates.length > 128;
   const eligible = candidates.slice(0, 128).flatMap((row) => { const item = verifyClaim(frame, row.claim_id); return item ? [item] : []; });
