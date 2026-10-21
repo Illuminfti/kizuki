@@ -1,3 +1,4 @@
+import { authorizedClaimSql as authorizedLegacyClaimSql } from "../../serving/claim-policy-sql";
 import type { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
 import type { ServeContext } from "../../serving/types";
@@ -56,7 +57,7 @@ export function lookupView(
   now: string,
   domain: ViewCacheDomain = "view",
 ): StoredView | null {
-  const { db } = ctx, permitted = authorizedSupportSql(ctx);
+  const { db } = ctx, permitted = authorizedSupportSql(ctx), legacy = authorizedLegacyClaimSql(ctx);
   const row = db
     .query<
       { fingerprint: string; projection: Uint8Array; expires_at: string },
@@ -70,9 +71,16 @@ export function lookupView(
            LEFT JOIN claim_v2_support s ON s.support_key=a.support_key
            WHERE d.token_hash=v.token_hash AND a.support_key IS NOT NULL
              AND COALESCE((${permitted.sql}),0)=0
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM world_view_token_deps d
+           JOIN world_wire_claim_targets a USING(namespace_id,wire_ref)
+           JOIN claims ON claims.claim_id=a.claim_id
+           WHERE d.token_hash=v.token_hash AND claims.is_world_typed=0
+             AND COALESCE((${legacy.sql}),0)=0
          )`,
     )
-    .get(cacheWireDigest(token, domain), partition, namespaceId, queryDigest ?? "", queryDigest ?? "", now, ...permitted.bindings);
+    .get(cacheWireDigest(token, domain), partition, namespaceId, queryDigest ?? "", queryDigest ?? "", now, ...permitted.bindings, ...legacy.bindings);
   return row === null ? null : { fingerprint: row.fingerprint, projection: row.projection, validUntil: row.expires_at };
 }
 

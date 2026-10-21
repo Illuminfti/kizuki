@@ -3,16 +3,17 @@ import { CURRENT, coverageLine } from "./shared";
 import { conceptCli } from "./concept";
 import { situationCli } from "./situation";
 import { personCli } from "./person";
+import { procedureCli, skillCli, frameworkCli } from "./skills";
 import { questionCli } from "./question";
 import type { WorldCliOp } from "./types";
 
 export const shareCli: WorldCliOp = {
-  usage: "--of-operation concept|situation|question|person --ref TOKEN",
+  usage: "--of-operation concept|situation|question|person|procedure|skill|framework --ref TOKEN",
   options: ["--of-operation", "--ref"],
-  bounds: { "--of-operation": "concept|situation|question|person", "--ref": "32-byte base64url object token" },
+  bounds: { "--of-operation": "concept|situation|question|person|procedure|skill|framework", "--ref": "32-byte base64url object token" },
   buildInput: (options) => {
     const operation = options.get("--of-operation"), token = options.get("--ref");
-    if ((operation !== "concept" && operation !== "situation" && operation !== "question" && operation !== "person") || token === undefined || !isWorldWireToken(token)) return null;
+    if ((operation !== "concept" && operation !== "situation" && operation !== "question" && operation !== "person" && operation !== "procedure" && operation !== "skill" && operation !== "framework") || token === undefined || !isWorldWireToken(token)) return null;
     return { of: { operation, [operation]: { kind: "object", token } }, ...CURRENT };
   },
   render: (data) => [`Resume handle: ${String(data.handle)} (expires ${String(data.expiresAt)})`],
@@ -33,5 +34,8 @@ export const resumeCli: WorldCliOp = {
         ? questionCli.render(data as Parameters<typeof questionCli.render>[0])
         : data.schema === "kizuki.person-card/v1"
           ? personCli.render(data as Parameters<typeof personCli.render>[0])
-          : [coverageLine(data.coverage as Parameters<typeof coverageLine>[0])],
+          : data.schema === "kizuki.procedure-card/v1" ? procedureCli.render(data as Parameters<typeof procedureCli.render>[0])
+        : data.schema === "kizuki.skill-card/v1" ? skillCli.render(data as Parameters<typeof skillCli.render>[0])
+        : data.schema === "kizuki.framework-card/v1" ? frameworkCli.render(data as Parameters<typeof frameworkCli.render>[0])
+        : [coverageLine(data.coverage as Parameters<typeof coverageLine>[0])],
 };
