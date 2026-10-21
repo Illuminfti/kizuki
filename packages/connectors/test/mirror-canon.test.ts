@@ -55,13 +55,23 @@ function fixture(kind: "wiki" | "folder", count = 1) {
     committedFiles: () => markdownCommittedIdentities(db, SOURCE),
     recordHistory: (ids) => recordHistory(db, id, SOURCE, ids),
   }), id, SOURCE, "sync", { vault_path: vault });
-  const write = () => runWritePass(db, vault, {
-    budget: createBudgetTracker({ canon_writes_per_run: 32 }), producer,
-    model_ref: "kizuki.llm.synthetic:mirror-test", claims: { db },
-  });
-  const pages = () => db.query<{ page_id: string; rel_path: string }, []>(
-    "SELECT page_id, rel_path FROM page_index WHERE rel_path LIKE 'auto/%' ORDER BY rel_path",
-  ).all().map((row) => ({ ...row, page: parseFrontmatter(readFileSync(join(vault, row.rel_path), "utf8")) }));
+  const write = async () => {
+    // Document and exact-byte artifact pages share the normal bounded writer.
+    // Drain this finite fixture through fresh passes without increasing its cap.
+    for (let pass = 0; pass < 4; pass++) {
+      const result = await runWritePass(db, vault, {
+        budget: createBudgetTracker({ canon_writes_per_run: 32 }), producer,
+        model_ref: "kizuki.llm.synthetic:mirror-test", claims: { db },
+      });
+      if (result.errors.length > 0 || result.canon_writes < 32) return result;
+    }
+    throw new Error("synthetic mirror canon did not drain within four bounded passes");
+  };
+  // These lifecycle checks track document pages. Exact-byte ArtifactVersion pages
+  // have separate identities and can be materialized in a later bounded pass.
+  const pages = () => db.query<{ page_id: string; rel_path: string }, [string]>(
+    "SELECT page_id, rel_path FROM page_index WHERE rel_path LIKE 'auto/%' AND (?='wiki' OR rel_path LIKE 'auto/kizuki.markdown-folder/markdown-folder/%') ORDER BY rel_path",
+  ).all(kind).map((row) => ({ ...row, page: parseFrontmatter(readFileSync(join(vault, row.rel_path), "utf8")) }));
   const text = () => {
     // A capture can be composed onto its existing subject page, whose type
     // stays unchanged. Find its quoted source text rather than a page type.
@@ -120,6 +130,7 @@ test(`ten ${kind} renames emit ten events and preserve ten active page identitie
     await h.sync();
     await h.write();
     const before = h.pages().map((page) => page.page_id);
+    expect(before).toHaveLength(10);
     for (let index = 0; index < 10; index++) renameSync(join(h.source, h.name(index)), join(h.source, `moved-${h.name(index)}`));
     expect(await h.sync()).toMatchObject({ stored: 10, withdrawn: 0, retractions_filed: 0, errors: [] });
     expect((await h.write()).errors).toEqual([]);

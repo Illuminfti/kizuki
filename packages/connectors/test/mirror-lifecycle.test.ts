@@ -450,7 +450,15 @@ describe("markdown folder follows its folder across a disk migration", () => {
       expect(await h.sync()).toMatchObject({ stored: 1, errors: [] });
       h.mirror.put("moved-again.md", "changed after the moves\n");
       expect(await h.sync()).toMatchObject({ stored: 1, errors: [] });
-      expect(subjects()).toEqual([original, original, original, original, original]);
+      const versions = subjects();
+      // A file keeps its document identity; an edit creates a new exact-byte artifact.
+      expect(versions.map(value => value.filter((id: string) => !id.startsWith("artifact:sha256:"))))
+        .toEqual(Array.from({ length: 5 }, () => original.filter((id: string) => !id.startsWith("artifact:sha256:"))));
+      expect(versions.slice(0, 3)).toEqual([original, original, original]);
+      const editedArtifact = `artifact:sha256:${new Bun.CryptoHasher("sha256").update("changed after the moves\n").digest("hex")}`;
+      expect(versions.slice(3).map(value => value.filter((id: string) => id.startsWith("artifact:sha256:"))))
+        .toEqual([[editedArtifact], [editedArtifact]]);
+      expect(original).not.toContain(editedArtifact);
     } finally { h.dispose(); }
   });
 

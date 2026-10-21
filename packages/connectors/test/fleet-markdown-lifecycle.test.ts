@@ -224,13 +224,19 @@ markdownTest("resume reports one mixed ordinary-file lifecycle without repeating
   expect(editedAgain.deleted).toBe(false);
   expect(editedAgain.text).toBe("SYNTHETIC_AFTER\n");
   expect(editedAgain.source_record_id).toBe(edited.source_record_id);
-  expect(editedAgain.subjects).toEqual(edited.subjects);
+  expect(editedAgain.subjects.filter(s => !s.subject_id.startsWith("artifact:sha256:")))
+    .toEqual(edited.subjects.filter(s => !s.subject_id.startsWith("artifact:sha256:")));
+  expect(editedAgain.subjects.filter(s => s.subject_id.startsWith("artifact:sha256:")))
+    .toEqual([{ subject_id: `artifact:sha256:${new Bun.CryptoHasher("sha256").update(editedAgain.text).digest("hex")}`, role: "about" }]);
+  expect(editedAgain.subjects.find(s => s.subject_id.startsWith("artifact:sha256:")))
+    .not.toEqual(edited.subjects.find(s => s.subject_id.startsWith("artifact:sha256:")));
 
   const tombstone = named(mixedEvents, "removed.md");
   expect(tombstone.deleted).toBe(true);
   expect(tombstone.text).toBe("");
   expect(tombstone.source_record_id).toBe(removed.source_record_id);
-  expect(tombstone.subjects).toEqual(removed.subjects);
+  expect(tombstone.subjects).toEqual(removed.subjects.filter(s => !s.subject_id.startsWith("artifact:sha256:")));
+  expect(tombstone.metadata["artifact"]).toBeUndefined();
 
   const again = await createMarkdownFolderConnector({ path: selected }).sync(
     requireCursor(mixed.cursor),
@@ -244,7 +250,7 @@ markdownTest("resume reports one mixed ordinary-file lifecycle without repeating
   expect(fresh.events.some((event) => event.deleted)).toBe(false);
   expect(named(fresh.events, "kept.md").subjects).toEqual(kept.subjects);
   expect(named(fresh.events, "kept.md").text).toBe("SYNTHETIC_KEPT\n");
-  expect(named(fresh.events, "edited.md").subjects).toEqual(edited.subjects);
+  expect(named(fresh.events, "edited.md").subjects).toEqual(editedAgain.subjects);
   expect(named(fresh.events, "edited.md").text).toBe("SYNTHETIC_AFTER\n");
 });
 
