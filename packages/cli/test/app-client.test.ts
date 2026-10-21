@@ -1433,7 +1433,7 @@ test('World resumes framework nesting and displays outcome stages without implyi
     const resumed=f.evaluate<Promise<void>>(`loadWorld(null,{operation:'resume',handle:'R'.repeat(43)})`);
     f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'resume',result:{status:'current',data:{schema:'kizuki.framework-card/v1',framework:{ref:{kind:'object',token:'F'.repeat(43)},labels:[{text:'Inspection framework'}]},purpose:[],components:[{predicate:'framework.includes',object:{kind:'node',ref:{kind:'object',token:'P'.repeat(43)}},assessments:[]}],assumptions:[],applicability:[],failureModes:[],lifecycle:[],coverage:{status:'complete_for_query'}}}}); await resumed;
     expect(f.main.textContent).toContain('Inspection framework'); expect(f.main.textContent).toContain('Nested components');
-    expect(f.evaluate('state.worldDetailKind')).toBe('framework');
+    expect(f.evaluate<string>('state.worldDetailKind')).toBe('framework');
     f.evaluate(`state.worldQuery='procedure:verify';`);
     const outcomes=findAction(f.main,'Outcomes').fire('click'); await tick();
     expect(f.requests[0]!.payload).toMatchObject({operation:'outcome',subject:'procedure:verify'});
