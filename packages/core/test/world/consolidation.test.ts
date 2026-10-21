@@ -331,7 +331,9 @@ test("a crash after request admission reopens as pending and retries only after 
     const seed = await worldSeed(db); authorizeModel(seed);
     const started = Date.now(), bound = model(db, { onCall: () => { db.close(); } });
     const failed = await runWorldJobs({ ...job(seed, bound.llm), now: () => new Date(started).toISOString() });
-    expect(failed.errors).toHaveLength(1); expect(bound.requests).toHaveLength(1);
+    // Jobs continue after a failure; the later forecast rail also observes the closed ledger.
+    expect(failed.errors.map(error => error.split(":").slice(0, 2).join(":"))).toEqual(["world_job:consolidation", "world_job:forecast"]);
+    expect(bound.requests).toHaveLength(1);
     db = openLedger(path);
     const reopened = { ...seed, ctx: { ...seed.ctx, db } }, retry = model(db);
     expect(card(reopened).summary).toBeNull();

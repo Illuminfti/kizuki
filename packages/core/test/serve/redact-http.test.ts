@@ -43,8 +43,12 @@ const CALLS: [string, Record<string, unknown>][] = [
 ];
 
 test("loopback HTTP serves an agent redacted v2 text and the owner raw v1 text", async () => {
+  const discovered = await post(fixture.tokens["reader-private"]!, "search", { query: "kettle", scope: "canon", limit: 50 });
+  const page = (discovered.value["canon"] as { title: string; page: unknown }[]).find(chunk => chunk.title === "Kettle secret page")?.page;
+  expect(page).toBeDefined();
   for (const [tool, args] of CALLS) {
-    const agent = await post(fixture.tokens["reader-private"]!, tool, args);
+    const scopedArgs = tool === "get_page" ? { page } : tool === "graph_neighbors" ? { anchor: page, kinds: ["wikilink"] } : args;
+    const agent = await post(fixture.tokens["reader-private"]!, tool, scopedArgs);
     for (const fragment of SECRET_FRAGMENTS) expect(agent.text).not.toContain(fragment);
     expect(agent.value["schema"]).toBe("kizuki.envelope/v2");
     expect(Object.keys(agent.value).sort()).toEqual(["at", "canon", "data", "principal", "quoted", "schema", "tool"]);
@@ -75,7 +79,13 @@ test("the daemon scrubs its exact live token, including an older unprefixed toke
     deleted: false, attachments: [], metadata: {},
   });
   if (event.status !== "stored") throw new Error("fixture not stored");
-  const served = await post(fixture.tokens["reader-public"]!, "timeline", { event_id: event.event.event_id });
+  const token = fixture.tokens["reader-public"]!;
+  const discovered = await post(token, "timeline", { since: "2026-02-28T10:00:00Z", until: "2026-02-28T11:00:00Z" });
+  const captured = (discovered.value["quoted"] as { text: string; eventVersion: unknown }[]).find(chunk => chunk.text.includes("Synthetic handoff"));
+  expect(captured).toBeDefined();
+  const served = await post(token, "timeline", { eventVersion: captured!.eventVersion });
+  expect(served.text).toContain("Synthetic handoff");
+  expect(served.text).toContain("[redacted:");
   expect(served.text).not.toContain(OWNER_TOKEN);
 });
 

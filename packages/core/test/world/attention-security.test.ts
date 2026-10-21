@@ -132,7 +132,7 @@ test("attention bookkeeping survives real export, restore and world rebuild", as
   } finally { f.dispose(); rmSync(root, { recursive: true, force: true }); }
 }, 120_000);
 
-test("the preceding schema upgrades with attention triggers and preserves ledger facts", async () => {
+test("the schema preceding the attention migration upgrades with its triggers and preserves ledger facts", async () => {
   const f = await attentionFixture();
   try {
     const path = join(f.vault.path, ".kizuki/kizuki.db"), before = f.db.query("SELECT claim_id,confidence,status FROM claims ORDER BY claim_id").all();
@@ -140,7 +140,7 @@ test("the preceding schema upgrades with attention triggers and preserves ledger
     if (erasure.via !== "trigger") throw new Error("attention erasure trigger missing");
     for (const trigger of erasure.triggers) f.db.exec(`DROP TRIGGER ${trigger}`);
     f.db.exec("DROP TABLE world_attention_state");
-    f.db.query("UPDATE schema_version SET version=?").run(LEDGER_SCHEMA_VERSION - 1);
+    f.db.query("UPDATE schema_version SET version=?").run(ATTENTION_TABLE_SPECS[0]!.since - 1);
     const upgraded = openLedger(path);
     try {
       expect(upgraded.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });

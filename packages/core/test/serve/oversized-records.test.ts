@@ -9,6 +9,8 @@ import { exportVault, restoreVault, type ExportManifest, type ExportManifestEntr
 import { accept } from "../../src/ledger/ledger";
 import { openLedger } from "../../src/ledger/db";
 import { purgeEvents } from "../../src/ledger/purge";
+import { planModelExtractionV2 } from "../../src/producer/model-v2";
+import { worldProduceInput } from "../../src/serve/extract-v2";
 import { escapeFenceText } from "../../src/producer/fence";
 import { inspectServeDoctor } from "../../src/serve/doctor";
 import { journalExtractBatch, mineLiveDrafts, readExtractCursor, retrySkippedRecords } from "../../src/serve/extract";
@@ -365,10 +367,13 @@ test("purge drops a record's segment progress; backup and restore keep progress 
 });
 
 test("a record whose segment no request can carry keeps a retry receipt, and a larger budget extracts it", async () => {
-  const f = vaultWith([recordText(0)], "[extraction]\nmax_calls_per_pass = 12\nmax_input_tokens = 2000\n");
+  const f = vaultWith([recordText(0)]);
   const [e0] = f.eventIds as [string];
-  // Forty named subjects at the head of the record: their supplied references
-  // alone outgrow a 2,000-token request, so no segment of it can be planned.
+  const ordinary = planModelExtractionV2(worldProduceInput([{ event_id: e0, text: recordText(0) } as never]));
+  if (ordinary.status !== "ready") throw new Error("ordinary fixture exceeds the shipped request budget");
+  writeServeToml(f.vault, `[extraction]\nmax_calls_per_pass = 12\nmax_input_tokens = ${ordinary.input_tokens}\n`);
+  // Reserve exactly enough for the ordinary record. Forty named subjects add
+  // supplied references that no segment can fit within the same request budget.
   const names = Array.from({ length: 40 }, (_, index) => `Name${String(index).padStart(2, "0")}x`);
   const crowded = `${names.join(" ")}\n\n${paragraphRecord(30_000)}`;
   const accepted = accept(f.db, { ...validEvent(), connector_id: "kizuki.fixture", source_record_id: "crowded", text: crowded,
