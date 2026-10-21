@@ -15,7 +15,7 @@ afterEach(() => setSystemTime());
 
 const view = (label: string, cursor?: string) => ({
   operation: "find_concepts", label, ...(cursor === undefined ? {} : { cursor }),
-  valid: { kind: "all" }, knownAt: { kind: "current" },
+  valid: { kind: "all" }, knownAt: { kind: "current" as const },
 });
 
 function page(ctx: ServeContext, label = "", cursor?: string) {
@@ -49,7 +49,7 @@ test("discovery joins aliases once, filters their combined labels and serves the
       expect(page(first.ctx, "absent").matches).toEqual([]);
       const card = readWorldView(first.ctx, {
         operation: "concept", concept: all.matches[0]!.ref,
-        valid: { kind: "all" }, knownAt: { kind: "current" },
+        valid: { kind: "all" }, knownAt: { kind: "current" as const },
       });
       if (!("result" in card) || card.result.status === "unavailable") throw new Error("card unavailable");
       expect((card.result.data as ConceptCard).concept.labels.map((label) => label.text).sort())
@@ -75,7 +75,7 @@ test("a saturated alias cannot crowd the requested anchor out of its grouped car
     const members = [handleOf(db, "topic:full-alias"), handleOf(db, "topic:requested")];
     const read = () => readWorldView(requested.ctx, {
       operation: "concept", concept: requested.ref,
-      valid: { kind: "all" }, knownAt: { kind: "current" },
+      valid: { kind: "all" }, knownAt: { kind: "current" as const },
     });
     expect(read()).toMatchObject({ result: { status: "current" } });
     const grouped = withWorldPipeline({ groupers: [joinHandles(members)] }, read);
@@ -167,7 +167,7 @@ test("group size is bounded after authorization and an oversized visible group r
   try {
     const first = await worldSeed(db, { subject: "topic:first", label: "First label" });
     const anchor = handleOf(db, "topic:first");
-    const invisible = Array.from({ length: 140 }, (_, index) => `unallocated-${index}`);
+    const invisible = Array.from({ length: 280 }, (_, index) => `unallocated-${index}`);
     const read = (members: readonly string[]) => withWorldPipeline({ groupers: [joinHandles(members)] }, () =>
       collectReadFrames(() => readWorldView(first.ctx, view(""))),
     );
@@ -175,7 +175,7 @@ test("group size is bounded after authorization and an oversized visible group r
     const hidden = read([anchor, ...invisible]);
     expect(canonicalBytes(hidden.result)).toEqual(canonicalBytes(before.result));
     expect(hidden.frames[0]!.stats).toEqual(before.frames[0]!.stats);
-    for (let i = 0; i < 128; i += 1)
+    for (let i = 0; i < 256; i += 1)
       await worldSeed(db, { subject: `topic:bounded-${i}`, label: `Bounded ${i}`, discover: false });
     const members = db.query<{ handle_id: string }, []>("SELECT handle_id FROM semantic_bindings").all()
       .map((row) => row.handle_id);

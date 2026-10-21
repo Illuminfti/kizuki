@@ -133,7 +133,7 @@ export function validateWorldEndpointProofs(
           !sameRef(priorSemantic.subject, target.subject) || priorSemantic.predicate !== target.predicate) {
         throw new ClaimError("provenance_unresolved", "native world endpoint target is not a live attested claim");
       }
-      if (identity && (priorSemantic.object.kind !== "vocabulary" || priorSemantic.object.ref.id !== "world/concept" || priorSemantic.polarity !== "positive"))
+      if (identity && (priorSemantic.object.kind !== "vocabulary" || priorSemantic.object.ref.id !== "world/concept" || priorSemantic.polarity !== "positive" || priorSemantic.context.length !== 0 || priorSemantic.perspective.mode !== "asserted" || priorSemantic.perspective.holder !== null || priorSemantic.perspective.speaker !== null || priorSemantic.perspective.addressee !== null))
         throw new ClaimError("provenance_unresolved", "native identity correction requires a concept classification");
       // A node the statement adds must already be one the world holds; the statement cannot mint an endpoint.
       const held = new Set(assertionEndpoints(priorSemantic).map(rawSubjectRefKey));

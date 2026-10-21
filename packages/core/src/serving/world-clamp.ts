@@ -1,3 +1,6 @@
+import type { ServeContext } from "./types";
+import { createRedactor, redactValue } from "./redact";
+
 /**
  * A redaction marker is longer than a short secret, so redacting a string that
  * already sat at its bound can push it past the bound the strict world_view
@@ -42,4 +45,10 @@ function clamp(value: unknown): unknown {
 /** `data` with every bounded world_view string cut to the bound the grammar states. */
 export function clampWorldData<T>(data: T): T {
   return clamp(data) as T;
+}
+
+/** Preview exactly the retained bytes without consuming output redaction counts. */
+export function worldViewProjection<T>(ctx: ServeContext, data: T): T {
+  return ctx.redactor === undefined ? data
+    : clampWorldData(redactValue(createRedactor(ctx.principal, ctx.servingSecrets), data));
 }

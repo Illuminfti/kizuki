@@ -2,6 +2,7 @@ import type { ViewGap } from "../../contracts/concept-card";
 import type { ServeContext } from "../../serving/types";
 import type { WorldNamespace } from "../references";
 import type { WorldDependencies } from "../dependencies";
+import type { ViewSession } from "../views/session";
 import type { WorldEvidenceSource } from "./evidence-types";
 
 /** Raised by any operation's parse or run; the gate audits it as invalid_arguments. */
@@ -101,6 +102,8 @@ export interface WorldFrame {
   /** The operations the reader dispatches over; `share` and `resume` look their target up here. */
   readonly registry: WorldOpRegistry;
   readonly dependencies?: WorldDependencies;
+  /** The already scoped conditional baseline, never a caller-provided projection. */
+  readonly view?: ViewSession;
 }
 
 export interface WorldWhen {
@@ -146,6 +149,8 @@ export interface ClaimsOp<Query = unknown> extends WorldOpBase {
    * partition and answers `unchanged` when nothing visible moved.
    */
   readonly views?: true;
+  /** This operation implements retained recorded-time cutoffs. */
+  readonly knownAt?: true;
   /**
    * Set when the operation is a read of one object, which `share` can hand to
    * another principal. Reads the object a semantic handle names for the

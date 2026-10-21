@@ -1,3 +1,5 @@
+import type { Database } from "bun:sqlite";
+import { serveWorldView } from "../../src/serving/world-view";
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 import { openLedger } from "../../src/ledger/db";
@@ -5,7 +7,7 @@ import { serveCorrect } from "../../src/serving/correct";
 import { undoReceipt } from "../../src/canon/undo";
 import { correctionKit, worldData } from "../helpers/world-correct-kit";
 import { tempVault } from "../helpers/vault";
-import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../src/agents";
+import { OWNER_AGENT_GRANT, addAgent, authenticate, setGrant } from "../../src/agents";
 import { collectReadFrames } from "../../src/world/pipeline/frame";
 import { rebuildWorldLayer } from "../../src/derived";
 import { purgeEvents } from "../../src/ledger/purge";
@@ -14,6 +16,7 @@ import { exportVault, restoreVault } from "../../src/export";
 import { correct } from "../../src/correction/correct";
 import { createBudgetTracker } from "../../src/canon/budget";
 import { cardFixture } from "../world/card-fixture";
+import { revokeSourceGrant } from "../../src/ledger/source-grants";
 
 setDefaultTimeout(120_000);
 
@@ -208,4 +211,131 @@ test("an oversized identity frontier is partial and an owner merge refuses befor
       mode: "merge_identity", object: { kind: "node", ref: other }, statement: "Merge this bounded component." })).rejects.toThrow("traversal bounds");
     expect(db.query<{ n: number }, []>("SELECT count(*) n FROM native_owner_evidence").get()!.n).toBe(before);
   } finally { db.close(); f.dispose(); }
+});
+
+
+test("historical identity never borrows a later receipt and survives later undo", async () => {
+  const s = await scene();
+  try {
+    const at = "2031-01-01T00:00:00.000Z";
+    s.db.query("UPDATE claim_history_clock SET last_recorded_at=?").run(at);
+    const input = (knownAt: unknown) => ({ operation: "concept", concept: s.a, valid: { kind: "all" }, knownAt });
+    const before = worldData(s.kit.read(s.kit.ctx, input({ kind: "time", at })));
+    // The existing page means a zero budget fails after filing the identity claim.
+    const target = s.db.query<{ claim_id: string }, []>("SELECT claim_id FROM claim_v2_semantics WHERE predicate='world.kind' ORDER BY claim_id LIMIT 1").get()!;
+    const request = { statement: "Historical identity assertion.", target, world: { mode: "merge_identity" as const, object: { kind: "subject" as const, ref: s.kit.ref("topic:b") } } };
+    await expect(correct({ db: s.db, vault_path: s.vault.path, budget: createBudgetTracker({ canon_writes_per_run: 0 }) }, request)).rejects.toThrow();
+    const filed = worldData(s.kit.read(s.kit.ctx, input({ kind: "time", at })));
+    expect(filed.concept.resolution).toBe("distinct");
+    const merged = await correct({ db: s.db, vault_path: s.vault.path }, request);
+    expect(merged.receipt_id).toBeString();
+    const committed = worldData(s.kit.read(s.kit.ctx, input({ kind: "time", at })));
+    expect(committed.concept.resolution).toBe("resolved");
+    expect(worldData(s.kit.read(s.kit.ctx, input(filed.knownAt))).concept.resolution).toBe("distinct");
+    expect(worldData(s.kit.read(s.kit.ctx, input(before.knownAt))).concept.resolution).toBe("distinct");
+    await undoReceipt({ db: s.db, vault_path: s.vault.path }, merged.receipt_id!);
+    expect(s.kit.card(s.kit.ctx, "concept", s.a).concept.resolution).toBe("distinct");
+    expect(worldData(s.kit.read(s.kit.ctx, input(committed.knownAt))).concept.resolution).toBe("resolved");
+  } finally { s.dispose(); }
+});
+
+test("cross-source owner identity splits immediately when endpoint consent is revoked", async () => {
+  const s = await scene();
+  try {
+    const other = correctionKit(s.db, s.vault.path);
+    await other.declare("concept", "topic:foreign", "Foreign endpoint");
+    const b = other.find(s.kit.ctx, "concept", "Foreign endpoint");
+    const merged = await serveCorrect(s.kit.ctx, { target: { world_claim: s.kit.card(s.kit.ctx, "concept", s.a).concept.classificationClaims[0] },
+      mode: "merge_identity", object: { kind: "node", ref: b }, statement: "The foreign endpoint is the same concept." });
+    expect(merged.data?.receipt_id).toBeString();
+    expect(s.kit.card(s.kit.ctx, "concept", s.a).concept.resolution).toBe("resolved");
+    revokeSourceGrant(s.db, { source_key: other.sourceKey, expected_revision: 1, operation_id: "identity-revoke-endpoint" });
+    expect(s.kit.card(s.kit.ctx, "concept", s.a).concept.resolution).toBe("distinct");
+    expect(other.read(s.kit.ctx, { operation: "concept", concept: b, valid: { kind: "all" }, knownAt: { kind: "current" } })).toEqual({ status: "not_found" });
+  } finally { s.dispose(); }
+});
+
+test("grant narrowing splits an owner component for that principal alone", async () => {
+  const s = await scene();
+  try {
+    await serveCorrect(s.kit.ctx, { target: { world_claim: s.kit.card(s.kit.ctx, "concept", s.a).concept.classificationClaims[0] },
+      mode: "merge_identity", object: { kind: "node", ref: s.b }, statement: "Merge for scoped read." });
+    const agent = addAgent(s.db, "identity-narrow", OWNER_AGENT_GRANT);
+    const ctx = { ...s.kit.ctx, principal: authenticate(s.db, agent.token)! };
+    const ref = s.kit.find(ctx, "concept", "First");
+    expect(s.kit.card(ctx, "concept", ref).concept.resolution).toBe("resolved");
+    setGrant(s.db, "identity-narrow", { subjects: ["topic:a"] });
+    const narrowed = { ...ctx, principal: authenticate(s.db, agent.token)! };
+    const now = s.kit.find(narrowed, "concept", "First");
+    expect(s.kit.card(narrowed, "concept", now).concept.resolution).toBe("distinct");
+    expect(s.kit.card(s.kit.ctx, "concept", s.a).concept.resolution).toBe("resolved");
+  } finally { s.dispose(); }
+});
+
+test("equal names, quoted nominations and copied witnesses do not manufacture identity", async () => {
+  const db = openLedger(":memory:"), f = await cardFixture(db);
+  try {
+    await f.write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } }, { subject: "topic:other" });
+    await f.write("concept.label", { kind: "literal", value: "Bayesian updating" }, { subject: "topic:other" });
+    expect(f.card().concept.resolution).toBe("distinct");
+    const object = { kind: "subject" as const, ref: f.ref("topic:other") };
+    await f.write("concept.same_as", object, { mode: "quoted", speaker: "person:speaker" });
+    expect(f.card().concept.resolution).toBe("distinct");
+    await f.write("concept.same_as", object, { text: "An identity nomination" });
+    await f.write("concept.same_as", object, { text: "An identity nomination", metadata: { copy_of: "earlier witness" } });
+    expect(f.card().concept.resolution).toBe("ambiguous");
+    const data = worldData(correctionKit(db, f.ctx.vaultPath, { source: { connector: "card.fixture", sourceKey: f.sourceKey } }).read(f.ctx, f.input("find_concepts", { label: "Bayesian" })));
+    expect(data.matches).toHaveLength(2);
+  } finally { f.dispose(); db.close(); }
+});
+
+
+test("historical grouping refuses a member whose retained classification coverage was reset", async () => {
+  const s = await scene();
+  try {
+    const at = "2032-01-01T00:00:00.000Z";
+    s.db.query("UPDATE claim_history_clock SET last_recorded_at=?").run(at);
+    const classification = await s.kit.write({ subject: "topic:b", predicate: "world.kind", object: { vocabulary: "world/concept" } });
+    const events = s.db.query<{ event_id: string }, [string]>("SELECT se.event_id FROM claim_v2_support s JOIN claim_v2_support_events se USING(support_key) WHERE s.claim_id=? ORDER BY se.event_id").all(classification);
+    expect(events.length).toBeGreaterThan(1);
+    await serveCorrect(s.kit.ctx, { target: { world_claim: s.kit.card(s.kit.ctx, "concept", s.a).concept.classificationClaims[0] },
+      mode: "merge_identity", object: { kind: "node", ref: s.b }, statement: "Same concept with retained endpoint evidence." });
+    const input = { operation: "concept", concept: s.a, valid: { kind: "all" }, knownAt: { kind: "time", at } };
+    expect(worldData(s.kit.read(s.kit.ctx, input)).concept.resolution).toBe("resolved");
+    s.db.query("UPDATE claim_history_clock SET last_recorded_at=?").run("2032-01-02T00:00:00.000Z");
+    purgeEvents(s.db, s.vault.path, { event_id: events[0]!.event_id }, "Erase one endpoint-classification witness");
+    expect(s.kit.card(s.kit.ctx, "concept", s.a).concept.resolution).toBe("resolved");
+    expect(s.kit.read(s.kit.ctx, input)).toMatchObject({ result: { status: "unavailable", reason: "history" } });
+    const retained = worldData(s.kit.read(s.kit.ctx, { ...input, knownAt: { kind: "time", at: "2032-01-02T00:00:00.000Z" } }));
+    expect(retained.concept.resolution).toBe("resolved");
+    expect(retained.coverage.history).toBe("baseline_only");
+  } finally { s.dispose(); }
+});
+
+
+test("final publication refuses a stale merge after its receipt disappears", async () => {
+  const s = await scene();
+  try {
+    const merged = await serveCorrect(s.kit.ctx, { target: { world_claim: s.kit.card(s.kit.ctx, "concept", s.a).concept.classificationClaims[0] },
+      mode: "merge_identity", object: { kind: "node", ref: s.b }, statement: "Receipt-dependent identity." });
+    let fired = false;
+    const db = new Proxy(s.db, { get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (key === "transaction") return (run: () => unknown) => {
+        const tx = target.transaction(run), finish = (result: unknown) => {
+          if (!fired && !target.inTransaction && result !== null && typeof result === "object" && "withheld" in result) {
+            fired = true;
+            // Storage-loss fault after first-read bytes, before final authority.
+            target.query("DELETE FROM canon_receipts WHERE receipt_id=?").run(merged.data!.receipt_id!);
+          }
+          return result;
+        };
+        return Object.assign(() => finish(tx()), { immediate: () => finish(tx.immediate()) });
+      };
+      return typeof value === "function" ? value.bind(target) : value;
+    } }) as Database;
+    const result = serveWorldView({ ...s.kit.ctx, db }, { operation: "concept", concept: s.a, valid: { kind: "all" }, knownAt: { kind: "current" } });
+    expect(fired).toBe(true);
+    expect(worldData(result.data).concept.resolution).toBe("distinct");
+  } finally { s.dispose(); }
 });

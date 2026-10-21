@@ -18,6 +18,7 @@ export async function worldFixture(
   db: Database,
   options: {
     kind?: "concept" | "situation";
+    validFrom?: string;
     subject?: string;
     label?: string;
     floor?: "public" | "private";
@@ -116,7 +117,7 @@ export async function worldFixture(
       },
       context: [],
       polarity: "positive",
-      valid_from: "2026-01-01T00:00:00.000Z",
+      valid_from: options.validFrom ?? "2026-01-01T00:00:00.000Z",
       valid_to: null,
       temporal_basis: "explicit",
       anchors: [

@@ -1,6 +1,7 @@
-import { heldClaimSql } from "./corroboration";
+import { checkKnownCoverage } from "./known/coverage";
 import { supportLineage } from "./lineage";
-import { authorizedClaimSql, authorizedSupportSql, validMeaningSql } from "./policy-sql";
+import { authorizedClaimSql } from "./policy-sql";
+import { knownSupportSql, knownValidSql, knownHeldSql } from "./known/cutoff";
 import { verifyClaim } from "./pipeline/collect";
 import { claimVisibleSql, type ReadFrame } from "./pipeline/frame";
 import type { Cluster, Grouper } from "./pipeline/group";
@@ -10,8 +11,7 @@ import type { ServeContext } from "../serving/types";
 import { handleFor } from "./relation";
 import { newReadFrame } from "./pipeline/frame";
 import { worldNamespace } from "./references";
-import { getCanonReceipt } from "../canon/receipts";
-import { isWorldCanonReceipt } from "../canon/world-receipt";
+import { identityReceiptCurrent } from "./identity-receipt";
 
 export const IDENTITY_MAX_MEMBERS = 256;
 export const IDENTITY_MAX_EDGES = 1024;
@@ -29,22 +29,23 @@ function asserted(item: Eligible): boolean {
 
 function nativeReceipted(frame: ReadFrame, item: Eligible): boolean {
   const id = frame.ctx.db.query<{ receipt_id: string | null }, [string]>("SELECT receipt_id FROM claims WHERE claim_id=?").get(item.claimId)?.receipt_id;
-  if (!id) return false;
-  const receipt = getCanonReceipt(frame.ctx.db, id);
-  return receipt !== null && isWorldCanonReceipt(receipt) && receipt.state === "retained" && receipt.claim_ids.includes(item.claimId);
+  if (!id || !identityReceiptCurrent(frame.ctx.db, item.claimId, id, frame.cutoff.kind === "current" ? undefined : frame.cutoff)) return false;
+  frame.dependencies?.identityReceipts.set(item.claimId, id);
+  return true;
 }
 
 /** Complete current policy is applied to both endpoints before an edge can consume a scan slot. */
-function classificationRule(frame: ReadFrame, endpoint: string) {
-  const support = authorizedSupportSql(frame.ctx), claim = authorizedClaimSql(frame.ctx, "classified"),
-    time = validMeaningSql(frame.valid, "kind"), held = heldClaimSql("classified", support);
+function classificationRule(frame: ReadFrame, endpoint: string, policyOnly = false) {
+  const cutoff = policyOnly || frame.cutoff.kind === "current" ? undefined : frame.cutoff;
+  const support = knownSupportSql(frame.ctx, cutoff), claim = authorizedClaimSql(frame.ctx, "classified"),
+    time = knownValidSql(policyOnly ? { kind: "all" } : frame.valid, cutoff, "kind"), held = knownHeldSql(frame.ctx, "classified", cutoff);
   return {
     sql: `kind.subject_kind=${endpoint}.raw_kind AND kind.subject_id=${endpoint}.raw_id
       AND coalesce(json_extract(kind.payload,'$.subject.namespace'),'')=${endpoint}.raw_namespace
       AND kind.predicate='world.kind' AND kind.polarity='positive'
       AND json_extract(kind.payload,'$.object.ref.id')='world/concept'
       AND json_extract(kind.payload,'$.perspective.mode')='asserted'
-      AND ${claimVisibleSql(frame, "classified")} AND ${claim.sql} AND ${time.sql}
+      AND ${policyOnly ? "classified.status<>'purged'" : claimVisibleSql(frame, "classified")} AND ${claim.sql} AND ${time.sql}
       AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=kind.claim_id AND ${support.sql})
       AND NOT ${held.sql}`,
     bindings: [...claim.bindings, ...time.bindings, ...support.bindings, ...held.bindings],
@@ -52,12 +53,13 @@ function classificationRule(frame: ReadFrame, endpoint: string) {
 }
 
 function classificationSql(frame: ReadFrame, endpoint: string) {
-  const rule = classificationRule(frame, endpoint);
+  const rule = classificationRule(frame, endpoint, frame.cutoff.kind === "recorded");
   return { ...rule, sql: `EXISTS(SELECT 1 FROM claim_v2_semantics kind JOIN claims classified USING(claim_id) WHERE ${rule.sql})` };
 }
 
 /** Full proof also records endpoint classification dependencies for publication. */
 function verifyClassification(frame: ReadFrame, handle: string): boolean {
+  if (frame.cutoff.kind === "recorded" && checkKnownCoverage(frame.ctx, handle, frame.cutoff)) frame.historyBaseline = true;
   const rule = classificationRule(frame, "b");
   const rows = frame.ctx.db.query<{ claim_id: string }, (string | number)[]>(`
     SELECT kind.claim_id FROM semantic_bindings b, claim_v2_semantics kind JOIN claims classified USING(claim_id)
@@ -77,8 +79,9 @@ export function identityCluster(frame: ReadFrame, anchor: string, joining?: stri
   if (!cache) { cache = new Map(); frames.set(frame, cache); }
   const hit = joining === undefined ? cache.get(anchor) : undefined;
   if (hit) return hit;
-  const support = authorizedSupportSql(frame.ctx), claim = authorizedClaimSql(frame.ctx),
-    time = validMeaningSql(frame.valid), held = heldClaimSql("base", support),
+  const cutoff = frame.cutoff.kind === "current" ? undefined : frame.cutoff;
+  const support = knownSupportSql(frame.ctx, cutoff), claim = authorizedClaimSql(frame.ctx),
+    time = knownValidSql(frame.valid, cutoff), held = knownHeldSql(frame.ctx, "base", cutoff),
     left = classificationSql(frame, "l"), right = classificationSql(frame, "r");
   const query = frame.ctx.db.query<Edge, (string | number)[]>(`
     SELECT c.claim_id,l.handle_id AS left,r.handle_id AS right
@@ -104,6 +107,7 @@ export function identityCluster(frame: ReadFrame, anchor: string, joining?: stri
   let ambiguous = false, overflow = false;
   for (let cursor = 0; cursor < queue.length && !overflow; cursor++) {
     const node = queue[cursor]!;
+    if (frame.cutoff.kind === "recorded" && checkKnownCoverage(frame.ctx, node, frame.cutoff)) frame.historyBaseline = true;
     const rows = query.all(node, node, ...bindings, IDENTITY_MAX_EDGES + 1);
     frame.stats.rowsExamined += rows.length;
     if (rows.length > IDENTITY_MAX_EDGES) { overflow = true; break; }
@@ -128,7 +132,7 @@ export function identityCluster(frame: ReadFrame, anchor: string, joining?: stri
     for (const pair of pairs.values()) {
       if (!members.has(pair.left) && !members.has(pair.right)) continue;
       const supports = pair.claims.flatMap(item => item.supports);
-      const qualifies = pair.claims.some(item => nativeReceipted(frame, item) && item.supports.some(s => s.row.support_origin === "native_owner")) ||
+      const qualifies = pair.claims.some(item => item.supports.some(s => s.row.support_origin === "native_owner") && nativeReceipted(frame, item)) ||
         (supports.length > 0 && supportLineage(frame, supports).count >= 2);
       if (pair.blocked || !qualifies) { ambiguous = true; continue; }
       for (const next of [pair.left, pair.right]) if (!members.has(next)) {

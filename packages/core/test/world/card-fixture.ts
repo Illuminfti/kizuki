@@ -54,7 +54,7 @@ export async function cardFixture(database?: Database) {
   await write("world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } });
   await write("concept.label", { kind: "literal", value: "Bayesian updating" });
   const definition = await write("concept.definition", { kind: "literal", value: "Revise beliefs using evidence" });
-  const input = (operation: string, own: Record<string, unknown>) => ({ operation, ...own, valid: { kind: "all" }, knownAt: { kind: "current" } });
+  const input = (operation: string, own: Record<string, unknown>) => ({ operation, ...own, valid: { kind: "all" as const }, knownAt: { kind: "current" as const } });
   function find(reader = ctx) {
     const found = readWorldView(reader, input("find_concepts", { label: "Bayesian" }));
     if (!("result" in found) || found.result.status === "unavailable" || !("matches" in found.result.data)) throw new Error("card not discovered");

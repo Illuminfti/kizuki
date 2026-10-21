@@ -1,3 +1,4 @@
+import { OWNER_AGENT_GRANT, addAgent, authenticate } from "../../core/src/agents";
 import { afterEach, expect, test } from "bun:test";
 import { worldFixture } from "../../core/test/serving/world-fixture";
 import { call, connectClient, envelopeOf } from "./client";
@@ -62,7 +63,8 @@ test("MCP validates issued views, unchanged, share and cross-client resume again
   fixture = mcpFixture();
   const seeded = await worldFixture(fixture.db);
   const owner = await connectClient(fixture.owner(), open);
-  const peer = await connectClient(fixture.agent("reader-private"), open);
+  const fullReader = addAgent(fixture.db, "full-view-peer", { ...OWNER_AGENT_GRANT, deny_classes: [] });
+  const peer = await connectClient({ ...fixture.owner(), principal: authenticate(fixture.db, fullReader.token)! }, open);
   const input = { operation: "concept", concept: seeded.ref, valid: { kind: "all" }, knownAt: { kind: "current" } };
   // Exercise discovery through the same client that will share the object.
   const discovered = envelopeOf(await call(owner, "world_view", { operation: "find_concepts", label: "", valid: input.valid, knownAt: input.knownAt })).data as any;
@@ -123,3 +125,16 @@ test("MCP world_view pages label discovery with the returned cursor", async () =
   });
   expect(bad.isError).toBe(true);
 }, 60_000);
+
+
+test("MCP consumes typed retained history and reuses its opaque cutoff for a Concept card",async()=>{
+ fixture=mcpFixture();fixture.db.query("UPDATE claim_history_clock SET last_recorded_at=?").run("2030-01-09T00:00:00.000Z");await worldFixture(fixture.db);
+ const client=await connectClient(fixture.owner(),open);
+ const found=envelopeOf(await call(client,"world_view",{operation:"find_concepts",label:"Bayesian"})).data as any;
+ const ref=found.result.data.matches[0].ref;
+ const result=await call(client,"world_view",{operation:"history",concept:ref,knownAt:{kind:"time",at:"2030-01-09T00:00:00.000Z"}});
+ expect(result.isError??false).toBe(false);const page=(envelopeOf(result).data as any).result.data;
+ expect(page.schema).toBe("kizuki.world-history/v1");expect(page.transitions).toHaveLength(3);
+ const card=await call(client,"world_view",{operation:"concept",concept:ref,knownAt:{kind:"snapshot",ref:page.snapshot}});
+ expect(card.isError??false).toBe(false);expect((envelopeOf(card).data as any).result.data.knownAt.ref).toEqual(page.snapshot);
+});

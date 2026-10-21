@@ -39,7 +39,7 @@ export function coverageOf(
     status: gaps.length === 0 ? "complete_for_query" : "partial",
     gaps,
     validWindow: frame.valid,
-    history: "unavailable",
+    history: frame.cutoff.kind === "current" ? "unavailable" : frame.historyBaseline ? "baseline_only" : "retained_for_query",
   };
 }
 

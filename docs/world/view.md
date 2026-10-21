@@ -103,9 +103,9 @@ pending token and returns the uniform `new_view_required` result.
 
 A handle stores its digest, semantic target, object operation, valid window,
 normalized issuer scope and scope digest, and an internal recorded-time marker.
-It stores no card or captured text. Before retained history lands, resume reads
+It stores no card or captured text. Resume currently reads
 the current model; the marker is never disclosed and does not claim historical
-repeatability. Time and snapshot queries still return `unavailable/history`.
+repeatability. Time and snapshot queries on resume still return `unavailable/history`; [KNOWN](known.md) supplies separate temporal card and history reads.
 
 ## Surfaces
 
