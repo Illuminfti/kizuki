@@ -13,6 +13,7 @@ import {
   type WorldAdmission,
 } from "../../contracts/world-admission";
 import { getWorldVocabularySpec } from "../../contracts/world-vocabulary";
+import { qualifiedPersonInterest } from "../../contracts/world-vocab/person";
 import { readEvent } from "../../ledger/ledger";
 import { eventDecision, readServableEvents } from "../../serving/ledger";
 import type { ServeContext } from "../../serving/types";
@@ -135,6 +136,9 @@ export function eligibleWorldClaim(
       semanticKey(admission.semantic) !== semanticKey(semantic)
     )
       continue;
+    // Registration must not turn an older, unqualified admission into a fact
+    // about a person. Native owner evidence is verified by the normal path below.
+    if (semantic.predicate === "person.interest" && !qualifiedPersonInterest(admission.semantic, row.support_origin === "native_owner")) continue;
     let cache = groundingReads.get(budget);
     if (cache === undefined) { cache = new Map(); groundingReads.set(budget, cache); }
     let grounding: readonly { event_id: string; event_content_hash: string }[];

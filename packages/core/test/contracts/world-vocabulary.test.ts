@@ -13,7 +13,7 @@ describe("world vocabulary v1", () => {
     expect(WORLD_VOCABULARY.map((entry) => entry.predicate)).toEqual([
       ...WORLD_VOCABULARY_PREDICATES,
     ]);
-    expect(new Set(WORLD_VOCABULARY_PREDICATES).size).toBe(75);
+    expect(new Set(WORLD_VOCABULARY_PREDICATES).size).toBe(76);
   });
 
   test("locks endpoint shapes and trusted vocabulary values", () => {
@@ -26,6 +26,11 @@ describe("world vocabulary v1", () => {
       subject: "concept",
       objects: ["literal", "raw_subject"],
       max_literal_chars: 400,
+    });
+    expect(getWorldVocabularySpec("person.interest")).toMatchObject({
+      subject: "person",
+      objects: ["concept"],
+      max_literal_chars: null,
     });
     expect(getWorldVocabularySpec("learning.assistance")).toMatchObject({
       subject: "task_context",
