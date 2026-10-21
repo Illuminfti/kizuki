@@ -44,10 +44,10 @@ export function verifyQualificationReceipt(bytes: string, approval: Qualificatio
     const item = qualificationCorpus.cases.find(row => row.id === observed.case_id)!;
     const expectedInput = caseInput(item, registry);
     if (!report.selected_kinds.includes(item.kind) || canonicalJson(expectedInput) !== canonicalJson(observed.input) ||
-      sha256(extractionV2SystemContent(expectedInput)) !== report.prompt_sha256) throw new Error("qualification input mismatch");
+      sha256(extractionV2SystemContent(expectedInput)) !== report.prompt_sha256_by_case[item.id]) throw new Error("qualification input mismatch");
     const traces = report.traces.filter(row => row.case_id === item.id);
     const trace = traces[0];
-    if (traces.length !== 1 || trace === undefined || trace.transport !== "ok" || !/^[a-f0-9]{64}$/.test(trace.request_sha256) || trace.response_sha256 === null || !/^[a-f0-9]{64}$/.test(trace.response_sha256) ||
+    if (traces.length !== 1 || trace === undefined || trace.transport !== "ok" || trace.prompt_sha256 !== report.prompt_sha256_by_case[item.id] || !/^[a-f0-9]{64}$/.test(trace.request_sha256) || trace.response_sha256 === null || !/^[a-f0-9]{64}$/.test(trace.response_sha256) ||
       !Number.isFinite(Date.parse(trace.started_at)) || trace.completed_at === null || !Number.isFinite(Date.parse(trace.completed_at)) || Date.parse(trace.completed_at) < Date.parse(trace.started_at)) throw new Error("qualification transport evidence missing");
   }
   for (let index = 1; index < report.traces.length; index++) if (Date.parse(report.traces[index]!.started_at) - Date.parse(report.traces[index - 1]!.started_at) < 60_000) throw new Error("qualification pacing violated");

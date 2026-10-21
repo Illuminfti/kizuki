@@ -200,6 +200,30 @@ const subjectObject = (id: string): Meaning["object"] => ({ kind: "subject", val
   ]);
 }
 
+// Grounding context is not witness evidence. These handles mirror the host's exact conditional-prompt grammar.
+{
+  const left = `g${"a".repeat(64)}/0`, right = `g${"a".repeat(64)}/1`;
+  const context = (id: string, text: string, handle: string, quote: string): RecordInput => ({ id, text, subjects: [{ id: handle, quote }] });
+  const pair = [context("prior-a", "Copper Queue is a queue that stores requests in arrival order.", left, "Copper Queue"),
+    context("prior-b", "Order Buffer is a queue that preserves arrival order.", right, "Order Buffer")];
+  for (const retained of [false, true]) {
+    const witness: RecordInput = { id: "witness", text: "Copper Queue is the same concept as Order Buffer.", subjects: [] };
+    const a = mentionRef(witness, "Copper Queue"), b = mentionRef(witness, "Order Buffer");
+    cases.push({ id: retained ? "concept-grounding-retained-label-v1" : "concept-grounding-compatible-v1", kind: "concept", family: "positive",
+      records: [retained ? context("prior-a", "The earlier label Copper Queue denoted a queue that stores requests in arrival order.", left, "Copper Queue") : pair[0]!, pair[1]!, witness],
+      nominations: [{ mention: a, supplied: left }, { mention: b, supplied: right }],
+      required: [assertion(meaning(a, "concept.same_as", { kind: "subject", value: b }, { citations: ["witness"] }))],
+      optional: [...kindRows("concept", a, "Copper Queue"), ...kindRows("concept", b, "Order Buffer")].map(row => ({ ...row, citations: ["witness"] })) });
+  }
+  cases.push({ id: "concept-grounding-homonym-v1", kind: "concept", family: "abstention", records: [
+    context("prior-a", "Atlas is a graph search technique.", left, "Atlas"), context("prior-b", "Atlas is a document layout technique.", right, "Atlas"),
+    { id: "witness", text: "Atlas is mentioned, but which meaning of Atlas is intended is unknown. No equivalence is asserted.", subjects: [] }], required: [], optional: [] });
+  cases.push({ id: "concept-grounding-missing-proof-v1", kind: "concept", family: "abstention", records: [pair[0]!,
+    { id: "witness", text: "A second concept's grounding record is unavailable. No evidence establishes that Copper Queue is identical to another concept.", subjects: [] }], required: [], optional: [] });
+  cases.push({ id: "concept-grounding-quoted-labels-v1", kind: "concept", family: "abstention", records: [...pair,
+    { id: "witness", text: 'A copied index quotes the labels "Copper Queue" and "Order Buffer". It asserts no identity relationship between them.', subjects: [] }], required: [], optional: [] });
+}
+
 export const qualificationCorpus: QualificationCorpus = {
   schema: "kizuki.world-qualification-corpus/v1", synthetic: true, split: "held_out", version: "world-kinds-20261021-v1", cases,
 };

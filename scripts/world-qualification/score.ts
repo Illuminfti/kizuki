@@ -18,6 +18,8 @@ export interface Meaning {
 }
 export interface QualificationCase {
   id: string; kind: string; family: Family; records: RecordInput[];
+  /** Exact request-local identity nominations expected on witness mentions, never prompt data. */
+  nominations?: { mention: string; supplied: string }[];
   /** Each required tuple has finite, predeclared alternatives, not model-graded fuzzy matching. */
   required: Meaning[][]; optional: Meaning[];
 }
@@ -109,6 +111,19 @@ export function scoreCase(item: QualificationCase, observed: Observation) {
   if (observed.usage.calls !== 1 || observed.usage.input_tokens === null || observed.usage.output_tokens === null) errors.push("unmeasured_usage");
   for (const count of [observed.usage.input_tokens, observed.usage.output_tokens]) if (count !== null && (!Number.isSafeInteger(count) || count < 0 || count > 100_000_000)) errors.push("invalid_usage");
   if ((observed.usage.output_tokens ?? 0) > observed.input.budget.max_output_tokens) errors.push("output_budget_exceeded");
+  const expectedNominations = new Map((item.nominations ?? []).map(row => [row.mention, row.supplied]));
+  const seenNominations = new Set<string>();
+  for (const mention of observed.response.mentions) {
+    const record = item.records[observed.input.events.findIndex(event => event.event_id === mention.anchor.event_id)];
+    const key = `mention:${record?.id}:${mention.anchor.start_utf16}:${mention.anchor.end_utf16}`;
+    const expected = expectedNominations.get(key);
+    if (expected === undefined) { if (mention.candidate_refs.length !== 0) errors.push("unsupported_nomination"); }
+    else {
+      seenNominations.add(key);
+      if (mention.candidate_refs.length !== 1 || mention.candidate_refs[0]?.kind !== "supplied" || mention.candidate_refs[0]?.id !== expected) errors.push("incorrect_nomination");
+    }
+  }
+  for (const key of expectedNominations.keys()) if (!seenNominations.has(key)) errors.push("missing_nomination");
   const keys = responseMeanings(item, observed.response).map(value => canonicalJson(value));
   const required = item.required.map(alternatives => alternatives.map(value => canonicalJson(normalizeMeaning(value))));
   const allowed = new Set([...required.flat(), ...item.optional.map(value => canonicalJson(normalizeMeaning(value)))]);

@@ -25,7 +25,9 @@ export function scripted(item: QualificationCase, registry?: WorldRegistry): Obs
     if (refs.has(value)) return refs.get(value)!;
     const [, recordId, start, end] = value.split(":"), index = item.records.findIndex(row => row.id === recordId), event = input.events[index]!;
     const id = `m${mentions.length + 1}`, anchor = { event_id: event.event_id, start_utf16: Number(start), end_utf16: Number(end) };
-    mentions.push({ id, label: event.text.slice(anchor.start_utf16, anchor.end_utf16), anchor, candidate_refs: [] });
+    const nominated = item.nominations?.find(row => row.mention === value)?.supplied;
+    mentions.push({ id, label: event.text.slice(anchor.start_utf16, anchor.end_utf16), anchor,
+      candidate_refs: nominated === undefined ? [] : [{ kind: "supplied", id: nominated }] });
     const result = { kind: "mention" as const, id }; refs.set(value, result); return result;
   };
   const anchors = (values: (DraftRef | null)[], citations: string[]): TextAnchor[] => {
@@ -77,6 +79,44 @@ test("attribution swaps, invented dates, unsupported claims and dropped output a
   expect(scoreCase(item, { ...good, response: { ...good.response!, claims: [...good.response!.claims, first] } }).passed).toBe(false);
 });
 
+test("grounding requires exact witness nominations and cannot count context as independent testimony", () => {
+  const item = qualificationCorpus.cases.find(row => row.id === "concept-grounding-compatible-v1")!;
+  const good = scripted(item);
+  expect(scoreCase(item, good).errors).toEqual([]);
+  const [left, right] = good.response!.mentions;
+  expect(() => {
+    const swapped = { ...good, response: { ...good.response!, mentions: [{ ...left!, candidate_refs: right!.candidate_refs }, right!] } };
+    expect(scoreCase(item, swapped).errors).toContain("incorrect_nomination");
+  }).not.toThrow();
+  const unbound = { ...good, response: { ...good.response!, mentions: good.response!.mentions.map(row => ({ ...row, candidate_refs: [] })) } };
+  expect(scoreCase(item, unbound).errors).toContain("incorrect_nomination");
+  const extraContext = { event_id: good.input.events[0]!.event_id, start_utf16: 0, end_utf16: good.input.events[0]!.text.length };
+  const copied = { ...good, response: { ...good.response!, claims: good.response!.claims.map(row => ({ ...row, anchors: [...row.anchors, extraContext] })) } };
+  expect(scoreCase(item, copied).passed).toBe(false);
+  for (const id of ["concept-grounding-homonym-v1", "concept-grounding-missing-proof-v1", "concept-grounding-quoted-labels-v1"]) {
+    const abstention = qualificationCorpus.cases.find(row => row.id === id)!;
+    expect(scoreCase(abstention, scripted(abstention)).passed).toBe(true);
+  }
+});
+
+test("grounding cases reach the actual conditional prompt and ProducerV2 parser", async () => {
+  const item = qualificationCorpus.cases.find(row => row.id === "concept-grounding-compatible-v1")!;
+  const control = scripted(item);
+  const server = startFakeEndpoint(() => Response.json({ id: "grounding-control", model: "synthetic", object: "chat.completion", created: 1,
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(control.response) } }],
+    usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }));
+  try {
+    const result = await runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", case_ids: [item.id] });
+    expect(result.observations).toHaveLength(1);
+    expect(scoreCase(item, result.observations[0]!).errors).toEqual([]);
+    const body = server.requests[0]!.body as { messages: { content: string }[] };
+    expect(body.messages[0]!.content).toContain("Identity grounding:");
+    expect(result.traces[0]!.prompt_sha256).toBe(sha256(body.messages[0]!.content));
+    expect(result.prompt_sha256_by_case[item.id]).toBe(result.traces[0]!.prompt_sha256);
+    expect(result.score.kinds.find(row => row.kind === "concept")?.status).toBe("failed");
+  } finally { server.stop(); }
+});
+
 test("response files cannot self-attest observed provider provenance or become reviewed qualifications", () => {
   const fake = JSON.stringify({ schema: "kizuki.world-qualification-run/v1", evidence: "scripted_contract", synthetic: true });
   expect(() => verifyQualificationReceipt(fake, { file: "fake.json", sha256: sha256(fake), endpoint_evidence: "a".repeat(64) }, WORLD_REGISTRY)).toThrow();
@@ -109,14 +149,15 @@ test("the receipt verifier binds reviewed bytes, full cases, prompt, source and 
     source_clean: true, source_commit: "a".repeat(40), runner_sha256: runnerDigest(), registry_sha256: registryDigest(registry),
     prompt_sha256: sha256(extractionV2SystemContent(observations[0]!.input)), missing: [], model: "synthetic-verifier-control", endpoint_host: "127.0.0.1:1",
     selected_kinds: ["question"], selected_extensions: [], corpus: qualificationCorpus, observations, score: scoreRun(qualificationCorpus, observations),
-    traces: observations.map((row, index) => ({ case_id: row.case_id, transport: "ok", request_sha256: "a".repeat(64), response_sha256: "b".repeat(64),
+    prompt_sha256_by_case: Object.fromEntries(observations.map(row => [row.case_id, sha256(extractionV2SystemContent(row.input))])),
+    traces: observations.map((row, index) => ({ case_id: row.case_id, prompt_sha256: sha256(extractionV2SystemContent(row.input)), transport: "ok", request_sha256: "a".repeat(64), response_sha256: "b".repeat(64),
       started_at: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(), completed_at: new Date(Date.UTC(2026, 0, 1, 0, index, 1)).toISOString() })) };
   const verify = (value: unknown, pinned?: string) => { const bytes = JSON.stringify(value); return verifyQualificationReceipt(bytes,
     { file: "synthetic-control.json", sha256: pinned ?? sha256(bytes), endpoint_evidence: "c".repeat(64) }, registry); };
   expect(() => checkOfferedQualification(registry, [verify(control)])).not.toThrow();
   expect(() => verify(control, "d".repeat(64))).toThrow("review pin");
   for (const mutation of [
-    { ...control, source_clean: false }, { ...control, prompt_sha256: "d".repeat(64) },
+    { ...control, source_clean: false }, { ...control, prompt_sha256_by_case: {} },
     { ...control, observations: observations.slice(1), score: scoreRun(qualificationCorpus, observations.slice(1)) },
     { ...control, traces: control.traces.map(row => ({ ...row, started_at: control.traces[0]!.started_at })) },
     { ...control, traces: control.traces.slice(1) },

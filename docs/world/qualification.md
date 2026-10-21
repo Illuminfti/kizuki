@@ -16,6 +16,15 @@ model. Every required tuple must appear, no unsupported tuple may appear, and
 there must be no dropped output or unknown usage. An empty answer passes only
 an applicable abstention case.
 
+Five Concept cases exercise the actual conditional identity-grounding prompt:
+compatible prior concepts, an earlier retained label, ambiguous homonyms,
+unavailable proof, and copied/quoted labels. Witness mentions must nominate
+exactly the predeclared request-local handles, and grounding-context records
+cannot count as witness citations. Retiring a label does not itself revoke a
+retained valid proof. Missing/purged host proof and final identity admission
+remain independently tested by the public identity and consolidation suites;
+model output does not establish host authorization.
+
 The scorer preserves subject references, object kinds, holder, speaker,
 addressee, mode, interpretation, context, polarity, validity and record-level
 citations. It permits only declared alternatives and whitespace/Unicode/date
@@ -68,7 +77,7 @@ fsynced before each request and the result after completion. A killed run
 therefore retains pending work as unproven; restarting uses a new output file,
 not a claimed resume. The report pins the source commit/clean state, runner,
 registry, corpus and complete system prompt, plus request/response hashes,
-per-case timing, parsed responses and measured usage. An untracked evaluator
+per-case conditional prompt hashes, timing, parsed responses and measured usage. An untracked evaluator
 cannot claim a clean source revision. `--cases` supports diagnosis, but a
 partial kind never qualifies.
 
