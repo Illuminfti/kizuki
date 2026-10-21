@@ -877,6 +877,8 @@ describe("help", () => {
         "--calendar",
         "--history-start",
         "--url",
+        "--exclude-cwd",
+        "--include-headless",
       ]);
       expect(body.data.flags).toEqual(["--list", "--json", "--new-source", "--no-browser"]);
       expect(body.data.irreversible).toBe(false);
@@ -888,6 +890,8 @@ describe("help", () => {
     expect(text.stdout).toContain("--new-source");
     expect(text.stdout).toContain("--no-browser");
     expect(text.stdout).toContain("--url");
+    expect(text.stdout).toContain("--exclude-cwd DIR ...");
+    expect(text.stdout).toContain("--include-headless true|false");
     for (const [args, diagnostic] of [
       [["connect", "--nope"], "unknown option --nope"],
       [["connect", "--json", "--json"], "repeated flag --json"],

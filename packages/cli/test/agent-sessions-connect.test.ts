@@ -131,3 +131,102 @@ test("a session run inside the vault is never captured, and the vault path is no
     expect(readFileSync(join(setup.vault, ".kizuki", "connections", name), "utf8")).not.toContain(setup.vault);
   }
 });
+
+for (const connector of ["claude-code-sessions", "codex-sessions"]) {
+  test(`${connector} persists repeatable excludes and amends capture filters without re-enrollment`, () => {
+    const setup = h.tempVault();
+    const sessions = h.tempDir("kizuki-session-scope-");
+    const connect = (...options: string[]) => h.runCli(setup.env, "connect", connector, "--source", sessions, ...options);
+    const first = connect("--exclude-cwd", "/work/automation", "--exclude-cwd=/work/other", "--include-headless", "false");
+    expect(first.exitCode, first.stderr).toBe(0);
+    const key = first.stdout.match(/source=([0-9A-HJKMNP-TV-Z]{26})/)?.[1];
+    expect(key).toBeDefined();
+    const stateFile = join(setup.vault, ".kizuki", "connections", `${key}.state`);
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).config).toEqual({ path: sessions, exclude_cwd: ["/work/automation", "/work/other"], include_headless: false });
+    const second = connect("--exclude-cwd", "/work/new");
+    expect(second.exitCode, second.stderr).toBe(0);
+    expect(second.stdout).toContain(`source=${key}`);
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).config).toEqual({ path: sessions, exclude_cwd: ["/work/new"], include_headless: false });
+    expect(connect().exitCode).toBe(0);
+    expect(JSON.parse(readFileSync(stateFile, "utf8")).config.exclude_cwd).toEqual(["/work/new"]);
+  });
+}
+
+test("session filter errors persist no connection and are refused for other sources", () => {
+  const setup = h.tempVault();
+  for (const [connector, flag, value] of [["claude-code-sessions", "--exclude-cwd", "relative"], ["codex-sessions", "--include-headless", "maybe"], ["markdown-folder", "--exclude-cwd", "/work/example"]]) {
+    const result = h.runCli(setup.env, "connect", connector!, "--source", setup.notes, flag!, value!);
+    expect(result.exitCode).toBe(2);
+  }
+  expect(h.runCli(setup.env, "connect", "status").stdout).toContain("No sources connected yet.");
+});
+
+test("amending excludes stops future capture, preserves captured sessions, and keeps the vault guard", () => {
+  const setup = h.tempVault();
+  const sessions = h.tempDir("kizuki-session-amend-");
+  const file = join(sessions, "a.jsonl");
+  const turn = (uuid: string, cwd: string) => JSON.stringify({ type: "user", uuid, sessionId: "s-1", cwd, entrypoint: "cli", timestamp: "2026-01-15T10:00:00.000Z", message: { role: "user", content: uuid } }) + "\n";
+  writeFileSync(file, turn("old", "/work/automation"));
+  const connected = h.runCli(setup.env, "connect", "claude-code-sessions", "--source", sessions);
+  expect(connected.exitCode, connected.stderr).toBe(0);
+  const key = connected.stdout.match(/source=([0-9A-HJKMNP-TV-Z]{26})/)?.[1] ?? "";
+  expect(h.runCli(setup.env, "connect", "grant", "--source", key, ...sessionGrant(setup.root, "grant-amend")).exitCode).toBe(0);
+  expect(h.runCli(setup.env, "backfill", "claude-code-sessions", "--source", key).stdout).toContain("events_stored=1");
+  const amended = h.runCli(setup.env, "connect", "claude-code-sessions", "--source", sessions, "--exclude-cwd", "/work/automation");
+  expect(amended.exitCode, amended.stderr).toBe(0);
+  expect(amended.stdout).toContain(`source=${key}`);
+  appendFileSync(file, turn("excluded", "/work/automation/subdir") + turn("vault", setup.vault) + turn("allowed", "/work/interactive"));
+  const synced = h.runCli(setup.env, "sync", "claude-code-sessions", "--source", key);
+  expect(synced.exitCode, synced.stderr).toBe(0);
+  expect(synced.stdout).toContain("events_stored=1");
+  const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  try {
+    expect(db.query<{ text: string }, []>("SELECT text FROM events ORDER BY accepted_at, event_id").all().map((r) => r.text).sort()).toEqual(["allowed", "old"]);
+  } finally { db.close(); }
+});
+
+test("saved include_headless=false excludes exec rollouts during CLI backfill", () => {
+  const setup = h.tempVault();
+  const sessions = h.tempDir("kizuki-headless-cli-");
+  const meta = (id: string, source: string) => ({ type: "session_meta", timestamp: "2026-01-15T10:00:00.000Z", payload: { id, cwd: "/work/example", source } });
+  const message = { type: "response_item", timestamp: "2026-01-15T10:00:01.000Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "decision" }] } };
+  for (const source of ["exec", "cli"]) writeFileSync(join(sessions, `${source}.jsonl`), [meta(source, source), message].map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const connected = h.runCli(setup.env, "connect", "codex-sessions", "--source", sessions, "--include-headless=false");
+  expect(connected.exitCode, connected.stderr).toBe(0);
+  const key = connected.stdout.match(/source=([0-9A-HJKMNP-TV-Z]{26})/)?.[1] ?? "";
+  expect(h.runCli(setup.env, "connect", "grant", "--source", key, ...sessionGrant(setup.root, "grant-headless")).exitCode).toBe(0);
+  const captured = h.runCli(setup.env, "backfill", "codex-sessions", "--source", key);
+  expect(captured.exitCode, captured.stderr).toBe(0);
+  expect(captured.stdout).toContain("events_stored=1");
+});
+
+test("portable export cannot silently drop session capture filters", () => {
+  // The current portable-local contract carries only a path, so refusal is safer than widening scope.
+  const setup = h.tempVault();
+  const sessions = h.tempDir("kizuki-filtered-export-");
+  const connected = h.runCli(setup.env, "connect", "codex-sessions", "--source", sessions, "--exclude-cwd", "/work/automation");
+  expect(connected.exitCode, connected.stderr).toBe(0);
+  const key = connected.stdout.match(/source=([0-9A-HJKMNP-TV-Z]{26})/)?.[1] ?? "";
+  const policy = join(setup.root, "export-policy.json");
+  writeFileSync(policy, JSON.stringify({ purposes: ["capture", "recall", "export"], allowed_fields: ["text", "subjects", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" }), { mode: 0o600 });
+  const granted = h.runCli(setup.env, "connect", "grant", "--source", key, "--policy", policy, "--expected-revision", "0", "--operation-id", "grant-filtered-export");
+  expect(granted.exitCode, granted.stderr).toBe(0);
+  const exported = h.runCli(setup.env, "export", "--out", join(setup.root, "snapshot"));
+  expect(exported.exitCode).not.toBe(0);
+  expect(exported.stderr).not.toContain("/work/automation");
+});
+
+test("the maximum CLI exclusion list leaves room for the implicit vault guard", () => {
+  const setup = h.tempVault();
+  const sessions = h.tempDir("kizuki-exclusion-bound-");
+  writeFileSync(join(sessions, "a.jsonl"), JSON.stringify({ type: "user", uuid: "one", sessionId: "one", cwd: "/work/allowed", entrypoint: "cli", timestamp: "2026-01-15T10:00:00.000Z", message: { role: "user", content: "allowed" } }) + "\n");
+  const exclusions = Array.from({ length: 63 }, (_, i) => ["--exclude-cwd", `/work/excluded-${i}`]).flat();
+  const connected = h.runCli(setup.env, "connect", "claude-code-sessions", "--source", sessions, ...exclusions);
+  expect(connected.exitCode, connected.stderr).toBe(0);
+  const key = connected.stdout.match(/source=([0-9A-HJKMNP-TV-Z]{26})/)?.[1] ?? "";
+  expect(h.runCli(setup.env, "connect", "grant", "--source", key, ...sessionGrant(setup.root, "grant-bound")).exitCode).toBe(0);
+  const capture = h.runCli(setup.env, "backfill", "claude-code-sessions", "--source", key);
+  expect(capture.exitCode, capture.stderr).toBe(0);
+  expect(capture.stdout).toContain("events_stored=1");
+  expect(h.runCli(setup.env, "connect", "claude-code-sessions", "--source", sessions, ...exclusions, "--exclude-cwd", "/work/extra").exitCode).toBe(2);
+});

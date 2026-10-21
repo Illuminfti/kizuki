@@ -5,7 +5,7 @@ import { runIcsUrlConnect } from "./connect-ics";
 import { runConnectConsent } from "./connect-consent";
 import { consentHint } from "../source-consent";
 import { runTelegramConnect } from "./connect-telegram";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import {
   applyConnectionSensitivity,
   inspectSourceGrant,
@@ -111,21 +111,38 @@ export function imapSignInNotice(vaultPath: string): string {
 }
 
 export const CONNECT_SCHEMA = {
-  options: ["--source", "--sensitivity", "--endpoint", "--token-ref", "--fields", "--calendar", "--history-start", "--url"],
+  options: ["--source", "--sensitivity", "--endpoint", "--token-ref", "--fields", "--calendar", "--history-start", "--url", "--exclude-cwd", "--include-headless"],
   flags: ["--list", "--json", "--new-source", "--no-browser"],
 } as const satisfies CommandHelpSchema;
 
 export const connectCommand: Command = {
   name: "connect",
-  usage: "connect [--list|status] [--json]\n       kizuki connect status --source KEY [--json]\n       kizuki connect grant --source KEY --policy FILE --expected-revision N --operation-id ID [--json]\n       kizuki connect revoke --source KEY --expected-revision N --operation-id ID [--json]\n       kizuki connect resume-revocation --source KEY --operation-id ID [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect ics --url https://HOST/PATH.ics [--sensitivity public|personal|private] [--json]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]\n       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--no-browser] [--json]\n       kizuki connect recover-x-api --source KEY --fields relationships,links,media|none --history-start RFC3339 [--no-browser] [--json]\n       kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--no-browser] [--json]\n       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--no-browser] [--json]\n       kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]",
+  usage: "connect [--list|status] [--json]\n       kizuki connect status --source KEY [--json]\n       kizuki connect grant --source KEY --policy FILE --expected-revision N --operation-id ID [--json]\n       kizuki connect revoke --source KEY --expected-revision N --operation-id ID [--json]\n       kizuki connect resume-revocation --source KEY --operation-id ID [--json]\n       kizuki connect <connector> --source PATH [--sensitivity public|personal|private]\n       kizuki connect claude-code-sessions|codex-sessions --source PATH [--exclude-cwd DIR ...] [--include-headless true|false]\n       kizuki connect ics --url https://HOST/PATH.ics [--sensitivity public|personal|private] [--json]\n       kizuki connect beeper --token-ref env:VAR|file:/absolute/path [--endpoint http://127.0.0.1:23373] [--sensitivity public|personal|private] [--json]\n       kizuki connect imap [--source KEY] [--sensitivity public|personal|private]\n       kizuki connect google-calendar --calendar CANONICAL_ID --fields summary,description,location,attendees,attachments|none [--source KEY | --new-source] [--no-browser] [--json]\n       kizuki connect recover-x-api --source KEY --fields relationships,links,media|none --history-start RFC3339 [--no-browser] [--json]\n       kizuki connect x-api --fields relationships,links,media|none --history-start RFC3339 [--source KEY | --new-source] [--no-browser] [--json]\n       kizuki connect gmail --fields text,subjects,headers,labels,attachments [--source KEY | --new-source] [--no-browser] [--json]\n       kizuki connect telegram [--source KEY] [--sensitivity public|personal|private] [--json]",
   summary: "enroll a supported source and check consent or sync status",
   schema: CONNECT_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
     if (["grant", "revoke", "resume-revocation"].includes(args[0] ?? "") || (args[0] === "status" && args.includes("--source"))) return runConnectConsent(io, args);
     const parsed = parseArguments(args, {
       options: [...CONNECT_SCHEMA.options],
+      repeatableOptions: ["--exclude-cwd"],
       flags: [...CONNECT_SCHEMA.flags],
     });
+    const sessionSource = ["claude-code-sessions", "codex-sessions", "kizuki.claude-code-sessions", "kizuki.codex-sessions"].includes(parsed.positionals[0] ?? "");
+    const excludes = parsed.repeated.get("--exclude-cwd");
+    const headless = parsed.options.get("--include-headless");
+    if ((excludes !== undefined || headless !== undefined) && !sessionSource) {
+      throw new UsageError("--exclude-cwd and --include-headless are only supported for coding session sources");
+    }
+    if (excludes !== undefined && (excludes.length > 63 || excludes.some((dir) => !isAbsolute(dir)))) {
+      throw new UsageError("--exclude-cwd requires at most 63 absolute directories (one slot is reserved for the vault)");
+    }
+    if (headless !== undefined && headless !== "true" && headless !== "false") {
+      throw new UsageError("--include-headless requires true or false");
+    }
+    const sessionFilters = {
+      ...(excludes === undefined ? {} : { exclude_cwd: [...new Set(excludes.map((dir) => resolve(dir)))] }),
+      ...(headless === undefined ? {} : { include_headless: headless === "true" }),
+    };
     const json = parsed.flags.has("--json");
     const newSource = parsed.flags.has("--new-source");
     const noBrowser = parsed.flags.has("--no-browser");
@@ -283,7 +300,8 @@ export const connectCommand: Command = {
       if (existing !== undefined && existing.state !== null) {
         // An explicit reconnect may validate the selected local source before
         // capture consent. Background loads use the gated loadConnector path.
-        const connector = getConnector(connectorId, existing.state.config);
+        const config = { ...existing.state.config, ...sessionFilters };
+        const connector = getConnector(connectorId, config);
         if (!connector.manifest().auth_modes.includes("none")) throw new ConnectionError(`sign-in for ${connectorId} is not wired yet`);
         await connector.connect(refuseSecrets);
         checkRequestedSensitivity(ctx.db, connector.manifest(), requested, existing.connection);
@@ -294,9 +312,13 @@ export const connectCommand: Command = {
           );
           return 1;
         }
+        const next = encodeHostState({ ...existing.state, config });
+        const connection = Buffer.from(next).equals(Buffer.from(encodeHostState(existing.state)))
+          ? existing.connection
+          : await ctx.store.rewrite(ctx.db, existing.connection, (writer) => writer.write(next));
         applyConnectionSensitivity(
           ctx.db,
-          existing.connection,
+          connection,
           connector.manifest(),
           requested,
         );
@@ -307,7 +329,7 @@ export const connectCommand: Command = {
         return 0;
       }
 
-      const connector = getConnector(connectorId, { path: absolute });
+      const connector = getConnector(connectorId, { path: absolute, ...sessionFilters });
       checkRequestedSensitivity(ctx.db, connector.manifest(), requested);
       if (!connector.manifest().auth_modes.includes("none")) {
         throw new ConnectionError(
@@ -330,7 +352,7 @@ export const connectCommand: Command = {
         {
           schema: "kizuki.cli.connection-state/v1",
           connector_id: connectorId,
-          config: { path: absolute },
+          config: { path: absolute, ...sessionFilters },
         },
       );
       applyConnectionSensitivity(
