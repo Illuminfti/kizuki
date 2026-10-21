@@ -127,14 +127,17 @@ describe("credential-classed evidence", () => {
       };
     };
     const byDefault = await seenBy(fixture.agent("cred-default"));
-    expect(byDefault.events).toContain(plain);
+    // All-scope retrieval now returns a canon page once instead of also its capture.
+    expect(byDefault.events).not.toContain(plain);
+    expect((await serveSearch(fixture.agent("cred-default"), { query: "kettle", scope: "ledger" })).quoted.map(chunk => chunk.event_id)).toContain(plain);
     expect(byDefault.events).not.toContain(secret);
     expect(byDefault.pages).toContain("fact:plain");
     expect(byDefault.pages).not.toContain("fact:secret");
 
     for (const ctx of [fixture.agent("cred-open"), fixture.owner()]) {
       const seen = await seenBy(ctx);
-      expect(seen.events).toContain(secret);
+      expect(seen.events).not.toContain(secret);
+      expect((await serveSearch(ctx, { query: "kettle", scope: "ledger" })).quoted.map(chunk => chunk.event_id)).toContain(secret);
       expect(seen.pages).toContain("fact:secret");
     }
   });

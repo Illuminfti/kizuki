@@ -1,8 +1,13 @@
+import { stringArray } from "../vault/pages";
+import { bareRetrievalId } from "../retrieval/ids";
+import { visibleIndexDegraded } from "./index-health";
+import { authorize } from "../agents";
+import { linkIndexFromPages, resolveWikilink } from "../graph/resolve";
 import type { AuditDenial, Grant } from "../agents";
-import { neighbors, neighborsForServing } from "../graph/graph";
+import { neighbors, neighborsForServing, wikilinks } from "../graph/graph";
 import type { GraphEdge, GraphEdgeKind } from "../graph/graph";
 import { enumOf, identifier } from "./arguments";
-import { eligible, loadCanon, pageDecision } from "./canon";
+import { eligible, loadCanon, pageDecision, pageScope } from "./canon";
 import type { CanonIndex } from "./canon";
 import { auditArguments, gateAsync } from "./gate";
 import type { Served } from "./gate";
@@ -29,6 +34,7 @@ export interface GraphData {
   id: string;
   edges: GraphEdge[];
   truncated: boolean;
+  degraded?: string[];
 }
 
 function depthOf(value: unknown): 1 | 2 {
@@ -188,7 +194,9 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
             canon: [],
             quoted: [],
             withheld: [{ id: root.id, reason: decision.reason }],
-            data: { id, edges: [], truncated: false },
+            data: { id, edges: [], truncated: false,
+              ...(visibleIndexDegraded(index, grant, "graph", [root]) ? { degraded: ["index-degraded"] } : {}),
+            },
           };
         }
       }
@@ -270,6 +278,17 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
         !walked.ok,
       );
 
+      // Empty replies can still omit authorized subject, source or prose links.
+      // Select the root's permitted corpus before reconstructing its health.
+      const permitted = index.pages.filter(page => authorize(grant, pageScope(index.sourceContext, page)).allow);
+      const links = linkIndexFromPages(permitted);
+      const related = root === undefined ? permitted.filter(page =>
+        ((kinds === undefined || kinds.includes("subject"))
+          && (grant.subjects === null || grant.subjects.includes(id)) && stringArray(page.data["subjects"]).includes(id))
+        || ((kinds === undefined || kinds.includes("source"))
+          && stringArray(page.data["sources"]).some(source => bareRetrievalId(source) === bareRetrievalId(id)))
+        || ((kinds === undefined || kinds.includes("wikilink"))
+          && wikilinks(page.body).some(target => (resolveWikilink(links, target) ?? target) === id))) : permitted;
       return {
         canon: [],
         quoted: [],
@@ -283,6 +302,7 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
           id,
           edges: served.kept.slice(0, MAX_EDGES),
           truncated: (ctx.principal.kind === "owner" ? found.truncated : scopedTruncated) || served.kept.length > MAX_EDGES,
+          ...(visibleIndexDegraded(index, grant, "graph", related) ? { degraded: ["index-degraded"] } : {}),
         },
       };
     },

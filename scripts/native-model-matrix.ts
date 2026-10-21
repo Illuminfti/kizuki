@@ -223,7 +223,7 @@ export async function runNativeModelMatrix(host: NativeModelHost): Promise<void>
       const deadline = Date.now() + 30_000;
       while (observation === null && Date.now() < deadline) { observation = readInstalledModelAttempt(vault, instance); if (observation === null) await Bun.sleep(100); }
       check(observation !== null, "receipt_missing");
-      const result = host.invoke(["query", "Orchard", "--json", "--vault", vault]);
+      const result = host.invoke(["query", "Orchard", "--scope", "ledger", "--json", "--vault", vault]);
       const modelQuery = host.invoke(["query", "operations", "--json", "--vault", vault]);
       const sourceHits = readStrictNativeQuery(result), modelHits = readStrictNativeQuery(modelQuery);
       const modelOutputReadable = modelHits.some(hit => hit.scope === "canon" && hit.authority === "model_inference" && hit.snippet.includes("operations"));
@@ -247,7 +247,7 @@ export async function runNativeModelMatrix(host: NativeModelHost): Promise<void>
         const recoveryDeadline = Date.now() + 30_000;
         while (next === null && Date.now() < recoveryDeadline) { next = readInstalledModelAttempt(vault, recovered); if (next === null) await Bun.sleep(100); }
         check(next !== null, "recovery_receipt_missing");
-        const recoveredSource = host.invoke(["query", "Orchard", "--json", "--vault", vault]);
+        const recoveredSource = host.invoke(["query", "Orchard", "--scope", "ledger", "--json", "--vault", vault]);
         const recoveredModel = host.invoke(["query", "operations", "--json", "--vault", vault]);
         const recoveredCounts = recoveredEndpoint.observation(), nextReceipt = next!.receipt;
         recoveryReceipt = nextReceipt;

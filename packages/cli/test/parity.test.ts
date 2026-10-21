@@ -123,6 +123,15 @@ function keysStack(lines: string[], extra: { log?: string } = {}): string[] {
   return [process.execPath, ESTATE, "keys", file, extra.log ?? "-"];
 }
 
+/** Mirror each query's own sources, rather than returning a recency packet for all of them. */
+function mirroredStack(extra: { log?: string; keys?: string[] } = {}): string[] {
+  const file = join(tempDir("parity-mirror-"), "keys.json");
+  writeFileSync(file, JSON.stringify(Object.fromEntries(QUERIES.map((query, index) =>
+    [query, [...(extra.keys ?? []), ...seeded.kizukiKeys[index]!]],
+  ))));
+  return [process.execPath, ESTATE, "query-keys", file, extra.log ?? "-"];
+}
+
 function run(
   estate: string[],
   options: string[] = [],
@@ -375,7 +384,7 @@ describe("parity run: usage", () => {
 describe("parity run: two fake stacks", () => {
   test("a stack that mirrors Kizuki meets the threshold and records only hashed diffs", () => {
     const mirrored = seeded.kizukiKeys[0]!;
-    const result = run(keysStack(mirrored), ["--json", "--k", "5"]);
+    const result = run(mirroredStack(), ["--json", "--k", "5"]);
     expect(result.exitCode, result.stderr).toBe(0);
     const { receipt } = receiptOf(result);
     expect(receipt.schema).toBe("kizuki.parity-receipt/v1");
@@ -387,6 +396,7 @@ describe("parity run: two fake stacks", () => {
       estate_only: [],
     });
     expect(first.overlap.ratio).toBe(1);
+    expect(receipt.queries.every(entry => entry.overlap.ratio === 1)).toBe(true);
     expect(first.kizuki.status).toBe("ok");
     expect(first.estate).toMatchObject({
       status: "ok",
@@ -461,7 +471,7 @@ describe("parity run: two fake stacks", () => {
 
   test("the query reaches the stack by placeholder or as the final argument", () => {
     const log = join(tempDir("parity-log-"), "queries.log");
-    const stack = keysStack(seeded.kizukiKeys[0]!, { log });
+    const stack = mirroredStack({ log });
     expect(run(stack, ["--json"]).exitCode).toBe(0);
     expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(QUERIES);
     const placed = join(tempDir("parity-log-"), "placed.log");
@@ -491,7 +501,7 @@ describe("parity run: two fake stacks", () => {
 describe("parity run: honesty and bounds", () => {
   test("receipts, stdout and stderr hold no query text, result text or personal names", () => {
     const leaky = [`people/${SENTINEL_NAME.replace(" ", "-")}.md`, ...seeded.kizukiKeys[0]!];
-    const stack = keysStack(leaky);
+    const stack = mirroredStack({ keys: leaky.slice(0, 1) });
     const json = run(stack, ["--json"]);
     const text = run(stack, []);
     expect([json.exitCode, text.exitCode]).toEqual([0, 0]);
@@ -507,7 +517,7 @@ describe("parity run: honesty and bounds", () => {
 
   test("a run never writes canon or ledger state and injects no context", () => {
     const before = observeState(seeded.vault);
-    const result = run(keysStack(seeded.kizukiKeys[1]!), ["--json"]);
+    const result = run(mirroredStack(), ["--json"]);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(observeState(seeded.vault)).toBe(before);
     const { file } = receiptOf(result);
@@ -592,7 +602,7 @@ describe("parity run: honesty and bounds", () => {
   });
 
   test("text output summarises without echoing queries and names the receipt", () => {
-    const result = run(keysStack(seeded.kizukiKeys[2]!), []);
+    const result = run(mirroredStack(), []);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout).toMatch(
       /^parity run=\S+ queries=3 compared=\d+ estate_empty=\d+ mean_overlap=\S+ verdict=\S+/,

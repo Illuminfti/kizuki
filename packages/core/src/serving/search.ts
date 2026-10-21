@@ -2,13 +2,17 @@ import { createRedactor } from "./redact";
 import { searchableText, servedTextMatcher } from "./search-match";
 import type { Database } from "bun:sqlite";
 import { denyClassesOf } from "../agents";
+import { visibleIndexDegraded, visibleLedgerIndexMissing } from "./index-health";
+import { authorize } from "../agents";
 import type { AuditDenial, AuditItem, Grant } from "../agents";
 import { canonReadGeneration } from "../canon/write-intent";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import { purgeReadEpoch } from "../derived-holds";
 import { sourcePolicyEpoch } from "../ledger/source-grants";
+import { requireCeiling } from "../query/sql";
+import { isCurrentVersion } from "../search/versions";
 import { bareRetrievalId } from "../retrieval/ids";
-import { searchAuditCandidates } from "../search/query";
+import { NO_MATCH_LABEL, RELAXED_LABEL, searchAuditCandidates } from "../search/query";
 import type { SearchHit, SearchOptions } from "../search/query";
 import {
   enumOf,
@@ -21,8 +25,9 @@ import {
   scopedWindow,
   text,
 } from "./arguments";
-import { canonChunk, eligible, excerptOf, loadCanon, pageDecision } from "./canon";
+import { canonChunk, eligible, excerptOf, loadCanon, pageDecision, pageScope } from "./canon";
 import type { CanonIndex } from "./canon";
+import { eventsCitedByPages } from "./dedupe";
 import { claimsEpoch } from "./epoch";
 import { auditArguments, gateAsync } from "./gate";
 import type { Served } from "./gate";
@@ -30,6 +35,8 @@ import {
   eventDecision,
   quotedChunk,
 } from "./ledger";
+import { WITHHELD_SCAN_BOUND } from "./query-events";
+import { isQuestionQuery } from "../search/relax";
 import { ServeError } from "./types";
 import type { CanonChunk, QuotedChunk, ServeContext, ResponseContract, ResponseEnvelope } from "./types";
 import { ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA } from "./types";
@@ -112,6 +119,15 @@ function classify(
       continue;
     }
 
+    // An earlier version of an edited record is evidence, not a current answer.
+    if (!isCurrentVersion(db, bareRetrievalId(hit.doc_id), {
+      ceiling: requireCeiling(grant.ceiling),
+      ...(grant.types === null ? {} : { types: grant.types }),
+      ...(grant.subjects === null ? {} : { subjects: grant.subjects }),
+      ...(grant.since === null ? {} : { since: grant.since }),
+      ...(grant.until === null ? {} : { until: grant.until }),
+      source: { owner: index.sourceContext.principal.kind === "owner", purpose: index.sourceContext.sourcePurpose ?? "recall", deny_classes: denyClassesOf(grant) },
+    })) continue;
     const quoted = currentQuotedSource(db, bareRetrievalId(hit.doc_id));
     if (quoted === null) continue;
     const decision = eventDecision(grant, quoted, index.sourceContext);
@@ -184,6 +200,12 @@ function assertSearchRead(ctx: ServeContext, snapshot: SearchReadSnapshot): void
 
 export interface SearchData {
   degraded: string[];
+  /**
+   * Present when the query was relaxed: the share of its content words each
+   * served page or capture holds, keyed by page id or event id. A caller that
+   * wants a stricter answer than the built-in floor thresholds it.
+   */
+  coverage?: Record<string, number>;
 }
 
 export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
@@ -235,6 +257,51 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
       const seen = new Set<string>();
       const narrowed = { ...grant, ...(types === undefined ? {} : { types }), ...(subjects === undefined ? {} : { subjects }), ...(window.since === undefined ? {} : { since: window.since }), ...(window.until === undefined ? {} : { until: window.until }) };
       const classified: Classification = { canon: [], quoted: [], withheld: [] };
+      const rankedOpts = {
+        canonIds: index.pages.filter(page => eligible(page) && pageDecision(index, narrowed, page).allow).map(page => `page:${page.id}`),
+        canonPaths: index.pages.filter(page => authorize(narrowed, pageScope(ctx, page)).allow).map(page => page.relPath),
+        ...base,
+        limit: MAX_RETRIEVAL_LIMIT,
+        ceiling: grant.ceiling,
+        source: {
+          owner: ctx.principal.kind === "owner",
+          purpose: ctx.sourcePurpose ?? "recall",
+          deny_classes: denyClassesOf(grant),
+        },
+      };
+      const degraded = new Set<string>();
+      const coverage = new Map<string, number>();
+      const read = contract === ENVELOPE_V2_SCHEMA ? null : snapshotSearchRead(ctx, index.generation);
+      let offset = 0;
+      let previousPage = "";
+      // Page the same rank order until MAX_RETRIEVAL_LIMIT authorized hits or the
+      // real end. FTS provenance is not an authorization predicate.
+      while (true) {
+        if (read !== null) assertSearchRead(ctx, read);
+        const ranked = searchAuditCandidates(ctx.db, query, {
+          ...rankedOpts,
+          ...(offset === 0 ? {} : { offset }),
+        });
+        for (const reason of ranked.degraded) if (!reason.startsWith("index-")) degraded.add(reason);
+        for (const candidate of ranked.candidates) if (candidate.coverage !== undefined) coverage.set(bareRetrievalId(candidate.doc_id), candidate.coverage);
+        if (ranked.candidates.length === 0) break;
+        const pageKey = ranked.candidates.map((hit) => hit.doc_id).join("\0");
+        if (pageKey === previousPage) break;
+        previousPage = pageKey;
+        absorbClassification(
+          classified,
+          classify(ctx.db, index, narrowed, ranked.candidates, seen, fullText, matcher?.matches),
+        );
+        if (
+          authorizedCount(classified) >= MAX_RETRIEVAL_LIMIT ||
+          ranked.candidates.length < MAX_RETRIEVAL_LIMIT
+        ) {
+          break;
+        }
+        offset += ranked.candidates.length;
+      }
+      const question = isQuestionQuery(query);
+      if (!question) {
       absorbClassification(
         classified,
         classify(
@@ -254,44 +321,17 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
       // pages retain only admitted identities; an arbitrary denied prefix must
       // not accumulate in the cross-page set. Each page has its own bounded set.
       for (const id of nominated.ids) seen.add(id);
-      const rankedOpts = {
-        ...base,
-        limit: MAX_RETRIEVAL_LIMIT,
-        ...(ctx.principal.kind === "owner" ? {} : { ceiling: grant.ceiling }),
-        source: {
-          owner: ctx.principal.kind === "owner",
-          purpose: ctx.sourcePurpose ?? "recall",
-          deny_classes: denyClassesOf(grant),
-        },
-      };
-      const degraded = new Set<string>();
-      const read = contract === ENVELOPE_V2_SCHEMA ? null : snapshotSearchRead(ctx, index.generation);
-      let offset = 0;
-      let previousPage = "";
-      // Page the same rank order until MAX_RETRIEVAL_LIMIT authorized hits or the
-      // real end. FTS provenance is not an authorization predicate.
-      while (true) {
-        if (read !== null) assertSearchRead(ctx, read);
-        const ranked = searchAuditCandidates(ctx.db, query, {
-          ...rankedOpts,
-          ...(offset === 0 ? {} : { offset }),
-        });
-        for (const reason of ranked.degraded) degraded.add(reason);
-        if (ranked.candidates.length === 0) break;
-        const pageKey = ranked.candidates.map((hit) => hit.doc_id).join("\0");
-        if (pageKey === previousPage) break;
-        previousPage = pageKey;
-        absorbClassification(
-          classified,
-          classify(ctx.db, index, narrowed, ranked.candidates, seen, fullText, matcher?.matches),
-        );
-        if (
-          authorizedCount(classified) >= MAX_RETRIEVAL_LIMIT ||
-          ranked.candidates.length < MAX_RETRIEVAL_LIMIT
-        ) {
-          break;
+      }
+      // Permission denials remain owner audit data, outside the visible rank window.
+      if (ctx.principal.kind === "owner") {
+        for (let skipped = 0; skipped < WITHHELD_SCAN_BOUND; skipped += MAX_RETRIEVAL_LIMIT) {
+          const sample = searchAuditCandidates(ctx.db, query, { ...base, limit: MAX_RETRIEVAL_LIMIT, source: rankedOpts.source, offset: skipped });
+          const denied = classify(ctx.db, index, narrowed, sample.candidates, seen, fullText, matcher?.matches).withheld;
+          const room = SEARCH_WITHHELD_CAP - classified.withheld.length;
+          if (room > 0) classified.withheld.push(...denied.slice(0, room));
+          if (sample.candidates.length < MAX_RETRIEVAL_LIMIT) break;
+          if (skipped + sample.candidates.length >= WITHHELD_SCAN_BOUND && classified.withheld.length > 0) degraded.add("scan-bound");
         }
-        offset += ranked.candidates.length;
       }
       const canon = classified.canon.slice(0, rows).map(candidate => {
         const page = index.byId.get(candidate.page_id)!;
@@ -300,13 +340,17 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
         const { excerpt, truncated } = excerptOf(page.body, LEDGER_EXCERPT, index.sourceContext);
         return canonChunk(index, page, decision, excerpt, truncated);
       });
-      const quoted = classified.quoted.slice(0, Math.max(0, rows - canon.length)).map(candidate => {
+      const cited = eventsCitedByPages(canon.flatMap(chunk => index.byId.get(chunk.page_id) ?? []), classified.quoted.map(chunk => chunk.event_id));
+      const quoted = classified.quoted.filter(chunk => !cited.has(chunk.event_id)).slice(0, Math.max(0, rows - canon.length)).map(candidate => {
         const source = currentQuotedSource(ctx.db, candidate.event_id);
         if (source === null) throw new ServeError("held", "evidence unavailable");
         const decision = eventDecision(narrowed, source, index.sourceContext);
         if (!decision.allow) throw new ServeError("held", "evidence unavailable");
         return boundedQuote(quotedChunk(source, decision.sensitivity, index.sourceContext, fullText ? source.text.length : 4096), fullText, index.sourceContext);
       });
+      if (canon.length + quoted.length > 0) degraded.delete(NO_MATCH_LABEL);
+      else if (question) degraded.add(NO_MATCH_LABEL);
+      if ((scope !== "ledger" && visibleIndexDegraded(index, narrowed, "search")) || (scope !== "canon" && visibleLedgerIndexMissing(ctx, narrowed))) degraded.add("index-degraded");
       const canonicalSubjects = new Map(canon.map(chunk => [chunk.page_id, canonSubjects(index, index.byId.get(chunk.page_id)!)]));
       const projection = projectSubjectLabels(index, narrowed, at, [...canonicalSubjects.values()].flat().concat(quoted.flatMap(chunk => chunk.subjects)), canon.length + quoted.length);
       const audit = new Map<string, AuditItem>();
@@ -317,6 +361,18 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
       for (const reason of nominated.degraded) degraded.add(reason);
       for (const reason of projection.degraded) degraded.add(reason);
 
+      // Coverage is evidence about released words, not the raw index's secrets.
+      if (matcher !== undefined) {
+        for (const chunk of canon) {
+          const page = index.byId.get(chunk.page_id)!;
+          coverage.set(chunk.page_id, matcher.coverage(searchableText(String(page.data["title"] ?? ""), undefined, ctx.servingSecrets), searchableText(page.body, LEDGER_EXCERPT, ctx.servingSecrets)));
+        }
+        for (const chunk of quoted) {
+          const source = currentQuotedSource(ctx.db, chunk.event_id)!;
+          coverage.set(chunk.event_id, matcher.coverage("", searchableText(source.text, fullText ? undefined : LEDGER_EXCERPT, ctx.servingSecrets)));
+        }
+      }
+      const scores = degraded.has(RELAXED_LABEL) ? Object.fromEntries([...canon.map(chunk => chunk.page_id), ...quoted.map(chunk => chunk.event_id)].flatMap(id => { const share = coverage.get(id); return share === undefined ? [] : [[id, share] as const]; })) : undefined;
       return {
         canon, quoted, audit_served: [...audit.values()],
         authorization: {
@@ -324,7 +380,7 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
           events: quoted.map((chunk) => ({ id: chunk.event_id, sensitivity: chunk.sensitivity })),
         },
         withheld: classified.withheld,
-        ...(degraded.size === 0 ? {} : { data: { degraded: [...degraded] } }),
+        ...(degraded.size === 0 ? {} : { data: { degraded: [...degraded], ...(scores === undefined ? {} : { coverage: scores }) } }),
       };
     } finally {
       matcher?.close();

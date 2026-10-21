@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { neutralizeControlTags, sanitizeCapturedText, scrubText } from "../producer/scrub";
+import { toRelaxedFtsQuery } from "../search/relax";
 import { toFtsQuery } from "../search/query";
 
 /**
@@ -25,15 +26,21 @@ export function servedTextMatcher(query: string) {
   const db = new Database(":memory:");
   db.exec("CREATE VIRTUAL TABLE served_text USING fts5(title, body, tokenize='unicode61 remove_diacritics 2')");
   const ftsQuery = toFtsQuery(query);
+  const relaxed = toRelaxedFtsQuery(query);
   const insert = db.prepare("INSERT INTO served_text(title,body) VALUES (?,?)");
   const matches = db.prepare<{ found: number }, [string]>("SELECT 1 AS found FROM served_text WHERE served_text MATCH ? LIMIT 1");
+  const coverage = (title: string, body: string): number => {
+    if (ftsQuery === "") return 0;
+    db.exec("DELETE FROM served_text");
+    insert.run(title, body);
+    if (matches.get(ftsQuery) !== null) return 1;
+    if (relaxed === null) return 0;
+    const found = relaxed.terms.filter(term => matches.get(term) !== null).length;
+    return found < relaxed.required ? 0 : found / relaxed.terms.length;
+  };
   return {
-    matches(title: string, body: string): boolean {
-      if (ftsQuery === "") return false;
-      db.exec("DELETE FROM served_text");
-      insert.run(title, body);
-      return matches.get(ftsQuery) !== null;
-    },
+    coverage,
+    matches(title: string, body: string): boolean { return coverage(title, body) > 0; },
     close() { db.close(); },
   };
 }
