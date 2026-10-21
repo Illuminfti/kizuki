@@ -59,5 +59,7 @@ export { PACKET_V2_SCHEMA } from "../serving/v2/context-packet";
 export type { ContextPacketArgsV2, ContextPacketDataV2, PacketContentV2 } from "../serving/v2/context-packet";
 
 export { inspectSourceCoverage, readSourceCoverage } from "./coverage";
+export { verifyWorldCopy } from "./verify";
+export type { WorldIntegrityReport } from "./verify";
 export type { SourceCoverageReport } from "./coverage";
 export type { ScanCoverage, PassCoverage } from "../contracts/source-coverage";

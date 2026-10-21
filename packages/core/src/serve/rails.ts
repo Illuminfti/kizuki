@@ -36,6 +36,7 @@ import {
 } from "./types";
 import { STOP_REQUESTED, runWritePass } from "./write-pass";
 import { LegacyExtractReconciliationError, requireAtomicExtractReplay } from "./extract";
+import { inspectWorldIntegrity } from "../world/verify";
 
 /**
  * What one sync pass may spend draining connectors. A connection that is not
@@ -590,6 +591,12 @@ async function runRailImpl(
         case "journal-prune":
           partial = runJournalPrune(db, vaultPath, started, config.journal_retention_days);
           break;
+        case "verify-world": {
+          const verification = db.transaction(() => inspectWorldIntegrity(db)).deferred();
+          partial = { status: verification.ok ? "ok" : "failed", errors: verification.checks
+            .filter((check) => check.status === "FAIL").map((check) => `world-verify:${check.id}`) };
+          break;
+        }
       }
     } catch (error) {
       if (error instanceof InjectedCrash) { interrupted = true; throw error; }

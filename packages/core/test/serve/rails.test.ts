@@ -32,6 +32,7 @@ describe("rails", () => {
       "purge-sweep",
       "retrieval-sweep",
       "sync",
+      "verify-world",
     ]);
     expect(dueRails(db, "2026-09-03T00:00:00Z").length).toBeGreaterThan(0);
     const receipts = await runServeOnce(db, vault, {
@@ -45,8 +46,9 @@ describe("rails", () => {
       "purge-sweep",
       "retrieval-sweep",
       "sync",
+      "verify-world",
     ]);
-    expect(listRunReceipts(db)).toHaveLength(7);
+    expect(listRunReceipts(db)).toHaveLength(8);
     expect(existsSync(join(vault, "dashboards", "brief-2026-09-03.md"))).toBe(true);
     const brief = readFileSync(join(vault, "dashboards", "brief-2026-09-03.md"), "utf8");
     expect(brief.startsWith("---\n")).toBe(true);

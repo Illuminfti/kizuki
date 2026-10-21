@@ -22,6 +22,8 @@ export const WORLD_GATE_TESTS = [
   "packages/core/test/world/questions-security.test.ts",
   "packages/core/test/world/questions-history.test.ts",
   "packages/core/test/world/evidence.test.ts",
+  "packages/core/test/world/verify.test.ts",
+  "packages/cli/test/verify-world.test.ts",
   "scripts/world-verify.test.ts",
 ] as const;
 

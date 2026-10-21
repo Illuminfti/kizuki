@@ -54,8 +54,44 @@ result proves registration only.
 ## Evidence limits
 
 This harness does not establish production activation or authorize model
-egress. Held-out model qualification, the copied-vault read-only probe, weekly
-verification receipts and the complete longitudinal/golden journeys have
+egress. Held-out model qualification and the complete longitudinal/golden journeys have
 separate acceptance requirements. Until those checks are implemented and run,
 they remain outstanding. Newly registered extraction kinds stay disabled for
 the producer until held-out qualification passes.
+
+## Stored-state audit
+
+Use a restored, offline copy with no SQLite WAL, SHM or rollback-journal files:
+
+```bash
+kizuki verify world --vault /absolute/offline-copy
+kizuki verify world --vault /absolute/offline-copy --json
+```
+
+The explicit absolute path is required; this command never chooses the live
+default vault. Do not delete sidecars to make a live copy pass. Stop the copy's
+writers and use the supported backup/restore path to obtain a consistent,
+checkpointed database.
+
+The command opens SQLite in immutable, read-only mode after validating custody.
+It prints PASS or FAIL for the current ledger schema, SQLite integrity and event
+sample, world admission/provenance closure, and historical clock/claim coverage.
+Every world admission is checked; the general event check uses the existing
+bounded ledger-health sample. Missing or invalid custody, sidecars, and a file
+changed during inspection fail closed. It does not repair, migrate, create an
+audit row, contact a model, or print captured records. CLI regression tests
+compare all vault files and metadata before and after both text and JSON reads.
+This is a stored-state audit, not proof of semantic correctness or live
+connector authorization; those require the other executable journeys.
+
+The daemon's `verify-world` rail runs the same stored-state checks weekly in a
+consistent database read transaction. Its normal run receipt records success
+or the failed check names. Doctor shows the last result and its age in seconds.
+The newest verification receipt survives journal retention, so a late or failed
+check cannot disappear at the seven-day boundary. The rail writes its receipt;
+the copied-vault command performs no writes.
+
+Retention also preserves the newest ordinary run receipt. If those two
+mandatory records exceed the configured byte cap, only those two may exceed it;
+older ordinary receipts are still removed. This extends the existing exception
+for a single oversized newest receipt by one verification record.
