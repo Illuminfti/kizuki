@@ -86,7 +86,10 @@ export async function runGoldenJourney(contract: "kizuki.envelope/v1" | "kizuki.
     for (const input of [{ operation: "concept", concept: peerRef, priorView: peerBaseline.view }, { operation: "concept", concept: peerRef, knownAt: { kind: "snapshot", ref: history.snapshot } }, { operation: "evidence", evidence }]) {
       const response = await peer.call("world_view", { ...WHEN, ...input, response_contract: "kizuki.envelope/v2" });
       const text = JSON.stringify(response); expect(text).not.toContain(ORIGINAL); expect(text).not.toContain(REVISED); expect(text).not.toContain(LABEL);
-      expect(response.isError === true || text.includes("new_view_required") || (input.operation === "evidence" && text.includes("not_found")), `${input.operation}: ${text}`).toBe(true);
+      expect(response.isError ?? false, `${input.operation}: ${text}`).toBe(false);
+      const data = envelopeOf(response).data as any;
+      if (input.operation === "evidence") expect(data).toEqual({ status: "not_found" });
+      else expect(data.result).toEqual({ status: "new_view_required" });
     }
     expect((await world(owner, { operation: "concept", concept: ref })).result.data.definitions.some((row: any) => row.object.value === REVISED)).toBe(true);
     if (rich) await outcomeStage(f, owner);
