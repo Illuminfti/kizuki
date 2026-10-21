@@ -776,6 +776,21 @@ export interface SourceReadScope {
   /** Resolves a source grant; a bulk caller passes a memoized lookup so each source is inspected once. */
   grantOf?: (sourceKey: string) => SourceGrant | null;
 }
+/** Necessary source-level permission; record fields are still checked separately. */
+function grantAllowsScope(grant: SourceGrant | null, scope: SourceReadScope, model: { model_endpoint: string; model: string } | undefined): boolean {
+  return grant !== null && grant.status === "active" && grant.policy.purposes.includes(scope.purpose ?? "recall")
+    && (scope.purpose !== "extract" || grant.policy.allowed_fields.includes("text"))
+    && (model === undefined || (grant.policy.egress !== "local_only" && grant.policy.egress.model_endpoint === model.model_endpoint && grant.policy.egress.model === model.model));
+}
+
+/** True only when a validated source policy denies every record for this bound extraction port. */
+export function sourceExtractionDenied(grant: SourceGrant, port: object): boolean {
+  const local = isLocalSourcePort(port), model = modelPorts.get(port);
+  // Missing transport authority is not a proof with which to advance a frontier.
+  if (!local && model === undefined) return false;
+  return !grantAllowsScope(grant, { owner: false, purpose: "extract", model: true, port }, model);
+}
+
 export function sourceEventsAllowed(
   db: Database,
   ids: readonly string[],
@@ -818,17 +833,8 @@ export function sourceEventsAllowed(
       continue;
     }
     const grant = scope.grantOf === undefined ? inspectSourceGrant(db, row.source_key) : scope.grantOf(row.source_key);
-    if (
-      grant === null ||
-      grant.status !== "active" ||
-      !grant.policy.purposes.includes(scope.purpose ?? "recall") ||
-      // Extraction classifies text before sending it to a model. Even empty
-      // text needs permission: its emptiness must not affect skips or work.
-      (scope.purpose === "extract" && !grant.policy.allowed_fields.includes("text"))
-    )
-      return false;
-    if (model !== undefined && (grant.policy.egress === "local_only" ||
-      grant.policy.egress.model_endpoint !== model.model_endpoint || grant.policy.egress.model !== model.model)) return false;
+    if (!grantAllowsScope(grant, scope, model)) return false;
+    if (grant === null) return false;
     if (
       (row.text.length > 0 && !grant.policy.allowed_fields.includes("text")) ||
       (["subjects", "attachments", "metadata"] as const).some(
