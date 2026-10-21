@@ -203,6 +203,8 @@ export interface RunReceipt {
   readonly events_stored: number;
   readonly events_duplicate: number;
   readonly events_self_skipped: number;
+  /** Sync rail only: a connection stopped at the drain budget or a stop request with more to read. Absent otherwise. */
+  readonly has_more?: true;
   readonly claims_extracted: number;
   readonly claims_written: number;
   /**
@@ -219,6 +221,11 @@ export interface RunReceipt {
    * or rejected on their own twice in a row. Absent on older receipts.
    */
   readonly records_skipped?: number;
+  /**
+   * Records extraction passed over before any model request because they carry
+   * no extractable content, counted by reason. Absent when none were.
+   */
+  readonly records_prefiltered?: Readonly<Record<string, number>>;
   /** Daemon-written brief pages the brief or doctor-sweep rail rewrote to pass the page schema. Absent when none. */
   readonly pages_repaired?: number;
   /** Capture notes of conversational events the doctor-sweep closed out as skipped. Absent when none. */
@@ -289,8 +296,18 @@ export interface ServeConfig {
   readonly journal_retention_days: number;
   /** Sync rail period, applied to the persisted schedule when the service starts. */
   readonly sync_period_s: number;
+  /** Seconds shared among connection drains in one sync pass; each resumes from its cursor after its share is spent. */
+  readonly connector_drain_seconds: number;
+  /** Batches one connection may drain in one sync pass. */
+  readonly connector_drain_batches: number;
   readonly extraction: ExtractionConfig;
 }
+
+/** Inclusive bounds; an out-of-range or non-integer value keeps its default. */
+export const CONNECTOR_DRAIN_BOUNDS = {
+  connector_drain_seconds: { min: 1, max: 3_600 },
+  connector_drain_batches: { min: 1, max: 10_000 },
+} as const;
 
 export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   memory_max: "2G",
@@ -304,6 +321,8 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   canon_writes_per_day: 256,
   journal_retention_days: RUN_RECEIPT_RETENTION_DAYS,
   sync_period_s: DEFAULT_SYNC_PERIOD_S,
+  connector_drain_seconds: 120,
+  connector_drain_batches: 100,
   extraction: DEFAULT_EXTRACTION_CONFIG,
 };
 
