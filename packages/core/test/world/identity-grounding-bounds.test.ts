@@ -1,5 +1,5 @@
 import { identityCluster } from "../../src/world/identity";
-import { newReadFrame, collectReadFrames } from "../../src/world/pipeline/frame";
+import { newReadFrame, collectReadFrames, WORLD_CLAIM_VERIFICATION_LIMIT } from "../../src/world/pipeline/frame";
 import { worldNamespace } from "../../src/world/references";
 import { handleFor } from "../../src/world/relation";
 import { expect, test } from "bun:test";
@@ -18,14 +18,17 @@ import { validEvent } from "../fixtures";
 import { enrollSource, worldSeed } from "../helpers/world-seed";
 import { tempVault } from "../helpers/vault";
 
-test("actual writer-admitted independent edges respect the component and byte bounds", async () => {
+test.each([
+  { boundary: "component and shared claim", members: 257, witnessBytes: 0 },
+  { boundary: "byte", members: 2, witnessBytes: 1024 * 1024 },
+])("actual writer-admitted independent edges respect the $boundary bounds", async ({ members, witnessBytes }) => {
   const vault = tempVault(), db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
     const groundingSource = enrollSource(db, "graph.grounding", "public");
     const witnesses = [enrollSource(db, "graph.witness", "public"), enrollSource(db, "graph.witness", "public")];
     const nodes: WorldGrounding[] = [];
     let anchor: { kind: "object"; token: string } | null = null;
-    for (let i = 0; i < 257; i++) {
+    for (let i = 0; i < members; i++) {
       const seeded = await worldSeed(db, { sourceKey: groundingSource, connector: "graph.grounding", subject: `c${i}`,
         label: `C${String(i).padStart(4, "0")}`, predicates: [], discover: i === 0 });
       if (i === 0) anchor = seeded.ref;
@@ -39,7 +42,8 @@ test("actual writer-admitted independent edges respect the component and byte bo
     }
     const connect = async (i: number) => {
       for (const [j, source] of witnesses.entries()) {
-        const text = j === 0 ? `C0000 equals C${String(i).padStart(4, "0")}.` : `C${String(i).padStart(4, "0")} aliases C0000.`;
+        const statement = j === 0 ? `C0000 equals C${String(i).padStart(4, "0")}.` : `C${String(i).padStart(4, "0")} aliases C0000.`;
+        const text = statement.padEnd(witnessBytes, j === 0 ? "a" : "b");
         const accepted = accept(db, { ...validEvent(), connector_id: "graph.witness", source_record_id: ulid(), text, subjects: [], sensitivity_hint: "public" },
           { source: { source_key: source, expected_revision: 1 } });
         if (accepted.status !== "stored") throw new Error("synthetic graph capture failed");
@@ -47,15 +51,28 @@ test("actual writer-admitted independent edges respect the component and byte bo
           predicate: "concept.same_as", object: { kind: "subject", ref: nodes[i]!.endpoint },
           perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
           context: [], polarity: "positive", valid_from: null, valid_to: null, temporal_basis: "unknown",
-          anchors: [{ event_id: accepted.event.event_id, start_utf16: 0, end_utf16: text.length }] };
-        await insertClaim({ db }, { kind: "claim", body: text, provenance: [accepted.event.event_id], producer: "model", confidence: 0.9,
-          sensitivity: "public", semantic, world_admission: { schema: "kizuki.world-admission/v2", semantic, rendering: { body: text, frontmatter: {} },
+          anchors: [{ event_id: accepted.event.event_id, start_utf16: 0, end_utf16: statement.length }] };
+        await insertClaim({ db }, { kind: "claim", body: statement, provenance: [accepted.event.event_id], producer: "model", confidence: 0.9,
+          sensitivity: "public", semantic, world_admission: { schema: "kizuki.world-admission/v2", semantic, rendering: { body: statement, frontmatter: {} },
             authority: "model_inference", confidence: 0.9, epistemicKind: "model_inference",
             grounding: [nodes[0]!, nodes[i]!].sort((a, b) => rawSubjectRefKey(a.endpoint) < rawSubjectRefKey(b.endpoint) ? -1 : 1) } });
       }
     };
-    for (let i = 1; i < 256; i++) await connect(i);
     const read = () => readWorldView({ db, vaultPath: vault.path, principal: OWNER }, { operation: "concept", concept: anchor, valid: { kind: "all" }, knownAt: { kind: "current" } });
+    if (witnessBytes > 0) {
+      // Only two grounded members and two independent, source-backed edges.
+      // Large valid captures reach the byte cap before claim work is exhausted.
+      await connect(1);
+      const observed = collectReadFrames(read);
+      expect(observed.result).toMatchObject({ result: { status: "unavailable", reason: "budget" } });
+      expect(observed.frames.length).toBeGreaterThan(0);
+      const budget = observed.frames[0]!.budget;
+      expect(budget.bytes).toBeGreaterThan(2 * 1024 * 1024);
+      expect(budget.claimVerifications).toBeGreaterThan(0);
+      expect(budget.claimVerifications).toBeLessThan(WORLD_CLAIM_VERIFICATION_LIMIT);
+      return;
+    }
+    for (let i = 1; i < 256; i++) await connect(i);
     db.transaction(() => {
       const frame = newReadFrame({ db, vaultPath: vault.path, principal: OWNER }, worldNamespace(db, OWNER), { kind: "all" });
       let component;
@@ -64,10 +81,12 @@ test("actual writer-admitted independent edges respect the component and byte bo
     }).immediate();
     const completeRead = collectReadFrames(read);
     const complete = completeRead.result;
-    // The component fits; its full card independently reaches the existing
-    // two-MiB budget and must not expose a partial component as resolved.
-    expect("result" in complete && complete.result.status).toBe("unavailable");
-    expect(completeRead.frames[0]!.budget.bytes).toBeGreaterThan(2 * 1024 * 1024);
+    // The byte-only internal component fits. A public card shares the claim
+    // work allowance and must refuse before publishing a partial identity.
+    expect(complete).toMatchObject({ result: { status: "unavailable", reason: "budget" } });
+    expect(completeRead.frames[0]!.budget.claimVerifications).toBe(WORLD_CLAIM_VERIFICATION_LIMIT);
+    expect(completeRead.frames[0]!.budget.bytes).toBeGreaterThan(0);
+    expect(completeRead.frames[0]!.budget.bytes).toBeLessThan(2 * 1024 * 1024);
     await connect(256);
     db.transaction(() => {
       const frame = newReadFrame({ db, vaultPath: vault.path, principal: OWNER }, worldNamespace(db, OWNER), { kind: "all" });
@@ -76,8 +95,8 @@ test("actual writer-admitted independent edges respect the component and byte bo
       expect(bounded.members).toHaveLength(1);
       expect(bounded.resolution).toBe("ambiguous");
     }).immediate();
-    // The full read may hit its stricter byte cap before it can publish the
-    // overflow card; it must never return a falsely resolved truncated group.
+    // Public claim/byte caps also apply to the oversized component; it must
+    // never return a falsely resolved truncated group.
     const bounded = read();
     expect("result" in bounded && bounded.result.status).toBe("unavailable");
   } finally { db.close(); vault.dispose(); }
