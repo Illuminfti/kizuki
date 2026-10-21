@@ -87,8 +87,8 @@ function restoreClaimLifecycle(io: CanonIo, original: CanonReceipt, at: string):
     for (const ref of original.superseded) reinstateClaim(io.db, ref.claim_id, prior.get(ref.claim_id) ?? null);
   }
 }
-function completeRows(io: CanonIo, intent: CanonWriteIntent): void {
-  if(intent.version===3) {completeErasureRows(io,intent);return;}
+function completeRows(scope:VaultMutationScope,io: CanonIo, intent: CanonWriteIntent): void {
+  if(intent.version===3) {completeErasureRows(scope,io,intent);return;}
   const { receipt, completion } = intent;
   // The intent and all effects are deleted/committed together. An existing row
   // with a surviving intent is not a legitimate halfway SQLite transaction.
@@ -123,7 +123,7 @@ function completeRows(io: CanonIo, intent: CanonWriteIntent): void {
   advanceCanonReadGeneration(io.db);
 }
 
-function completeErasureRows(io:CanonIo,intent:WorldCanonErasureIntent):void {
+function completeErasureRows(scope:VaultMutationScope,io:CanonIo,intent:WorldCanonErasureIntent):void {
   const receipt=intent.erasure.final_receipt;
   const machine=io.db.query<{before_hash:string|null;after_hash:string},[string]>("SELECT before_hash,after_hash FROM canon_machine_byte_intents WHERE receipt_id=?").get(receipt.receipt_id);
   if(machine===null||machine.before_hash!==intent.receipt.before_hash||machine.after_hash!==intent.receipt.after_hash)recoveryFailure("intent_invalid",receipt.receipt_id);
@@ -137,14 +137,14 @@ function completeErasureRows(io:CanonIo,intent:WorldCanonErasureIntent):void {
   const after=decodeCanonImage(intent.after_base64),pageId=intent.completion.page_id;
   if(after===null) {
     deletePageIndex(io.db,intent.receipt.page_path);
-    if(pageId!==null)removeDerivedPage(io.db,pageId,io.vault_path);
+    if(pageId!==null)removeDerivedPage(io.db,pageId,io.vault_path,scope);
   }else {
     if(pageId===null||isErasedReceipt(receipt))recoveryFailure("intent_invalid",receipt.receipt_id);
     io.db.query("UPDATE claims SET receipt_id=? WHERE claim_id IN (SELECT value FROM json_each(?))").run(receipt.receipt_id,JSON.stringify(receipt.basis.after?.map(item=>item.claim_id)??[]));
     upsertPageIndex(io.db,{page_id:pageId,rel_path:receipt.page_path,subject_key:null,last_receipt:receipt.receipt_id,last_hash:receipt.after_hash});
     io.db.query("UPDATE page_index SET subject_key=NULL WHERE page_id=?").run(pageId);
     const page=parseFrontmatter(after.toString("utf8"));
-    refreshDerivedPage(io.db,{id:pageId,path:join(io.vault_path,receipt.page_path),relPath:receipt.page_path,data:page.data,body:page.body,contentHash:receipt.after_hash},io.vault_path);
+    refreshDerivedPage(io.db,{id:pageId,path:join(io.vault_path,receipt.page_path),relPath:receipt.page_path,data:page.data,body:page.body,contentHash:receipt.after_hash},io.vault_path,scope);
   }
   io.db.query("DELETE FROM canon_write_intents WHERE singleton=1 AND receipt_id=?").run(receipt.receipt_id);
   advanceCanonReadGeneration(io.db);
@@ -172,7 +172,7 @@ function finish(scope: VaultMutationScope, io: CanonIo, intent: CanonWriteIntent
       stream.reconcile(intent.checkpoint, Buffer.from(`${JSON.stringify(intent.receipt)}\n`));
     }
     stream.sync(); stream.verifyBinding();
-    completeRows(io, intent);
+    completeRows(scope, io, intent);
     stream.verifyBinding();
   }).immediate();
   if(intent.version!==3)refreshCanonProjectionFloor(scope, io, intent.receipt.receipt_id);

@@ -205,6 +205,7 @@ async function runSyncRail(
     claims_rejected: written.claims_rejected,
     records_skipped: written.records_skipped,
     canon_writes: written.canon_writes,
+    ...(written.canon_quarantined.length === 0 ? {} : { canon_quarantined: written.canon_quarantined }),
     model: { ...written.model, model_ref: hooks?.model_ref ?? null },
     ...(written.oversized.segments + written.oversized.skipped === 0 ? {} : { oversized: written.oversized }),
     stopped: written.stopped,

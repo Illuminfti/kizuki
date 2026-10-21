@@ -522,6 +522,8 @@ Owner correction. `--claim` names a **live** legacy claim; `--world-claim`
 accepts the opaque claim token emitted by `kizuki world` for the current owner
 namespace. The options are mutually exclusive. Rewrites affected canon in the
 same pass. No model required. Prints an undo line when a receipt is minted.
+While the loop is writing canon, `tell` waits up to 30 seconds for the writer,
+which the loop lets go between pages, before it reports the writer busy.
 
 ## context
 
@@ -663,7 +665,8 @@ refusal lists those receipts and names `kizuki undo <receipt_id> --cascade`,
 which reverses them newest first. When nothing later explains the change, the
 page was edited outside Kizuki: the refusal says so and tells you to put the
 page back to the receipt's version by hand, or keep your edit and leave the
-receipt as it is. `--cascade` cannot help there, and the refusal says why.
+receipt as it is. `--cascade` cannot help there, and the refusal says why. Like `tell`, it waits up to 30
+seconds for a canon write in progress.
 
 ## audit
 
@@ -720,8 +723,13 @@ unless `serve.toml` says otherwise: `[serve] sync_period_s` sets the period,
 applied to the persisted schedule when the service starts, and `[extraction]`
 sets `max_calls_per_pass`, `records_per_request`, `max_input_tokens`,
 `max_output_tokens`, `max_pass_seconds` and the daily budgets
-`max_calls_per_day` and `max_output_tokens_per_day`. `serve status` and
-`doctor` print the effective values and the records skipped in the doctor
+`max_calls_per_day` and `max_output_tokens_per_day`. `[budget]
+canon_writes_per_run` (default 32) sets how many canon pages one pass writes, and
+a value above 32 raises the pass's former fixed ceiling;
+the pass takes the writer for one page at a time and reads a stop request
+between pages, and a typed page that fails three passes in a row is set aside
+for a day (see [canon writes per pass](extraction-budgets.md#canon-writes-per-pass)). `serve status` and
+`doctor` print the effective extraction and schedule values and the records skipped in the doctor
 window on a `throughput` line; `--json` reports them as `throughput` in the
 serve doctor report. A model that still answers HTTP 429 after the port's
 bounded retries stops the pass as `model:rate_limited`, and the next pass
@@ -736,7 +744,9 @@ as `serve:stop_requested`. See [extraction budgets](extraction-budgets.md#owner-
 A record too large for one typed request is extracted one segment per request.
 One that cannot be split, such as a single token longer than a request, is
 skipped with a `record_oversized_skipped` receipt and the cursor moves on.
-`serve status` and `doctor` print an `oversized records` line with both counts.
+`serve status` and `doctor` print an `oversized records` line with both counts,
+and a `quarantined typed pages` line with the number of typed pages the writer
+has set aside, with one `quarantined` line each in `doctor`.
 `serve retry-skipped` puts every skipped record back on the deferred queue so
 the loop decides it again, and prints `requeued=N`. See
 [records too large for one request](extraction-budgets.md#records-too-large-for-one-request).
