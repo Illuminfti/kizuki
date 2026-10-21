@@ -1,3 +1,4 @@
+import { atlasFragment } from "./atlas";
 import { sliceFragment } from "./slice";
 import { personFragment, findPeopleFragment } from "./person";
 import { procedureFragment, findProceduresFragment, skillFragment, frameworkFragment, outcomeFragment } from "./skills";
@@ -41,4 +42,5 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   // slot: ATTN
   // slot: FCST
   // slot: ATLAS
+  atlasFragment,
 ];

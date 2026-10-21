@@ -1,3 +1,4 @@
+import { atlasCli } from "./atlas";
 import { sliceCli } from "./slice";
 import { personCli, findPeopleCli } from "./person";
 import { procedureCli, findProceduresCli, skillCli, frameworkCli, outcomeCli } from "./skills";
@@ -44,4 +45,5 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   // slot: ATTN
   // slot: FCST
   // slot: ATLAS
+  { name: "atlas", cli: atlasCli },
 ];

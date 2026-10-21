@@ -1,3 +1,4 @@
+import type { Atlas, AtlasPanelName, AtlasObjectOperation } from "../contracts/atlas";
 import type { WorldSlice } from "../contracts/world-slice";
 import type { PersonCard } from "../contracts/person-card";
 import { resolvePrincipal, toolAllowed, type Principal } from "../agents";
@@ -63,6 +64,7 @@ export type {
 
 /** The typed request of the shipped operations; the reader itself takes `unknown` and the registry decides. */
 export type WorldReadInput =
+  | { readonly operation: "atlas"; readonly panel?: AtlasPanelName; readonly focus?: { readonly operation: AtlasObjectOperation; readonly ref: WorldObjectRef }; readonly baselineView?: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "slice"; readonly task: string; readonly kinds?: readonly string[]; readonly budgetTokens: number; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "person"; readonly person: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "find_people"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
@@ -128,6 +130,7 @@ export type WorldReadInput =
 
 /** The bodies the shipped operations return; each operation's `dataSchemas` say which one it is. */
 export type WorldData =
+  | Atlas
   | WorldSlice
   | ConceptCard
   | PersonCard

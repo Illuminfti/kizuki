@@ -1,3 +1,4 @@
+import { atlasOp } from "./atlas";
 import { sliceOp } from "./slice";
 import { personOp } from "./person";
 import { findPeopleOp } from "./find-people";
@@ -99,6 +100,7 @@ const WORLD_OP_SOURCES: readonly WorldOpSource[] = [
   // slot: ATTN
   // slot: FCST
   // slot: ATLAS
+  atlasOp,
 ];
 
 export const WORLD_OPS: WorldOpRegistry = worldOpRegistry(WORLD_OP_SOURCES);

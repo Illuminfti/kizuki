@@ -22,7 +22,7 @@ export interface SliceCandidates {
 }
 
 /** Walk only an already authorized, byte-bounded card; retain each qualified assertion once. */
-function relations(card: unknown): readonly Relation[] {
+export function projectedRelations(card: unknown): readonly Relation[] {
   const pending = [card], found = new Map<string, Relation>();
   while (pending.length > 0) {
     const value = pending.pop();
@@ -39,7 +39,7 @@ function relations(card: unknown): readonly Relation[] {
 /** Reused for public task views and selected session cards; never re-reads a claim. */
 export function cardSliceItems(kind: string, node: WorldWireRef<"object">, card: unknown, assembler: KindAssembler) {
   const constraints: SliceItem[] = [], detail: SliceItem[] = [];
-  for (const relation of relations(card)) {
+  for (const relation of projectedRelations(card)) {
     const evidence = [...new Map([...relation.perspective.evidence, ...relation.assessments.flatMap(one => one.evidence)]
       .map(one => [JSON.stringify(one), one])).values()];
     const item: SliceItem = { kind, node, relation, evidence };
