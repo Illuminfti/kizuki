@@ -12,6 +12,8 @@ import type { WorldFrame, WorldWhen } from "../ops/types";
 import type { WorldWireRef } from "../../contracts/world-card-kit";
 import type { KindAssembler } from "../kinds/kit";
 import { sourceCoverage } from "../coverage";
+import { createRedactor } from "../../serving/redact";
+import { relevantMatches } from "./relevance";
 
 export interface SliceCandidates {
   readonly constraints: readonly SliceItem[];
@@ -55,10 +57,11 @@ export function sliceAssembler(kind: string) {
 }
 
 /** One bounded source of candidates for the public slice and session-start renderer. */
-export function collectSlice(frame: WorldFrame, kinds: readonly string[], when: WorldWhen): SliceCandidates {
+export function collectSlice(frame: WorldFrame, kinds: readonly string[], when: WorldWhen, task = ""): SliceCandidates {
   const constraints: SliceItem[] = [], detail: SliceItem[] = [], providers: ProviderCoverage[] = [];
   const gaps = new Set<ViewGap>(sourceCoverage(frame.ctx, frame.dependencies));
   const read = newReadFrame(frame.ctx, frame.ns, when.valid, frame.dependencies);
+  const preview = createRedactor(frame.ctx.principal, frame.ctx.servingSecrets);
   let truncated = false;
   for (const id of [...kinds].sort()) {
     const kind = activeWorldRegistry().kind(id), assembler = sliceAssembler(id);
@@ -70,8 +73,11 @@ export function collectSlice(frame: WorldFrame, kinds: readonly string[], when: 
     } else providers.push({ kind: id, status: "included" });
     const matches = readWorldMatches(read, id, "", null, WORLD_DISCOVERY_SCAN_BUDGET);
     for (const gap of matches.coverage.gaps) gaps.add(gap);
-    if (matches.cursor !== null || matches.matches.length > 4) { truncated = true; gaps.add("traversal_limit"); }
-    for (const match of [...matches.matches].sort((a, b) => a.ref.token.localeCompare(b.ref.token)).slice(0, 4)) {
+    // Discovery records every examined authorized label/classification in the
+    // dependency closure, including candidates that relevance does not select.
+    const selected = relevantMatches(matches.matches, task, preview);
+    if (matches.cursor !== null || selected.length > 4) { truncated = true; gaps.add("traversal_limit"); }
+    for (const match of selected.slice(0, 4)) {
       const handle = resolveWorldObject(frame.ctx.db, frame.ns, match.ref.token);
       const card = handle === null ? null : readWorldCard(read, handle, id, assembler.cardSchema);
       if (card === null) continue;
