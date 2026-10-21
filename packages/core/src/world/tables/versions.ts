@@ -12,6 +12,7 @@ export type WorldSlotKey = (typeof WORLD_SLOT_KEYS)[number];
 export const PURGE_REINGEST_MIGRATION_VERSION = 34;
 export const CURSOR_STORE_MIGRATION_VERSION = 35;
 export const SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION = 39;
+export const CLAIM_HISTORY_MIGRATION_VERSION = 40;
 
 /** Non-world ledger migrations keep their numbers as later packets land. */
 export const LEDGER_MIGRATION_VERSIONS = {
@@ -27,6 +28,7 @@ export const WORLD_MIGRATION_VERSIONS = {
   // slot: view
   view: 37,
   // slot: known
+  known: CLAIM_HISTORY_MIGRATION_VERSION,
   // slot: consol
   // slot: ident
   // slot: attn

@@ -929,8 +929,8 @@ export function listUnwrittenLiveClaims(
  */
 export function reviveUncontestedSkipped(db: Database): number {
   initClaims(db);
-  const result = db
-    .query<{ changes: number }, []>(
+  const rows = db
+    .query<{ claim_id: string }, []>(
       `UPDATE claims SET status = 'live'
         WHERE status = 'skipped'
           AND retracted_at IS NULL
@@ -941,10 +941,10 @@ export function reviveUncontestedSkipped(db: Database): number {
               SELECT claim_key FROM claims
                WHERE status = 'live' AND claim_key IS NOT NULL
             )
-          )`,
+          ) RETURNING claim_id`,
     )
-    .run();
-  return result.changes;
+    .all();
+  return rows.length;
 }
 
 export function getClaim(db: Database, claimId: string): Claim | null {

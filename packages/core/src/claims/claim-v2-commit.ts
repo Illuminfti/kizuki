@@ -432,8 +432,8 @@ export function commitClaimV2(
       input.support.admitted_at,
       ...(suppliedWorld === null ? [] : [supportOrigin]),
     ];
-    const written = db.query(`INSERT INTO claim_v2_support (${columns}) VALUES (${placeholders})`).run(...args);
-    if (written.changes !== 1) {
+    const written = db.query(`INSERT INTO claim_v2_support (${columns}) VALUES (${placeholders}) RETURNING support_key`).all(...args);
+    if (written.length !== 1) {
       throw new ClaimError(
         "schema_invalid",
         "claim/v2 support row was refused by the ledger",

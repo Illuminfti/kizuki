@@ -7,7 +7,7 @@ export function removeWorldSchema(db: Database): void {
     .query<
       { name: string },
       []
-    >("SELECT name FROM sqlite_master WHERE type='trigger' AND (name GLOB 'world_*' OR name GLOB 'semantic_*')")
+    >("SELECT name FROM sqlite_master WHERE type='trigger' AND (name GLOB 'world_*' OR name GLOB 'semantic_*' OR name GLOB 'canon_body_*')")
     .all())
     db.exec(`DROP TRIGGER ${name}`);
   for (const table of [...WORLD_TABLE_SPECS].reverse())

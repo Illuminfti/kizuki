@@ -1,3 +1,4 @@
+import { beginClaimHistoryRestore, prepareClaimHistoryImport, finishClaimHistoryRestore } from "./world/tables/known";
 import { createWorldTables, exportedWorldTables, resetWorldTables } from "./world/tables/registry";
 import { assertWorldState } from "./world/integrity";
 import { capturePortableAdapter, capturePortableLocal, hashPortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
@@ -2806,6 +2807,7 @@ function restoreWorldTables(db: Database, backup: string, manifest: ExportManife
     if (key.startsWith("world/") && !named.has(key)) throw new Error(`backup carries ${key}, which no registered world table accepts`);
   }
   createWorldTables(db, LEDGER_SCHEMA_VERSION);
+  prepareClaimHistoryImport(db, manifest.schema_versions.ledger);
   for (const { name, columns } of tables) {
     for (const row of streamRows(backup, manifest, worldStream(name), true)) {
       if (Object.keys(row).length !== columns.length || !columns.every((key) => Object.hasOwn(row, key))) throw new Error("world backup row has unexpected fields");
@@ -2890,6 +2892,7 @@ export function restoreVault(
     try {
       options.onProgress?.("ledger");
       db.transaction(() => {
+        beginClaimHistoryRestore(db);
         if (eventFormat === "legacy") {
           // This database is private restore staging. No readers or file publication
           // exist until legacy validation, backfill and guard restoration commit.
@@ -3031,6 +3034,7 @@ export function restoreVault(
         }
         assertTypedCanonReceipts(db, staging);
         validateDurableExtractStorage(db);
+        finishClaimHistoryRestore(db, manifest.schema_versions.ledger);
       }).immediate();
 
       const events =
