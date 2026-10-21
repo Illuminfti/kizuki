@@ -11,7 +11,9 @@ test("a clipped replacement in a packet preview is counted once and kept verbati
       purpose: "recall", include: ["timeline"], budget_tokens: 2000,
       since: "2026-02-28T10:29:00Z", until: "2026-02-28T10:31:00Z",
     });
-    const preview = answer.quoted[0]!.text;
+    const quoted = answer.quoted[0];
+    if (quoted === undefined || !("event_id" in quoted)) throw new Error("expected a captured event preview");
+    const preview = quoted.text;
     expect(Array.from(preview)).toHaveLength(160);
     expect(answer.data!.packet_md).toContain(preview);
     expect(answer.redacted).toEqual({ secret_assignment: 1 });

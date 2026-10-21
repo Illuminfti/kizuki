@@ -26,7 +26,7 @@ import {
   type SessionSection,
 } from "./sections";
 import { ServeError } from "./types";
-import type { CanonChunk, Envelope, QuotedChunk, ServeContext } from "./types";
+import type { CanonChunk, Envelope, QuotedChunk, QuotedPageChunk, ServeContext } from "./types";
 import { PACKET_TOKENIZER_ID, packetTokens as tokens } from "./packet-tokenizer";
 import { SESSION_STATE_NOTE, collectSessionPieces } from "./session-sections";
 import type { SessionEmptyReason, SessionReport } from "./session-sections";
@@ -257,8 +257,8 @@ function boundOverflowingCanon(
 export async function serveContextPacket(
   ctx: ServeContext,
   args: ContextPacketArgs,
-): Promise<Envelope<ContextPacketData>> {
-  return gateAsync(
+): Promise<Envelope<ContextPacketData, QuotedChunk | QuotedPageChunk>> {
+  const envelope = await gateAsync(
     ctx,
     "context_packet",
     auditArguments(args),
@@ -556,4 +556,13 @@ export async function serveContextPacket(
       };
     },
   );
+  // Packing and auditing use the page's identity. The public trust buckets
+  // separate quoted pages from clean produced prose, without inventing an event.
+  const quotedPages: QuotedPageChunk[] = envelope.canon.flatMap(chunk =>
+    chunk.taint === "quoted" ? [{ ...chunk, taint: "quoted" as const, tainted: true as const }] : []);
+  return {
+    ...envelope,
+    canon: envelope.canon.filter(chunk => chunk.taint !== "quoted"),
+    quoted: [...envelope.quoted, ...quotedPages],
+  };
 }

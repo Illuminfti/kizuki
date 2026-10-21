@@ -43,6 +43,7 @@ import {
 } from "./report";
 import type { LegacyEventsReport } from "./report";
 import { rowToEvent } from "./rows";
+import { assertFileOutsideVault } from "../vault-boundary";
 import { BATCH_ROWS, openJsonlSource, openSqliteSource } from "./source";
 import type { LegacyRowSource } from "./source";
 
@@ -136,6 +137,7 @@ export class LegacyEventsConnector implements Connector {
 
   async backfill(cursor: Cursor | null): Promise<SyncBatch> {
     const previous = cursor === null ? null : decodeCursor(cursor);
+    await assertFileOutsideVault(this.path);
     const source = this.#open();
     try {
       return this.#page(source, previous);

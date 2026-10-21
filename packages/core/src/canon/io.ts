@@ -1,4 +1,6 @@
 import { resolve } from "node:path";
+import { reconcileCanonGraph } from "./graph-maintenance";
+import { canonReadGeneration } from "./write-intent";
 import { readPage, type CanonIo } from "./store";
 import { assertCanonFiles, type CanonFiles } from "../vault/canon-files";
 import { withMutationFilesAsync, withMutationFilesSync } from "../vault/mutation-files";
@@ -66,16 +68,43 @@ export function snapshotCanonIo(io: CanonIo): CanonIo {
   return owner === undefined ? captured : bindCanonFiles(owner.scope, captured, owner.files);
 }
 
-/** Callers snapshot their full operation input before acquiring the writer. */
+/**
+ * Callers snapshot their full operation input before acquiring the writer.
+ * Repair disposable graph state after committed work releases ownership;
+ * reads, acquisition failures and refused writes leave projections untouched.
+ */
 export function withCanonMutationSync<T extends CanonIo, R>(io: T, work: (scope: VaultMutationScope, io: T) => PromiseLike<R>): Promise<R>;
 export function withCanonMutationSync<T extends CanonIo, R>(io: T, work: (scope: VaultMutationScope, io: T) => R): R;
 export function withCanonMutationSync<T extends CanonIo, R>(io: T, work: (scope: VaultMutationScope, io: T) => R | PromiseLike<R>): R | PromiseLike<R> {
-  return withVaultMutationSync(io, scope => withMutationFilesSync(scope, io, files => work(scope, bindCanonFiles(scope, io, files))));
+  let generation: number | undefined;
+  let deferred = false;
+  const reconcile = (): void => {
+    if (generation !== undefined && canonReadGeneration(io.db) !== generation) reconcileCanonGraph(io.db, io.vault_path);
+  };
+  try {
+    const result = withVaultMutationSync(io, scope => withMutationFilesSync(scope, io, files => {
+      generation = canonReadGeneration(io.db);
+      return work(scope, bindCanonFiles(scope, io, files));
+    }));
+    if (result instanceof Promise) {
+      deferred = true;
+      return result.finally(reconcile);
+    }
+    return result;
+  } finally { if (!deferred) reconcile(); }
 }
 
-export function withCanonMutationAsync<T extends CanonIo, R>(
+export async function withCanonMutationAsync<T extends CanonIo, R>(
   io: T,
   work: (scope: VaultMutationScope, io: T) => R | PromiseLike<R>,
 ): Promise<R> {
-  return withVaultMutationAsync(io, scope => withMutationFilesAsync(scope, io, files => work(scope, bindCanonFiles(scope, io, files))));
+  let generation: number | undefined;
+  try {
+    return await withVaultMutationAsync(io, scope => withMutationFilesAsync(scope, io, files => {
+      generation = canonReadGeneration(io.db);
+      return work(scope, bindCanonFiles(scope, io, files));
+    }));
+  } finally {
+    if (generation !== undefined && canonReadGeneration(io.db) !== generation) reconcileCanonGraph(io.db, io.vault_path);
+  }
 }

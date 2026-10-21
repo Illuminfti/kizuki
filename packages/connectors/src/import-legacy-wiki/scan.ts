@@ -6,6 +6,7 @@ import { KizukiError } from "../errors";
 import { compareStrings, errorMessage } from "../util";
 import { matchesGlob } from "../legacy/coerce";
 import { MAPPING_FILE_NAME } from "../legacy/mapping-file";
+import { assertOutsideVault, refuseVaultSource } from "../vault-boundary";
 import { LEGACY_WIKI_CONNECTOR_ID } from "./mapping";
 
 /**
@@ -68,6 +69,9 @@ interface Walk {
   skipped: Skipped[];
   /** Every directory entry looked at, so a flood of skips is bounded too. */
   considered: number;
+  /** Directories entered only to look for a vault, bounded like the walk itself. */
+  hidden: number;
+  maxHidden: number;
   truncated: boolean;
 }
 
@@ -173,14 +177,20 @@ export async function confinedDirectory(
     : null;
 }
 
+/**
+ * `collect` is false beneath an ignored directory: nothing there is imported or
+ * reported, but the walk still looks for a nested vault, because an ignore
+ * pattern hides pages and never machine output.
+ */
 async function walkDirectory(
   walk: Walk,
   directory: string,
   depth: number,
+  collect = true,
 ): Promise<void> {
   if (walk.truncated) return;
   if (depth > MAX_DEPTH) {
-    skip(walk, relative(walk.root, directory), "depth", "directory");
+    if (collect) skip(walk, relative(walk.root, directory), "depth", "directory");
     return;
   }
   let entries: Dirent[];
@@ -191,42 +201,52 @@ async function walkDirectory(
     // abandon the rest of the estate. The root is different: a wiki that
     // cannot be listed at all is a misconfiguration, and the caller is told.
     if (depth === 0) throw error;
-    skip(walk, relative(walk.root, directory), "unreadable", "directory");
+    if (collect) skip(walk, relative(walk.root, directory), "unreadable", "directory");
     return;
   }
+  // A vault nested anywhere under the wiki is machine output. The dot-entry
+  // rule below would hide its marker, so it is checked first.
+  if (entries.some((entry) => entry.name === ".kizuki")) refuseVaultSource();
   entries.sort((a, b) => compareStrings(a.name, b.name));
   for (const entry of entries) {
     if (walk.truncated) return;
     // Dot entries hold tool state, not pages, and the mapping file is input.
     if (entry.name.startsWith(".") || entry.name === MAPPING_FILE_NAME)
       continue;
-    if (walk.considered >= MAX_FILES) {
+    if (!collect) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      // An unvisited remainder could hold a nested vault, so an exhausted
+      // budget is a refusal to verify, never a silent pass.
+      if (walk.hidden >= walk.maxHidden) {
+        throw new KizukiError("misconfigured", "source_path_depth: ignored folders exceed the verification bound");
+      }
+      walk.hidden += 1;
+    } else if (walk.considered >= MAX_FILES) {
       walk.truncated = true;
       return;
+    } else {
+      walk.considered += 1;
     }
-    walk.considered += 1;
     const absolute = path.join(directory, entry.name);
     const relpath = relative(walk.root, absolute);
     if (entry.isSymbolicLink()) {
       // Never followed: a link out of the wiki is a traversal, and a link
       // inside it is a second copy of a page already being imported.
-      skip(walk, relpath, "symlink");
+      if (collect) skip(walk, relpath, "symlink");
       continue;
     }
     if (entry.isDirectory()) {
-      if (walk.ignore.some((pattern) => matchesGlob(relpath, pattern))) {
-        skip(walk, relpath, "ignored", "directory");
-        continue;
-      }
+      const ignored = !collect || walk.ignore.some((pattern) => matchesGlob(relpath, pattern));
+      if (ignored && collect) skip(walk, relpath, "ignored", "directory");
       const inside = await confinedDirectory(walk.root, absolute);
       if (inside === null) {
-        skip(walk, relpath, "symlink", "directory");
+        if (collect && !ignored) skip(walk, relpath, "symlink", "directory");
         continue;
       }
-      await walkDirectory(walk, inside, depth + 1);
+      await walkDirectory(walk, inside, depth + 1, !ignored);
       continue;
     }
-    if (!entry.isFile() || !MARKDOWN.test(entry.name)) continue;
+    if (!collect || !entry.isFile() || !MARKDOWN.test(entry.name)) continue;
     if (walk.ignore.some((pattern) => matchesGlob(relpath, pattern))) {
       skip(walk, relpath, "ignored");
       continue;
@@ -238,6 +258,7 @@ async function walkDirectory(
 export async function scanLegacyWiki(
   root: string,
   ignore: string[],
+  maxHidden = MAX_FILES,
 ): Promise<ScanResult> {
   const walk: Walk = {
     // Canonical, so containment below is decided against where the wiki
@@ -247,6 +268,8 @@ export async function scanLegacyWiki(
     files: [],
     skipped: [],
     considered: 0,
+    hidden: 0,
+    maxHidden,
     truncated: false,
   };
   try {
@@ -258,6 +281,7 @@ export async function scanLegacyWiki(
       );
     }
     walk.root = await realpath(root);
+    await assertOutsideVault(walk.root);
     await walkDirectory(walk, walk.root, 0);
   } catch (error) {
     if (error instanceof KizukiError) throw error;

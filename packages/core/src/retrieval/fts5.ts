@@ -254,16 +254,19 @@ export class Fts5RetrievalPort implements RetrievalPort {
     return { processed: validated.length };
   }
 
-  async rebuildFromDocuments(source: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>): Promise<void> {
+  async rebuildFromDocuments(source: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>, options: { signal?: AbortSignal } = {}): Promise<void> {
+    options.signal?.throwIfAborted();
     this.assertMutable();
     this.rebuilding = true;
     try {
       const docs: RetrievalDoc[] = [];
       for await (const doc of source) {
+        options.signal?.throwIfAborted();
         if (docs.length >= 10_000) throw new PortError("config_invalid", "FTS rebuild exceeds 10000 documents", false);
         docs.push(structuredClone(validateRetrievalDoc(doc)));
       }
       this.assertOpen();
+      options.signal?.throwIfAborted();
       this.db.transaction(() => {
         this.db.exec("DELETE FROM search_docs; DELETE FROM search_documents");
         this.writeDocs(docs);
