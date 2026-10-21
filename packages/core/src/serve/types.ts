@@ -1,3 +1,5 @@
+import { DEFAULT_CONSOLIDATION_CONFIG, type ConsolidationConfig, type ConsolidationRunReport } from "../contracts/consolidation";
+import type { ConsolidationDoctor } from "./doctor-consolidation";
 import type { ProducerDiagnostic } from "../contracts/producer";
 import type { ExternalRetention } from "../ledger/source-grants";
 import { MAX_V2_EVENTS, MAX_V2_OUTPUT_TOKENS } from "../contracts/producer-v2";
@@ -80,6 +82,7 @@ export const RAIL_IDS = [
   "brief",
   "doctor-sweep",
   "journal-prune",
+  "verify-world",
 ] as const;
 export type RailId = (typeof RAIL_IDS)[number];
 
@@ -123,6 +126,7 @@ export const DEFAULT_RAILS: readonly RailSpec[] = [
   { rail: "brief", period_s: 24 * 60 * 60, jitter_s: 0, enabled: true },
   { rail: "doctor-sweep", period_s: 60 * 60, jitter_s: 0, enabled: true },
   { rail: "journal-prune", period_s: 24 * 60 * 60, jitter_s: 0, enabled: true },
+  { rail: "verify-world", period_s: 7 * 24 * 60 * 60, jitter_s: 0, enabled: true },
 ];
 
 export interface ScheduleRow {
@@ -207,6 +211,7 @@ export interface CanonQuarantineNotice {
 }
 
 export interface RunReceipt {
+  readonly consolidation?: ConsolidationRunReport;
   /** Durable scheduler compare-and-advance intent, replayed with the receipt row. */
   readonly schedule_transition?: RunScheduleTransition;
   /** Legacy receipts omit this and cannot prove automatic artifact-bound execution. */
@@ -326,6 +331,7 @@ export interface ServeConfig {
   /** Batches one connection may drain in one sync pass. */
   readonly connector_drain_batches: number;
   readonly extraction: ExtractionConfig;
+  readonly consolidation?: ConsolidationConfig;
 }
 
 /** Inclusive bounds; an out-of-range or non-integer value keeps its default. */
@@ -349,6 +355,7 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   connector_drain_seconds: 120,
   connector_drain_batches: 100,
   extraction: DEFAULT_EXTRACTION_CONFIG,
+  consolidation: DEFAULT_CONSOLIDATION_CONFIG,
 };
 
 export interface SupervisorStatus {
@@ -371,6 +378,7 @@ export interface SupervisorLastExit {
 
 export interface RailDoctor {
   readonly rail: RailId;
+  readonly last_result: RunStatus | null;
   readonly last_receipt_at: string | null;
   readonly age_s: number | null;
   readonly period_s: number;
@@ -562,6 +570,7 @@ export interface ServeDoctorReport {
   readonly rails: RailDoctor[];
   readonly model: ModelDoctor;
   readonly extraction: ExtractionDoctor;
+  readonly consolidation: ConsolidationDoctor;
   readonly egress: EgressDoctor[];
   readonly throughput: ThroughputDoctor;
   readonly oversized: OversizedDoctor;

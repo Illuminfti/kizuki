@@ -92,7 +92,7 @@ export function readWorldCard(
   const cluster = group(frame, handle, stages.groupers);
   const collection = collectCard(frame, cluster, kind, stages.collectors);
   if (collection === null) return null;
-  let body = enrich(frame, collection.items, stages.enrichers, collection.overflow);
+  let body = enrich(frame, collection.items, stages.enrichers, collection.overflow, { cluster, kind: kind.id });
   if (kindId === "situation" && cardSchema === SITUATION_CARD_V2_SCHEMA)
     body = { ...body, situationV2: collectSituationDetails(frame,cluster,body) };
   return assembleCard(frame, kind, assembler, cluster, collection, body);

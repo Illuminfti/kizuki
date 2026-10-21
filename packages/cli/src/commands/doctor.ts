@@ -619,6 +619,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(report.serve.supervisor.detail);
   io.out(report.serve.model.detail);
   io.out(report.serve.extraction.detail);
+  io.out(report.serve.consolidation.detail);
   for (const source of report.serve.egress) {
     io.out(`egress source=${source.source_key} connector=${source.connector_id} host=${clean(source.endpoint_host)} model=${clean(source.model)} retention=${source.retention} (${RETENTION_MEANING[source.retention]})`);
     if (source.judge !== null) {
@@ -634,7 +635,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   }
   for (const rail of report.serve.rails) {
     const extra = rail.reason === null ? "" : ` ${rail.reason}`;
-    io.out(`rail ${rail.rail} status=${rail.status}${extra}`);
+    io.out(`rail ${rail.rail} status=${rail.status}${rail.rail === "verify-world" ? ` last_result=${rail.last_result ?? "never"} age_s=${rail.age_s ?? "unknown"}` : ""}${extra}`);
   }
   for (const failure of report.serve.failures) {
     io.out(`serve-failure ${supervisorFailureLine(failure, report.serve.supervisor, report.serve.supervisor_exit, report.vault)}`);

@@ -1,3 +1,4 @@
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 import { expect, test } from "bun:test";
 import { addAgent, authenticate, OWNER_AGENT_GRANT } from "../../src/agents";
 import { purgeEvents } from "../../src/ledger/purge";
@@ -28,8 +29,9 @@ test("hidden Questions and gaps change neither a restricted frontier nor its wor
 }, 120_000);
 
 test.each(["revocation", "purge"])("%s removes Question and frontier evidence at the next consumer read", async cause => {
-  const f = await questionFixture();
+  const f = await questionFixture(undefined, { model: EMPTY_SUMMARY_MODEL });
   try {
+    await completeEmptyWorldSummaries(f.db, f.ctx.vaultPath);
     const request = { operation: "question", question: f.questionRef, ...WHEN };
     const before = serveWorldView(f.ctx, request).data;
     if (!("result" in before) || before.result.status !== "current") throw new Error("missing baseline");

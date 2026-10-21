@@ -1,3 +1,4 @@
+import { consolidationDoctor } from "./doctor-consolidation";
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { embeddingThroughputFromReceipts } from "../retrieval/reembed";
@@ -528,7 +529,7 @@ export function inspectServeDoctor(
   const pendingReceipts = readPendingRunReceipts(db, vaultPath);
   const railHistory = (rail: RailId): RunReceipt[] => {
     const limit = rail === "sync" ? DOCTOR_SYNC_RECEIPTS : DOCTOR_RAIL_RECEIPTS;
-    const persisted = rail === "sync" ? syncReceipts : listRunReceipts(db, { rail, since, limit });
+    const persisted = rail === "sync" ? syncReceipts : listRunReceipts(db, { rail, ...(rail === "verify-world" ? {} : { since }), limit });
     const runs = new Map(pendingReceipts.filter(receipt => receipt.rail === rail && receipt.finished_at >= since)
       .map(receipt => [receipt.run_id, receipt]));
     for (const receipt of persisted) runs.set(receipt.run_id, receipt);
@@ -643,6 +644,7 @@ export function inspectServeDoctor(
     rails,
     model,
     extraction,
+    consolidation: consolidationDoctor(db, now, model.canon_writing !== "off", config.consolidation),
     egress,
     throughput,
     oversized,

@@ -376,6 +376,7 @@ export function railDoctor(
   }
   return {
     rail,
+    last_result: last?.status ?? null,
     last_receipt_at: last?.finished_at ?? null,
     age_s: age,
     period_s,

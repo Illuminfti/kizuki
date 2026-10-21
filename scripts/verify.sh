@@ -298,6 +298,7 @@ main() {
   gate rfc-tests
   bun "$verify_script_dir/verify-packet-seams.ts"
   gate packet-seams
+  bun "$verify_script_dir/world-verify.ts" --registry-only
   bun run typecheck
   gate typecheck
   bun run test

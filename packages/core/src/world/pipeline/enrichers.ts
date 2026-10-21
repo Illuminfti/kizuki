@@ -1,3 +1,4 @@
+import { summaryEnricher } from "../enrich/summary";
 import type { Enricher } from "./enrich";
 import { conflictEnricher } from "../enrich/conflict";
 import { independenceEnricher } from "../enrich/independence";
@@ -8,4 +9,5 @@ export const ENRICHERS: readonly Enricher[] = [
   // slot: card
   conflictEnricher, independenceEnricher, assistanceEnricher,
   // slot: consol
+  summaryEnricher,
 ];
