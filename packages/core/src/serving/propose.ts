@@ -297,6 +297,7 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
     auditArguments(args),
     async ({ ctx }): Promise<Served<ProposeData>> => {
     const perform = async (): Promise<Served<ProposeData>> => {
+    const originalSelection = ctx.selection;
     const normalized = normalizeMutationArgs(ctx, "propose", args, contract);
     ctx = normalized.ctx;
     const request = normalized.args;
@@ -350,6 +351,7 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
     const subject = subjectOf(grant, request.subject, requested);
     const predicate = predicateOf(request.predicate, subject);
 
+    let provenanceContext = ctx;
     let checkOutcomeBinding: (() => { subjectRef: string; artifactVersion: unknown }) | undefined;
     let object = request.object === undefined ? undefined : text("object", request.object, MAX_OBJECT_CHARS);
     if (predicate !== undefined && OUTCOME_PREDICATES.includes(predicate as typeof OUTCOME_PREDICATES[number])) {
@@ -365,7 +367,9 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
         let subjectRef = "none";
         if (evidence.subjectRef !== "none") {
           const anchor = readableWorldNode(live, ns, evidence.subjectRef);
-          if (anchor === null || anchor.id !== subject) throw refuse("object", "subjectRef must be a current object token for the subject, or none");
+          if (anchor === null || anchor.id !== subject ||
+              contract === ENVELOPE_V2_SCHEMA && (normalized.subjectIdentity === undefined ||
+                rawSubjectRefKey(anchor) !== rawSubjectRefKey(normalized.subjectIdentity))) throw refuse("object", "subjectRef must be a current object token for the subject, or none");
           subjectRef = sha256Hex(rawSubjectRefKey(anchor));
         }
         let artifactVersion: unknown = evidence.artifactVersion;
@@ -385,9 +389,18 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
       // Persist a stable digest, never a principal-local capability or raw namespace.
       const binding = ctx.db.transaction(checkOutcomeBinding).immediate();
       object = canonicalJson({ ...evidence, ...binding });
+      if (contract === ENVELOPE_V2_SCHEMA && binding.subjectRef !== "none") {
+        // An exact object binding relates independently recorded outcomes to
+        // the subject. Their evidence need not repeat that object occurrence.
+        // Retain the gate selection and current normalized authority instead
+        // of treating the mutation's added subject selection as permission.
+        provenanceContext = { ...ctx };
+        delete provenanceContext.selection;
+        if (originalSelection !== undefined) provenanceContext.selection = originalSelection;
+      }
       if (object.length > MAX_OBJECT_CHARS) throw refuse("object", "normalized outcome evidence is too large");
     }
-    validateProvenance(ctx, provenance, contract);
+    validateProvenance(provenanceContext, provenance, contract);
 
     if (ctx.db.inTransaction) throw new Error("claim insertion requires a top-level transaction");
     initClaims(ctx.db);
@@ -423,7 +436,7 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
       normalized.assertCurrent?.();
       if (checkOutcomeBinding !== undefined) {
         checkOutcomeBinding();
-        validateProvenance(ctx, provenance, contract);
+        validateProvenance(provenanceContext, provenance, contract);
       }
       return prepared.apply();
     }).immediate();
