@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { OWNER_AGENT_GRANT, addAgent } from "../../src/agents";
+import { claimKey } from "../../src/claims/hash";
 import { insertClaim, listClaims } from "../../src/claims/store";
 import { stampRuleClasses } from "../../src/ledger/event-classes";
 import { bindSourceEvent, setSourceGrant } from "../../src/ledger/source-grants";
@@ -76,7 +77,8 @@ test("compiled claim visibility preserves the reader's effective source purpose"
     const ctx = f.agent("reader-public");
     for (const purpose of ["session", "recall"] as const) {
       const reader = claimReader(f.db, ctx.principal.grant, { owner: false, purpose });
-      const selected = listClaims(f.db, { status: "live", visibility: reader.visibility });
+      const selected = listClaims(f.db, { status: "live",
+        claim_key: claimKey("person:ada", "employment.role"), visibility: reader.visibility });
       expect(selected.map(row => row.claim_id)).toEqual(purpose === "session" ? [id] : []);
       const packet = (await serveContextPacket(ctx, {
         purpose, include: ["claims"], budget_tokens: 1200,
