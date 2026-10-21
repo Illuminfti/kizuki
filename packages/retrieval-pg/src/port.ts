@@ -23,6 +23,10 @@ const MIN_TEXT_BYTES = 1024 * 1024;
 const MAX_TEXT_BYTES = 1024 * 1024 * 1024;
 /** A bounded request keeps a local embedding server responsive during rebuilds. */
 const EMBEDDING_BATCH_SIZE = 16;
+interface PendingEmbedding {
+  readonly key: string;
+  readonly chunks: Chunk[];
+}
 
 export interface EmbeddedRetrievalOptions {
   /** Overrides `max_text_bytes` from the port configuration. */
@@ -593,22 +597,29 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
         const stored = await this.store.run(() => this.store.meta("space"));
         const sameSpace = reuseVectors && stored !== null && canonical(stored) === canonical(space);
         let last = "";
-        let batch: Chunk[] = [];
+        // A rebuild projects the same current text through canon, claims and quoted
+        // source documents. Exact framed inputs share a vector, while every row still
+        // receives its own staged vector before the atomic replacement.
+        const embedded = new Map<string, Float32Array>();
+        let batch: PendingEmbedding[] = [];
         const flush = async (): Promise<void> => {
           if (batch.length === 0) return;
           check();
           assertNoStoreTransaction("embedDocs");
           const current = batch;
           batch = [];
-          const vectors = await withAbortSignal(this.embedding!.embedDocs(current), options.signal);
+          const vectors = await withAbortSignal(this.embedding!.embedDocs(current.map(entry => entry.chunks[0]!)), options.signal);
           if (vectors.length !== current.length) throw new PortError("space_mismatch", "embedding server returned an unexpected vector count", false);
           for (const vector of vectors) this.validateVector(vector, space);
           check();
           await this.store.run(() => this.store.transaction(async tx => {
-            for (const [at, chunk] of current.entries()) {
-              await tx.query("INSERT INTO rebuild_vectors VALUES($1,$2::vector)", [chunk.chunk_id, JSON.stringify([...vectors[at]!])]);
+            for (const [at, entry] of current.entries()) {
+              for (const chunk of entry.chunks) {
+                await tx.query("INSERT INTO rebuild_vectors VALUES($1,$2::vector)", [chunk.chunk_id, JSON.stringify([...vectors[at]!])]);
+              }
             }
           }));
+          for (const [at, entry] of current.entries()) embedded.set(entry.key, vectors[at]!);
         };
         for (;;) {
           check();
@@ -621,7 +632,16 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
             if (!(sameSpace && await this.store.run(() => this.store.reuseVectors(doc.doc_id, doc.title, chunks)))) {
               for (const chunk of chunks) {
                 check();
-                batch.push({ chunk_id: chunk.chunk_id, doc_id: doc.doc_id, title: doc.title, text: chunk.text, index: chunk.index });
+                const staged: Chunk = { chunk_id: chunk.chunk_id, doc_id: doc.doc_id, title: doc.title, text: chunk.text, index: chunk.index };
+                const key = JSON.stringify([staged.title, staged.text]);
+                const vector = embedded.get(key);
+                if (vector !== undefined) {
+                  await this.store.run(() => this.store.db.query("INSERT INTO rebuild_vectors VALUES($1,$2::vector)", [staged.chunk_id, JSON.stringify([...vector])]));
+                  continue;
+                }
+                const duplicate = batch.find(entry => entry.key === key);
+                if (duplicate !== undefined) duplicate.chunks.push(staged);
+                else batch.push({ key, chunks: [staged] });
                 if (batch.length === EMBEDDING_BATCH_SIZE) await flush();
               }
             }

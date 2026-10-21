@@ -360,6 +360,17 @@ describe("rebuild", () => {
     expect((await chunkRows(port)).every(row => row.embedding !== null)).toBe(true);
   });
 
+  test("embeds duplicate rebuild inputs once while staging every retrieval row", async () => {
+    const embedding = new RecordingEmbedding();
+    const { port } = await open(embedding, { chunk_tokens: 100, chunk_overlap: 0 });
+    const duplicate = Array.from({ length: 17 }, (_, at) => doc(`page:duplicate-${at}`, "shared current evidence", "Shared title"));
+
+    await port.rebuildFromDocuments(duplicate);
+
+    expect(embedding.chunks).toHaveLength(1);
+    expect((await chunkRows(port)).filter(row => row.embedding !== null)).toHaveLength(17);
+  });
+
   test("a vector-layer rebuild embeds every chunk again", async () => {
     const embedding = new RecordingEmbedding();
     const { port } = await open(embedding, options);
