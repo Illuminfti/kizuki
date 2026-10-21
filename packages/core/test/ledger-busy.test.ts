@@ -65,6 +65,20 @@ async function holdWriteLock(path: string, holdMs: number): Promise<Holder> {
 }
 
 describe("a busy ledger", () => {
+  test("a nonblocking shutdown write performs no retry waits and commits nothing while held", async () => {
+    const path = join(temporary("kizuki-busy-stop-"), "ledger.sqlite");
+    const db = openLedger(path, { busyTimeoutMs: 0 });
+    const holder = await holdWriteLock(path, 10_000);
+    let calls = 0;
+    try {
+      const started = performance.now();
+      expect(() => runImmediate(db, () => { calls++; db.exec("CREATE TABLE shutdown_probe (id INTEGER)"); })).toThrow();
+      expect(performance.now() - started).toBeLessThan(200);
+      expect(calls).toBe(0);
+      expect(db.query("SELECT name FROM sqlite_master WHERE name='shutdown_probe'").get()).toBeNull();
+    } finally { await holder.release(); db.close(); }
+  });
+
   test("opening waits for a writer that holds the lock past the busy timeout", async () => {
     const directory = temporary("kizuki-busy-open-");
     const path = join(directory, "ledger.sqlite");

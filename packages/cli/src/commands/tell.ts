@@ -4,6 +4,7 @@ import type { CorrectArgs, CorrectData, WorldReadResult } from "@kizuki/core";
 import { UsageError, parseArguments } from "../args";
 import { withVault } from "../context";
 import { tryRefreshDerived } from "../derived";
+import { whileWriterBusy } from "../writer-wait";
 import { clean, jsonEnvelope } from "../output";
 import { RESPONSE_CONTRACT_BOUND, RESPONSE_CONTRACT_OPTION, cliResultV2, contractFailure, responseContract, serveV2 } from "../response-contract";
 import type { CliIo, Command, CommandHelpSchema } from "./index";
@@ -127,9 +128,9 @@ export const tellCommand: Command = {
             ...(refresh === undefined ? {} : { refresh_world: { operation: "concept" as const, concept: { kind: "object" as const, token: refresh } } }),
             ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
           };
-          const served = contract === undefined
-            ? await serveCorrect(serve, request)
-            : await serveV2(serve, "correct", request, contract);
+          const served = await whileWriterBusy(() => contract === undefined
+            ? serveCorrect(serve, request)
+            : serveV2(serve, "correct", request, contract));
           const data = served.data as CorrectData | undefined;
           if (data === undefined) throw new CorrectError("target_required", "world claim correction was not recorded");
           const pending = data.recovery_pending !== undefined;

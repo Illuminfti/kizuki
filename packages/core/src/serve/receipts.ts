@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import {
   appendFileSync,
   closeSync,
+  constants,
   existsSync,
   fstatSync,
   fsyncSync,
@@ -24,6 +25,7 @@ import { loadServeConfig } from "./config";
 import {
   DOCTOR_JOURNAL_TAIL_BYTES,
   InjectedCrash,
+  LEDGER_LEASE_HELD_STOP,
   NOOP_RECEIPT_HEARTBEAT_S,
   RUN_RECEIPT_JOURNAL_MAX_BYTES,
   RUN_RECEIPTS_PATH,
@@ -34,6 +36,7 @@ import {
   type RunExecution,
   type RunScheduleTransition,
   type RunStatus,
+  type CanonQuarantineNotice,
 } from "./types";
 
 const RUN_STATUSES = new Set(["ok", "degraded", "stopped", "failed"]);
@@ -46,6 +49,19 @@ export function redactReceiptText(text: string): string {
   return text
     .replace(/\/(?:home|Users|tmp|var|workspace|opt)\/[^\s"']+/g, "[path]")
     .replace(/\b[A-Za-z0-9_-]{20,}\b/g, "[redacted]");
+}
+
+function quarantineNotices(value: unknown): { canon_quarantined?: CanonQuarantineNotice[] } {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 10_000) return {};
+  const notices: CanonQuarantineNotice[] = [];
+  for (const item of value) {
+    if (!isPlainObject(item) || Object.keys(item).sort().join() !== "attempts,handle,path,until" ||
+        typeof item.handle !== "string" || !/^[0-9a-f]{32}$/.test(item.handle) || item.path !== `auto/world/${item.handle}.md` ||
+        typeof item.attempts !== "number" || !Number.isSafeInteger(item.attempts) || item.attempts < 3 ||
+        typeof item.until !== "string" || !Number.isFinite(Date.parse(item.until)) || new Date(item.until).toISOString() !== item.until) return {};
+    notices.push({ handle: item.handle, path: item.path as string, attempts: item.attempts, until: item.until });
+  }
+  return { canon_quarantined: notices };
 }
 
 /** A display marker cannot recover the original model reference identity. */
@@ -84,6 +100,14 @@ function parseTransition(value: unknown): RunScheduleTransition | undefined {
     period_s: Number(value["period_s"]), brief_hour: value["brief_hour"] as number | null };
 }
 
+function parsePrefiltered(value: unknown): Record<string, number> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const counts = Object.entries(value).filter(
+    (entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]) && entry[1] > 0,
+  );
+  return counts.length === 0 ? undefined : Object.fromEntries(counts);
+}
+
 /** Internal normalizer used by the content-digest observer as well as storage. */
 export function parseRunReceipt(value: unknown): RunReceipt | null {
   if (!isPlainObject(value)) return null;
@@ -106,6 +130,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
   const retrieval = isPlainObject(value["retrieval"]) ? value["retrieval"] : {};
   const oversized = isPlainObject(value["oversized"]) ? value["oversized"] : null;
   const execution = parseRunExecution(value["execution"]);
+  const prefiltered = parsePrefiltered(value["records_prefiltered"]);
   const transition = parseTransition(value["schedule_transition"]);
   if (value["schedule_transition"] !== undefined && transition === undefined) throw new Error("invalid receipt schedule transition");
   return {
@@ -124,6 +149,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
       value["events_self_skipped"],
       totals.events_self_skipped,
     ),
+    ...(value["has_more"] === true ? { has_more: true as const } : {}),
     claims_extracted: numberOr(value["claims_extracted"], totals.claims_extracted),
     claims_written: numberOr(value["claims_written"], totals.claims_written),
     ...(typeof value["claims_written_extracted"] === "number" && Number.isFinite(value["claims_written_extracted"])
@@ -144,6 +170,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     ...(typeof value["records_skipped"] === "number" && Number.isFinite(value["records_skipped"])
       ? { records_skipped: value["records_skipped"] }
       : {}),
+    ...(prefiltered === undefined ? {} : { records_prefiltered: prefiltered }),
     ...(typeof value["pages_repaired"] === "number" && Number.isFinite(value["pages_repaired"])
       ? { pages_repaired: value["pages_repaired"] }
       : {}),
@@ -196,6 +223,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
           .filter((item): item is string => typeof item === "string")
           .map(redactReceiptText)
       : [],
+    ...quarantineNotices(value["canon_quarantined"]),
   };
 }
 
@@ -363,26 +391,54 @@ export function readRunReceiptsLog(vaultPath: string, tailBytes?: number): RunRe
       if (line.trim().length === 0) return [];
       let value: unknown;
       try { value = JSON.parse(line); } catch { return []; }
-      const parsed = parseRunReceipt(value);
-      return parsed === null ? [] : [parsed];
+      try {
+        const parsed = parseRunReceipt(value);
+        return parsed === null ? [] : [parsed];
+      } catch (error) {
+        // Inspection ignores invalid tail entries; recovery still fails closed
+        // on invalid schedule transitions rather than silently losing them.
+        if (tailBytes === undefined) throw error;
+        return [];
+      }
     });
 }
 
 function readJournalText(path: string, tailBytes: number | undefined): string {
   if (tailBytes === undefined) return readFileSync(path, "utf8");
-  const fd = openSync(path, "r");
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const size = fstatSync(fd).size;
-    if (size <= tailBytes) return readFileSync(fd, "utf8");
-    const buffer = Buffer.alloc(tailBytes);
-    readSync(fd, buffer, 0, tailBytes, size - tailBytes);
-    const text = buffer.toString("utf8");
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return "";
+    const size = stat.size;
+    const buffer = Buffer.alloc(Math.min(size, tailBytes));
+    const offset = Math.max(0, size - tailBytes);
+    const count = readSync(fd, buffer, 0, buffer.length, offset);
+    const text = buffer.subarray(0, count).toString("utf8");
+    if (offset === 0) return text;
     // The window starts mid-line; drop the partial first line.
     const firstBreak = text.indexOf("\n");
     return firstBreak === -1 ? "" : text.slice(firstBreak + 1);
   } finally {
     closeSync(fd);
   }
+}
+
+/** Bounded, validated journal runs still awaiting SQLite publication. Persisted ids win. */
+export function readPendingRunReceipts(db: Database, vaultPath: string): RunReceipt[] {
+  const pending = new Map<string, RunReceipt>();
+  const persisted = tableExists(db, "run_receipts")
+    ? db.query<{ present: number }, [string]>("SELECT 1 AS present FROM run_receipts WHERE run_id = ?")
+    : null;
+  const validTime = (value: string): boolean => Number.isFinite(Date.parse(value)) &&
+    new Date(value).toISOString().replace(".000Z", "Z") === value.replace(".000Z", "Z");
+  for (const receipt of readRunReceiptsLog(vaultPath, DOCTOR_JOURNAL_TAIL_BYTES)) {
+    if (!isRailId(receipt.rail) || receipt.run_id.length > 128 ||
+        !validTime(receipt.started_at) || !validTime(receipt.finished_at) ||
+        receipt.finished_at < receipt.started_at || persisted?.get(receipt.run_id)) continue;
+    // Repeated journal ids are one run. Recovery remains responsible for conflicts.
+    if (!pending.has(receipt.run_id)) pending.set(receipt.run_id, receipt);
+  }
+  return [...pending.values()];
 }
 
 function appendJsonl(vaultPath: string, receipt: RunReceipt): void {
@@ -460,7 +516,8 @@ function redactReceipt(receipt: RunReceipt): RunReceipt {
 
 /** Attach the compare-and-advance intent for the rail's next due slot. */
 function withScheduleTransition(db: Database, vaultPath: string, receipt: RunReceipt): RunReceipt {
-  if (!isRailId(receipt.rail)) return receipt;
+  // A skipped pass leaves its rail due: the daemon retries it with backoff.
+  if (!isRailId(receipt.rail) || receipt.stopped === LEDGER_LEASE_HELD_STOP) return receipt;
   const row = db.query<{ next_run_at: string | null; period_s: number }, [string]>("SELECT next_run_at,period_s FROM schedules WHERE rail=?").get(receipt.rail);
   if (row === null) return receipt;
   const scheduled = receipt.execution?.trigger === "scheduled";
@@ -481,6 +538,7 @@ export function isNoopReceipt(receipt: RunReceipt): boolean {
   ];
   return receipt.status === "ok" && receipt.stopped === null && receipt.errors.length === 0 &&
     receipt.oversized === undefined && receipt.retrieval.degraded.length === 0 &&
+    receipt.has_more === undefined && receipt.records_prefiltered === undefined &&
     Object.keys(receipt.claims_rejected).length === 0 && counters.every((count) => count === 0);
 }
 

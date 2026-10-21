@@ -24,6 +24,8 @@ import type { WorldClaimBasis } from "./world-receipt";
 import { CanonWriteError } from "./errors";
 
 const MAX_PAGE_CLAIMS=64;
+/** Groups one scan reads; a queue longer than this is read a window at a time. */
+const MAX_PENDING_GROUPS=32;
 export function worldAdmissionHash(admission:WorldAdmission):string { return sha256Hex(`kizuki.world-canon-admission/v1\0${canonicalJson(admission)}`); }
 export function worldCanonPath(handle:string):string {
  if(!/^[0-9a-f]{32}$/.test(handle))throw new CanonWriteError("target_invalid","invalid world handle");
@@ -59,7 +61,8 @@ export interface WorldMaterialization {
 /** Select one complete admitted rendering per assertion; never pool partial or denied support. */
 export function selectWorldMaterialization(db:Database,handle:string):WorldMaterialization|null {
  const ctx=context(db),permitted=authorizedSupportSql(ctx),budget:ReadBudget={bytes:0};
- const candidates=db.query<{claim_id:string},(string|number)[]>(`SELECT DISTINCT c.claim_id FROM claims c JOIN claim_v2_support s USING(claim_id) JOIN semantic_allocations a USING(support_key) JOIN semantic_bindings b USING(handle_id) JOIN claim_v2_semantics m ON m.claim_id=c.claim_id AND m.subject_kind=b.raw_kind AND m.subject_id=b.raw_id AND (b.raw_kind='occurrence' OR (json_extract(m.payload,'$.subject.namespace.connector_id')=json_extract(b.raw_namespace,'$.connector_id') AND json_extract(m.payload,'$.subject.namespace.source_key')=json_extract(b.raw_namespace,'$.source_key'))) WHERE c.is_world_typed=1 AND c.status='live' AND a.handle_id=? AND ${permitted.sql} ORDER BY c.claim_id LIMIT ?`).all(handle,...permitted.bindings,MAX_PAGE_CLAIMS+1);
+ const held=heldClaimSql("c",permitted);
+ const candidates=db.query<{claim_id:string},(string|number)[]>(`SELECT DISTINCT c.claim_id FROM claims c JOIN claim_v2_support s USING(claim_id) JOIN semantic_allocations a USING(support_key) JOIN semantic_bindings b USING(handle_id) JOIN claim_v2_semantics m ON m.claim_id=c.claim_id AND m.subject_kind=b.raw_kind AND m.subject_id=b.raw_id AND (b.raw_kind='occurrence' OR (json_extract(m.payload,'$.subject.namespace.connector_id')=json_extract(b.raw_namespace,'$.connector_id') AND json_extract(m.payload,'$.subject.namespace.source_key')=json_extract(b.raw_namespace,'$.source_key'))) WHERE c.is_world_typed=1 AND c.status='live' AND a.handle_id=? AND ${permitted.sql} AND NOT ${held.sql} ORDER BY c.claim_id LIMIT ?`).all(handle,...permitted.bindings,...held.bindings,MAX_PAGE_CLAIMS+1);
  const claims:Claim[]=[],basis:WorldClaimBasis[]=[];let title="Knowledge record",pageType:PageType=DEFAULT_PAGE_TYPE;
  for(const candidate of candidates) {
   if(worldClaimHandle(db,candidate.claim_id)!==handle)continue;
@@ -87,20 +90,30 @@ export function assertWorldBasis(db:Database,basis:readonly WorldClaimBasis[]|nu
  if(!worldBasisAllowed(context(db),basis,historical))throw new CanonWriteError("decision_stale","world support changed before canon admission");
 }
 
-/** Distinct bounded queue: neutral typed parents never enter the legacy materializer. */
-export function pendingWorldCanonClaims(db:Database,limit=32):Claim[][] {
- const ctx=context(db),permitted=authorizedSupportSql(ctx);
+export interface PendingWorldGroup { readonly handle:string; readonly claims:Claim[]; }
+/**
+ * Distinct bounded queue: neutral typed parents never enter the legacy
+ * materializer. Groups whose handle is in `excluded` are passed over without
+ * using up the window, so a page that cannot be written does not hide the ones behind it.
+ */
+export function pendingWorldCanonClaims(db:Database,limit=32,excluded:ReadonlySet<string>=new Set()):PendingWorldGroup[] {
+ const ctx=context(db),permitted=authorizedSupportSql(ctx),window=MAX_PENDING_GROUPS*MAX_PAGE_CLAIMS;
  const held=heldClaimSql("c",permitted);
- const ids=db.query<{claim_id:string},(string|number)[]>(`SELECT c.claim_id FROM claims c WHERE c.is_world_typed=1 AND c.status='live' AND c.receipt_id IS NULL AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql} ORDER BY c.claim_id LIMIT ?`).all(...permitted.bindings,...held.bindings,Math.min(limit,32)*MAX_PAGE_CLAIMS);
  const groups=new Map<string,Claim[]>();
- for(const {claim_id} of ids) {
-  const handle=worldClaimHandle(db,claim_id),claim=getClaim(db,claim_id);if(handle===null||claim===null)continue;
-  if(!groups.has(handle)&&groups.size===Math.min(limit,32))continue;
-  const group=groups.get(handle)??[];
-  if(group.length===MAX_PAGE_CLAIMS)continue;
-  group.push(claim);groups.set(handle,group);
+ let after="";
+ while(groups.size<limit) {
+  const ids=db.query<{claim_id:string},(string|number)[]>(`SELECT c.claim_id FROM claims c WHERE c.is_world_typed=1 AND c.status='live' AND c.receipt_id IS NULL AND c.claim_id>? AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql} ORDER BY c.claim_id LIMIT ?`).all(after,...permitted.bindings,...held.bindings,window);
+  for(const {claim_id} of ids) {
+   const handle=worldClaimHandle(db,claim_id),claim=getClaim(db,claim_id);if(handle===null||claim===null||excluded.has(handle))continue;
+   if(!groups.has(handle)&&groups.size===limit)continue;
+   const group=groups.get(handle)??[];
+   if(group.length===MAX_PAGE_CLAIMS)continue;
+   group.push(claim);groups.set(handle,group);
+  }
+  if(ids.length<window)break;
+  after=ids[ids.length-1]!.claim_id;
  }
- return [...groups.values()];
+ return [...groups].map(([handle,claims])=>({handle,claims}));
 }
 
 /** Metadata belongs to the exact selected contributions, not caller-supplied receipt fields. */

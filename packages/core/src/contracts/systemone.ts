@@ -72,6 +72,8 @@ export interface SystemOneRequest {
   readonly state: SystemOneState;
   readonly questions: Readonly<Record<string, SystemOneQuestion>>;
   readonly deadline_ms: number;
+  /** Aborting ends the request at once with an `unavailable` refusal. */
+  readonly signal?: AbortSignal;
 }
 
 export interface SystemOneResponse {
