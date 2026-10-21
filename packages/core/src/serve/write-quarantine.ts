@@ -129,6 +129,10 @@ function heldClaim(claim: Omit<QuarantinedClaim, "until">, now: string): Quarant
 /** Dead, corrected, written or purged claims cannot hold a queue slot or appear as pending work. */
 export function listQuarantinedClaims(db: Database, now: string): QuarantinedClaim[] {
   if (!tableExists(db, "rail_cursors") || !tableExists(db, "claims")) return [];
+  // The normal empty quarantine needs no claims lookup. Avoid adding a third
+  // unwritten-claim query to every doctor inspection and sync pass.
+  if (db.query("SELECT 1 FROM rail_cursors WHERE rail = ? AND source_key LIKE ? LIMIT 1")
+    .get(WRITER_RAIL, `${CLAIM_KEY_PREFIX}%`) === null) return [];
   const held: QuarantinedClaim[] = [];
   const rows = db.query<{ claim_id: string; cursor: string }, [string, string, number]>(
     `SELECT c.claim_id, r.cursor FROM rail_cursors r JOIN claims c ON c.claim_id = substr(r.source_key, ${CLAIM_KEY_PREFIX.length + 1})
