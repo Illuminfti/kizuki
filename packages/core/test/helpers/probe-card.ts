@@ -46,6 +46,9 @@ export const validateProbeCard = cardCodec<ProbeCard, "probe-card">({
 
 export const probeAssembler: KindAssembler = {
   kind: "probe",
+  // This test-only assembler has no background summary job. Its nullable
+  // placeholder must not claim support for consolidation it cannot perform.
+  consolidation: false,
   assemble({ node, own, summary, coverage }) {
     const texts = own.filter((item) => item.predicate === "probe.text");
     const card: ProbeCard = {

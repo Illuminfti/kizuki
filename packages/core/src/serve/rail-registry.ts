@@ -1,5 +1,5 @@
 import { VERIFY_WORLD_RAIL } from "./rails/verify-world";
-import { BACKUP_RAIL } from "./backup";
+import { BACKUP_RAIL } from "./backup-rail";
 import { BUILTIN_RAILS } from "./builtin-rails";
 import type { RailDefinition } from "./rail-definition";
 import type { RailSpec } from "./types";

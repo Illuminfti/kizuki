@@ -4,7 +4,7 @@ import { assertSeparated, BACKUP_SCHEMA, exportVault, restoreVault, verifyBackup
 import { isUlid } from "../util/ulid";
 import { openOwnedDirectory, type OwnedDirectory, type OwnedDirectoryIdentity } from "../util/owned-directory";
 import { loadBackupSelection } from "./config";
-import { defineRail, type RailRunContext } from "./rail-definition";
+import type { RailRunContext } from "./rail-definition";
 import { readVaultId } from "./vault-id";
 import type { RunReceipt } from "./types";
 
@@ -101,11 +101,3 @@ export function runScheduledBackup(context: RailRunContext): Partial<RunReceipt>
     finally { root?.close(); }
   }
 }
-
-export const BACKUP_RAIL = defineRail({
-  id: "backup", period_s: 86_400, jitter_s: 0,
-  summary: "When a backup directory is configured, exports, restores to verify, and retains the newest archives.",
-  expects_output: false,
-  retain_receipt: true,
-  run: runScheduledBackup,
-});

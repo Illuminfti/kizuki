@@ -1,4 +1,3 @@
-import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 /**
  * A kind that does not ship reaches the pipeline through data alone: a
  * vocabulary module in a test registry, an assembler built from the card kit,
@@ -54,7 +53,6 @@ test("a kind registered as data is discovered and read as a card of its own code
     await withWorldRegistry(registryFor(), () =>
       withWorldPipeline({ assemblers: [probeAssembler] }, async () => {
         await worldSeed(db, {
-          model: EMPTY_SUMMARY_MODEL,
           kind: "probe",
           subject: "probe:idempotency",
           label: "What is idempotency?",
@@ -63,7 +61,6 @@ test("a kind registered as data is discovered and read as a card of its own code
             { predicate: "probe.candidate_answer", object: { kind: "literal", value: "Repeating it changes nothing" } },
           ],
         });
-        await completeEmptyWorldSummaries(db);
         const found = read(db, (open) => readWorldMatches(open(), "probe", "idempot", null, 100));
         expect(found.schema).toBe("kizuki.probe-matches/v1");
         expect(found.matches.map((match) => match.labels)).toEqual([["What is idempotency?"]]);
