@@ -19,6 +19,11 @@
 - Agent proposals and corrections compare and retire only readable claims, and
   unreadable canon pages remain untouched and unnamed. Search and entity labels
   match served redacted text; graph limits count authorized edges.
+- World discovery and cards exclude held claims before their candidate bounds,
+  so a held prefix cannot hide an eligible label or definition. Visible
+  overflow still reports incomplete coverage.
+- Graph maintenance reconciles unreadable cached paths through its existing
+  partial rebuild instead of masking a successful, receipted canon write.
 - Connector drains and prefilter-only extraction yield to the host between
   durable batches, so signals and timer callbacks can stop an active pass
   even when its promises resolve immediately. Terminal batches yield before
