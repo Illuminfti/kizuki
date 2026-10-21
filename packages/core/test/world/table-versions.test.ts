@@ -59,7 +59,7 @@ describe("migration numbers", () => {
   });
 
   test("every table past the base names a claimed migration", () => {
-    const claimed = new Set<number>(Object.values(WORLD_MIGRATION_VERSIONS));
+    const claimed = new Set<number>([...Object.values(WORLD_MIGRATION_VERSIONS), ...Object.values(LEDGER_MIGRATION_VERSIONS)]);
     for (const spec of WORLD_TABLE_SPECS) {
       if (spec.since > WORLD_MIGRATION_BASE)
         expect(claimed.has(spec.since)).toBe(true);

@@ -59,7 +59,7 @@ import { isProducerV2, type ExtractionProducerPort } from "./extract-v2";
 import { backoffRemaining, readRejections, recordRejection, writeRejections } from "./extract-rejections";
 import { redactReceiptError } from "./receipts";
 import { runWorldJobs } from "./world-jobs";
-import { clearStuckPage, listQuarantinedPages, recordStuckPage } from "./write-quarantine";
+import { clearStuckPage, listQuarantinedPages, recordStuckPage, clearStuckClaim, recordStuckClaim } from "./write-quarantine";
 import { reconcileCanonGraph } from "../canon/graph-maintenance";
 
 /**
@@ -532,12 +532,13 @@ function writeNextPage(
     }
   }
 
+  const retry = { excluded: [...attempted], now };
   db.transaction(() => {
-    for (const claim of listUnwrittenLiveClaims(db, WRITE_PASS_SCAN).reverse()) {
+    for (const claim of listUnwrittenLiveClaims(db, WRITE_PASS_SCAN, false, retry).reverse()) {
       supersedePageRevisions(db, claim.claim_id, claim.created_at);
     }
   })();
-  const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN, true);
+  const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN, true, retry);
   for (const claim of pending) {
     if (attempted.has(claim.claim_id)) continue;
     attempted.add(claim.claim_id);
@@ -553,6 +554,7 @@ function writeNextPage(
         tally.canon_writes += 1;
         tally.claims_written += 1;
         if (claim.producer === "model") tally.claims_written_extracted += 1;
+        clearStuckClaim(db, claim.claim_id);
         return "wrote";
       } catch (error) {
         // File/JSONL can land before the receipt row; count the SQLite slot.
@@ -577,7 +579,13 @@ function writeNextPage(
         tally.stopped = error.stopped;
         return "done";
       }
-      tally.errors.push(redactReceiptError(error));
+      const reason = redactReceiptError(error);
+      tally.errors.push(reason);
+      // Recovery is shared writer state; do not blame or delay an individual claim for it.
+      if (!(error instanceof CanonRecoveryError)) {
+        const held = recordStuckClaim(db, claim.claim_id, error instanceof CanonWriteError ? error.code : "canon_write_failed", now);
+        if (held !== null) tally.errors.push(`legacy claim set aside until ${held.until} after ${held.attempts} failed passes; see doctor`);
+      }
       return "failed";
     }
   }

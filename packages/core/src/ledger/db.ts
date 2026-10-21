@@ -38,8 +38,9 @@ import { applyWorldTables } from "../world/schema";
 import { applyClaimV2TablesV31 } from "./migrations/claim-v2-v31";
 import { applyPurgeReingestV34 } from "./migrations/purge-reingest-v34";
 import { applyMachineBodies } from "./machine-body-schema";
+import { applyCanonClaimRetries } from "./canon-claim-retry-schema";
 import { applyCursorStoreV35 } from "./migrations/cursor-store-v35";
-import { SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION, CURSOR_STORE_MIGRATION_VERSION, PURGE_REINGEST_MIGRATION_VERSION, WORLD_MIGRATION_VERSIONS, LEDGER_MIGRATION_VERSIONS } from "../world/tables/versions";
+import { CANON_CLAIM_RETRY_MIGRATION_VERSION, SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION, CURSOR_STORE_MIGRATION_VERSION, PURGE_REINGEST_MIGRATION_VERSION, WORLD_MIGRATION_VERSIONS, LEDGER_MIGRATION_VERSIONS } from "../world/tables/versions";
 import { applyKnownRefs } from "../world/tables/known-refs";
 import { applyClaimHistorySchema } from "../world/tables/known";
 import { applyWorldViewTables } from "../world/tables/views";
@@ -251,6 +252,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: WORLD_MIGRATION_VERSIONS.attn, apply: applyAttention },
   { version: WORLD_MIGRATION_VERSIONS.fcst, apply: applyForecasts },
   { version: WORLD_MIGRATION_VERSIONS.typed_refs, apply: applyTypedRefs },
+  { version: CANON_CLAIM_RETRY_MIGRATION_VERSION, apply: applyCanonClaimRetries },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

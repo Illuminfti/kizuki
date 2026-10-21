@@ -1,6 +1,7 @@
 import { beginForecastRestore } from "./world/tables/forecasts";
 import { validateForecastJournal } from "./world/forecast/validate";
 import { beginClaimHistoryRestore, prepareClaimHistoryImport, finishClaimHistoryRestore } from "./world/tables/known";
+import { applyCanonClaimRetries } from "./ledger/canon-claim-retry-schema";
 import { createWorldTables, exportedWorldTables, resetWorldTables } from "./world/tables/registry";
 import { assertWorldState } from "./world/integrity";
 import { capturePortableAdapter, capturePortableLocal, hashPortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
@@ -2996,6 +2997,8 @@ export function restoreVault(
         if (railEntry !== undefined && railCount !== railEntry.count) {
           throw new Error("backup extract rail cursor count mismatch");
         }
+        // Old archives import cursors after the fresh target has already migrated.
+        applyCanonClaimRetries(db);
         for (const row of streamRows(source, manifest, "ledger/connector_sensitivity.jsonl", false)) {
           insertConnectorSensitivity(db, row);
         }

@@ -2,6 +2,7 @@ import { TYPED_REF_TABLE_SPECS } from "./refs";
 import { FORECAST_TABLE_SPECS } from "./forecasts";
 import { ATTENTION_TABLE_SPECS } from "./attention";
 import { CONSOLIDATION_TABLE_SPECS } from "./consolidation";
+import { CANON_CLAIM_RETRY_TABLE } from "../../ledger/canon-claim-retry-schema";
 import { MACHINE_BODY_TABLE } from "../../ledger/machine-body-schema";
 import type { Database } from "bun:sqlite";
 import { LedgerStoreError } from "../../ledger/errors";
@@ -114,6 +115,7 @@ export const WORLD_TABLE_SPECS: readonly WorldTableSpec[] = [
   ...FORECAST_TABLE_SPECS,
   // slot: machine_images
   MACHINE_BODY_TABLE,
+  CANON_CLAIM_RETRY_TABLE,
 ];
 
 /** Durable classes must reach purge; only derived and cache tables may opt out with `none`. */

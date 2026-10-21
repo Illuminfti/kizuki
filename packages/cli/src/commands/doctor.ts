@@ -641,6 +641,9 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   for (const page of report.serve.quarantined.pages) {
     io.out(`quarantined ${page.path} handle=${page.handle} failed_passes=${page.attempts} until=${page.until} last_error=${JSON.stringify(page.reason)}`);
   }
+  for (const claim of report.serve.quarantined.claims ?? []) {
+    io.out(`unmaterialized claim=${JSON.stringify(claim.claim_id)} failed_passes=${claim.attempts} until=${claim.until} last_error=${JSON.stringify(claim.reason)}`);
+  }
   for (const rail of report.serve.rails) {
     const extra = rail.reason === null ? "" : ` ${rail.reason}`;
     io.out(`rail ${rail.rail} status=${rail.status}${rail.rail === "verify-world" ? ` last_result=${rail.last_result ?? "never"} age_s=${rail.age_s ?? "unknown"}` : ""}${extra}`);

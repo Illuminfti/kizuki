@@ -3,6 +3,7 @@ import { validateWorldAdmissionProofs } from "./world-grounding";
 import { OUTCOME_PREDICATES } from "../contracts/outcome-card";
 import { validateArtifactClaim } from "../world/artifact-binding";
 import type { ClaimVisibility } from "./visibility";
+import { CLAIM_RETRY_FAILURES, CLAIM_RETRY_MS } from "../ledger/canon-claim-retry-schema";
 import { UNWRITTEN_CAPTURE_NOTE_WHERE } from "./capture-fanout";
 import { pageClaimKey } from "./hash";
 import { readCanonWriteIntent } from "../canon/write-intent";
@@ -930,9 +931,14 @@ export function listUnwrittenLiveClaims(
   db: Database,
   limit = 32,
   prioritizeExisting = false,
+  retry: { readonly excluded?: readonly string[]; readonly now?: string } = {},
 ): Claim[] {
   if (!tableExists(db, "claims")) return [];
   const bound = Number.isSafeInteger(limit) && limit > 0 ? limit : 32;
+  const at = Date.parse(retry.now ?? new Date().toISOString());
+  const held = tableExists(db, "canon_claim_retries") && Number.isFinite(at);
+  const holdClause = held ? `AND NOT EXISTS (SELECT 1 FROM canon_claim_retries r WHERE r.claim_id=claims.claim_id
+    AND r.attempts>=${CLAIM_RETRY_FAILURES} AND r.last_at_ms<=? AND r.last_at_ms>?)` : "";
   // Scheduling hints only: the arbiter still validates the actual bytes and
   // resolves bindings. Existing mutations must not sit behind held creates.
   const priority = prioritizeExisting && tableExists(db, "page_index") ? `
@@ -945,22 +951,18 @@ export function listUnwrittenLiveClaims(
         WHERE s.winner=claims.claim_id AND loser.receipt_id IS NOT NULL)
     THEN 0 ELSE 1 END,` : "";
   return db
-    .query<ClaimRow, [number]>(
+    .query<ClaimRow, (string | number)[]>(
       `SELECT * FROM claims
         WHERE ${unwrittenLiveWhere(db)}
+          AND claim_id NOT IN (SELECT value FROM json_each(?))
+          ${holdClause}
         ORDER BY ${priority} created_at, claim_id
         LIMIT ?`,
     )
-    .all(bound)
+    .all(JSON.stringify(retry.excluded ?? []), ...(held ? [at, at - CLAIM_RETRY_MS] : []), bound)
     .map(rowToClaim);
 }
 
-/**
- * Leftover Wave 1 ingest mapped pending proposals onto `skipped`. Those
- * rows did not lose a conflict — they never got a chance. Lift them to
- * live so the receipted writer can act. A skip that lost to a live peer
- * on the same `claim_key` stays skipped.
- */
 export function reviveUncontestedSkipped(db: Database): number {
   return db.transaction(() => {
     assertPositiveAuthorityMutationAllowed(db);
