@@ -37,7 +37,7 @@ test("only receipted native-owner completion is done, and undo returns the commi
  const f=await situationV2Fixture();try{
   f.materialize("commitment:review");
   const entry=f.readSituation().commitments.find(c=>c.label?.object.kind==="literal"&&c.label.object.value==="Review draft")!;
-  const answer=await serveCorrect(f.ctx,{statement:"I confirm the review is complete.",target:{world_claim:entry.statusBasis[0]},mode:"replace_object",object:{kind:"vocabulary",id:"commitment/done"}});
+  const answer=await serveCorrect(f.ctx,{statement:"I confirm the review is complete.",target:{world_claim:entry.statusBasis[0]!},mode:"replace_object",object:{kind:"vocabulary",id:"commitment/done"}});
   expect(f.readSituation().commitments.find(c=>c.commitment.token===entry.commitment.token)?.status).toBe("done");
   if(!answer.data||!("receipt_id"in answer.data)||typeof answer.data.receipt_id!=="string")throw Error("receipt missing");
   await undoReceipt({db:f.db,vault_path:f.ctx.vaultPath},answer.data.receipt_id);
@@ -101,13 +101,13 @@ test("hidden nested commitments cannot change a narrow reader's bytes or work an
 
 test("session commitments use typed card status and retain separate due perspectives",async()=>{
  const f=await cardFixture(undefined,{purposes:["capture","derive","recall","session","correction","export"]});try{
-  for(const[id,kind,label]of [["project:session","situation","Session plan"],["commitment:session","commitment","Send brief"]]){
+  for(const[id,kind,label]of [["project:session","situation","Session plan"],["commitment:session","commitment","Send brief"]] as const){
    await f.write("world.kind",vocabulary(`world/${kind}`),{subject:id});await f.write(`${kind}.label`,literal(label!),{subject:id});
   }
   await f.write("situation.has_commitment",node(f,"commitment:session"),{subject:"project:session"});
   await f.write("commitment.due",literal("2026-10-23"),{subject:"commitment:session",holder:"person:ada"});
   await f.write("commitment.status",vocabulary("commitment/done"),{subject:"commitment:session"});
-  const packet=await serveContextPacket(f.ctx,{purpose:"session",budget_tokens:3000});
+  const packet=await serveContextPacket(f.ctx,{purpose:"session",budget_tokens:2000});
   expect(packet.data?.session?.commitments.served).toBe(1);
   expect(packet.data?.packet_md).toContain("status=claimed_done");
   expect(packet.data?.packet_md).toContain("2026-10-23");
