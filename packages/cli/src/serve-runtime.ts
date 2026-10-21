@@ -27,6 +27,7 @@ import {
   type ProducerPort,
   type ProducerV2Port,
   type RailRuntimeV2,
+  type RailSyncDrain,
   type RailSyncResult,
   type RetrievalPort,
   type SystemOnePort,
@@ -113,12 +114,20 @@ async function syncConnections(
   vaultPath: string,
   store: Parameters<typeof listHostConnections>[1],
   env: Record<string, string | undefined>,
+  drain: RailSyncDrain,
 ): Promise<RailSyncResult> {
+  let has_more = false;
   let events_synced = 0;
   let events_stored = 0;
   let events_duplicate = 0;
   const errors: string[] = [];
-  for (const selected of listHostConnections(db, store)) {
+  const connections = listHostConnections(db, store);
+  const started = performance.now();
+  for (const [index, selected] of connections.entries()) {
+    // The pass ends at a stop request; a connection not reached resumes next pass.
+    if (drain.stopRequested?.() === true) { has_more = true; break; }
+    // Each connection gets an equal share of what is left, so an early finisher lends its time and a large backfill cannot starve the rest.
+    const deadline_ms = Math.max(0, drain.deadline_ms - (performance.now() - started)) / (connections.length - index);
     if (selected.state === null) {
       if (errors.length < MAX_SYNC_ERRORS) errors.push("connection state unavailable");
       continue;
@@ -132,8 +141,13 @@ async function syncConnections(
           selected.connection.connector_id,
           selected.connection.source_key,
           "sync",
-          { vault_path: vaultPath },
+          {
+            vault_path: vaultPath,
+            slice: { max_batches: drain.max_batches, deadline_ms },
+            ...(drain.stopRequested === undefined ? {} : { stopRequested: drain.stopRequested }),
+          },
         );
+        if (result.has_more === true) has_more = true;
         events_stored += result.stored;
         events_duplicate += result.duplicates;
         events_synced += result.stored + result.duplicates;
@@ -153,7 +167,7 @@ async function syncConnections(
       }
     }
   }
-  return { events_synced, events_stored, events_duplicate, events_self_skipped: 0, errors };
+  return { ...(has_more ? { has_more: true as const } : {}), events_synced, events_stored, events_duplicate, events_self_skipped: 0, errors };
 }
 
 interface ServeRuntimeOptions {
@@ -333,8 +347,8 @@ export async function createServeRuntime(options: ServeRuntimeOptions): Promise<
       embedding_configured: embeddingConfigured(options.vaultPath),
       ...(binding?.producer === undefined ? {} : { producer: binding.producer }),
       claims,
-      sync: async () => {
-        const result = await syncConnections(options.db, options.vaultPath, options.store, options.env);
+      sync: async (drain) => {
+        const result = await syncConnections(options.db, options.vaultPath, options.store, options.env, drain);
         return configurationUnavailable
           ? { ...result, errors: [...result.errors, "model configuration unavailable"] }
           : result;

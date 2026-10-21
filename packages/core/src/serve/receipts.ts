@@ -84,6 +84,14 @@ function parseTransition(value: unknown): RunScheduleTransition | undefined {
     period_s: Number(value["period_s"]), brief_hour: value["brief_hour"] as number | null };
 }
 
+function parsePrefiltered(value: unknown): Record<string, number> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const counts = Object.entries(value).filter(
+    (entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]) && entry[1] > 0,
+  );
+  return counts.length === 0 ? undefined : Object.fromEntries(counts);
+}
+
 /** Internal normalizer used by the content-digest observer as well as storage. */
 export function parseRunReceipt(value: unknown): RunReceipt | null {
   if (!isPlainObject(value)) return null;
@@ -106,6 +114,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
   const retrieval = isPlainObject(value["retrieval"]) ? value["retrieval"] : {};
   const oversized = isPlainObject(value["oversized"]) ? value["oversized"] : null;
   const execution = parseRunExecution(value["execution"]);
+  const prefiltered = parsePrefiltered(value["records_prefiltered"]);
   const transition = parseTransition(value["schedule_transition"]);
   if (value["schedule_transition"] !== undefined && transition === undefined) throw new Error("invalid receipt schedule transition");
   return {
@@ -124,6 +133,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
       value["events_self_skipped"],
       totals.events_self_skipped,
     ),
+    ...(value["has_more"] === true ? { has_more: true as const } : {}),
     claims_extracted: numberOr(value["claims_extracted"], totals.claims_extracted),
     claims_written: numberOr(value["claims_written"], totals.claims_written),
     ...(typeof value["claims_written_extracted"] === "number" && Number.isFinite(value["claims_written_extracted"])
@@ -144,6 +154,7 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
     ...(typeof value["records_skipped"] === "number" && Number.isFinite(value["records_skipped"])
       ? { records_skipped: value["records_skipped"] }
       : {}),
+    ...(prefiltered === undefined ? {} : { records_prefiltered: prefiltered }),
     ...(typeof value["pages_repaired"] === "number" && Number.isFinite(value["pages_repaired"])
       ? { pages_repaired: value["pages_repaired"] }
       : {}),
@@ -481,6 +492,7 @@ export function isNoopReceipt(receipt: RunReceipt): boolean {
   ];
   return receipt.status === "ok" && receipt.stopped === null && receipt.errors.length === 0 &&
     receipt.oversized === undefined && receipt.retrieval.degraded.length === 0 &&
+    receipt.has_more === undefined && receipt.records_prefiltered === undefined &&
     Object.keys(receipt.claims_rejected).length === 0 && counters.every((count) => count === 0);
 }
 
