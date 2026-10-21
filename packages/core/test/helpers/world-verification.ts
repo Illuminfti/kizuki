@@ -10,7 +10,7 @@ import type { ShareData } from "../../src/world/views/resume";
 
 export const WORLD_VERIFICATION_OPERATIONS = [
   "find_concepts", "find_situations", "concept", "situation", "describe",
-  "evidence", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people",
+  "evidence", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people", "diff",
 ] as const;
 export type VerificationOperation = typeof WORLD_VERIFICATION_OPERATIONS[number];
 const PERSON = "person:verification-ada";
@@ -26,6 +26,8 @@ export async function verificationScene(): Promise<NoninterferenceScene> {
       predicates: [{ predicate: "person.role", object: { kind: "literal", value: "Reviewer" } }] });
     const agent = addAgent(base.db, "verification-reader", {
       ...OWNER_AGENT_GRANT, ceiling: "public", subjects: ["topic:bayes", "project:launch", QUESTION, PERSON],
+      // Four observations per operation plus setup reads; production limits stay unchanged.
+      rate_limit_per_minute: 4 * WORLD_VERIFICATION_OPERATIONS.length + 16,
     });
     const reader = { ...base.reader, principal: authenticate(base.db, agent.token)! };
     const ref = (operation: string, label: string) => {
@@ -57,6 +59,7 @@ export function verificationInputs(scene: NoninterferenceScene): Record<Verifica
   const person = people.result.data.matches[0]?.ref;
   if (!person) throw new Error("verification Person positive control is absent");
   const of = { operation: "concept", concept: scene.refs.concept };
+  if (concept.result.status !== "current" || !("kind" in concept.result.view)) throw new Error("verification diff baseline is incomplete");
   const shared = read("share", { of });
   if (!("result" in shared) || !("data" in shared.result)) throw new Error("verification sharing failed");
   const handle = (shared.result.data as ShareData).handle;
@@ -71,6 +74,7 @@ export function verificationInputs(scene: NoninterferenceScene): Record<Verifica
     resume: input("resume", { handle }), question: input("question", { question }),
     find_questions: input("find_questions", { label: "update" }), frontier: input("frontier"),
     person: input("person", { person }), find_people: input("find_people", { label: "Ada" }),
+    diff: input("diff", { of, priorView: concept.result.view }),
   };
 }
 
@@ -85,10 +89,24 @@ function normalizeShare(value: ReturnType<typeof serveWorldView>): unknown {
 
 export function verificationCases(scene: NoninterferenceScene): readonly ReadCase[] {
   const inputs = verificationInputs(scene);
+  // Other operations deliberately issue many views. Give this long-lived
+  // conditional baseline its own identical grant and fixed cache partition,
+  // so ordinary 16-slot eviction cannot turn the privacy check into a stale-token check.
+  const agent = addAgent(scene.db, "verification-diff-reader", scene.reader.principal.grant);
+  const diffPrincipal = authenticate(scene.db, agent.token)!;
+  const reader = { ...scene.reader, principal: diffPrincipal };
+  const found = serveWorldView(reader, input("find_concepts", { label: "Bayesian" })).data;
+  if (!("result" in found) || !("data" in found.result) || !("matches" in found.result.data)) throw Error("diff verification discovery required");
+  const of = { operation: "concept", concept: found.result.data.matches[0]!.ref };
+  const baseline = serveWorldView(reader, { ...of, ...WHEN }).data;
+  if (!("result" in baseline) || baseline.result.status !== "current" || !("kind" in baseline.result.view)) throw Error("diff verification baseline required");
+  inputs.diff = input("diff", { of, priorView: baseline.result.view });
   return WORLD_VERIFICATION_OPERATIONS.map(name => {
     let work = { frames: 0, rowsExamined: 0, claimsVerified: 0, parsedBytes: 0 };
     return { name, run(ctx) {
-      const observed = collectReadFrames(() => serveWorldView(ctx, inputs[name]));
+      const observed = collectReadFrames(() => serveWorldView(name === "diff" ? { ...ctx, principal: diffPrincipal } : ctx, inputs[name]));
+      if (name === "diff" && (!("result" in observed.result.data) || observed.result.data.result.status !== "unchanged"))
+        throw Error("diff noninterference lost its live baseline");
       work = { frames: observed.frames.length,
         rowsExamined: observed.frames.reduce((n, frame) => n + frame.stats.rowsExamined, 0),
         claimsVerified: observed.frames.reduce((n, frame) => n + frame.stats.claimsVerified, 0),

@@ -7,6 +7,7 @@ import { situationCli } from "./situation";
 import { shareCli, resumeCli } from "./resume";
 import { evidenceCli } from "./evidence";
 import { questionCli, findQuestionsCli, frontierCli } from "./question";
+import { diffCli } from "./diff";
 import type { WorldCliEntry } from "./types";
 
 export type { WorldCliEntry, WorldCliOp } from "./types";
@@ -32,6 +33,7 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   // slot: ART
   // slot: OUTCOME
   // slot: DIFF
+  { name: "diff", cli: diffCli },
   // slot: SLICE
   // slot: ATTN
   // slot: FCST

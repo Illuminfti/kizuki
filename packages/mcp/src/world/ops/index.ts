@@ -7,6 +7,7 @@ import { situationFragment } from "./situation";
 import { shareFragment, resumeFragment } from "./resume";
 import { evidenceFragment } from "./evidence";
 import { questionFragment, findQuestionsFragment, frontierFragment } from "./question";
+import { diffFragment } from "./diff";
 import type { McpWorldOp } from "./types";
 
 export type { McpWorldOp } from "./types";
@@ -32,6 +33,7 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   // slot: ART
   // slot: OUTCOME
   // slot: DIFF
+  diffFragment,
   // slot: SLICE
   // slot: ATTN
   // slot: FCST

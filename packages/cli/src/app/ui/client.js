@@ -826,6 +826,15 @@ function renderWorld() {
     if (result.status === 'unavailable') section.append(empty('World view is not available here.', result.reason === 'history' ? 'Historical world snapshots are not available yet.' : 'Kizuki cannot read this world view right now.', button('Try again', retry, 'primary')));
     else if (result.status === 'new_view_required') section.append(empty('Read a fresh view.', 'This view or resume handle can no longer be used.', button('Browse again', () => loadWorld(null), 'primary')));
     else if (result.data?.schema === 'kizuki.resume-handle/v1') section.append(el('article', { class: 'result-item' }, el('h2', {}, 'Resume in another client'), el('code', {}, result.data.handle), el('p', {}, `Expires ${result.data.expiresAt}. The other client reads under its own access.`), button('Back to item', retry, 'quiet')));
+    else if (result.data?.schema === 'kizuki.world-diff/v1' || (state.world.operation === 'diff' && result.status === 'unchanged')) {
+      const changes = result.data;
+      section.append(el('article', { class: 'result-item' }, el('h2', {}, 'Changes since your previous read'),
+        result.status === 'unchanged' ? el('p', { role: 'status' }, 'No visible change since your previous read.') : el('p', {}, `${changes.added.length} added statements · ${changes.removed.length} removed statements · ${changes.changed.length} changed statements`),
+        changes?.truncated ? el('p', { class: 'search-hint' }, 'This comparison is partial. Read the current item for the available information.') : null,
+        ...(changes?.changed || []).map(change => el('p', {}, `Statement changed: ${change.fields.join(', ')}.`)),
+        button('Read current item', () => loadWorld(state.worldRef, state.world.diffOf), 'primary'),
+        result.view?.kind === 'view' && state.world.diffOf ? button('Check for more changes', () => loadWorld(state.worldRef, { operation: 'diff', of: state.world.diffOf, priorView: result.view }), 'secondary') : null));
+    }
     else {
       if (result.status === 'unchanged') section.append(el('p', { role: 'status' }, 'No visible change since your previous read.'));
       const data = result.data, matches = Array.isArray(data?.matches) ? data.matches : null;
@@ -846,6 +855,7 @@ function renderWorld() {
             el('p', {}, 'These statements explain the current view. Confidence reflects the assessment of each statement. Original source text is not included here.'),
             ...related.map(worldRelation)) : null));
         if (node?.ref) section.append(button('Share a resume handle', () => loadWorld(node.ref, { operation: 'share', of: { operation: data.concept ? 'concept' : 'situation', [data.concept ? 'concept' : 'situation']: node.ref } }), 'secondary'));
+        if (node?.ref && result.view?.kind === 'view') section.append(button('Check for changes', () => loadWorld(node.ref, { operation: 'diff', of: { operation: data.concept ? 'concept' : 'situation', [data.concept ? 'concept' : 'situation']: node.ref }, priorView: result.view }), 'secondary'));
         if (result.validUntil) section.append(el('p', { class: 'search-hint' }, `View valid until ${result.validUntil}. Access is checked on every read.`));
       }
     }
@@ -863,7 +873,8 @@ async function loadWorld(ref = state.worldRef, request = null) {
   if (state.view === 'world') render();
   try {
     const world = await api('world_view', payload); if (!current()) return;
-    if (world.result?.status === 'unchanged' && previous?.result?.data) world.result.data = previous.result.data;
+    if (world.result?.status === 'unchanged' && request?.operation !== 'diff' && previous?.result?.data) world.result.data = previous.result.data;
+    if (request?.operation === 'diff') world.diffOf = request.of;
     if (request?.operation === 'resume') {
       const node = world.result?.data?.concept || world.result?.data?.situation;
       state.worldRef = node?.ref || null;
