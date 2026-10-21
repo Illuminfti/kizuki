@@ -31,11 +31,11 @@ export interface PipelineStages {
 }
 
 const SHIPPED: PipelineStages = Object.freeze({
-  groupers: GROUPERS,
-  collectors: COLLECTORS,
-  enrichers: ENRICHERS,
-  // Assemblers share frame contracts with recursive card readers. Resolve the
-  // list at read time so either public entry point can initialize first.
+  // Stage modules share frame contracts with recursive readers and writers.
+  // Resolve every list at read time so any public entry point can initialize first.
+  get groupers() { return GROUPERS; },
+  get collectors() { return COLLECTORS; },
+  get enrichers() { return ENRICHERS; },
   get assemblers() { return KIND_ASSEMBLERS; },
 });
 let active: PipelineStages = SHIPPED;
