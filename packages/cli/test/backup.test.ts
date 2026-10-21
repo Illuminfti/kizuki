@@ -1,5 +1,5 @@
 import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHelpers } from "./helpers";
 
@@ -47,4 +47,24 @@ test("backup snapshots a vault whose source never granted export, verifies, and 
   const inside = runCli(f.env, "backup", "--out", join(f.vault, "inside"));
   expect(inside.exitCode).toBe(1);
   expect(inside.stderr).toContain("must not be inside the vault");
+});
+
+test("the scheduled backup rail produces an archive the real restore command verifies into an empty vault", () => {
+  const f = tempVault(), destination = join(f.root, "scheduled-backups"), target = join(f.root, "scheduled-restored");
+  const policy = join(f.root, "scheduled-policy.json");
+  writeFileSync(policy, JSON.stringify({ purposes: ["capture", "recall", "derive", "export"], allowed_fields: ["text", "subjects", "attachments", "metadata"], retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "private" }), { mode: 0o600 });
+  expect(runCli(f.env, "import", "markdown-folder", "--source", f.notes, "--policy", policy, "--expected-revision", "0", "--operation-id", "scheduled-fixture").exitCode).toBe(0);
+  writeFileSync(join(f.vault, ".kizuki/serve.toml"), `[backup]\ndir=${JSON.stringify(destination)}\nretain=2\n`, { mode: 0o600 });
+  const ran = runCli(f.env, "serve", "run", "backup", "--json");
+  expect(ran.exitCode, ran.stderr + ran.stdout).toBe(0);
+  const receipt = JSON.parse(ran.stdout).data;
+  expect(receipt).toMatchObject({ rail: "backup", status: "ok", errors: [], model: { calls: 0 } });
+  const directories = readdirSync(destination);
+  expect(directories).toHaveLength(1);
+  expect(directories[0]).toContain(receipt.run_id);
+  const restored = runCli(f.env, "restore", "--from", join(destination, directories[0]!), "--into", target, "--verify");
+  expect(restored.exitCode, restored.stderr).toBe(0);
+  expect(restored.stdout).toContain("events=3");
+  expect(restored.stdout).toContain("doctor_invalid=0");
+  expect(existsSync(join(target, ".kizuki/kizuki.db"))).toBe(true);
 });

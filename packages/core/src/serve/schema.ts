@@ -1,7 +1,8 @@
+import { DEFAULT_RAILS, isRailId } from "./rail-registry";
+import { assertRailPeriod } from "./rail-definition";
 import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
 import {
-  DEFAULT_RAILS,
   SERVE_SCHEMA_VERSION,
   type RailId,
   type ScheduleRow,
@@ -130,6 +131,7 @@ export function initServe(db: Database): void {
   }).immediate();
 }
 
+/** Seed every registered rail. Existing rows are left alone. */
 export function seedSchedules(db: Database): void {
   const insert = db.query(
     `INSERT OR IGNORE INTO schedules (rail, period_s, jitter_s, enabled)
@@ -145,6 +147,7 @@ export function seedSchedules(db: Database): void {
  * slot in to one new period from now; it never pushes a due slot back.
  */
 export function applyRailPeriod(db: Database, rail: RailId, periodSeconds: number, now: string): void {
+  assertRailPeriod(periodSeconds);
   db.transaction(() => {
     const row = db.query<{ period_s: number; next_run_at: string | null }, [string]>(
       "SELECT period_s,next_run_at FROM schedules WHERE rail=?",
@@ -156,6 +159,7 @@ export function applyRailPeriod(db: Database, rail: RailId, periodSeconds: numbe
   }).immediate();
 }
 
+/** The schedule rows of registered rails. */
 export function listSchedules(db: Database): ScheduleRow[] {
   if (!tableExists(db, "schedules")) return [];
   return db
@@ -175,9 +179,7 @@ export function listSchedules(db: Database): ScheduleRow[] {
         ORDER BY rail`,
     )
     .all()
-    .filter((row): row is typeof row & { rail: RailId } =>
-      DEFAULT_RAILS.some((spec) => spec.rail === row.rail),
-    )
+    .filter((row) => isRailId(row.rail))
     .map((row) => ({
       rail: row.rail,
       period_s: row.period_s,

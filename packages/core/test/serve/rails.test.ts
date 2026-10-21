@@ -25,6 +25,7 @@ describe("rails", () => {
     initVault(vault);
     const db = openLedger(join(vault, ".kizuki", "kizuki.db"));
     expect(listSchedules(db).map((row) => row.rail)).toEqual([
+      "backup",
       "brief",
       "doctor-sweep",
       "embed-backfill",
@@ -39,6 +40,7 @@ describe("rails", () => {
       now: () => "2026-09-03T00:00:00Z",
     });
     expect(receipts.map((item) => item.rail).sort()).toEqual([
+      "backup",
       "brief",
       "doctor-sweep",
       "embed-backfill",
@@ -48,7 +50,7 @@ describe("rails", () => {
       "sync",
       "verify-world",
     ]);
-    expect(listRunReceipts(db)).toHaveLength(8);
+    expect(listRunReceipts(db)).toHaveLength(9);
     expect(existsSync(join(vault, "dashboards", "brief-2026-09-03.md"))).toBe(true);
     const brief = readFileSync(join(vault, "dashboards", "brief-2026-09-03.md"), "utf8");
     expect(brief.startsWith("---\n")).toBe(true);

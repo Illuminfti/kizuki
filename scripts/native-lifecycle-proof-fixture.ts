@@ -1,7 +1,8 @@
 /** Invented receipt data for refusal tests. Never runtime or release evidence. */
 import { LEDGER_SCHEMA_VERSION } from "../packages/core/src/ledger/db";
 import { createHash } from "node:crypto";
-import { RAIL_IDS } from "../packages/core/src/serve/types";
+
+import { RAIL_IDS } from "../packages/core/src/serve/rail-registry";
 import { CURRENT_PACKAGE_FILES } from "./release-artifacts";
 import { SQLITE_ENGINE_POLICY } from "./artifact-proof";
 import { LIFECYCLE_BASELINE_SOURCE, LIFECYCLE_HISTORY, LIFECYCLE_MODEL_IDS, LIFECYCLE_ORIGINAL_STEPS, LIFECYCLE_RECOVERY_IDS, LIFECYCLE_REGISTRY_SHA256, LIFECYCLE_STATE_IDS, type NativeLifecycleIdentity } from "./native-lifecycle-proof";

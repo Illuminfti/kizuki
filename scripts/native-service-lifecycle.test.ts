@@ -7,7 +7,8 @@ import { cleanupOwnedNativeFixtures, nativeLifecycleCommandTimeout, runNativeExt
 import { SUPERVISOR_COMMAND_TIMEOUT_MS, SYSTEMD_RESTART_TIMEOUT_MS, SYSTEMD_START_TIMEOUT_MS, SYSTEMD_STOP_TIMEOUT_MS } from "../packages/core/src/serve/supervisor";
 import { SERVICE_BROKER_REAP_SECONDS, SERVICE_READY_SECONDS, SERVICE_START_SECONDS } from "../packages/core/src/serve/units";
 import { HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS } from "../packages/core/src/serve/types";
-import { RAIL_IDS, emptyRunTotals } from "../packages/core/src/serve/types";
+import { emptyRunTotals } from "../packages/core/src/serve/types";
+import { defineRail, registerRail, RAIL_IDS } from "../packages/core/src/serve/rail-registry";
 import { installedRailsHealth, readNativeRailDiagnostics, recordInstalledHealth, waitForFreshRails } from "./native-service-health";
 import { Database } from "bun:sqlite";
 
@@ -22,6 +23,17 @@ function healthyStatus() {
 }
 const healthyDiagnostics = () => ({ complete: true, truncated: false, error: null,
   receipts: RAIL_IDS.map(rail => ({ rail, status: "ok", finished_at: healthAt, current_instance: true, errors: [] as string[], retrieval_degraded: [] as string[] })) });
+
+test("installed health evidence retains every registered extension rail", () => {
+  const remove = ["fixture-health-one", "fixture-health-two"].map(id => registerRail(defineRail({
+    id, summary: "Fixture health rail.", period_s: 300, jitter_s: 0, expects_output: false, run: () => ({ status: "ok" }),
+  })));
+  try {
+    const result = installedRailsHealth({ exit_code: 0, stdout: JSON.stringify(healthyStatus()), stderr: "" }, healthyDiagnostics(), healthAt, Date.parse(healthAt));
+    expect(result.passed).toBe(true);
+    expect(result.evidence.rails?.map(row => row.rail)).toEqual([...RAIL_IDS]);
+  } finally { remove.reverse().forEach(dispose => dispose()); }
+});
 
 test("fresh empty no-model rails pass and report no store degradation", () => {
   const result = installedRailsHealth({ exit_code: 0, stdout: JSON.stringify(healthyStatus()), stderr: "" }, healthyDiagnostics(), healthAt, Date.parse(healthAt));

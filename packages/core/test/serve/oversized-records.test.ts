@@ -14,7 +14,8 @@ import { inspectServeDoctor } from "../../src/serve/doctor";
 import { journalExtractBatch, mineLiveDrafts, readExtractCursor, retrySkippedRecords } from "../../src/serve/extract";
 import { listSkippedRecords, segmentEnd } from "../../src/serve/extract-oversized";
 import { runRail } from "../../src/serve/rails";
-import { DEFAULT_EXTRACTION_CONFIG } from "../../src/serve/types";
+import { readLease } from "../../src/serve/leases";
+import { DEFAULT_EXTRACTION_CONFIG, HEARTBEAT_SECONDS, LEASE_RECLAIM_HEARTBEATS, WRITER_LEASE } from "../../src/serve/types";
 import { runWritePass } from "../../src/serve/write-pass";
 import { withVaultMutationSync } from "../../src/vault/mutation-scope";
 import {
@@ -44,8 +45,8 @@ function vaultWith(texts: readonly string[], settings = SETTINGS) {
   return { ...vault, db };
 }
 
-const sync = (f: { db: Database; vault: string }, producer: ReturnType<typeof segmentModelProducer>["producer"]) =>
-  runRail(f.db, f.vault, "sync", { hooks: { producer, claims: { db: f.db }, model_ref: MODEL } });
+const sync = (f: { db: Database; vault: string }, producer: ReturnType<typeof segmentModelProducer>["producer"], now?: () => string) =>
+  runRail(f.db, f.vault, "sync", { ...(now === undefined ? {} : { now }), hooks: { producer, claims: { db: f.db }, model_ref: MODEL } });
 const endsAt = (cursor: string | null, eventId: string): boolean => cursor?.endsWith(`\t${eventId}`) === true;
 const modelClaims = (db: Database): number =>
   listClaims(db, { status: "live", limit: 1_000 }).filter((claim) => claim.producer === "model").length;
@@ -242,7 +243,11 @@ test("a kill between segments resumes at the next segment and never re-files a f
   expect(modelClaims(db)).toBe(2);
 
   const model = segmentModelProducer(f.vault);
-  const resumed = await sync({ db, vault: f.vault }, model.producer);
+  const lease = readLease(db, WRITER_LEASE)!;
+  expect((await sync({ db, vault: f.vault }, model.producer, () => lease.heartbeat_at)).status).toBe("failed");
+  expect(model.requests).toEqual([]);
+  const retryAt = new Date(Date.parse(lease.heartbeat_at) + HEARTBEAT_SECONDS * LEASE_RECLAIM_HEARTBEATS * 1000).toISOString();
+  const resumed = await sync({ db, vault: f.vault }, model.producer, () => retryAt);
   expect(resumed).toMatchObject({ status: "ok", errors: [], claims_extracted: 3, oversized: { segments: 2, skipped: 0 } });
   expect(model.requests.map((request) => request.event_ids)).toEqual([[e1], [e1], [e2]]);
   const rest = segmentsOf(model.requests, e1);

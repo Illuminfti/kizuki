@@ -8,7 +8,7 @@ import type { PortDescriptor } from "../contracts/ports";
 import { inspectServeDoctor, type ServeDoctorOptions } from "./doctor";
 import { runRail } from "./rails";
 import type { RailHooks } from "./rails";
-import { isRailId } from "./types";
+import { isRailId } from "./rail-registry";
 import type { Database } from "bun:sqlite";
 
 export const SERVE_SURFACE_ID = "kizuki.surface.cli";

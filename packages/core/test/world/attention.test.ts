@@ -12,6 +12,7 @@ import { bindSourceModelPort } from "../../src/ledger/source-grants";
 import type { LlmPort } from "../../src/contracts/llm";
 import { writeRailCursor } from "../../src/ledger/checkpoints";
 import { runWorldJobs } from "../../src/serve/world-jobs";
+import { runRail } from "../../src/serve/rails";
 import { EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 
 const fixture = (name: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../../rfcs/fixtures", `${name}-design.json`), "utf8"));
@@ -98,6 +99,25 @@ test("file notifier returns duplicate for a repeated candidate and preserves one
     expect(await deliverAttention(f.ctx, cue)).toMatchObject({ status: "delivered", receipt: { duplicate: true } });
     expect(statSync(path).mtimeMs).toBe(before);
     expect(readFileSync(path, "utf8").split("\n").filter(line => line.startsWith("- "))).toHaveLength(1);
+    expect(readdirSync(join(f.vault.path, "dashboards")).filter(name => name.startsWith("attention-"))).toHaveLength(1);
+  } finally { f.dispose(); }
+}, 120_000);
+
+test("the registered brief rail delivers current attention once alongside its daily page", async () => {
+  const f = await attentionFixture();
+  try {
+    const cue = f.candidates()[0]!.cue;
+    const now = new Date().toISOString();
+    const run = () => runRail(f.db, f.vault.path, "brief", { now: () => now });
+    const first = await run();
+    expect(first.status).toBe("ok");
+    expect(first.model.calls).toBe(0);
+    const path = join(f.vault.path, "dashboards", `attention-${cue}.md`);
+    const before = readFileSync(path, "utf8"), modified = statSync(path).mtimeMs;
+    expect(before).toContain(cue);
+    expect((await run()).status).toBe("ok");
+    expect(readFileSync(path, "utf8")).toBe(before);
+    expect(statSync(path).mtimeMs).toBe(modified);
     expect(readdirSync(join(f.vault.path, "dashboards")).filter(name => name.startsWith("attention-"))).toHaveLength(1);
   } finally { f.dispose(); }
 }, 120_000);
