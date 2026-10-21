@@ -64,8 +64,9 @@ regular and not a symlink. It is read privately and used only in request
 headers. The runner records neither its value nor its path. Remote endpoints
 require the explicit `--allow-remote` option and existing authorization.
 
-Calls are sequential with at least 60 seconds between starts and at most 100
-selected cases. The configured bridge must also enforce cross-process daily
+Calls are sequential with at least 61 seconds after the previous HTTP response
+completes and at most 100 selected cases. This exceeds the bridge admission gap
+even when HTTP admission was delayed. The configured bridge must also enforce cross-process daily
 limits and one in-flight call; the runner does not replace those controls.
 Each case receives one attempt with adapter retries disabled. A refusal is
 retained, never silently retried or replaced. Do not tune a prompt against this
@@ -75,7 +76,10 @@ unseen corpus and keeps the previous result.
 The new output file is created exclusively with mode 0600. A pending trace is
 fsynced before each request and the result after completion. A killed run
 therefore retains pending work as unproven; restarting uses a new output file,
-not a claimed resume. The report pins the source commit/clean state, runner,
+not a claimed resume. The narrowly reviewed v1-to-v2 continuation accepts only
+exact pinned predecessor bytes, retains every successful transport including
+semantic failures, and permits only an explicitly classified HTTP429/unrun
+continuation. A changed corpus, prompt, model or registry cannot reuse it. The report pins the source commit/clean state, runner,
 registry, corpus and complete system prompt, plus request/response hashes,
 per-case conditional prompt hashes, timing, parsed responses and measured usage. An untracked evaluator
 cannot claim a clean source revision. `--cases` supports diagnosis, but a
@@ -111,3 +115,33 @@ bun run typecheck
 Scorer tests deliberately use scripted controls and a fake local endpoint to
 prove rejection and provenance handling. They establish harness correctness,
 not real model quality or production readiness.
+
+## Fresh contract split
+
+`corpus-v1.ts` preserves the original authored corpus. Its original receipts and
+strict scores remain historical evidence. The current `corpus-v2.ts` contains
+53 newly authored cases and uses the versioned v2 corpus schema. It includes
+all four families for nine kinds, twelve domain cases and five conditional
+grounding cases. No production kind is enabled by this change.
+
+RFC0003 permits ordinary supplied and occurrence references. The new scorer
+accepts only finite, predeclared, record-grounded representations of an entity;
+it rejects a response that puts classification and details on different
+representations. It never merges arbitrary names, records or source namespaces.
+Ordinary parser-valid nominations are bounded data, while identity witness
+nominations retain their exact host-proof oracle. Person subjects and Person
+relationship endpoints retain the separate supplied-only admission rule.
+
+Literal alternatives are declared in the corpus before calls; prose-specific
+capitalization and final-period alternatives do not create a general fuzzy
+matcher. The scorer still rejects invented objects, altered polarity,
+incorrect speakers, omitted consumer prerequisites, and fabricated time. The
+fresh negative Framework assertion must remain negative, and the Person time
+case must retain both supplied endpoints and its exact relationship interval.
+
+The repaired extraction prompt describes the registered kind and predicate
+constraints from build-owned definitions, intersected with the request's
+provided registry. It keeps the existing wire contract and includes no source
+text in the system message. Synthetic model-adapter → writer → consumer tests
+prove the boundary for structured Person, refused raw-name Person, and a
+nominated Question occurrence. Those tests are separate from real model quality.

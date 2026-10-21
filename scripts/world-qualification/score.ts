@@ -20,11 +20,15 @@ export interface QualificationCase {
   id: string; kind: string; family: Family; records: RecordInput[];
   /** Exact request-local identity nominations expected on witness mentions, never prompt data. */
   nominations?: { mention: string; supplied: string }[];
+  /** Finite, record-grounded equivalent reference representations; one representation per response. */
+  references?: { key: string; refs: string[] }[];
+  /** Ordinary nominations are bounded data; only identity witnesses require exact grounding. */
+  ordinary_nominations?: "bounded";
   /** Each required tuple has finite, predeclared alternatives, not model-graded fuzzy matching. */
   required: Meaning[][]; optional: Meaning[];
 }
 export interface QualificationCorpus {
-  schema: "kizuki.world-qualification-corpus/v1"; synthetic: true;
+  schema: "kizuki.world-qualification-corpus/v1" | "kizuki.world-qualification-corpus/v2"; synthetic: true;
   split: "held_out"; version: string; cases: QualificationCase[];
 }
 export interface Observation {
@@ -59,6 +63,16 @@ function normalizeMeaning(value: Meaning): Meaning {
     valid_to: value.valid_to === null ? null : new Date(value.valid_to).toISOString(),
     context: [...value.context].sort(), citations: [...value.citations].sort(), perspective_citations: [...value.perspective_citations].sort() };
 }
+function canonicalRef(item: QualificationCase, value: string | null): string | null {
+  return value === null ? null : item.references?.find(row => row.refs.includes(value))?.key ?? value;
+}
+function canonicalMeaning(item: QualificationCase, meaning: Meaning): Meaning {
+  return normalizeMeaning({ ...meaning, subject: canonicalRef(item, meaning.subject)!,
+    object: meaning.object.kind === "subject" ? { ...meaning.object, value: canonicalRef(item, meaning.object.value)! } : meaning.object,
+    holder: canonicalRef(item, meaning.holder), speaker: canonicalRef(item, meaning.speaker), addressee: canonicalRef(item, meaning.addressee),
+    context: meaning.context.map(ref => canonicalRef(item, ref)!),
+  });
+}
 export function responseMeanings(item: QualificationCase, response: ExtractResponseV2): Meaning[] {
   const records = new Map(item.records.map((row, index) => [eventId(index), row.id]));
   const mentions = new Map(response.mentions.map(row => [row.id, row]));
@@ -69,7 +83,7 @@ export function responseMeanings(item: QualificationCase, response: ExtractRespo
     return mention === undefined ? "invalid:missing-mention" : `mention:${records.get(mention.anchor.event_id) ?? "invalid"}:${mention.anchor.start_utf16}:${mention.anchor.end_utf16}`;
   };
   const citations = (anchors: readonly { event_id: string }[]) => [...new Set(anchors.map(anchor => records.get(anchor.event_id) ?? "invalid"))].sort();
-  return response.claims.map(claim => normalizeMeaning({
+  return response.claims.map(claim => canonicalMeaning(item, {
     subject: ref(claim.subject)!, predicate: claim.predicate,
     object: { kind: claim.object.kind, value: claim.object.kind === "literal" ? claim.object.value : claim.object.kind === "vocabulary" ? claim.object.ref.id : ref(claim.object.ref)! },
     holder: ref(claim.perspective.holder), speaker: ref(claim.perspective.speaker), addressee: ref(claim.perspective.addressee),
@@ -80,7 +94,7 @@ export function responseMeanings(item: QualificationCase, response: ExtractRespo
 }
 
 export function validateCorpus(corpus: QualificationCorpus): void {
-  if (corpus.schema !== "kizuki.world-qualification-corpus/v1" || corpus.synthetic !== true || corpus.split !== "held_out" ||
+  if (!["kizuki.world-qualification-corpus/v1", "kizuki.world-qualification-corpus/v2"].includes(corpus.schema) || corpus.synthetic !== true || corpus.split !== "held_out" ||
     !/^[a-z0-9-]{1,64}$/.test(corpus.version) || corpus.cases.length < 4 || corpus.cases.length > 100) throw new Error("invalid qualification corpus");
   const ids = new Set<string>();
   for (const item of corpus.cases) {
@@ -88,6 +102,23 @@ export function validateCorpus(corpus: QualificationCorpus): void {
       item.records.length < 1 || item.records.length > 8 || item.required.length > 32 || item.optional.length > 64 ||
       (item.family !== "abstention" && item.required.length === 0)) throw new Error("invalid qualification case");
     ids.add(item.id);
+    if ((item.references !== undefined || item.ordinary_nominations !== undefined) && corpus.schema !== "kizuki.world-qualification-corpus/v2") throw new Error("legacy corpus cannot change reference semantics");
+    if (item.references !== undefined) {
+      if (item.references.length > 32 || new Set(item.references.map(row => row.key)).size !== item.references.length) throw new Error("invalid reference alternatives");
+      const seen = new Set<string>();
+      for (const group of item.references) {
+        if (!/^entity:[a-z0-9-]{1,50}$/.test(group.key) || group.refs.length < 1 || group.refs.length > 8) throw new Error("invalid reference alternative");
+        for (const ref of group.refs) {
+          if (seen.has(ref)) throw new Error("ambiguous reference alternative"); seen.add(ref);
+          if (ref.startsWith("supplied:")) {
+            if (!item.records.some(row => row.subjects.some(subject => `supplied:${subject.id}` === ref))) throw new Error("unbound supplied alternative");
+          } else {
+            const match = /^mention:([^:]+):(\d+):(\d+)$/.exec(ref), record = item.records.find(row => row.id === match?.[1]);
+            if (match === null || record === undefined || Number(match[2]) >= Number(match[3]) || Number(match[3]) > record.text.length) throw new Error("unbound mention alternative");
+          }
+        }
+      }
+    }
     if (new Set(item.records.map(row => row.id)).size !== item.records.length || item.records.some(row => row.text.length === 0 || row.text.length > 8000) ||
       item.records.reduce((n, row) => n + row.text.length, 0) > 24_000) throw new Error("invalid qualification records");
     for (const alternatives of item.required) if (alternatives.length < 1 || alternatives.length > 8) throw new Error("invalid oracle alternatives");
@@ -117,16 +148,37 @@ export function scoreCase(item: QualificationCase, observed: Observation) {
     const record = item.records[observed.input.events.findIndex(event => event.event_id === mention.anchor.event_id)];
     const key = `mention:${record?.id}:${mention.anchor.start_utf16}:${mention.anchor.end_utf16}`;
     const expected = expectedNominations.get(key);
-    if (expected === undefined) { if (mention.candidate_refs.length !== 0) errors.push("unsupported_nomination"); }
+    if (expected === undefined) { if (item.ordinary_nominations !== "bounded" && mention.candidate_refs.length !== 0) errors.push("unsupported_nomination"); }
     else {
       seenNominations.add(key);
       if (mention.candidate_refs.length !== 1 || mention.candidate_refs[0]?.kind !== "supplied" || mention.candidate_refs[0]?.id !== expected) errors.push("incorrect_nomination");
     }
   }
   for (const key of expectedNominations.keys()) if (!seenNominations.has(key)) errors.push("missing_nomination");
+  // Reference alternatives may not hide a classification/detail split that produces no usable card.
+  if (item.references !== undefined) {
+    const used = new Map<string, Set<string>>();
+    const rawRef = (ref: { kind: "supplied" | "mention"; id: string } | null) => {
+      if (ref === null) return;
+      const mention = ref.kind === "mention" ? observed.response!.mentions.find(row => row.id === ref.id) : undefined;
+      const record = mention === undefined ? undefined : item.records[observed.input.events.findIndex(event => event.event_id === mention.anchor.event_id)];
+      const raw = ref.kind === "supplied" ? `supplied:${ref.id}` : `mention:${record?.id}:${mention?.anchor.start_utf16}:${mention?.anchor.end_utf16}`;
+      const key = canonicalRef(item, raw)!;
+      if (!key.startsWith("entity:")) return;
+      const representations = used.get(key) ?? new Set<string>(); representations.add(raw); used.set(key, representations);
+    };
+    for (const claim of observed.response.claims) {
+      [claim.subject, ...(claim.object.kind === "subject" ? [claim.object.ref] : []), ...claim.context,
+        claim.perspective.holder, claim.perspective.speaker, claim.perspective.addressee].forEach(rawRef);
+      if ((claim.predicate.startsWith("person.") || claim.predicate === "relationship.with" ||
+          (claim.predicate === "world.kind" && claim.object.kind === "vocabulary" && claim.object.ref.id === "world/person")) && claim.subject.kind !== "supplied") errors.push("invalid_person_ref");
+      if (["relationship.with", "commitment.debtor", "commitment.creditor"].includes(claim.predicate) && claim.object.kind === "subject" && claim.object.ref.kind !== "supplied") errors.push("invalid_person_endpoint");
+    }
+    if ([...used.values()].some(refs => refs.size > 1)) errors.push("split_reference_identity");
+  }
   const keys = responseMeanings(item, observed.response).map(value => canonicalJson(value));
-  const required = item.required.map(alternatives => alternatives.map(value => canonicalJson(normalizeMeaning(value))));
-  const allowed = new Set([...required.flat(), ...item.optional.map(value => canonicalJson(normalizeMeaning(value)))]);
+  const required = item.required.map(alternatives => alternatives.map(value => canonicalJson(canonicalMeaning(item, value))));
+  const allowed = new Set([...required.flat(), ...item.optional.map(value => canonicalJson(canonicalMeaning(item, value)))]);
   required.forEach((alternatives, index) => { if (!keys.some(key => alternatives.includes(key))) errors.push(`missing_meaning:${index}`); });
   keys.forEach((key, index) => { if (!allowed.has(key)) errors.push(`unsupported_meaning:${index}`); });
   if (new Set(keys).size !== keys.length) errors.push("duplicate_meaning");

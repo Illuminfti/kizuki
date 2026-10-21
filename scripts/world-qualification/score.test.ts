@@ -16,11 +16,12 @@ import { extractionV2SystemContent } from "../../packages/core/src/producer/prom
 
 /** A scorer control only. It never receives runner provenance or enables product flags. */
 export function scripted(item: QualificationCase, registry?: WorldRegistry): Observation {
-  const input = caseInput(item, registry ?? candidateRegistry(WORLD_VOCABULARY_MODULES, [item.kind]));
+  const input = caseInput(item, registry ?? candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation", "question", "person", "skill", "framework", "procedure", "commitment", "decision"], ["situation.has_commitment"]));
   const mentions: ExtractResponseV2["mentions"][number][] = [];
   const refs = new Map<string, DraftRef>();
   const ref = (value: string | null): DraftRef | null => {
     if (value === null) return null;
+    value = item.references?.find(row => row.key === value)?.refs[0] ?? value;
     if (value.startsWith("supplied:")) return { kind: "supplied", id: value.slice(9) };
     if (refs.has(value)) return refs.get(value)!;
     const [, recordId, start, end] = value.split(":"), index = item.records.findIndex(row => row.id === recordId), event = input.events[index]!;
@@ -56,7 +57,7 @@ test("missing observations are not_run and never a qualified kind", () => {
 });
 
 test("all runnable authored cases have satisfiable typed oracles, without claiming model quality", () => {
-  for (const item of qualificationCorpus.cases.filter(row => ["concept", "situation", "question"].includes(row.kind))) {
+  for (const item of qualificationCorpus.cases) {
     if (item.required.flat().some(row => !WORLD_REGISTRY.vocabulary.some(predicate => predicate.predicate === row.predicate))) continue;
     const result = scoreCase(item, scripted(item));
     expect({ id: result.id, errors: result.errors }).toEqual({ id: item.id, errors: [] });
@@ -64,23 +65,24 @@ test("all runnable authored cases have satisfiable typed oracles, without claimi
 });
 
 test("attribution swaps, invented dates, unsupported claims and dropped output all fail", () => {
-  const item = qualificationCorpus.cases.find(row => row.id === "question-perspective-v1")!;
+  const item = qualificationCorpus.cases.find(row => row.id === "question-perspective-v2")!;
   const good = scripted(item);
   expect(scoreCase(item, good).passed).toBe(true);
-  const first = good.response!.claims[0]!;
+  const index = good.response!.claims.findIndex(row => row.perspective.mode === "quoted");
+  const first = good.response!.claims[index]!;
   for (const replacement of [
     { ...first, perspective: { ...first.perspective, holder: { kind: "supplied" as const, id: "ben" } } },
     { ...first, perspective: { ...first.perspective, mode: "asserted" as const } },
     { ...first, valid_from: "2026-01-01T00:00:00Z", temporal_basis: "explicit" as const },
     { ...first, object: { kind: "vocabulary" as const, ref: { kind: "vocabulary" as const, id: "question/resolved" } }, predicate: "question.status" },
-  ]) expect(scoreCase(item, { ...good, response: { ...good.response!, claims: [replacement, ...good.response!.claims.slice(1)] } }).passed).toBe(false);
+  ]) expect(scoreCase(item, { ...good, response: { ...good.response!, claims: good.response!.claims.map((row, i) => i === index ? replacement : row) } }).passed).toBe(false);
   expect(scoreCase(item, { ...good, dropped: 1 }).passed).toBe(false);
   expect(scoreCase(item, { ...good, usage: { ...good.usage, output_tokens: null } }).passed).toBe(false);
   expect(scoreCase(item, { ...good, response: { ...good.response!, claims: [...good.response!.claims, first] } }).passed).toBe(false);
 });
 
 test("grounding requires exact witness nominations and cannot count context as independent testimony", () => {
-  const item = qualificationCorpus.cases.find(row => row.id === "concept-grounding-compatible-v1")!;
+  const item = qualificationCorpus.cases.find(row => row.id === "concept-grounding-compatible-v2")!;
   const good = scripted(item);
   expect(scoreCase(item, good).errors).toEqual([]);
   const [left, right] = good.response!.mentions;
@@ -93,14 +95,14 @@ test("grounding requires exact witness nominations and cannot count context as i
   const extraContext = { event_id: good.input.events[0]!.event_id, start_utf16: 0, end_utf16: good.input.events[0]!.text.length };
   const copied = { ...good, response: { ...good.response!, claims: good.response!.claims.map(row => ({ ...row, anchors: [...row.anchors, extraContext] })) } };
   expect(scoreCase(item, copied).passed).toBe(false);
-  for (const id of ["concept-grounding-homonym-v1", "concept-grounding-missing-proof-v1", "concept-grounding-quoted-labels-v1"]) {
+  for (const id of ["concept-grounding-homonym-v2", "concept-grounding-missing-proof-v2", "concept-grounding-quoted-labels-v2"]) {
     const abstention = qualificationCorpus.cases.find(row => row.id === id)!;
     expect(scoreCase(abstention, scripted(abstention)).passed).toBe(true);
   }
 });
 
 test("grounding cases reach the actual conditional prompt and ProducerV2 parser", async () => {
-  const item = qualificationCorpus.cases.find(row => row.id === "concept-grounding-compatible-v1")!;
+  const item = qualificationCorpus.cases.find(row => row.id === "concept-grounding-compatible-v2")!;
   const control = scripted(item);
   const server = startFakeEndpoint(() => Response.json({ id: "grounding-control", model: "synthetic", object: "chat.completion", created: 1,
     choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(control.response) } }],
@@ -203,7 +205,7 @@ test("actual port observation binds the exact prompt and usage but a single synt
     choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }) } }],
     usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }));
   try {
-    const result = await runQualification({ kinds: ["question"], base_url: server.base_url, model: "synthetic", case_ids: ["question-abstention-v1"] });
+    const result = await runQualification({ kinds: ["question"], base_url: server.base_url, model: "synthetic", case_ids: ["question-abstention-v2"] });
     expect(result.observations).toHaveLength(1); expect(result.traces).toHaveLength(1);
     expect(result.observations[0]!.usage).toEqual({ calls: 1, input_tokens: 100, output_tokens: 10 });
     expect(result.score.kinds.find(row => row.kind === "question")?.status).toBe("failed");
@@ -223,7 +225,7 @@ test("endpoint and credential custody failures cannot call the model or expose t
   try {
     await expect(runQualification({ kinds: ["question"], base_url: "https://models.example.test/v1", model: "synthetic" })).rejects.toThrow("endpoint rejected");
     const path = join(directory, "token"); writeFileSync(path, "synthetic-private-marker", { mode: 0o644 });
-    await expect(runQualification({ kinds: ["question"], base_url: server.base_url, model: "synthetic", token_file: path, case_ids: ["question-abstention-v1"] })).rejects.toThrow("token custody rejected");
+    await expect(runQualification({ kinds: ["question"], base_url: server.base_url, model: "synthetic", token_file: path, case_ids: ["question-abstention-v2"] })).rejects.toThrow("token custody rejected");
     expect(server.requests).toHaveLength(0);
   } finally { server.stop(); rmSync(directory, { recursive: true, force: true }); }
 });
@@ -243,5 +245,62 @@ test("an empty successful response proves abstention only; it cannot qualify pos
     const input = caseInput(item, candidateRegistry(WORLD_VOCABULARY_MODULES, ["question"]));
     const score = scoreCase(item, { case_id: item.id, input, status: "ok", response: empty, dropped: 0, usage: { calls: 1, input_tokens: 10, output_tokens: 10 } });
     expect(score.passed).toBe(item.family === "abstention");
+  }
+});
+
+
+test("fresh split is distinct, complete, within planning budgets, and exercises every new offered predicate", () => {
+  const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation", "question", "person", "skill", "framework", "procedure", "commitment", "decision"], ["situation.has_commitment"]);
+  expect(qualificationCorpus.schema).toBe("kizuki.world-qualification-corpus/v2");
+  expect(qualificationCorpus.cases).toHaveLength(53);
+  const legacy = require("./corpus-v1").qualificationCorpus as typeof qualificationCorpus;
+  const oldText = new Set(legacy.cases.flatMap(row => row.records.map(record => record.text)));
+  const tested = new Set(qualificationCorpus.cases.flatMap(row => row.required.flat().map(meaning => meaning.predicate)));
+  const baseline = new Set(WORLD_REGISTRY.offered.vocabulary.map(row => row.predicate));
+  for (const predicate of registry.offered.vocabulary) if (!baseline.has(predicate.predicate)) expect(tested.has(predicate.predicate)).toBe(true);
+  for (const item of qualificationCorpus.cases) {
+    expect(item.records.every(row => !oldText.has(row.text))).toBe(true);
+    const input = caseInput(item, registry);
+    const plan = require("../../packages/core/src/producer/model-v2").planModelExtractionV2(input);
+    expect({ id: item.id, status: plan.status }).toEqual({ id: item.id, status: "ready" });
+  }
+});
+
+test("finite reference choices allow one grounded representation but cannot conceal a split or new identity", () => {
+  const item = qualificationCorpus.cases.find(row => row.id === "question-positive-v2")!, good = scripted(item);
+  expect(scoreCase(item, good).passed).toBe(true);
+  const supplied = { kind: "supplied" as const, id: "subject" };
+  const allSupplied = { ...good, response: { ...good.response!, claims: good.response!.claims.map(row => ({ ...row, subject: supplied })) } };
+  expect(scoreCase(item, allSupplied).passed).toBe(true);
+  const split = { ...good, response: { ...good.response!, claims: good.response!.claims.map((row, i) => i === 0 ? { ...row, subject: supplied } : row) } };
+  expect(scoreCase(item, split).errors).toContain("split_reference_identity");
+  const ordinary = { ...good, response: { ...good.response!, mentions: good.response!.mentions.map(row => ({ ...row, candidate_refs: [supplied] })) } };
+  expect(scoreCase(item, ordinary).passed).toBe(true);
+  const wrong = { ...good, response: { ...good.response!, claims: good.response!.claims.map(row => ({ ...row, subject: { kind: "supplied" as const, id: "missing" } })) } };
+  expect(scoreCase(item, wrong).passed).toBe(false);
+});
+
+test("fresh negative assertions and structured Person authority cannot be scored away", () => {
+  const framework = qualificationCorpus.cases.find(row => row.id === "framework-positive-v2")!, good = scripted(framework);
+  expect(scoreCase(framework, good).passed).toBe(true);
+  const inverted = { ...good, response: { ...good.response!, claims: good.response!.claims.map(row => row.polarity === "negative" ? { ...row, polarity: "positive" as const } : row) } };
+  expect(scoreCase(framework, inverted).passed).toBe(false);
+  const person = qualificationCorpus.cases.find(row => row.id === "person-positive-v2")!, observed = scripted(person);
+  const anchor = observed.input.supplied_refs[0]!.anchors[0]!;
+  const forged = { ...observed, response: { ...observed.response!, mentions: [{ id: "p", label: "Leda", anchor, candidate_refs: [] }], claims: observed.response!.claims.map(row => ({ ...row, subject: { kind: "mention" as const, id: "p" } })) } };
+  expect(scoreCase(person, forged).errors).toContain("invalid_person_ref");
+  expect(scoreCase(person, forged).passed).toBe(false);
+});
+
+test("every declared reference choice and semantic alternative is a satisfiable typed oracle", () => {
+  for (const item of qualificationCorpus.cases) {
+    for (const group of item.references ?? []) for (const selected of group.refs) {
+      const variant = { ...item, references: item.references!.map(row => row.key === group.key ? { ...row, refs: [selected, ...row.refs.filter(ref => ref !== selected)] } : row) };
+      expect({ id: item.id, reference: selected, errors: scoreCase(item, scripted(variant)).errors }).toEqual({ id: item.id, reference: selected, errors: [] });
+    }
+    item.required.forEach((alternatives, index) => alternatives.forEach(selected => {
+      const variant = { ...item, required: item.required.map((rows, at) => at === index ? [selected] : rows) };
+      expect({ id: item.id, index, errors: scoreCase(item, scripted(variant)).errors }).toEqual({ id: item.id, index, errors: [] });
+    }));
   }
 });

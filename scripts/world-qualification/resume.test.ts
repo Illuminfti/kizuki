@@ -76,12 +76,12 @@ test("even freshly pinned malformed predecessor provenance, pending turns or unr
 test("HTTP429 records explicit transport failure, halts without retries, and leaves remaining cases not_run", async () => {
   const server = startFakeEndpoint(() => new Response("synthetic rate refusal", { status: 429 }));
   try {
-    const result = await runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", case_ids: ["concept-positive-v1", "concept-abstention-v1"] });
+    const result = await runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", case_ids: ["concept-positive-v2", "concept-abstention-v2"] });
     expect(server.requests).toHaveLength(1);
     expect(result.traces[0]?.http_status).toBe(429);
     expect(result.halt_reason).toBe("transport_refused");
     expect(result.score.kinds.find(row => row.kind === "concept")?.status).toBe("not_run");
-    expect(result.case_states).toEqual([{ case_id: "concept-positive-v1", status: "transport_failed" }, { case_id: "concept-abstention-v1", status: "not_run" }]);
+    expect(result.case_states).toEqual([{ case_id: "concept-positive-v2", status: "transport_failed" }, { case_id: "concept-abstention-v2", status: "not_run" }]);
     expect(result.observations).toHaveLength(1);
   } finally { server.stop(); }
 });
@@ -105,7 +105,7 @@ test("stop during an active HTTP turn preserves its response before stopping the
       usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } });
   });
   try {
-    const result = await runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", stopped: () => stopped, case_ids: ["concept-positive-v1", "concept-abstention-v1"] });
+    const result = await runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", stopped: () => stopped, case_ids: ["concept-positive-v2", "concept-abstention-v2"] });
     expect(server.requests).toHaveLength(1); expect(result.halt_reason).toBe("requested_stop");
     expect(result.traces[0]?.http_status).toBe(200); expect(result.traces[0]?.completed_at).not.toBeNull();
     expect(result.observations).toHaveLength(1); expect(result.observations[0]?.response?.schema).toBe("kizuki.producer-response/v2");
