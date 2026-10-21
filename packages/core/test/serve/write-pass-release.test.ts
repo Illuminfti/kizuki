@@ -16,6 +16,8 @@ import { putEvent } from "../claims/helpers";
 import { seedLivePages } from "../helpers/bulk-pages";
 import { clearGraphRegistry } from "../../src/graph/graph";
 import * as pages from "../../src/vault/pages";
+import * as capacity from "../../src/canon/capacity";
+import * as inventory from "../../src/vault/capacity-inventory";
 
 const dirs: string[] = [];
 afterEach(() => { for (const directory of dirs.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -99,21 +101,39 @@ test("one write pass does not enumerate historical receipt identities", async ()
   } finally { read.mockRestore(); db.close(); }
 }, 120_000);
 
-test("a cold write pass discovers page identities outside writer ownership", async () => {
-  const { path, db, options } = pending(1);
+test("a cold write pass discovers identities outside ownership and checks capacity under it", async () => {
+  const { path, db, written, options } = pending(1);
   seedLivePages(db, path, 200);
   rebuildDerived(db, path);
   clearGraphRegistry(db);
+  const receiptsBefore = written();
+  // A missing or unqualified resource inventory requires a fresh capacity
+  // walk under the writer. It is not graph identity reconciliation.
+  const bound = spyOn(inventory, "currentCapacityBound").mockReturnValue(null);
+  const originalCapacity = capacity.requireCanonWriteCapacity;
+  let checkingCapacity = false, discoveryWalks = 0, capacityWalks = 0;
+  const check = spyOn(capacity, "requireCanonWriteCapacity").mockImplementation((...args) => {
+    checkingCapacity = true;
+    try { return originalCapacity(...args); }
+    finally { checkingCapacity = false; }
+  });
   const original = pages.listCanonPagesReport;
   const walk = spyOn(pages, "listCanonPagesReport").mockImplementation((...args) => {
     const lock = tryWriteFlock(path);
-    expect(lock).not.toBeNull(); lock?.release();
+    try {
+      if (checkingCapacity) { expect(lock).toBeNull(); capacityWalks++; }
+      else { expect(lock).not.toBeNull(); discoveryWalks++; }
+    } finally { lock?.release(); }
     return original(...args);
   });
   try {
-    expect((await runWritePass(db, path, options())).canon_writes).toBe(1);
-    expect(walk).toHaveBeenCalled();
-  } finally { walk.mockRestore(); db.close(); }
+    const result = await runWritePass(db, path, options());
+    expect(result.canon_writes).toBe(1);
+    expect(result.errors).toEqual([]);
+    expect(written()).toBe(receiptsBefore + 1);
+    expect(discoveryWalks).toBeGreaterThan(0);
+    expect(capacityWalks).toBeGreaterThan(0);
+  } finally { walk.mockRestore(); check.mockRestore(); bound.mockRestore(); db.close(); }
 });
 
 test("a stop request between two pages ends the pass with at most one more page", async () => {
