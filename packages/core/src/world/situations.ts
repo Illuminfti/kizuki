@@ -61,7 +61,15 @@ export function readSituations(
   return ctx.db.transaction(() => readSituationsSnapshot(ctx, options))();
 }
 
-function readSituationsSnapshot(ctx: ServeContext, options: { limit: number; at: string; subjects?: readonly string[]; canRead: (claim: Claim) => boolean }): SituationState[] {
+/** Session callers cannot supply an old instant and borrow present outcome evidence. */
+export function readCurrentSituations(ctx: ServeContext, options: {
+  limit: number; subjects?: readonly string[]; canRead: (claim: Claim) => boolean;
+}): SituationState[] {
+  const at = new Date().toISOString();
+  return ctx.db.transaction(() => readSituationsSnapshot(ctx, { ...options, at, currentOutcomeAt: at }))();
+}
+
+function readSituationsSnapshot(ctx: ServeContext, options: { limit: number; at: string; currentOutcomeAt?: string; subjects?: readonly string[]; canRead: (claim: Claim) => boolean }): SituationState[] {
   if (
     !tableExists(ctx.db, "claim_v2_semantics") ||
     !tableExists(ctx.db, "semantic_bindings")
@@ -111,11 +119,12 @@ function readSituationsSnapshot(ctx: ServeContext, options: { limit: number; at:
 function readOne(
   ctx: ServeContext,
   row: SubjectRow,
-  options: { at: string; canRead: (claim: Claim) => boolean },
+  options: { at: string; currentOutcomeAt?: string; canRead: (claim: Claim) => boolean },
   budget: ReadBudget,
 ): SituationState | null {
   const ns = worldNamespace(ctx.db,ctx.principal), world = worldDependencies();
-  const frame = { ...newReadFrame(ctx,ns,{kind:"at",at:options.at},world), budget };
+  const frame = { ...newReadFrame(ctx,ns,{kind:"at",at:options.at},world), budget,
+    ...(options.currentOutcomeAt === undefined ? {} : { currentOutcomeAt: options.currentOutcomeAt }) };
   const card = readWorldCard(frame,row.handle_id,"situation",SITUATION_CARD_V2_SCHEMA) as SituationCardV2 | null;
   if (card === null) return null;
   // Prime the caller's existing claim publication reader with every dependency,

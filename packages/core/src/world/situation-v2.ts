@@ -1,4 +1,7 @@
 import type { ClaimV2Assertion } from "../contracts/claim-v2";
+import { rawSubjectRefKey } from "../contracts/claim-v2";
+import { sha256Hex } from "../util/hash";
+import { readOutcomes } from "./outcomes";
 import { dependencyIntersection, dependencyPerspective, isSituationDependency } from "./situation-cycle";
 import { activeWorldRegistry } from "../contracts/world-vocabulary";
 import { SITUATION_DEPENDENCIES, type CommitmentEntry, type DecisionEntry, type SituationCardV2, type SituationDependency } from "../contracts/situation-card-v2";
@@ -87,12 +90,37 @@ export function collectSituationDetails(frame: ReadFrame, cluster: Cluster, body
     let status: CommitmentEntry["status"] = values.size === 1 && values.has("commitment/dropped") ? "dropped"
       : values.has("commitment/done") || values.has("commitment/claimed_done") ? "claimed_done" : "open";
     if (authoritativeDone && !values.has("commitment/dropped") && !values.has("commitment/open")) status = "done";
+    let statusBasis = statuses.map(r => r.claim);
+    const deliverables = by("commitment.deliverable").filter(isAsserted);
+    const criteria = new Set(deliverables.flatMap(r => r.object.kind === "literal" ? [r.object.value] : []));
+    const criterion = criteria.size === 1 ? [...criteria][0]! : null;
+    // Node deliverables need the authenticated ART outcome binding. A matching
+    // arbitrary artifactVersion string cannot identify a captured artifact.
+    const nodeDeliverable = deliverables.some(r => r.object.kind === "node");
+    if (nodeDeliverable) gaps.add("coverage");
+    if (!nodeDeliverable && criterion !== null && criterion.length <= 128) {
+      const current = frame.cutoff.kind === "current" && (frame.valid.kind === "all" ||
+        (frame.valid.kind === "at" && frame.currentOutcomeAt === frame.valid.at));
+      if (!current) gaps.add("coverage");
+      else {
+        const subject = items[0]!.eligible.semantic.subject;
+        const outcomes = readOutcomes(frame,subject.id,sha256Hex(rawSubjectRefKey(subject)));
+        for (const gap of outcomes.coverage.gaps) gaps.add(gap);
+        const matching = outcomes.evaluations.filter(e => e.conditions?.criterion === criterion);
+        if (!values.has("commitment/dropped") && outcomes.coverage.status === "complete_for_query" &&
+            matching.length > 0 && matching.every(e => e.result === "met")) {
+          const basis = [...new Map([...statusBasis,...matching.flatMap(e => [e.report,...e.observations,...e.reviews])].map(ref => [ref.token,ref])).values()];
+          if (basis.length > 128) gaps.add("traversal_limit");
+          else { status = "done"; statusBasis = basis; }
+        }
+      }
+    }
     if (values.size > 1) uncertainty.push(...statuses);
     uncertainty.push(...relations.filter(r => !isAsserted(r)));
     const labels = by("commitment.label").filter(isAsserted);
     commitments.push({ commitment: link.object.ref, label: labels.length === 1 ? labels[0]! : null,
       debtor: parties("commitment.debtor"), creditor: parties("commitment.creditor"), due: by("commitment.due"), deliverable: by("commitment.deliverable"),
-      status, statusBasis: statuses.map(r => r.claim), overdue: "unknown" });
+      status, statusBasis, overdue: "unknown" });
   }
   const decisions: DecisionEntry[] = [];
   for (const [token, link] of connected("situation.has_decision")) {

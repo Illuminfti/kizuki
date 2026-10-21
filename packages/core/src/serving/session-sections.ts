@@ -6,7 +6,7 @@ import { getClaim } from "../claims/store";
 import { claimReadSql } from "../claims/read-scope";
 import { instantSecondSql, instantNanoSql } from "../query/sql";
 import type { Claim } from "../contracts/proposal";
-import { readSituations } from "../world/situations";
+import { readCurrentSituations } from "../world/situations";
 import type { SituationItem, SituationState } from "../world/situations";
 import {
   claimLine,
@@ -101,6 +101,8 @@ export function emptyReasonText(
 
 export interface SessionPieces {
   pieces: Piece[];
+  /** Includes evidence for completed commitments omitted from the open section. */
+  world: import("../world/dependencies").WorldDependencies[];
   /** Empty-section reasons decided while gathering. */
   reasons: Partial<Record<SessionSection, SessionEmptyReason>>;
   withheld: AuditDenial[];
@@ -271,9 +273,8 @@ export function collectSessionPieces(
   };
   const situations = (): SituationState[] => {
     if (!worldGranted) return [];
-    return readSituations(ctx, {
+    return readCurrentSituations(ctx, {
       limit: SITUATIONS,
-      at: request.at,
       ...(request.subjects === undefined || request.subjects.length === 0
         ? {}
         : { subjects: request.subjects }),
@@ -479,6 +480,7 @@ export function collectSessionPieces(
   out.push(...explained);
   return {
     pieces: out,
+    world: (situationCache ?? []).map(state => state.world),
     reasons,
     withheld: [...reader.denied.values()],
     degraded,
