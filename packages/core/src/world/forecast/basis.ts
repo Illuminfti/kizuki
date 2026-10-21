@@ -1,6 +1,6 @@
 import { rawSubjectRefKey } from "../../contracts/claim-v2";
 import { activeWorldRegistry } from "../../contracts/world-vocabulary";
-import { exactCommitmentDue } from "../../contracts/world-vocab/commitment";
+import { deadlineInstant } from "./rules";
 import { canonicalJson, sha256Hex } from "../../util/hash";
 import { anchorOf, collectCard, COLLECTORS } from "../pipeline/collect";
 import type { ReadFrame } from "../pipeline/frame";
@@ -26,11 +26,6 @@ export interface ForecastBasis {
 }
 const asserted = (e:Eligible) => e.semantic.polarity==="positive" && e.semantic.perspective.mode==="asserted" && e.semantic.perspective.holder===null;
 const sameSubject = (a:Eligible,b:ReturnType<typeof anchorOf>) => b!==null && rawSubjectRefKey(a.semantic.subject)===rawSubjectRefKey(b);
-/** Exact date means the end of that UTC date, never an invented local timezone. */
-export function deadlineInstant(due:string):string|null {
-  if(!exactCommitmentDue(due))return null;
-  return due.length===10 ? `${due}T23:59:59.999Z` : new Date(due).toISOString();
-}
 function collect(frame:ReadFrame,handle:string,kind:string):readonly Eligible[]|null {
   const spec=activeWorldRegistry().kind(kind);if(spec===undefined)return null;
   const found=collectCard(frame,{anchor:handle,members:[handle],resolution:"distinct"},spec,COLLECTORS);

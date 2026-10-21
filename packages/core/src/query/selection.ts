@@ -4,8 +4,9 @@ import { rawRef, rawSubjectNamespace, type RawSubjectRef } from "../contracts/cl
 /** Resolved request filters, never authority. Public callers provide wire refs;
  * only Core fills this structure after current-namespace resolution. */
 export interface EvidenceSelection {
+  readonly claimIds?: readonly string[];
   readonly subjects?: readonly RawSubjectRef[];
-  readonly source?: { readonly sourceKey: string | null; readonly nativeEventId: string | null };
+  readonly source?: { readonly sourceKey: string | null; readonly captureEventId: string | null };
 }
 export function rawSubjectMembership(raw: RawSubjectRef): { sql: string; bindings: string[] } | null {
   if (!rawRef(raw)) return null;
@@ -29,7 +30,7 @@ export function selectedEventSql(selection: EvidenceSelection | undefined): { sq
   const source = selection?.source;
   if (source !== undefined) {
     clauses.push(source.sourceKey === null ? "events.event_id=?" : "EXISTS(SELECT 1 FROM source_event_bindings b WHERE b.event_id=events.event_id AND b.source_key=?)");
-    bindings.push(source.sourceKey ?? source.nativeEventId ?? "");
+    bindings.push(source.sourceKey ?? source.captureEventId ?? "");
   }
   return { sql: clauses.length === 0 ? "1" : clauses.join(" AND "), bindings };
 }
@@ -46,6 +47,7 @@ export function selectedPage(db: Database, selection: EvidenceSelection | undefi
 /** Typed claims match their qualified subject directly. Legacy claims must cite
  * an exact membership as well as carry the selected raw ID. */
 export function selectedClaimSql(selection: EvidenceSelection | undefined, alias = "claims"): { sql: string; bindings: string[] } {
+  if (selection?.claimIds !== undefined) return { sql: `${alias}.claim_id IN (SELECT value FROM json_each(?))`, bindings: [JSON.stringify(selection.claimIds)] };
   if (selection?.subjects === undefined) return { sql: "1", bindings: [] };
   const clauses: string[] = [], bindings: string[] = [];
   for (const raw of selection.subjects) {

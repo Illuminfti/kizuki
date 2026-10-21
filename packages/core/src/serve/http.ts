@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { OWNER, TOOLS, authenticate } from "../agents";
 import type { Principal, Tool } from "../agents";
 import { initAgents } from "../agents/schema";
-import { ServeError, dispatchServeTool } from "../serving";
+import { ServeError, scopedWriterRefusal, dispatchServeTool } from "../serving";
 import { RESPONSE_CONTRACT_KEY } from "../serving/contract";
 import { ENVELOPE_V2_SCHEMA } from "../serving/types";
 import type { ServeContext } from "../serving";
@@ -90,6 +90,8 @@ function json(status: number, body: unknown): Response {
 }
 
 function refused(error: unknown): Response {
+  const writer = scopedWriterRefusal(error);
+  if (writer !== null) return json(503, writer);
   if (error instanceof ServeError) {
     // The contract refusal is the same bytes for every cause, with no retry hint.
     if (error.code === "unsupported_contract") {

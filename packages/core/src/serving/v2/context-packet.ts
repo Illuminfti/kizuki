@@ -29,13 +29,7 @@ export interface PacketContentV2 {
   budgetTokens: number;
   tokenizer: string;
   purpose: PacketPurpose;
-  sections: ContextPacketData["sections"];
-  /** True when packing stopped because a later in-scope chunk would exceed the budget. */
-  truncated: boolean;
-  retrievalDegraded: string[];
-  session?: SessionReport;
-  lifecycle?: ContextPacketData["lifecycle"];
-  task?: TaskAttachment;
+  coverage: import("../../contracts/world-card-kit").Coverage;
 }
 
 export interface ContextPacketDataV2 {

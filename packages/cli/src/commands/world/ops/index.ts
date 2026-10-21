@@ -1,3 +1,4 @@
+import { observationCli } from "./observation";
 import { forecastCli, forecastScoresCli } from "./forecast";
 import { attentionCli } from "./attention";
 import { atlasCli } from "./atlas";
@@ -27,6 +28,8 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   { name: "describe", cli: describeCli },
   // slot: CARD
   { name: "evidence", cli: evidenceCli },
+  // slot: REFS
+  { name: "observation", cli: observationCli },
   // slot: KNOWN
   { name: "history", cli: historyCli },
   // slot: VIEW

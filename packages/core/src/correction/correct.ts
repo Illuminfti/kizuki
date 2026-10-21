@@ -66,13 +66,14 @@ function canonIo(io: ScopedCorrectIo): CanonIo {
 
 function snapshotCorrectIo(io: CorrectIo): CorrectIo {
   const canon = snapshotCanonIo(io);
-  const { budget, producer, relay_owner_corrections, grant } = io;
+  const { budget, producer, relay_owner_corrections, grant, scoped } = io;
   return Object.freeze({
     ...canon,
     ...(budget === undefined ? {} : { budget }),
     ...(producer === undefined ? {} : { producer }),
     ...(relay_owner_corrections === undefined ? {} : { relay_owner_corrections }),
     ...(grant === undefined ? {} : { grant }),
+    ...(scoped === undefined ? {} : { scoped }),
   });
 }
 
@@ -180,13 +181,13 @@ interface ScopedCorrectIo extends CorrectIo {
 
 function scopeCorrection(scope: VaultMutationScope, io: CorrectIo): ScopedCorrectIo {
   const producer = io.producer ?? "owner";
-  if (!producer.startsWith("agent:")) return io;
+  if (!producer.startsWith("agent:") && io.scoped?.selection === undefined) return io;
   const identity = producer.slice("agent:".length);
   const agent = getAgent(io.db, identity);
-  const resolved = principalForAgentId(io.db, identity) ??
+  const resolved = producer === "owner" ? OWNER : principalForAgentId(io.db, identity) ??
     (agent === null ? null : principalForAgentId(io.db, agent.agent_id));
   if (resolved === null) throw new CorrectError("tool_not_granted", "correction principal is unavailable");
-  const ctx: ServeContext = { db: io.db, vaultPath: io.vault_path, principal: resolved };
+  const ctx: ServeContext = { db: io.db, vaultPath: io.vault_path, principal: resolved, ...(io.scoped?.selection === undefined ? {} : { selection: io.scoped.selection }) };
   const visibility = correctionVisibility({ ...ctx, sourcePurpose: "recall" });
   const pages = new Map<string, { hash: string; generation: number; epoch: number; allow: boolean }>();
   return extendOwnedCanonIo(scope, io, { grant: ctx.principal.grant,
@@ -342,11 +343,11 @@ function reconstruct(
     .all(winner.claim_id);
   const superseded = losers.flatMap((row) => {
     const claim = getClaim(io.db, row.loser);
-    if (claim === null || claim.claim_key === null || !(io.readScope?.claims.canRead(claim) ?? true)) return [];
+    if (claim === null || !(io.readScope?.claims.canRead(claim) ?? true)) return [];
     return [
       {
         claim_id: claim.claim_id,
-        claim_key: claim.claim_key,
+        claim_key: claim.claim_key ?? "",
         was: answerTerms(io.db, claim).value,
         page_path: readableClaimPage(io, claim),
       },
@@ -546,9 +547,10 @@ function acceptOwnerEvent(
   if (input.dry_run === true) {
     return { event_id: existing ?? mintId(io), duplicate: existing !== null };
   }
-  try { return recordNativeCorrection(io.db, event, sourceId); }
+  try { return recordNativeCorrection(io.db, event, sourceId, io.scoped?.assertCurrent); }
   catch (error) {
-    if (error instanceof ErasurePendingError) throw error;
+    // Scoped current-authority refusals keep their fixed serving identity.
+    if (io.scoped !== undefined || error instanceof ErasurePendingError) throw error;
     throw new CorrectError("ledger_rejected", "owner correction conflicts with existing evidence or could not be recorded");
   }
 }
@@ -615,6 +617,7 @@ async function insertCorrection(
   let result;
   try {
     result=io.db.transaction(()=>{
+      io.scoped?.assertCurrent();
       const inserted=prepared.apply();
       if (isSourcePageClaim(io.db, live) && (inserted.outcome === "stored" || inserted.outcome === "duplicate")) {
         supersedeLiveGroup(io.db, inserted.claim, at, io.readScope?.claims, live);
@@ -804,6 +807,7 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
     if (recorded !== null) return recorded;
   }
 
+  if (io.scoped !== undefined) io.db.transaction(io.scoped.assertCurrent).immediate();
   const group = loadExactGroup(io, input.target as CorrectTarget, input.scope);
   if (group.length === 0) {
     throw new CorrectError("claim_unknown", "no live claims matched the target and scope");

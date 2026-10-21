@@ -97,6 +97,7 @@ describe("a command-line spec builds only the keys its core operation takes", ()
       const op = WORLD_OPS.find((candidate) => candidate.name === entry.name)!;
       const { required } = worldOpKeys(op);
       const options = new Map(entry.cli.options.filter(option => option !== "--snapshot").map((option) => [option, samples.get(option) ?? "x"]));
+      if (entry.name === "observation") options.delete("--observation");
       if (entry.name === "diff") { options.set("--of-operation", "situation"); options.set("--prior-view", SAMPLE_TOKEN); }
       const built = entry.cli.buildInput(options);
       expect(built, entry.name).not.toBeNull();

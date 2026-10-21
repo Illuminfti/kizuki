@@ -48,7 +48,7 @@ function matchesName(page: CanonPage, needle: string, redactor: Redactor): boole
 
 export interface EntitiesData { degraded: SubjectLabelDegradation[] }
 
-export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(ctx: ServeContext, args: EntitiesArgs, contract: C = ENVELOPE_SCHEMA as C): ResponseEnvelope<EntitiesData, C> {
+export function serveEntities<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(ctx: ServeContext, args: EntitiesArgs, contract: C = ENVELOPE_SCHEMA as C): ResponseEnvelope<EntitiesData, C, null> {
   return gate(
     ctx,
     "query_entities",

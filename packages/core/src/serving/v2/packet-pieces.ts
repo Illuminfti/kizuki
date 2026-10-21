@@ -22,6 +22,7 @@ export function scopePacketPieces(ctx: ServeContext, pieces: readonly Piece[]): 
     const scope = referenceScope(ctx), redactor = redactorOf(ctx);
     const index = pieces.some(piece => piece.canon !== undefined) ? loadCanon(ctx) : undefined;
     return pieces.flatMap(piece => {
+      if (piece.scopedBlock === true) return [piece];
       if (piece.canon !== undefined) {
         const scopedCanon = projectCanonChunk(scope, piece.canon, index);
         return [{ ...piece, scopedCanon, block: canonBlockV2(scopedCanon, redactor) }];
@@ -42,7 +43,7 @@ export function scopePacketPieces(ctx: ServeContext, pieces: readonly Piece[]): 
         lines.push(claimBlockV2(ref, `${claim.predicate ?? "claim"}: ${value}\n${qualifier}; authority=${claim.authority}; confidence=${claim.confidence}; status=${claim.status}`, redactor));
       }
       const label = piece.heading === "## counterevidence" ? "- These claims include a conflict or a validity gap.\n" : "";
-      return [{ ...piece, block: label + lines.join("") }];
+      return [{ ...piece, scopedBlock: true as const, block: label + lines.join("") }];
     });
   }).immediate();
 }

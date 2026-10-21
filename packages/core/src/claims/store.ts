@@ -68,6 +68,8 @@ import { sourceRoots } from "./source-roots";
 export const RETRIEVAL_SWEEP_LIMIT = 32;
 
 export interface ClaimsIo {
+  /** Internal adapter reference guard, evaluated inside the existing apply transaction. */
+  readonly beforeCommit?: () => void;
   readonly db: Database;
   /** Serving principals cannot corroborate or supersede evidence they may not read. */
   readonly deny_classes?: readonly EventClass[];
@@ -1281,6 +1283,27 @@ export function supersedeExactClaim(
   loserId: string,
   at: string,
 ): void {
+  supersedeExactLegacyClaim(io, winner, loserId, null, at);
+}
+
+/** An explicit keyed replacement may change a multi-valued predicate's key. */
+export function supersedeExactKeyedClaim(
+  io: Pick<ClaimsIo, "db" | "retrieval">,
+  winner: Claim,
+  loserId: string,
+  expectedKey: string,
+  at: string,
+): void {
+  supersedeExactLegacyClaim(io, winner, loserId, expectedKey, at);
+}
+
+function supersedeExactLegacyClaim(
+  io: Pick<ClaimsIo, "db" | "retrieval">,
+  winner: Claim,
+  loserId: string,
+  expectedKey: string | null,
+  at: string,
+): void {
   const { db } = io;
   if (!db.inTransaction)
     throw new ClaimError("schema_invalid", "exact supersession requires the claim transaction");
@@ -1288,11 +1311,13 @@ export function supersedeExactClaim(
   if (
     loser === null ||
     loser.status !== "live" ||
-    loser.claim_key !== null ||
+    loser.claim_key !== expectedKey ||
+    (expectedKey !== null && (loser.subject !== winner.subject || loser.predicate !== winner.predicate ||
+      AUTHORITY_TIERS[winner.authority] < AUTHORITY_TIERS[loser.authority])) ||
     winner.status !== "live" ||
     winner.claim_id === loserId
   )
-    throw new ClaimError("schema_invalid", "unkeyed correction target changed");
+    throw new ClaimError("schema_invalid", "exact correction target changed");
   const superseded = {
     ...loser,
     status: "superseded" as const,
@@ -1501,6 +1526,7 @@ export async function prepareClaimInsert(
     signature: historicalClaimReplaySignature(input),
     apply() {
       if (!io.db.inTransaction) throw new Error("prepared claim requires a transaction");
+      io.beforeCommit?.();
       const at = nowOf(io);
       const world = preparedWorldCommit(io.db, input, scope, at);
       const existing = world === null ? null : io.db.query<{ claim_id: string }, [string]>(

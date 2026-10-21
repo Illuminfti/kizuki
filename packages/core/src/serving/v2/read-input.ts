@@ -1,3 +1,4 @@
+import { snapshotScopedInput } from "./input-snapshot";
 import type { Tool } from "../../agents";
 import type { RawSubjectRef } from "../../contracts/claim-v2";
 import type { GraphAnchorV2 } from "../../contracts/scoped-tools";
@@ -31,6 +32,7 @@ function invalid(): never { throw new ServeError("invalid_arguments", "invalid a
 /** Validate every reference's grammar before looking up any reference. */
 export function normalizeReadArgs(ctx: ServeContext, tool: Tool, input: object, contract: ResponseContract): { ctx: ServeContext; args: Record<string, unknown>; anchor?: GraphAnchorV2 } {
   if (contract !== ENVELOPE_V2_SCHEMA) return { ctx, args: input as Record<string, unknown> };
+  input = snapshotScopedInput(input);
   const keys = KEYS[tool];
   if (keys === undefined || Object.keys(input).some(key => !keys.includes(key))) invalid();
   const args = { ...input } as Record<string, unknown>;

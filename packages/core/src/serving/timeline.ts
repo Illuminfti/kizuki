@@ -49,7 +49,7 @@ export function serveTimeline<C extends ResponseContract = typeof ENVELOPE_SCHEM
   ctx: ServeContext,
   args: TimelineArgs | TimelineArgsV2,
   contract: C = ENVELOPE_SCHEMA as C,
-): ResponseEnvelope<TimelineExpandData | undefined, C> {
+): ResponseEnvelope<TimelineExpandData | undefined, C, null> {
   return gate(ctx, "timeline", auditArguments(args), ({ ctx }): Served<TimelineExpandData | undefined> => {
     const normalized = normalizeReadArgs(ctx, "timeline", args, contract);
     ctx = normalized.ctx;

@@ -213,7 +213,7 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
   ctx: ServeContext,
   args: SearchArgs | SearchArgsV2,
   contract: C = ENVELOPE_SCHEMA as C,
-): Promise<ResponseEnvelope<SearchData, C>> {
+): Promise<ResponseEnvelope<SearchData, C, { gaps: readonly import("../contracts/scoped-tools").ReadGap[] }>> {
   return gateAsync(ctx, "search", auditArguments(args), async ({ ctx, at }): Promise<Served<SearchData>> => {
     const normalized = normalizeReadArgs(ctx, "search", args, contract);
     ctx = normalized.ctx;

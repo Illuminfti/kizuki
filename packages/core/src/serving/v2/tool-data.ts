@@ -21,7 +21,7 @@ function mutationReceipt(scope: RefScope, id: string | null) {
   scope.ctx.db.query("INSERT INTO world_wire_receipt_targets(namespace_id,wire_ref,receipt_id) VALUES (?,?,?)").run(scope.ns.id, token, id);
   return ref("receipt", token);
 }
-function correction(scope: RefScope, data: CorrectData): CorrectDataV2 {
+function correction(scope: RefScope, data: CorrectData, message?: "dry_run"): CorrectDataV2 {
   const index = data.rewritten.length === 0 ? null : loadCanon(scope.ctx);
   return {
     receipt: mutationReceipt(scope, data.receipt_id),
@@ -36,13 +36,13 @@ function correction(scope: RefScope, data: CorrectData): CorrectDataV2 {
       const candidate = issueClaimGroupRef(scope, item.claim_ids), claims = item.claim_ids.map(id => issueClaimRef(scope, id));
       return candidate === null || claims.some(value => value === null) ? [] : [{ candidate, claims: claims.filter(value => value !== null) }];
     }),
-    message: data.event_id !== null || data.claim_id !== null ? "correction_recorded" : data.ambiguous.length > 0 ? "ambiguous" : data.answer.toLowerCase().includes("dry") ? "dry_run" : "no_change",
+    message: data.event_id !== null || data.claim_id !== null ? "correction_recorded" : data.ambiguous.length > 0 ? "ambiguous" : message === "dry_run" ? "dry_run" : "no_change",
     refreshedWorld: data.refreshedWorld ?? null,
   };
 }
 /** Each tool owns a closed data DTO. Legacy answer strings, coverage ID maps,
  * frontmatter and unified diffs are never copied into the scoped wire shape. */
-export function projectToolData(scope: RefScope, tool: Tool, data: unknown): unknown {
+export function projectToolData(scope: RefScope, tool: Tool, data: unknown, message?: "dry_run"): unknown {
   switch (tool) {
     case "get_page": case "query_entities": case "timeline": return null;
     case "search": {
@@ -65,7 +65,7 @@ export function projectToolData(scope: RefScope, tool: Tool, data: unknown): unk
       return { outcome: result.outcome, claim: issueWorldRef(scope.ctx.db, scope.ns, "claim", result.claim_id),
         superseded: result.superseded.map(id => issueWorldRef(scope.ctx.db, scope.ns, "claim", id)) } satisfies ProposeDataV2;
     }
-    case "correct": return correction(scope, data as CorrectData);
+    case "correct": return correction(scope, data as CorrectData, message);
     case "context_packet": case "world_view": return data;
     case "system_health": throw new ServeError("unsupported_contract", "requested contract unavailable");
   }

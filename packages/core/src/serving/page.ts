@@ -19,7 +19,7 @@ const MAX_BODY_CHARS = 65_536;
 
 export type GetPageArgs = { id: string } | { path: string };
 
-export function serveGetPage<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(ctx: ServeContext, args: GetPageArgs | GetPageArgsV2, contract: C = ENVELOPE_SCHEMA as C): ResponseEnvelope<undefined, C> {
+export function serveGetPage<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(ctx: ServeContext, args: GetPageArgs | GetPageArgsV2, contract: C = ENVELOPE_SCHEMA as C): ResponseEnvelope<undefined, C, null> {
   return gate(ctx, "get_page", auditArguments(args), ({ ctx }): Served<undefined> => {
     const normalized = normalizeReadArgs(ctx, "get_page", args, contract);
     ctx = normalized.ctx;

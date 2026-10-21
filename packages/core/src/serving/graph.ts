@@ -162,7 +162,7 @@ export async function serveGraph<C extends ResponseContract = typeof ENVELOPE_SC
   ctx: ServeContext,
   args: GraphArgs | GraphArgsV2,
   contract: C = ENVELOPE_SCHEMA as C,
-): Promise<ResponseEnvelope<GraphData, C>> {
+): Promise<ResponseEnvelope<GraphData, C, import("../contracts/scoped-tools").GraphDataV2>> {
   return gateAsync(
     ctx,
     "graph_neighbors",

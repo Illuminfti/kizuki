@@ -158,6 +158,8 @@ export function claimLine(claim: Claim, redactor?: Redactor): string {
 
 /** One renderable unit of a packet, with the chunk the envelope reports. */
 export interface Piece {
+  /** Internal closed reference rendering, already budgeted by the shared slice compiler. */
+  scopedBlock?: true;
   section: PacketSection | SessionSection;
   /** Explains an empty session section; served by no count. */
   placeholder?: true;

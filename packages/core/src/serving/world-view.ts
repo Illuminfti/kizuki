@@ -399,7 +399,8 @@ export function serveWorldView(
       throw error;
     }
   };
-  const envelope = gate(
+  const envelope = gate<WorldReadResult, typeof ENVELOPE_V2_SCHEMA, WorldReadResult, readonly WorldQuotedEvidence[]>(
+
     ctx,
     "world_view",
     auditArguments(args),
@@ -430,7 +431,7 @@ export function serveWorldView(
     quoted: envelope.quoted.map((chunk): WorldQuotedEvidence => {
       // The final gate snapshot already revalidated and redacted these sources.
       // This pure projection removes raw source identities without issuing refs.
-      const source = chunk as WorldEvidenceSource;
+      const source = chunk;
       return { evidence: source.evidence, text: source.text, tainted: true,
         integrity: source.integrity, slice_integrity: source.slice_integrity,
         offset: source.offset, returned: source.returned, total: source.total,

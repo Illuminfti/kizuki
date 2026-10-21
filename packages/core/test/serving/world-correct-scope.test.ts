@@ -30,7 +30,7 @@ async function scene(){
  const target=read().dependencies[0]!.relation.claim;
  const correct=()=>serveCorrect(ctx,{statement:"Project b depends on project a.",target:{world_claim:target},mode:"replace_object",object:{kind:"node",ref:a}});
  const counts=()=>["events","claims","native_owner_evidence"].map(t=>f.db.query<{n:number},[]>(`SELECT count(*) n FROM ${t}`).get()!.n);
- return {...f,ctx,read,correct,counts,target,old:edge.stored.claim.claim_id};
+ return {...f,ctx,read,correct,counts,target,replacement:a,old:edge.stored.claim.claim_id};
 }
 test("a subject-scoped relay corrects a readable typed relation through native evidence",async()=>{
  const f=await scene();try{
@@ -86,5 +86,38 @@ for(const restriction of ["endpoint","type","time","relay","source"] as const)te
   await expect(f.correct()).rejects.toThrow();
   expect(f.counts()).toEqual(before);
   expect(getClaim(f.db,f.old)?.status).toBe("live");
+ }finally{f.dispose();}
+},120000);
+
+
+test("typed refs preserve semantic subject scope and exact retired-target retries",async()=>{
+ const f=await scene();try{
+  const args={statement:"Project b depends on project a.",target:f.target,mode:"replace_object" as const,object:{kind:"node" as const,ref:f.replacement}};
+  const out=await serveCorrect(f.ctx,args,"kizuki.envelope/v2");
+  expect(out.data.claim?.kind).toBe("claim");
+  expect(out.data.superseded).toEqual([f.target]);
+  expect(getClaim(f.db,f.old)?.status).toBe("superseded");
+  const before=f.counts();
+  f.db.query("INSERT INTO canon_source_erasure_intents(page_path,source_key,intent,digest) VALUES (?,?,?,?)").run("unrelated-pending","unrelated-source","{}","fixture");
+  const replay=await serveCorrect(f.ctx,args,"kizuki.envelope/v2");
+  expect(replay.data).toEqual(out.data);
+  expect(f.counts()).toEqual(before);
+ }finally{f.dispose();}
+},120000);
+
+
+test("typed correction rechecks the principal after the real native-capture preparation gap",async()=>{
+ const f=await scene();try{
+  const claims=f.counts()[1];
+  const pending=serveCorrect(f.ctx,{statement:"Project b depends on project a.",target:f.target,mode:"replace_object",object:{kind:"node",ref:f.replacement}},"kizuki.envelope/v2");
+  expect(f.db.query("SELECT count(*) n FROM native_owner_evidence").get()).toEqual({n:1});
+  expect(getClaim(f.db,f.old)?.status).toBe("live");
+  setGrant(f.db,"scoped-corrector",{subjects:["project:b"]});
+  await expect(pending).rejects.toMatchObject({code:"not_found"});
+  expect(getClaim(f.db,f.old)?.status).toBe("live");
+  expect(f.counts()[1]).toBe(claims);
+  // Already captured owner words retain capture custody; no claim or canon
+  // authority is granted after the scope changes across preparation.
+  expect(f.db.query("SELECT filing_state FROM native_owner_evidence").get()).toEqual({filing_state:"recorded"});
  }finally{f.dispose();}
 },120000);

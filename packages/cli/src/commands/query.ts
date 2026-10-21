@@ -90,7 +90,7 @@ export const queryCommand: Command = {
         }
         if (envelope.canon.length === 0 && envelope.quoted.length === 0) io.err("0 hits");
         for (const chunk of envelope.canon) io.out(`page ${chunk.sensitivity} ${clean(chunk.title)} ${clean(chunk.excerpt)}`);
-        for (const chunk of envelope.quoted) io.out(`event ${chunk.connector_id} ${chunk.occurred_at} ${clean(chunk.text)}${chunk.truncated === true ? "…" : ""}`);
+        for (const chunk of envelope.quoted) io.out(`event-version-ref:${chunk.eventVersion.token} ${chunk.occurred.kind === "known" ? chunk.occurred.from : "unknown time"} ${clean(chunk.text)}`);
         return 0;
       }, { retrieval: "optional" }).catch((error: unknown) => contractFailure(io, "query", parsed.flags.has("--json"), error));
     }

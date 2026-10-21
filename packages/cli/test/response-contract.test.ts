@@ -1,8 +1,12 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { accept, listAudit } from "@kizuki/core";
+import { OWNER, accept, listAudit } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
+import { worldSeed } from "../../core/test/helpers/world-seed";
+import { serveWorldView } from "../../core/src/serving/world-view";
+import { WRITER_REFUSAL_V2 } from "../../core/src/contracts/scoped-tools";
+import { tryWriteFlock } from "../../core/src/serve/flock";
 import { createHelpers, fixtureConsent } from "./helpers";
 
 setDefaultTimeout(120_000);
@@ -87,13 +91,44 @@ test("v2 queries preserve bounded excerpts and explicit full-text reads", () => 
   expect(bounded.exitCode, bounded.stderr).toBe(0);
   const [chunk] = JSON.parse(bounded.stdout).result.quoted;
   expect(Array.from(chunk.text)).toHaveLength(600);
-  expect(chunk.truncated).toBe(true);
+  expect(chunk).not.toHaveProperty("truncated");
+  expect(chunk.eventVersion.kind).toBe("event_version");
   const text = runCli(setup.env, ...args);
   expect(text.exitCode, text.stderr).toBe(0);
-  expect(text.stdout.trimEnd()).toEndWith("…");
+  expect(text.stdout).toContain(chunk.text);
   const whole = runCli(setup.env, ...args, "--full-text", "--json");
   expect(whole.exitCode, whole.stderr).toBe(0);
   const [full] = JSON.parse(whole.stdout).result.quoted;
   expect(full.text.length).toBeGreaterThan(5000);
   expect(full.truncated).toBeUndefined();
+});
+
+
+test("CLI typed correction uses retained refs and gives the same fixed busy and erasure refusal", async () => {
+  const setup = tempVault(), db = openLedger(join(setup.vault, ".kizuki/kizuki.db"));
+  try {
+    const seed = await worldSeed(db), ctx = { db, vaultPath: setup.vault, principal: OWNER };
+    const card = serveWorldView(ctx, { operation: "concept", concept: seed.ref, valid: { kind: "all" }, knownAt: { kind: "current" } }).data as any;
+    const ref = card.result.data.definitions[0].claim;
+    const args = ["tell", "The updated definition.", "--world-claim", ref.token, "--response-contract", V2, "--json"];
+    for (const mode of ["busy", "erasure"] as const) {
+      const lock = mode === "busy" ? tryWriteFlock(setup.vault) : null;
+      if (mode === "busy") expect(lock).not.toBeNull();
+      else db.query("INSERT INTO canon_source_erasure_intents(page_path,source_key,intent,digest) VALUES (?,?,?,?)").run("unrelated-pending", "unrelated-source", "{}", "fixture");
+      try {
+        const result = runCli(setup.env, ...args);
+        expect(result.exitCode, result.stderr).toBe(1);
+        expect(JSON.parse(result.stdout)).toEqual({ schema: "kizuki.cli-result/v2", command: "tell", result: WRITER_REFUSAL_V2 });
+        expect(db.query("SELECT 1 FROM native_owner_evidence").get()).toBeNull();
+      } finally { lock?.release(); }
+    }
+    db.query("DELETE FROM canon_source_erasure_intents").run();
+    const result = runCli(setup.env, ...args);
+    expect(result.exitCode, result.stderr).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.result.data.message).toBe("correction_recorded");
+    expect(output.result.data.superseded).toEqual([ref]);
+    expect(output.result.data.claim.kind).toBe("claim");
+    expect(output.result.data).not.toHaveProperty("answer");
+  } finally { db.close(); }
 });

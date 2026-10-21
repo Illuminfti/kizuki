@@ -20,10 +20,10 @@ export function sealEnvelope<
   K extends Tool = Tool,
   C extends readonly CanonChunk[] = readonly CanonChunk[],
   Q extends readonly QuotedChunk[] = readonly QuotedChunk[],
->(ctx: ServeContext, tool: K, at: string, canon: C, quoted: Q, data: T): EnvelopeV2<T, K, C, Q> {
+>(ctx: ServeContext, tool: K, at: string, canon: C, quoted: Q, data: T, message?: "dry_run"): EnvelopeV2<unknown, K, readonly import("../../contracts/scoped-tools").CanonChunkV2[], readonly (import("../../contracts/scoped-tools").QuotedChunkV2 | import("../../world/ops/evidence-types").WorldQuotedEvidence)[]> {
   try {
     return ctx.db
-      .transaction((): EnvelopeV2<T, K, C, Q> => {
+      .transaction((): EnvelopeV2<unknown, K, readonly import("../../contracts/scoped-tools").CanonChunkV2[], readonly (import("../../contracts/scoped-tools").QuotedChunkV2 | import("../../world/ops/evidence-types").WorldQuotedEvidence)[]> => {
         const principal = resolvePrincipal(ctx.db, ctx.principal);
         if (principal === null) throw new ServeError("unknown_agent", "unknown agent");
         const ns = worldNamespace(ctx.db, principal);
@@ -46,8 +46,8 @@ export function sealEnvelope<
             }
             return projectQuotedChunk({ ctx: { ...ctx, principal }, ns }, chunk);
           }),
-          data: projectToolData({ ctx: { ...ctx, principal }, ns }, tool, data),
-        } as unknown as EnvelopeV2<T, K, C, Q>;
+          data: projectToolData({ ctx: { ...ctx, principal }, ns }, tool, data, message),
+        };
       })
       .immediate();
   } catch (error) {

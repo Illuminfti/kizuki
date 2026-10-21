@@ -1,17 +1,17 @@
 import { getClaim } from "../../claims/store";
 import type { Claim } from "../../contracts/proposal";
 import type { ClaimGroupRef, ScopedRef } from "../../contracts/scoped-refs";
-import { authorizedClaimSql } from "../../serving/claim-policy-sql";
-import { claimReader } from "../../serving/claims";
+import { correctionVisibility } from "../../correction/visibility";
+import { selectedClaimSql } from "../../query/selection";
 import { canonicalJson, sha256Hex } from "../../util/hash";
 import { issueWorldRef, resolveWorldClaim } from "../references";
 import { allocateRef, ref, type RefScope } from "./common";
 
 export function readableClaim(scope: RefScope, id: string): Claim | null {
-  const policy = authorizedClaimSql(scope.ctx);
-  if (scope.ctx.db.query(`SELECT 1 FROM claims WHERE claim_id=? AND ${policy.sql}`).get(id, ...policy.bindings) === null) return null;
+  const policy = correctionVisibility(scope.ctx), selected = selectedClaimSql(scope.ctx.selection);
+  if (scope.ctx.db.query(`SELECT 1 FROM claims WHERE claim_id=? AND (${policy.sql}) AND (${selected.sql})`).get(id, ...policy.bindings, ...selected.bindings) === null) return null;
   const claim = getClaim(scope.ctx.db, id);
-  return claim !== null && claimReader(scope.ctx.db, scope.ctx.principal.grant, { owner: scope.ctx.principal.kind === "owner", purpose: scope.ctx.sourcePurpose ?? "recall" }).canRead(claim) ? claim : null;
+  return claim !== null && policy.canRead(claim) ? claim : null;
 }
 export function issueClaimRef(scope: RefScope, id: string): ScopedRef<"claim"> | null {
   return readableClaim(scope, id) === null ? null : issueWorldRef(scope.ctx.db, scope.ns, "claim", id);

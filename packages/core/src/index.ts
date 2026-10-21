@@ -958,6 +958,7 @@ export {
   ENTITY_TYPES,
   ENVELOPE_SCHEMA,
   ServeError,
+  scopedWriterRefusal,
   dispatchServeTool,
   gate,
   PACKET_PURPOSES,

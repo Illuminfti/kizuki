@@ -15,6 +15,7 @@ import {
   listClaims,
   listSupersessions,
 } from "../../src/claims/store";
+import { undoReceipt } from "../../src/canon/undo";
 import { serveCorrect } from "../../src/serving/correct";
 import type { CorrectArgs } from "../../src/serving/correct";
 import { servePropose } from "../../src/serving/propose";
@@ -101,6 +102,42 @@ async function fileClaim(
 }
 
 describe("serveCorrect retires what the owner says is wrong", () => {
+  test("an explicit multi-valued replacement retires only its target and undo restores it", async () => {
+    const live = await newFixture();
+    const wrong = await fileClaim(live, "Ada prefers rushed reviews.", "preference.prefers", "rushed reviews");
+    const other = await fileClaim(live, "Ada prefers written notes.", "preference.prefers", "written notes");
+    const io = { db: live.db, vault_path: live.vaultPath };
+    const prior = getClaim(live.db, wrong)!;
+    const receipt = applyCanonWrite(io, prior, resolveTarget(io, prior), { writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }) });
+    const before = readFileSync(join(live.vaultPath, receipt.page_path), "utf8");
+    const corrected = await serveCorrect(live.owner(), { statement: "Ada prefers careful reviews.", target: { claim_id: wrong }, object: "careful reviews" });
+    expect(corrected.data?.superseded.map(row => row.claim_id)).toEqual([wrong]);
+    expect(getClaim(live.db, wrong)?.status).toBe("superseded");
+    expect(getClaim(live.db, other)?.status).toBe("live");
+    expect(getClaim(live.db, corrected.data!.claim_id!)?.object).toBe("careful reviews");
+    expect(corrected.data?.receipt_id).not.toBeNull();
+    const journal = listSupersessions(live.db).filter(row => row.winner === corrected.data!.claim_id);
+    expect(journal.map(row => row.loser)).toEqual([wrong]);
+    await undoReceipt(io, corrected.data!.receipt_id!);
+    expect(getClaim(live.db, wrong)?.status).toBe("live");
+    expect(getClaim(live.db, other)?.status).toBe("live");
+    expect(getClaim(live.db, corrected.data!.claim_id!)?.status).toBe("reverted");
+    expect(readFileSync(join(live.vaultPath, receipt.page_path), "utf8")).toBe(before);
+  });
+
+  test("multi-valued exact retirement rolls back with the replacement if its journal fails", async () => {
+    const live = await newFixture();
+    const wrong = await fileClaim(live, "Ada prefers rushed reviews.", "preference.prefers", "rushed reviews");
+    const other = await fileClaim(live, "Ada prefers written notes.", "preference.prefers", "written notes");
+    const before = listClaims(live.db, { limit: 1000 });
+    live.db.exec("CREATE TRIGGER fail_exact_retirement BEFORE INSERT ON claim_supersessions BEGIN SELECT RAISE(ABORT, 'fixture journal failure'); END");
+    await expect(serveCorrect(live.owner(), { statement: "Ada prefers careful reviews.", target: { claim_id: wrong }, object: "careful reviews" })).rejects.toThrow();
+    expect(listClaims(live.db, { limit: 1000 })).toEqual(before);
+    expect(getClaim(live.db, wrong)?.status).toBe("live");
+    expect(getClaim(live.db, other)?.status).toBe("live");
+    expect(listSupersessions(live.db)).toEqual([]);
+  });
+
   test("a named claim is superseded and the statement is kept verbatim", async () => {
     const live = await newFixture();
     const wrong = await fileClaim(
@@ -294,7 +331,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
     ).toBe(0);
   });
 
-  test("a claim with no predicate cannot be corrected", async () => {
+  test("a claim with no predicate is retracted by its exact identity", async () => {
     const live = await newFixture();
     const keyless = await servePropose(live.agent("reader-private"), {
       kind: "claim",
@@ -303,15 +340,11 @@ describe("serveCorrect retires what the owner says is wrong", () => {
       subjects: ["person:ada"],
       provenance: [live.events["public"] as string],
     });
-    const error = await refusal(() =>
-      serveCorrect(live.owner(), {
-        statement: "That is wrong.",
-        target: { claim_id: keyless.data?.claim_id ?? "" },
-      }),
-    );
-    expect(error.message).toBe(
-      "invalid arguments: target.claim_id: names a claim with no predicate to correct",
-    );
+    const corrected = await serveCorrect(live.owner(), {
+      statement: "That is wrong.", target: { claim_id: keyless.data!.claim_id },
+    });
+    expect(corrected.data?.superseded.map(row => row.claim_id)).toEqual([keyless.data!.claim_id]);
+    expect(getClaim(live.db, keyless.data!.claim_id)?.status).toBe("superseded");
   });
 
   test("a relayed correction is on the record and bounded by the grant", async () => {
@@ -606,60 +639,30 @@ describe("serveCorrect retires what the owner says is wrong", () => {
     ).toEqual(["owner_correction"]);
   });
 
-  test("a mixed-authority group denies only the relay that cannot beat the owner reading", async () => {
+  test("multi-valued retirement checks exact target authority and keeps other values live", async () => {
     const live = await newFixture();
-    const github = await fileClaim(
-      live,
-      "Ada's handle is github.com/ada.",
-      "identity.handle_on",
-      "github.com/ada",
-    );
-    await serveCorrect(live.owner(), {
-      statement: "Ada also uses x.com/ada.",
-      target: { claim_id: github },
-      object: "x.com/ada",
+    const github = await fileClaim(live, "Ada's handle is github.com/ada.", "identity.handle_on", "github.com/ada");
+    const initial = await fileClaim(live, "Ada's old handle is old.example/ada.", "identity.handle_on", "old.example/ada");
+    const corrected = await serveCorrect(live.owner(), {
+      statement: "Ada uses x.com/ada.", target: { claim_id: initial }, object: "x.com/ada",
     });
-    const liveHandles = listClaims(live.db, {
-      status: "live",
-      subject: "person:ada",
-      keyed: true,
-    }).filter((claim) => claim.predicate === "identity.handle_on");
-    expect(
-      liveHandles.map((claim) => claim.authority).sort(),
-    ).toEqual(["model_inference", "owner_correction"]);
-
-    const denial = "Ada has none of those handles.";
-    const denied = await refusal(() =>
-      serveCorrect(live.agent("downgraded"), {
-        statement: denial,
-        target: { claim_id: github },
-      }),
-    );
+    const protectedId = corrected.data!.claim_id!;
+    expect(getClaim(live.db, initial)?.status).toBe("superseded");
+    const beforeEvents = ownerEvents(live);
+    const denied = await refusal(() => serveCorrect(live.agent("downgraded"), {
+      statement: "Ada uses a different handle.", target: { claim_id: protectedId }, object: "elsewhere.example/ada",
+    }));
     expect(denied.code).toBe("held");
-    expect(ownerIntent(live, denial)).toBe(0);
+    expect(ownerEvents(live)).toBe(beforeEvents);
     expect(skippedCorrections(live)).toBe(0);
-    expect(getClaim(live.db, github)?.status).toBe("live");
-
+    expect(getClaim(live.db, protectedId)?.status).toBe("live");
     const relayed = await serveCorrect(live.agent("downgraded"), {
-      statement: "Ada also uses gitlab.com/ada.",
-      target: { claim_id: github },
-      object: "gitlab.com/ada",
+      statement: "Ada uses gitlab.com/ada.", target: { claim_id: github }, object: "gitlab.com/ada",
     });
-    expect(getClaim(live.db, relayed.data?.claim_id ?? "")?.authority).toBe(
-      "owner_authored",
-    );
-    expect(getClaim(live.db, github)?.status).toBe("live");
-    expect(
-      listClaims(live.db, {
-        status: "live",
-        subject: "person:ada",
-        keyed: true,
-      }).some(
-        (claim) =>
-          claim.predicate === "identity.handle_on" &&
-          claim.authority === "owner_correction",
-      ),
-    ).toBe(true);
+    expect(getClaim(live.db, relayed.data!.claim_id!)?.authority).toBe("owner_authored");
+    expect(getClaim(live.db, github)?.status).toBe("superseded");
+    expect(getClaim(live.db, protectedId)?.status).toBe("live");
+    expect(relayed.data?.superseded.map(row => row.claim_id)).toEqual([github]);
   });
 
   test("a grant that may not speak as the owner files one tier down", async () => {

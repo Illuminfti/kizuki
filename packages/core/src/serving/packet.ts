@@ -437,11 +437,7 @@ async function servePacket(
                   budgetTokens: budget,
                   tokenizer: PACKET_TOKENIZER_ID,
                   purpose,
-                  sections: emptySections,
-                  truncated: false,
-                  retrievalDegraded: ["context-unavailable"],
-                  ...(lifecycle === undefined ? {} : { lifecycle }),
-                  ...(attached === undefined ? {} : { task: attached.task }),
+                  coverage: { status: "partial", gaps: ["coverage"], validWindow: { kind: "all" }, history: "baseline_only" },
                 },
                 reasons: ["coverage"],
               },
@@ -618,12 +614,9 @@ async function servePacket(
           budgetTokens: budget,
           tokenizer: PACKET_TOKENIZER_ID,
           purpose,
-          sections,
-          truncated,
-          retrievalDegraded: degraded,
-          ...(session === undefined ? {} : { session }),
-          ...(lifecycle === undefined ? {} : { lifecycle }),
-          ...(task === undefined ? {} : { task }),
+          coverage: { status: degraded.length > 0 || truncated || task?.status === "incomplete" || task?.status === "unavailable" ? "partial" : "complete_for_query",
+            gaps: [...(degraded.length > 0 || task?.status === "unavailable" ? ["coverage" as const] : []), ...(truncated || task?.status === "incomplete" ? ["required_context_overflow" as const] : [])],
+            validWindow: { kind: "all" }, history: "baseline_only" },
         };
         // Compare the complete authorized response, including its header,
         // metadata and chunks. Neither request time nor a global counter is a basis.
@@ -631,7 +624,7 @@ async function servePacket(
           const scope = referenceScope(ctx);
           return packetView(content, canon.map(chunk => projectCanonChunk(scope, chunk)), quoted.map(chunk => projectQuotedChunk(scope, chunk)));
         }).immediate();
-        const same = degraded.length === 0 && priorView === view.token;
+        const same = content.coverage.status === "complete_for_query" && priorView === view.token;
         return {
           canon: same ? [] : canon,
           quoted: same ? [] : quoted,

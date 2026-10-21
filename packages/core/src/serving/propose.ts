@@ -1,3 +1,5 @@
+import { withScopedClaimMutation } from "./v2/writer-refusal";
+import { normalizeMutationArgs, type ProposeArgsV2 } from "./v2/mutation-input";
 import type { ArtifactCard } from "../contracts/artifact-card";
 import { outcomeArtifactBinding } from "../world/outcome-binding";
 import { readWorldCard } from "../world/pipeline/read";
@@ -286,14 +288,18 @@ function validateProvenance(ctx: ServeContext, provenance: string[], contract: R
 
 export async function servePropose<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
-  args: ProposeArgs,
+  args: ProposeArgs | ProposeArgsV2,
   contract: C = ENVELOPE_SCHEMA as C,
-): Promise<ResponseEnvelope<ProposeData, C>> {
+): Promise<ResponseEnvelope<ProposeData, C, import("../contracts/scoped-tools").ProposeDataV2>> {
   return gateAsync(
     ctx,
     "propose",
     auditArguments(args),
     async ({ ctx }): Promise<Served<ProposeData>> => {
+    const perform = async (): Promise<Served<ProposeData>> => {
+    const normalized = normalizeMutationArgs(ctx, "propose", args, contract);
+    ctx = normalized.ctx;
+    const request = normalized.args;
     const principal = ctx.principal;
     // A proposal has to carry a distinct identity in `producer`: agents
     // propose claims, and the owner speaks as the owner elsewhere.
@@ -305,24 +311,24 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
     }
     const grant = principal.grant;
 
-    const kind = enumOf("kind", args.kind, PROPOSE_KINDS);
-    const body = text("body", args.body, MAX_BODY_CHARS);
+    const kind = enumOf("kind", request.kind, PROPOSE_KINDS);
+    const body = text("body", request.body, MAX_BODY_CHARS);
     const target =
-      args.target === undefined || args.target === null
+      request.target === undefined || request.target === null
         ? null
-        : text("target", args.target, MAX_TARGET_CHARS);
-    const provenance = idList("provenance", args.provenance, MAX_PROVENANCE);
+        : text("target", request.target, MAX_TARGET_CHARS);
+    const provenance = idList("provenance", request.provenance, MAX_PROVENANCE);
     if (provenance.length === 0) {
       throw refuse("provenance", "must name at least one event");
     }
     const frontmatter = validateFrontmatter(
       grant,
-      args.frontmatter === undefined ? {} : args.frontmatter,
+      request.frontmatter === undefined ? {} : request.frontmatter,
     );
     const requested =
-      args.subjects === undefined
+      request.subjects === undefined
         ? undefined
-        : idList("subjects", args.subjects, MAX_SUBJECTS);
+        : idList("subjects", request.subjects, MAX_SUBJECTS);
     if (
       grant.subjects !== null &&
       (requested === undefined || requested.length === 0)
@@ -340,12 +346,12 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
         );
       }
     }
-    const confidence = confidenceOf(args.confidence);
-    const subject = subjectOf(grant, args.subject, requested);
-    const predicate = predicateOf(args.predicate, subject);
+    const confidence = confidenceOf(request.confidence);
+    const subject = subjectOf(grant, request.subject, requested);
+    const predicate = predicateOf(request.predicate, subject);
 
     let checkOutcomeBinding: (() => { subjectRef: string; artifactVersion: unknown }) | undefined;
-    let object = args.object === undefined ? undefined : text("object", args.object, MAX_OBJECT_CHARS);
+    let object = request.object === undefined ? undefined : text("object", request.object, MAX_OBJECT_CHARS);
     if (predicate !== undefined && OUTCOME_PREDICATES.includes(predicate as typeof OUTCOME_PREDICATES[number])) {
       const evidence = parseOutcomeSubmission(predicate, object);
       if (kind !== "claim" || evidence === null) throw refuse("object", "must contain bounded outcome evidence");
@@ -404,16 +410,17 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
         ...(subject === undefined ? {} : { subject }),
         ...(predicate === undefined ? {} : { predicate }),
         ...(object === undefined ? {} : { object }),
-        ...(args.polarity === undefined
+        ...(request.polarity === undefined
           ? {}
           : {
-              polarity: enumOf("polarity", args.polarity, CLAIM_POLARITIES),
+              polarity: enumOf("polarity", request.polarity, CLAIM_POLARITIES),
             }),
       },
     );
 
     if (ctx.db.inTransaction) throw new Error("claim insertion requires a top-level transaction");
     const filed = ctx.db.transaction(() => {
+      normalized.assertCurrent?.();
       if (checkOutcomeBinding !== undefined) {
         checkOutcomeBinding();
         validateProvenance(ctx, provenance, contract);
@@ -439,6 +446,8 @@ export async function servePropose<C extends ResponseContract = typeof ENVELOPE_
       data,
       audit_ids: { claim_ids: [claim.claim_id] },
     };
+    };
+    return contract === ENVELOPE_V2_SCHEMA ? withScopedClaimMutation(ctx.db, ctx.vaultPath, perform) : perform();
   },
   contract,
   );

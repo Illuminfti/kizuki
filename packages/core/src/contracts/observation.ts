@@ -1,3 +1,4 @@
+import { canonicalJson } from "../util/hash";
 import { isPlainObject } from "../util/validate";
 import { isRfc3339 } from "../util/time";
 import { cardCodec, exact, evidenceRef, knownTime, type EvidenceRef, type KnownTime } from "./world-card-kit";
@@ -20,7 +21,7 @@ export type Observation = {
   readonly admittedAt: string;
 };
 const evidence = (value: unknown): boolean => Array.isArray(value) && value.length > 0 && value.length <= 256 && value.every(evidenceRef);
-export const validateObservation = cardCodec<Observation, "observation">({ schema: OBSERVATION_SCHEMA, label: "observation", fields: {
+const structuralObservation = cardCodec<Observation, "observation">({ schema: OBSERVATION_SCHEMA, label: "observation", fields: {
   ref: value => parseScopedRef(value)?.kind === "observation",
   evidence,
   attribution: value => Array.isArray(value) && value.length <= 256 && value.every(item => isPlainObject(item) &&
@@ -29,3 +30,14 @@ export const validateObservation = cardCodec<Observation, "observation">({ schem
   fidelity: value => ["verbatim_text", "source_metadata", "lossy_transcript"].includes(String(value)),
   occurred: knownTime, sourceObservedAt: value => value === null || isRfc3339(value), admittedAt: isRfc3339,
 } });
+
+/** Attribution must name evidence present in the complete outer observation. */
+export function validateObservation(input: unknown) {
+  const parsed = structuralObservation(input);
+  if (!parsed.ok) return parsed;
+  const evidence = new Set(parsed.value.evidence.map(item => canonicalJson(item)));
+  if (parsed.value.attribution.some(item => item.evidence.some(basis =>
+    basis.span.kind !== "metadata" || basis.span.field !== item.field || !evidence.has(canonicalJson(basis)))))
+    return { ok: false as const, errors: ["invalid observation/v1 payload"] as const };
+  return parsed;
+}

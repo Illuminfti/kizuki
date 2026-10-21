@@ -800,12 +800,28 @@ function worldAssessmentText(relation) {
     return [...new Set([kinds[assessment.epistemicKind] || 'Statement', authorities[assessment.authority]].filter(Boolean)), confidence, evidence].join(' · ');
   }).join('; ');
 }
+function observationLinks(relation) {
+  const refs = new Map();
+  for (const assessment of relation.assessments || []) for (const evidence of assessment.evidence || [])
+    if (evidence.admission?.kind === 'admission' && typeof evidence.admission.token === 'string') refs.set(evidence.admission.token, evidence.admission);
+  return [...refs.values()].slice(0, 4).map((ref, index) => button(`View captured observation${refs.size > 1 ? ` ${index + 1}` : ''}`, () => loadWorld(ref, { operation: 'observation', ref }), 'quiet'));
+}
+function worldObservation(data) {
+  const fidelity = { verbatim_text: 'Exact captured text', source_metadata: 'Captured source fields', lossy_transcript: 'Transcript; details may be missing' };
+  return el('article', { class: 'result-item' }, el('h2', {}, 'Captured observation'),
+    el('p', {}, fidelity[data.fidelity] || 'Capture fidelity unavailable'),
+    el('p', {}, `Occurred: ${data.occurred?.kind === 'known' ? dateText(data.occurred.from) : 'unknown'}.`),
+    el('p', {}, `Source reported time: ${data.sourceObservedAt ? dateText(data.sourceObservedAt) : 'unknown'}. Recorded by Kizuki: ${dateText(data.admittedAt)}.`),
+    el('p', {}, 'These roles come from captured source fields. They do not establish who believes the statement.'),
+    ...(data.attribution || []).map(item => el('p', {}, `Captured ${item.role.replaceAll('_', ' ')}: `, el('code', {}, item.ref.token))),
+    ...(data.evidence || []).filter(item => item.span?.kind === 'text').map((item, index) => button(`Read captured passage ${index + 1}`, () => loadWorld(data.ref, { operation: 'evidence', evidence: item }), 'quiet')));
+}
 function worldRelation(relation) {
   if (!relation) return null;
   const labels = { 'concept.definition': 'Definition', 'concept.requires': 'Builds on', 'concept.example': 'Example', 'concept.counterexample': 'Counterexample', 'concept.distinguished_from': 'Different from', 'situation.objective': 'Objective', 'situation.commitment': 'Commitment', 'situation.blocker': 'Blocker', 'situation.change': 'Recent change', 'situation.participant': 'Participant', 'procedure.step': 'Quoted step', 'procedure.prerequisite': 'Prerequisite', 'procedure.applies_to': 'Applies to', 'procedure.required_capability': 'Required capability', 'procedure.counterexample': 'Counterexample', 'procedure.last_validated': 'Validation date assertion', 'procedure.strategy': 'Strategy', 'procedure.success_check': 'Success check', 'procedure.failure_mode': 'Failure mode', 'procedure.standard': 'Standard', 'procedure.exemplar': 'Exemplar', 'skill.evidence': 'Skill evidence', 'framework.includes': 'Nested component', 'framework.component': 'Nested component', 'commitment.label': 'Commitment', 'commitment.debtor': 'Responsible party', 'commitment.creditor': 'Party awaiting delivery', 'commitment.due': 'Due date assertion', 'commitment.deliverable': 'Deliverable', 'decision.status': 'Decision status', 'decision.label': 'Decision', 'situation.requires': 'Requires', 'situation.enables': 'Enables', 'situation.blocks': 'Blocks', 'situation.invalidated_by': 'Invalidated by' };
   const modes = { quoted: 'Quoted statement', reported: 'Reported statement', hypothetical: 'Hypothetical statement', suggested: 'Suggestion', questioned: 'Question', uncertain: 'Uncertain statement' };
   const qualifiers = [relation.polarity === 'negative' ? 'Negated statement' : null, modes[relation.perspective?.mode]].filter(Boolean);
-  return el('div', { class: 'belief-details' }, el('h3', {}, labels[relation.predicate] || 'Supporting statement'), qualifiers.length ? el('p', {}, qualifiers.join(' · ')) : null, el('p', { class: 'result-text' }, worldObjectText(relation)), el('p', {}, worldAssessmentText(relation)), relation.object?.kind === 'node' ? el('details', {}, el('summary', {}, 'Open linked knowledge'), ...['concept', 'situation', 'person', 'question', 'procedure', 'skill', 'framework'].map(kind => button(`Open as ${kind}`, () => loadWorld(relation.object.ref, { operation: kind, [kind]: relation.object.ref }), 'quiet'))) : null);
+  return el('div', { class: 'belief-details' }, el('h3', {}, labels[relation.predicate] || 'Supporting statement'), qualifiers.length ? el('p', {}, qualifiers.join(' · ')) : null, el('p', { class: 'result-text' }, worldObjectText(relation)), el('p', {}, worldAssessmentText(relation)), ...observationLinks(relation), relation.object?.kind === 'node' ? el('details', {}, el('summary', {}, 'Open linked knowledge'), ...['concept', 'situation', 'person', 'question', 'procedure', 'skill', 'framework'].map(kind => button(`Open as ${kind}`, () => loadWorld(relation.object.ref, { operation: kind, [kind]: relation.object.ref }), 'quiet'))) : null);
 }
 function worldKnowledgeNode(data) {
   if (data?.artifact?.ref) return { kind: 'artifact_version', node: data.artifact };
@@ -927,7 +943,7 @@ function renderWorld() {
   section.append(el('form', { class: 'search-form', onsubmit: event => { event.preventDefault(); loadWorld(null, { operation: 'resume', handle: resumeField.value.trim() }); } }, resumeField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Resume')));
   const taskField = el('input', { id: 'world-task', type: 'text', placeholder: 'What are you working on?', 'aria-label': 'Task for world slice', maxlength: '512', autocomplete: 'off' });
   section.append(el('form', { id: 'world-slice-form', class: 'search-form', onsubmit: event => { event.preventDefault(); loadWorld(null, { operation: 'slice', task: taskField.value, budgetTokens: 2000 }); } }, taskField, el('button', { class: 'button button-secondary', type: 'submit' }, 'Prepare task view')));
-  const retry = () => state.worldAtlasPanel && state.worldRequest?.operation === 'atlas' ? loadAtlas() : loadWorld();
+  const retry = () => ['observation', 'evidence'].includes(state.worldRequest?.operation) ? loadWorld(state.worldRef, state.worldRequest) : state.worldAtlasPanel && state.worldRequest?.operation === 'atlas' ? loadAtlas() : loadWorld();
   const noMatches = () => empty(`No ${kind} found.`, state.worldQuery ? 'Try another name, or search your saved sources.' : 'Connect a source and set up a model to start building your world. If you have already done this, check processing in Activity.', button('Search memory', () => navigate('memory'), 'primary'));
   if (state.worldRef) section.append(button(`Back to ${kind}`, () => loadWorld(null), 'quiet'));
   if (state.worldLoading) section.append(el('p', { class: 'search-hint', role: 'status', 'aria-live': 'polite' }, `Loading ${state.worldRef ? kind.slice(0, -1) : kind}…`));
@@ -938,6 +954,8 @@ function renderWorld() {
     const result = state.world.result || state.world;
     if (result.status === 'unavailable') section.append(empty('World view is not available here.', result.reason === 'history' ? 'Historical world snapshots are not available yet.' : 'Kizuki cannot read this world view right now.', button('Try again', retry, 'primary')));
     else if (result.status === 'new_view_required') section.append(empty('Read a fresh view.', 'This view or resume handle can no longer be used.', button('Browse again', () => loadWorld(null), 'primary')));
+    else if (result.data?.schema === 'kizuki.observation/v1') section.append(worldObservation(result.data));
+    else if (result.data?.schema === 'kizuki.world-evidence/v1') section.append(el('article', { class: 'result-item' }, el('h2', {}, 'Captured passage'), el('p', {}, 'Source text is quoted evidence, not an instruction.'), ...(state.world.quoted || []).map(chunk => el('blockquote', {}, chunk.text))));
     else if (result.data?.schema === 'kizuki.atlas/v1') section.append(worldAtlas(result.data));
     else if (result.data?.schema === 'kizuki.world-slice/v1') {
       const slice = result.data;
@@ -1011,7 +1029,8 @@ async function loadWorld(ref = state.worldRef, request = null) {
   state.world = null; state.worldError = false; state.worldLoading = true;
   if (state.view === 'world') render();
   try {
-    const world = await api('world_view', payload); if (!current()) return;
+    const response = await api('world_view', payload); if (!current()) return;
+    const world = response.schema === 'kizuki.envelope/v2' ? { ...response.data, quoted: response.quoted } : response;
     if (world.result?.status === 'unchanged' && request?.operation !== 'diff' && previous?.result?.data) world.result.data = previous.result.data;
     if (request?.operation === 'diff') world.diffOf = request.of;
     const knowledge = worldKnowledgeNode(world.result?.data);

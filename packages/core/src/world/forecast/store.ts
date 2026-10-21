@@ -2,7 +2,7 @@ import { readClaimV2Semantic } from "../../claims/claim-v2-commit";
 import { rawSubjectRefKey } from "../../contracts/claim-v2";
 import { anchorOf } from "../pipeline/collect";
 import { supportAtSql } from "../known/cutoff";
-import { deadlineInstant } from "./basis";
+import { deadlineInstant } from "./rules";
 import type { Database } from "bun:sqlite";
 import { canonicalJson, sha256Hex } from "../../util/hash";
 import { ulid } from "../../util/ulid";

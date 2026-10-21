@@ -1,10 +1,10 @@
+import { WORLD_MIGRATION_VERSIONS } from "./versions";
 import { createObservationTables, observationTableSpecs } from "./observations";
 import { backfillSupportObservations } from "../../claims/observations";
 import type { Database } from "bun:sqlite";
 import type { WorldTableSpec } from "./registry";
 
-// Reserved by the current all-features task. Register only after actual FCST44.
-export const TYPED_REF_MIGRATION_VERSION = 45;
+export const TYPED_REF_MIGRATION_VERSION = WORLD_MIGRATION_VERSIONS.typed_refs;
 export const TYPED_REF_KINDS = ["page", "source", "receipt", "raw_subject", "captured_subject", "claim_group", "observation"] as const;
 export type TypedRefKind = typeof TYPED_REF_KINDS[number];
 const allKinds = ["object", "claim", "admission", "event_version", "principal", ...TYPED_REF_KINDS];
@@ -23,9 +23,9 @@ CREATE TABLE IF NOT EXISTS world_wire_page_targets (
 ) STRICT;
 CREATE TABLE IF NOT EXISTS world_wire_source_targets (
   ${base("source")}, source_key TEXT REFERENCES source_grants(source_key) ON DELETE CASCADE,
-  native_event_id TEXT REFERENCES events(event_id) ON DELETE CASCADE,
-  CHECK((source_key IS NOT NULL AND native_event_id IS NULL) OR (source_key IS NULL AND native_event_id IS NOT NULL)),
-  ${reference}, UNIQUE(namespace_id,source_key), UNIQUE(namespace_id,native_event_id)
+  capture_event_id TEXT REFERENCES events(event_id) ON DELETE CASCADE,
+  CHECK((source_key IS NOT NULL AND capture_event_id IS NULL) OR (source_key IS NULL AND capture_event_id IS NOT NULL)),
+  ${reference}, UNIQUE(namespace_id,source_key), UNIQUE(namespace_id,capture_event_id)
 ) STRICT;
 CREATE TABLE IF NOT EXISTS world_wire_receipt_targets (
   ${base("receipt")}, receipt_id TEXT NOT NULL REFERENCES canon_receipts(receipt_id) ON DELETE CASCADE,
@@ -88,6 +88,10 @@ WHEN NOT EXISTS(SELECT 1 FROM world_wire_raw_subject_members WHERE namespace_id=
 BEGIN DELETE FROM world_wire_raw_subject_targets WHERE namespace_id=OLD.namespace_id AND wire_ref=OLD.wire_ref; END;
 CREATE TRIGGER IF NOT EXISTS world_wire_claim_group_member_erased AFTER DELETE ON world_wire_claim_group_members
 BEGIN DELETE FROM world_wire_claim_group_targets WHERE namespace_id=OLD.namespace_id AND wire_ref=OLD.wire_ref; END;
+CREATE TRIGGER IF NOT EXISTS world_wire_claim_group_claim_purged AFTER UPDATE OF status ON claims
+WHEN NEW.status='purged'
+BEGIN DELETE FROM world_wire_claim_group_targets WHERE (namespace_id,wire_ref) IN
+  (SELECT namespace_id,wire_ref FROM world_wire_claim_group_members WHERE claim_id=NEW.claim_id); END;
 CREATE TRIGGER IF NOT EXISTS world_wire_claim_group_bounded BEFORE INSERT ON world_wire_claim_group_members
 WHEN (SELECT count(*) FROM world_wire_claim_group_members WHERE namespace_id=NEW.namespace_id AND wire_ref=NEW.wire_ref)>=16
 BEGIN SELECT RAISE(ABORT,'claim group exceeds bound'); END;
@@ -131,7 +135,7 @@ export function applyTypedRefs(db: Database): void {
 }
 
 const targets: readonly [TypedRefKind, readonly string[]][] = [
-  ["page", ["page_id", "rel_path", "content_hash"]], ["source", ["source_key", "native_event_id"]],
+  ["page", ["page_id", "rel_path", "content_hash"]], ["source", ["source_key", "capture_event_id"]],
   ["receipt", ["receipt_id"]], ["raw_subject", ["raw_key", "raw_ref"]],
   ["captured_subject", ["event_id", "subject_id"]], ["claim_group", ["group_key", "member_count"]], ["observation", ["observation_id"]],
 ];

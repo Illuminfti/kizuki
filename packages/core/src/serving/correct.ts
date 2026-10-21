@@ -1,3 +1,5 @@
+import { withScopedCanonMutation } from "./v2/writer-refusal";
+import { normalizeMutationArgs, type CorrectArgsV2 } from "./v2/mutation-input";
 import { sha256Hex } from "../util/hash";
 import { extendOwnedCanonIo, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
 import { VaultMutationError } from "../vault/mutation-scope";
@@ -14,8 +16,9 @@ import {
   resolveConflict,
   type ConflictClaim,
 } from "../claims/conflict";
-import { insertClaim, getClaim, listClaims, isSourcePageClaim } from "../claims/store";
+import { prepareClaimInsert, retryRetrievalOps, supersedeExactKeyedClaim, getClaim, listClaims, isSourcePageClaim } from "../claims/store";
 import type { RawSubjectRef } from "../contracts/claim-v2";
+import { AUTHORITY_TIERS } from "../contracts/proposal";
 import type { AuthorityTier, Claim } from "../contracts/proposal";
 import { recordNativeCorrection } from "../correction/evidence";
 import { text } from "./arguments";
@@ -29,7 +32,7 @@ import { claimVisibleTo, groupByKey, readable, resolve } from "./target";
 import type { CorrectTarget } from "./target";
 import { ServeError } from "./types";
 import type { ServeContext, ResponseContract, ResponseEnvelope } from "./types";
-import { ENVELOPE_SCHEMA } from "./types";
+import { ENVELOPE_SCHEMA, ENVELOPE_V2_SCHEMA } from "./types";
 import { resolveWorldClaim, worldNamespace } from "../world/references";
 import { readableWorldNode } from "../world/endpoint-access";
 import { isWorldWireToken, readWorldView, WorldViewError } from "./world-view";
@@ -248,8 +251,10 @@ async function correctWorldClaim(
   if (!isWorldClaimTarget(ctx, target))
     throw refuse("target", "names no live claim");
   const claim = getClaim(ctx.db, target.claim_id);
-  if (claim === null || claim.status !== "live")
+  if (claim === null)
     throw refuse("target", "names no live claim");
+  // The canonical writer checks exact replay before requiring a live target.
+  // A retained, currently readable predecessor must reach that same boundary.
   // A typed correction is filed at the owner's authority; a grant that cannot relay the owner cannot file one.
   if (ctx.principal.kind !== "owner" && !ctx.principal.grant.relay_owner_corrections)
     throw new ServeError("held", "correction relay is not granted");
@@ -370,7 +375,7 @@ function recordStatement(
     source_record_id: sourceRecordId, kind: CORRECTION_KIND,
     occurred_at: at, observed_at: at, text: statement, subjects: [],
     sensitivity_hint: "private", deleted: false, attachments: [], metadata: {},
-  }, requestDigest).event_id;
+  }, requestDigest, ctx.scopedMutationCurrent).event_id;
 }
 
 /** A readable recording is acknowledged without returning current page bytes. */
@@ -448,6 +453,9 @@ function assertSufficientAuthority(
     status: "live",
     provenance: [...new Set(live.flatMap((claim) => claim.provenance))],
   };
+  // Explicit retirement is still an authority change when replacing a
+  // multi-valued object, whose key differs and never conflicts implicitly.
+  if (group.some(claim => AUTHORITY_TIERS[claim.authority] > AUTHORITY_TIERS[incoming.authority])) throw refuseAuthority();
   for (const rival of live) {
     if (!claimsConflict(incoming, rival)) continue;
     if (resolveConflict(incoming, rival).action === "skip") {
@@ -498,9 +506,17 @@ function snapshot<T>(field: string, value: T): T {
  */
 export async function serveCorrect<C extends ResponseContract = typeof ENVELOPE_SCHEMA>(
   ctx: ServeContext,
-  args: CorrectArgs,
+  input: CorrectArgs | CorrectArgsV2,
   contract: C = ENVELOPE_SCHEMA as C,
-): Promise<ResponseEnvelope<CorrectData, C>> {
+): Promise<ResponseEnvelope<CorrectData, C, import("../contracts/scoped-tools").CorrectDataV2>> {
+  return gateAsync(
+    ctx,
+    "correct",
+    auditArguments(input),
+    async ({ ctx, at }): Promise<Served<CorrectData>> => {
+      const normalized = normalizeMutationArgs(ctx, "correct", input, contract);
+      ctx = { ...normalized.ctx, ...(normalized.assertCurrent === undefined ? {} : { scopedMutationCurrent: normalized.assertCurrent }) };
+      let args = normalized.args;
   const { statement, target, object, dry_run, mode, perspective_mode, refresh_world } = args;
   const worldClaim =
     target !== undefined &&
@@ -522,22 +538,20 @@ export async function serveCorrect<C extends ResponseContract = typeof ENVELOPE_
     ...(perspective_mode === undefined ? {} : { perspective_mode }),
     ...(refresh_world === undefined ? {} : { refresh_world: snapshot("refresh_world", refresh_world) }),
   });
-  return gateAsync(
-    ctx,
-    "correct",
-    auditArguments(args),
-    async ({ ctx, at }): Promise<Served<CorrectData>> => {
-      const io = snapshotCanonIo({
+      if (normalized.refresh !== undefined) checkRefresh(ctx, normalized.refresh);
+      const io: CorrectIo = Object.freeze({ ...snapshotCanonIo({
         db: ctx.db,
         vault_path: ctx.vaultPath,
         ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }),
-      });
+      }), ...(normalized.assertCurrent === undefined ? {} : { scoped: { assertCurrent: normalized.assertCurrent, ...(ctx.selection === undefined ? {} : { selection: ctx.selection }) } }) });
       ctx = Object.freeze({ ...ctx, db: io.db, vaultPath: io.vault_path });
+      const ownMutation = contract === ENVELOPE_V2_SCHEMA ? withScopedCanonMutation : withCanonMutationAsync;
+      const execute = async (): Promise<Served<CorrectData>> => {
       try {
         if (worldClaim !== undefined) {
           const intent = parseIntent(args);
           if (intent.refresh !== undefined) checkRefresh(ctx, intent.refresh);
-          const served = await withCanonMutationAsync(io, (scope, owned) =>
+          const served = await ownMutation(io, (scope, owned) =>
             correctWorldClaim(scope, owned, ctx, args, worldClaim.token, intent),
           );
           // Taken after the writer is released: the correction is durable, whatever the read finds.
@@ -548,7 +562,7 @@ export async function serveCorrect<C extends ResponseContract = typeof ENVELOPE_
         }
         if (args.mode !== undefined || args.perspective_mode !== undefined || args.refresh_world !== undefined || typeof args.object === "object")
           throw refuse("target", "mode, perspective_mode, refresh_world and a typed object need a world_claim target");
-        return await withCanonMutationAsync(io, async (scope, canon) => {
+        return await ownMutation(io, async (scope, canon) => {
       const grant = ctx.principal.grant;
       const statement = text("statement", args.statement, MAX_STATEMENT_CHARS);
       const replacement =
@@ -790,34 +804,58 @@ export async function serveCorrect<C extends ResponseContract = typeof ENVELOPE_
       );
       const sensitivity: Sensitivity = first.sensitivity;
       const ceiling = relayCeiling(ctx);
-      const filed = await insertClaim(claimsIo(ctx), {
-        kind: "claim",
-        // The key the correction is about, so one wording aimed at two
-        // different readings files as two claims rather than colliding on
-        // the store's idempotency index.
-        target: `correction:${claimKeyValue}`,
-        body: statement,
-        provenance: [...new Set([eventId, ...targetEvidence])],
-        subjects: [subject],
-        subject,
-        predicate,
-        // Named a replacement, the correction asserts it. Unnamed, it denies
-        // the recorded reading and asserts nothing: deriving the polarity
-        // from whatever is live would flip with the count of how many times
-        // the owner has spoken rather than with what the owner said.
-        ...(replacement === undefined
-          ? { polarity: "negative" as const }
-          : { polarity: "positive" as const, object: replacement }),
-        producer:
-          ctx.principal.kind === "owner"
-            ? "owner"
-            : `agent:${ctx.principal.agent.name}`,
-        confidence: 1,
-        intent: "correct",
-        taint: "clean",
-        sensitivity,
-        ...(ceiling === undefined ? {} : { relay_ceiling: ceiling }),
-      }).catch((error) => {
+      const io = claimsIo(ctx);
+      const file = async () => {
+        const prepared = await prepareClaimInsert(io, {
+          kind: "claim",
+          // The key the correction is about, so one wording aimed at two
+          // different readings files as two claims rather than colliding on
+          // the store's idempotency index.
+          target: `correction:${claimKeyValue}`,
+          body: statement,
+          provenance: [...new Set([eventId, ...targetEvidence])],
+          subjects: [subject],
+          subject,
+          predicate,
+          // Named a replacement, the correction asserts it. Unnamed, it denies
+          // the recorded reading and asserts nothing: deriving the polarity
+          // from whatever is live would flip with the count of how many times
+          // the owner has spoken rather than with what the owner said.
+          ...(replacement === undefined
+            ? { polarity: "negative" as const }
+            : { polarity: "positive" as const, object: replacement }),
+          producer:
+            ctx.principal.kind === "owner"
+              ? "owner"
+              : `agent:${ctx.principal.agent.name}`,
+          confidence: 1,
+          intent: "correct",
+          taint: "clean",
+          sensitivity,
+          ...(ceiling === undefined ? {} : { relay_ceiling: ceiling }),
+        });
+        if (ctx.db.inTransaction) throw new Error("claim insertion requires a top-level transaction");
+        const result = ctx.db.transaction(() => {
+          ctx.scopedMutationCurrent?.();
+          const current = group.map(claim => getClaim(ctx.db, claim.claim_id));
+          if (current.some(claim => claim === null || claim.status !== "live" || claim.claim_key !== claimKeyValue))
+            throw refuse("target", "names no live keyed claim");
+          assertSufficientAuthority(ctx, current as Claim[], claimKeyValue, predicate, replacement, at);
+          const inserted = prepared.apply();
+          if (inserted.outcome === "stored") {
+            for (const targetClaim of group) {
+              const targetNow = getClaim(ctx.db, targetClaim.claim_id);
+              if (targetNow?.status === "superseded" && targetNow.superseded_by === inserted.claim.claim_id) continue;
+              supersedeExactKeyedClaim(io, inserted.claim, targetClaim.claim_id, claimKeyValue, at);
+              inserted.superseded.push({ claim_id: targetClaim.claim_id, rule: "R5" });
+            }
+          }
+          return inserted;
+        }).immediate();
+        await retryRetrievalOps(io);
+        return result;
+      };
+      const filed = await file().catch((error) => {
         ctx.db
           .query(
             "UPDATE native_owner_evidence SET filing_state='failed' WHERE event_id=?",
@@ -888,6 +926,13 @@ export async function serveCorrect<C extends ResponseContract = typeof ENVELOPE_
         }
         throw error;
       }
+      };
+      const served = await execute();
+      if (served.data !== undefined) {
+        if (args.dry_run === true) served.scopedMessage = "dry_run";
+        if (normalized.refresh !== undefined && served.data.claim_id !== null) served.data.refreshedWorld = refreshedWorld(ctx, normalized.refresh);
+      }
+      return served;
     },
     contract,
   );

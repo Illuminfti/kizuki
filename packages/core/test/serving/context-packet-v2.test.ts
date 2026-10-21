@@ -68,19 +68,17 @@ test("the v2 body leads with its marker and names no epoch, time or digest", asy
     expect(view.token).toMatch(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/);
     const [marker, header, rules] = data.packetMd.split("\n");
     expect(marker).toBe("KIZUKI CONTEXT v2");
-    expect(header).toBe(`principal=narrow-reader purpose=session budget=1000`);
+    if (envelope.schema !== V2) throw new Error("wrong contract");
+    expect(header).toBe(`principal=${envelope.principal.token} purpose=session budget=1000`);
     expect(rules).toStartWith("rules=canon lines are produced prose");
     expect(data.packetMd).not.toMatch(/epoch|\bat=|etag|packet_hash/);
     expect(Object.keys(data).sort()).toEqual([
       "budgetTokens",
+      "coverage",
       "packetMd",
       "purpose",
-      "retrievalDegraded",
-      "sections",
-      "session",
       "tokenizer",
       "tokens",
-      "truncated",
     ]);
     expect(data.tokens).toBeLessThanOrEqual(data.budgetTokens);
     expect(new Date(packet.result.validUntil).getTime()).toBeGreaterThan(
@@ -135,9 +133,7 @@ test("an incomplete packet is served with its gap and is never unchanged", async
     });
     if (degraded.packet.result.status !== "incomplete")
       throw new Error("unreachable");
-    expect(degraded.packet.result.data.retrievalDegraded).toContain(
-      "retrieval-unavailable",
-    );
+    expect(degraded.packet.result.data.coverage.gaps).toContain("coverage");
     expect(degraded.packet.result).not.toHaveProperty("view");
   } finally {
     scene.dispose();
@@ -267,7 +263,7 @@ test("a query without indexed canon reports its incomplete retrieval coverage", 
     const first = (await read(scene, { ...WIDE, query: "Bayesian" })).packet.result;
     expect(first.status).toBe("incomplete");
     if (first.status !== "incomplete") throw new Error("expected query coverage gap");
-    expect(first.data.retrievalDegraded).toContain("query-no-match");
+    expect(first.data.coverage.gaps).toContain("coverage");
     expect(first).not.toHaveProperty("view");
   } finally { scene.dispose(); }
 });
