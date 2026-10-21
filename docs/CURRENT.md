@@ -1,4 +1,8 @@
-# Current direction (2026-09-23)
+# Current direction
+
+Implementation inventory updated 2026-10-21. This describes the checked-out
+source, not the version installed on any particular host. The readiness decision
+below remains the owner's recorded 2026-09-23 decision.
 
 Binding intent is RFC 0002 — Autonomous canon (`rfcs/0002-autonomous-canon.md`).
 It is BINDING. It amends `docs/architecture.md` invariants 3, 5, 9, RFC 0000,
@@ -36,7 +40,7 @@ There is no owner review queue, and there never will be one. The TUI
 survives as audit and undo only. Conversational correction (`kizuki tell` /
 MCP `correct`) is the update path a person actually uses.
 
-## What this revision ships
+## What this revision implements
 
 Version 1.0.2.
 
@@ -55,6 +59,29 @@ discovery says so and points at `kizuki doctor`. Discovery and cards report
 `partial` coverage while a readable source is still importing, failed its last
 run, or has unconsumed extraction backlog; label search is case-insensitive
 and paginated by cursor.
+
+The same world reader also implements current evidence expansion, recorded-time
+history, shared and resumed views, World Diff, task-bounded World Slice, Questions
+and frontier, People, Skills, Frameworks, Procedures, exact captured ArtifactVersions,
+Outcomes, Attention, Forecasts and Atlas. Core, CLI, MCP, HTTP and App use that
+reader and the same authorization rules. Registered operations and their precise
+coverage are documented in [the CLI reference](cli.md) and the [world verification
+matrix](world/verification.md).
+
+Implementation and extraction activation are separate. Concept and Situation
+extraction is offered by default; Question, Person, Skill, Framework, Procedure,
+Commitment and Decision extraction remains disabled pending real model
+qualification. Their isolated synthetic integration tests do not enable them in
+an owner's vault. Artifact versions come from supported connector metadata;
+Outcome reports use the existing proposal seam. These inputs retain their own
+provenance and authority requirements.
+
+Consolidation is a budgeted background job over current supported claims.
+Correction or revoked support withholds obsolete summaries immediately. Forecasts
+use a frozen, explicitly uncalibrated heuristic and independent outcome evidence;
+their scores are not a prediction-accuracy claim. Attention dispositions do not
+alter truth or confidence. The [golden journey](world/golden-journey.md) documents
+the tested cross-client lifecycle and its scripted-model limitations.
 
 A default session context packet starts with `owner`, `now`, `commitments`
 and `uncertain` sections read from authorized claims and Situations, each empty
@@ -109,10 +136,13 @@ The release package is a Linux x64 baseline build. It is not signed, and
 nothing is published to npm or another package registry. macOS and other
 platforms run from a source checkout. Telegram, Gmail, Google Calendar, IMAP,
 X and Beeper have no recorded live-account qualification on this revision;
-the Beeper connector has synthetic coverage only. Revision resume for world
-views is not issued yet (fresh cards carry a `not_issued` view marker), and
-Atlas, forecasts, World Slice and Diff, outcomes and attention remain on the
-roadmap. A vault copied at file level while a canon write is pending refuses
+the Beeper connector has synthetic coverage only. Additional extraction kinds
+remain gated as described above. [Adaptive domain learning and collaboration
+model requirements](v2-adaptive-collaboration.md) are a separate v2 checklist;
+the presence of Slice, artifacts and outcomes does not establish their completion.
+Exact-head repository and native package checks, migrations and installed
+consumer checks are required before describing this source as a deployed release.
+A vault copied at file level while a canon write is pending refuses
 recovery with `receipt_stream_changed` instead of completing it; take
 `kizuki backup` of a running vault instead of copying its files.
 
