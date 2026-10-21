@@ -1,3 +1,4 @@
+export { ErasurePendingError, assertPositiveAuthorityMutationAllowed } from "./positive-authority";
 export { applyCanonWrite } from "./apply";
 export type { ApplyCanonWriteOptions } from "./apply";
 export { listAuditReceipts } from "./audit";
