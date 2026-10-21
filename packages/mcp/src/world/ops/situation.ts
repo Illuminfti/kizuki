@@ -34,5 +34,5 @@ export const situationFragment: McpWorldOp = {
     },
   },
   summary:
-    "situation reads one Situation by the object token find_situations returned, passed in the field named situation. Optional card:kizuki.situation-card/v2 adds independent commitments, decisions and dependencies; omitted card preserves v1.",
+    "situation reads its ObjectRef; card:kizuki.situation-card/v2 adds commitments/decisions/dependencies; default v1.",
 };

@@ -96,6 +96,7 @@ export function verificationInputs(scene: NoninterferenceScene): Record<Verifica
     history: input("history", { concept: scene.refs.concept }), share: input("share", { of }),
     resume: input("resume", { handle }), question: input("question", { question }),
     find_questions: input("find_questions", { label: "update" }), frontier: input("frontier"),
+    atlas: input("atlas", { panel: "people" }),
     slice: input("slice", { task: "Resume the launch", kinds: ["concept", "situation"], budgetTokens: 2000 }),
     person: input("person", { person }), find_people: input("find_people", { label: "Ada" }),
     find_procedures: input("find_procedures", { label: "verify" }), procedure: input("procedure", { procedure }),

@@ -1524,3 +1524,41 @@ for (const kind of ["procedure", "artifact_version"] as const) {
     f.evaluate("invalidatePrivateView()"); expect(f.storageWrites).toHaveLength(0);
   });
 }
+
+test('Atlas panels use keyboard-native controls and announce loading, incomplete, empty, unavailable and error states', async () => {
+  const f = fixture(); f.evaluate(`state.view='world'; render();`);
+  const nav = f.main.querySelector('nav')!;
+  expect(nav.getAttribute('aria-label')).toBe('Atlas views');
+  const buttons = nav.children.filter(one => one.tag === 'button');
+  expect(buttons.map(one => one.textContent)).toEqual(['Overview','Resume my work','What changed','People','Questions','Commitments','Stale evidence','Corrections and impact']);
+  for (const button of buttons) { expect(button.getAttribute('type')).toBe('button'); expect(button.getAttribute('tabindex')).not.toBe('-1'); }
+  const loading = f.evaluate<Promise<void>>(`loadAtlas('people')`);
+  expect(f.requests[0]!.payload).toMatchObject({operation:'atlas',panel:'people'});
+  expect(f.main.textContent).toContain('Loading');
+  expect(f.main.querySelector('section')!.getAttribute('aria-busy')).toBe('true');
+  const coverage={status:'partial',gaps:['coverage'],validWindow:{kind:'all'},history:'baseline_only'};
+  const panel={panel:'people',title:'People',status:'partial',reason:null,entries:[],change:null,nextView:null,coverage};
+  f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'atlas',result:{status:'incomplete',data:{schema:'kizuki.atlas/v1',panel:'people',panels:[panel],coverage},reasons:['coverage']}});await loading;
+  expect(f.main.textContent).toContain('This view is incomplete.');
+  for (const state of ['empty','unavailable']) {
+    f.evaluate(`state.world.result.data.panels[0].status=${JSON.stringify(state)};state.world.result.data.panels[0].reason='baseline_required';render();`);
+    expect(f.main.textContent).toContain(state==='empty'?'No matching information in this view.':'Open an item first');
+  }
+  const failed=f.evaluate<Promise<void>>(`loadAtlas('questions')`);
+  f.requests.splice(0,1)[0]!.result.resolve({status:500,json:async()=>({ok:false,error:{code:'internal'}})});await failed;
+  expect(f.main.textContent).toContain('World view is unavailable.');
+  const alerts=(node:Element):Element[] => [...(node.getAttribute('role')==='alert'?[node]:[]),...node.children.flatMap(alerts)];
+  expect(alerts(f.main).length).toBeGreaterThan(0);
+  const retry = f.evaluate<Promise<void>>(`loadAtlas()`); expect(f.requests[0]!.payload.panel).toBe('questions');
+  f.reply('world_view',{status:'not_found'});await retry;
+});
+
+test('Atlas comparison baselines are cleared with privacy state and cannot survive logout', async () => {
+  const f=fixture();f.evaluate(`state.worldAtlasFocus={focus:{operation:'concept',ref:{kind:'object',token:'a'.repeat(43)}},baselineView:{kind:'view',token:'b'.repeat(43)}}; state.worldAtlasPanel='changed';`);
+  const pending=f.evaluate<Promise<void>>(`state.view='world';loadAtlas('changed')`);
+  expect(f.requests[0]!.payload).toHaveProperty('baselineView.token','b'.repeat(43));
+  f.evaluate(`invalidatePrivateView();`);
+  expect(f.evaluate('state.worldAtlasFocus')).toBeNull();
+  f.reply('world_view',{schema:'kizuki.world-view/v1',operation:'atlas',result:{status:'current',data:{schema:'kizuki.atlas/v1',panels:[]}}});await pending;
+  expect(f.main.textContent).not.toContain('b'.repeat(43));
+});

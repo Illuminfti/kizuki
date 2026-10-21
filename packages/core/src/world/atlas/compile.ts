@@ -1,11 +1,10 @@
 import { ATLAS_SCHEMA, type Atlas, type AtlasEntry, type AtlasPanel, type AtlasPanelName, type AtlasObjectOperation } from "../../contracts/atlas";
 import { coverage as validCoverage, type Coverage, type ViewGap, type Relation } from "../../contracts/world-card-kit";
-import { isPlainObject } from "../../util/validate";
 import { projectedRelations } from "../slice/providers";
 import type { ClaimsOp, ViewToken, WorldFrame, WorldObjectRef, WorldOpData, WorldRecord, WorldWhen } from "../ops/types";
 import type { WorldEvidenceSource } from "../ops/evidence-types";
 
-export interface AtlasQuery { readonly panel: AtlasPanelName; readonly focus: { readonly operation: AtlasObjectOperation; readonly ref: WorldObjectRef } | null; readonly baselineView: ViewToken | null }
+export interface AtlasQuery { readonly panel: AtlasPanelName; readonly focus: { readonly operation: AtlasObjectOperation; readonly ref: WorldObjectRef; readonly card?: "kizuki.situation-card/v2" } | null; readonly baselineView: ViewToken | null }
 type PanelName = Exclude<AtlasPanelName, "home">;
 const TITLES: Record<PanelName, string> = { resume: "Resume my work", changed: "What changed", people: "People", questions: "Questions", commitments: "Commitments", stale: "Stale evidence", corrections: "Corrections and impact" };
 /** Stable order; missing providers are an explicit unavailable panel. */
@@ -88,7 +87,7 @@ export function compileAtlas(frame: WorldFrame, query: AtlasQuery, when: WorldWh
     if (!focus || !baselineView) return panel(name, cov(when, ["coverage"]), [], "baseline_required");
     const target = frame.registry.find(op => op.name === focus.operation) as ClaimsOp | undefined;
     if (!target?.readObject) return panel(name, cov(when, ["coverage"]), [], "not_landed");
-    const of = { operation: focus.operation, [focus.operation]: focus.ref };
+    const of = { operation: focus.operation, [nodeKey(focus.operation)]: focus.ref, ...(focus.card ? { card: focus.card } : {}) };
     const result = read({ operation: "diff", of, priorView: baselineView }, true);
     if ("status" in result || result.result.status === "new_view_required") return panel(name, cov(when, ["coverage"]), [], "baseline_unusable");
     const value = result.result;
@@ -113,7 +112,7 @@ export function compileAtlas(frame: WorldFrame, query: AtlasQuery, when: WorldWh
     const count = change.added.length + change.removed.length + change.changed.length;
     return { ...panel(name, cov(when, gaps), entries), status: gaps.size ? "partial" : count || entries.length ? "ready" : "empty",
       change: { added: change.added, removed: change.removed, changed: change.changed, truncated: change.truncated },
-      nextView: "view" in value && value.view.kind === "view" ? value.view : null };
+      nextView: "view" in value && "kind" in value.view && value.view.kind === "view" ? value.view : null };
   };
   const one = (name: PanelName): AtlasPanel => {
     if (!frame.read) return panel(name, cov(when, ["coverage"]), [], "not_landed");
