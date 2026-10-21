@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { assertPositiveAuthorityMutationAllowed } from "../canon/positive-authority";
 import { tableExists } from "../ledger/schema";
 import { CONVERSATION_EVENT_KINDS } from "../staging/budget";
 
@@ -100,6 +101,7 @@ export function skipCaptureFanoutClaims(
     const ids = select.all(Math.min(BATCH, limit - skipped));
     const closed = db
       .transaction(() => {
+        assertPositiveAuthorityMutationAllowed(db);
         let changed = 0;
         for (const { claim_id } of ids) {
           const result = close.run(at, CAPTURE_FANOUT_SKIP_REASON, claim_id);

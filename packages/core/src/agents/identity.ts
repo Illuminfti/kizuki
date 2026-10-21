@@ -1,3 +1,5 @@
+import { assertPositiveAuthorityMutationAllowed } from "../canon/positive-authority";
+import { tableExists } from "../ledger/schema";
 import type { Database } from "bun:sqlite";
 import { timingSafeEqual } from "node:crypto";
 import { ulid } from "../util/ulid";
@@ -375,6 +377,10 @@ function quarantineIfInvalid(db: Database, agentId: string, at: string): void {
   }).immediate();
 }
 
+function assertAgentAuthorityMutationAllowed(db: Database): void {
+  if (tableExists(db, "canon_source_erasure_intents")) assertPositiveAuthorityMutationAllowed(db);
+}
+
 export function writeAgentGrant(
   db: Database,
   agentId: string,
@@ -382,6 +388,7 @@ export function writeAgentGrant(
   at: string,
   epoch: number,
 ): void {
+  assertAgentAuthorityMutationAllowed(db);
   using statement = db.prepare<
     never,
     [string, string, string | null, string | null, string | null, string | null, string, number, number, number, string, string | null]
@@ -430,6 +437,7 @@ export function addAgent(
   };
 
   db.transaction(() => {
+    assertAgentAuthorityMutationAllowed(db);
     if (getAgent(db, name) !== null) {
       throw new Error(`agent ${name} already exists`);
     }
@@ -611,6 +619,7 @@ export function setGrantInTransaction(
   patch: Partial<Grant>,
   operation?: GrantOperation,
 ): Grant {
+  assertAgentAuthorityMutationAllowed(db);
   const row = grantRowByName(db, name);
   if (row === null) throw new Error(`agent ${name} does not exist`);
   const before = tryDecodeGrant(row);
@@ -695,6 +704,7 @@ export function revokeAgent(db: Database, name: string): void {
 
 export function rotateToken(db: Database, name: string): string {
   return db.transaction((): string => {
+    assertAgentAuthorityMutationAllowed(db);
     const row = grantRowByName(db, name);
     if (row === null) throw new Error(`agent ${name} does not exist`);
     if (row.revoked_at !== null) throw new Error(`agent ${name} is revoked`);
