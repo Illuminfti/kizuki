@@ -356,7 +356,7 @@ describe("rebuild", () => {
     await port.rebuildFromDocuments(many);
 
     expect(embedding.chunks).toHaveLength(17);
-    expect(embedding.batches.map(batch => batch.length)).toEqual([8, 8, 1]);
+    expect(embedding.batches.map(batch => batch.length)).toEqual([2, 2, 2, 2, 2, 2, 2, 2, 1]);
     expect((await chunkRows(port)).every(row => row.embedding !== null)).toBe(true);
   });
 
