@@ -4,6 +4,7 @@ import {
   PAGE_CANDIDATE_KEY,
   PAGE_CANDIDATE_SCHEMA,
   PAGE_SENSITIVITIES,
+  isPlainObject,
   validatePageCandidate,
 } from "@kizuki/core";
 import type { CaptureEventInput, PageSensitivity, PageType } from "@kizuki/core";
@@ -60,6 +61,45 @@ export interface PlanOptions {
    * those.
    */
   pinned?: Record<string, string>;
+  /**
+   * New relpath to the relpath it was renamed from. Such an event names its
+   * origin in `moved_from`, and its target is pinned to the origin's page.
+   */
+  movedFrom?: Record<string, string>;
+}
+
+/**
+ * A digest of what the migration decided about a page: its text, labels,
+ * target and fields. It leaves out the mapping's own hash, the observation
+ * time, a file time the planner took from the disk, and the revision markers,
+ * so an edit to the mapping that changes nothing about a page is not a new
+ * revision of it, and a mapping edit that is reverted returns to the digest it
+ * had. The planner builds every event in one fixed key order, so the same
+ * decision always serializes the same way.
+ */
+function planDigest(event: CaptureEventInput): string {
+  const {
+    mapping_hash: _mapping,
+    plan_sha256: _plan,
+    revision_epoch: _epoch,
+    moved_from: _moved,
+    ...decided
+  } = event.metadata;
+  const migration = event.metadata["migration"];
+  const fromField = isPlainObject(migration) && migration["occurred_at"] === "field";
+  return new Bun.CryptoHasher("sha256")
+    .update(
+      JSON.stringify([
+        event.source_record_id,
+        event.kind,
+        event.text,
+        event.subjects,
+        event.sensitivity_hint ?? null,
+        fromField ? event.occurred_at : null,
+        decided,
+      ]),
+    )
+    .digest("hex");
 }
 
 interface PageDraft {
@@ -284,37 +324,41 @@ function planPage(
   const { relpath: _relpath, ...migration } = report;
   const frontmatter = jsonSafeFrontmatter(data);
 
+  const event: CaptureEventInput = {
+    schema: "kizuki.event/v1",
+    connector_id: LEGACY_WIKI_CONNECTOR_ID,
+    source_record_id: file.relpath,
+    kind: "page",
+    occurred_at: occurred,
+    observed_at: opts.observedAt,
+    text,
+    subjects,
+    sensitivity_hint: label,
+    deleted: false,
+    attachments: [],
+    metadata: {
+      relpath,
+      size: file.size,
+      sha256: new Bun.CryptoHasher("sha256").update(file.content).digest("hex"),
+      mapping_hash: opts.mappingHash,
+      frontmatter_status: parsed.status,
+      ...("frontmatter" in frontmatter
+        ? { frontmatter: frontmatter.frontmatter }
+        : { frontmatter_omitted: frontmatter.omitted }),
+      ...(truncated ? { text_truncated: true } : {}),
+      ...(bodyTruncated ? { body_truncated: true } : {}),
+      ...(usable ? { [PAGE_CANDIDATE_KEY]: candidate } : {}),
+      ...(opts.movedFrom?.[file.relpath] === undefined
+        ? {}
+        : { moved_from: opts.movedFrom[file.relpath] }),
+      // The decision record travels with the evidence, so a page reviewed
+      // months later still says what the migration did to it.
+      migration,
+    },
+  };
   return {
     report,
-    event: {
-      schema: "kizuki.event/v1",
-      connector_id: LEGACY_WIKI_CONNECTOR_ID,
-      source_record_id: file.relpath,
-      kind: "page",
-      occurred_at: occurred,
-      observed_at: opts.observedAt,
-      text,
-      subjects,
-      sensitivity_hint: label,
-      deleted: false,
-      attachments: [],
-      metadata: {
-        relpath,
-        size: file.size,
-        sha256: new Bun.CryptoHasher("sha256").update(file.content).digest("hex"),
-        mapping_hash: opts.mappingHash,
-        frontmatter_status: parsed.status,
-        ...("frontmatter" in frontmatter
-          ? { frontmatter: frontmatter.frontmatter }
-          : { frontmatter_omitted: frontmatter.omitted }),
-        ...(truncated ? { text_truncated: true } : {}),
-        ...(bodyTruncated ? { body_truncated: true } : {}),
-        ...(usable ? { [PAGE_CANDIDATE_KEY]: candidate } : {}),
-        // The decision record travels with the evidence, so a page reviewed
-        // months later still says what the migration did to it.
-        migration,
-      },
-    },
+    event: { ...event, metadata: { ...event.metadata, plan_sha256: planDigest(event) } },
   };
 }
 

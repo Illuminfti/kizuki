@@ -334,7 +334,7 @@ describe("MarkdownFolderConnector", () => {
     }
   });
 
-  test("rejects a same-root cursor when page_size or exclude changes", async () => {
+  test("rejects a same-root cursor when exclude changes and resumes it when only page_size changes", async () => {
     const root = await makeTempDir();
     try {
       await writeFile(path.join(root, "a.md"), "alpha\n");
@@ -347,7 +347,6 @@ describe("MarkdownFolderConnector", () => {
       expect(first.has_more).toBe(true);
 
       const mismatches: Array<{ path: string; page_size: number; exclude?: string[] }> = [
-        { path: root, page_size: 2 },
         { path: root, page_size: 1, exclude: ["c.md"] },
       ];
       for (const config of mismatches) {
@@ -368,6 +367,10 @@ describe("MarkdownFolderConnector", () => {
           }
         }
       }
+
+      // A batch size is only how much one page emits: the same token resumes at another.
+      const resized = await createMarkdownFolderConnector({ path: root, page_size: 2 }).backfill(first.cursor);
+      expect(resized.events.map((event) => event.source_record_id)).toEqual(["b.md", "c.md"]);
 
       const remaining: string[] = [];
       let cursor = first.cursor;
@@ -1476,22 +1479,23 @@ describe("markdown folder committed identities", () => {
     }
   });
 
-  test("a compact cursor still rejects a foreign root", async () => {
+  test("a compact cursor resumes on a migrated root and emits only differences", async () => {
     const firstRoot = await makeTempDir();
     const secondRoot = await makeTempDir();
     try {
       await writeFile(path.join(firstRoot, "a.md"), "a\n");
       await writeFile(path.join(secondRoot, "a.md"), "a\n");
+      await writeFile(path.join(secondRoot, "b.md"), "b\n");
+      const committed = () => [["a.md", identityOf("a\n")]] as [string, { sha256: string; size: number }][];
       const first = await createMarkdownFolderConnector(
         { path: firstRoot },
-        { committedFiles: () => [] },
+        { committedFiles: committed },
       ).backfill(null);
-      await expect(
-        createMarkdownFolderConnector(
-          { path: secondRoot },
-          { committedFiles: () => [] },
-        ).sync(first.cursor),
-      ).rejects.toThrow("does not belong to this root");
+      const second = await createMarkdownFolderConnector(
+        { path: secondRoot },
+        { committedFiles: committed },
+      ).sync(first.cursor);
+      expect(second.events.map((event) => [event.source_record_id, event.deleted])).toEqual([["b.md", false]]);
     } finally {
       await rm(firstRoot, { recursive: true, force: true });
       await rm(secondRoot, { recursive: true, force: true });

@@ -695,7 +695,7 @@ describe("help", () => {
         data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
       };
       expect(body.data.name).toBe("sync");
-      expect(body.data.options).toEqual(["--source"]);
+      expect(body.data.options).toEqual(["--source", "--confirm-withdrawals"]);
       expect(body.data.flags).toEqual(["--once"]);
       expect(body.data.irreversible).toBe(false);
     }

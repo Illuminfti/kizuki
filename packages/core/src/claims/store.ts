@@ -1148,17 +1148,37 @@ export function supersedePageRevisions(db: Database, winnerId: string, at: strin
   const connector = winner.frontmatter["x-connector"] as string;
   const record = winner.frontmatter["x-source-record-id"] as string;
   const source = pageSource(db, winner);
-  const older = db.query<ClaimRow, [string, string, string, string, string, string]>(
-    `SELECT * FROM claims
-      WHERE (status = 'live' OR
-             (status = 'skipped' AND claim_key IS NULL AND retracted_at IS NULL AND superseded_by IS NULL))
-        AND claim_id <> ? AND kind IN ('entity', 'claim')
-        AND (authority <> 'connector_evidence' OR rowid < (SELECT rowid FROM claims WHERE claim_id = ?))
-        AND (claim_key IN (?, ?) OR (claim_key IS NULL AND producer = 'deterministic' AND authority = 'connector_evidence'
-             AND json_extract(frontmatter, '$."x-connector"') = ?
-             AND json_extract(frontmatter, '$."x-source-record-id"') = ?))`,
-  ).all(winner.claim_id, winner.claim_id, winner.claim_key!, pageClaimKey(connector, record), connector, record).map(rowToClaim)
-    .filter(loser => pageSource(db, loser) === source);
+  const eligibleOlder = `(status = 'live' OR
+    (status = 'skipped' AND claim_key IS NULL AND retracted_at IS NULL AND superseded_by IS NULL))
+    AND claim_id <> ? AND kind IN ('entity', 'claim')
+    AND (authority <> 'connector_evidence' OR rowid < (SELECT rowid FROM claims WHERE claim_id = ?))`;
+  const keyed = db.query<ClaimRow, [string, string, string, string]>(
+    `SELECT * FROM claims WHERE ${eligibleOlder} AND claim_key IN (?, ?)`,
+  ).all(winner.claim_id, winner.claim_id, winner.claim_key!, pageClaimKey(connector, record));
+  // Legacy source claims have no key. Resolve their first admitted event through
+  // the source-record index and the disposable claim index, then verify all
+  // provenance. A new record must not scan every earlier capture in the vault.
+  // Unary + keeps event IDs unchanged but removes TEXT affinity so SQLite can
+  // seek the json_extract expression index instead of scanning keyless claims.
+  const legacy = db.query<ClaimRow, Array<string | number>>(
+    `SELECT * FROM claims INDEXED BY claims_legacy_source_event WHERE ${eligibleOlder}
+      AND claim_key IS NULL AND producer = 'deterministic' AND authority = 'connector_evidence'
+      AND json_extract(provenance, '$[0]') IN (
+        SELECT +event_id FROM events WHERE connector_id = ? AND source_record_id = ?
+      )
+      AND json_extract(frontmatter, '$."x-connector"') = ?
+      AND (json_extract(frontmatter, '$."x-source-record-id"') = ?
+        OR (? = 1 AND kind = 'claim'
+          AND json_extract(frontmatter, '$."x-source-record-id"') IS NULL
+          AND json_extract(frontmatter, '$."x-capture-kind"') = 'file'))
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(claims.provenance) p
+        LEFT JOIN events e ON e.event_id = p.value
+        WHERE e.event_id IS NULL OR e.connector_id <> ? OR e.source_record_id <> ?
+      )`,
+  ).all(winner.claim_id, winner.claim_id, connector, record, connector, record,
+    winner.frontmatter["x-capture-kind"] === "file" ? 1 : 0, connector, record);
+  const older = [...keyed, ...legacy].map(rowToClaim).filter(loser => pageSource(db, loser) === source);
   if (older.some(loser => AUTHORITY_TIERS[loser.authority] > AUTHORITY_TIERS[winner.authority])) {
     skipUnwrittenClaim(db, winner.claim_id, at);
     return;

@@ -1,4 +1,4 @@
-import { inspectSourceGrant, listConnections, resumeSourceRevocation, revokeSourceGrant, setSourceGrant } from "@kizuki/core";
+import { inspectSourceGrant, listConnections, massWithdrawalHoldOf, resumeSourceRevocation, revokeSourceGrant, setSourceGrant } from "@kizuki/core";
 import { createOwnedRetrievalInventory, OwnedRetrievalInventoryError } from "../owned-retrieval-inventory";
 import { parseArguments, UsageError } from "../args";
 import { withReadVault, withVault } from "../context";
@@ -6,6 +6,7 @@ import { egressDestination, egressRetention, egressView } from "../egress-view";
 import { connectConsentSchema } from "../option-schema";
 import { clean, jsonEnvelope } from "../output";
 import { consentHint, expectedRevision, readSourcePolicy } from "../source-consent";
+import { withdrawalHoldLine } from "../withdrawal-hold";
 import type { CliIo } from "./index";
 
 export async function runConnectConsent(io: CliIo, args: string[]): Promise<number> {
@@ -24,7 +25,8 @@ export async function runConnectConsent(io: CliIo, args: string[]): Promise<numb
   const policy = file === undefined ? undefined : readSourcePolicy(file);
   return (action === "status" ? withReadVault : withVault)(io, async (ctx) => {
     // Consent outlives the connection: an owner must reach a disconnected source to inspect, widen or revoke it.
-    if (!listConnections(ctx.db, { includeDisconnected: true }).some((connection) => connection.source_key === source)) throw new Error("source_not_enrolled");
+    const enrolled = listConnections(ctx.db, { includeDisconnected: true }).find((connection) => connection.source_key === source);
+    if (enrolled === undefined) throw new Error("source_not_enrolled");
     let receipt;
     if (action === "grant") receipt = setSourceGrant(ctx.db, { source_key: source, expected_revision: revision!, operation_id: operation!, policy });
     if (action === "revoke") receipt = revokeSourceGrant(ctx.db, { source_key: source, expected_revision: revision!, operation_id: operation! });
@@ -43,14 +45,16 @@ export async function runConnectConsent(io: CliIo, args: string[]): Promise<numb
         maintenanceError = inventory.diagnostic() ?? maintenanceError;
       }
     }
+    const hold = enrolled.disconnected_at === null ? massWithdrawalHoldOf(ctx.db, enrolled.connector_id, source) : null;
     const egress = egressView(ctx.vaultPath, grant);
     const purge = maintenanceError !== null ? "pending" : grant?.status === "purged" && grant.purge_blockers.length === 0 ? "complete" : grant?.status === "denied" ? "pending" : "not_requested";
     const pending = action === "resume-revocation" && (purge !== "complete" || maintenanceError !== null);
-    if (parsed.flags.has("--json")) io.out(jsonEnvelope("connect", pending ? "degraded" : "ok", { source_key: source, receipt: receipt ?? null, grant, egress, purge, maintenance_error: maintenanceError }));
+    if (parsed.flags.has("--json")) io.out(jsonEnvelope("connect", pending ? "degraded" : "ok", { source_key: source, receipt: receipt ?? null, grant, egress, purge, maintenance_error: maintenanceError, hold }));
     else {
       io.out(`source=${source} consent=${grant?.status ?? "required"} revision=${grant?.revision ?? 0} purge=${purge}`);
       io.out(`egress=${clean(egressDestination(egress))} retention=${clean(egressRetention(egress))}`);
       if (maintenanceError !== null) io.out(maintenanceError);
+      if (hold !== null) io.out(withdrawalHoldLine(enrolled.connector_id, source, hold));
       if (receipt !== undefined) io.out(`operation_id=${receipt.operation_id} receipt_revision=${receipt.revision}`);
       if (grant === null) io.out(consentHint(ctx.db, source));
       if (grant?.status === "denied") {

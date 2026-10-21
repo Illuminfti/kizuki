@@ -404,7 +404,7 @@ describe("backfill and sync", () => {
     ).toEqual(["journal/ada.md=entities/ada-2", "notes/ada.md=entities/ada"]);
   });
 
-  test("a changed mapping re-emits every page and the report says why", async () => {
+  test("a changed mapping re-emits only the pages it changes and the report says why", async () => {
     seed();
     const first = await createLegacyWikiConnector({ path: wiki }).backfill(
       null,
@@ -414,8 +414,25 @@ describe("backfill and sync", () => {
     });
     const connector = createLegacyWikiConnector({ path: wiki });
     const second = await connector.sync(first.cursor);
-    expect(second.events).toHaveLength(8);
+    expect(second.events).toHaveLength(1);
+    expect(second.events[0]?.sensitivity_hint).toBe("private");
     expect(connector.lastReport()?.notes).toEqual(["mapping_changed"]);
+  });
+
+  test("a mapping edit that changes nothing a page decided emits nothing, and neither does its revert", async () => {
+    seed();
+    const first = await createLegacyWikiConnector({ path: wiki }).backfill(
+      null,
+    );
+    for (const overrides of [
+      { ignore: ["drafts/**", "never-there/**"] },
+      {},
+    ]) {
+      writeMapping(overrides);
+      const connector = createLegacyWikiConnector({ path: wiki });
+      const next = await connector.sync(first.cursor);
+      expect(next.events).toEqual([]);
+    }
   });
 
   test("a malformed cursor is a parse error, not a silent full walk", async () => {
@@ -569,9 +586,10 @@ describe("backfill and sync", () => {
         { hash: "a".repeat(64), target: `entities/topics/gone-${index}.md` },
       ]);
     }
+    // The wiki is empty, so every page is withdrawn: released by the owner.
     const connector = createLegacyWikiConnector(
       { path: wiki },
-      { committedFiles: () => identities },
+      { committedFiles: () => identities, confirmWithdrawals: count },
     );
     const primed = await connector.sync(null);
     expect(primed.events).toEqual([]);
