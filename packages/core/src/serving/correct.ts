@@ -378,8 +378,8 @@ function replayResponse(ctx: ServeContext, prior: Claim, eventId: string): Serve
   requireSourceEvents(ctx.db, prior.provenance, {
     owner: ctx.principal.kind === "owner", purpose: "correction", deny_classes: denyClassesOf(ctx.principal.grant),
   });
-  ctx.db.query("UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?").run(eventId);
   const pending = pendingCanonRewrite(ctx, prior);
+  if (pending === undefined) ctx.db.query("UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?").run(eventId);
   return {
     canon: [], quoted: [],
     withheld: pending !== undefined ? [{ id: "tool:correct", reason: "error" as const }] : [],
@@ -676,9 +676,11 @@ export async function serveCorrect<C extends ResponseContract = typeof ENVELOPE_
         const visible = result.rewritten.filter((rewrite) =>
           pageSnapshot(owned, ctx, rewrite.page_path).readable,
         );
-        const recovery = result.recovery_pending?.filter((item) =>
-          pageSnapshot(owned, ctx, item.page_path).readable,
-        );
+        const recovery = ctx.principal.kind === "owner"
+          ? result.recovery_pending
+          : result.recovery_pending?.filter((item) =>
+            pageSnapshot(owned, ctx, item.page_path).readable,
+          );
         const redacted = visible.length !== result.rewritten.length ||
           (recovery?.length ?? 0) !== (result.recovery_pending?.length ?? 0);
         const receiptVisible = result.receipt_id !== null && visible.some(

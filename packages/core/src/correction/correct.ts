@@ -947,7 +947,7 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
         } }),
       });
     } catch (error) {
-      const pending = correctionRecoveryPending(io.db, stored.claim_id, page.rel_path);
+      const pending = correctionRecoveryPending(io.db, stored.claim_id);
       if (pending.length > 0 || error instanceof CanonRecoveryError) { recoveryPending = pending; break; }
       if (error instanceof BudgetExhausted) {
         throw new CorrectError("budget_exhausted", error.stopped, { cause: error });
@@ -972,7 +972,7 @@ async function correctOwned(scope: VaultMutationScope, io: ScopedCorrectIo, inpu
 
   bumpClaimsEpoch(io.db);
   // insertClaim already owns the durable, source-authorized retrieval update.
-  io.db.query("UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?").run(accepted.event_id);
+  if (recoveryPending === undefined) io.db.query("UPDATE native_owner_evidence SET filing_state='filed' WHERE event_id=?").run(accepted.event_id);
 
   return {
     receipt_id: receiptId,
