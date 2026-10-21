@@ -3,6 +3,10 @@ import type { CaptureEvent } from "../contracts/event";
 import { sha256Hex } from "../util/hash";
 import { isUlid } from "../util/ulid";
 import { eventFromRow, type EventRow } from "./event-record";
+import { readSchemaVersion } from "./integrity";
+import { WORLD_MIGRATION_VERSIONS } from "../world/tables/versions";
+import { machineBodyHash, machineImageHashes } from "./machine-image";
+import { sourceEventsAllowed, sourcePolicyEpoch } from "./source-grants";
 
 export const ABSENT_BYTE_HASH = sha256Hex("");
 export interface MachineByteIntent {
@@ -28,28 +32,58 @@ function hash(value: unknown): value is string {
 /** Only new admission reads the registry, under SQLite's write order. */
 export function classifyNewEventOrigin(db: Database,
   event: Pick<CaptureEvent, "text" | "text_hash">,
+  source?: { connector_id: string; source_record_id: string; source_key: string | null },
 ): "external" | "self" {
   if (!db.inTransaction) throw new EventOriginError();
-  try { return classify(db, event); } catch { throw new EventOriginError(); }
+  try { return classify(db, event, source); } catch { throw new EventOriginError(); }
 }
 
-function classify(db: Database, event: Pick<CaptureEvent, "text" | "text_hash">): "external" | "self" {
+function classify(db: Database, event: Pick<CaptureEvent, "text" | "text_hash">,
+  source?: { connector_id: string; source_record_id: string; source_key: string | null },
+): "external" | "self" {
   if (!hash(event.text_hash) || sha256Hex(event.text) !== event.text_hash) throw new EventOriginError();
+  if (event.text.includes("KIZUKI CONTEXT v1")) return "self";
+  // The exact bytes first, then the images a lightly edited copy derives from.
+  const candidates = JSON.stringify([...new Set([event.text_hash, ...machineImageHashes(event.text)])]
+    .filter(candidate => candidate !== ABSENT_BYTE_HASH));
   using statement = db.prepare<{ before_hash: string | null; after_hash: string }, [string, string, string, string]>(`
-    SELECT before_hash,after_hash FROM canon_receipts WHERE writer='loop' AND before_hash=?
-    UNION ALL SELECT before_hash,after_hash FROM canon_receipts WHERE writer='loop' AND after_hash=?
-    UNION ALL SELECT before_hash,after_hash FROM canon_machine_byte_intents WHERE before_hash=?
-    UNION ALL SELECT before_hash,after_hash FROM canon_machine_byte_intents WHERE after_hash=? LIMIT 1
+    SELECT before_hash,after_hash FROM canon_receipts WHERE writer='loop' AND before_hash IN (SELECT value FROM json_each(?))
+    UNION ALL SELECT before_hash,after_hash FROM canon_receipts WHERE writer='loop' AND after_hash IN (SELECT value FROM json_each(?))
+    UNION ALL SELECT before_hash,after_hash FROM canon_machine_byte_intents WHERE before_hash IN (SELECT value FROM json_each(?))
+    UNION ALL SELECT before_hash,after_hash FROM canon_machine_byte_intents WHERE after_hash IN (SELECT value FROM json_each(?)) LIMIT 1
   `);
-  const matching = statement.get(event.text_hash, event.text_hash, event.text_hash, event.text_hash);
+  const matching = statement.get(candidates, candidates, candidates, candidates);
   if (matching !== null && (!hash(matching.after_hash) ||
       (matching.before_hash !== null && !hash(matching.before_hash)))) throw new EventOriginError();
-  return event.text.includes("KIZUKI CONTEXT v1") ||
-    (event.text_hash !== ABSENT_BYTE_HASH && matching !== null) ? "self" : "external";
+  if (matching !== null) return "self";
+  // Historical event migration predates this registry; current admissions require it.
+  if (readSchemaVersion(db) < WORLD_MIGRATION_VERSIONS.machine_images) return "external";
+  const bodyHash = machineBodyHash(event.text);
+  if (bodyHash === null) return "external";
+  using body = db.prepare("SELECT 1 FROM canon_machine_body_images WHERE body_hash=? LIMIT 1");
+  if (body.get(bodyHash) === null) return "external";
+  // A mirrored source keeps ownership of its previously admitted exact prose.
+  // Accept supplies enrollment identity only after capture authorization in this
+  // same transaction. Metadata cannot supply it; unbound legacy continuity is
+  // available only before source policy exists. Exact canon images above remain self.
+  if (source !== undefined && (source.source_key !== null || sourcePolicyEpoch(db) === 0)) {
+    using prior = db.prepare<EventRow, [string, string, string, string | null]>(`
+      SELECT e.* FROM events e LEFT JOIN source_event_bindings b ON b.event_id=e.event_id
+       WHERE e.connector_id=? AND e.source_record_id=? AND e.text_hash=?
+         AND e.origin='external' AND e.origin_binding_kind IN ('capture','legacy')
+         AND b.source_key IS ? ORDER BY e.accepted_at,e.event_id LIMIT 1
+    `);
+    const row = prior.get(source.connector_id, source.source_record_id, event.text_hash, source.source_key);
+    if (row !== null) {
+      const accepted = eventFromRow(row, db);
+      if (sourceEventsAllowed(db, [accepted.event_id], { owner: true, purpose: "capture" })) return "external";
+    }
+  }
+  return "self";
 }
 
 /** Admission and the exact byte intent have one durable SQLite linearization. */
-export function commitMachineByteIntent(db: Database, intent: MachineByteIntent, admit: () => void): void {
+export function commitMachineByteIntent(db: Database, intent: MachineByteIntent, admit: () => void, images?: { before: string | null; after: string | null }): void {
   if (db.inTransaction) throw new Error("loop byte admission requires a top-level transaction");
   if (!isUlid(intent.receipt_id) || !hash(intent.after_hash) ||
       (intent.before_hash !== null && !hash(intent.before_hash))) throw new EventOriginError();
@@ -68,7 +102,20 @@ export function commitMachineByteIntent(db: Database, intent: MachineByteIntent,
       using insert = db.prepare("INSERT INTO canon_machine_byte_intents VALUES (?,?,?)");
       insert.run(intent.receipt_id, intent.before_hash, intent.after_hash);
     }
+    if (images !== undefined) recordMachineBodyImages(db, intent, images);
   }).immediate();
+}
+
+/** Called only in the byte admission or recovery transaction, over verified images. */
+export function recordMachineBodyImages(db: Database, intent: MachineByteIntent, images: { before: string | null; after: string | null }): void {
+  if (!db.inTransaction) throw new EventOriginError();
+  for (const [text, expected] of [[images.before, intent.before_hash], [images.after, intent.after_hash]] as const) {
+    if (text === null) continue;
+    if (!hash(expected) || sha256Hex(text) !== expected) throw new EventOriginError();
+    const bodyHash = machineBodyHash(text);
+    if (bodyHash !== null) db.query("INSERT OR IGNORE INTO canon_machine_body_images(receipt_id,image_hash,body_hash) VALUES(?,?,?)")
+      .run(intent.receipt_id, expected, bodyHash);
+  }
 }
 
 /** Validate the immutable admission stamp; later intents cannot restamp evidence. */

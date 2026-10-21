@@ -114,7 +114,7 @@ test("an archived loop preimage is marked self before a copied byte can re-enter
   try {
     const claim = await storedClaim(db, putEvent(db));
     const created = writeLoop(db, vault, claim);
-    const revised = writeLoop(db, vault, await storedClaim(db, putEvent(db, { source_record_id: "archive-revision" }), "deterministic", {
+    const revised = writeLoop(db, vault, await storedClaim(db, putEvent(db, { source_record_id: "archive-revision", text: "Grace can be reached at grace@example.invalid." }), "deterministic", {
       predicate: "contact.email", object: "grace@example.invalid", body: "Grace can be reached at grace@example.invalid.",
     }));
     expect(revised.archive_path).not.toBeNull();
@@ -272,7 +272,7 @@ test("a loop revision refused by an occupied archive retains its committed byte 
     const first = writeLoop(db, vault, await storedClaim(db, putEvent(db)));
     const before = readFileSync(join(vault, first.page_path), "utf8");
     expect(db.query("SELECT receipt_id FROM canon_machine_byte_intents").all()).toHaveLength(0);
-    const claim = await storedClaim(db, putEvent(db, { source_record_id: "failed-revision" }), "deterministic", {
+    const claim = await storedClaim(db, putEvent(db, { source_record_id: "failed-revision", text: "Grace can be reached at grace@example.invalid." }), "deterministic", {
       predicate: "contact.email", object: "grace@example.invalid", body: "Grace can be reached at grace@example.invalid.",
     });
     const receiptId = ulid();

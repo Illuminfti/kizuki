@@ -10,7 +10,7 @@ import {
 } from "../ledger/canon-source-survivor-lineage";
 import { parseFrontmatter, serializePage } from "../vault/frontmatter";
 import { commitWorldCanonErasure, commitCanonWrite } from "./recovery";
-import { worldErasureFinalReceipt, assertCanonAdmission, canonPageRecoveryPending, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type WorldCanonErasureIntent, type CanonWriteIntent } from "./write-intent";
+import { worldErasureFinalReceipt, advanceCanonReadGeneration, assertCanonAdmission, canonPageRecoveryPending, decodeCanonImage, readCanonWriteIntent, recoveryFailure, type WorldCanonErasureIntent, type CanonWriteIntent } from "./write-intent";
 import { archiveRelPath, hashBytes, ABSENT_PAGE_HASH } from "../vault/write";
 import { requireSourceEvents, sourceSensitivity } from "../ledger/source-grants";
 import { commitMachineByteIntent, requireExternalEvents } from "../ledger/event-origin";
@@ -890,6 +890,7 @@ function finishSourceErasure(scope: VaultMutationScope, io: CanonIo, intent: Sou
                 }
             }
             io.db.query("DELETE FROM canon_source_erasure_intents WHERE page_path=?").run(receipt.page_path);
+            advanceCanonReadGeneration(io.db);
             stream.verifyBinding();
         }).immediate();
     } finally {
@@ -897,9 +898,9 @@ function finishSourceErasure(scope: VaultMutationScope, io: CanonIo, intent: Sou
     }
     if (intent.page_id !== null && !receipt.page_path.startsWith("archive/")) {
         if (page === null)
-            removeDerivedPage(io.db, intent.page_id, io.vault_path);
+            removeDerivedPage(io.db, intent.page_id, io.vault_path, scope);
         else
-            refreshDerivedPage(io.db, canonPageFromWrite(io.vault_path, receipt.page_path, intent.page_id, page, receipt.after_hash), io.vault_path);
+            refreshDerivedPage(io.db, canonPageFromWrite(io.vault_path, receipt.page_path, intent.page_id, page, receipt.after_hash), io.vault_path, scope);
     }
 }
 /** Called only inside the source purge's existing native writer ownership. */
@@ -974,7 +975,7 @@ function applySourcePurgeWrite(scope: VaultMutationScope, io: CanonIo, input: So
         "SELECT 1 FROM source_event_bindings b JOIN source_grants g ON g.source_key=b.source_key WHERE b.event_id=? AND g.status!='active'",
       ).get(id) === null)) throw new CanonWriteError("decision_stale", "source erasure admission changed");
       if (next !== null) requireSourceEvents(io.db, existingSources(next), { owner: true, purpose: "derive" });
-    });
+    }, { before: null, after: next === null ? null : serializePage(next) });
     const cap = grantCanonWrite("loop", intent.receipt.receipt_id, io.vault_path, files);
     const outcome = writePage(cap, join(io.vault_path, input.rel_path), next ?? { data, body: "\n" }, {
         revision: true, expected_hash: existing.hash, erase_prior: true, delete: nothingRemains,

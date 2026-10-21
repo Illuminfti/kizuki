@@ -29,6 +29,7 @@ import { isRetryableStatus } from "./response";
 import {
   DEFAULT_MAX_RESPONSE_BYTES,
   fetchTransport,
+  orUntilAborted,
 } from "./transport";
 import type { ChatTransport, TransportResult } from "./transport";
 
@@ -197,6 +198,9 @@ function transportToError(result: Extract<TransportResult, { ok: false }>): neve
   if (result.kind === "transport") {
     if (result.failure === "timeout") {
       throw new PortError("timeout", "systemone request timed out", true);
+    }
+    if (result.failure === "aborted") {
+      throw new PortError("unavailable", "systemone request aborted", false);
     }
     if (result.failure === "too_large") {
       throw new PortError("unavailable", "rejected: response_too_large", false);
@@ -467,6 +471,9 @@ export function createSystemOneJevPort(
     async evaluate(request: SystemOneRequest): Promise<SystemOneResponse> {
       assertOpen();
       const validated = validateRequest(request);
+      const { signal } = request;
+      const aborted = (): boolean => signal?.aborted === true;
+      if (aborted()) throw new PortError("unavailable", "systemone request aborted", false);
       const deadline = Date.now() + Math.min(config.timeout_ms, validated.deadline_ms);
       const apiKey = await beforeDeadline(resolveApiKey(ctx, config.secret_ref), deadline);
       const body = buildWireBody(config, validated);
@@ -482,6 +489,7 @@ export function createSystemOneJevPort(
             timeout_ms: remaining,
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             body,
+            ...(signal === undefined ? {} : { signal }),
           }),
           deadline,
         );
@@ -499,7 +507,8 @@ export function createSystemOneJevPort(
             : Math.min(last.retry_after_ms ?? DEFAULT_RETRY_MS, RETRY_CAP_MS);
         const remainingBeforeWait = deadline - Date.now();
         if (remainingBeforeWait <= 0) throw timeoutError();
-        await beforeDeadline(sleep(Math.min(wait, remainingBeforeWait)), deadline);
+        await beforeDeadline(orUntilAborted(sleep(Math.min(wait, remainingBeforeWait)), signal), deadline);
+        if (aborted()) throw new PortError("unavailable", "systemone request aborted", false);
         attempt += 1;
       }
       if (last === undefined || last.ok) {

@@ -821,7 +821,10 @@ export function sourceEventsAllowed(
     if (
       grant === null ||
       grant.status !== "active" ||
-      !grant.policy.purposes.includes(scope.purpose ?? "recall")
+      !grant.policy.purposes.includes(scope.purpose ?? "recall") ||
+      // Extraction classifies text before sending it to a model. Even empty
+      // text needs permission: its emptiness must not affect skips or work.
+      (scope.purpose === "extract" && !grant.policy.allowed_fields.includes("text"))
     )
       return false;
     if (model !== undefined && (grant.policy.egress === "local_only" ||

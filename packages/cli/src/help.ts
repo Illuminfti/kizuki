@@ -25,6 +25,7 @@ const EXAMPLES: Readonly<Record<string, readonly string[]>> = {
     `${INVOCATION} query acme`,
     `${INVOCATION} query acme --scope canon`,
     `${INVOCATION} query acme --degraded`,
+    `${INVOCATION} query acme --scope ledger --full-text --json`,
   ],
   context: [
     `${INVOCATION} context --purpose session --query "acme"`,

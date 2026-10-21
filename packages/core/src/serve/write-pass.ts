@@ -1,4 +1,4 @@
-import { pendingWorldCanonClaims, worldCanonTarget } from "../canon/world-materialization";
+import { pendingWorldCanonClaims, worldCanonPath, worldCanonTarget } from "../canon/world-materialization";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
 import { inheritSourcePortBindings } from "../ledger/source-grants";
 import { SelfOriginError, requireExternalEvents } from "../ledger/event-origin";
@@ -8,6 +8,7 @@ import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent"
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import type { Database } from "bun:sqlite";
+import { setImmediate as yieldToHost } from "node:timers/promises";
 import {
   BudgetExhausted,
   resolveTarget,
@@ -26,7 +27,7 @@ import type { DroppedDraftV2, ProduceResultV2, ProducerV2Port } from "../contrac
 import { formatProducerDiagnostic, readProducerDiagnostic } from "../producer/diagnostics";
 import { invokeProducer, invokeProducerV2, type ValidatedProduceResult } from "../producer/result";
 import type { WorldDraftInsert } from "../producer/world-drafts";
-import { DEFAULT_EXTRACTION_CONFIG, type ExtractionConfig, type RunModelReport, type RunOversizedReport } from "./types";
+import { DEFAULT_EXTRACTION_CONFIG, type CanonQuarantineNotice, type ExtractionConfig, type RunModelReport, type RunOversizedReport } from "./types";
 import {
   prepareClaimInsert,
   retryRetrievalOps,
@@ -45,6 +46,7 @@ import {
   mineLiveDrafts,
   producedClaimInput,
   readDurableExtractBatch,
+  replayedPrefilterCounts,
   requeuePassedOverRecords,
   requireAtomicExtractReplay,
   type DurableExtractBatch,
@@ -54,11 +56,19 @@ import { isProducerV2, type ExtractionProducerPort } from "./extract-v2";
 import { backoffRemaining, readRejections, recordRejection, writeRejections } from "./extract-rejections";
 import { redactReceiptError } from "./receipts";
 import { runWorldJobs } from "./world-jobs";
+import { clearStuckPage, listQuarantinedPages, recordStuckPage } from "./write-quarantine";
+import { reconcileCanonGraph } from "../canon/graph-maintenance";
 
-/** One sync pass never materializes more than this many unwritten claims. */
+/**
+ * A pass ends by itself after this many canon writes, or after the run budget's
+ * limit when that is larger, so the vault's `canon_writes_per_run` can raise it.
+ * A smaller run budget stops the pass first, as `budget:canon_writes_per_run`.
+ */
 const WRITE_PASS_LIMIT = 32;
 /** Owner-edited skips stay live; scan past them so they cannot fill the write cap. */
 const WRITE_PASS_SCAN = 256;
+/** Bound request-free cursor work even when a supplied clock does not advance. */
+const LOCAL_EXTRACTION_STEP_LIMIT = 1_024;
 /** A stop request or signal ends the pass at the next extraction step. */
 export const STOP_REQUESTED = "serve:stop_requested";
 /** Different records refused alike: the model, not the records, is at fault. The pass waits and skips nothing more. */
@@ -70,6 +80,8 @@ const DAILY_OUTPUT_TOKENS = "model_output_tokens_per_day";
 /** An answered request waits this long for a writer another operation holds before it is discarded. */
 const SETTLE_WAIT_MS = 5_000;
 const SETTLE_POLL_MS = 25;
+/** The writer stays free this long between two pages: twice a waiter's poll, so every poller finds it. */
+const PAGE_GAP_MS = 2 * SETTLE_POLL_MS;
 
 export interface WritePassResult {
   readonly revived: number;
@@ -82,7 +94,10 @@ export interface WritePassResult {
   readonly claims_skipped: Readonly<Record<string, number>>;
   /** Records extraction passed over for good without claims; each has its reason in `errors`. */
   readonly records_skipped: number;
+  /** Records passed over before any request because they carry no extractable content, by reason. */
+  readonly records_prefiltered: Readonly<Record<string, number>>;
   readonly canon_writes: number;
+  readonly canon_quarantined: readonly CanonQuarantineNotice[];
   readonly claims_rejected: Readonly<Record<string, number>>;
   readonly model: Omit<RunModelReport, "model_ref">;
   /** Segments filed and records skipped with a retry receipt, for records too large for one request. */
@@ -93,13 +108,13 @@ export interface WritePassResult {
 
 /** A pass's totals, kept across its short writer holds. */
 type PassTally = {
-  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "claims_skipped" | "model" | "oversized" | "errors">]: WritePassResult[K];
-} & { readonly oversized: { segments: number; skipped: number }; readonly claims_skipped: Record<string, number>; readonly errors: string[] };
+  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "claims_skipped" | "model" | "oversized" | "errors" | "records_prefiltered" | "canon_quarantined">]: WritePassResult[K];
+} & { readonly oversized: { segments: number; skipped: number }; readonly claims_skipped: Record<string, number>; readonly records_prefiltered: Record<string, number>; readonly errors: string[]; readonly canon_quarantined: CanonQuarantineNotice[] };
 
 function emptyTally(): PassTally {
   return {
     revived: 0, claims_extracted: 0, claims_written: 0, claims_written_extracted: 0, claims_deduped: 0,
-    claims_superseded: 0, claims_skipped: {}, records_skipped: 0, canon_writes: 0, oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
+    claims_superseded: 0, claims_skipped: {}, records_skipped: 0, records_prefiltered: {}, canon_writes: 0, canon_quarantined: [], oversized: { segments: 0, skipped: 0 }, stopped: null, errors: [],
   };
 }
 
@@ -142,13 +157,15 @@ function count(metrics: ProduceMetrics, reason: string): void {
 
 type ExtractionProduceResult = ProduceResult | ProduceResultV2;
 
-function observe(metrics: ProduceMetrics, validated: ValidatedProduceResult<ExtractionProduceResult>, wallMs: number): void {
+function observe(metrics: ProduceMetrics, validated: ValidatedProduceResult<ExtractionProduceResult>, wallMs: number, stopped: boolean): void {
   const { result } = validated;
   metrics.wall_ms += wallMs;
   metrics.calls += result.usage.calls;
   metrics.input_tokens += result.usage.input_tokens;
   metrics.output_tokens += result.usage.output_tokens;
   for (const [kind, redacted] of Object.entries(result.usage.redacted ?? {})) metrics.redacted[kind] = (metrics.redacted[kind] ?? 0) + redacted;
+  // A request the daemon's stop aborted is charged, but it is not the model's failure.
+  if (stopped && result.status === "unavailable") return;
   const diagnostic = result.status === "ok" ? undefined : readProducerDiagnostic(result.diagnostic);
   metrics.last = {
     answered: result.status === "ok",
@@ -177,6 +194,8 @@ function observedProducer(
   record: (result?: ExtractionProduceResult) => void,
   /** Why no request may leave now, or null. Read before every request. */
   spent: () => string | null,
+  /** True once the daemon was told to stop, which aborts the request in flight. */
+  stopped: () => boolean,
 ): ExtractionProducerPort {
   if (isProducerV2(producer)) {
     const observed: ProducerV2Port = {
@@ -190,7 +209,7 @@ function observedProducer(
         const started = performance.now();
         record();
         const validated = await invokeProducerV2(producer, input);
-        observe(metrics, validated, Math.max(0, Math.round(performance.now() - started)));
+        observe(metrics, validated, Math.max(0, Math.round(performance.now() - started)), stopped());
         if (validated.usage_known) record(validated.result);
         return validated.result;
       },
@@ -208,7 +227,7 @@ function observedProducer(
       // Commit intent before crossing the asynchronous external-effect boundary.
       record();
       const validated = await invokeProducer(producer, input);
-      observe(metrics, validated, Math.max(0, Math.round(performance.now() - started)));
+      observe(metrics, validated, Math.max(0, Math.round(performance.now() - started)), stopped());
       // Keep the original durable intent: failed validation cannot refund a call.
       if (validated.usage_known) record(validated.result);
       return validated.result;
@@ -359,7 +378,9 @@ export async function runWritePass(
   });
   const tally = emptyTally();
   const metrics = emptyMetrics();
-  const result = (): WritePassResult => ({ ...tally, claims_skipped: { ...tally.claims_skipped }, oversized: { ...tally.oversized }, ...metricResult(metrics) });
+  const result = (): WritePassResult => ({
+    ...tally, claims_skipped: { ...tally.claims_skipped }, oversized: { ...tally.oversized }, records_prefiltered: { ...tally.records_prefiltered }, ...metricResult(metrics),
+  });
 
   const opened = await holdWriter(io, (_scope, owned) => { tally.revived = reviveUncontestedSkipped(owned.db); });
   if (!opened.held) { tally.stopped = opened.stopped; return result(); }
@@ -376,33 +397,83 @@ export async function runWritePass(
   if (jobs.stopped) { tally.stopped = STOP_REQUESTED; return result(); }
   // No model configured: claims stay live and unwritten; doctor says so.
   if (!modelConfigured(options)) return result();
-  const written = await holdWriter(io, (scope, owned) => {
-    try {
-      settleWriteReservations(owned.db, owned.vault_path);
-      writeCanon(scope, owned, options.budget, tally);
-    } finally {
-      settleWriteReservations(owned.db, owned.vault_path);
-    }
-  });
-  if (!written.held) tally.stopped = written.stopped;
+  await writeCanon(io, options, tally);
   return result();
 }
 
-function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracker, tally: PassTally): void {
+type Page = "wrote" | "failed" | "done";
+
+/**
+ * Materializes unwritten live claims one page at a time. Failed attempts count
+ * toward the pass limit too, so a damaged backlog cannot monopolize a rail.
+ * Each page takes the writer and lets it go again, and a stop request is read
+ * between pages, so an
+ * owner verb, a request or a stop waits for one page and not for the pass.
+ */
+async function writeCanon(io: CanonIo, options: WritePassOptions, tally: PassTally): Promise<void> {
+  const limit = Math.max(WRITE_PASS_LIMIT, options.budget.usage().canon_writes_per_run.limit);
+  const now = options.now ?? (() => new Date().toISOString());
+  const attempted = new Set<string>();
+  for (let attempts = 0; attempts < limit && tally.canon_writes < limit; attempts++) {
+    if (options.stopRequested?.() === true) { tally.stopped = STOP_REQUESTED; return; }
+    reconcileCanonGraph(io.db, io.vault_path);
+    const step = await holdWriter(io, (scope, owned) => {
+      try {
+        settleWriteReservations(owned.db, owned.vault_path);
+        return writeNextPage(scope, owned, options.budget, tally, attempted, now());
+      } finally {
+        settleWriteReservations(owned.db, owned.vault_path);
+      }
+    }, SETTLE_WAIT_MS);
+    if (!step.held) { tally.stopped = step.stopped; return; }
+    if (step.value === "done") return;
+    // A write that could not complete keeps its intent and blocks every later one.
+    if (inspectCanonRecovery(io.db).pending) { tally.stopped = "recovery:held"; return; }
+    await new Promise(resolve => setTimeout(resolve, PAGE_GAP_MS));
+  }
+}
+
+/**
+ * Writes the next page that is not one this pass already tried, or reports
+ * none is left. A typed page that failed too often is skipped for a day; a
+ * claim the arbiter leaves to the owner is passed over without a page.
+ */
+function writeNextPage(
+  scope: VaultMutationScope,
+  io: CanonIo,
+  budget: BudgetTracker,
+  tally: PassTally,
+  attempted: Set<string>,
+  now: string,
+): Page {
   const { db } = io;
-  for (const typedClaims of pendingWorldCanonClaims(db, WRITE_PASS_LIMIT)) {
-    if (tally.canon_writes >= WRITE_PASS_LIMIT) break;
-    const primary=typedClaims[0]!;
-    const decision=worldCanonTarget(db,primary.claim_id);
-    const before=occupyingWriteIds(db);
+  const typed = pendingWorldCanonClaims(db, 1, new Set([...attempted, ...listQuarantinedPages(db, now).map(page => page.handle)]))[0];
+  if (typed !== undefined) {
+    const { handle, claims: typedClaims } = typed;
+    attempted.add(handle);
+    const path = worldCanonPath(handle);
+    const receiptBoundary = lastReceiptRow(db);
+    const before = occupyingWriteIds(db, receiptBoundary);
     try {
-      const receipt=applyCanonWriteOwned(scope,io,typedClaims,decision,{writer:"loop",budget});
-      tally.canon_writes+=1;tally.claims_written+=receipt.claim_ids.length;
-      tally.claims_written_extracted+=typedClaims.filter(claim=>claim.producer==="model"&&receipt.claim_ids.includes(claim.claim_id)).length;
-    } catch(error) {
-      if(!(error instanceof BudgetExhausted))tally.canon_writes+=newOccupyingWrites(before,occupyingWriteIds(db));
-      if(error instanceof BudgetExhausted){tally.stopped=error.stopped;break;}
-      tally.errors.push(redactReceiptError(error));
+      const receipt = applyCanonWriteOwned(scope, io, typedClaims, worldCanonTarget(db, typedClaims[0]!.claim_id), { writer: "loop", budget });
+      tally.canon_writes += 1; tally.claims_written += receipt.claim_ids.length;
+      tally.claims_written_extracted += typedClaims.filter(claim => claim.producer === "model" && receipt.claim_ids.includes(claim.claim_id)).length;
+      clearStuckPage(db, handle);
+      return "wrote";
+    } catch (error) {
+      if (!(error instanceof BudgetExhausted)) tally.canon_writes += newOccupyingWrites(before, occupyingWriteIds(db, receiptBoundary));
+      if (error instanceof BudgetExhausted) { tally.stopped = error.stopped; return "done"; }
+      const reason = redactReceiptError(error);
+      tally.errors.push(`${reason} (page ${handle} at ${path})`);
+      // A recovery hold is the writer's state, not this page's fault.
+      if (!(error instanceof CanonRecoveryError)) {
+        const held = recordStuckPage(db, { handle, path, reason }, now);
+        if (held !== null) {
+          tally.canon_quarantined.push({ handle, path, attempts: held.attempts, until: held.until });
+          tally.errors.push(`typed page ${handle} at ${path} set aside until ${held.until} after ${held.attempts} failed passes`);
+        }
+      }
+      return "failed";
     }
   }
 
@@ -413,25 +484,25 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
   })();
   const pending = listUnwrittenLiveClaims(db, WRITE_PASS_SCAN);
   for (const claim of pending) {
-    if (tally.canon_writes >= WRITE_PASS_LIMIT) break;
+    if (attempted.has(claim.claim_id)) continue;
+    attempted.add(claim.claim_id);
     try {
       if (requiresSourceTombstoneBinding(db, claim)) requireSourceTombstoneProposal(db, claim, io);
       else requireExternalEvents(db, claim.provenance);
       const decision = segregateLoopDecision(resolveTarget(io, claim));
       if (decision.action === "skip") continue;
-      const before = occupyingWriteIds(db);
+      const receiptBoundary = lastReceiptRow(db);
+      const before = occupyingWriteIds(db, receiptBoundary);
       try {
-        applyCanonWriteOwned(scope, io, claim, decision, {
-          writer: "loop",
-          budget,
-        });
+        applyCanonWriteOwned(scope, io, claim, decision, { writer: "loop", budget });
         tally.canon_writes += 1;
         tally.claims_written += 1;
         if (claim.producer === "model") tally.claims_written_extracted += 1;
+        return "wrote";
       } catch (error) {
         // File/JSONL can land before the receipt row; count the SQLite slot.
         if (!(error instanceof BudgetExhausted)) {
-          const committed = newOccupyingWrites(before, occupyingWriteIds(db));
+          const committed = newOccupyingWrites(before, occupyingWriteIds(db, receiptBoundary));
           tally.canon_writes += committed;
           tally.claims_written += committed;
         }
@@ -449,20 +520,28 @@ function writeCanon(scope: VaultMutationScope, io: CanonIo, budget: BudgetTracke
       }
       if (error instanceof BudgetExhausted) {
         tally.stopped = error.stopped;
-        break;
+        return "done";
       }
       tally.errors.push(redactReceiptError(error));
+      return "failed";
     }
   }
+  return "done";
 }
 
-/** SQLite receipts, live reservations, and pending intents — never the JSONL log. */
-function occupyingWriteIds(db: Database): Set<string> {
+/** Writer ownership keeps this boundary stable until the page finishes. */
+function lastReceiptRow(db: Database): number {
+  if (!tableExists(db, "canon_receipts")) return 0;
+  return db.query<{ row_id: number | null }, []>("SELECT max(rowid) AS row_id FROM canon_receipts").get()?.row_id ?? 0;
+}
+
+/** New SQLite receipts, live reservations, and pending intents — never historical IDs or the JSONL log. */
+function occupyingWriteIds(db: Database, afterReceiptRow: number): Set<string> {
   const ids = new Set<string>();
   if (tableExists(db, "canon_receipts")) {
-    for (const row of db.query<{ receipt_id: string }, []>(
-      "SELECT receipt_id FROM canon_receipts WHERE writer = 'loop'",
-    ).all()) {
+    for (const row of db.query<{ receipt_id: string }, [number]>(
+      "SELECT receipt_id FROM canon_receipts WHERE rowid > ? AND writer = 'loop'",
+    ).all(afterReceiptRow)) {
       ids.add(row.receipt_id);
     }
   }
@@ -502,6 +581,7 @@ interface ExtractionPass {
   readonly model_ref: string | null;
   readonly limits: ExtractionConfig;
   readonly clock: () => string;
+  readonly stopRequested: () => boolean;
   /** Counts claims an answered request carried that journaling declined, in the run's totals. */
   readonly decline: (dropped: readonly DroppedDraftV2[]) => void;
 }
@@ -552,9 +632,10 @@ async function runExtraction(
     recordUsage(result === undefined
       ? metricResult({ ...metrics, calls: metrics.calls + 1, last: { answered: false, usage_unknown: true } })
       : metricResult(metrics));
-  }, spent);
+  }, spent, () => options.stopRequested?.() === true);
   const pass: ExtractionPass = {
     io, db, claims, producer, observed, metrics,
+    stopRequested: () => options.stopRequested?.() === true,
     model_ref: options.model_ref ?? null, limits, clock,
     decline(dropped) {
       if (dropped.length === 0) return;
@@ -574,10 +655,15 @@ async function runExtraction(
   }
   // Every step files its decision and advances the cursor before the next
   // one starts, so a kill loses at most the request in flight.
-  for (let taken = 0; taken < pass.limits.max_calls_per_pass; taken++) {
+  for (let taken = 0, steps = 0, localSteps = 0;
+    taken < pass.limits.max_calls_per_pass && localSteps < LOCAL_EXTRACTION_STEP_LIMIT; steps++) {
+    // Local cursor steps perform no asynchronous model work. Give stop
+    // signals and host timers a turn between their durable cursor commits.
+    if (steps > 0) await yieldToHost();
     if (options.stopRequested?.() === true) { tally.stopped = STOP_REQUESTED; return; }
     // A spent pass starts no further step; the next pass resumes from the cursor.
-    if (taken > 0 && Date.parse(clock()) - started >= pass.limits.max_pass_seconds * 1_000) return;
+    if (steps > 0 && Date.parse(clock()) - started >= pass.limits.max_pass_seconds * 1_000) return;
+    const requested = metrics.calls;
     let outcome: StepOutcome;
     try {
       outcome = await extractionStep(pass);
@@ -593,11 +679,18 @@ async function runExtraction(
     tally.records_skipped = Math.max(0, tally.records_skipped + outcome.skipped - outcome.requeued);
     tally.oversized.segments += outcome.segments;
     tally.oversized.skipped += outcome.oversized_skipped;
+    for (const [reason, records] of Object.entries(outcome.prefiltered ?? {})) {
+      tally.records_prefiltered[reason] = (tally.records_prefiltered[reason] ?? 0) + records;
+    }
     tally.errors.push(...outcome.errors);
     tally.stopped = outcome.stopped;
     // The refusal history changed after this step's request was recorded.
     if (metrics.calls > 0 && metrics.last?.usage_unknown !== true) recordUsage(metricResult(metrics));
     if (outcome.next === "stop") return;
+    // A fresh, committed local decision made no request. It has its own
+    // finite bound, so denied evidence cannot spend the model-call budget.
+    if (metrics.calls > requested || outcome.local_progress_only !== true) taken++;
+    else localSteps++;
   }
 }
 
@@ -623,6 +716,10 @@ interface StepOutcome {
   readonly segments: number;
   /** Records too large for one request passed over with a retry receipt. */
   readonly oversized_skipped: number;
+  /** Records passed over before any request because they carry no extractable content, by reason. */
+  readonly prefiltered?: Readonly<Record<string, number>>;
+  /** Fresh committed prefilter or denied-frontier progress, without model work. */
+  readonly local_progress_only?: true;
   readonly stopped: string | null;
   readonly errors: readonly string[];
 }
@@ -648,9 +745,10 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
     if (pending === null) return null;
     // Replay files an existing decision; it is not another extraction.
     const filed = await fileProducedDrafts(claims, pending, producer);
-    return filed === null
-      ? settled("stop", { errors: ["extract cursor changed before durable batch commit"] })
-      : settled("continue", { deduped: filed.deduped, superseded: filed.superseded });
+    if (filed === null) return settled("stop", { errors: ["extract cursor changed before durable batch commit"] });
+    const prefiltered = replayedPrefilterCounts(db, pending, producer);
+    return settled("continue", { deduped: filed.deduped, superseded: filed.superseded,
+      ...(prefiltered === undefined ? {} : { prefiltered }) });
   });
   if (!replay.held) return settled("stop", { stopped: replay.stopped });
   if (replay.value !== null) return replay.value;
@@ -667,6 +765,8 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
   const diagnostic = fresh === undefined ? [] : [formatProducerDiagnostic(fresh)];
   switch (mined.mined.status) {
     case "unavailable":
+      // The stop aborted this request; the pass ends as asked, and the next one asks again.
+      if (pass.stopRequested()) return settled("stop", { stopped: STOP_REQUESTED });
       if (metrics.budget_spent !== undefined) return settled("stop", { stopped: BUDGET_DAY, errors: [`model budget: ${metrics.budget_spent}`] });
       return settled("stop", { stopped: modelStop(mined.mined.reason, fresh), errors: diagnostic });
     case "rejected": {
@@ -742,7 +842,8 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
         return filed === null
           ? settled("stop", { errors: ["extract cursor changed before commit"] })
           : settled("continue", { extracted, deduped: filed.deduped, superseded: filed.superseded,
-            segments: mined.segment === undefined ? 0 : 1 });
+            segments: mined.segment === undefined ? 0 : 1,
+            ...(mined.prefiltered === undefined ? {} : { prefiltered: mined.prefiltered }) });
       });
     }
     default: {
@@ -764,9 +865,19 @@ function advance(pass: ExtractionPass, mined: MineResult, errors: readonly strin
 /** The cursor commit of `advance`, for a caller that already holds the writer. */
 function advanceHeld(pass: ExtractionPass, mined: MineResult, errors: readonly string[] = []): StepOutcome {
   if (!commitExtractCursor(pass.db, mined)) return settled("stop", { errors: [...errors, "extract cursor changed before commit"] });
-  if (mined.skipped !== undefined) return settled("continue", { oversized_skipped: 1, errors });
-  if (mined.mined.status === "skipped") return settled("continue", { skipped: 1, errors: [...errors, `record skipped: ${mined.mined.reason}`] });
-  return settled("continue", { segments: mined.segment === undefined ? 0 : 1, errors });
+  const prefiltered = mined.prefiltered === undefined ? {} : { prefiltered: mined.prefiltered };
+  if (mined.skipped !== undefined) return settled("continue", { oversized_skipped: 1, errors, ...prefiltered });
+  if (mined.mined.status === "skipped") return settled("continue", { skipped: 1, errors: [...errors, `record skipped: ${mined.mined.reason}`], ...prefiltered });
+  const noModelWork = mined.mined.status === "empty" ||
+    (mined.mined.status === "deferred" && mined.mined.count === 0);
+  const prefilterOnly = noModelWork && mined.prefiltered !== undefined &&
+    (mined.mode === "deferred" || (mined.model_inputs?.length ?? 0) === 0);
+  // A denied frontier page is already durably queued by the cursor commit.
+  // Exempt its metadata-only progress; replayed decisions keep the step cap.
+  const deniedFrontier = mined.mined.status === "deferred" && mined.mode === "frontier" &&
+    (mined.input_ids?.length ?? 0) > 0 && (mined.model_inputs?.length ?? 0) === 0;
+  return settled("continue", { segments: mined.segment === undefined ? 0 : 1, errors, ...prefiltered,
+    ...(prefilterOnly || deniedFrontier ? { local_progress_only: true } : {}) });
 }
 
 /**

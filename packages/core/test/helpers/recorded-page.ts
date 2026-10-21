@@ -43,7 +43,7 @@ export async function recordedPage(
   } else {
     const result = accept(db, {
       ...validEvent(), connector_id: "fixture", source_record_id: `page-${ulid()}`,
-      text: body, sensitivity_hint: sensitivity,
+      text: `Source report for ${relPath}:\n\n${body}`, sensitivity_hint: sensitivity,
     });
     if (result.status !== "stored") throw new Error(`recorded page capture: ${result.status}`);
     provenance = [result.event.event_id];

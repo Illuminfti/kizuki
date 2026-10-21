@@ -168,7 +168,10 @@ export function accept(
         };
       }
 
-      const origin = classifyNewEventOrigin(db, { text: normalized.text, text_hash: textHash });
+      const origin = classifyNewEventOrigin(db, { text: normalized.text, text_hash: textHash }, {
+        connector_id: normalized.connector_id, source_record_id: normalized.source_record_id,
+        source_key: deps.source?.source_key ?? null,
+      });
       insertBoundEvent(db, normalized, eventId, origin, "capture", null);
 
       if (deps.source !== undefined) bindSourceEvent(db, eventId, deps.source);

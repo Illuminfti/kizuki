@@ -297,7 +297,7 @@ main() {
   gate rfc-tests
   bun run typecheck
   gate typecheck
-  bun test
+  bun run test
   gate test
   bash scripts/verify-policy.test.sh
   gate policy

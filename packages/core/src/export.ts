@@ -65,6 +65,7 @@ import { isUtf16TextBoundary } from "./contracts/producer-v2";
 import { isUlid, ulid } from "./util/ulid";
 import { writeRailCursor } from "./ledger/checkpoints";
 import { NULL_CONNECTION_CONFIG } from "./ledger/connection-state";
+import { assertMachineBodyBindings } from "./ledger/machine-body-schema";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "./ledger/db";
 import {
   LINEAGE_UNAVAILABLE_WARNING,
@@ -1851,6 +1852,7 @@ function exportVaultOwned(
       }
       const snapshot = snapshotOf(db);
       validateExportEventOrigins(db, snapshot);
+      assertMachineBodyBindings(db);
       writeStream(
         staging,
         "ledger/events.jsonl",
@@ -2984,6 +2986,7 @@ export function restoreVault(
         if (eventFormat === "current" && intentCount !== manifest.files[MACHINE_BYTE_INTENTS_BACKUP]!.count) {
           throw new Error("backup machine-byte intent count mismatch");
         }
+        assertMachineBodyBindings(db);
         const deferredPath = "serve/extract-deferred-inputs.jsonl";
         const deferredRequired = manifest.schema_versions.serve >= 8;
         let deferredCount = 0;
