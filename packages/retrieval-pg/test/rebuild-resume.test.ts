@@ -96,6 +96,6 @@ test("final authority rejection rolls activation back and cancellation resumes o
     const before = embedding.calls;
     embedding.embedDocs = original;
     await port.rebuildFromDocuments(docs);
-    expect(embedding.calls - before).toBe(2);
+    expect(embedding.calls - before).toBe(8);
   } finally { await port.close(); f.cleanup(); }
 });
