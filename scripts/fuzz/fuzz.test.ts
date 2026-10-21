@@ -40,10 +40,10 @@ test("an internal failure inside a successful HTTP envelope fails the campaign f
     const owner = await envelopeFor(OWNER_TOKEN);
     expect(owner).toMatchObject({ ok: true, value: { denied: [{ reason: "error", count: 1 }] } });
     await expect(httpTool(driver.httpOrigin!, "context_packet", body)).rejects.toThrow("http-crash");
-    // The scoped v2 packet hides denials and carries the degradation in its result.
+    // The scoped v2 packet hides denials and identifies storage failure in its result.
     const reader = await envelopeFor(agent.token);
     expect(reader).toMatchObject({ ok: true, value: { schema: "kizuki.envelope/v2", data: {
-      schema: "kizuki.context-packet/v2", result: { status: "incomplete", data: { retrievalDegraded: ["context-unavailable"] } },
+      schema: "kizuki.context-packet/v2", result: { status: "incomplete", reasons: ["storage"], data: { coverage: { status: "partial", gaps: ["coverage"] } } },
     } } });
     await expect(httpTool(driver.httpOrigin!, "context_packet", body, agent.token)).rejects.toThrow("http-crash");
   } finally { db.close(); await driver.close(); rmSync(scratch, { recursive: true, force: true }); }

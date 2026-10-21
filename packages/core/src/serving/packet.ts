@@ -442,7 +442,7 @@ async function servePacket(
                   purpose,
                   coverage: { status: "partial", gaps: ["coverage"], validWindow: { kind: "all" }, history: "baseline_only" },
                 },
-                reasons: ["coverage"],
+                reasons: ["storage"],
               },
             },
           };

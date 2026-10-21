@@ -329,3 +329,39 @@ test("task-only packets count an authorized packed capture and exclude unfit or 
     expect(revoked.packet.result.data.packetMd).not.toContain("Resume the recorded task.");
   } finally { scene.dispose(); }
 });
+
+
+test("storage fallback preserves an independently authorized task without exposing denied content", async () => {
+  const scene = await hiddenScene();
+  try {
+    visibleCapture(scene, "kizuki.task/v1\nconstraint: Preserve provenance.\nobjective: Continue the authorized task.", "storage-task");
+    const discovery = await dispatchServeTool(scene.reader, "timeline", { since: WIDE.since, until: WIDE.until, limit: 100 }, { response_contract: V2 });
+    if (discovery.schema !== V2) throw new Error("wrong contract");
+    const task = discovery.quoted.find(chunk => chunk.text.startsWith("kizuki.task/v1"));
+    if (task === undefined || !("eventVersion" in task)) throw new Error("authorized task not discovered");
+    const args = { ...PACKET, purpose: "recall", include: ["claims"], taskEventVersion: task.eventVersion };
+    // The event store and its source policy remain intact. Canon storage fails
+    // independently, so it must not erase a separately authorized task capture.
+    scene.db.exec("DROP TABLE canon_receipts");
+    const result = await read(scene, args);
+    expect(result.packet.result).toMatchObject({ status: "incomplete", reasons: ["storage"], data: {
+      servedUnits: 1, coverage: { status: "partial", gaps: ["coverage"] },
+    } });
+    if (result.packet.result.status !== "incomplete") throw new Error("expected storage fallback");
+    expect(result.packet.result).not.toHaveProperty("view");
+    expect(result.packet.result.data.packetMd).toContain("Continue the authorized task.");
+    expect(result.packet.result.data.packetMd).toContain("coverage=incomplete; missing context must not be treated as absent");
+    expect(result.packet.result.data.packetMd).not.toContain("topic:hidden");
+    expect(result.packet.result.data.tokens).toBeLessThanOrEqual(PACKET.budget_tokens);
+    expect(result.envelope.canon).toEqual([]);
+    expect(result.envelope.quoted).toHaveLength(1);
+    expect(result.envelope.quoted[0]).toMatchObject({ eventVersion: task.eventVersion, text: expect.stringContaining("Continue the authorized task.") });
+    expect(result.envelope).not.toHaveProperty("denied");
+    // The same failure does not authorize a purpose-denied attachment.
+    const denied = await read(scene, { ...args, purpose: "session" });
+    expect(denied.packet.result).toMatchObject({ status: "incomplete", reasons: ["storage"], data: { servedUnits: 0 } });
+    if (denied.packet.result.status !== "incomplete") throw new Error("expected storage fallback");
+    expect(denied.packet.result.data.packetMd).not.toContain("Continue the authorized task.");
+    expect(denied.envelope.quoted).toEqual([]);
+  } finally { scene.dispose(); }
+});

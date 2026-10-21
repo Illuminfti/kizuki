@@ -211,7 +211,12 @@ absent`. Whole qualified relations may be omitted to fit, but their qualifiers
 and evidence are never cut apart. The hook refuses older incomplete packets
 that lack this warning. Current v2 packets carry a structured `servedUnits`
 count of packed authorized units; quoted text cannot substitute for that count.
-Scoped coverage-shaped packets without the count are refused. A failed typed projection marks session sections
+Scoped coverage-shaped packets without the count are refused. If context storage
+fails, a v2 packet reports `result.status=incomplete` with `reasons=["storage"]`;
+its coverage remains partial. An independently authorized task attachment can
+still be served within the same token budget. The storage reason adds no denied
+identities or counts and is distinct from ordinary incomplete query coverage.
+A failed typed projection marks session sections
 unavailable while preserving independently authorized capture. Full world-card
 summary coverage is separate from this session's recorded-relation projection.
 

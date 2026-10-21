@@ -1,6 +1,7 @@
 import { CONTEXT_PACKET_MARKERS } from "../../canon/origin";
 import { issuedOpaqueFields } from "../../util/issued-opaque";
 import { isWorldWireToken } from "../../world/ops/parse";
+import type { ViewGap } from "../../contracts/world-card-kit";
 import type { ViewResult, ViewToken } from "../../world/ops/types";
 import type { ContextPacketArgs, ContextPacketData } from "../packet";
 import type { PacketPurpose } from "../sections";
@@ -38,8 +39,14 @@ export interface ContextPacketDataV2 {
   schema: typeof PACKET_V2_SCHEMA;
   result: Extract<
     ViewResult<PacketContentV2>,
-    { status: "current"; view: ViewToken } | { status: "unchanged" | "incomplete" }
-  >;
+    { status: "current"; view: ViewToken } | { status: "unchanged" }
+  > | {
+    readonly status: "incomplete";
+    readonly data: PacketContentV2;
+    /** A packet can preserve authorized task data while its context storage fails.
+     * This failure cause is packet-specific; ordinary world coverage is unchanged. */
+    readonly reasons: readonly (ViewGap | "storage")[];
+  };
 }
 
 /** Rejects a v1 baseline key before anything is read; it would be a second version switch. */
