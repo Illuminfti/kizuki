@@ -6,6 +6,7 @@ import type { ProcedureCard } from "../contracts/procedure-card";
 import type { FrameworkCard } from "../contracts/framework-card";
 import type { SkillCard } from "../contracts/skill-card";
 import type { OutcomeCard } from "../contracts/outcome-card";
+import type { ArtifactCard } from "../contracts/artifact-card";
 import type { QuestionCard } from "../contracts/question-card";
 import type { Frontier } from "../world/ops/frontier";
 import type { WorldMatches } from "../world/pipeline/assemble";
@@ -64,6 +65,8 @@ export type {
 export type WorldReadInput =
   | { readonly operation: "person"; readonly person: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "find_people"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "artifact_version"; readonly artifact: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "find_artifacts"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | {
       readonly operation: "find_concepts" | "find_situations";
       readonly label: string;
@@ -112,7 +115,8 @@ export type WorldReadInput =
         | { readonly operation: "situation"; readonly situation: WorldObjectRef }
         | { readonly operation: "procedure"; readonly procedure: WorldObjectRef }
         | { readonly operation: "skill"; readonly skill: WorldObjectRef }
-        | { readonly operation: "framework"; readonly framework: WorldObjectRef };
+        | { readonly operation: "framework"; readonly framework: WorldObjectRef }
+        | { readonly operation: "artifact_version"; readonly artifact: WorldObjectRef };
       readonly valid: WorldValidQuery;
       readonly knownAt: WorldKnownAt;
     }
@@ -128,6 +132,8 @@ export type WorldReadInput =
 export type WorldData =
   | ConceptCard
   | PersonCard
+  | ArtifactCard
+  | WorldMatches<"kizuki.artifact_version-matches/v1">
   | QuestionCard
   | ProcedureCard | FrameworkCard | SkillCard | OutcomeCard
   | WorldMatches<"kizuki.procedure-matches/v1">

@@ -43,7 +43,8 @@ describe("the operation registry", () => {
       "share",
       "resume",
       "question", "find_questions", "frontier",
-      "procedure", "find_procedures", "skill", "framework", "outcome",
+      "person", "find_people", "procedure", "find_procedures", "skill", "framework",
+      "artifact_version", "find_artifacts", "outcome",
     ]);
   });
 
@@ -212,6 +213,7 @@ describe("describe", () => {
         { id: "framework", state: "dark", population: "extraction_off" },
         { id: "procedure", state: "dark", population: "extraction_off" },
         { id: "outcome", state: "shipped", population: "propose" },
+        { id: "artifact_version", state: "shipped", population: "connector_metadata" },
       ],
       operations: WORLD_OPS.map((op) => ({
         name: op.name,

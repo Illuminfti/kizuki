@@ -1,3 +1,4 @@
+import { artifactFixture } from "./artifact-fixture";
 import { skillFixture, PROCEDURE, SKILL, FRAMEWORK } from "./skill-fixture";
 /** Explicit public-operation scenarios. A new operation must supply a real case. */
 import { addAgent, authenticate, OWNER_AGENT_GRANT } from "../../src/agents";
@@ -11,7 +12,7 @@ import type { ShareData } from "../../src/world/views/resume";
 
 export const WORLD_VERIFICATION_OPERATIONS = [
   "find_concepts", "find_situations", "concept", "situation", "describe",
-  "evidence", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people", "find_procedures", "procedure", "skill", "framework", "outcome",
+  "evidence", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people", "find_procedures", "procedure", "skill", "framework", "outcome", "artifact_version", "find_artifacts",
 ] as const;
 export type VerificationOperation = typeof WORLD_VERIFICATION_OPERATIONS[number];
 const PERSON = "person:verification-ada";
@@ -21,15 +22,18 @@ const input = (operation: string, own = {}) => ({ operation, ...own, ...WHEN });
 export async function verificationScene(): Promise<NoninterferenceScene> {
   const base = await hiddenScene();
   let skills: Awaited<ReturnType<typeof skillFixture>> | undefined;
+  let artifacts: Awaited<ReturnType<typeof artifactFixture>> | undefined;
   try {
     skills = await skillFixture(base.db);
+    artifacts = await artifactFixture(base.db);
+    const artifact = await artifacts.capture("Synthetic verification artifact exact bytes.");
     await skills.file(0, "outcome.self_report");
     await worldSeed(base.db, { kind: "question", subject: QUESTION, label: "When should I update a belief?", discover: false,
       predicates: [{ predicate: "question.status", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "question/open" } } }] });
     await worldSeed(base.db, { kind: "person", subject: PERSON, label: "Ada", discover: false,
       predicates: [{ predicate: "person.role", object: { kind: "literal", value: "Reviewer" } }] });
     const agent = addAgent(base.db, "verification-reader", {
-      ...OWNER_AGENT_GRANT, ceiling: "public", subjects: ["topic:bayes", "project:launch", QUESTION, PERSON, PROCEDURE, SKILL, FRAMEWORK, "framework:inspection"],
+      ...OWNER_AGENT_GRANT, ceiling: "public", subjects: ["topic:bayes", "project:launch", QUESTION, PERSON, PROCEDURE, SKILL, FRAMEWORK, "framework:inspection", artifact.subject.id, ...(artifact.metadata.versionOf ? [artifact.metadata.versionOf] : [])],
       // Four observations per operation plus setup reads; production limits stay unchanged.
       rate_limit_per_minute: 4 * WORLD_VERIFICATION_OPERATIONS.length + 16,
     });
@@ -43,9 +47,9 @@ export async function verificationScene(): Promise<NoninterferenceScene> {
     };
     return { ...base, reader,
       refs: { concept: ref("find_concepts", "Bayesian"), situation: ref("find_situations", "Launch") },
-      dispose() { skills?.dispose(); base.dispose(); },
+      dispose() { artifacts?.dispose(); skills?.dispose(); base.dispose(); },
     };
-  } catch (error) { skills?.dispose(); base.dispose(); throw error; }
+  } catch (error) { artifacts?.dispose(); skills?.dispose(); base.dispose(); throw error; }
 }
 
 export function verificationInputs(scene: NoninterferenceScene): Record<VerificationOperation, Record<string, unknown>> {
@@ -71,6 +75,10 @@ export function verificationInputs(scene: NoninterferenceScene): Record<Verifica
   const skillNode = procedural.result.data.applicability.requiredCapabilities[0]?.object;
   const frameworkNode = procedural.result.data.applicability.prerequisites[0]?.object;
   if (skillNode?.kind !== "node" || frameworkNode?.kind !== "node") throw new Error("verification skill/framework positive controls are absent");
+  const artifacts = read("find_artifacts", { label: "Artifact" });
+  if (!("result" in artifacts) || !("data" in artifacts.result) || !("matches" in artifacts.result.data)) throw new Error("verification artifacts failed");
+  const artifact = artifacts.result.data.matches[0]?.ref;
+  if (!artifact) throw new Error("verification ArtifactVersion positive control is absent");
   const of = { operation: "concept", concept: scene.refs.concept };
   const shared = read("share", { of });
   if (!("result" in shared) || !("data" in shared.result)) throw new Error("verification sharing failed");
@@ -89,6 +97,7 @@ export function verificationInputs(scene: NoninterferenceScene): Record<Verifica
     find_procedures: input("find_procedures", { label: "verify" }), procedure: input("procedure", { procedure }),
     skill: input("skill", { skill: skillNode.ref }), framework: input("framework", { framework: frameworkNode.ref }),
     outcome: input("outcome", { subject: PROCEDURE }),
+    artifact_version: input("artifact_version", { artifact }), find_artifacts: input("find_artifacts", { label: "Artifact" }),
   };
 }
 
