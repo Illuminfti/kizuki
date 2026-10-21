@@ -8,9 +8,14 @@ import type { PersonaSize } from "./persona";
 installLogicalClock(AS_OF);
 installFixtureEntropy();
 try {
-  const options = JSON.parse(process.argv[2]!) as { size?: PersonaSize; out: string };
-  const { evaluateAtLogicalTime } = await import("./run");
-  await evaluateAtLogicalTime(options);
+  const options = JSON.parse(process.argv[2]!) as { size?: PersonaSize; out: string; mode?: "baselines"; workspace?: string };
+  if (options.mode === "baselines") {
+    const { evaluateBaselinesAtLogicalTime } = await import("./baselines");
+    await evaluateBaselinesAtLogicalTime(options);
+  } else {
+    const { evaluateAtLogicalTime } = await import("./run");
+    await evaluateAtLogicalTime(options);
+  }
   // Session hooks leave deadline timers pending after successful reads.
   process.exit(0);
 } catch {
