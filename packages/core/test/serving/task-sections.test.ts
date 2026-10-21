@@ -146,7 +146,7 @@ describe("structured task sections", () => {
     });
     expect(envelope.quoted).toHaveLength(1);
     expect(envelope.quoted[0]?.tainted).toBe(true);
-    expect(envelope.quoted[0]?.text).toContain(CONSTRAINT);
+    expect(envelope.quoted.find(chunk => "event_id" in chunk)?.text).toContain(CONSTRAINT);
     expect(JSON.stringify(envelope)).not.toContain(PAGE_BODY);
   });
 

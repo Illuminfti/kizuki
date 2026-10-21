@@ -773,7 +773,7 @@ export type {
 export { cursorStoreDeltaError, cursorStoreOverflow, readCursorStore } from "./ledger/cursor-store";
 export { scopedSecretResolver } from "./ledger/secret-scope";
 export { assertConnectorBrowserUrl, guardedSignInIo } from "./ledger/sign-in-guard";
-export { DeadlineError, withDeadline } from "./util/deadline";
+export { DeadlineError, withDeadline, withAbortSignal } from "./util/deadline";
 export { sha256Hex } from "./util/hash";
 export {
   ConnectionStateStore,
@@ -787,7 +787,7 @@ export { createStatePersister } from "./ledger/state-persister";
 export type { StatePersisterHandle } from "./ledger/state-persister";
 export { isSecretRef, parseSecretRef } from "./contracts/secret-ref";
 export type { SecretRef, SecretRefScheme } from "./contracts/secret-ref";
-export type { RunResult, RunToCompletionOptions } from "./ingest/run";
+export type { DrainSlice, RunResult, RunToCompletionOptions } from "./ingest/run";
 export type { SourceTombstoneContext } from "./canon/source-tombstone";
 export {
   DEFAULT_MAX_BATCHES,
@@ -986,6 +986,7 @@ export type {
   ProposeArgs,
   ProposeData,
   QuotedChunk,
+  QuotedPageChunk,
   RewrittenPage,
   SearchArgs,
   SearchData,
@@ -1110,9 +1111,11 @@ export type {
   RailHooksV2,
   RailRefreshReport,
   RailRuntime,
+  RailRuntimeContext,
   RailRuntimeV2,
   RailId,
   RailSpec,
+  RailSyncDrain,
   RailSyncResult,
   RunRailOptions,
   RunRailOptionsV2,

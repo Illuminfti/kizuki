@@ -4,7 +4,7 @@ import { KizukiError } from "../src/contracts/errors";
 import { openLedger } from "../src/ledger/db";
 import { getCheckpoint, registerConnection } from "../src/ledger/connections";
 import { setSourceGrant } from "../src/ledger/source-grants";
-import { runBackfill, runSync } from "../src/ingest/run";
+import { runBackfill, runSync, runToCompletion } from "../src/ingest/run";
 import { connector } from "./connections-helpers";
 
 const source = "01JJ0000000000000000000004";
@@ -65,5 +65,31 @@ test("hostile coverage accessors are refused without executing or advancing the 
     expect(getCheckpoint(db, "fixture", source)).toMatchObject({ cursor: null, backfill_complete: false,
       last_result: { coverage: { last_successful_pass_at: null, last_error_class: "refused" } } });
     expect(JSON.stringify(result)).not.toContain("synthetic private content");
+  } finally { db.close(); }
+});
+
+test("a bounded folder drain reports completion only after its resumed terminal batch", async () => {
+  const { db, capture } = fixture();
+  const manifest = capture.manifest();
+  capture.manifest = () => ({ ...manifest, capabilities: { ...manifest.capabilities, sync_covers_backfill: true } });
+  let calls = 0;
+  capture.sync = async () => {
+    calls++;
+    return { events: [], cursor: `page-${calls}`, has_more: calls < 2 };
+  };
+  try {
+    const first = await runToCompletion(db, capture, "fixture", source, "sync", { slice: { max_batches: 1 } });
+    expect(first.has_more).toBe(true);
+    expect(first.coverage?.last_successful_pass_at).toBeNull();
+    expect(getCheckpoint(db, "fixture", source)).toMatchObject({ sync_cursor: "page-1", backfill_complete: false });
+    const stopped = await runToCompletion(db, capture, "fixture", source, "sync", { stopRequested: () => true });
+    expect(stopped.has_more).toBe(true);
+    expect(calls).toBe(1);
+    expect(getCheckpoint(db, "fixture", source)?.last_result.coverage?.last_successful_pass_at).toBeNull();
+    const complete = await runToCompletion(db, capture, "fixture", source, "sync", { slice: { max_batches: 1 } });
+    expect(complete.has_more).toBeUndefined();
+    expect(complete.coverage?.last_successful_pass_at).toEqual(expect.any(String));
+    expect(getCheckpoint(db, "fixture", source)).toMatchObject({ sync_cursor: "page-2", backfill_complete: true,
+      last_result: { coverage: complete.coverage } });
   } finally { db.close(); }
 });

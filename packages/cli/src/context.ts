@@ -12,7 +12,7 @@ import {
   withLeaseHeldRefusal,
 } from "@kizuki/core";
 import type { ConnectionStateReader, RetrievalPort } from "@kizuki/core";
-import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, LedgerReadError, LEDGER_SCHEMA_VERSION, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch } from "@kizuki/core/internal";
+import { assertBoundVaultId, inspectLedgerIdentity, LedgerIdentityError, LedgerReadError, LEDGER_SCHEMA_VERSION, ledgerNotReadyError, openLedgerRead, openReadyLedgerRead, openLedger, ledgerAccepted, readLedgerMark, sealLedger, initSearch, withControlWait } from "@kizuki/core/internal";
 import type { LedgerReadContext } from "@kizuki/core/internal";
 import { INVOCATION, shellQuote } from "./runtime";
 import { inspectConfiguredRetrieval, openConfiguredRetrieval } from "./retrieval-runtime";
@@ -187,7 +187,7 @@ export interface VaultContext {
 export async function withVault<T>(
   io: CliIo,
   fn: (ctx: VaultContext) => Promise<T>,
-  options: { retrieval?: "required" | "optional" | "none" } = {},
+  options: { retrieval?: "required" | "optional" | "none"; nonblockingSeal?: boolean } = {},
 ): Promise<T> {
   const path = configPath(io.env);
   const config = readConfig(path);
@@ -201,7 +201,7 @@ export async function withVault<T>(
 async function withOpenVault<T>(
   io: CliIo,
   fn: (ctx: VaultContext) => Promise<T>,
-  options: { retrieval?: "required" | "optional" | "none" },
+  options: { retrieval?: "required" | "optional" | "none"; nonblockingSeal?: boolean },
   path: string,
   resolved: string,
 ): Promise<T> {
@@ -226,7 +226,8 @@ async function withOpenVault<T>(
       ...(retrieval === undefined ? {} : { retrieval }),
       ...(retrievalUnavailable === undefined ? {} : { retrievalUnavailable }),
     });
-    sealLedger(vaultPath, db);
+    if (options.nonblockingSeal) withControlWait(db, () => sealLedger(vaultPath, db), 0);
+    else sealLedger(vaultPath, db);
     return result;
   } finally {
     try { await retrieval?.close(); } finally { db.close(); }

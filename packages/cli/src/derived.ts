@@ -253,11 +253,14 @@ export function refreshDerived(
   db: Database,
   vaultPath: string,
   onEvent?: (event: CaptureEvent) => void,
-  options: { limit?: number } = {},
+  options: { limit?: number; pace?: () => void } = {},
 ): IndexReport {
   const start = readIndexCursor(vaultPath);
   const limit = options.limit ?? Number.POSITIVE_INFINITY;
-  const onBatch = (batch: IndexCursor): void => writeIndexCursor(vaultPath, batch);
+  const onBatch = (batch: IndexCursor): void => {
+    writeIndexCursor(vaultPath, batch);
+    options.pace?.();
+  };
   const events = indexEventsFromCursor(db, start, onEvent, { limit, onBatch });
   const pages = indexReceiptsFromCursor(db, vaultPath, events.cursor, listCanonPagesReport, {
     limit: Math.max(0, limit - events.indexed),
@@ -281,7 +284,7 @@ export function refreshDerived(
 export function tryRefreshDerived(
   db: Database,
   vaultPath: string,
-  options: { limit?: number } = {},
+  options: { limit?: number; pace?: () => void } = {},
 ): IndexReport {
   try {
     return refreshDerived(db, vaultPath, undefined, options);
@@ -304,12 +307,13 @@ export async function refreshAndPublishDerived(
   db: Database,
   vaultPath: string,
   retrieval: RetrievalPort | undefined,
+  pace?: () => void,
 ): Promise<IndexReport> {
-  if (retrieval === undefined) return tryRefreshDerived(db, vaultPath);
+  if (retrieval === undefined) return tryRefreshDerived(db, vaultPath, pace === undefined ? {} : { pace });
   const pending: CaptureEvent[] = [];
   let report: IndexReport;
   try {
-    report = refreshDerived(db, vaultPath, (event) => pending.push(event));
+    report = refreshDerived(db, vaultPath, (event) => pending.push(event), pace === undefined ? {} : { pace });
   } catch (error) {
     const cursor = readIndexCursor(vaultPath);
     return {

@@ -123,8 +123,8 @@ export function refreshCanonProjectionFloor(scope: VaultMutationScope, io: Canon
     const page = verify(scope, io, saved.value);
     io.db.query("DELETE FROM canon_projection_obligations WHERE receipt_id=?").run(receiptId);
     if (page === null || page.data["status"] !== "active") {
-      if (saved.value.page_id !== null) removeDerivedPage(io.db, saved.value.page_id, io.vault_path);
-    } else refreshDerivedPage(io.db, page, io.vault_path);
+      if (saved.value.page_id !== null) removeDerivedPage(io.db, saved.value.page_id, io.vault_path, scope);
+    } else refreshDerivedPage(io.db, page, io.vault_path, scope);
     if (saved.value.external_execution.some(state => state !== "acknowledged")) insert(io.db, saved.row, saved.value.sources);
     else advanceCanonReadGeneration(io.db);
   }).immediate();

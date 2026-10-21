@@ -24,6 +24,7 @@ import { labelClaimSensitivity } from "../sensitivity/store";
 import { stricter } from "../sensitivity/resolve";
 import { cloneExactJson, isNonEmptyString, isPlainObject } from "../util/validate";
 import { ulid } from "../util/ulid";
+import { sourceRoots } from "../claims/source-roots";
 import { NAMESPACED_SUBJECT_MAX } from "./subjects";
 
 /**
@@ -497,6 +498,10 @@ function corroborateCompatClaim(
     (live.sensitivity ?? "private") as Sensitivity,
     proposal.sensitivity,
   );
+  // Every new citation is kept as evidence; only a source record the claim did
+  // not already rest on is a further witness.
+  const known = sourceRoots(db, current);
+  const confirmed = bump && [...sourceRoots(db, provenance)].some((root) => !known.has(root));
   db.query(
     `UPDATE claims
         SET provenance = ?, corroboration = ?,
@@ -505,7 +510,7 @@ function corroborateCompatClaim(
       WHERE claim_id = ?`,
   ).run(
     JSON.stringify(merged),
-    bump ? live.corroboration + 1 : live.corroboration,
+    confirmed ? live.corroboration + 1 : live.corroboration,
     bump ? 1 : 0,
     at,
     sensitivity,
