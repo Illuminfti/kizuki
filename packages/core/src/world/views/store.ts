@@ -16,6 +16,22 @@ export function wireDigest(token: string): string {
   return createHash("sha256").update(Buffer.from(token, "base64url")).digest("hex");
 }
 
+export type ViewCacheDomain = "view" | "known-snapshot";
+
+/**
+ * A cache token is meaningful only within its protocol.  The stored digest
+ * deliberately includes that protocol so a value issued as a known snapshot
+ * cannot also name a retained view projection.
+ */
+function cacheWireDigest(token: string, domain: ViewCacheDomain): string {
+  if (domain === "view") return wireDigest(token);
+  return createHash("sha256")
+    .update(domain)
+    .update("\0")
+    .update(Buffer.from(token, "base64url"))
+    .digest("hex");
+}
+
 export function fingerprintOf(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
@@ -35,9 +51,10 @@ export function lookupView(
   ctx: ServeContext,
   partition: number,
   namespaceId: string,
-  queryDigest: string,
+  queryDigest: string | null,
   token: string,
   now: string,
+  domain: ViewCacheDomain = "view",
 ): StoredView | null {
   const { db } = ctx, permitted = authorizedSupportSql(ctx);
   const row = db
@@ -46,15 +63,16 @@ export function lookupView(
       (string | number)[]
     >(
       `SELECT v.fingerprint,v.projection,v.expires_at FROM world_view_tokens v
-       WHERE v.token_hash=? AND v.partition_id=? AND v.namespace_id=? AND v.query_digest=? AND v.expires_at>?
+       WHERE v.token_hash=? AND v.partition_id=? AND v.namespace_id=? AND (?='' OR v.query_digest=?) AND v.expires_at>?
          AND NOT EXISTS (
            SELECT 1 FROM world_view_token_deps d
            JOIN world_wire_admission_targets a USING(namespace_id,wire_ref)
            LEFT JOIN claim_v2_support s ON s.support_key=a.support_key
-           WHERE d.token_hash=v.token_hash AND COALESCE((${permitted.sql}),0)=0
+           WHERE d.token_hash=v.token_hash AND a.support_key IS NOT NULL
+             AND COALESCE((${permitted.sql}),0)=0
          )`,
     )
-    .get(wireDigest(token), partition, namespaceId, queryDigest, now, ...permitted.bindings);
+    .get(cacheWireDigest(token, domain), partition, namespaceId, queryDigest ?? "", queryDigest ?? "", now, ...permitted.bindings);
   return row === null ? null : { fingerprint: row.fingerprint, projection: row.projection, validUntil: row.expires_at };
 }
 
@@ -92,6 +110,7 @@ export function issueView(
   projection: Uint8Array,
   refs: readonly string[],
   now: string,
+  domain: ViewCacheDomain = "view",
 ): IssuedView | null {
   if (projection.byteLength > VIEW_TOKEN_BYTES) return null;
   const validUntil = new Date(Date.parse(now) + VIEW_TTL_MS).toISOString();
@@ -101,7 +120,7 @@ export function issueView(
   );
   for (let attempt = 0; attempt < 4; attempt++) {
     const token = randomBytes(32).toString("base64url");
-    const hash = wireDigest(token);
+    const hash = cacheWireDigest(token, domain);
     if (db.query("SELECT 1 FROM world_view_tokens WHERE token_hash=?").get(hash) !== null) continue;
     db.query("DELETE FROM world_view_tokens WHERE partition_id=? AND expires_at<=?").run(partition, now);
     db.query(MAKE_ROOM).run(partition, VIEW_SLOTS - 1, VIEW_PRINCIPAL_BYTES - projection.byteLength);
