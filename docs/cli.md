@@ -282,18 +282,40 @@ model. `kizuki connect status` shows, for every source, that path only:
   model the grant names. A grant whose model is not the configured one is marked
   `(not the configured model)`; it cannot send anything until the configuration
   matches it.
-- **Retention**: `none`, or `provider-managed`, the only retention stance a
-  grant can record, followed by the provider controls the configured model asks
-  the router to enforce (`[ports.llm.provider]`, for example
-  `data_collection=deny zdr=true`) or `no provider controls requested`. Kizuki
-  cannot see what a provider retains; the stance says who manages it, not that
-  retention is off.
+- **Retention**: `none`, or the loosest retention class the grant accepts
+  (`zero-retention`, `logged-no-training`, `logged-and-trained` or
+  `provider-managed`). For a class other than `provider-managed`, and when the
+  granted model is the configured one, it adds `model declares <class>` or
+  `model declares nothing`, the class from `[ports.llm] retention`. Then come the
+  provider controls the configured model asks the router to enforce
+  (`[ports.llm.provider]`, for example `data_collection=deny zdr=true`) or `no
+  provider controls requested`. Kizuki cannot see what a provider retains; the
+  class is what the owner accepted and declared, not proof that retention is off.
+
+A grant states the loosest class it accepts in `egress.external_retention`:
+`zero_retention`, `logged_no_training`, `logged_and_trained` (strictest to
+loosest) or `provider_managed`, which accepts any model and keeps every earlier
+grant working unchanged. The configured model declares its own class in
+`[ports.llm] retention`, and an undeclared model counts as `logged_and_trained`.
+Text is sent only when the model's declared class is at least as strict as the
+class the grant accepts; otherwise the source's events are held, not sent. A
+configured System One judge is sent the same events and claims, so it needs the
+same consent, and its destination differs from the model's. A grant names the
+judge as its own pair beside the model, `judge_endpoint` (the judge's
+`<base_url>/systemone`) and `judge_model`; both or neither, and a grant without
+the pair keeps its earlier form and digest. With a judge configured and no pair
+that matches it, the source's events are held, not sent and not filed as empty,
+and `kizuki doctor` and `connect status` say `held` next to the source. The judge
+declares no retention class, so the grant must accept `logged_and_trained` or
+`provider_managed`. Use `connect grant --policy FILE` to supply this explicit
+pair; the app's model-only permit action does not grant judge access. See
+[`@kizuki/llm`](../packages/llm/README.md#retention-classes).
 
 `connect status --json` reports the same view as `egress` on each connection
-(`destination`, `host`, `model`, `retention`, `provider_controls`,
-`configured`), and `connect status --source KEY` adds it to the consent line and
-JSON. Provider controls are not part of the model binding that consent names;
-see [`@kizuki/llm`](../packages/llm/README.md#provider-privacy-controls-portsllmprovider).
+(`destination`, `host`, `model`, `retention`, `declared_retention`,
+`provider_controls`, `configured`), and `connect status --source KEY` adds it to the consent line and
+JSON. Provider controls are not part of the model binding that consent names; the
+declared retention class is. See [`@kizuki/llm`](../packages/llm/README.md#provider-privacy-controls-portsllmprovider).
 
 Before an extraction prompt reaches the `[ports.llm]` endpoint, it is scrubbed
 of obvious secrets. Each match is replaced by `[redacted:<kind>]`, where kind is:
@@ -316,15 +338,15 @@ sent to the model is. The model's anchors into scrubbed text are moved back onto
 the original record. The per-kind counts appear as `model.redacted` in each run
 receipt, and are absent when nothing was redacted.
 
-**Known limit: the admission judge is a separate destination.** When
+**The admission judge is a separate destination.** When
 `[ports.systemone]` is configured, the extraction-path admission judge (typed
 and legacy) receives the same scrubbed extraction text at its own `base_url`
-(the default host is `api.typesafe.ai`), not at the `[ports.llm]` endpoint. That
-destination is not named by source consent, is not covered by
-`[ports.llm.provider]`, and is not shown by `connect status` or its `--json`
-`egress`. Scrubbing applies to it; the egress and retention view does not.
-Leave `[ports.systemone]` unset to keep extraction text on the `[ports.llm]`
-destination alone. The judge the reflex path uses is not scrubbed.
+(the default host is `api.typesafe.ai`), not at the `[ports.llm]` endpoint. Source
+consent covers it only when the grant names it (`judge_endpoint`, `judge_model`,
+above); `connect status` and `kizuki doctor` show whether it does. It is not
+covered by `[ports.llm.provider]`. Scrubbing applies to it. Leave `[ports.systemone]`
+unset to keep extraction text on the `[ports.llm]` destination alone. The judge
+the reflex path uses is not scrubbed.
 
 ## backfill / sync
 
@@ -484,8 +506,10 @@ extract cursor for a granted source (counted up to 10,000, shown as `N+`) and
 passes in a row were rejected as truncated, it adds the change to make: set
 `[ports.llm] reasoning_effort` or raise `[extraction] max_output_tokens`. An
 `egress` line names, for every source whose text may go to a model, the
-endpoint host, the model and `retention=provider_managed`, which means the
-provider keeps sent text under its own policy. When canon files cannot be
+endpoint host, the model and the retention class the grant accepts, for example
+`retention=provider_managed` (the provider keeps sent text under its own policy)
+or `retention=zero_retention` (the grant accepts only a model that declares zero
+retention). When canon files cannot be
 indexed, doctor prints `index-degraded` with the skipped paths (the first 16)
 and their total; a canon page held out of the index by an open hold or write is
 listed as `index-degraded` too, and a truncated canon walk is said aloud. The
@@ -695,9 +719,12 @@ reports `configured` with the daemon's own last success and failure from its
 run receipts, or `unverified` when the daemon has left none. The optional `[ports.llm] reasoning_effort` (`none`,
 `minimal`, `low`, `medium` or `high`) is sent with each model request;
 `doctor` and `serve status` show it next to the bound model, and `doctor`
-names an invalid value. The optional `[ports.llm.provider]` table
+names an invalid value. The optional `temperature` (0 to 2) and `json_mode`
+(`response_format` `json_object`) keys are sent only when set. The optional
+`[ports.llm.provider]` table
 (`data_collection`, `zdr`, `order`, `only`, `ignore`, `allow_fallbacks`) is
-passed through to OpenAI-compatible routers; see
+passed through to OpenAI-compatible routers, and `retention` declares the
+class the destination is held to; see
 [Model egress and retention](#model-egress-and-retention). Rails hold the ledger only for the length of one batch; they
 never keep a write transaction open across a network or model call, so owner
 verbs keep working while the loop runs. See

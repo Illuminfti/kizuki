@@ -31,6 +31,9 @@ describe("openai-compatible config", () => {
       timeout_ms: 60_000,
       max_retries: 2,
       reasoning_effort: null,
+      temperature: null,
+      json_mode: false,
+      retention: null,
     });
   });
 
@@ -88,9 +91,9 @@ describe("openai-compatible config", () => {
       parseOpenAiCompatibleConfig({
         base_url: "http://127.0.0.1/v1",
         model: "synthetic",
-        temperature: 0,
+        top_p: 0.5,
       }),
-    ).toThrow("unknown llm config key temperature");
+    ).toThrow("unknown llm config key top_p");
   });
 });
 
@@ -157,6 +160,42 @@ describe("openai-compatible port", () => {
     expect(bodies[1]).toMatchObject({ model: "synthetic", reasoning_effort: "minimal" });
     // Effort tunes the request only; the recorded model identity is unchanged.
     expect(refs).toEqual([`${OPENAI_COMPATIBLE_LLM_ID}:synthetic@127.0.0.1`, `${OPENAI_COMPATIBLE_LLM_ID}:synthetic@127.0.0.1`]);
+  });
+
+  test("sends temperature and a JSON response format only when configured", async () => {
+    fake = startFakeEndpoint();
+    const bodies: Record<string, unknown>[] = [];
+    for (const extra of [{}, { temperature: 0, json_mode: true }]) {
+      const temporary = temporaryLlmContext(OPENAI_COMPATIBLE_LLM_DESCRIPTOR, { base_url: fake.base_url, model: "synthetic", ...extra });
+      try {
+        await createOpenAiCompatibleLlmPort(temporary.ctx).complete(SAMPLE_REQUEST);
+        bodies.push(fake.requests.at(-1)?.body as Record<string, unknown>);
+      } finally {
+        temporary.cleanup();
+      }
+    }
+    expect("temperature" in bodies[0]!).toBe(false);
+    expect("response_format" in bodies[0]!).toBe(false);
+    expect(bodies[1]).toMatchObject({ temperature: 0, response_format: { type: "json_object" } });
+    for (const temperature of [-0.1, 2.1, "0", Number.NaN, true]) {
+      expect(() => parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1/v1", model: "synthetic", temperature })).toThrow("temperature");
+    }
+    expect(() => parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1/v1", model: "synthetic", json_mode: "yes" })).toThrow("json_mode");
+  });
+
+  test("a retention class is refused unless the request asks for what it claims", () => {
+    const remote = { base_url: "https://openrouter.ai/api/v1", model: "synthetic" };
+    expect(parseOpenAiCompatibleConfig(remote).retention).toBeNull();
+    expect(() => parseOpenAiCompatibleConfig({ ...remote, retention: "forever" })).toThrow(PortError);
+    expect(() => parseOpenAiCompatibleConfig({ ...remote, retention: "zero_retention" })).toThrow("provider.zdr");
+    expect(() => parseOpenAiCompatibleConfig({ ...remote, retention: "zero_retention", provider: { zdr: true } })).toThrow("allow_fallbacks");
+    expect(parseOpenAiCompatibleConfig({ ...remote, retention: "zero_retention", provider: { zdr: true, allow_fallbacks: false } }).retention).toBe("zero_retention");
+    expect(() => parseOpenAiCompatibleConfig({ ...remote, retention: "logged_no_training" })).toThrow("data_collection");
+    expect(parseOpenAiCompatibleConfig({ ...remote, retention: "logged_no_training", provider: { data_collection: "deny" } }).retention).toBe("logged_no_training");
+    // Logging and training is the loosest claim and needs nothing on the wire.
+    expect(parseOpenAiCompatibleConfig({ ...remote, retention: "logged_and_trained" }).retention).toBe("logged_and_trained");
+    // Nothing leaves the machine for a loopback endpoint, so the strictest class needs no routing.
+    expect(parseOpenAiCompatibleConfig({ base_url: "http://127.0.0.1:11434/v1", model: "local", retention: "zero_retention" }).retention).toBe("zero_retention");
   });
 
   test("fails closed before fetch when the secret cannot be resolved", async () => {

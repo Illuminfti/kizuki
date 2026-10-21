@@ -65,6 +65,8 @@ export interface ServeDoctorOptions {
   readonly configured_model_ref?: string | null;
   /** True when an embedding port is configured; only then does embed-backfill have work to judge. */
   readonly embedding_configured?: boolean;
+  /** The destination a configured System One judge sends extraction text to; each egress line then says whether its grant consents to it. */
+  readonly judge?: { readonly model_endpoint: string; readonly model: string } | null;
   /**
    * False skips the walk of every canon page. The walk parses each page, so a
    * caller inside the daemon's event loop or one that reads a single field
@@ -550,7 +552,7 @@ export function inspectServeDoctor(
   const stores = storeDoctor(db, vaultPath, now, readEmbeddingReceipts(db, since, DOCTOR_RAIL_RECEIPTS), pages, embedding);
   const cal = calibration(db, syncReceipts, now);
   const extraction = extractionDoctor(db, syncReceipts, model.canon_writing !== "off");
-  const { egress, failures: egressFailures } = egressDoctor(db);
+  const { egress, failures: egressFailures } = egressDoctor(db, options.judge ?? null);
   const found: { text: string; top: TopFailure }[] = [];
   const fail = (text: string, kind: TopFailure["kind"] = "other", rail: RailId | null = null): void => {
     found.push({ text, top: { kind, rail } });

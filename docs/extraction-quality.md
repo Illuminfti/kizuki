@@ -124,10 +124,33 @@ are identified. Source CLI reports set `artifact` to `null`. The old v1
 complete package identity. A successful source run does not stand in for this
 artifact consumer check.
 
+## Score a real model on the synthetic fixture
+
+`scripts/evaluate-extraction-model.ts` drives the real LLM port and the typed
+producer over the same 12 synthetic cases and scores what the model answered:
+
+```bash
+bun scripts/evaluate-extraction-model.ts \
+  --base-url http://127.0.0.1:8080/v1 --model NAME \
+  --out /tmp/extraction-model-score.json \
+  [--reasoning-effort low] [--temperature 0] [--json-mode]
+```
+
+The runner makes the calls itself, so provenance is observed in-process and
+never read from a file: endpoint host, whether it is loopback, the model, the
+call count and a hash of every request and response. The response-file guard in
+`evaluate-extraction.ts` is unchanged. A JSON file cannot claim this mode, and
+even a copy of a runner-built set is refused by the scorer. A non-loopback
+endpoint is refused unless `--allow-remote` is given, and the corpus is
+synthetic only, so nothing private is sent. The runner sends no credential, so a
+remote endpoint must accept unauthenticated requests. Reports say
+`synthetic_fixture_measured` with `model_quality_claim: false`: they measure this
+fixture and are not a claim about a model's extraction quality on real records.
+
 ## Verification
 
 ```bash
-bun test scripts/evaluate-extraction.test.ts scripts/extraction-quality-native.test.ts
+bun test scripts/evaluate-extraction.test.ts scripts/evaluate-extraction-model.test.ts scripts/extraction-quality-native.test.ts
 bun run typecheck
 ```
 

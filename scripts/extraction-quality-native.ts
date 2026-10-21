@@ -118,7 +118,7 @@ export function inspectRequest(replay: Replay, raw: string): { eventIds: string[
   assert(raw.length <= 100_000, "fixture request exceeds bound");
   const body = JSON.parse(raw) as { model?: unknown; messages?: { role?: unknown; content?: unknown }[]; tools?: unknown };
   assert(body.model === MODEL && body.tools === undefined && Array.isArray(body.messages) && body.messages.length === 2, "unexpected fixture model request");
-  assert(body.messages[0]?.role === "system" && body.messages[0].content === EXTRACTION_V2_SYSTEM_PROMPT && body.messages[1]?.role === "user" && typeof body.messages[1].content === "string", "native extraction prompt contract changed");
+  assert(body.messages[0]?.role === "system" && typeof body.messages[0].content === "string" && body.messages[0].content.startsWith(EXTRACTION_V2_SYSTEM_PROMPT) && body.messages[1]?.role === "user" && typeof body.messages[1].content === "string", "native extraction prompt contract changed");
   const prompt = body.messages[1].content;
   const sentIds = [...prompt.matchAll(/<<<KZ-QUOTE [0-9a-f]{32} event:([A-Za-z0-9:_.-]+)>>>/g)].map((match) => match[1]!);
   const expectedIds = Object.values(replay.ids).sort();
