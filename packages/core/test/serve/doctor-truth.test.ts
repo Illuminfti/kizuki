@@ -108,8 +108,9 @@ function capture(
   db: ReturnType<typeof openLedger>,
   count: number,
 ): { event_id: string; accepted_at: string }[] {
-  // The runs use a fixed clock; their backlog must have arrived before them.
-  setSystemTime(new Date("2026-09-30T12:00:00Z"));
+  // Ledger acceptance uses wall time; pin it before the synthetic run history
+  // without modifying append-only events or leaking a clock into later tests.
+  setSystemTime(new Date(minute(0)));
   try {
     return Array.from({ length: count }, (_, index) => {
       const stored = accept(db, {

@@ -19,12 +19,14 @@ export const RETRIEVAL_CONTRACT_MINOR = 0;
 export const MAX_RETRIEVAL_LIMIT = 100;
 /** Additive, opt-in erasure contract. Existing exact-ID methods keep v1 semantics. */
 export const PROVENANCE_ERASURE_CAPABILITY = "provenance-erasure/v1" as const;
+export const MUTATION_FENCE_CAPABILITY = "mutation-fence/v1" as const;
 export const RETRIEVAL_CAPABILITIES = [
   "lexical",
   "vector",
   "hybrid",
   "graph",
   PROVENANCE_ERASURE_CAPABILITY,
+  MUTATION_FENCE_CAPABILITY,
 ] as const;
 export type RetrievalCapability =
   (typeof RETRIEVAL_CAPABILITIES)[number];
@@ -132,7 +134,22 @@ export interface GraphQueryOptions {
   readonly ceiling: Sensitivity;
 }
 
+/** Retained ownership proof; consumers recheck it synchronously at acknowledgment. */
+export interface RetrievalMutationFence {
+  readonly store: string;
+  /** Throw if ownership or generation changed. Must complete synchronously. */
+  assertCurrent(): void;
+}
+
 export interface RetrievalPort extends Port {
+  /**
+   * Requires mutation-fence/v1. Resolve only while exclusively
+   * owning the current store generation, after every earlier mutation has
+   * stopped and cannot publish later. Ownership must last until close. A
+   * reacquired caller lease or a timeout alone is not a fence. Refuse if this
+   * cannot be proved, including pending asynchronous work or changed custody.
+   */
+  fenceMutations?(): Promise<RetrievalMutationFence>;
   /** Stage before atomic replacement. Cancellation retains the active generation. */
   rebuildFromDocuments?(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>, options?: { signal?: AbortSignal }): Promise<void>;
   upsert(docs: readonly RetrievalDoc[]): Promise<RetrievalMutationReport>;
