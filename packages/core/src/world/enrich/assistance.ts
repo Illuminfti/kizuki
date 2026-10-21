@@ -31,8 +31,8 @@ export const assistanceEnricher: Enricher = (frame, body) => {
     const related = qualified.claims.filter((candidate) => {
       const semantic = candidate.eligible.semantic;
       return tasks.has(rawSubjectRefKey(semantic.subject)) &&
-        (semantic.context.some((ref) => rawSubjectRefKey(ref) === actor) ||
-          [semantic.perspective.holder, semantic.perspective.speaker].some((ref) => ref !== null && rawSubjectRefKey(ref) === actor)) &&
+        // Attribution identifies who reports a claim, not who performed its task.
+        semantic.context.some((ref) => rawSubjectRefKey(ref) === actor) &&
         validOverlap(facet.relation.valid, candidate.relation.valid) !== false;
     });
     // Qualify conflicts within the displayed actor/task basis, so a different

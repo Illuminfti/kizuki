@@ -24,8 +24,9 @@ calculation consumes only complete, currently authorized supports and never
 looks up an inaccessible purported copy parent.
 
 Learning assistance comes from separate qualified `learning.assistance` claims
-on the learning relation's exact task context, with the same actor identified
-by context or attribution and compatible validity. Opposing, uncertain or
+on the learning relation's exact task context, with the same actor explicitly
+identified in context and compatible validity. Attribution alone does not
+identify the learner. Opposing, uncertain or
 negative claims retain their qualifiers and yield `unknown`. Exposure remains
 exposure; assistance never establishes mastery or an independent outcome.
 
