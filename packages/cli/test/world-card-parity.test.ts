@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { serveWorldView } from "@kizuki/core/world";
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../../core/test/helpers/world-consolidation";
 import { cardFixture } from "../../core/test/world/card-fixture";
 import { startLoopback } from "../../core/test/helpers/world-kit/loopback";
 import { twoClients } from "../../mcp/test/helpers/two-clients";
@@ -19,8 +20,8 @@ function currentMeaning(value: any) {
 }
 
 test("one card and its evidence have the same meaning through Core, stdio MCP, HTTP, CLI and the App model", async () => {
-  const clients = await twoClients({ seed: { subject: "topic:initial", label: "Initial topic" }, agent: { subjects: null } });
-  const f = await cardFixture(clients.db), h = createHelpers();
+  const clients = await twoClients({ seed: { subject: "topic:initial", label: "Initial topic", model: EMPTY_SUMMARY_MODEL }, agent: { subjects: null } });
+  const f = await cardFixture(clients.db, { model: EMPTY_SUMMARY_MODEL }), h = createHelpers();
   const ctx = { ...f.ctx, vaultPath: clients.vaultPath };
   const env = h.isolatedEnv();
   const host = createAppHost({ env, vaultOverride: clients.vaultPath, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out: () => {}, err: () => {}, prompt: async () => "" });
@@ -32,6 +33,7 @@ test("one card and its evidence have the same meaning through Core, stdio MCP, H
     await f.write("concept.example", { kind: "literal", value: "A worked observation" }, { mode: "reported", speaker: "person:ada" });
     await f.write("learning.application", { kind: "subject", ref: f.ref("topic:bayes") }, { subject: "person:ada", context: ["task:one"] });
     await f.write("learning.assistance", { kind: "vocabulary", ref: { kind: "vocabulary", id: "learning/assisted" } }, { subject: "task:one", context: ["person:ada"] });
+    await completeEmptyWorldSummaries(clients.db, clients.vaultPath);
     const input = f.input("concept", { concept: f.find(ctx) }), core = serveWorldView(ctx, input);
     const mcp = envelopeOf(await clients.owner.call("world_view", input));
     expect(currentMeaning(mcp.data)).toEqual(currentMeaning(core.data));

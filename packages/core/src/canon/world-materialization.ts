@@ -18,6 +18,7 @@ import type { PageType } from "../vault/schema";
 import type { WorldAdmission } from "../contracts/world-admission";
 import { canonicalJson, sha256Hex } from "../util/hash";
 import { eligibleWorldClaim, type EligibleSupport, type ReadBudget } from "../world/projection";
+import { retainedWorldClaimForReceipt } from "../world/pipeline/eligible";
 import { authorizedSupportSql } from "../world/policy-sql";
 import { heldClaimSql } from "../world/corroboration";
 import type { ServeContext } from "../serving/types";
@@ -136,6 +137,21 @@ export function selectWorldMaterialization(
   }
   return claims.length === 0 ? null : { handle, claims, basis, title, pageType };
 }
+type BasisProof = "current" | "historical" | "receipt_custody";
+function basisClaim(db:Database,item:WorldClaimBasis,budget:ReadBudget,proof:BasisProof) {
+ const supportKeys=item.supports.map(support=>support.support_key);
+ return proof==="receipt_custody"?retainedWorldClaimForReceipt(db,item.claim_id,budget,supportKeys):
+  eligibleWorldClaim(context(db),item.claim_id,{kind:"all"},budget,{...(proof==="historical"?{historical:true as const}:{}),supportKeys});
+}
+/** Retained bytes can prove custody after a tombstone, never permission to serve or undo them. */
+export function assertRetainedWorldBasis(db:Database,basis:readonly WorldClaimBasis[]|null):void {
+ const budget:ReadBudget={bytes:0};
+ for(const item of basis??[]) {
+  const eligible=basisClaim(db,item,budget,"receipt_custody");
+  if(eligible===null||semanticKey(eligible.semantic)!==item.semantic_key||!item.supports.every(expected=>eligible.supports.some(actual=>actual.row.support_key===expected.support_key&&worldAdmissionHash(actual.admission)===expected.admission_hash)))
+   throw new CanonWriteError("decision_stale","retained world support changed before canon admission");
+ }
+}
 /** Exact selected historical support remains valid after supersession, but never after source loss. */
 export function worldBasisAllowed(ctx:ServeContext,basis:readonly WorldClaimBasis[]|null,historical=false):boolean {
  if(basis===null)return true;
@@ -187,13 +203,16 @@ export function pendingWorldCanonClaims(db:Database,limit=32,excluded:ReadonlySe
 
 /** Metadata belongs to the exact selected contributions, not caller-supplied receipt fields. */
 export function worldBasisMetadata(db:Database,basis:readonly WorldClaimBasis[]|null,historical=false):{authority:AuthorityTier;confidence:number;provenance:string[]}|null {
+ return basisMetadata(db,basis,historical?"historical":"current");
+}
+function basisMetadata(db:Database,basis:readonly WorldClaimBasis[]|null,proof:BasisProof):{authority:AuthorityTier;confidence:number;provenance:string[]}|null {
  if(basis===null)return null;
- assertWorldBasis(db,basis,historical);
- const ctx=context(db),budget:ReadBudget={bytes:0},provenance:string[]=[],confidences:number[]=[];
+ if(proof==="receipt_custody")assertRetainedWorldBasis(db,basis);else assertWorldBasis(db,basis,proof==="historical");
+ const budget:ReadBudget={bytes:0},provenance:string[]=[],confidences:number[]=[];
  let authority:AuthorityTier="owner_correction";
  for(const item of basis) {
   if(item.supports.length!==1)throw new Error("typed canon requires one complete selected support per assertion");
-  const eligible=eligibleWorldClaim(ctx,item.claim_id,{kind:"all"},budget,{...(historical?{historical:true as const}:{}),supportKeys:item.supports.map(support=>support.support_key)});
+  const eligible=basisClaim(db,item,budget,proof);
   const support=eligible?.supports.find(support=>support.row.support_key===item.supports[0]!.support_key);
   if(support===undefined)throw new Error("typed canon metadata support missing");
   if(AUTHORITY_TIERS[support.admission.authority]<AUTHORITY_TIERS[authority])authority=support.admission.authority;
@@ -203,7 +222,7 @@ export function worldBasisMetadata(db:Database,basis:readonly WorldClaimBasis[]|
  return {authority,confidence:Math.round(confidences.reduce((sum,value)=>sum+value,0)/confidences.length*1e4)/1e4,provenance};
 }
 function assertWorldReceiptMetadata(db:Database,receipt:RetainedWorldCanonReceipt):void {
- const before=worldBasisMetadata(db,receipt.basis.before,true),after=worldBasisMetadata(db,receipt.basis.after,true),metadata=after??before;
+ const before=basisMetadata(db,receipt.basis.before,"receipt_custody"),after=basisMetadata(db,receipt.basis.after,"receipt_custody"),metadata=after??before;
  if(metadata===null||receipt.authority!==metadata.authority||receipt.confidence!==metadata.confidence||receipt.producer!=="deterministic"||receipt.model_ref!==null)throw new Error("typed receipt metadata differs from admitted support");
  const provenance=[...new Set([...(before?.provenance??[]),...(after?.provenance??[])])].sort();
  if(canonicalJson([...receipt.provenance].sort())!==canonicalJson(provenance))throw new Error("typed receipt provenance differs from admitted support");
@@ -246,13 +265,13 @@ function assertWorldReceiptOwnership(db:Database,receipt:RetainedWorldCanonRecei
  }
 }
 
-/** Restore and reads share the same exact semantic-handle namespace check. */
-export function assertWorldReceiptBasis(db:Database,receipt:RetainedWorldCanonReceipt,options:{historical?:boolean}={}):void {
+/** Receipt integrity is distinct from permission to materialize either image. */
+export function assertWorldReceiptBasis(db:Database,receipt:RetainedWorldCanonReceipt,options:{historical?:boolean;proof?:"receipt_custody"}={}):void {
  if(!isWorldCanonReceipt(receipt))throw new Error("typed receipt required");
  assertWorldReceiptMetadata(db,receipt);
  assertWorldReceiptOwnership(db,receipt);
  for(const image of [receipt.basis.before,receipt.basis.after]) {
-  assertWorldBasis(db,image,options.historical??false);
+  if(options.proof==="receipt_custody")assertRetainedWorldBasis(db,image);else assertWorldBasis(db,image,options.historical??false);
   for(const item of image??[]) {
    const handle=worldClaimHandle(db,item.claim_id);
    if(handle===null||worldCanonPath(handle)!==receipt.page_path)throw new Error("typed receipt handle mismatch");
@@ -260,7 +279,7 @@ export function assertWorldReceiptBasis(db:Database,receipt:RetainedWorldCanonRe
  }
 }
 /** Reconstruct the exact receipt-versioned text; rehashed backup prose is not evidence. */
-export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonReceipt,bytes:Uint8Array|null,image:"before"|"after"):void {
+export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonReceipt,bytes:Uint8Array|null,image:"before"|"after",proof:"historical"|"receipt_custody"="historical"):void {
  assertWorldReceiptMetadata(db,receipt);
  const basis=receipt.basis[image],expected=image==="before"?receipt.before_hash:receipt.after_hash;
  if(bytes===null) {
@@ -269,12 +288,12 @@ export function assertWorldCanonPage(db:Database,receipt:RetainedWorldCanonRecei
   return;
  }
  if(basis===null||hashBytes(bytes)!==expected)throw new Error("typed canon image differs from receipt");
- assertWorldBasis(db,basis,true);
- const ctx=context(db),budget:ReadBudget={bytes:0},bodies:string[]=[],sources:string[]=[];
+ if(proof==="receipt_custody")assertRetainedWorldBasis(db,basis);else assertWorldBasis(db,basis,true);
+ const budget:ReadBudget={bytes:0},bodies:string[]=[],sources:string[]=[];
  let title="Knowledge record",type:PageType=DEFAULT_PAGE_TYPE,minimumSensitivity=0,quoted=false;
  for(const item of basis) {
   const handle=worldClaimHandle(db,item.claim_id);if(handle===null||worldCanonPath(handle)!==receipt.page_path)throw new Error("typed receipt handle mismatch");
-  const eligible=eligibleWorldClaim(ctx,item.claim_id,{kind:"all"},budget,{historical:true,supportKeys:item.supports.map(support=>support.support_key)})!;
+  const eligible=basisClaim(db,item,budget,proof)!;
   const support=eligible.supports.find(support=>support.row.support_key===item.supports[0]!.support_key)!;
   const claim=getClaim(db,item.claim_id)!;
   minimumSensitivity=Math.max(minimumSensitivity,SENSITIVITY_ORDER[claim.sensitivity]);quoted ||= claim.taint==="quoted";

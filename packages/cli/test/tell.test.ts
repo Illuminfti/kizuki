@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { accept, applyCanonWrite, createBudgetTracker, insertClaim, resolveTarget } from "@kizuki/core";
 import type { CaptureEventInput, Claim, InsertClaimInput } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
+import { worldFixture } from "../../core/test/serving/world-fixture";
 import { createHelpers } from "./helpers";
 
 // These tests spawn real CLI processes; bound them for a loaded host.
@@ -92,8 +93,17 @@ describe("kizuki tell", () => {
   test("tell v2 returns the shared correction envelope and preserves v1 explicitly", async () => {
     const setup = tempVault();
     const claimId = await writeGraceClaim(setup.vault);
-    const result = runCli(setup.env, "tell", "Grace now works at Initech.",
+    const rejected = runCli(setup.env, "tell", "Grace now works at Initech.",
       "--claim", claimId, "--dry-run", "--response-contract", "kizuki.envelope/v2", "--json");
+    expect(rejected.exitCode).toBe(2);
+    expect(rejected.stderr).toContain("use --world-claim TOKEN");
+    const db = openLedger(join(setup.vault, ".kizuki/kizuki.db"));
+    const world = await worldFixture(db); db.close();
+    const read = runCli(setup.env, "world", "--operation", "concept", `--ref=${world.ref.token}`, "--json");
+    expect(read.exitCode, read.stderr).toBe(0);
+    const target = JSON.parse(read.stdout).data.data.result.data.definitions[0].claim.token;
+    const result = runCli(setup.env, "tell", "Use prior odds and evidence.",
+      `--world-claim=${target}`, "--dry-run", "--response-contract", "kizuki.envelope/v2", "--json");
     expect(result.exitCode, result.stderr).toBe(0);
     const value = JSON.parse(result.stdout);
     expect(Object.keys(value).sort()).toEqual(["command", "result", "schema"]);

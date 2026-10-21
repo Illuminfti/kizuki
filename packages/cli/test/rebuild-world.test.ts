@@ -11,7 +11,13 @@ const helpers = createHelpers();
 afterEach(helpers.cleanup);
 
 /** The cache tables the view work adds; every rebuild puts them back in their initial state. */
-const VIEW_TABLES = ["world_view_partitions", "world_view_tokens", "world_view_token_deps", "world_resume_handles"];
+const VIEW_TABLES = [
+  "world_view_partitions", "world_view_tokens", "world_view_token_deps", "world_resume_handles",
+  "world_known_receipt_refs", "world_consolidation", "world_consolidation_basis", "world_consolidation_jobs",
+  "world_wire_page_targets", "world_wire_source_targets", "world_wire_receipt_targets",
+  "world_wire_raw_subject_targets", "world_wire_captured_subject_targets", "world_wire_claim_group_targets",
+  "world_wire_observation_targets", "world_wire_page_events", "world_wire_raw_subject_members", "world_wire_claim_group_members",
+];
 
 const PRELOAD = resolve(import.meta.dir, "world-tables-preload.ts");
 const MAIN = resolve(import.meta.dir, "../src/main.ts");

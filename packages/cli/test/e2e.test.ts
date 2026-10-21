@@ -30,22 +30,25 @@ describe("kizuki CLI stranger loop", () => {
     expect(imported).toMatchObject({
       exitCode: 0,
       stdout:
-        "events_stored=3 duplicates=0 proposals_created=6 withdrawn=0 retractions_filed=0 errors=0\n",
+        "events_stored=3 duplicates=0 proposals_created=9 withdrawn=0 retractions_filed=0 errors=0\n",
     });
 
     const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
     let key = "";
     try {
       const entities = listClaims(db).filter((claim) => claim.kind === "entity");
-      expect(entities).toHaveLength(3);
-      expect(new Set(entities.flatMap((claim) => claim.subjects)).size).toBe(3);
+      // Each file supplies a path identity and a content-addressed artifact.
+      expect(entities).toHaveLength(6);
+      expect(entities.filter(claim => String(claim.frontmatter["x-subject-id"]).startsWith("markdown-folder:"))).toHaveLength(3);
+      expect(entities.filter(claim => String(claim.frontmatter["x-subject-id"]).startsWith("artifact:sha256:"))).toHaveLength(3);
+      expect(new Set(entities.flatMap((claim) => claim.subjects)).size).toBe(6);
       for (const entity of entities) {
         expect(entity.frontmatter["type"]).toBe("topic");
         expect(entity.subjects[0]).toMatch(
-          /^kizuki\.markdown-folder\/markdown-folder\/[a-f0-9]{64}$/,
+          /^kizuki\.markdown-folder\/(?:markdown-folder|artifact\/sha256)\/[a-f0-9]{64}$/,
         );
         expect(entity.frontmatter["x-subject-id"]).toMatch(
-          /^markdown-folder:[a-f0-9]{64}$/,
+          /^(?:markdown-folder|artifact:sha256):[a-f0-9]{64}$/,
         );
         expect(entity.authority).toBe("connector_evidence");
         expect(entity.provenance).toHaveLength(1);
@@ -89,10 +92,10 @@ describe("kizuki CLI stranger loop", () => {
     expect(doctor.stdout).toContain("claims live=");
     expect(doctor.stdout).toContain("filed=");
     expect(doctor.stdout).toMatch(
-      /claims live=6 filed=0 written=0 unwritten=6 superseded=0 skipped=0/,
+      /claims live=9 filed=0 written=0 unwritten=9 superseded=0 skipped=0/,
     );
     expect(doctor.stdout).toContain("unwritten=");
-    expect(doctor.stdout).toContain("live_by_producer model_extracted=0 deterministic_floor=6 owner=0 agent=0");
+    expect(doctor.stdout).toContain("live_by_producer model_extracted=0 deterministic_floor=9 owner=0 agent=0");
     expect(doctor.stdout).toContain("derived search=");
     expect(doctor.stdout).toContain("next: kizuki tell");
     expect(doctor.stdout).not.toContain("tell --claim needs a live claim");
@@ -103,7 +106,7 @@ describe("kizuki CLI stranger loop", () => {
     rmSync(join(setup.notes, "linus.md"));
     const synced = runCli(setup.env, "sync", "markdown-folder");
     expect(synced.exitCode).toBe(0);
-    expect(synced.stdout).toContain("withdrawn=2");
+    expect(synced.stdout).toContain("withdrawn=3");
     expect(synced.stdout).toContain("retractions_filed=0");
 
     const doctorAfter = runCli(setup.env, "doctor");

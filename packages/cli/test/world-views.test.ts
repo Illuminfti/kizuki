@@ -1,6 +1,7 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 import { openLedger } from "../../core/src/ledger/db";
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../../core/test/helpers/world-consolidation";
 import { worldSeed } from "../../core/test/helpers/world-seed";
 import { startLoopback } from "../../core/test/helpers/world-kit/loopback";
 import { createAppHost } from "../src/app/host";
@@ -19,7 +20,8 @@ function result(value: WorldReadResult) {
 
 test("CLI processes retain a baseline and share/resume in JSON and text with clean diagnostics", async () => {
   const setup = h.tempVault(), db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
-  const seeded = await worldSeed(db); db.close();
+  const seeded = await worldSeed(db, { model: EMPTY_SUMMARY_MODEL });
+  await completeEmptyWorldSummaries(db, setup.vault); db.close();
   const read = (args: string[]) => {
     const reply = h.runCli(setup.env, "world", ...args);
     expect(reply.exitCode, reply.stderr).toBe(0); expect(reply.stderr).toBe("");
@@ -42,7 +44,8 @@ test("CLI processes retain a baseline and share/resume in JSON and text with cle
 
 test("HTTP and App read the same baseline states and portable handles", async () => {
   const setup = h.tempVault(), db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
-  const seeded = await worldSeed(db);
+  const seeded = await worldSeed(db, { model: EMPTY_SUMMARY_MODEL });
+  await completeEmptyWorldSummaries(db, setup.vault);
   const loopback = await startLoopback(db, setup.vault);
   const io: CliIo = { env: setup.env, vaultOverride: setup.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out: () => {}, err: () => {}, prompt: async () => "" };
   const app = createAppHost(io);

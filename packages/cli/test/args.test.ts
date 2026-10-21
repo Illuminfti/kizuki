@@ -19,6 +19,14 @@ describe("option grammar", () => {
     expect(parsed.positionals).toEqual([]);
   });
 
+  test("inline reference values preserve valid base64url tokens beginning with hyphens", () => {
+    const token = "--" + "A".repeat(41);
+    const refs = { options: ["--world-claim", "--object-ref"], flags: ["--json"] };
+    expect(parseArguments([`--world-claim=${token}`, `--object-ref=${token}`, "--json"], refs).options)
+      .toEqual(new Map([["--world-claim", token], ["--object-ref", token]]));
+    expect(() => parseArguments(["--world-claim", "--json"], refs)).toThrow("missing value for --world-claim");
+  });
+
   test("keeps explicit empty values and ordinary separated values", () => {
     expect(parseArguments(["--source="], spec).options.get("--source")).toBe("");
     expect(parseArguments(["--source", "notes"], spec).options.get("--source")).toBe("notes");

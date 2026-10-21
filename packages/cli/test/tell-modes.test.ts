@@ -66,8 +66,7 @@ function card(env: Env, ref: string): Card {
     "world",
     "--operation",
     "concept",
-    "--ref",
-    ref,
+    `--ref=${ref}`,
     "--json",
   );
   expect(read.exitCode).toBe(0);
@@ -78,8 +77,8 @@ describe("kizuki tell with a world claim", () => {
   test("identity correction and concept union work through CLI processes", async () => {
     const { env, ref, logic } = await world();
     const before = card(env, ref) as Card & { concept: { classificationClaims: { token: string }[] } };
-    const told = runCli(env, "tell", "These names refer to one concept.", "--world-claim", before.concept.classificationClaims[0]!.token,
-      "--mode", "merge_identity", "--object-ref", logic, "--json");
+    const told = runCli(env, "tell", "These names refer to one concept.", `--world-claim=${before.concept.classificationClaims[0]!.token}`,
+      "--mode", "merge_identity", `--object-ref=${logic}`, "--json");
     expect(told.exitCode, told.stderr).toBe(0);
     const merged = card(env, logic) as Card & { concept: { resolution: string; labels: { text: string }[] } };
     expect(merged.concept.ref.token).toBe(logic);
@@ -97,12 +96,10 @@ describe("kizuki tell with a world claim", () => {
       env,
       "tell",
       "That is not what it means.",
-      "--world-claim",
-      claim,
+      `--world-claim=${claim}`,
       "--mode",
       "retract",
-      "--refresh-concept-ref",
-      ref,
+      `--refresh-concept-ref=${ref}`,
     );
     expect(told.exitCode, told.stderr).toBe(0);
     expect(told.stdout).toContain(
@@ -127,14 +124,11 @@ describe("kizuki tell with a world claim", () => {
       env,
       "tell",
       "It needs formal logic.",
-      "--world-claim",
-      edge["claim"].token,
+      `--world-claim=${edge["claim"].token}`,
       "--mode",
       "replace_object",
-      "--object-ref",
-      logic,
-      "--refresh-concept-ref",
-      ref,
+      `--object-ref=${logic}`,
+      `--refresh-concept-ref=${ref}`,
       "--json",
     );
     expect(told.exitCode, told.stderr).toBe(0);
@@ -155,8 +149,7 @@ describe("kizuki tell with a world claim", () => {
       env,
       "tell",
       "Only an idea.",
-      "--world-claim",
-      claim,
+      `--world-claim=${claim}`,
       "--mode",
       "reclassify_mode",
       "--perspective-mode",
@@ -175,8 +168,7 @@ describe("kizuki tell with a world claim", () => {
       env,
       "tell",
       "Only an idea.",
-      "--world-claim",
-      claim,
+      `--world-claim=${claim}`,
       "--mode",
       "reclassify_mode",
       "--perspective-mode",
@@ -196,8 +188,7 @@ describe("kizuki tell with a world claim", () => {
       env,
       "tell",
       "Beliefs follow evidence, not habit.",
-      "--world-claim",
-      claim,
+      `--world-claim=${claim}`,
       "--object",
       "Beliefs follow evidence",
     );
@@ -216,8 +207,7 @@ describe("kizuki tell with a world claim", () => {
       env,
       "tell",
       "Actually a situation.",
-      "--world-claim",
-      kind.classificationClaims[0]!.token,
+      `--world-claim=${kind.classificationClaims[0]!.token}`,
     );
     expect(refused.exitCode).toBe(1);
     expect(refused.stderr).toContain("classification_claim");
@@ -231,7 +221,7 @@ describe("kizuki tell with a world claim", () => {
       ["--object-ref", "nope"],
       ["--refresh-concept-ref", "nope"],
     ]) {
-      const bad = runCli(env, "tell", "x", "--world-claim", claim, ...args);
+      const bad = runCli(env, "tell", "x", `--world-claim=${claim}`, ...args);
       expect(bad.exitCode, args.join(" ")).toBe(2);
       expect(bad.stderr).toContain("usage: kizuki tell");
     }
@@ -251,13 +241,14 @@ describe("kizuki tell with a world claim", () => {
       const { env, ref } = await world();
       const claim = card(env, ref).definitions[0]!["claim"].token;
       const told = runCli(env, "tell", "That is not what it means.",
-        "--world-claim", claim, "--mode", "retract", "--refresh-concept-ref", ref,
+        `--world-claim=${claim}`, "--mode", "retract", `--refresh-concept-ref=${ref}`,
         "--response-contract", "kizuki.envelope/v2", ...(json ? ["--json"] : []));
       expect(told.exitCode, told.stderr).toBe(0);
       if (json) {
         const body = JSON.parse(told.stdout);
         expect(body.schema).toBe("kizuki.cli-result/v2");
-        expect(body.result.data.mode).toBe("retract");
+        expect(body.result.data.message).toBe("correction_recorded");
+        expect(body.result.data).not.toHaveProperty("mode");
         expect(body.result.data.refreshedWorld.result.data.definitions[0].polarity).toBe("negative");
       } else {
         expect(told.stdout).toContain("Refreshed concept: Bayesian updating");

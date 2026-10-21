@@ -1,7 +1,7 @@
 import { assertPositiveAuthorityMutationAllowed } from "./positive-authority";
 import { isSensitivity } from "../agents/types";
 import { isWorldCanonReceipt } from "./world-receipt";
-import { assertWorldReceiptBasis, worldBasisMetadata } from "./world-materialization";
+import { assertWorldBasis, assertWorldReceiptBasis, worldBasisMetadata } from "./world-materialization";
 import { canonicalJson } from "../util/hash";
 import { getCanonReceiptRecord, isErasedReceipt, latestWorldReceiptRecord } from "./receipts";
 import { requireSourceEvents } from "../ledger/source-grants";
@@ -149,7 +149,12 @@ export async function undoReceiptOwned(
   if (original === null) {
     throw new UndoError("receipt_unknown", `undo: receipt ${receiptId} is unknown`);
   }
-  if (isWorldCanonReceipt(original)) assertWorldReceiptBasis(io.db,original,{historical:true});
+  if (isWorldCanonReceipt(original)) {
+    assertWorldReceiptBasis(io.db,original,{proof:"receipt_custody"});
+    // Integrity of retained history does not authorize bringing deleted meaning back.
+    assertWorldBasis(io.db,original.basis.before,true);
+    assertWorldBasis(io.db,original.basis.after,true);
+  }
   assertReceiptPaths(original);
   assertPageRelPath(original.page_path);
   // Settle an older acknowledged/scheduled projection before admitting a successor.

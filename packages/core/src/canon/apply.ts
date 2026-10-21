@@ -2,7 +2,7 @@ import { assertPositiveAuthorityMutationAllowed } from "./positive-authority";
 import { ATTENTION_SOURCES, attentionDeliveryBody, attentionDeliveryLine } from "../contracts/attention";
 import { completedEventPurgeProofs } from "../ledger/purge";
 import { canonicalJson, sha256Hex } from "../util/hash";
-import { worldBasisMetadata, selectWorldMaterialization, worldClaimHandle, worldCanonPath, assertWorldBasis } from "./world-materialization";
+import { worldBasisMetadata, selectWorldMaterialization, worldClaimHandle, worldCanonPath, assertWorldBasis, assertRetainedWorldBasis } from "./world-materialization";
 import { eraseWorldReceipt, isWorldCanonReceipt, type RetainedWorldCanonReceipt, type WorldCanonBasis } from "./world-receipt";
 import { isErasedReceipt, rowToReceiptRecord, type CanonReceiptRow, latestWorldReceiptRecord } from "./receipts";
 import { stageSourceErasureIntent, readSourceErasureIntent, appendSourceErasureReceipt, isLiveSourceSurvivorPath, isLiveSourceSurvivorReceipt, type SourceErasureIntent } from "./source-erasure-intent";
@@ -473,7 +473,7 @@ export function applyCanonWriteOwned(
     worldPriorId = previous?.receipt_id ?? null;
     if (existing !== null && (previous === null || isErasedReceipt(previous) || !isWorldCanonReceipt(previous) || previous.after_hash !== existing.hash)) throw new CanonWriteError("decision_stale", "typed canon predecessor is not recorded");
     worldBasis = {schema:"kizuki.world-canon-basis/v1",before:previous !== null && !isErasedReceipt(previous) && isWorldCanonReceipt(previous) ? previous.basis.after : null,after:materialization.basis};
-    assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after);
+    assertRetainedWorldBasis(io.db,worldBasis.before);assertWorldBasis(io.db,worldBasis.after);
   }
   assertProvenance(io, provenance);
 
@@ -525,7 +525,7 @@ export function applyCanonWriteOwned(
           : !isWorldCanonReceipt(current) || current.after_hash !== (existing?.hash ?? ABSENT_PAGE_HASH) || canonicalJson(current.basis.after) !== canonicalJson(worldBasis.before))) {
         throw new CanonWriteError("decision_stale", "typed canon predecessor changed before byte admission");
       }
-      assertWorldBasis(io.db,worldBasis.before,true);assertWorldBasis(io.db,worldBasis.after);
+      assertRetainedWorldBasis(io.db,worldBasis.before);assertWorldBasis(io.db,worldBasis.after);
     }
     assertProvenance(io, provenance);
     requireSourceEvents(io.db, existingSources(prepared.page), { owner: true, purpose: "derive" });

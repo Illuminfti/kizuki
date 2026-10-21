@@ -31,7 +31,7 @@ export function inspectOwnerPageCorrectionTargets(ctx: Pick<ServeContext, 'db' |
     if (!page) return { claims: [], truncated: false };
     const receipt = latestReceiptForPage(ctx.db, page.path);
     if (receipt !== null && isWorldCanonReceipt(receipt)) {
-        try { assertWorldReceiptBasis(ctx.db, receipt, { historical: true }); }
+        try { assertWorldReceiptBasis(ctx.db, receipt, {proof:"receipt_custody"}); }
         catch { return { claims: [], truncated: false }; }
         if (!worldBasisAllowed(owner, receipt.basis.after)) return { claims: [], truncated: false };
         // Opaque references are issued in the existing authorization namespace,

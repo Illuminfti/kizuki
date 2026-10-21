@@ -252,6 +252,8 @@ describe("help", () => {
       expect(body.data.options).toEqual([
         "--claim",
         "--world-claim",
+        "--claim-group-ref",
+        "--subject-ref",
         "--since",
         "--until",
         "--mode",
@@ -435,7 +437,7 @@ describe("help", () => {
         };
       };
       expect(body.data.name).toBe("context");
-      expect(body.data.options).toEqual(["--purpose", "--budget", "--query", "--since", "--until", "--task-event", "--task-integrity", "--response-contract"]);
+      expect(body.data.options).toEqual(["--purpose", "--budget", "--query", "--since", "--until", "--task-event", "--task-event-version", "--task-integrity", "--response-contract"]);
       expect(body.data.flags).toEqual(["--json"]);
       expect(body.data.defaults).toEqual({ "--purpose": "session" });
       expect(body.data.bounds).toEqual({
