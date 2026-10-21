@@ -1,6 +1,7 @@
 import type { Principal } from "../agents";
 import { neutralizeControlTags, sanitizeCapturedText, scrubText, stripInvisibleText, tallyRedactions } from "../producer/scrub";
 import type { RedactionCounts } from "../producer/scrub";
+import { isIssuedOpaqueField } from "../util/issued-opaque";
 
 export type { RedactionCounts } from "../producer/scrub";
 
@@ -81,7 +82,7 @@ export function redactorOf(ctx: { principal: Pick<Principal, "kind">; redactor?:
   return ctx.redactor ?? createRedactor(ctx.principal, ctx.servingSecrets);
 }
 
-/** A copy of `value` in which every string, at any depth, has passed through `redactor`. */
+/** Scrub every string except exact opaque fields on host-issued frozen objects. */
 export function redactValue<T>(redactor: Redactor, value: T): T {
   return walk(redactor, value) as T;
 }
@@ -94,7 +95,8 @@ function walk(redactor: Redactor, value: unknown): unknown {
   const json = (value as { toJSON?: () => unknown }).toJSON;
   if (typeof json === "function") return walk(redactor, json.call(value));
   const copy: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) copy[key] = walk(redactor, item);
+  for (const [key, item] of Object.entries(value))
+    copy[key] = isIssuedOpaqueField(value, key, item) ? item : walk(redactor, item);
   return copy;
 }
 

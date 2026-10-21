@@ -1,4 +1,5 @@
 import { createRedactor } from "../../serving/redact";
+import { issuedOpaqueFields } from "../../util/issued-opaque";
 import type {
   ConceptCoverage,
   ViewGap,
@@ -128,7 +129,7 @@ export function assembleMatches<Schema extends string>(
       a.ref.token.localeCompare(b.ref.token),
   );
   const dark = first && scan.visibleHandles === 0 && !populationEnabled(kind);
-  return {
+  const result = {
     schema,
     matches,
     cursor:
@@ -137,4 +138,5 @@ export function assembleMatches<Schema extends string>(
         : issueWorldRef(db, frame.ns, "object", scan.resumeAfter).token,
     coverage: coverageOf(frame, scan.cut, dark ? ["coverage"] : []),
   };
+  return result.cursor === null ? result : issuedOpaqueFields(result, ["cursor"]);
 }

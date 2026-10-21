@@ -1,5 +1,6 @@
 import type { ServeContext } from "../../serving/types";
 import { canonicalJson } from "../../util/hash";
+import { issuedOpaqueFields } from "../../util/issued-opaque";
 import { isRfc3339 } from "../../util/time";
 import { compareRfc3339 } from "../../agents/time";
 import { dependencyRefs, worldEvidenceCurrent, type WorldDependencies } from "../dependencies";
@@ -129,7 +130,7 @@ export function issueKnownSnapshot(
       SNAPSHOT_DOMAIN,
       input.reserveView ?? false,
     ))();
-    return issued === null ? null : { kind: "snapshot", token: issued.token };
+    return issued === null ? null : issuedOpaqueFields({ kind: "snapshot" as const, token: issued.token }, ["token"]);
   } catch (error) {
     if (error instanceof Error && error.name === "SQLiteError") return null;
     throw error;
@@ -197,8 +198,9 @@ export function reuseKnownSnapshot(
   if (ref === null) return null;
   const cutoff = lookupKnownSnapshot(frame.ctx, frame.ns, ref, handle, valid);
   if (cutoff === null || !worldEvidenceCurrent(frame.ctx, frame.dependencies, cutoff)) return null;
-  const bytes = projectionBytes(operation, worldViewProjection(frame.ctx, body(ref)));
-  return Buffer.compare(bytes, baseline.projection) === 0 ? { ref, cutoff } : null;
+  const validated = issuedOpaqueFields(ref, ["token"]);
+  const bytes = projectionBytes(operation, worldViewProjection(frame.ctx, body(validated)));
+  return Buffer.compare(bytes, baseline.projection) === 0 ? { ref: validated, cutoff } : null;
 }
 
 /** Recheck the exact returned capability in the final output transaction too. */

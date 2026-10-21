@@ -1,4 +1,5 @@
 import { CONTEXT_PACKET_MARKERS } from "../../canon/origin";
+import { issuedOpaqueFields } from "../../util/issued-opaque";
 import { isWorldWireToken } from "../../world/ops/parse";
 import type { ViewResult, ViewToken } from "../../world/ops/types";
 import type { ContextPacketArgs, ContextPacketData } from "../packet";
@@ -93,5 +94,5 @@ export function packetView(content: PacketContentV2, canon: unknown, quoted: unk
     .update(`${PACKET_V2_SCHEMA}\0`)
     .update(JSON.stringify({ content, canon, quoted }))
     .digest("base64url");
-  return { kind: "view", token };
+  return issuedOpaqueFields({ kind: "view" as const, token }, ["token"]);
 }

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { issuedOpaqueFields } from "../../util/issued-opaque";
 import type { HistoryPage, StateTransition } from "../../contracts/world-history";
 import { validateHistoryPage } from "../../contracts/world-history";
 import { compareRfc3339 } from "../../agents/time";
@@ -56,7 +57,8 @@ function snapshot(
     try { checkCoverage(frame, handle, reused.cutoff); }
     catch (error) { if (error instanceof WorldHistoryUnavailable) reused = null; else throw error; }
   }
-  const ref = when.knownAt.kind === "snapshot" ? when.knownAt.ref : reused?.ref
+  // resolve() already validated a supplied snapshot in this read transaction.
+  const ref = when.knownAt.kind === "snapshot" ? issuedOpaqueFields(when.knownAt.ref, ["token"]) : reused?.ref
     ?? issueKnownSnapshot(frame.ctx, frame.ns, { cutoff, handle, valid: when.valid, reserveView }, frame.dependencies ?? worldDependencies());
   if (ref !== null) retainKnownSnapshotDependency(frame, ref, handle, when.valid, reused?.cutoff ?? cutoff, reused !== null);
   return ref;
@@ -95,7 +97,7 @@ function receiptRef(frame: WorldFrame, claimId: string, receiptId: string | null
   // One receipt identity may be witnessed by several authorized transitions.
   // Each claim retains its own erasure edge to the shared opaque identity.
   frame.ctx.db.query("INSERT OR IGNORE INTO world_known_receipt_refs(namespace_id,claim_id,receipt_id,wire_ref) VALUES (?,?,?,?)").run(frame.ns.id, claimId, receiptId, token);
-  return { kind: "receipt" as const, token };
+  return issuedOpaqueFields({ kind: "receipt" as const, token }, ["token"]);
 }
 export function readKnownHistory(frame: WorldFrame, handle: string, when: WorldWhen): WorldOpOutcome {
   const cutoff = resolve(frame, handle, when);
