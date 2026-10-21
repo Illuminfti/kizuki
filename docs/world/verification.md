@@ -54,10 +54,12 @@ result proves registration only.
 ## Evidence limits
 
 This harness does not establish production activation or authorize model
-egress. Held-out model qualification and the complete longitudinal/golden journeys have
-separate acceptance requirements. Until those checks are implemented and run,
-they remain outstanding. Newly registered extraction kinds stay disabled for
-the producer until held-out qualification passes.
+egress. [Held-out extraction qualification](qualification.md) has a separate
+real-model runner and exact-artifact review gate. Its offline scorer tests do
+not qualify a kind. The complete longitudinal/golden journeys also have
+separate acceptance requirements. Newly registered extraction kinds and
+changed offered predicates fail the registry gate without reviewed held-out
+evidence. The explicit pre-existing compatibility baseline is unqualified.
 
 ## Stored-state audit
 

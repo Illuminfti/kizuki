@@ -44,6 +44,38 @@ function parse(value: unknown, context = input) {
 }
 
 describe("producer v2 response parser", () => {
+  test("a containing evidence span never substitutes for an exact supplied endpoint or perspective anchor", () => {
+    const endpoint = input.supplied_refs[0]!.anchors[0]!;
+    const enclosing = { ...endpoint, end_utf16: input.events[0]!.text.length };
+    const supplied = { kind: "supplied" as const, id: "s0" };
+    const context = { ...input, vocabulary_refs: ["world/person"], predicates: [
+      { id: "world.kind", object_kinds: ["vocabulary" as const] },
+      { id: "relationship.with", object_kinds: ["subject" as const] },
+    ] };
+    const classification = { ...response.claims[0]!, subject: supplied, predicate: "world.kind",
+      object: { kind: "vocabulary" as const, ref: { kind: "vocabulary" as const, id: "world/person" } }, anchors: [enclosing] };
+    const cases = [
+      classification,
+      { ...classification, subject: response.claims[0]!.subject, predicate: "relationship.with", object: { kind: "subject" as const, ref: supplied } },
+      { ...classification, subject: response.claims[0]!.subject, context: [supplied] },
+      ...(["holder", "speaker", "addressee"] as const).map(role => ({ ...classification,
+        subject: response.claims[0]!.subject, anchors: [endpoint, enclosing],
+        perspective: { ...classification.perspective, [role]: supplied, mode: "quoted" as const, anchors: [enclosing] },
+      })),
+    ];
+    for (const claim of cases) {
+      // The mention already cites the same record. Its automatic grounding
+      // must not manufacture the separate supplied-handle capability.
+      const wire = { ...response, claims: [claim] };
+      if (claim.subject.kind === "mention") wire.mentions = [{ ...response.mentions[0]!, anchor: enclosing, candidate_refs: [] }];
+      expect(parse(wire, context)).toMatchObject({ ok: true, response: { claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
+      const grounded = { ...wire, claims: [{ ...claim, anchors: [endpoint, enclosing],
+        perspective: { ...claim.perspective, anchors: claim.perspective.anchors.length === 0 ? [] : [endpoint, enclosing] },
+      }] };
+      expect(parse(grounded, context)).toMatchObject({ ok: true, response: { claims: grounded.claims }, dropped: [] });
+    }
+  });
+
   test("accepts a closed response with source-grounded open subjects", () => {
     expect(parse(response)).toEqual({ ok: true, response, dropped: [] });
   });
