@@ -10,7 +10,7 @@ import { runWorldJobs } from "../../src/serve/world-jobs";
 import { accept } from "../../src/ledger/ledger";
 import { canonicalizeRfc3339Utc } from "../../src/util/time";
 import { ulid } from "../../src/util/ulid";
-import { revokeSourceGrant } from "../../src/ledger/source-grants";
+import { inspectSourceGrant,setSourceGrant,revokeSourceGrant } from "../../src/ledger/source-grants";
 import { purgeEvents } from "../../src/ledger/purge";
 import { validEvent } from "../fixtures";
 import { enrollSource } from "../helpers/world-seed";
@@ -23,7 +23,17 @@ import { worldNamespace } from "../../src/world/references";
 import { legacyProof } from "../../src/world/forecast/proof";
 import { collectReadFrames } from "../../src/world/pipeline/frame";
 import { validateForecastJournal } from "../../src/world/forecast/validate";
+import { resupersedeClaim, reinstateClaim } from "../../src/claims/store";
 const WHEN={valid:{kind:"all"},knownAt:{kind:"current"}} as const;
+function assertJournalRestore(f:{db:ReturnType<typeof openLedger>;ctx:{vaultPath:string}}):void {
+ const temp=tempVault("forecast-readmission-restore-");try{
+  const before=f.db.query("SELECT * FROM world_forecast_resolutions ORDER BY forecast_id").all();
+  const backup=join(temp.path,"backup"),restored=join(temp.path,"restored");
+  exportVault(f.db,f.ctx.vaultPath,backup);restoreVault(backup,restored);
+  const db=openLedger(join(restored,".kizuki/kizuki.db"));try{validateForecastJournal(db);expect(db.query("SELECT * FROM world_forecast_resolutions ORDER BY forecast_id").all()).toEqual(before);}finally{db.close();}
+ }finally{temp.dispose();}
+}
+
 async function fixture(){
  const purposes=["capture","derive","recall","correction","export","session"] as const;
  const f=await situationV2Fixture(undefined,{purposes});
@@ -158,12 +168,12 @@ test("source completion cannot resolve a forecast; native receipted completion c
  }finally{f.dispose();}
 },120_000);
 
-test("late independent success resolves the inspection but never rewrites completion by the frozen deadline",async()=>{
+for(const result of ["met","not_met"] as const)test(`late independent ${result} resolves inspection but cannot prove completion by the frozen deadline`,async()=>{
  const f=await fixture();try{
   await f.file(0,"outcome.self_report","met");await f.run();
-  await f.file(1,"outcome.observation","met",{},"public","2026-10-25T01:00:00.000Z");await f.run("2026-10-25T02:00:00.000Z");
+  await f.file(1,"outcome.observation",result,{},"public","2026-10-25T01:00:00.000Z");await f.run("2026-10-25T02:00:00.000Z");
   expect(f.read().records.find(r=>r.question==="commitment_met_by_due")!.status).toBe("unresolved");
-  expect(f.read().records.find(r=>r.question==="next_independent_inspection_meets_criterion")!.status).toBe("resolved_met");
+  expect(f.read().records.find(r=>r.question==="next_independent_inspection_meets_criterion")!.status).toBe(result==="met"?"resolved_met":"resolved_not_met");
   expect(Date.parse(f.db.query<{resolved_at:string},[]>("SELECT resolved_at FROM world_forecast_resolutions").get()!.resolved_at)).toBe(Date.parse("2026-10-25T01:00:00.000Z"));
   validateForecastJournal(f.db);
  }finally{f.dispose();}
@@ -218,5 +228,56 @@ test("Outcome admission positions roll back atomically and purge erases their cl
   expect(f.db.query("SELECT * FROM claim_history_clock").get()).toEqual(clock);expect(f.db.query("SELECT * FROM world_forecast_outcome_admissions").all()).toEqual(positions);
   purgeEvents(f.db,f.ctx.vaultPath,{event_id:event},"erase outcome admission locator");
   expect(f.db.query("SELECT 1 FROM world_forecast_outcome_admissions WHERE claim_id=?").get(id)).toBeNull();
+ }finally{f.dispose();}
+},120_000);
+
+
+test("revived earlier Outcome cannot enter a previously resolved forecast selection retroactively",async()=>{
+ const f=await fixture();try{
+  await f.file(0,"outcome.self_report","met");await f.run();
+  const first=await f.file(1,"outcome.observation","not_met");
+  const later=await f.file(2,"outcome.observation","met");
+  const claim=(event:string)=>f.db.query<{claim_id:string},[string]>("SELECT claim_id FROM claims WHERE provenance LIKE ?").get(`%${event}%`)!.claim_id;
+  resupersedeClaim(f.db,claim(first),claim(later),new Date().toISOString(),null);
+  await f.run();
+  const frozen=f.read().records.find(r=>r.question==="next_independent_inspection_meets_criterion")!;
+  expect(frozen.status).toBe("resolved_met");validateForecastJournal(f.db);
+  reinstateClaim(f.db,claim(first),null);
+  expect(f.read().records.find(r=>r.question===frozen.question)).toEqual(frozen);
+  expect(()=>validateForecastJournal(f.db)).not.toThrow();assertJournalRestore(f);
+ }finally{f.dispose();}
+},120_000);
+
+
+test("reauthorized earlier Outcome cannot enter a saved resolution selection retroactively",async()=>{
+ const f=await fixture();try{
+  await f.file(0,"outcome.self_report","met");await f.run();
+  await f.file(1,"outcome.observation","not_met");
+  const source=f.actors[1]!.source,policy=inspectSourceGrant(f.db,source)!.policy;
+  setSourceGrant(f.db,{source_key:source,expected_revision:1,operation_id:"forecast-inspection-hide",policy:{...policy,purposes:policy.purposes.filter(p=>p!=="derive")}});
+  await f.file(2,"outcome.observation","met");await f.run();
+  const frozen=f.read().records.find(r=>r.question==="next_independent_inspection_meets_criterion")!;
+  expect(frozen.status).toBe("resolved_met");validateForecastJournal(f.db);
+  const positions=f.db.query("SELECT * FROM world_forecast_outcome_admissions ORDER BY claim_id").all(),clock=f.db.query("SELECT * FROM claim_history_clock").get();
+  expect(()=>f.db.transaction(()=>{
+   setSourceGrant(f.db,{source_key:source,expected_revision:2,operation_id:"forecast-inspection-regrant",policy});throw Error("readmission rollback");
+  })()).toThrow("readmission rollback");
+  expect(f.db.query("SELECT * FROM world_forecast_outcome_admissions ORDER BY claim_id").all()).toEqual(positions);
+  expect(f.db.query("SELECT * FROM claim_history_clock").get()).toEqual(clock);
+  setSourceGrant(f.db,{source_key:source,expected_revision:2,operation_id:"forecast-inspection-regrant",policy});
+  expect(f.read().records.find(r=>r.question===frozen.question)).toEqual(frozen);
+  expect(()=>validateForecastJournal(f.db)).not.toThrow();assertJournalRestore(f);
+ }finally{f.dispose();}
+},120_000);
+
+
+test("an inconclusive independent inspection is censored and later success cannot replace it",async()=>{
+ const f=await fixture();try{
+  await f.file(0,"outcome.self_report","met");await f.run();
+  await f.file(1,"outcome.observation","inconclusive");await f.run();
+  const initial=f.read().records.find(r=>r.question==="next_independent_inspection_meets_criterion")!;
+  expect(initial.status).toBe("censored");expect(f.read().records.find(r=>r.question==="commitment_met_by_due")!.status).toBe("unresolved");
+  await f.file(2,"outcome.observation","met");await f.run();
+  expect(f.read().records.find(r=>r.question===initial.question)).toEqual(initial);validateForecastJournal(f.db);
  }finally{f.dispose();}
 },120_000);
