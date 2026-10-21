@@ -1,4 +1,5 @@
 import { canonCapacity, loadCanonLimits } from "../vault/canon-limits";
+import { currentCapacityBound } from "../vault/capacity-inventory";
 import { fatalCanonSkips, listCanonPagesReport } from "../vault/pages";
 import { CanonWriteError } from "./errors";
 
@@ -10,8 +11,14 @@ import { CanonWriteError } from "./errors";
  */
 export function requireCanonWriteCapacity(vaultPath: string, newLivePage: boolean, additionalFiles: number, additionalBytes: number): void {
   if (!newLivePage && additionalFiles <= 0 && additionalBytes <= 0) return;
-  const report = listCanonPagesReport(vaultPath);
   const limits = loadCanonLimits(vaultPath);
+  const bound = currentCapacityBound(vaultPath);
+  if (bound !== null && (!newLivePage || bound.files < limits.live_pages) &&
+      bound.files + additionalFiles <= limits.walk_files &&
+      bound.bytes + Math.max(0, additionalBytes) <= limits.walk_bytes) return;
+  // Near a limit, classify every page afresh: archived and invalid candidates
+  // conservatively counted above must never permanently consume live slots.
+  const report = listCanonPagesReport(vaultPath);
   const capacity = canonCapacity(report.pages, report.truncated, limits);
   if (report.truncated || fatalCanonSkips(report.skipped).length > 0 ||
       report.scanned_files + additionalFiles > limits.walk_files ||

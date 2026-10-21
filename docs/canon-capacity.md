@@ -63,7 +63,24 @@ Reactivating an archived page requires a free live slot. Receipted undo remains
 available. Archive changes and existing-page edits use the same writer and
 receipt path; this setting creates no additional write path.
 
-Capacity is established by a fresh walk under the cooperating writer fence.
+Capacity is established under the cooperating writer fence. On qualified local
+Linux filesystems, an existing complete maintenance walk also seeds a bounded,
+process-local resource inventory. Synchronous inode and directory notifications
+refresh changed candidates before admission. The fast proof counts **every**
+Markdown candidate as potentially live and charges its full byte size, including
+archived, invalid and oversized files. It never reuses a cached classification to
+claim a free slot: memory-mapped edits can change a status without a notification.
+Near any limit the writer performs the exact fresh walk, so archives still consume
+no live slots. Current per-page integrity, provenance and conflict checks remain
+unchanged; the fast bound is not a full-vault semantic validation.
+
+Notification loss, directory replacement, newly discovered subdirectories, root
+or mount changes, aliases, unsupported filesystems and watcher limits discard the
+bound and use the exact walk. There is no asynchronous callback or time-to-live
+assumption. The cache holds at most four vaults and 65,536 watches per vault;
+eviction and process exit release the native resources. Other platforms retain
+the exact scanning path. Reads and maintenance never depend on the cache.
+
 Every forward write that grows the inventory reserves its positive net file
 and byte usage before publication, including edits and archive transitions.
 Resource-neutral or shrinking edits require no new capacity. Undo remains

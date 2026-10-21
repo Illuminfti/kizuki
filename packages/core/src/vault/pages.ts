@@ -4,6 +4,7 @@ import { hashBytes } from "./write";
 import { parseFrontmatter } from "./frontmatter";
 import { validatePage } from "./schema";
 import { canonLimitsFor, DEFAULT_LIVE_PAGE_CEILING, loadCanonLimits, type CanonLimits } from "./canon-limits";
+import { beginCapacityInventory, type CapacityInventory } from "./capacity-inventory";
 
 export const MAX_CANON_PAGE_BYTES = 1_048_576;
 export const MAX_CANON_DEPTH = 8;
@@ -113,6 +114,7 @@ function isCanonPagePath(relPath: string): boolean {
 }
 
 interface WalkState {
+  capacity: CapacityInventory | null;
   pages: CanonPage[];
   skipped: SkippedPage[];
   /** First path that claimed this frontmatter id, valid or not. */
@@ -186,6 +188,7 @@ function hasArchivedHeader(path: string): boolean {
 
 function considerFile(state: WalkState, path: string, relPath: string): void {
   if (state.truncated) return;
+  state.capacity?.observe(path, false);
   if (state.includeArchived && !reserveFile(state)) return;
   let size: number;
   let signature: string;
@@ -309,6 +312,7 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
 
 function walk(state: WalkState, directory: string, vaultPath: string, depth: number): void {
   if (state.truncated) return;
+  state.capacity?.observe(directory, true);
   let entries;
   try {
     entries = readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
@@ -364,6 +368,7 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
 
 function newWalkState(vaultPath: string, cache: CanonPageCache | null, statOnly: boolean, excludedPaths: ReadonlySet<string> = new Set(), options: { readonly include_archived?: boolean } = {}): WalkState {
   return {
+    capacity: null,
     pages: [],
     skipped: [],
     seen: new Map(),
@@ -387,7 +392,9 @@ export function listCanonPagesReport(
   options: { readonly include_archived?: boolean } = {},
 ): CanonPageReport {
   const state = newWalkState(vaultPath, cache ?? null, false, excludedPaths, options);
+  if (excludedPaths.size === 0 && options.include_archived !== false) state.capacity = beginCapacityInventory(vaultPath);
   walk(state, vaultPath, vaultPath, 0);
+  state.capacity?.finish(!state.truncated && fatalCanonSkips(state.skipped).length === 0);
   if (cache !== undefined) cache.files = state.remembered;
   state.skipped.sort((left, right) => compareName(left.relPath, right.relPath));
   return { pages: state.pages, skipped: state.skipped, truncated: state.truncated, signatures: state.signatures, scanned_files: state.files, scanned_bytes: state.bytes };
