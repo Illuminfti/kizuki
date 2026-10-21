@@ -8,11 +8,12 @@ import { registerConnection } from "../../src/ledger/connections";
 import { openLedger } from "../../src/ledger/db";
 import { accept } from "../../src/ledger/ledger";
 import { recordNativeCorrection } from "../../src/correction/evidence";
-import { setSourceGrant } from "../../src/ledger/source-grants";
+import { bindLocalSourcePort, setSourceGrant } from "../../src/ledger/source-grants";
 import { seedConnectorSensitivity } from "../../src/sensitivity/store";
 import { ulid } from "../../src/util/ulid";
 import { removeWorldSchema } from "../helpers/world-schema";
 import { validEvent } from "../fixtures";
+import { FixtureVectorPort } from "./helpers";
 
 function fixture(withWorldTables: boolean) {
   const db = openLedger(":memory:");
@@ -113,5 +114,21 @@ test("a native correction is a separate support contribution and forged native s
     await expect(insertClaim({ db }, {
       ...input(db, "native-owner", forged.event.event_id), provenance: [forged.event.event_id], producer: "owner", intent: "correct",
     })).rejects.toThrow("source-bound provenance");
+  } finally { db.close(); }
+});
+
+
+test("typed world admission never sends its normalized empty v1 body to semantic dedup", async () => {
+  const { db, eventId, sourceKey } = fixture(true);
+  const retrieval = bindLocalSourcePort(new FixtureVectorPort(), { store_id: "local:typed-admission" });
+  let semanticCalls = 0;
+  retrieval.search = async () => { semanticCalls++; throw new Error("typed admission must use its exact semantic identity"); };
+  try {
+    const first = await insertClaim({ db, retrieval }, input(db, sourceKey, eventId));
+    expect(first.outcome).toBe("stored");
+    expect(first.dedup).toBe("structural-only");
+    const repeat = await insertClaim({ db, retrieval }, input(db, sourceKey, eventId));
+    expect(repeat.outcome).toBe("duplicate");
+    expect(semanticCalls).toBe(0);
   } finally { db.close(); }
 });

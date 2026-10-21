@@ -655,9 +655,9 @@ async function nominateSemantic(
   io: ClaimsIo,
   incoming: Pick<Claim, "body" | "subject" | "provenance">,
   mode: DedupMode,
-): Promise<Claim[]> {
-  if (mode !== "full" || io.retrieval === undefined) return [];
-  if (await retrievalIsDegraded(io.retrieval)) return [];
+): Promise<{ claims: Claim[]; mode: DedupMode }> {
+  if (mode !== "full" || io.retrieval === undefined) return { claims: [], mode: "structural-only" };
+  if (await retrievalIsDegraded(io.retrieval)) return { claims: [], mode: "structural-only" };
   requireSourceEvents(io.db, incoming.provenance, { owner: true, purpose: "derive", port: io.retrieval });
   const query: RetrievalQuery = {
     text: incoming.body,
@@ -671,7 +671,12 @@ async function nominateSemantic(
     deadline_ms: 5_000,
   };
   const result = await io.retrieval.search(query);
-  const space = result.space ?? FIXTURE_EMBEDDING_SPACE;
+  // The threshold is calibrated only for the named fixture space. A real
+  // embedding can nominate search hits without authorizing claim equivalence.
+  if (result.space !== FIXTURE_EMBEDDING_SPACE || result.degraded.length > 0) {
+    return { claims: [], mode: "structural-only" };
+  }
+  const space = result.space;
   const nominated: Claim[] = [];
   for (const hit of result.hits) {
     if (hit.kind !== "claim") continue;
@@ -682,7 +687,7 @@ async function nominateSemantic(
     if (pair < CLAIM_DEDUP_MIN) continue;
     nominated.push(candidate);
   }
-  return nominated;
+  return { claims: nominated, mode: "full" };
 }
 
 export function claimRetrievalDoc(claim: Claim): RetrievalDoc {
@@ -1489,12 +1494,13 @@ export async function prepareClaimInsert(
   }
   // The v1 vector window cannot express the complete read grant: hidden
   // nominations would consume its cap before Core can filter them.
-  let mode = io.visibility === undefined ? retrievalDedupMode(io.retrieval) : "structural-only" as const;
+  let mode = io.visibility === undefined && input.world_admission === undefined ? retrievalDedupMode(io.retrieval) : "structural-only" as const;
   if (mode === "full" && await retrievalIsDegraded(io.retrieval)) mode = "structural-only";
-  const nominees = mode === "full" ? await nominateSemantic(io, {
+  const nomination = await nominateSemantic(io, {
     body: input.body, subject: input.subject ?? input.subjects?.[0] ?? null, provenance: input.provenance,
-  }, mode) : [];
-  const nomineeIds = nominees.map(claim => claim.claim_id);
+  }, mode);
+  mode = nomination.mode;
+  const nomineeIds = nomination.claims.map(claim => claim.claim_id);
   return {
     db: io.db,
     signature: historicalClaimReplaySignature(input),
@@ -1809,7 +1815,7 @@ export async function semanticDuplicates(
   requireSourceEvents(io.db, incoming.provenance, { owner: true, purpose: "derive", ...(io.retrieval === undefined ? {} : { port: io.retrieval }) });
   const mode = retrievalDedupMode(io.retrieval);
   const nominated = await nominateSemantic(io, incoming, mode);
-  return nominated.filter((candidate) => {
+  return nominated.claims.filter((candidate) => {
     if (!sourceEventsAllowed(io.db, candidate.provenance, { owner: true, purpose: "derive" }) || !externalEvidence(io.db, candidate.provenance) || incoming.claim_key === null) return false;
     return candidate.claim_key === incoming.claim_key;
   });

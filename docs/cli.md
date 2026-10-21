@@ -1302,6 +1302,11 @@ rebuilds vectors in that space. The public CLI refuses when that binding is
 unavailable instead of discarding vector state. Other layers are not implemented and exit 2. `--prune-old` cannot
 be combined with `--layer`, `--port`, `--confirm`, or a budget option.
 
+Semantic retrieval does not by itself qualify semantic claim deduplication. An
+embedding space without a calibrated claim-equivalence threshold uses structural
+claim deduplication; typed world claims always use their exact semantic identity.
+Owner corrections remain available with such a retrieval model.
+
 The authoritative rebuild scanner runs under an explicit resource budget. The
 selected retrieval engine can impose a smaller capacity bound (see Semantic
 retrieval above):
