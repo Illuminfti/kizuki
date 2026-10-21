@@ -126,7 +126,10 @@ test("a new kind seeded with an explicit predicate list stores exactly those pre
       .query<{ predicate: string }, []>("SELECT predicate FROM claim_v2_semantics ORDER BY predicate")
       .all()
       .map((row) => row.predicate);
-    expect(predicates).toEqual(["question.label", "question.text", "world.kind"]);
+    // question.text is both its registered label and this explicit detail;
+    // identical admission is idempotent, not a fabricated question.label row.
+    expect(new Set(seed.claims).size).toBe(2);
+    expect(predicates).toEqual(["question.text", "world.kind"]);
   } finally {
     db.close();
   }

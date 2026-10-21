@@ -13,6 +13,7 @@ import { readWorldView } from "../../src/serving/world-view";
 import { seedConnectorSensitivity } from "../../src/sensitivity/store";
 import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 
 export async function worldFixture(
   db: Database,
@@ -28,6 +29,8 @@ export async function worldFixture(
     retrieval?: RetrievalPort;
     occurrence?: boolean;
     purposes?: SourcePurpose[];
+    /** Explicit synthetic model consent and a completed-null summary prerequisite. */
+    completeSummary?: true;
   } = {},
 ) {
   const sourceKey = options.sourceKey ?? ulid(),
@@ -50,10 +53,10 @@ export async function worldFixture(
       expected_revision: 0,
       operation_id: `grant-${sourceKey}`,
       policy: {
-        purposes: options.purposes ?? ["capture", "derive", "recall", "correction", "export"],
+        purposes: options.purposes ?? ["capture", "derive", "recall", "correction", "export", ...(options.completeSummary ? ["extract" as const] : [])],
         allowed_fields: ["text", "subjects", "metadata", "attachments"],
         retention: "persistent_owned_until_revoked",
-        egress: "local_only",
+        egress: options.completeSummary ? EMPTY_SUMMARY_MODEL : "local_only",
         sensitivity_floor: options.floor ?? "public",
       },
     });
@@ -153,6 +156,7 @@ export async function worldFixture(
     claims.push(stored.claim.claim_id);
   }
   const ctx = { db, vaultPath: "/tmp/world-fixture", principal: OWNER };
+  if (options.completeSummary) await completeEmptyWorldSummaries(db);
   const discovery = readWorldView(ctx, {
     operation: kind === "concept" ? "find_concepts" : "find_situations",
     label,

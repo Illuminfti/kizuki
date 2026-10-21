@@ -188,7 +188,7 @@ test("a cursor is bound to the principal that received it and to discovery", asy
 test("unfinished history import or a failed last run makes discovery and cards partial", async () => {
   const db = openLedger(":memory:");
   try {
-    const f = await worldFixture(db);
+    const f = await worldFixture(db, { completeSummary: true });
     expect(find(f.ctx, "bayes").page.coverage).toMatchObject({
       status: "complete_for_query",
       gaps: [],
@@ -421,6 +421,7 @@ test("situation discovery reports the same coverage gaps", async () => {
   const db = openLedger(":memory:");
   try {
     const f = await worldFixture(db, {
+      completeSummary: true,
       kind: "situation",
       subject: "project:launch",
       label: "Launch",

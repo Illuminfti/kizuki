@@ -194,13 +194,29 @@ export function deniedPageAudit(index: CanonIndex, selector: { id: string } | { 
   const sourceClass = tableExists(db, "event_classes")
     ? `EXISTS(SELECT 1 FROM canon_receipts r, json_each(r.provenance) p JOIN event_classes ec ON ec.event_id=CASE WHEN p.value LIKE 'event:%' THEN substr(p.value,7) ELSE p.value END
         WHERE r.receipt_id=pi.last_receipt AND ec.class IN (SELECT value FROM json_each(?)))` : "0";
+  const window: string[] = [];
+  const windowBindings: (string | number)[] = [];
+  if (principal.grant.since !== null) {
+    window.push(`${instantPairSql("events.occurred_at")} >= (?,?)`);
+    windowBindings.push(...instantBoundPair(principal.grant.since, "grant since"));
+  }
+  if (principal.grant.until !== null) {
+    window.push(`${instantPairSql("events.occurred_at")} <= (?,?)`);
+    windowBindings.push(...instantBoundPair(principal.grant.until, "grant until"));
+  }
+  const timeDenied = window.length === 0 ? "0" : `EXISTS (
+    SELECT 1 FROM canon_receipts r WHERE r.receipt_id=pi.last_receipt AND
+      (json_array_length(r.provenance)=0 OR EXISTS (SELECT 1 FROM json_each(r.provenance) p
+        WHERE NOT EXISTS (SELECT 1 FROM events
+          WHERE events.event_id=CASE WHEN p.value LIKE 'event:%' THEN substr(p.value,7) ELSE p.value END
+            AND ${window.join(" AND ")}))))`;
   // Aggregate to one bounded result even for an absent selector. No denied
   // file is read, and these identities never enter an agent's response.
-  const row = db.query<{ value: string }, string[]>(`SELECT json_group_array(json_object('id',pi.page_id,'path',pi.rel_path,
-    'classDenied',(${pageClass}) OR (${sourceClass}))) AS value FROM page_index pi WHERE ${"id" in selector ? "pi.page_id" : "pi.rel_path"}=?`)
-    .get(...(pageClass === "0" ? [] : [denied]), ...(sourceClass === "0" ? [] : [denied]), "id" in selector ? selector.id : selector.path)!;
-  const entries = JSON.parse(row.value) as { id: string; path: string; classDenied: number }[];
-  return entries.filter(item => index.deniedPaths.has(item.path)).map(item => ({ id: item.id, reason: item.classDenied ? "class_denied" : "held" }));
+  const row = db.query<{ value: string }, (string | number)[]>(`SELECT json_group_array(json_object('id',pi.page_id,'path',pi.rel_path,
+    'classDenied',(${pageClass}) OR (${sourceClass}), 'timeDenied',(${timeDenied}))) AS value FROM page_index pi WHERE ${"id" in selector ? "pi.page_id" : "pi.rel_path"}=?`)
+    .get(...(pageClass === "0" ? [] : [denied]), ...(sourceClass === "0" ? [] : [denied]), ...windowBindings, "id" in selector ? selector.id : selector.path)!;
+  const entries = JSON.parse(row.value) as { id: string; path: string; classDenied: number; timeDenied: number }[];
+  return entries.filter(item => index.deniedPaths.has(item.path)).map(item => ({ id: item.id, reason: item.classDenied ? "class_denied" : item.timeDenied ? "time_out_of_scope" : "held" }));
 }
 
 /** Resolves only the pages whose bytes, or the receipt history, changed since the last call. */

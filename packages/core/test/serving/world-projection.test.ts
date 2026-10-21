@@ -28,6 +28,7 @@ import { readWorldView, serveWorldView } from "../../src/serving/world-view";
 import { revokeSourceGrant } from "../../src/ledger/source-grants";
 import { worldFixture } from "./world-fixture";
 import { assertWorldState } from "../../src/world/integrity";
+import { completeEmptyWorldSummaries } from "../helpers/world-consolidation";
 
 function currentData(read: ReturnType<typeof readWorldView>) {
   if (!("result" in read) || read.result.status !== "current") throw new Error("expected a fresh complete projection");
@@ -42,14 +43,14 @@ const lookup = (
 test("an admitted supported concept is discoverable and returns evidence-qualified definitions", async () => {
   const db = openLedger(":memory:");
   try {
-    const f = await worldFixture(db);
+    const f = await worldFixture(db, { completeSummary: true });
     const result = serveWorldView(f.ctx, lookup(f.ref));
     expect(result.schema).toBe("kizuki.envelope/v2");
     expect(result).not.toHaveProperty("source_policy");
     expect(result).not.toHaveProperty("denied");
     const serialized = JSON.stringify(result);
     expect(serialized).toContain("Revise beliefs using evidence");
-    expect(serialized).toContain('"independence":"unknown"');
+    expect(serialized).toContain('"independence":"independent"');
     expect(serialized).not.toContain(f.sourceKey);
     expect(serialized).not.toContain(f.eventId);
     for (const id of f.claims) expect(serialized).not.toContain(id);
@@ -71,6 +72,7 @@ test("Situation uses admitted labels and objective; unknown slots remain explici
   const db = openLedger(":memory:");
   try {
     const f = await worldFixture(db, {
+      completeSummary: true,
       kind: "situation",
       subject: "project:launch",
       label: "Launch",
@@ -87,7 +89,7 @@ test("Situation uses admitted labels and objective; unknown slots remain explici
 test("tokens are principal-bound and source revocation is indistinguishable from absence", async () => {
   const db = openLedger(":memory:");
   try {
-    const f = await worldFixture(db);
+    const f = await worldFixture(db, { completeSummary: true });
     const agent = addAgent(db, "world-reader", { ...OWNER_AGENT_GRANT });
     const principal = authenticate(db, agent.token)!;
     const ctx = { ...f.ctx, principal };
@@ -137,7 +139,7 @@ test("issued references survive reopen, rebuild and mandatory ledger32 backup/re
     target = tempVault();
   let db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
-    const f = await worldFixture(db),
+    const f = await worldFixture(db, { completeSummary: true }),
       input = lookup(f.ref);
     const before = readWorldView({ ...f.ctx, vaultPath: vault.path }, input);
     initSearch(db);
@@ -161,6 +163,10 @@ test("issued references survive reopen, rebuild and mandatory ledger32 backup/re
     restoreVault(backup, destination);
     const restored = openLedger(join(destination, ".kizuki/kizuki.db"));
     try {
+      const pending = readWorldView({ db: restored, vaultPath: destination, principal: OWNER }, input);
+      expect(pending).toMatchObject({ result: { status: "incomplete", data: { coverage: { gaps: ["pending_consolidation"] } } } });
+      // Summary caches are rebuilt, never restored as durable authority.
+      await completeEmptyWorldSummaries(restored, destination);
       expect(
         currentData(readWorldView(
           { db: restored, vaultPath: destination, principal: OWNER },
@@ -183,7 +189,7 @@ test("physical event purge erases admissions, allocated handles and all dependen
   const vault = tempVault(),
     db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
-    const f = await worldFixture(db);
+    const f = await worldFixture(db, { completeSummary: true });
     initSearch(db);
     initGraph(db);
     readWorldView(f.ctx, lookup(f.ref));
@@ -251,7 +257,7 @@ function matches(ctx: Parameters<typeof readWorldView>[0], label = "") {
 test("discovery issues returned objects and evidence refs, and grant changes erase namespaces", async () => {
   const db = openLedger(":memory:");
   try {
-    const f = await worldFixture(db, { label: "École" });
+    const f = await worldFixture(db, { completeSummary: true, label: "École" });
     expect(matches(f.ctx, "Éco")).toHaveLength(1);
     expect(matches(f.ctx, "éco")).toHaveLength(1);
     expect(matches(f.ctx, "eco")).toHaveLength(0);
@@ -302,7 +308,7 @@ test("discovery issues returned objects and evidence refs, and grant changes era
 test("denied-only source additions and revocation do not affect narrow payload or issue hidden refs", async () => {
   const db = openLedger(":memory:");
   try {
-    const visible = await worldFixture(db);
+    const visible = await worldFixture(db, { completeSummary: true });
     const added = addAgent(db, "narrow-world", {
       ...OWNER_AGENT_GRANT,
       ceiling: "public",
@@ -352,7 +358,7 @@ test("actual native owner correction replaces the definition and honors relay co
   const vault = tempVault(),
     db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
-    const f = await worldFixture(db);
+    const f = await worldFixture(db, { completeSummary: true });
     initSearch(db);
     initGraph(db);
     const yes = addAgent(db, "relay-yes", {
@@ -394,7 +400,7 @@ test("actual native owner correction replaces the definition and honors relay co
 test("a public opaque claim ref corrects its current principal-scoped world claim", async () => {
   const vault = tempVault(), db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
-    const f = await worldFixture(db);
+    const f = await worldFixture(db, { completeSummary: true });
     const before = readWorldView(f.ctx, lookup(f.ref));
     if ("status" in before || before.result.status !== "current" || !("definitions" in before.result.data)) throw new Error("missing world definition");
     const claim = before.result.data.definitions[0]!.claim;
@@ -444,7 +450,7 @@ async function worldCorrectionFixture() {
     new WorldCorrectionRetrieval(temporary.ctx),
     { store_id: "local:world-correction" },
   );
-  const world = await worldFixture(db, { retrieval });
+  const world = await worldFixture(db, { completeSummary: true, retrieval });
   const before = readWorldView(world.ctx, lookup(world.ref));
   if (
     "status" in before ||
@@ -536,7 +542,7 @@ test("world claim correction leaves a durable retrieval retry after publication 
 test("opaque world claim refs never mint native corrections after access is withdrawn", async () => {
   const vault = tempVault(), db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
-    const f = await worldFixture(db);
+    const f = await worldFixture(db, { completeSummary: true });
     const card = readWorldView(f.ctx, lookup(f.ref));
     if ("status" in card || card.result.status !== "current" || !("definitions" in card.result.data))
       throw new Error("missing world definition");
@@ -592,7 +598,7 @@ test("opaque world claim refs never mint native corrections after access is with
 test("raw serving rejects non-exact opaque claim selectors before native evidence", async () => {
   const vault = tempVault(), db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
-    const f = await worldFixture(db);
+    const f = await worldFixture(db, { completeSummary: true });
     const card = readWorldView(f.ctx, lookup(f.ref));
     if ("status" in card || card.result.status !== "current" || !("definitions" in card.result.data))
       throw new Error("missing world definition");
@@ -621,7 +627,7 @@ test("source revocation physically erases one contribution while independent mea
   const vault = tempVault(),
     db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
-    const first = await worldFixture(db);
+    const first = await worldFixture(db, { completeSummary: true });
     const nativeEvents = await addNativeSupport(db, first.claims);
     const second = first;
     initSearch(db);
@@ -723,7 +729,7 @@ import {
 test("typed parents remain neutral and never enter the legacy materialization queue", async () => {
   const db = openLedger(":memory:");
   try {
-    await worldFixture(db);
+    await worldFixture(db, { completeSummary: true });
     expect(db.query("SELECT body,frontmatter FROM claims").all()).toEqual(
       Array.from({ length: 3 }, () => ({ body: "", frontmatter: "{}" })),
     );
@@ -820,14 +826,17 @@ test("same supplied IDs stay distinct across connector and source namespaces thr
   const db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
     const first = await worldFixture(db, {
+      completeSummary: true,
       subject: "alice",
       label: "Source A",
     });
     const second = await worldFixture(db, {
+      completeSummary: true,
       subject: "alice",
       label: "Source B",
     });
     const third = await worldFixture(db, {
+      completeSummary: true,
       subject: "alice",
       label: "Source C",
       connector: "another.fixture",
@@ -893,8 +902,8 @@ test("erasing one event preserves independently supported meaning within the sam
   const vault = tempVault(),
     db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
-    const first = await worldFixture(db),
-      second = await worldFixture(db, { sourceKey: first.sourceKey });
+    const first = await worldFixture(db, { completeSummary: true }),
+      second = await worldFixture(db, { completeSummary: true, sourceKey: first.sourceKey });
     expect(first.claims).toEqual(second.claims);
     initSearch(db);
     initGraph(db);
@@ -921,7 +930,7 @@ test("erasing one event preserves independently supported meaning within the sam
 test("projection validates the complete assertion and perspective evidence union", async () => {
   const db = openLedger(":memory:");
   try {
-    const f = await worldFixture(db, { perspectiveEvidence: true });
+    const f = await worldFixture(db, { completeSummary: true, perspectiveEvidence: true });
     expect(JSON.stringify(readWorldView(f.ctx, lookup(f.ref)))).toContain(
       "Revise beliefs using evidence",
     );
@@ -944,7 +953,7 @@ test("unsupported nonliteral correction fails before recording native evidence",
   const vault = tempVault(),
     db = openLedger(join(vault.path, ".kizuki/kizuki.db"));
   try {
-    const f = await worldFixture(db);
+    const f = await worldFixture(db, { completeSummary: true });
     const before = db
       .query("SELECT count(*) AS n FROM native_owner_evidence")
       .get();

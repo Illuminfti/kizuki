@@ -294,7 +294,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
     ).toBe(0);
   });
 
-  test("a claim with no predicate cannot be corrected", async () => {
+  test("a claim with no predicate is retracted by exact identity and cannot acquire an invented replacement", async () => {
     const live = await newFixture();
     const keyless = await servePropose(live.agent("reader-private"), {
       kind: "claim",
@@ -307,11 +307,25 @@ describe("serveCorrect retires what the owner says is wrong", () => {
       serveCorrect(live.owner(), {
         statement: "That is wrong.",
         target: { claim_id: keyless.data?.claim_id ?? "" },
+        object: "Invented replacement",
       }),
     );
     expect(error.message).toBe(
-      "invalid arguments: target.claim_id: names a claim with no predicate to correct",
+      "invalid arguments: object: names a claim with no predicate, which is retracted and not replaced",
     );
+    expect(getClaim(live.db, keyless.data!.claim_id!)?.status).toBe("live");
+    const result = await serveCorrect(live.owner(), { statement: "That is wrong.", target: { claim_id: keyless.data!.claim_id! } });
+    expect(result.data!.superseded.map(item => item.claim_id)).toContain(keyless.data!.claim_id!);
+    expect(getClaim(live.db, keyless.data!.claim_id!)?.status).toBe("superseded");
+    expect(result.data!.event_id).toBeString();
+    const replay = await serveCorrect(live.owner(), { statement: "That is wrong.", target: { claim_id: keyless.data!.claim_id! } });
+    expect(replay.data).toMatchObject({
+      event_id: result.data!.event_id,
+      claim_id: result.data!.claim_id,
+      superseded: [],
+      rewritten: [],
+      receipt_id: null,
+    });
   });
 
   test("a relayed correction is on the record and bounded by the grant", async () => {
