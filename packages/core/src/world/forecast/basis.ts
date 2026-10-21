@@ -1,6 +1,7 @@
 import { rawSubjectRefKey } from "../../contracts/claim-v2";
 import { activeWorldRegistry } from "../../contracts/world-vocabulary";
-import { exactCommitmentDue } from "../../contracts/world-vocab/commitment";
+import { deadlineInstant } from "./rules";
+import { identityReceiptCurrent } from "../identity-receipt";
 import { canonicalJson, sha256Hex } from "../../util/hash";
 import { anchorOf, collectCard, COLLECTORS } from "../pipeline/collect";
 import type { ReadFrame } from "../pipeline/frame";
@@ -26,11 +27,6 @@ export interface ForecastBasis {
 }
 const asserted = (e:Eligible) => e.semantic.polarity==="positive" && e.semantic.perspective.mode==="asserted" && e.semantic.perspective.holder===null;
 const sameSubject = (a:Eligible,b:ReturnType<typeof anchorOf>) => b!==null && rawSubjectRefKey(a.semantic.subject)===rawSubjectRefKey(b);
-/** Exact date means the end of that UTC date, never an invented local timezone. */
-export function deadlineInstant(due:string):string|null {
-  if(!exactCommitmentDue(due))return null;
-  return due.length===10 ? `${due}T23:59:59.999Z` : new Date(due).toISOString();
-}
 function collect(frame:ReadFrame,handle:string,kind:string):readonly Eligible[]|null {
   const spec=activeWorldRegistry().kind(kind);if(spec===undefined)return null;
   const found=collectCard(frame,{anchor:handle,members:[handle],resolution:"distinct"},spec,COLLECTORS);
@@ -42,6 +38,12 @@ export function forecastBasis(frame:ReadFrame,handle:string):ForecastBasis[] {
   const anchor=anchorOf(frame.ctx.db,handle),items=collect(frame,handle,"commitment");
   if(anchor===null||items===null)return [];
   const own=items.filter(e=>sameSubject(e,anchor));
+  // A forecast starts before the target is already settled. An attributed model
+  // statement is not owner completion, even if it contains the word "done".
+  if(own.some(e=>asserted(e)&&e.semantic.predicate==="commitment.status"&&e.semantic.object.kind==="vocabulary"&&["commitment/done","commitment/dropped"].includes(e.semantic.object.ref.id)&&
+    e.supports.some(s=>s.row.support_origin==="native_owner"&&s.admission.epistemicKind==="owner_assertion")&&
+    frame.ctx.db.query<{producer:string},[string]>("SELECT producer FROM claims WHERE claim_id=?").get(e.claimId)?.producer==="owner"&&
+    identityReceiptCurrent(frame.ctx.db,e.claimId,frame.ctx.db.query<{receipt_id:string|null},[string]>("SELECT receipt_id FROM claims WHERE claim_id=?").get(e.claimId)?.receipt_id??"")))return [];
   const dues=own.filter(e=>e.semantic.predicate==="commitment.due"&&e.semantic.polarity==="positive"&&e.semantic.object.kind==="literal"&&e.semantic.perspective.holder===null);
   const actual=dues.filter(asserted),hypothetical=dues.filter(e=>e.semantic.perspective.mode==="hypothetical");
   const actualDates=new Set(actual.map(e=>e.semantic.object.kind==="literal"?deadlineInstant(e.semantic.object.value):null));
@@ -85,6 +87,9 @@ export function forecastBasis(frame:ReadFrame,handle:string):ForecastBasis[] {
   const awaitingInspection=report!==undefined && !(outcomes?.entries.some(e=>e.stage.stage==="observed"&&e.value!==null&&independentOutcomeRoots(report,e)&&e.value.task===report.value?.task&&e.value.attempt===report.value?.attempt&&e.value.criterion===report.value?.criterion&&e.value.environment===report.value?.environment&&e.value.assistance===report.value?.assistance)??false);
   const conditions=report?.value&&reportProof!==null?{report:report.claim.claim_id,expected:report.value}:null;
   if(reportProof!==null)proofs.set(reportProof.claim,reportProof);
+  const alreadyMet=report?.value!==null&&report!==undefined&&outcomes?.entries.some(e=>e.stage.stage==="observed"&&e.value!==null&&!e.value.confounded&&e.value.result==="met"&&independentOutcomeRoots(report,e)&&
+    e.value.task===report.value?.task&&e.value.attempt===report.value?.attempt&&e.value.criterion===report.value?.criterion&&e.value.environment===report.value?.environment&&e.value.assistance===report.value?.assistance&&canonicalJson(e.value.artifactVersion)===canonicalJson(report.value?.artifactVersion));
+  if(alreadyMet)return [];
   return candidates.flatMap(candidate=>{
     const value=candidate.dues[0]?.semantic.object;
     const due=value?.kind==="literal"?deadlineInstant(value.value):null;if(due===null)return [];

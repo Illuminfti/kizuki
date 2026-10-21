@@ -21,7 +21,7 @@ export function readForecast(frame:WorldFrame,handle:string|null,when:WorldWhen,
   for(const row of rows.slice(0,128)){
     const inputs=forecastInputs(frame.ctx.db,row.forecast_id);if(inputs===null||!validForecastRecord(frame.ctx.db,row,inputs)||!inputs.every(p=>forecastProofCurrent(read,p)))continue;
     const allowed=forecastProofScopeSql(frame.ctx);
-    const candidate=frame.ctx.db.query<ResolutionRow,(string|number)[]>(`SELECT status,resolved_at,recorded_at,proof FROM world_forecast_resolutions r
+    const candidate=frame.ctx.db.query<ResolutionRow,(string|number)[]>(`SELECT status,resolved_at,recorded_at,recorded_sequence,proof FROM world_forecast_resolutions r
       WHERE forecast_id=? AND status<>'invalidated' ${cutoff===null?"":"AND julianday(recorded_at)<=julianday(?)"} AND NOT EXISTS(
         SELECT 1 FROM (SELECT value proof FROM json_each(r.proof)) pin LEFT JOIN claims base ON base.claim_id=json_extract(pin.proof,'$.claim')
         WHERE base.claim_id IS NULL OR COALESCE((${allowed.sql}),0)=0)`)
@@ -44,7 +44,7 @@ export function readForecast(frame:WorldFrame,handle:string|null,when:WorldWhen,
     unresolved:records.filter(r=>r.status==="unresolved").length,censored:records.filter(r=>r.status==="censored").length,
     brier:resolved.reduce((sum,r)=>sum+(r.probability-(r.status==="resolved_met"?1:0))**2,0)/resolved.length,
     certainWrong:resolved.filter(r=>r.probability>=0.99&&r.status==="resolved_not_met"||r.probability<=0.01&&r.status==="resolved_met").length,
-    cost:{predictions:records.length,retries:0,maintenance:0,unknown:[{metric:"maintenance",reason:"not_metered"},{metric:"cpu_time",reason:"not_metered"}]},
+    cost:{predictions:records.length,retries:0,maintenance:0,unknown:[{metric:"retries",reason:"not_metered"},{metric:"maintenance",reason:"not_metered"},{metric:"cpu_time",reason:"not_metered"}]},
     usefulness:{status:"unavailable",reason:"insufficient_history"},coverage};
   return coveredOutcome(sealCard(data,validateForecastScores,"forecast-scores"));
 }

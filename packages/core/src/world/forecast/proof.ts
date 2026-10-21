@@ -47,7 +47,7 @@ export function typedProof(frame: ReadFrame, item: Eligible): ForecastProof {
 }
 export function legacyProof(frame: ReadFrame, id: string): ForecastProof | null {
   const claim=getClaim(frame.ctx.db,id), reader=claimReader(frame.ctx.db,frame.ctx.principal.grant,{owner:frame.ctx.principal.kind==="owner",purpose:frame.ctx.sourcePurpose??"recall"});
-  if(claim===null||claim.status!=="live"||!reader.canRead(claim)||frame.ctx.db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=0 AND predicate IN ('outcome.self_report','outcome.provider_ack','outcome.observation','outcome.review')").get(id)===null)return null;
+  if(frame.ctx.db.query("SELECT 1 FROM world_forecast_outcome_admissions WHERE claim_id=?").get(id)===null||claim===null||claim.status!=="live"||!reader.canRead(claim)||frame.ctx.db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=0 AND predicate IN ('outcome.self_report','outcome.provider_ack','outcome.observation','outcome.review')").get(id)===null)return null;
   const sources=frame.ctx.db.query<{source_key:string},[string]>("SELECT DISTINCT source_key FROM source_event_bindings WHERE event_id IN (SELECT value FROM json_each(?)) ORDER BY source_key").all(JSON.stringify(claim.provenance)).map(r=>r.source_key);
   return {kind:"legacy",claim:id,fingerprint:claimPublicationFingerprint(claim),witnesses:[],supports:[],events:sorted(claim.provenance),sources,receipt:null};
 }
