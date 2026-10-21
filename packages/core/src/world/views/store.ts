@@ -1,3 +1,4 @@
+import { authorizedClaimSql as authorizedLegacyClaimSql } from "../../serving/claim-policy-sql";
 import type { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
 import type { ServeContext } from "../../serving/types";
@@ -56,7 +57,7 @@ export function lookupView(
   now: string,
   domain: ViewCacheDomain = "view",
 ): StoredView | null {
-  const { db } = ctx, permitted = authorizedSupportSql(ctx);
+  const { db } = ctx, permitted = authorizedSupportSql(ctx), legacy = authorizedLegacyClaimSql(ctx);
   const row = db
     .query<
       { fingerprint: string; projection: Uint8Array; expires_at: string },
@@ -70,10 +71,18 @@ export function lookupView(
            LEFT JOIN claim_v2_support s ON s.support_key=a.support_key
            WHERE d.token_hash=v.token_hash AND a.support_key IS NOT NULL
              AND COALESCE((${permitted.sql}),0)=0
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM world_view_token_deps d
+           JOIN world_wire_claim_targets a USING(namespace_id,wire_ref)
+           JOIN claims ON claims.claim_id=a.claim_id
+           WHERE d.token_hash=v.token_hash AND claims.is_world_typed=0
+             AND COALESCE((${legacy.sql}),0)=0
          )`,
     )
-    .get(cacheWireDigest(token, domain), partition, namespaceId, queryDigest ?? "", queryDigest ?? "", now, ...permitted.bindings);
-  return row === null ? null : { fingerprint: row.fingerprint, projection: row.projection, validUntil: row.expires_at };
+    .get(cacheWireDigest(token, domain), partition, namespaceId, queryDigest ?? "", queryDigest ?? "", now, ...permitted.bindings, ...legacy.bindings);
+  if (row === null || (domain === "view" && fingerprintOf(row.projection) !== row.fingerprint)) return null;
+  return { fingerprint: row.fingerprint, projection: row.projection, validUntil: row.expires_at };
 }
 
 /**
@@ -89,7 +98,7 @@ const MAKE_ROOM = `
              row_number() OVER newest AS place,
              sum(bytes) OVER newest AS held
       FROM world_view_tokens WHERE partition_id=?
-      WINDOW newest AS (ORDER BY created_at DESC, token_hash DESC)
+      WINDOW newest AS (ORDER BY (token_hash=?) DESC, created_at DESC, token_hash DESC)
     ) WHERE place>? OR held>?)`;
 
 export interface IssuedView {
@@ -112,6 +121,7 @@ export function issueView(
   now: string,
   domain: ViewCacheDomain = "view",
   reserveView = false,
+  preserveToken: string | null = null,
 ): IssuedView | null {
   if (projection.byteLength > VIEW_TOKEN_BYTES) return null;
   const validUntil = new Date(Date.parse(now) + VIEW_TTL_MS).toISOString();
@@ -127,7 +137,9 @@ export function issueView(
     // A temporal body can issue both capabilities in the same transaction.
     // Reserve the second bounded projection before either token is published.
     const paired = domain === "known-snapshot" && reserveView;
-    db.query(MAKE_ROOM).run(partition, VIEW_SLOTS - (paired ? 2 : 1), VIEW_PRINCIPAL_BYTES - projection.byteLength - (paired ? VIEW_TOKEN_BYTES : 0));
+    // A conditional read still checks its old baseline at publication. Keep
+    // that one token while evicting other entries within the unchanged bounds.
+    db.query(MAKE_ROOM).run(partition, preserveToken === null ? "" : wireDigest(preserveToken), VIEW_SLOTS - (paired ? 2 : 1), VIEW_PRINCIPAL_BYTES - projection.byteLength - (paired ? VIEW_TOKEN_BYTES : 0));
     insert.run(hash, partition, ns.id, queryDigest, projection, domain === "view" ? fingerprintOf(projection) : fingerprintOf(Buffer.from(domain)), projection.byteLength, now, validUntil);
     const link = db.query(
       `INSERT OR IGNORE INTO world_view_token_deps(token_hash,namespace_id,wire_ref)

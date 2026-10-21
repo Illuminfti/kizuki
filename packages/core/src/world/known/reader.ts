@@ -40,9 +40,9 @@ function snapshot(
   if (ref !== null) retainKnownSnapshotDependency(frame, ref, handle, when.valid, reused?.cutoff ?? cutoff, reused !== null);
   return ref;
 }
-export function readKnownCard(frame: WorldFrame, handle: string, kind: "concept" | "situation" | "question" | "person", when: WorldWhen): WorldOpOutcome {
+export function readKnownCard(frame: WorldFrame, handle: string, kind: "concept" | "situation" | "question" | "person" | "skill" | "framework" | "procedure" | "artifact_version", when: WorldWhen, cardSchema?: string): WorldOpOutcome {
   if (when.knownAt.kind === "current") {
-    const card = projectWorldCard(frame.ctx, frame.ns, handle, kind, when.valid, frame.dependencies);
+    const card = projectWorldCard(frame.ctx, frame.ns, handle, kind, when.valid, frame.dependencies, undefined, cardSchema);
     return card === null ? NOT_FOUND : coveredOutcome(card);
   }
   const cutoff = resolve(frame, handle, when);
@@ -54,7 +54,7 @@ export function readKnownCard(frame: WorldFrame, handle: string, kind: "concept"
   }
   if (frame.dependencies !== undefined) frame.dependencies.cutoff = cutoff;
   let card: ReturnType<typeof projectWorldCard>;
-  try { card = projectWorldCard(frame.ctx, frame.ns, handle, kind, when.valid, frame.dependencies, { kind: "recorded", ...cutoff }); }
+  try { card = projectWorldCard(frame.ctx, frame.ns, handle, kind, when.valid, frame.dependencies, { kind: "recorded", ...cutoff }, cardSchema); }
   catch (error) {
     if (error instanceof WorldHistoryUnavailable && when.knownAt.kind === "snapshot") return { status: "new_view_required" };
     throw error;

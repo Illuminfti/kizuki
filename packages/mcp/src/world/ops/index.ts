@@ -1,4 +1,5 @@
 import { personFragment, findPeopleFragment } from "./person";
+import { procedureFragment, findProceduresFragment, skillFragment, frameworkFragment, outcomeFragment } from "./skills";
 import { historyFragment } from "./history";
 import { conceptFragment } from "./concept";
 import { describeFragment } from "./describe";
@@ -6,7 +7,9 @@ import { discoverConceptsFragment, discoverSituationsFragment } from "./discover
 import { situationFragment } from "./situation";
 import { shareFragment, resumeFragment } from "./resume";
 import { evidenceFragment } from "./evidence";
+import { artifactFragment, findArtifactsFragment } from "./artifact";
 import { questionFragment, findQuestionsFragment, frontierFragment } from "./question";
+import { diffFragment } from "./diff";
 import type { McpWorldOp } from "./types";
 
 export type { McpWorldOp } from "./types";
@@ -29,9 +32,13 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   // slot: PEOPLE
   personFragment, findPeopleFragment,
   // slot: SKILL
+  procedureFragment, findProceduresFragment, skillFragment, frameworkFragment,
   // slot: ART
+  artifactFragment, findArtifactsFragment,
   // slot: OUTCOME
+  outcomeFragment,
   // slot: DIFF
+  diffFragment,
   // slot: SLICE
   // slot: ATTN
   // slot: FCST

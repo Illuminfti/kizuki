@@ -76,6 +76,7 @@ export function assembleCard(
     }));
   return assembler.assemble({
     frame,
+    ...(body.situationV2 === undefined ? {} : { situationV2: body.situationV2 }),
     node: {
       schema: "kizuki.knowledge-node/v1",
       ref,
@@ -90,6 +91,8 @@ export function assembleCard(
     relations,
     summary: body.summary,
     learning: body.learning ?? [],
+    outcomeUsefulness: body.outcomeUsefulness,
+    independentSkillClaims: body.independentSkillClaims,
     coverage: coverageOf(frame, collection.overflow || cluster.overflow === true, body.gaps),
   });
 }

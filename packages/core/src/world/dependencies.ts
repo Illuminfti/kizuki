@@ -1,3 +1,5 @@
+import { claimReader, claimPublicationFingerprint } from "../serving/claims";
+import { getClaim } from "../claims/store";
 import { identityReceiptCurrent } from "./identity-receipt";
 import type { ServeContext } from "../serving/types";
 import type { Database } from "bun:sqlite";
@@ -10,9 +12,12 @@ import { sourceCoverage, type SourceCoverageGap } from "./coverage";
 /** Complete authorized evidence used by a projection, including evidence omitted from its wire body. */
 export interface WorldDependencies {
   readonly claims: Set<string>;
+  readonly legacyClaims: Map<string, string>;
   cutoff?: KnownCutoff;
   /** A returned temporal capability can retain an older, byte-equivalent cutoff. */
   snapshot?: { readonly cutoff: KnownCutoff; readonly current: (ctx: ServeContext) => boolean };
+  /** A conditional result also depends on the continued authority of its retained baseline. */
+  priorView?: { readonly current: (ctx: ServeContext) => boolean };
   readonly supports: Set<string>;
   readonly events: Set<string>;
   /** Exact receipt ownership used to activate native identity, rechecked at publication. */
@@ -24,7 +29,7 @@ export interface WorldDependencies {
 }
 
 export function worldDependencies(): WorldDependencies {
-  return { claims: new Set(), supports: new Set(), events: new Set(), identityReceipts: new Map(), consolidations: new Map(), coverage: null };
+  return { claims: new Set(), legacyClaims: new Map(), supports: new Set(), events: new Set(), identityReceipts: new Map(), consolidations: new Map(), coverage: null };
 }
 
 export function recordWorldDependencies(deps: WorldDependencies, item: Eligible): void {
@@ -44,7 +49,7 @@ export function recordWorldDependencies(deps: WorldDependencies, item: Eligible)
 /** Bind the complete evidence closure to the existing erasure cascades, without adding another cache table. */
 export function dependencyRefs(db: Database, ns: WorldNamespace, deps: WorldDependencies): string[] {
   return [
-    ...[...deps.claims].map((id) => issueWorldRef(db, ns, "claim", id).token),
+    ...[...deps.legacyClaims.keys(), ...deps.claims].map((id) => issueWorldRef(db, ns, "claim", id).token),
     ...[...deps.supports].map((id) => issueWorldRef(db, ns, "admission", id).token),
     ...[...deps.events].map((id) => issueWorldRef(db, ns, "event_version", id).token),
   ];
@@ -57,6 +62,11 @@ export function worldEvidenceCurrent(ctx: ServeContext, deps: WorldDependencies,
       "SELECT response_hash,completed_at,expires_at FROM world_consolidation WHERE basis_digest=? AND status='complete'",
     ).get(basis);
     if (row === null || row.response_hash !== summary.responseHash || row.completed_at !== summary.completedAt || row.expires_at !== summary.expiresAt || row.expires_at <= new Date().toISOString()) return false;
+  }
+  const legacy = claimReader(ctx.db, ctx.principal.grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
+  for (const [id, fingerprint] of deps.legacyClaims) {
+    const claim = getClaim(ctx.db, id);
+    if (claim === null || claim.status !== "live" || !legacy.canRead(claim) || claimPublicationFingerprint(claim) !== fingerprint) return false;
   }
   for (const [claim, receipt] of deps.identityReceipts) if (!identityReceiptCurrent(ctx.db, claim, receipt, cutoff)) return false;
   const permitted = knownSupportSql(ctx, cutoff);
@@ -75,6 +85,7 @@ export function worldEvidenceCurrent(ctx: ServeContext, deps: WorldDependencies,
 
 /** Revalidate evidence, retained capabilities and coverage without a global write epoch. */
 export function worldDependenciesCurrent(ctx: ServeContext, deps: WorldDependencies): boolean {
+  if (deps.priorView !== undefined && !deps.priorView.current(ctx)) return false;
   if (!worldEvidenceCurrent(ctx, deps)) return false;
   if (deps.snapshot !== undefined && (!deps.snapshot.current(ctx) || !worldEvidenceCurrent(ctx, deps, deps.snapshot.cutoff))) return false;
   if (deps.coverage === null) return true;

@@ -1,4 +1,6 @@
 import { validateWorldAdmissionProofs } from "./world-grounding";
+import { OUTCOME_PREDICATES } from "../contracts/outcome-card";
+import { validateArtifactClaim } from "../world/artifact-binding";
 import type { ClaimVisibility } from "./visibility";
 import { UNWRITTEN_CAPTURE_NOTE_WHERE } from "./capture-fanout";
 import { pageClaimKey } from "./hash";
@@ -323,6 +325,7 @@ function preparedWorldCommit(
   at: string,
 ) {
   if (input.world_admission === undefined || input.semantic === undefined) return null;
+  validateArtifactClaim(db,input);
   const admission = parseWorldAdmission(input.world_admission);
   if (admission === null || canonicalJson(admission.semantic) !== canonicalJson(input.semantic)) {
     throw new ClaimError("schema_invalid", "world admission needs its matching typed semantic");
@@ -555,6 +558,7 @@ function findExact(
   target: string | null,
   bodyHash: string,
   visibility?: ClaimVisibility,
+  outcomeIdentity?: Claim,
 ): Claim | null {
   const statement = db.prepare<ClaimRow, (string | number)[]>(
     `SELECT * FROM claims
@@ -565,6 +569,9 @@ function findExact(
   try {
     for (const row of statement.iterate(kind, target ?? "", bodyHash, ...(visibility?.bindings ?? []))) {
       const claim = rowToClaim(row);
+      if (outcomeIdentity !== undefined && (claim.subject !== outcomeIdentity.subject || claim.predicate !== outcomeIdentity.predicate ||
+          claim.object !== outcomeIdentity.object || claim.producer !== outcomeIdentity.producer || claim.polarity !== outcomeIdentity.polarity ||
+          JSON.stringify([...claim.provenance].sort()) !== JSON.stringify([...outcomeIdentity.provenance].sort()))) continue;
       if (visibility?.canRead(claim) ?? true) return claim;
     }
     return null;
@@ -1505,11 +1512,15 @@ export async function prepareClaimInsert(
       if (world !== null && (result.outcome === "stored" || result.outcome === "contested")) {
         commitClaimV2(io.db, result.outcome === "stored" ? result.claim.claim_id : result.incoming.claim_id, {
           ...world,
+          scope: { ...world.scope, ...(io.deny_classes === undefined ? {} : { deny_classes: io.deny_classes }) },
+          ...(io.visibility === undefined ? {} : { visibility: io.visibility }),
           accepted_world: acceptedWorldValues(input, loadEventFacts(io.db, input.provenance)),
         });
       } else if (world !== null && result.outcome === "duplicate") {
         commitClaimV2(io.db, result.claim.claim_id, {
           ...world,
+          scope: { ...world.scope, ...(io.deny_classes === undefined ? {} : { deny_classes: io.deny_classes }) },
+          ...(io.visibility === undefined ? {} : { visibility: io.visibility }),
           accepted_world: acceptedWorldValues(input, loadEventFacts(io.db, input.provenance)),
         });
       }
@@ -1659,8 +1670,11 @@ function applyClaimInsert(
   if (worldSemanticMatch !== null) {
     return { outcome: "duplicate", claim: worldSemanticMatch, dedup: mode };
   }
+  // Outcome observations preserve the observer and immutable evidence basis.
+  // Coalescing different observers would erase the independence we must prove.
+  const outcomeEvidence = OUTCOME_PREDICATES.includes(claim.predicate as typeof OUTCOME_PREDICATES[number]);
   const exact = input.world_admission === undefined
-    ? findExact(io.db, claim.kind, claim.target, claim.body_hash, io.visibility)
+    ? findExact(io.db, claim.kind, claim.target, claim.body_hash, io.visibility, outcomeEvidence ? claim : undefined)
     : null;
   if (exact !== null && sourceControl) {
     requireSourceTombstoneProposal(io.db, exact,
@@ -1690,7 +1704,7 @@ function applyClaimInsert(
   ];
   const structural = structuralCandidates.find((live) =>
     // A source-page correction replaces complete prose, not just its parsed object.
-    input.page_correction_target === undefined &&
+    !outcomeEvidence && input.page_correction_target === undefined &&
     sourceEventsAllowed(io.db, live.provenance, sourceScope) && externalEvidence(io.db, live.provenance) && structuralMatch(claim, live),
   );
   // Same key + polarity + object is corroboration, including a second

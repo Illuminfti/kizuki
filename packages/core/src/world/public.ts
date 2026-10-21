@@ -1,9 +1,24 @@
+export { validateProcedureCard } from "../contracts/procedure-card";
+export type { ProcedureCard } from "../contracts/procedure-card";
+export { validateSkillCard } from "../contracts/skill-card";
+export type { SkillCard } from "../contracts/skill-card";
+export { validateFrameworkCard } from "../contracts/framework-card";
+export type { FrameworkCard } from "../contracts/framework-card";
+export { validateOutcomeCard } from "../contracts/outcome-card";
+export type { OutcomeCard } from "../contracts/outcome-card";
+export type { ProcedureUsefulness, OutcomeEvidence, OutcomeEvaluation } from "../contracts/outcome-card";
+export { ARTIFACT_CARD_SCHEMA, validateArtifactCard } from "../contracts/artifact-card";
+export type { ArtifactCard } from "../contracts/artifact-card";
 /**
  * The world-model API of `@kizuki/core`. New operations and their types are
  * exported here so `src/index.ts` never has to change for them.
  */
+export { SITUATION_CARD_V2_SCHEMA, validateSituationCardV2 } from "../contracts/situation-card-v2";
+export type { SituationCardV2, CommitmentEntry, DecisionEntry } from "../contracts/situation-card-v2";
 export { validateHistoryPage } from "../contracts/world-history";
 export type { HistoryPage, StateTransition } from "../contracts/world-history";
+export { WORLD_DIFF_SCHEMA, WORLD_DIFF_FIELDS } from "../contracts/world-diff";
+export type { WorldDiff, WorldDiffField } from "../contracts/world-diff";
 export { PERSON_CARD_SCHEMA, validatePersonCard } from "../contracts/person-card";
 export type { PersonCard, PersonPerspective } from "../contracts/person-card";
 export { QUESTION_CARD_SCHEMA, validateQuestionCard } from "../contracts/question-card";
