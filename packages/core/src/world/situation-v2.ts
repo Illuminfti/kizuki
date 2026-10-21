@@ -1,4 +1,5 @@
-import { dependencyPerspective, isSituationDependency } from "./situation-cycle";
+import type { ClaimV2Assertion } from "../contracts/claim-v2";
+import { dependencyIntersection, dependencyPerspective, isSituationDependency } from "./situation-cycle";
 import { activeWorldRegistry } from "../contracts/world-vocabulary";
 import { SITUATION_DEPENDENCIES, type CommitmentEntry, type DecisionEntry, type SituationCardV2, type SituationDependency } from "../contracts/situation-card-v2";
 import type { Relation, ViewGap } from "../contracts/world-card-kit";
@@ -106,13 +107,16 @@ export function collectSituationDetails(frame: ReadFrame, cluster: Cluster, body
   }
   const dependencies: SituationDependency[] = [];
   let walked = 0;
-  const cycles = (token: string, path: readonly string[], perspective: string): boolean => {
+  const cycles = (token: string, path: readonly string[], perspective: string, interval: Pick<ClaimV2Assertion,"valid_from"|"valid_to">): boolean => {
     if (++walked > 128) { gaps.add("traversal_limit"); return false; }
     if (path.includes(token)) return true;
     const data = read(token,"situation"); if (data === null) return false;
-    return rows(data,token).some(c => isAsserted(c.relation) && isSituationDependency(c.relation.predicate)
-      && c.relation.object.kind === "node" && dependencyPerspective(c.eligible.semantic) === perspective
-      && cycles(c.relation.object.ref.token,[...path,token],perspective));
+    return rows(data,token).some(c => {
+      const next = dependencyIntersection(interval,c.eligible.semantic);
+      return next !== null && isAsserted(c.relation) && isSituationDependency(c.relation.predicate)
+        && c.relation.object.kind === "node" && dependencyPerspective(c.eligible.semantic) === perspective
+        && cycles(c.relation.object.ref.token,[...path,token],perspective,next);
+    });
   };
   for (const relation of own) {
     if (!SITUATION_DEPENDENCIES.includes(relation.predicate as SituationDependency["predicate"]) || !isAsserted(relation)) continue;
@@ -121,7 +125,7 @@ export function collectSituationDetails(frame: ReadFrame, cluster: Cluster, body
     const target = ["situation","commitment","decision"].some(kind => read(token,kind) !== null);
     if (target && isSituationDependency(relation.predicate)) {
       const original = body.claims.find(c => c.relation === relation)!;
-      if (cycles(token,[ownToken],dependencyPerspective(original.eligible.semantic))) { gaps.add("stale_dependencies"); continue; }
+      if (cycles(token,[ownToken],dependencyPerspective(original.eligible.semantic),original.eligible.semantic)) { gaps.add("stale_dependencies"); continue; }
     }
     if (target) dependencies.push({ predicate: relation.predicate as SituationDependency["predicate"], from: relation.subject, to: relation.object.ref, relation });
   }

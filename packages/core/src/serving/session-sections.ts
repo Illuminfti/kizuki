@@ -130,7 +130,7 @@ function situationLine(state: SituationState, item: SituationItem, redactor: Red
   return redactor.join([
     `- [claim:${inline(item.claim.claim_id)}] ${stamps(item.claim)}${hedge} :: situation `,
     say(state.label ?? state.subject), " ",
-    redactor.format(item.predicate.slice(10), inline), " ", say(item.text), "\n",
+    redactor.format(item.predicate.slice(item.predicate.indexOf(".")+1), inline), " ", say(item.text), "\n",
   ]);
 }
 
@@ -140,6 +140,7 @@ function piece(
   block: string,
   ids: string[],
   reader: ReturnType<typeof claimReader>,
+  world?: import("../world/dependencies").WorldDependencies,
 ): Piece {
   return {
     section,
@@ -147,6 +148,7 @@ function piece(
     block,
     audit: ids.flatMap((id) => reader.auditClaim(id)),
     claims: reader.publication(ids),
+    ...(world === undefined ? {} : {world}),
   };
 }
 
@@ -324,8 +326,9 @@ export function collectSessionPieces(
             "now",
             "## now (situations)",
             situationLine(state, item, redactor),
-            [item.claim.claim_id],
+            [...(item.claimIds ?? [item.claim.claim_id])],
             reader,
+            state.world,
           ),
         );
       }
@@ -361,8 +364,9 @@ export function collectSessionPieces(
             "commitments",
             "## commitments (open)",
             situationLine(state, item, redactor),
-            [item.claim.claim_id],
+            [...(item.claimIds ?? [item.claim.claim_id])],
             reader,
+            state.world,
           ),
         );
       }
@@ -395,8 +399,9 @@ export function collectSessionPieces(
             "uncertain",
             "## uncertain (contradictions and open questions)",
             situationLine(state, item, redactor),
-            [item.claim.claim_id],
+            [...(item.claimIds ?? [item.claim.claim_id])],
             reader,
+            state.world,
           ),
         );
       }
