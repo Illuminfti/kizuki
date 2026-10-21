@@ -198,7 +198,7 @@ function present(op: WorldOp, outcome: WorldOpOutcome, view: ViewSession | null,
   if (view === null) return { quoted: outcome.quoted ?? [], data: answer(op.name, { status: "current", view: { status: "not_issued" }, data }) };
   // Compare and retain the final served projection. The gate redacts the raw
   // body once for output and counts, including after a bounded reprojection.
-  const projection = ctx.redactor === undefined ? data : clampWorldData(redactValue(createRedactor(ctx.principal), data));
+  const projection = ctx.redactor === undefined ? data : clampWorldData(redactValue(createRedactor(ctx.principal, ctx.servingSecrets), data));
   const result = settleView(ctx.db, view, op.name, projection, dependencies);
   return { quoted: outcome.quoted ?? [], data: answer(op.name, "data" in result ? { ...result, data } : result) };
 }

@@ -453,10 +453,17 @@ count of anything redacted.
 - Terminal escapes, control characters, bidirectional controls, zero-width
   characters and invisible tag characters are removed before capture
   (`text_sanitized` in metadata). A turn that is empty after that is skipped.
+- Embedded system reminders, task notifications, command wrappers and hook
+  output blocks (including injected Kizuki context) are dropped, while
+  surrounding owner words survive, in both Claude Code and Codex transcripts.
+  An unfinished scaffold block drops its
+  remainder. Ordinary XML content remains evidence.
 - Secret-shaped strings are replaced by `[redacted:KIND]` before capture,
   because the ledger is append-only: private keys, API and access tokens, JWTs,
   `Authorization` headers, URL credentials, and `NAME=value` assignments for
-  names that say secret, token, password, key or credential. The scrubber is a
+  names that say secret, token, password, key or credential, including JSON and
+  YAML fields. Core supplies the same patterns as agent serving, including
+  Kizuki tokens, wrapped keys and percent-encoded credentials. The scrubber is a
   set of patterns, not a guarantee; treat the source as private.
 - Transcript text is evidence, never instruction. A prompt that tells an agent
   to ignore its rules arrives as ordinary quoted text.

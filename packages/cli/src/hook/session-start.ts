@@ -1,6 +1,6 @@
+import { neutralizeControlTags, sanitizeCapturedText, scrubText } from "@kizuki/core/internal";
 import { existsSync } from "node:fs";
 import { request as httpRequest } from "node:http";
-import { createRedactor } from "@kizuki/core/internal";
 import { basename, join } from "node:path";
 import type { Database } from "bun:sqlite";
 import {
@@ -50,16 +50,16 @@ const MAX_QUERY_CHARS = 200;
 const MAX_STDIN_WAIT_MS = 250;
 
 /** The claude-code and codex hooks share one documented SessionStart output shape. */
-export function formatHookOutput(harness: Harness, context: string): string {
-  // A harness always gets agent-grade text, even when authorization was owner-level.
-  const safe = createRedactor({ kind: "agent" }).text(context);
+export function formatHookOutput(harness: Harness, context: string, exactSecrets: readonly string[] = []): string {
+  // Harness output is always scrubbed, including explicit owner sessions.
+  const text = neutralizeControlTags(scrubText(sanitizeCapturedText(context), exactSecrets).text);
   return harness === "generic"
-    ? safe
-    : JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: safe } });
+    ? text
+    : JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: text } });
 }
 
-function outputFor(harness: Harness, context: string): HookResult {
-  const output = formatHookOutput(harness, context);
+function outputFor(harness: Harness, context: string, exactSecrets: readonly string[] = []): HookResult {
+  const output = formatHookOutput(harness, context, exactSecrets);
   return Buffer.byteLength(output, "utf8") + 1 > MAX_HOOK_OUTPUT_BYTES
     ? { skip: "oversized" }
     : { output };
@@ -95,7 +95,7 @@ export function usableContext(data: unknown): string | null {
   const shaped = data as { schema?: unknown; result?: { status?: unknown; data?: PacketLike } };
   if (shaped.schema !== PACKET_V2_SCHEMA || shaped.result?.status !== "current") return null;
   const packet = shaped.result.data;
-  if (packet === undefined || typeof packet.packetMd !== "string" || !packet.packetMd.startsWith("KIZUKI CONTEXT v2\\n")) return null;
+  if (packet === undefined || typeof packet.packetMd !== "string" || !packet.packetMd.startsWith("KIZUKI CONTEXT v2\n")) return null;
   if (Array.isArray(packet.retrievalDegraded) && packet.retrievalDegraded.includes("context-unavailable")) return null;
   const served = [
     ...Object.values(packet.sections ?? {}),
@@ -126,7 +126,7 @@ async function callDaemon(url: string, bearer: string, body: object, ms: number)
       method: "POST",
       headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
     }, (response) => {
-      if (response.statusCode !== 200) { finish({ kind: "refused" }); return; }
+      if (response.statusCode !== 200 && response.statusCode !== 400) { finish({ kind: "refused" }); return; }
       const chunks: Buffer[] = [];
       let size = 0;
       response.on("data", (chunk: Buffer) => {
@@ -141,6 +141,7 @@ async function callDaemon(url: string, bearer: string, body: object, ms: number)
         try {
           const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { ok?: unknown; error?: { code?: unknown }; value?: { schema?: unknown; data?: unknown } };
           if (parsed.ok !== true) { finish({ kind: parsed.error?.code === "unsupported_contract" ? "unsupported_contract" : "refused" }); return; }
+          if (response.statusCode !== 200) { finish({ kind: "refused" }); return; }
           if (parsed.value?.schema !== ENVELOPE_V2_SCHEMA) { finish({ kind: "unsupported_contract" }); return; }
           const context = usableContext(parsed.value?.data);
           finish(context === null ? { kind: "empty" } : { kind: "packet", context });
@@ -176,11 +177,13 @@ async function readInProcess(io: CliIo, options: SessionStartOptions, request: R
   const context = await withVault(io, async (ctx) => {
     const principal = principalFor(io, ctx.db, options.tokenRef);
     if (principal === null) return "denied" as const;
+    const standing = await bearerFor(io, ctx.vaultPath, undefined);
     const envelope = await dispatchServeTool(
       {
         db: ctx.db,
         vaultPath: ctx.vaultPath,
         principal,
+        ...(standing === null ? {} : { servingSecrets: [standing] }),
         ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
       },
       "context_packet", request, { response_contract: ENVELOPE_V2_SCHEMA },
@@ -274,7 +277,7 @@ export async function runSessionStart(io: CliIo, options: SessionStartOptions): 
     const bearer = endpoint === null ? null : await bearerFor(io, vault, options.tokenRef);
     if (endpoint !== null && bearer !== null) {
       const wire = await callDaemon(endpoint.url, bearer, request, remaining());
-      if (wire.kind === "packet") return outputFor(options.harness, wire.context);
+      if (wire.kind === "packet") return outputFor(options.harness, wire.context, [bearer]);
       if (wire.kind === "empty") return { skip: "empty" };
       if (wire.kind === "timeout") return { skip: "timeout" };
       if (wire.kind === "refused") return { skip: "denied" };

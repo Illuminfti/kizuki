@@ -125,16 +125,32 @@ test("secrets are scrubbed before emission and counted in metadata", async () =>
   for (const secret of secrets) expect(serialized).not.toContain(secret);
   expect(events[0]?.text).toContain("The decision stands: keep the format stable.");
   expect(events[0]?.metadata["redactions"]).toEqual({
-    authorization: 1,
-    assignment: 1,
-    aws: 1,
-    github: 1,
+    bearer: 1,
+    secret_assignment: 1,
+    api_token: 4,
     jwt: 1,
     pem: 1,
-    sk: 1,
-    slack: 1,
   });
 });
+
+for (const flavor of ["claude-code", "codex"] as const) {
+  test(`${flavor} counts complete credentials on consecutive lines separately`, async () => {
+    const root = await tempRoot();
+    const text = [
+      `sk-${"A".repeat(24)}`,
+      "gh" + `p_${"B".repeat(36)}`,
+      `eyJ${"h".repeat(12)}.${"p".repeat(12)}.${"s".repeat(12)}`,
+      "Preserve the receipt.",
+    ].join("\n");
+    await writeJsonl(root, "proj/tokens.jsonl", flavor === "claude-code"
+      ? [claudeTurn("u-1", text)] : [codexMeta(), codexTurn("user", text)]);
+    const { events } = await drain(connectorFor(flavor, { path: root }));
+    expect(texts(events)).toEqual([
+      "[redacted:api_token]\n[redacted:api_token]\n[redacted:jwt]\nPreserve the receipt.",
+    ]);
+    expect(events[0]?.metadata["redactions"]).toEqual({ api_token: 2, jwt: 1 });
+  });
+}
 
 test("a turn carrying Kizuki's own context packet is never captured", async () => {
   const root = await tempRoot();

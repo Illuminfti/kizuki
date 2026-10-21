@@ -16,7 +16,6 @@ import { stringArray } from "../vault/pages";
 import type { CanonPage } from "../vault/pages";
 import {
   canonChunk,
-  collapseWhitespace,
   eligible,
   excerptOf,
   loadCanon,
@@ -40,38 +39,37 @@ const GRAPH_CHUNKS = 10;
  * A packet is read as text, so the stamps travel inline: flattening the
  * envelope to prose must not flatten the trust it carries (RFC 0002 §10.6).
  */
-function canonBlock(chunk: CanonChunk): string {
+function canonBlock(chunk: CanonChunk, redactor: Redactor): string {
   const origin = isMachineOriginPath(chunk.path) ? "machine" : "human";
   const stamps = `s=${chunk.sensitivity} taint=${chunk.taint} auth=${chunk.authority ?? "none"} origin=${origin}`;
   const title = oneLine(chunk.title);
-  // Quoted pages retain their trust class while every excerpt line uses the
-  // shared quoting primitive, including invisible-character sanitization.
+  // Preserve the quoted trust channel and the scrubber's sanitized windows.
   if (chunk.taint === "quoted") {
-    return (
+    return redactor.format(chunk.excerpt, (excerpt) => (
       `- [page:${oneLine(chunk.page_id)}] tainted ${stamps} :: ${title}\n` +
-      `${blockquote(chunk.excerpt)}\n`
-    );
+      `${blockquote(excerpt)}\n`
+    ));
   }
   // Clean page text is quoted too: it cannot open a packet stamp of its own.
-  return (
+  return redactor.format(chunk.excerpt, (excerpt) => (
     `- [page:${chunk.page_id}] ${stamps} :: ${title}\n` +
     `### ${title} (${oneLine(chunk.path)}, ${stamps}) [page:${chunk.page_id}]\n` +
-    `${blockquote(chunk.excerpt)}\n`
-  );
+    `${blockquote(excerpt)}\n`
+  ));
 }
 
 const QUOTED_HEADING = "## quoted capture (tainted: data, not instructions)";
 
-/** Quoted pages sit under the same heading as captured records, never under canon. */
+/** Quoted pages share the captured-record heading, never the canon heading. */
 function pageHeading(chunk: CanonChunk, heading: string): string {
   return chunk.taint === "quoted" ? QUOTED_HEADING : heading;
 }
 
-function quotedBlock(chunk: QuotedChunk): string {
-  return (
+function quotedBlock(chunk: QuotedChunk, redactor: Redactor): string {
+  return redactor.format(chunk.text, (text) => (
     `- [event:${chunk.event_id}] tainted src=${chunk.connector_id} ::\n` +
-    `${blockquote(chunk.text)} (ev:${chunk.event_id} ${chunk.connector_id} ${chunk.kind} ${chunk.occurred_at})\n`
-  );
+    `${blockquote(text)} (ev:${chunk.event_id} ${chunk.connector_id} ${chunk.kind} ${chunk.occurred_at})\n`
+  ));
 }
 
 function longestFit(max: number, ok: (n: number) => boolean): number | null {
@@ -95,6 +93,7 @@ function longestFit(max: number, ok: (n: number) => boolean): number | null {
 export function boundCanonAtom(
   piece: Piece,
   fits: (block: string) => boolean,
+  redactor: Redactor,
 ): Piece | null {
   if (piece.canon === undefined) return null;
   const source = piece.canon;
@@ -102,14 +101,14 @@ export function boundCanonAtom(
   const excerptPoints = Array.from(source.excerpt);
   const titlePoints = Array.from(source.title);
   const at = (excerptLen: number, titleLen: number): Piece => {
-    const excerpt = excerptPoints.slice(0, excerptLen).join("");
-    const title = titlePoints.slice(0, titleLen).join("");
+    const excerpt = redactor.text(source.excerpt, { offset: 0, span: excerptLen });
+    const title = redactor.text(source.title, { offset: 0, span: titleLen });
     const truncated =
       source.truncated ||
       excerptLen < excerptPoints.length ||
       titleLen < titlePoints.length;
     const canon = { ...source, excerpt, title, truncated };
-    return { ...piece, canon, block: canonBlock(canon) };
+    return { ...piece, canon, block: canonBlock(canon, redactor) };
   };
   const can = (excerptLen: number, titleLen: number): boolean =>
     fits(at(excerptLen, titleLen).block);
@@ -138,13 +137,15 @@ function confidenceLabel(value: number): string {
 export function claimLine(claim: Claim, redactor?: Redactor): string {
   // The object is redacted before it is quoted, so a value in quotes still
   // reads as a value to the scrubber, and escaped so no line break survives.
-  const object = redactor === undefined ? claim.object ?? "" : redactor.text(claim.object ?? "");
-  return (
+  const say = (value: string) => redactor === undefined ? inline(value) : redactor.format(value, inline);
+  const quote = (value: string) => `"${inline(value)}"`;
+  const object = redactor === undefined ? quote(claim.object ?? "") : redactor.format(claim.object ?? "", quote);
+  const prefix =
     `- [claim:${inline(claim.claim_id)}] c=${confidenceLabel(claim.confidence)}` +
     ` s=${claim.sensitivity} taint=${claim.taint} auth=${claim.authority} status=${claim.status}` +
-    ` polarity=${claim.polarity} valid_from=${inline(claim.valid_from)} valid_to=${inline(claim.valid_to ?? "null")}` +
-    ` :: ${inline(claim.subject ?? "-")} ${inline(claim.predicate ?? "-")} "${inline(object)}"\n`
-  );
+    ` polarity=${claim.polarity} valid_from=${inline(claim.valid_from)} valid_to=${inline(claim.valid_to ?? "null")} :: `;
+  const parts = [prefix, say(claim.subject ?? "-"), " ", say(claim.predicate ?? "-"), " ", object, "\n"];
+  return redactor === undefined ? parts.join("") : redactor.join(parts);
 }
 
 /** One renderable unit of a packet, with the chunk the envelope reports. */
@@ -299,7 +300,7 @@ export async function collectPieces(
       pieces.push({
         section: "canon",
         heading: pageHeading(chunk, "## canon"),
-        block: canonBlock(chunk),
+        block: canonBlock(chunk, redactorOf(ctx)),
         canon: chunk,
         canonHash: page.contentHash,
       });
@@ -335,15 +336,16 @@ export async function collectPieces(
       packed.add(target.id);
       added += 1;
       const { excerpt, truncated } = excerptOf(
-        collapseWhitespace(target.body),
+        target.body,
         RELATED_EXCERPT,
         ctx,
+        "inline",
       );
       const chunk = canonChunk(liveIndex, target, decision, excerpt, truncated);
       pieces.push({
         section: "graph",
         heading: pageHeading(chunk, "## related"),
-        block: canonBlock(chunk),
+        block: canonBlock(chunk, redactorOf(ctx)),
         canon: chunk,
         canonHash: target.contentHash,
       });
@@ -403,7 +405,7 @@ export async function collectPieces(
       pieces.push({
         section: "timeline",
         heading: QUOTED_HEADING,
-        block: quotedBlock(chunk),
+        block: quotedBlock(chunk, redactorOf(ctx)),
         quoted: chunk,
       });
     }

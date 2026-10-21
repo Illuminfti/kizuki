@@ -300,7 +300,7 @@ function enter(
     ]);
     throw new ServeError("tool_not_granted", "tool not granted");
   }
-  return { live: { ...live, sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall", redactor: createRedactor(live.principal) }, audit_id: reserved.audit_id };
+  return { live: { ...live, sourcePurpose: tool === "correct" ? "correction" : tool === "propose" ? "derive" : live.sourcePurpose ?? "recall", redactor: createRedactor(live.principal, live.servingSecrets) }, audit_id: reserved.audit_id };
 }
 
 /**
@@ -385,7 +385,7 @@ function envelopeOf<T, C extends ResponseContract>(
 
   // The one serving-output seam: sources redact before they truncate or pack,
   // and this pass covers every string that reaches the caller, whatever built it.
-  const redactor = live.redactor ?? createRedactor(live.principal);
+  const redactor = live.redactor ?? createRedactor(live.principal, live.servingSecrets);
   const { canon, quoted, data } = redactValue(redactor, { canon: served.canon, quoted: served.quoted, data: served.data });
   if (contract === ENVELOPE_V2_SCHEMA) {
     return sealEnvelope(live, tool, at, canon, quoted, data ?? null) as unknown as ResponseEnvelope<T, C>;
@@ -443,7 +443,7 @@ function gated<T, C extends ResponseContract>(
         const current = liveContext(live);
         if (current === null) throw new ServeError("unknown_agent", "unknown agent");
         if (!toolAllowed(current.principal.grant, tool)) throw new ServeError("tool_not_granted", "tool not granted");
-        const fresh = { ...current, redactor: createRedactor(current.principal) };
+        const fresh = { ...current, redactor: createRedactor(current.principal, current.servingSecrets) };
         const final = recheck({ ctx: fresh, at }, served);
         validatePublication(fresh, tool, final);
         return envelopeOf(fresh, tool, args, at, audit_id, final, contract);
