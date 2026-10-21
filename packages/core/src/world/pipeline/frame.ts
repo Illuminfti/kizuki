@@ -27,6 +27,8 @@ export interface ReadFrame {
   readonly cutoff: RecordedCutoff;
   /** Host-captured current session evaluation; never taken from a world_view argument. */
   readonly currentOutcomeAt?: string;
+  /** Internal session projection: qualified recorded relations, not a full card or summary. */
+  readonly projection?: "relations";
   readonly budget: ReadBudget;
   readonly stats: ReadStats;
   /** A traversed member may have a retained baseline even when the anchor has full history. */

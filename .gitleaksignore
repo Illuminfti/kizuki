@@ -1,0 +1,12 @@
+# Owner-approved 2026-10-21: exact synthetic identifiers and redaction canaries.
+# Directory scans run from this repository root (gitleaks dir ... .).
+# These are fixture-specific fingerprints, not file or rule exclusions.
+packages/core/test/fixtures/agent-enrollment-ledger16-claim.sql:generic-api-key:371
+packages/core/test/export.test.ts:generic-api-key:82
+packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:98
+packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:99
+packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:339
+packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:343
+packages/core/test/serving/canon-classes.test.ts:generic-api-key:37
+packages/core/test/serving/credential-boundaries.test.ts:generic-api-key:183
+packages/core/test/serving/world-correct-modes.test.ts:generic-api-key:102

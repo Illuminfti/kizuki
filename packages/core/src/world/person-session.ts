@@ -1,8 +1,10 @@
 import type { Claim } from "../contracts/proposal";
+import type { PersonCard } from "../contracts/person-card";
 import type { ServeContext } from "../serving/types";
 import { authorizedClaimSql, authorizedSupportSql, validMeaningSql } from "./policy-sql";
 import { heldClaimSql } from "./corroboration";
-import { projectWorldCard } from "./projection";
+import { newReadFrame } from "./pipeline/frame";
+import { readWorldCard } from "./pipeline/read";
 import { worldNamespace } from "./references";
 import { worldDependencies } from "./dependencies";
 
@@ -28,7 +30,10 @@ export function sessionPerson(ctx: ServeContext, identity: Claim, at: string) {
     // An unqualified legacy id cannot pick one of several connector identities.
     if (handles.length !== 1) return null;
     const deps = worldDependencies();
-    const card = projectWorldCard(ctx, worldNamespace(ctx.db, ctx.principal), handles[0]!.handle_id, "person", { kind: "at", at }, deps);
-    return card?.schema === "kizuki.person-card/v1" ? { card, deps } : null;
+    // Session consumers render labels and qualified relations, never the summary.
+    const frame = newReadFrame(ctx, worldNamespace(ctx.db, ctx.principal), { kind: "at", at }, deps);
+    const card = readWorldCard({ ...frame, projection: "relations" }, handles[0]!.handle_id, "person");
+    // The registered Person assembler owns this schema, as in projectWorldCard.
+    return card?.schema === "kizuki.person-card/v1" ? { card: card as PersonCard, deps } : null;
   })();
 }

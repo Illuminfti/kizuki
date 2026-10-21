@@ -7,6 +7,7 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import { listAudit } from "../../src/agents";
 import { hasContextPacketMarker } from "../../src/canon/origin";
 import { accept } from "../../src/ledger/ledger";
+import { revokeSourceGrant } from "../../src/ledger/source-grants";
 import { dispatchServeTool } from "../../src/serving/dispatch";
 import type { ContextPacketDataV2 } from "../../src/serving/v2/context-packet";
 import { validEvent } from "../fixtures";
@@ -33,13 +34,13 @@ async function read(
   return { envelope, packet: envelope.data as ContextPacketDataV2 };
 }
 
-function visibleCapture(scene: NoninterferenceScene, text: string): void {
+function visibleCapture(scene: NoninterferenceScene, text: string, recordId?: string): string {
   const stored = accept(
     scene.db,
     {
       ...validEvent(),
       connector_id: "world.fixture",
-      source_record_id: `visible-${text}`,
+      source_record_id: recordId ?? `visible-${text}`,
       text,
       sensitivity_hint: "public",
       subjects: [{ subject_id: "topic:bayes", role: "about" }],
@@ -53,6 +54,7 @@ function visibleCapture(scene: NoninterferenceScene, text: string): void {
   );
   if (stored.status !== "stored")
     throw new Error("the visible capture was not stored");
+  return stored.event.event_id;
 }
 
 test("the v2 body leads with its marker and names no epoch, time or digest", async () => {
@@ -77,12 +79,16 @@ test("the v2 body leads with its marker and names no epoch, time or digest", asy
       "purpose",
       "retrievalDegraded",
       "sections",
+      "servedUnits",
       "session",
       "tokenizer",
       "tokens",
       "truncated",
     ]);
     expect(data.tokens).toBeLessThanOrEqual(data.budgetTokens);
+    expect(Number.isSafeInteger(data.servedUnits)).toBe(true);
+    expect(data.servedUnits).toBe(Object.values(data.sections).reduce((total, count) => total + count, 0) +
+      Object.values(data.session ?? {}).reduce((total, section) => total + section.served, 0));
     expect(new Date(packet.result.validUntil).getTime()).toBeGreaterThan(
       Date.parse(envelope.at),
     );
@@ -269,5 +275,58 @@ test("a query without indexed canon reports its incomplete retrieval coverage", 
     if (first.status !== "incomplete") throw new Error("expected query coverage gap");
     expect(first.data.retrievalDegraded).toContain("query-no-match");
     expect(first).not.toHaveProperty("view");
+  } finally { scene.dispose(); }
+});
+
+
+test("optional capture truncation retains the incomplete warning and exact served-unit witness", async () => {
+  const scene = await hiddenScene();
+  try {
+    for (let index = 0; index < 6; index++) visibleCapture(scene, `Observation ${index}: ${"the bounded context is recorded ".repeat(8).trim()}`);
+    const { packet } = await read(scene, { ...WIDE, budget_tokens: 450 });
+    if (!("data" in packet.result)) throw new Error("packet missing");
+    const data = packet.result.data;
+    expect(data.truncated).toBe(true);
+    expect(data.servedUnits).toBeGreaterThan(0);
+    expect(data.servedUnits).toBeLessThan(6);
+    expect(data.servedUnits).toBe(data.sections.timeline);
+    expect(data.packetMd).toContain("coverage=incomplete; missing context must not be treated as absent\n");
+    expect(data.packetMd).not.toContain("coverage=complete_for_query");
+    expect(data.tokens).toBeLessThanOrEqual(450);
+  } finally { scene.dispose(); }
+});
+
+test("task-only packets count an authorized packed capture and exclude unfit or revoked attachments", async () => {
+  const scene = await hiddenScene();
+  try {
+    const eventId = visibleCapture(scene, "kizuki.task/v1\nconstraint: Preserve the existing provenance.\nobjective: Resume the recorded task.", "task-witness");
+    const args = { ...PACKET, purpose: "recall", include: [], task_event_id: eventId };
+    // This source grants recall but not session use. The witness must not
+    // turn a purpose-denied task into usable context.
+    const denied = await read(scene, { ...args, purpose: "session" });
+    if (!("data" in denied.packet.result)) throw new Error("packet missing");
+    expect(denied.packet.result.data.servedUnits).toBe(0);
+    expect(denied.packet.result.data.task?.status).toBe("unavailable");
+    expect(denied.envelope.quoted).toEqual([]);
+    const current = await read(scene, args);
+    if (!("data" in current.packet.result)) throw new Error("packet missing");
+    expect(current.packet.result.data.servedUnits).toBe(1);
+    expect(current.packet.result.data.task?.status).toBe("current");
+    expect(Object.values(current.packet.result.data.sections)).toEqual([0, 0, 0, 0]);
+    expect(current.envelope.quoted).toHaveLength(1);
+    expect(current.packet.result.data.packetMd).toContain("Resume the recorded task.");
+    const small = await read(scene, { ...args, budget_tokens: 100 });
+    if (!("data" in small.packet.result)) throw new Error("packet missing");
+    expect(small.packet.result.data.servedUnits).toBe(0);
+    expect(small.packet.result.data.task?.reason).toBe("constraints_do_not_fit");
+    expect(small.envelope.quoted).toEqual([]);
+    expect(small.packet.result.data.tokens).toBeLessThanOrEqual(100);
+    revokeSourceGrant(scene.db, { source_key: scene.visible.concept.sourceKey, expected_revision: 1, operation_id: "task-witness-revoke" });
+    const revoked = await read(scene, args);
+    if (!("data" in revoked.packet.result)) throw new Error("packet missing");
+    expect(revoked.packet.result.data.servedUnits).toBe(0);
+    expect(revoked.packet.result.data.task?.status).toBe("unavailable");
+    expect(revoked.envelope.quoted).toEqual([]);
+    expect(revoked.packet.result.data.packetMd).not.toContain("Resume the recorded task.");
   } finally { scene.dispose(); }
 });
