@@ -1,6 +1,7 @@
 import { ENTITY_PAGE_TYPES } from "../contracts/page-candidate";
 import type { PageCandidate } from "../contracts/page-candidate";
 import type { CaptureEvent } from "../contracts/event";
+import { pageClaimKey } from "../claims/hash";
 import { DETERMINISTIC_PRODUCER_BUDGET } from "./budget";
 import { MAX_PROPOSAL_BODY_CHARS } from "./proposals";
 import type { ProposalInput } from "./proposals";
@@ -18,6 +19,9 @@ function headOf(text: string, units: number): string {
  * came from the owner's own estate, exactly as it does for `editBody`. A
  * `---` line inside it stays inert because the page writer closes the
  * frontmatter fence first.
+ *
+ * The claim carries a key per source record, so a newer revision of the same
+ * page supersedes the older claim instead of being composed after it.
  *
  * A page longer than staging files is staged as its head, marked
  * `x-body-truncated`, rather than refused: a refusal would stage nothing of
@@ -62,6 +66,7 @@ export function pageCandidateProposal(
     target: candidate.target,
     body: truncated ? headOf(event.text, MAX_PROPOSAL_BODY_CHARS) : event.text,
     frontmatter,
+    claim_key: pageClaimKey(event.connector_id, event.source_record_id),
     provenance: [event.event_id],
     subjects,
     producer: "deterministic",
