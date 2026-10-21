@@ -1,3 +1,4 @@
+import type { LlmPort } from "../contracts/llm";
 import { VaultMutationError, withVaultMutationSync } from "../vault/mutation-scope";
 import { recoverCanonWrites } from "../canon/recovery";
 import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent";
@@ -76,6 +77,7 @@ interface RailHooksBase {
   readonly refresh?: () => Promise<RailRefreshReport>;
   readonly claims?: ClaimsIo;
   readonly model_ref?: string | null;
+  readonly llm?: LlmPort;
   readonly embedding_backlog?: number;
   /**
    * True when the vault configures an embedding port. The host sets it from
@@ -213,6 +215,8 @@ async function runSyncRail(
   const written = await runWritePass(db, vaultPath, {
     budget,
     extraction,
+    ...(config.consolidation === undefined ? {} : { consolidation: config.consolidation }),
+    ...(hooks?.llm === undefined ? {} : { llm: hooks.llm }),
     ...(stopRequested === undefined ? {} : { stopRequested }),
     run_id: runId,
     now,
@@ -255,6 +259,7 @@ async function runSyncRail(
     canon_writes: written.canon_writes,
     ...(written.canon_quarantined.length === 0 ? {} : { canon_quarantined: written.canon_quarantined }),
     model: { ...written.model, model_ref: hooks?.model_ref ?? null },
+    ...(written.consolidation === undefined ? {} : { consolidation: written.consolidation }),
     ...(written.oversized.segments + written.oversized.skipped === 0 ? {} : { oversized: written.oversized }),
     stopped,
     errors,

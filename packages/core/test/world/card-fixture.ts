@@ -9,12 +9,12 @@ import { readWorldView, serveWorldView } from "@kizuki/core/world";
 import type { ServeContext } from "../../src/serving/types";
 import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
-import { enrollSource } from "../helpers/world-seed";
+import { enrollSource, type WorldSeedOptions } from "../helpers/world-seed";
 import { tempVault } from "../helpers/vault";
 
-export async function cardFixture(database?: Database) {
+export async function cardFixture(database?: Database, options: Pick<WorldSeedOptions, "model"> = {}) {
   const vault = tempVault("kizuki-card-"), db = database ?? openLedger(`${vault.path}/.kizuki/kizuki.db`);
-  const connector = "card.fixture", sourceKey = enrollSource(db, connector, "public");
+  const connector = "card.fixture", sourceKey = enrollSource(db, connector, "public", undefined, options.model);
   const namespace = { connector_id: connector, source_key: sourceKey };
   const ref = (id: string) => ({ kind: "supplied" as const, id, namespace });
   const ctx: ServeContext = { db, vaultPath: vault.path, principal: OWNER };

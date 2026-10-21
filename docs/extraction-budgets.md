@@ -493,3 +493,5 @@ segment request, a real kill between segments, replay of a journaled segment,
 a skip with its receipt, doctor line and retry, records under the limit,
 purge, and backup and restore. All fixtures are synthetic; they make no
 provider or account calls.
+
+World-card summaries use separate [consolidation budgets](world-consolidation.md); their usage is reported independently from extraction.

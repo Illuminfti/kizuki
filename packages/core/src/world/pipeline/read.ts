@@ -88,7 +88,7 @@ export function readWorldCard(
   const cluster = group(frame, handle, stages.groupers);
   const collection = collectCard(frame, cluster, kind, stages.collectors);
   if (collection === null) return null;
-  const body = enrich(frame, collection.items, stages.enrichers, collection.overflow);
+  const body = enrich(frame, collection.items, stages.enrichers, collection.overflow, { cluster, kind: kind.id });
   return assembleCard(frame, kind, assembler, cluster, collection, body);
 }
 
