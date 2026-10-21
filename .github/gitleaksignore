@@ -29,3 +29,6 @@ df334914dccfef538ab625413cab9999d330247b:packages/core/test/sensitivity/event-cl
 25b841c94987fb121977425c860846f633ec193c:packages/core/test/sensitivity/event-classes.test.ts:generic-api-key:337
 25b841c94987fb121977425c860846f633ec193c:packages/core/test/serving/world-correct-modes.test.ts:generic-api-key:102
 25b841c94987fb121977425c860846f633ec193c:packages/core/test/serving/canon-classes.test.ts:generic-api-key:34
+# Literal alphabet-and-digits canary in the consolidation scrubber regression.
+# It is fabricated test evidence; the test proves it never reaches the model.
+c54784e98b2c3aa4235beeb123d42890d2459564:packages/core/test/world/consolidation.test.ts:generic-api-key:312
