@@ -74,7 +74,7 @@ const PRIVATE_CORRECTION: RetrievalDoc = {
 describe("kizuki.retrieval.embedded-pg conformance", () => {
   test("bound capabilities advertise vector nomination only with an embedding port", async () => {
     const lexical = await openPort();
-    expect(lexical.port.descriptor.supports).toEqual(["lexical", "hybrid", "graph", "provenance-erasure/v1"]);
+    expect(lexical.port.descriptor.supports).toEqual(["lexical", "hybrid", "graph", "provenance-erasure/v1", "document-scope/v1"]);
     expect((await lexical.port.health()).status).toBe("ready");
     const embedded = await openPort(new FixtureEmbeddingPort());
     expect(embedded.port.descriptor.supports).toEqual(EMBEDDED_RETRIEVAL_DESCRIPTOR.supports);
@@ -100,7 +100,7 @@ describe("kizuki.retrieval.embedded-pg conformance", () => {
       registry.listPorts("retrieval").find(({ id }) => id === EMBEDDED_RETRIEVAL_ID),
     ).toMatchObject({
       contract: "kizuki.retrieval/v1",
-      supports: ["lexical", "vector", "hybrid", "graph", "provenance-erasure/v1"],
+      supports: ["lexical", "vector", "hybrid", "graph", "provenance-erasure/v1", "document-scope/v1"],
       requires_lease: true,
       optional_package: "@kizuki/retrieval-pg",
     });

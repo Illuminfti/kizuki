@@ -2,13 +2,13 @@ import { removeOwnedGeneration, validateOwnedGeneration } from "./owned-generati
 import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { openOwnedDirectory, PortError, validatePortDescriptor, validateProvenanceEventIds, validateRetrievalDoc, validateRetrievalQuery, SENSITIVITY_ORDER, withAbortSignal } from "@kizuki/core";
-import type { OwnedDirectory, AbsenceProof, EmbedProgress, ProvenanceAbsenceProof, EmbeddingPort, EmbeddingSpace, EntityRef, GraphQueryOptions, GraphResult, PortContext, PortDescriptor, PortHealth, RetrievalDoc, RetrievalMutationReport, RetrievalPort, RetrievalQuery, RetrievalResult } from "@kizuki/core";
+import type { OwnedDirectory, AbsenceProof, Chunk, EmbedProgress, ProvenanceAbsenceProof, EmbeddingPort, EmbeddingSpace, EntityRef, GraphQueryOptions, GraphResult, PortContext, PortDescriptor, PortHealth, RetrievalDoc, RetrievalMutationReport, RetrievalPort, RetrievalQuery, RetrievalResult } from "@kizuki/core";
 import { EMBEDDED_RETRIEVAL_DESCRIPTOR } from "./descriptor";
 import { WriterLease } from "./lease";
 import type { LeaseReceipt } from "./lease";
 import { candidateFromDoc, finalizeRecipe, hitsFromCandidates, walkNeighbors, MAX_WALK_DEPTH } from "./rank";
 import { canonical, SqlStore } from "./sql-store";
-import type { CandidateRow } from "./sql-store";
+import type { CandidateRow, PendingRow } from "./sql-store";
 import { ChunkLimitError, chunkDocument, engineMismatch } from "./store";
 import type { EngineJson, EmbedCheckpoint } from "./store";
 import { assertNoStoreTransaction, runStoreTransaction } from "./txn";
@@ -21,6 +21,14 @@ const CORPUS_LIMITS = { text_bytes: EMBEDDED_ENGINE_MAX_TEXT_BYTES, payload_byte
 type CorpusSize = Record<keyof typeof CORPUS_LIMITS, number>;
 const MIN_TEXT_BYTES = 1024 * 1024;
 const MAX_TEXT_BYTES = 1024 * 1024 * 1024;
+/** Local CPU embedding latency rises sharply above eight inputs; keep rebuild calls bounded. */
+const EMBEDDING_BATCH_SIZE = 8;
+// Persist useful progress before Core's 30s deadline on bounded CPU embedders.
+const REBUILD_EMBEDDING_BATCH_SIZE = 2;
+interface PendingEmbedding {
+  readonly key: string;
+  readonly chunks: Chunk[];
+}
 
 export interface EmbeddedRetrievalOptions {
   /** Overrides `max_text_bytes` from the port configuration. */
@@ -148,6 +156,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       }
       const empty = (await this.store.db.query("SELECT 1 FROM retrieval_docs LIMIT 1")).rows.length === 0;
       await this.store.transaction(async tx => {
+        if (validated.length > 0) await tx.exec("DELETE FROM rebuild_docs; DELETE FROM retrieval_meta WHERE key='rebuild_identity'");
         for (const doc of validated) await this.store.writeDoc(tx, doc, this.tokens, this.overlap, this.countTokens);
         if (this.embedding !== undefined && empty) await this.store.setMeta("chunking", this.chunkingId(), tx);
       });
@@ -244,6 +253,8 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
       this.assertMutable();
       await this.assertAvailable();
       return this.store.transaction(async (tx) => {
+        await tx.query(`DELETE FROM rebuild_docs WHERE ${byProvenance ? "ARRAY(SELECT jsonb_array_elements_text(doc->'provenance')) && $1::text[]" : "doc_id=ANY($1::text[])"}`, [values]);
+        await tx.exec("DELETE FROM retrieval_meta WHERE key='rebuild_identity'");
         await tx.query(`DELETE FROM retrieval_docs WHERE ${byProvenance ? "provenance && $1::text[]" : "doc_id=ANY($1::text[])"}`, [values]);
         if (this.checkpoint !== null && (await tx.query(
           "SELECT 1 FROM retrieval_docs WHERE doc_id=$1", [this.checkpoint.doc_id],
@@ -274,6 +285,9 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
           WHERE EXISTS (
             SELECT 1 FROM retrieval_docs AS d
              WHERE ${byProvenance ? "d.provenance && ARRAY[requested.id, 'event:' || requested.id]" : "d.doc_id = requested.id"}
+          ) OR EXISTS (
+            SELECT 1 FROM rebuild_docs AS d
+             WHERE ${byProvenance ? "ARRAY(SELECT jsonb_array_elements_text(d.doc->'provenance')) && ARRAY[requested.id, 'event:' || requested.id]" : "d.doc_id = requested.id"}
           ) ORDER BY doc_id`, [[...ids]])).rows.map(row => row.doc_id);
     });
     return { checked: ids.length, found, store: this.descriptor.id, method: byProvenance ? "sql-event-provenance" : "sql-exact-documents", at: this.ctx.clock() };
@@ -389,21 +403,29 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     const documents = new Set<string>();
     const recut = new Set<string>();
     while (!this.closed && (limit === undefined || chunks < limit)) {
-      const pending = await this.store.run(() => this.store.pending(only));
-      if (pending === undefined || this.closed) {
+      const remaining = limit === undefined ? EMBEDDING_BATCH_SIZE : Math.min(EMBEDDING_BATCH_SIZE, limit - chunks);
+      const pending = await this.store.run(() => this.store.pending(remaining, only));
+      if (pending.length === 0 || this.closed) {
         break;
       }
       assertNoStoreTransaction("embedDocs");
-      let vector: Float32Array | undefined;
+      let vectors: Float32Array[];
       try {
-        [vector] = await embedding.embedDocs([{ chunk_id: pending.chunk_id, doc_id: pending.doc_id, title: pending.title, text: pending.body, index: pending.chunk_index }]);
+        vectors = await embedding.embedDocs(pending.map(chunk => ({ chunk_id: chunk.chunk_id, doc_id: chunk.doc_id, title: chunk.title, text: chunk.body, index: chunk.chunk_index })));
       } catch (error) {
         // A chunk cut for another tokenizer must not stall every chunk behind it: cut its document
-        // again once, and give up on it only if the fresh chunks are refused too.
-        if (!(error instanceof PortError) || error.code !== "budget_exhausted" || recut.has(pending.doc_id)) throw error;
-        recut.add(pending.doc_id);
+        // again once, and give up on it only if the fresh chunks are refused too. A batched
+        // refusal does not identify its culprit, so retry each item through that established path.
+        if (!(error instanceof PortError) || error.code !== "budget_exhausted") throw error;
+        if (pending.length > 1) {
+          for (const item of pending) chunks += await this.drainEmbeddingBatch([item], space, embedding, recut, documents);
+          continue;
+        }
+        const item = pending[0]!;
+        if (recut.has(item.doc_id)) throw error;
+        recut.add(item.doc_id);
         await this.store.run(async () => {
-          const row = (await this.store.db.query<{ doc: RetrievalDoc }>("SELECT doc FROM retrieval_docs WHERE doc_id=$1", [pending.doc_id])).rows[0];
+          const row = (await this.store.db.query<{ doc: RetrievalDoc }>("SELECT doc FROM retrieval_docs WHERE doc_id=$1", [item.doc_id])).rows[0];
           if (row !== undefined) {
             const size = await this.retainedSize([row.doc.doc_id]);
             const added = this.documentSize(row.doc);
@@ -414,22 +436,51 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
         });
         continue;
       }
-      this.validateVector(vector ?? null, space);
-      if (this.closed) {
-        break;
-      }
-      await this.store.run(() => this.store.transaction(async (tx) => {
-        const result = await tx.query("UPDATE retrieval_chunks SET embedding=$1::vector,space=$2,embedded_at=$3 WHERE chunk_id=$4 AND revision=$5 RETURNING chunk_id", [JSON.stringify([...vector!]), space.id, this.ctx.clock(), pending.chunk_id, pending.revision]);
-        if (result.rows.length > 0) {
-          this.checkpoint = { doc_id: pending.doc_id, chunk_index: pending.chunk_index + 1, space: space.id };
-          await this.store.setMeta("checkpoint", this.checkpoint, tx);
-          chunks += 1;
-          documents.add(pending.doc_id);
-        }
-      }));
+      chunks += await this.persistEmbeddingBatch(pending, vectors, space, documents);
     }
     // A pass cut short by close or erasure has no store left to count in.
     return { chunks, documents: documents.size, remaining: this.closed ? 0 : await this.store.run(() => this.store.pendingCount()) };
+  }
+  /** Runs a one-item fallback after a batch-wide budget refusal. */
+  private async drainEmbeddingBatch(pending: readonly PendingRow[], space: EmbeddingSpace, embedding: EmbeddingPort, recut: Set<string>, documents: Set<string>): Promise<number> {
+    const item = pending[0]!;
+    try {
+      const vectors = await embedding.embedDocs([{ chunk_id: item.chunk_id, doc_id: item.doc_id, title: item.title, text: item.body, index: item.chunk_index }]);
+      return this.persistEmbeddingBatch(pending, vectors, space, documents);
+    } catch (error) {
+      if (!(error instanceof PortError) || error.code !== "budget_exhausted" || recut.has(item.doc_id)) throw error;
+      recut.add(item.doc_id);
+      await this.store.run(async () => {
+        const row = (await this.store.db.query<{ doc: RetrievalDoc }>("SELECT doc FROM retrieval_docs WHERE doc_id=$1", [item.doc_id])).rows[0];
+        if (row !== undefined) {
+          const size = await this.retainedSize([row.doc.doc_id]);
+          const added = this.documentSize(row.doc);
+          for (const key of Object.keys(size) as Array<keyof CorpusSize>) size[key] += added[key];
+          await this.checkCapacity(size);
+          await this.store.transaction(tx => this.store.writeChunks(tx, row.doc, this.tokens, this.overlap, this.countTokens));
+        }
+      });
+      return 0;
+    }
+  }
+  /** Applies only vectors whose rows and revisions remain current after the model call. */
+  private async persistEmbeddingBatch(pending: readonly PendingRow[], vectors: readonly Float32Array[], space: EmbeddingSpace, documents: Set<string>): Promise<number> {
+    if (vectors.length !== pending.length) throw new PortError("space_mismatch", "embedding server returned an unexpected vector count", false);
+    for (const vector of vectors) this.validateVector(vector, space);
+    if (this.closed) return 0;
+    return this.store.run(() => this.store.transaction(async (tx) => {
+      let written = 0;
+      for (const [at, item] of pending.entries()) {
+        const vector = vectors[at]!;
+        const result = await tx.query("UPDATE retrieval_chunks SET embedding=$1::vector,space=$2,embedded_at=$3 WHERE chunk_id=$4 AND revision=$5 RETURNING chunk_id", [JSON.stringify([...vector]), space.id, this.ctx.clock(), item.chunk_id, item.revision]);
+        if (result.rows.length === 0) continue;
+        this.checkpoint = { doc_id: item.doc_id, chunk_index: item.chunk_index + 1, space: space.id };
+        await this.store.setMeta("checkpoint", this.checkpoint, tx);
+        written += 1;
+        documents.add(item.doc_id);
+      }
+      return written;
+    }));
   }
   /**
    * Chunks are cut once and embedded once. When the embedding port cuts them
@@ -517,10 +568,10 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
     }
   }
   /** Stage documents and vectors before atomic replacement, reusing only exact same-space chunks. */
-  rebuildFromDocuments(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>, options: { signal?: AbortSignal } = {}): Promise<void> {
+  rebuildFromDocuments(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>, options: { signal?: AbortSignal; snapshot_id?: string; assertCurrent?: () => void } = {}): Promise<void> {
     return this.rebuildDocuments(docs, true, options);
   }
-  private async rebuildDocuments(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>, reuseVectors: boolean, options: { signal?: AbortSignal } = {}): Promise<void> {
+  private async rebuildDocuments(docs: AsyncIterable<RetrievalDoc> | Iterable<RetrievalDoc>, reuseVectors: boolean, options: { signal?: AbortSignal; snapshot_id?: string; assertCurrent?: () => void } = {}): Promise<void> {
     const check = (): void => { options.signal?.throwIfAborted(); this.assertOpen(); };
     check();
     this.assertMutable();
@@ -533,8 +584,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
         throw new PortError("config_invalid", "embedding dimensions must be 1..2000 for HNSW", false);
       }
       await this.store.run(() => this.store.db.exec(`
-        CREATE TEMP TABLE rebuild_docs (doc_id text PRIMARY KEY,doc jsonb NOT NULL);
-        CREATE TEMP TABLE rebuild_vectors (chunk_id text PRIMARY KEY,embedding vector NOT NULL);`));
+        CREATE TEMP TABLE incoming_rebuild_docs (doc_id text PRIMARY KEY,doc jsonb NOT NULL);`));
       const size: CorpusSize = { text_bytes: 0, payload_bytes: 0, documents: 0, chunks: 0, links: 0 };
       for await (const raw of docs) {
         check();
@@ -548,12 +598,51 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
         const added = this.documentSize(doc);
         for (const key of Object.keys(size) as Array<keyof CorpusSize>) size[key] += added[key];
         await this.store.run(() => this.checkCapacity(size));
-        await this.store.run(() => this.store.db.query("INSERT INTO rebuild_docs VALUES($1,$2::jsonb) ON CONFLICT(doc_id) DO UPDATE SET doc=excluded.doc", [doc.doc_id, JSON.stringify(doc)]));
+        await this.store.run(() => this.store.db.query("INSERT INTO incoming_rebuild_docs VALUES($1,$2::jsonb) ON CONFLICT(doc_id) DO UPDATE SET doc=excluded.doc", [doc.doc_id, JSON.stringify(doc)]));
       }
+      // A complete, bounded input is priced before replacing any private stage.
+      // Include every authority/provenance field, not only the embedded text.
+      const identity = await this.store.run(async () => {
+        const rows = (await this.store.db.query<{doc: RetrievalDoc}>("SELECT doc FROM incoming_rebuild_docs ORDER BY doc_id")).rows;
+        return sha256Text(canonical({ docs: rows.map(row => row.doc), space, chunking: this.chunkingId(), snapshot_id: options.snapshot_id ?? null }));
+      });
+      await this.store.run(() => this.store.transaction(async tx => {
+        const prior = (await tx.query<{value: string}>("SELECT value FROM retrieval_meta WHERE key='rebuild_identity'")).rows[0]?.value;
+        if (prior !== identity) {
+          await tx.exec("DELETE FROM rebuild_docs; INSERT INTO rebuild_docs SELECT * FROM incoming_rebuild_docs");
+          await this.store.setMeta("rebuild_identity", identity, tx);
+        }
+      }));
       if (space !== null) {
         const stored = await this.store.run(() => this.store.meta("space"));
         const sameSpace = reuseVectors && stored !== null && canonical(stored) === canonical(space);
         let last = "";
+        // A rebuild projects the same current text through canon, claims and quoted
+        // source documents. Exact framed inputs share a vector, while every row still
+        // receives its own staged vector before the atomic replacement.
+        const embedded = new Map<string, Float32Array>();
+        const completed = new Map((await this.store.run(async () => (await this.store.db.query<{chunk_id: string; embedding: string}>(
+          "SELECT chunk_id,embedding::text FROM rebuild_vectors")).rows)).map(row => [row.chunk_id, Float32Array.from(JSON.parse(row.embedding) as number[])]));
+        let batch: PendingEmbedding[] = [];
+        const flush = async (): Promise<void> => {
+          if (batch.length === 0) return;
+          check();
+          assertNoStoreTransaction("embedDocs");
+          const current = batch;
+          batch = [];
+          const vectors = await withAbortSignal(this.embedding!.embedDocs(current.map(entry => entry.chunks[0]!)), options.signal);
+          if (vectors.length !== current.length) throw new PortError("space_mismatch", "embedding server returned an unexpected vector count", false);
+          for (const vector of vectors) this.validateVector(vector, space);
+          check();
+          await this.store.run(() => this.store.transaction(async tx => {
+            for (const [at, entry] of current.entries()) {
+              for (const chunk of entry.chunks) {
+                await tx.query("INSERT INTO rebuild_vectors VALUES($1,$2,$3::vector) ON CONFLICT(chunk_id) DO NOTHING", [chunk.chunk_id, chunk.doc_id, JSON.stringify([...vectors[at]!])]);
+              }
+            }
+          }));
+          for (const [at, entry] of current.entries()) embedded.set(entry.key, vectors[at]!);
+        };
         for (;;) {
           check();
           const rows = await this.store.run(async () => (await this.store.db.query<{doc: RetrievalDoc}>(
@@ -565,19 +654,29 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
             if (!(sameSpace && await this.store.run(() => this.store.reuseVectors(doc.doc_id, doc.title, chunks)))) {
               for (const chunk of chunks) {
                 check();
-                assertNoStoreTransaction("embedDocs");
-                const [vector] = await withAbortSignal(this.embedding!.embedDocs([{chunk_id: chunk.chunk_id, doc_id: doc.doc_id, title: doc.title, text: chunk.text, index: chunk.index}]), options.signal);
-                this.validateVector(vector ?? null, space);
-                check();
-                await this.store.run(() => this.store.db.query("INSERT INTO rebuild_vectors VALUES($1,$2::vector)", [chunk.chunk_id, JSON.stringify([...vector!])]));
+                const staged: Chunk = { chunk_id: chunk.chunk_id, doc_id: doc.doc_id, title: doc.title, text: chunk.text, index: chunk.index };
+                const key = JSON.stringify([staged.title, staged.text]);
+                const saved = completed.get(staged.chunk_id);
+                if (saved !== undefined) { this.validateVector(saved, space); embedded.set(key, saved); continue; }
+                const vector = embedded.get(key);
+                if (vector !== undefined) {
+                  await this.store.run(() => this.store.db.query("INSERT INTO rebuild_vectors VALUES($1,$2,$3::vector) ON CONFLICT(chunk_id) DO NOTHING", [staged.chunk_id, staged.doc_id, JSON.stringify([...vector])]));
+                  continue;
+                }
+                const duplicate = batch.find(entry => entry.key === key);
+                if (duplicate !== undefined) duplicate.chunks.push(staged);
+                else batch.push({ key, chunks: [staged] });
+                if (batch.length === REBUILD_EMBEDDING_BATCH_SIZE) await flush();
               }
             }
             last = doc.doc_id;
           }
         }
+        await flush();
       }
       await this.store.run(async () => {
         check();
+        options.assertCurrent?.();
         await this.store.transaction(async tx => {
           await tx.exec("DELETE FROM retrieval_docs; DROP INDEX IF EXISTS retrieval_chunks_hnsw_cosine; DELETE FROM retrieval_meta WHERE key IN ('space','checkpoint','refusal')");
           let last = "";
@@ -594,7 +693,12 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
           await this.store.setMeta("chunking", this.chunkingId(), tx);
           await this.store.setMeta("rebuilt", this.ctx.clock(), tx);
           await this.store.setMeta("migration_required", false, tx);
+          if (space !== null && (await tx.query("SELECT 1 FROM retrieval_chunks WHERE embedding IS NULL LIMIT 1")).rows.length !== 0) {
+            throw new PortError("unavailable", "rebuild staging is incomplete", true);
+          }
+          await tx.exec("DELETE FROM rebuild_docs; DELETE FROM retrieval_meta WHERE key='rebuild_identity'");
           check();
+          options.assertCurrent?.();
         });
         this.checkpoint = null;
         await this.syncEngineMetadata();
@@ -603,7 +707,7 @@ export class EmbeddedRetrievalPort implements RetrievalPort {
         rmSync(join(this.ctx.data_dir, "store", name), { force: true });
       }
     } finally {
-      try { if (!this.closed) await this.store.run(() => this.store.db.exec("DROP TABLE IF EXISTS rebuild_vectors; DROP TABLE IF EXISTS rebuild_docs")); }
+      try { if (!this.closed) await this.store.run(() => this.store.db.exec("DROP TABLE IF EXISTS incoming_rebuild_docs")); }
       finally { this.rebuilding = false; }
     }
   }
