@@ -61,7 +61,7 @@ test("listed MCP client discovers and reads real supported Concept and Situation
 
 test("MCP validates issued views, unchanged, share and cross-client resume against the full grammar", async () => {
   fixture = mcpFixture();
-  const seeded = await worldFixture(fixture.db);
+  const seeded = await worldFixture(fixture.db, { completeSummary: true });
   const owner = await connectClient(fixture.owner(), open);
   const fullReader = addAgent(fixture.db, "full-view-peer", { ...OWNER_AGENT_GRANT, deny_classes: [] });
   const peer = await connectClient({ ...fixture.owner(), principal: authenticate(fixture.db, fullReader.token)! }, open);

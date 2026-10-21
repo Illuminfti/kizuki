@@ -26,7 +26,13 @@ test("MCP and real HTTP expose read-only knowledge with unchanged tool count", a
     expect(resumed.result.data).toEqual(f.readProcedure());
     const agent = await connectClient(f.agents[0]!.ctx, close);
     const filed = await f.file(0, "outcome.provider_ack", { result: "acknowledged" });
-    const replay = await call(agent, "propose", filed.input);
+    const timeline = envelopeOf(await call(agent, "timeline", { since: filed.event.occurred_at }));
+    const evidence = (timeline.quoted as import("../../core/src/contracts/scoped-tools").QuotedChunkV2[])
+      .find(chunk => chunk.text === filed.event.text)!;
+    expect(evidence).toBeDefined();
+    expect(evidence.subjects).toHaveLength(1);
+    const replay = await call(agent, "propose", { ...filed.input, subject: f.findProcedure(f.agents[0]!.ctx), subjects: evidence.subjects,
+      object: { kind: "literal", value: filed.input.object }, provenance: [evidence.eventVersion] });
     expect(replay.isError ?? false).toBe(false);
     expect((envelopeOf(replay).data as any).outcome).toBe("duplicate");
   } finally { for (const stop of close.reverse()) await stop(); await http.stop(); f.dispose(); }

@@ -41,9 +41,9 @@ test("an internal failure inside a successful MCP envelope fails the campaign fo
     for (const [ctx, reported] of [
       // The owner envelope reports the failure as an `error` denial.
       [fixture.owner(), { denied: [{ reason: "error", count: 1 }] }],
-      // An agent envelope hides denials, so only the degradation names the failure.
+      // Scoped packets expose the closed storage reason without owner diagnostics.
       [fixture.agent("reader-private"), { schema: "kizuki.envelope/v2", data: {
-        schema: "kizuki.context-packet/v2", result: { status: "incomplete", data: { retrievalDegraded: ["context-unavailable"] } },
+        schema: "kizuki.context-packet/v2", result: { status: "incomplete", reasons: ["storage"], data: { coverage: { status: "partial", gaps: ["coverage"] } } },
       } }],
     ] as const) {
       const raw = await call(await connectClient(ctx, open), "context_packet", args);

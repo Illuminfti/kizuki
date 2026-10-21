@@ -35,7 +35,7 @@ export const TOOL_DESCRIPTIONS: Record<Tool, string> = {
   timeline: `Read captures by time, RawSubjectRef, SourceRef or EventVersionRef. offset/span expand a passage. Missing or forbidden evidence is unavailable. ${TAINT_RULE}`,
   context_packet: `Build a purpose-scoped Markdown brief within budget_tokens. v2 uses typed subjects, taskEventVersion and priorView; v1 supports task_event_id and delta capabilities. Constraints remain whole. Unsupported hooks stay pull-only. ${TAINT_RULE}`,
   graph_neighbors: `Read links around a PageRef, RawSubjectRef or EventVersionRef (v2), or id (v1). ${TAINT_RULE}`,
-  system_health: `Read permitted health and connection counts; owner also receives vault-wide state. v1 only.`,
+  system_health: `Read permitted health and connection counts; owner also receives vault-wide state. v1 only. ${TAINT_RULE}`,
   world_view: `${WORLD.description} ${TAINT_RULE}`,
   propose: `File a claim for the receipted writer. v2 takes typed provenance, subjects and target; object must be literal. Outcome predicates accept a JSON literal binding task, attempt, criterion, subjectRef and artifactVersion. Reports alone do not prove success. ${TAINT_RULE}`,
   correct: `Relay owner words against ClaimRef, ClaimGroupRef or RawSubjectRef (v2); v1 keeps legacy targets. Typed claims accept literal, vocabulary or node objects and correction modes. dry_run previews; refreshWorld reads after commit. Receipts support undo. ${TAINT_RULE}`,

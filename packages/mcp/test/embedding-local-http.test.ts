@@ -80,7 +80,7 @@ timeout_ms = 5000
 
 interface Reply {
   code: number;
-  messages: Array<{ id?: number; result?: { isError?: boolean; structuredContent?: { data?: Record<string, unknown> } } }>;
+  messages: Array<{ id?: number; result?: { isError?: boolean; structuredContent?: { schema?: string; data?: Record<string, unknown> } } }>;
   stderr: string;
 }
 
@@ -115,14 +115,15 @@ describe("kizuki-mcp with a configured local embedding server", () => {
     expect(search?.isError).not.toBe(true);
     // Nothing in the vault says "teapot": only the vector lane can connect it to the kettle event.
     expect(JSON.stringify(search)).toContain("the public kettle is on");
-    const degraded = (search?.structuredContent?.data?.["degraded"] ?? []) as string[];
-    expect(degraded.filter((label) => label !== "index-degraded")).toEqual([]);
+    expect(search?.structuredContent?.schema).toBe("kizuki.envelope/v2");
+    expect(search?.structuredContent?.data?.["gaps"]).not.toContain("retrieval_unavailable");
     const packet = answer(reply, 3);
     expect(packet?.isError).not.toBe(true);
     // Packets nominate canon pages only, and this vault serves none: an empty match is not a lost vector lane.
-    const packetLabels = (packet?.structuredContent?.data?.["retrieval_degraded"] ?? []) as string[];
-    expect(packetLabels).not.toContain("retrieval-vector-unavailable");
-    expect(packetLabels).not.toContain("retrieval-unavailable");
+    expect(packet?.structuredContent?.schema).toBe("kizuki.envelope/v2");
+    const packetData = packet?.structuredContent?.data as { result: { status: string; reasons?: string[] } };
+    expect(["current", "incomplete"]).toContain(packetData.result.status);
+    expect(packetData.result.reasons ?? []).not.toContain("storage");
     // Each call embedded its query once, on the loopback server and nowhere else.
     expect(server.requests.filter((request) => request.body.input[0] === "teapot")).toHaveLength(2);
     expect(reply.stderr).not.toContain("retrieval-unavailable");
@@ -138,9 +139,9 @@ describe("kizuki-mcp with a configured local embedding server", () => {
     expect(reply.code).toBe(0);
     const keyword = answer(reply, 2);
     expect(JSON.stringify(keyword)).toContain("the public kettle is on");
-    expect(keyword?.structuredContent?.data?.["degraded"]).toContain("retrieval-vector-unavailable");
+    expect(keyword?.structuredContent?.data?.["gaps"]).toContain("retrieval_unavailable");
     const paraphrase = answer(reply, 3);
     expect(JSON.stringify(paraphrase)).not.toContain("the public kettle is on");
-    expect(paraphrase?.structuredContent?.data?.["degraded"]).toContain("retrieval-vector-unavailable");
+    expect(paraphrase?.structuredContent?.data?.["gaps"]).toContain("retrieval_unavailable");
   });
 });

@@ -114,12 +114,18 @@ describe("the advertised output schema describes what the server sends", () => {
     const canon = (
       advertised?.outputSchema as {
         properties?: {
-          canon?: { items?: { required?: string[]; properties?: object } };
+          canon?: { items?: { anyOf?: { required?: string[]; properties?: object }[] } };
         };
       }
     ).properties?.canon?.items;
-    expect(canon?.required).toContain("taint");
-    expect(canon?.required).toContain("authority");
+    expect(canon?.anyOf).toHaveLength(2);
+    for (const arm of canon?.anyOf ?? []) {
+      expect(arm.required).toContain("taint");
+      expect(arm.required).toContain("authority");
+    }
+    const ownerCanon = canon?.anyOf?.find(arm => arm.required?.includes("page_id"));
+    expect(ownerCanon).toBeDefined();
+    expect(canon?.anyOf?.find(arm => arm.required?.includes("page"))).toBeDefined();
 
     const chunk = (
       envelopeOf(
@@ -130,7 +136,7 @@ describe("the advertised output schema describes what the server sends", () => {
     // Whatever the engine puts on a chunk is described; nothing is advertised
     // that the engine never sends.
     expect(Object.keys(chunk ?? {}).sort()).toEqual(
-      [...(canon?.required ?? [])].sort(),
+      [...(ownerCanon?.required ?? [])].sort(),
     );
     expect(chunk?.["page_id"]).toBe("person:schema-canon");
     expect(chunk?.["sources"]).toEqual(recorded.sourceIds);
@@ -243,9 +249,15 @@ describe("the advertised output schema describes what the server sends", () => {
       expect(advertised.anyOf?.map(arm => arm.properties?.schema?.const)).toEqual(["kizuki.envelope/v1", "kizuki.envelope/v2"]);
       expect(advertised.anyOf?.[0]?.required).toContain("denied");
       expect(advertised.anyOf?.[1]?.required).toContain("data");
-      expect(advertised.properties?.source_policy?.required?.slice().sort()).toEqual(
-        ["epoch", "legacy_unbound", "mode"],
-      );
+      if (tool.name === "get_page") {
+        expect(advertised.properties?.source_policy?.required?.slice().sort()).toEqual(
+          ["epoch", "legacy_unbound", "mode"],
+        );
+      } else {
+        // Discovery summarizes this owner-only object to bound tools/list.
+        // Runtime validation still uses the complete negotiated grammar.
+        expect(advertised.properties?.source_policy?.required).toBeUndefined();
+      }
     }
   });
 

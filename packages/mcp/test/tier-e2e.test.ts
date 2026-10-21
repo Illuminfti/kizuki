@@ -6,7 +6,7 @@ import { OWNER_AGENT_GRANT, TOOLS, accept, addAgent } from "@kizuki/core";
 import type { ServeContext } from "@kizuki/core";
 import { rebuildDerived } from "@kizuki/core/internal";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { call, connectClient, envelopeOf } from "./client";
+import { call, connectClient, envelopeOf, eventIds, errorOf } from "./client";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
 
@@ -49,9 +49,9 @@ function reader(running: McpFixture, name: string, denyClasses?: ("credential" |
   }).token;
 }
 
-async function eventsSeen(client: Client): Promise<string[]> {
+async function eventsSeen(client: Client, ctx: ServeContext): Promise<string[]> {
   const result = await call(client, "search", { query: "kettle", scope: "ledger", limit: 50 });
-  return (envelopeOf(result)["quoted"] as { event_id: string }[]).map((chunk) => chunk.event_id);
+  return eventIds(ctx, envelopeOf(result));
 }
 
 describe("classes over the protocol", () => {
@@ -64,15 +64,15 @@ describe("classes over the protocol", () => {
     reader(fixture, "private-open", []);
 
     const connect = (ctx: ServeContext) => connectClient(ctx, open);
-    const byDefault = await eventsSeen(await connect(fixture.agent("private-default")));
+    const byDefault = await eventsSeen(await connect(fixture.agent("private-default")), fixture.agent("private-default"));
     expect(byDefault).toContain(plain);
     expect(byDefault).not.toContain(secret);
 
-    expect(await eventsSeen(await connect(fixture.agent("private-open")))).toContain(secret);
-    expect(await eventsSeen(await connect(fixture.owner()))).toContain(secret);
+    expect(await eventsSeen(await connect(fixture.agent("private-open")), fixture.agent("private-open"))).toContain(secret);
+    expect(await eventsSeen(await connect(fixture.owner()), fixture.owner())).toContain(secret);
 
     const timeline = await call(await connect(fixture.agent("private-default")), "timeline", { day: "2026-02-28" });
-    const ids = (envelopeOf(timeline)["quoted"] as { event_id: string }[]).map((chunk) => chunk.event_id);
+    const ids = eventIds(fixture.agent("private-default"), envelopeOf(timeline));
     expect(ids).toContain(plain);
     expect(ids).not.toContain(secret);
   });
@@ -92,10 +92,11 @@ describe("classes over the protocol", () => {
       expect(owner.withheld_pages.map((entry) => entry.path)).toEqual(["entities/zz-link.md"]);
 
       const asAgent = await call(await connectClient(fixture.agent("private-default"), open), "system_health", {});
-      expect(asAgent.isError).not.toBe(true);
-      const agent = envelopeOf(asAgent)["data"] as { pages: { withheld?: number }; withheld_pages?: unknown[] };
-      expect(agent.pages.withheld).toBeUndefined();
-      expect(agent.withheld_pages).toBeUndefined();
+      expect(asAgent.isError).toBe(true);
+      expect(errorOf(asAgent).error).toBe("unsupported_contract");
+      expect(asAgent.structuredContent).toBeUndefined();
+      expect(JSON.stringify(asAgent)).not.toContain("zz-link.md");
+      expect(JSON.stringify(asAgent)).not.toContain(fixture.vaultPath);
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }

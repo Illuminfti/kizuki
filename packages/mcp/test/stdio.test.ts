@@ -154,12 +154,12 @@ describe("the stdio process entry", () => {
       const messages = result.stdout.trim().split("\n").map(line => JSON.parse(line));
       const search = messages.find(message => message.id === 2)?.result;
       expect(search?.isError).not.toBe(true);
-      expect(search?.structuredContent?.data?.degraded).toContain("retrieval-unavailable");
+      expect(search?.structuredContent?.data?.gaps).toContain("retrieval_unavailable");
       expect(JSON.stringify(search)).toContain("public kettle");
       expect(JSON.stringify(search)).not.toContain("private kettle protocol");
       const packet = messages.find(message => message.id === 3)?.result;
       expect(packet?.isError).not.toBe(true);
-      expect(packet?.structuredContent?.data?.result?.data?.retrievalDegraded).toContain("retrieval-unavailable");
+      expect(packet?.structuredContent?.data?.result).toMatchObject({ status: "incomplete", reasons: ["coverage"], data: { coverage: { status: "partial", gaps: ["coverage"] } } });
       expect(JSON.stringify(packet)).not.toContain("private kettle protocol");
       expect(result.stderr).toContain("retrieval-unavailable; using the lexical floor");
       expect(result.stderr).not.toContain(running.vaultPath);

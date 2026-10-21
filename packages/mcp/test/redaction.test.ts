@@ -8,7 +8,7 @@ import {
   TAG_TEXT,
 } from "../../core/test/helpers/synthetic-secrets";
 import { worldFixture } from "../../core/test/serving/world-fixture";
-import { call, connectClient, envelopeOf } from "./client";
+import { call, connectClient, envelopeOf, resolvedCanon, eventIds } from "./client";
 import { mcpFixture } from "./helpers";
 import type { McpFixture } from "./helpers";
 
@@ -79,7 +79,6 @@ const CALLS: [string, Record<string, unknown>][] = [
       since: "2026-02-01T00:00:00Z",
       until: "2026-03-30T00:00:00Z",
       budget_tokens: 2000,
-      hooks: ["session_start"],
     },
   ],
 ];
@@ -88,8 +87,10 @@ test("over stdio an agent gets no credential-shaped text, a forged stamp stays q
   fixture = await seeded();
   const agent = await connectClient(fixture.agent("reader-private"), open);
   const owner = await connectClient(fixture.owner(), open);
+  const found = envelopeOf(await call(agent, "search", { query: "kettle", scope: "canon", limit: 50 }));
+  const page = resolvedCanon(fixture.agent("reader-private"), found).find(chunk => chunk.page_id === "fact:secret")!.page;
   for (const [tool, args] of CALLS) {
-    const served = await call(agent, tool, args);
+    const served = await call(agent, tool, tool === "get_page" ? { page } : args);
     expect(served.isError ?? false).toBe(false);
     const wire = served.content[0]!.text;
     for (const fragment of SECRET_FRAGMENTS)
@@ -189,7 +190,13 @@ test("MCP tool answers neutralize captured harness tags for every principal", as
   if (stored.status !== "stored") throw new Error("fixture not stored");
   for (const ctx of [fixture.owner(), fixture.agent("reader-private")]) {
     const client = await connectClient(ctx, open);
-    const served = await call(client, "timeline", { event_id: stored.event.event_id, span: 1000 });
+    const found = envelopeOf(await call(client, "timeline", { day: "2026-02-28" }));
+    const index = eventIds(ctx, found).indexOf(stored.event.event_id);
+    expect(index).toBeGreaterThanOrEqual(0);
+    const args = ctx.principal.kind === "owner"
+      ? { event_id: stored.event.event_id, span: 1000 }
+      : { eventVersion: (found.quoted as { eventVersion: unknown }[])[index]!.eventVersion, span: 1000 };
+    const served = await call(client, "timeline", args);
     expect(served.isError ?? false).toBe(false);
     const text = JSON.stringify(envelopeOf(served));
     expect(text).toContain("Owner words");
