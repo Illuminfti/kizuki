@@ -2,6 +2,7 @@ import { conceptOp } from "./concept";
 import { describeOp } from "./describe";
 import { discoverConceptsOp, discoverSituationsOp } from "./discover";
 import { situationOp } from "./situation";
+import { evidenceOp } from "./evidence";
 import type { WorldOp, WorldOpRegistry } from "./types";
 
 const COMMON_KEYS = ["operation", "valid", "knownAt"];
@@ -54,6 +55,7 @@ export const WORLD_OPS: WorldOpRegistry = worldOpRegistry([
   situationOp,
   describeOp,
   // slot: CARD
+  evidenceOp,
   // slot: KNOWN
   // slot: VIEW
   // slot: QUEST

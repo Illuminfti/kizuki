@@ -1,0 +1,65 @@
+import { expect, test } from "bun:test";
+import { serveWorldView } from "@kizuki/core/world";
+import { cardFixture } from "../../core/test/world/card-fixture";
+import { startLoopback } from "../../core/test/helpers/world-kit/loopback";
+import { twoClients } from "../../mcp/test/helpers/two-clients";
+import { envelopeOf } from "../../mcp/test/client";
+import { createAppHost } from "../src/app/host";
+import { createHelpers } from "./helpers";
+
+test("one card and its evidence have the same meaning through Core, stdio MCP, HTTP, CLI and the App model", async () => {
+  const clients = await twoClients({ seed: { subject: "topic:initial", label: "Initial topic" }, agent: { subjects: null } });
+  const f = await cardFixture(clients.db), h = createHelpers();
+  const ctx = { ...f.ctx, vaultPath: clients.vaultPath };
+  const env = h.isolatedEnv();
+  const host = createAppHost({ env, vaultOverride: clients.vaultPath, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false, out: () => {}, err: () => {}, prompt: async () => "" });
+  let http: Awaited<ReturnType<typeof startLoopback>> | undefined;
+  const app = async (input: unknown) => (await host.handle(new Request("http://127.0.0.1/app/v1/world_view", { method: "POST", body: JSON.stringify(input) }))).json() as Promise<any>;
+  try {
+    const initialized = h.runCli(env, "init", clients.vaultPath, "--no-service", "--no-default");
+    expect(initialized.exitCode, initialized.stderr).toBe(0);
+    await f.write("concept.example", { kind: "literal", value: "A worked observation" }, { mode: "reported", speaker: "person:ada" });
+    await f.write("learning.application", { kind: "subject", ref: f.ref("topic:bayes") }, { subject: "person:ada", context: ["task:one"] });
+    await f.write("learning.assistance", { kind: "vocabulary", ref: { kind: "vocabulary", id: "learning/assisted" } }, { subject: "task:one", context: ["person:ada"] });
+    const input = f.input("concept", { concept: f.find(ctx) }), core = serveWorldView(ctx, input);
+    const mcp = envelopeOf(await clients.owner.call("world_view", input));
+    expect(mcp.data).toEqual(core.data);
+    const appCard = await app(input);
+    expect(appCard.ok, JSON.stringify(appCard)).toBe(true);
+    expect(appCard.data).toEqual(core.data);
+    const json = h.runCli(env, "--vault", clients.vaultPath, "world", "--operation", "concept", "--ref", f.find().token, "--json");
+    expect(json.exitCode).toBe(0);
+    expect(JSON.parse(json.stdout).data.data).toEqual(core.data);
+    const text = h.runCli(env, "--vault", clients.vaultPath, "world", "--operation", "concept", "--ref", f.find().token);
+    expect(text.exitCode).toBe(0);
+    for (const meaning of ["Revise beliefs using evidence", "A worked observation", "reported", "application", "assisted", "Evidence:", "Uncertainty:", "Coverage:", "Known at: current"]) expect(text.stdout).toContain(meaning);
+    http = await startLoopback(clients.db, clients.vaultPath);
+    const reply = await http.post("world_view", input);
+    expect(reply.status).toBe(200);
+    expect((reply.body as any).value.data).toEqual(core.data);
+    const card = f.card(ctx), evidence = card.definitions[0]!.assessments[0]!.evidence[0]!;
+    const evidenceInput = f.input("evidence", { evidence }), source = serveWorldView(ctx, evidenceInput);
+    expect(envelopeOf(await clients.owner.call("world_view", evidenceInput)).quoted).toEqual(source.quoted);
+    expect((await app(evidenceInput)).data.quoted).toEqual(source.quoted);
+    expect(((await http.post("world_view", evidenceInput)).body as any).value.quoted).toEqual(source.quoted);
+    const args = ["--vault", clients.vaultPath, "world", "--operation", "evidence", "--admission", evidence.admission.token, "--event-version", evidence.eventVersion.token, "--start-utf16", "0", "--end-utf16", String(evidence.span.kind === "text" ? evidence.span.endUtf16 : 0)];
+    expect(JSON.parse(h.runCli(env, ...args, "--json").stdout).data.quoted).toEqual(source.quoted);
+    const quoteText = h.runCli(env, ...args);
+    expect(quoteText.exitCode).toBe(0);
+    expect(quoteText.stdout).toContain("Captured evidence (untrusted):");
+    expect(quoteText.stdout).toContain(`> ${f.definition.event.text}`);
+    const narrow = await clients.readConcept(clients.agent, "Bayesian");
+    expect(narrow.card).not.toBeNull();
+    const narrowCard = (narrow.card!.data as any).result.data;
+    const narrowEvidence = narrowCard.definitions[0].assessments[0].evidence[0];
+    const permitted = envelopeOf(await clients.agent.call("world_view", f.input("evidence", { evidence: narrowEvidence })));
+    expect(permitted.quoted).toHaveLength(1);
+    expect(envelopeOf(await clients.agent.call("world_view", evidenceInput)).data).toEqual({ status: "not_found" });
+  } finally {
+    await http?.stop();
+    await host.close();
+    f.dispose();
+    await clients.close();
+    h.cleanup();
+  }
+}, 120_000);

@@ -363,12 +363,13 @@ export function checkpointModeCursor(
   return mode === "backfill" ? checkpoint.backfill_cursor : checkpoint.sync_cursor;
 }
 
-export function inspectCheckpoints(db: Database): Inspected<Checkpoint>[] {
+/** An optional source set keeps authorization-sensitive callers from loading hidden rows. */
+export function inspectCheckpoints(db: Database, sourceKeys?: readonly string[]): Inspected<Checkpoint>[] {
   return db
-    .query<CheckpointRow, []>(
-      "SELECT * FROM checkpoints ORDER BY connector_id, source_key",
+    .query<CheckpointRow, string[]>(
+      `SELECT * FROM checkpoints${sourceKeys === undefined ? "" : " WHERE source_key IN (SELECT value FROM json_each(?))"} ORDER BY connector_id, source_key`,
     )
-    .all()
+    .all(...(sourceKeys === undefined ? [] : [JSON.stringify(sourceKeys)]))
     .map((row) => inspectRow(row.connector_id, row.source_key, () => checkpointFromRow(row)));
 }
 

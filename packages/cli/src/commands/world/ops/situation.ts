@@ -3,6 +3,7 @@ import type { WorldData } from "@kizuki/core/world";
 import { clean } from "../../../output";
 import { CURRENT, coverageLine } from "./shared";
 import type { WorldCliOp } from "./types";
+import { relationLines } from "./relation-render";
 
 const LABELS: Readonly<Record<string, string>> = {
   "situation.objective": "Objective",
@@ -23,11 +24,14 @@ export const situationCli: WorldCliOp<Extract<WorldData, { schema: "kizuki.situa
   },
   render: (data) => [
     clean(data.situation.labels.map((label) => label.text).join(" / ")) || "Situation",
-    ...[data.objective, data.blocker, data.recentChange, ...data.commitments].flatMap((item) =>
-      item?.object.kind === "literal"
-        ? [`${LABELS[item.predicate] ?? item.predicate}: ${clean(item.object.value)}`]
-        : [],
-    ),
+    `Identity: ${data.situation.resolution}; object: ${data.situation.ref.token}; classification: ${data.situation.classificationClaims.map((ref) => ref.token).join(", ")}.`,
+    ...[["Objective", data.objective], ["Blocker", data.blocker], ["Recent change", data.recentChange]].flatMap(([label, value]) => value === null ? [`${label}: unknown.`] : []),
+    ...[...new Map([data.objective, data.blocker, data.recentChange, ...data.commitments, ...data.uncertainty]
+      .flatMap((item) => item === null ? [] : [[item.claim.token, item] as const])).values()]
+      .flatMap((item) => relationLines(item, LABELS[item.predicate] ?? item.predicate)),
+    `Participants: ${data.participants.map((ref) => ref.token).join(", ") || "none observed"}.`,
+    `Known at: ${data.knownAt.kind}; summary: ${data.summary === null ? "unavailable" : clean(data.summary.text)}.`,
+    ...(data.summary === null ? [] : [`Summary evidence: ${data.summary.admissions.map((ref) => ref.token).join(", ")}.`]),
     coverageLine(data.coverage),
   ],
 };

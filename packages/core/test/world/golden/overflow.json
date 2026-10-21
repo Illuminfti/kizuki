@@ -77,7 +77,7 @@
           "kind": "known",
           "value": 0.5
         },
-        "independence": "unknown",
+        "independence": "dependent",
         "evidence": [
           {
             "admission": {
@@ -142,7 +142,7 @@
           "kind": "known",
           "value": 0.5
         },
-        "independence": "unknown",
+        "independence": "dependent",
         "evidence": [
           {
             "admission": {
@@ -174,5 +174,5 @@
     },
     "history": "unavailable"
   },
-  "digest": "d86ebbb654a334eb42e15ca32cc947c6df4b8def465e93097293286a6839d5b8"
+  "digest": "278c595ecdc54f573f4c641d75b7e950cdd33285dd6a333a7fdd349524466110"
 }

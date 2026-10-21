@@ -2,6 +2,7 @@ import { conceptFragment } from "./concept";
 import { describeFragment } from "./describe";
 import { discoverConceptsFragment, discoverSituationsFragment } from "./discover";
 import { situationFragment } from "./situation";
+import { evidenceFragment } from "./evidence";
 import type { McpWorldOp } from "./types";
 
 export type { McpWorldOp } from "./types";
@@ -14,6 +15,7 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   situationFragment,
   describeFragment,
   // slot: CARD
+  evidenceFragment,
   // slot: KNOWN
   // slot: VIEW
   // slot: QUEST

@@ -1,5 +1,6 @@
 import type { Relation, ViewGap } from "../../contracts/concept-card";
 import type { ConceptCard } from "../../contracts/concept-card";
+import type { ConceptLearning } from "../../contracts/concept-card";
 import { relation } from "../relation";
 import type { Eligible } from "./eligible";
 import type { ReadFrame } from "./frame";
@@ -19,6 +20,8 @@ export interface CardBody {
   /** Gaps beyond source coverage and the traversal bound; they make the card partial. */
   readonly gaps: readonly ViewGap[];
   readonly summary: CardSummary | null;
+  readonly overflow?: boolean;
+  readonly learning?: readonly ConceptLearning[];
 }
 
 /**
@@ -32,6 +35,7 @@ export function enrich(
   frame: ReadFrame,
   items: readonly Eligible[],
   enrichers: readonly Enricher[],
+  overflow = false,
 ): CardBody {
   const start: CardBody = {
     claims: items.map((eligible) => ({
@@ -40,6 +44,7 @@ export function enrich(
     })),
     gaps: [],
     summary: null,
+    overflow,
   };
   return enrichers.reduce((body, enricher) => {
     const next = enricher(frame, body);
