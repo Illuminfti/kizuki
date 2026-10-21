@@ -79,7 +79,8 @@ function parseRefresh(value: unknown): Readonly<Record<string, unknown>> {
 export type CorrectionChange =
   | { readonly mode: "replace_object"; readonly object: CorrectObject | undefined }
   | { readonly mode: "retract" }
-  | { readonly mode: "reclassify_mode"; readonly to: ReclassifiedMode };
+  | { readonly mode: "reclassify_mode"; readonly to: ReclassifiedMode }
+  | { readonly mode: "merge_identity" | "separate_identity"; readonly object: Extract<CorrectObject, {kind: "node"}> };
 
 export interface CorrectionIntent {
   readonly change: CorrectionChange;
@@ -104,9 +105,14 @@ export function parseIntent(args: {
   }
   const to = args.perspective_mode;
   if (mode !== "reclassify_mode" && to !== undefined) throw refuse("perspective_mode", "is only for mode reclassify_mode");
-  if (mode !== "replace_object" && args.object !== undefined) throw refuse("object", "is only for mode replace_object");
+  if (mode !== "replace_object" && mode !== "merge_identity" && mode !== "separate_identity" && args.object !== undefined) throw refuse("object", "is only for mode replace_object");
   let change: CorrectionChange;
-  if (mode === "retract") change = { mode };
+  if (mode === "merge_identity" || mode === "separate_identity") {
+    const object = parseObject(args.object);
+    if (object.kind !== "node") throw refuse("object", "identity correction requires a node");
+    change = { mode, object };
+  }
+  else if (mode === "retract") change = { mode };
   else if (mode === "reclassify_mode") {
     if (!(RECLASSIFIED_MODES as readonly unknown[]).includes(to)) {
       throw refuse("perspective_mode", `must be one of ${RECLASSIFIED_MODES.join(", ")}`);

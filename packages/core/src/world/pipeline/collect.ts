@@ -288,9 +288,10 @@ export function scanMatches(
       let overflow = own.overflow;
       if (groupers.length > 0) {
         const proposed = group(frame, row.handle_id, groupers);
-        const members = grouped.all(JSON.stringify(proposed.members), ...policyBindings, MAX_RELATIONS + 1);
+        overflow ||= proposed.overflow === true;
+        const members = grouped.all(JSON.stringify(proposed.members), ...policyBindings, 257);
         frame.stats.rowsExamined += members.length;
-        if (members.length > MAX_RELATIONS) throw new WorldProjectionBudgetError();
+        if (members.length > 256) throw new WorldProjectionBudgetError();
         const eligible = members.flatMap((member) => {
           const match = matchOf(member.handle_id);
           return match === null ? [] : [{ handle: member.handle_id, ...match }];

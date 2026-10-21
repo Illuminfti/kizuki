@@ -195,7 +195,9 @@ function isWorldClaimTarget(
 
 /** The correction a caller asked for, with a node token replaced by the endpoint it names for them. */
 function worldCorrection(change: CorrectionChange, statement: string, node: RawSubjectRef | null): WorldCorrection {
-  if (change.mode !== "replace_object") return change;
+  if (change.mode === "merge_identity" || change.mode === "separate_identity")
+    return { mode: change.mode, object: { kind: "subject", ref: node! } };
+  if (change.mode === "retract" || change.mode === "reclassify_mode") return change;
   const object = change.object;
   // The statement is the default object, so naming it changes nothing and must not make a new record.
   if (object === undefined || (object.kind === "literal" && object.value === statement)) return { mode: "replace_object" };
@@ -238,7 +240,7 @@ async function correctWorldClaim(
   intent: CorrectionIntent,
 ): Promise<Served<CorrectData>> {
   const resolved = ctx.db
-    .transaction(() => resolvedWorldTarget(ctx, token, intent.change.mode === "replace_object" ? intent.change.object : undefined))
+    .transaction(() => resolvedWorldTarget(ctx, token, "object" in intent.change ? intent.change.object : undefined))
     .immediate();
   ctx = resolved.ctx;
   const target = resolved.target;

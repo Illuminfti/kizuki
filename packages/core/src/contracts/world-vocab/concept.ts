@@ -21,6 +21,7 @@ export const CONCEPT_VOCABULARY: WorldVocabularyModule = {
     concept("concept.requires", ["concept"]),
     concept("concept.example", ["literal", "raw_subject"]),
     concept("concept.counterexample", ["literal", "raw_subject"]),
+    concept("concept.same_as", ["concept"]),
     concept("concept.distinguished_from", ["concept"]),
   ],
 };

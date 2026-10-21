@@ -340,7 +340,7 @@ export const CORRECT_INPUT = z.strictObject({
       z.strictObject({ kind: z.literal("node"), ref: CORRECT_OBJECT_REF }),
     ])
     .optional(),
-  mode: z.enum(["replace_object", "retract", "reclassify_mode"]).optional(),
+  mode: z.enum(["replace_object", "retract", "reclassify_mode", "merge_identity", "separate_identity"]).optional(),
   perspective_mode: z.enum(["suggested", "hypothetical", "questioned"]).optional(),
   refresh_world: z
     .strictObject({
