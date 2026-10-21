@@ -33,24 +33,44 @@ function requiredFile(root: string, path: unknown): string {
   return path;
 }
 
+/** Operator rails expose Core and CLI, without adding a world-view transport. */
+function verifyOperatorSeams(root: string, row: Record<string, unknown>, key: string): void {
+  for (const surface of ["core", "cli"]) {
+    const entries = row[surface];
+    if (!Array.isArray(entries) || entries.length === 0 || entries.some((entry) => typeof entry !== "string" || entry.trim() === ""))
+      fail(`${key} is missing ${surface}`);
+  }
+  for (const surface of ["mcp", "http", "app"])
+    if (row[surface] !== undefined) fail(`${key} cannot declare ${surface}`);
+  if (!Array.isArray(row.implementation) || row.implementation.length === 0) fail(`${key} needs implementation files`);
+  for (const path of row.implementation) requiredFile(root, path);
+  requiredFile(root, row.docs);
+}
+
 /** The shared scaffold accepts append-only workstream rows, with explicit paths when needed. */
 export function verifyPacketSeams(root: string, input: unknown): number {
   if (!Array.isArray(input) || input.length === 0) fail("expected a nonempty packet table");
   const seen = new Set<string>();
   for (const value of input) {
     const row = record(value);
-    if (!Number.isSafeInteger(row.packet) || (row.packet as number) <= 0 || typeof row.workstream !== "string" || row.workstream === "")
+    const operator = row.kind === "operator";
+    if (operator) {
+      if (typeof row.packet !== "string" || !/^[A-Z][A-Z0-9-]{0,47}$/.test(row.packet)) fail("an operator row needs a packet id");
+    } else if (!Number.isSafeInteger(row.packet) || (row.packet as number) <= 0 || typeof row.workstream !== "string" || row.workstream === "")
       fail("a row needs a packet and workstream");
-    const key = `${row.packet}:${row.workstream}`;
+    const key = operator ? `operator:${row.packet}` : `${row.packet}:${row.workstream}`;
     if (seen.has(key)) fail(`duplicate ${key}`);
     seen.add(key);
-    if (typeof row.scope !== "string" || row.scope === "") fail(`${key} needs its implemented scope`);
-    const seams = row.seams === undefined ? SURFACE_FILES : record(row.seams);
-    for (const surface of Object.keys(SURFACE_FILES) as (keyof typeof SURFACE_FILES)[]) {
-      if (typeof row[surface] !== "string" || row[surface] === "") fail(`${key} is missing ${surface}`);
-      const paths = seams[surface];
-      if (!Array.isArray(paths) || paths.length === 0) fail(`${key} needs ${surface} files`);
-      for (const path of paths) requiredFile(root, path);
+    if (operator) verifyOperatorSeams(root, row, key);
+    else {
+      if (typeof row.scope !== "string" || row.scope === "") fail(`${key} needs its implemented scope`);
+      const seams = row.seams === undefined ? SURFACE_FILES : record(row.seams);
+      for (const surface of Object.keys(SURFACE_FILES) as (keyof typeof SURFACE_FILES)[]) {
+        if (typeof row[surface] !== "string" || row[surface] === "") fail(`${key} is missing ${surface}`);
+        const paths = seams[surface];
+        if (!Array.isArray(paths) || paths.length === 0) fail(`${key} needs ${surface} files`);
+        for (const path of paths) requiredFile(root, path);
+      }
     }
     if (!Array.isArray(row.tests) || row.tests.length === 0) fail(`${key} needs acceptance tests`);
     for (const test of row.tests) {

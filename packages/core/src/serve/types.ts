@@ -74,17 +74,8 @@ export const LEDGER_HELD_BACKOFF_MAX_MS = 30_000;
 /** How often a running rail looks for a queued `serve stop`. */
 export const STOP_WATCH_MS = 500;
 
-export const RAIL_IDS = [
-  "sync",
-  "retrieval-sweep",
-  "purge-sweep",
-  "embed-backfill",
-  "brief",
-  "doctor-sweep",
-  "journal-prune",
-  "verify-world",
-] as const;
-export type RailId = (typeof RAIL_IDS)[number];
+/** Any registered rail's id. `isRailId` in `rail-registry.ts` says whether one is registered. */
+export type RailId = string;
 
 export const RUN_STATUSES = ["ok", "degraded", "stopped", "failed"] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
@@ -117,17 +108,6 @@ export interface RailSpec {
   readonly jitter_s: number;
   readonly enabled: boolean;
 }
-
-export const DEFAULT_RAILS: readonly RailSpec[] = [
-  { rail: "sync", period_s: DEFAULT_SYNC_PERIOD_S, jitter_s: 90, enabled: true },
-  { rail: "retrieval-sweep", period_s: 5 * 60, jitter_s: 0, enabled: true },
-  { rail: "purge-sweep", period_s: 10 * 60, jitter_s: 0, enabled: true },
-  { rail: "embed-backfill", period_s: 60, jitter_s: 0, enabled: true },
-  { rail: "brief", period_s: 24 * 60 * 60, jitter_s: 0, enabled: true },
-  { rail: "doctor-sweep", period_s: 60 * 60, jitter_s: 0, enabled: true },
-  { rail: "journal-prune", period_s: 24 * 60 * 60, jitter_s: 0, enabled: true },
-  { rail: "verify-world", period_s: 7 * 24 * 60 * 60, jitter_s: 0, enabled: true },
-];
 
 export interface ScheduleRow {
   readonly rail: RailId;
@@ -649,10 +629,6 @@ export function emptyRunTotals(): Pick<
     budget: {},
     errors: [],
   };
-}
-
-export function isRailId(value: string): value is RailId {
-  return (RAIL_IDS as readonly string[]).includes(value);
 }
 
 export function isCrashPoint(value: string): value is CrashPoint {
