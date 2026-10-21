@@ -11,6 +11,8 @@ import { sourceCoverage, type SourceCoverageGap } from "./coverage";
 
 /** Complete authorized evidence used by a projection, including evidence omitted from its wire body. */
 export interface WorldDependencies {
+  /** Independent guards for bounded operation composition; never overwrite a sibling baseline. */
+  readonly children: WorldDependencies[];
   readonly claims: Set<string>;
   readonly legacyClaims: Map<string, string>;
   cutoff?: KnownCutoff;
@@ -27,7 +29,7 @@ export interface WorldDependencies {
 }
 
 export function worldDependencies(): WorldDependencies {
-  return { claims: new Set(), legacyClaims: new Map(), supports: new Set(), events: new Set(), identityReceipts: new Map(), consolidations: new Map(), coverage: null };
+  return { children: [], claims: new Set(), legacyClaims: new Map(), supports: new Set(), events: new Set(), identityReceipts: new Map(), consolidations: new Map(), coverage: null };
 }
 
 export function recordWorldDependencies(deps: WorldDependencies, item: Eligible): void {
@@ -45,12 +47,14 @@ export function recordWorldDependencies(deps: WorldDependencies, item: Eligible)
 }
 
 /** Bind the complete evidence closure to the existing erasure cascades, without adding another cache table. */
-export function dependencyRefs(db: Database, ns: WorldNamespace, deps: WorldDependencies): string[] {
-  return [
+export function dependencyRefs(db: Database, ns: WorldNamespace, deps: WorldDependencies, depth = 0): string[] {
+  if (depth > 2 || deps.children.length > 32) throw new Error("world dependency composition limit");
+  return [...new Set([
     ...[...deps.legacyClaims.keys(), ...deps.claims].map((id) => issueWorldRef(db, ns, "claim", id).token),
     ...[...deps.supports].map((id) => issueWorldRef(db, ns, "admission", id).token),
     ...[...deps.events].map((id) => issueWorldRef(db, ns, "event_version", id).token),
-  ];
+    ...deps.children.flatMap(child => dependencyRefs(db, ns, child, depth + 1)),
+  ])];
 }
 
 /** Validate one bounded evidence closure at its retained position and current authority. */
@@ -82,7 +86,8 @@ export function worldEvidenceCurrent(ctx: ServeContext, deps: WorldDependencies,
 }
 
 /** Revalidate evidence, retained capabilities and coverage without a global write epoch. */
-export function worldDependenciesCurrent(ctx: ServeContext, deps: WorldDependencies): boolean {
+export function worldDependenciesCurrent(ctx: ServeContext, deps: WorldDependencies, depth = 0): boolean {
+  if (depth > 2 || deps.children.length > 32 || deps.children.some(child => !worldDependenciesCurrent(ctx, child, depth + 1))) return false;
   if (!worldEvidenceCurrent(ctx, deps)) return false;
   if (deps.snapshot !== undefined && (!deps.snapshot.current(ctx) || !worldEvidenceCurrent(ctx, deps, deps.snapshot.cutoff))) return false;
   if (deps.coverage === null) return true;

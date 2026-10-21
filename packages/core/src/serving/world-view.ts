@@ -255,13 +255,13 @@ export function readWorldView(
   return read(ctx, input, registry, worldDependencies()).data;
 }
 
-function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, dependencies: WorldDependencies): WorldResponse {
+function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, dependencies: WorldDependencies, depth = 0, retain = true): WorldResponse {
   const principal = resolvePrincipal(ctx.db, ctx.principal);
   if (principal === null)
     throw new ServeError("unknown_agent", "unknown agent");
   if (!toolAllowed(principal.grant, "world_view"))
     throw new ServeError("tool_not_granted", "tool not granted");
-  ctx = { ...ctx, principal, sourcePurpose: ctx.sourcePurpose ?? "recall" };
+  ctx = { ...ctx, principal, sourcePurpose: ctx.sourcePurpose ?? "recall", worldReadBudget: ctx.worldReadBudget ?? { bytes: 0 } };
   if (!isPlainObject(input)) throw new WorldViewError();
   const op = findWorldOp(registry, input.operation);
   if (op === undefined) throw new WorldViewError();
@@ -295,9 +295,18 @@ function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, depe
         const live = { ...ctx, principal: current };
         const ns = worldNamespace(ctx.db, current);
         // The baseline is judged before any projection work, so an unusable one costs the same for every cause.
-        const view = op.views === true ? openView(live, ns, input, prior) : null;
+        const view = op.views === true && retain ? openView(live, ns, input, prior) : null;
         if (view?.stale === true) return withoutQuotes(answer(op.name, { status: "new_view_required" }));
-        return present(op, op.run({ ctx: live, ns, registry, dependencies, ...(view === null ? {} : { view }) }, query, { valid, knownAt }), view, live, dependencies);
+        const compose = (input: import("../world/ops/types").WorldRecord, options: { readonly retain: boolean } = { retain: false }): WorldResponse => {
+          if (!options.retain && Object.hasOwn(input, "priorView")) throw new WorldViewError();
+          if (depth >= 2 || dependencies.children.length >= 32) throw new WorldProjectionBudgetError();
+          const child = worldDependencies();
+          dependencies.children.push(child);
+          const response = read(live, input, registry, child, depth + 1, options.retain);
+          if ("result" in response.data && response.data.result.status === "unavailable" && response.data.result.reason === "budget") throw new WorldProjectionBudgetError();
+          return response;
+        };
+        return present(op, op.run({ ctx: live, ns, registry, dependencies, read: compose, ...(view === null ? {} : { view }) }, query, { valid, knownAt }), view, live, dependencies);
       })
       .immediate();
   } catch (error) {

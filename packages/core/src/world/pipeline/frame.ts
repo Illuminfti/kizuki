@@ -48,7 +48,7 @@ export function newReadFrame(
     ns,
     valid,
     cutoff,
-    budget: { bytes: 0 },
+    budget: ctx.worldReadBudget ?? { bytes: 0 },
     stats: newReadStats(),
     historyBaseline: false,
     dependencies,
