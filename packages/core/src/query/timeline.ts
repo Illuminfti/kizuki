@@ -1,3 +1,4 @@
+import { currentVersionSql } from "../search/versions";
 import type { Database } from "bun:sqlite";
 import { MAX_GRANT_SCOPE_ITEMS, type Sensitivity } from "../agents/types";
 import { tableExists } from "../ledger/schema";
@@ -25,6 +26,8 @@ export interface TimelineOptions {
   source?: SourceServingScope;
   /** Internal coverage check after policy and before the result cap. */
   missingSearchIndex?: boolean;
+  /** Internal semantic domain: visible later revisions supersede before the cap. */
+  currentVersionsOnly?: boolean;
 }
 
 export interface TimelineEntry {
@@ -184,6 +187,13 @@ function timelinePlan(
       SELECT 1 FROM search_documents d JOIN search_docs f ON f.rowid=d.rowid AND f.doc_id=d.doc_id
       WHERE d.doc_id='event:' || events.event_id AND d.scope='ledger'
     )`);
+  }
+  if (opts.currentVersionsOnly) {
+    const current = currentVersionSql(db, { ceiling,
+      ...(kinds === undefined ? {} : { types: kinds }), ...(subjects === undefined ? {} : { subjects }),
+      ...(opts.since === undefined ? {} : { since: opts.since }), ...(opts.until === undefined ? {} : { until: opts.until }),
+      ...(opts.source === undefined ? {} : { source: opts.source }) });
+    clauses.push(current.sql); bindings.push(...current.bindings);
   }
   bindings.push(limit);
 

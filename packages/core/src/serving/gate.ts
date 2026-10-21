@@ -69,6 +69,7 @@ export interface Served<T> {
     events: { id: string; sensitivity?: import("../agents").Sensitivity }[];
     claims?: import("./claims").ClaimPublication[];
     world?: readonly import("../world/dependencies").WorldDependencies[];
+    retrieval?: readonly import("./retrieval-domain").RetrievalDomain[];
     purpose?: import("../ledger/source-grants").SourcePurpose;
   };
 }

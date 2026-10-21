@@ -10,6 +10,8 @@
     "@kizuki/core": "workspace:*",
     "@modelcontextprotocol/sdk": "1.30.0",
     "zod": "4.5.4",
-    "@kizuki/retrieval-pg": "workspace:*"
+    "@kizuki/retrieval-pg": "workspace:*",
+    "@kizuki/embed-gguf": "workspace:*",
+    "@kizuki/embed-local-http": "workspace:*"
   }
 }

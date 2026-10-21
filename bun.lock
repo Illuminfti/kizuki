@@ -23,6 +23,7 @@
         "@kizuki/connectors": "workspace:*",
         "@kizuki/core": "workspace:*",
         "@kizuki/embed-gguf": "workspace:*",
+        "@kizuki/embed-local-http": "workspace:*",
         "@kizuki/llm": "workspace:*",
         "@kizuki/retrieval-pg": "workspace:*",
         "@kizuki/tui": "workspace:*",
@@ -117,6 +118,12 @@
         "@kizuki/core": "workspace:*",
       },
     },
+    "packages/embed-local-http": {
+      "name": "@kizuki/embed-local-http",
+      "dependencies": {
+        "@kizuki/core": "workspace:*",
+      },
+    },
     "packages/llm": {
       "name": "@kizuki/llm",
       "dependencies": {
@@ -128,6 +135,8 @@
       "version": "1.0.2",
       "dependencies": {
         "@kizuki/core": "workspace:*",
+        "@kizuki/embed-gguf": "workspace:*",
+        "@kizuki/embed-local-http": "workspace:*",
         "@kizuki/retrieval-pg": "workspace:*",
         "@modelcontextprotocol/sdk": "1.30.0",
         "zod": "4.5.4",
@@ -191,6 +200,8 @@
     "@kizuki/core": ["@kizuki/core@workspace:packages/core"],
 
     "@kizuki/embed-gguf": ["@kizuki/embed-gguf@workspace:packages/embed-gguf"],
+
+    "@kizuki/embed-local-http": ["@kizuki/embed-local-http@workspace:packages/embed-local-http"],
 
     "@kizuki/llm": ["@kizuki/llm@workspace:packages/llm"],
 

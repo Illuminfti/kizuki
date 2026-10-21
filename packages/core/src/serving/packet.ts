@@ -467,13 +467,14 @@ async function servePacket(
       let pieces: Piece[];
       let withheld: AuditDenial[];
       let degraded: string[];
+      let retrieval: readonly import("./retrieval-domain").RetrievalDomain[];
       // An explicit `include` asks for exactly those sections.
       const gatherState = profile.session_state && args.include === undefined;
       const stateReasons: Partial<Record<SessionSection, SessionEmptyReason>> = {};
       let stateTruncated = false;
       const worldPublications: import("../world/dependencies").WorldDependencies[] = [];
       try {
-        ({ pieces, withheld, degraded } = await collectPieces(ctx, {
+        ({ pieces, withheld, degraded, retrieval } = await collectPieces(ctx, {
           include,
           ...(query === undefined ? {} : { query }),
           ...(subjects === undefined ? {} : { subjects }),
@@ -632,6 +633,7 @@ async function servePacket(
             events: quoted.map((chunk) => ({ id: chunk.event_id, sensitivity: chunk.sensitivity })),
             claims: [...claimPublications.values()],
             world: worldPublications,
+            retrieval,
           },
           data: {
             schema: PACKET_V2_SCHEMA,
@@ -663,6 +665,9 @@ async function servePacket(
         quoted: unchanged ? [] : quoted,
         withheld,
         audit_served: unchanged ? [] : [...audit.values()],
+        authorization: { purpose, retrieval, pages: [...pagePublications].map(([id, stamp]) => ({ id, ...stamp })),
+          events: quoted.map((chunk) => ({ id: chunk.event_id, sensitivity: chunk.sensitivity })),
+          claims: [...claimPublications.values()], world: worldPublications },
         data: {
           packet_md: packet,
           retrieval_degraded: degraded,

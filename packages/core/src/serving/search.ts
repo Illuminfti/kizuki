@@ -1,3 +1,4 @@
+import { currentSemanticNomination, type RetrievalDomain } from "./retrieval-domain";
 import { createRedactor } from "./redact";
 import { searchableText, servedTextMatcher } from "./search-match";
 import type { Database } from "bun:sqlite";
@@ -86,6 +87,7 @@ function classify(
   seen: Set<string>,
   fullText: boolean,
   matches?: ReturnType<typeof servedTextMatcher>["matches"],
+  semantic?: RetrievalDomain,
 ): Classification {
   // Candidate previews must not charge redactions to the response. Render the
   // final selected rows with the call's redactor after applying its limit.
@@ -110,7 +112,7 @@ function classify(
       }
       const { excerpt, truncated } = excerptOf(page.body, LEDGER_EXCERPT, index.sourceContext);
       const chunk = canonChunk(index, page, decision, excerpt, truncated);
-      if (matches !== undefined && !matches(
+      if (matches !== undefined && !currentSemanticNomination(index.sourceContext, index, semantic, hit.doc_id) && !matches(
         searchableText(typeof page.data["title"] === "string" ? page.data["title"] : "", undefined, index.sourceContext.servingSecrets),
         searchableText(page.body, LEDGER_EXCERPT, index.sourceContext.servingSecrets),
       )) continue;
@@ -136,7 +138,7 @@ function classify(
       continue;
     }
     const chunk = boundedQuote(quotedChunk(quoted, decision.sensitivity, index.sourceContext, fullText ? quoted.text.length : 4096), fullText, index.sourceContext);
-    if (matches !== undefined && !matches("", searchableText(quoted.text, fullText ? undefined : LEDGER_EXCERPT, index.sourceContext.servingSecrets))) continue;
+    if (matches !== undefined && !currentSemanticNomination(index.sourceContext, index, semantic, hit.doc_id) && !matches("", searchableText(quoted.text, fullText ? undefined : LEDGER_EXCERPT, index.sourceContext.servingSecrets))) continue;
     seen.add(hit.doc_id);
     result.quoted.push(chunk);
   }
@@ -250,7 +252,7 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
 
     const matcher = ctx.principal.kind === "owner" ? undefined : servedTextMatcher(query);
     try {
-      const nominated = await retrievalCandidates(ctx, query, { ...base, ceiling: grant.ceiling });
+      const nominated = await retrievalCandidates(ctx, query, { ...base, ceiling: grant.ceiling }, { canon: LEDGER_EXCERPT, ...(fullText ? {} : { event: LEDGER_EXCERPT }) });
       // Re-read current canon and evidence only after the engine finishes.
       const index = loadCanon(ctx);
       base.excludePaths = [...index.holds];
@@ -308,13 +310,14 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
           ctx.db,
           index,
           narrowed,
-          nominated.ids.map((doc_id) => ({
+          nominated.ids.filter(id => nominated.semantic === undefined || currentSemanticNomination(ctx, index, nominated.semantic, id)).map((doc_id) => ({
             doc_id,
             scope: doc_id.startsWith("page:") ? "canon" : "ledger",
           } as const)),
           seen,
           fullText,
           matcher?.matches,
+          nominated.semantic,
         ),
       );
       // Preserve nomination deduplication, including denied nominations. Ranked
@@ -376,6 +379,7 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
       return {
         canon, quoted, audit_served: [...audit.values()],
         authorization: {
+          ...(nominated.semantic === undefined ? {} : { retrieval: [nominated.semantic] }),
           pages: canon.map((chunk) => ({ id: chunk.page_id, hash: index.byId.get(chunk.page_id)!.contentHash, sensitivity: chunk.sensitivity })),
           events: quoted.map((chunk) => ({ id: chunk.event_id, sensitivity: chunk.sensitivity })),
         },

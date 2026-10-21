@@ -1,3 +1,4 @@
+import { retrievalDomainCurrent } from "../retrieval-domain";
 import { worldDependenciesCurrent } from "../../world/dependencies";
 import type { Tool } from "../../agents";
 import { sensitivity, SENSITIVITY_ORDER } from "../../agents";
@@ -18,6 +19,7 @@ export function validatePublication(ctx: ServeContext, tool: Tool, served: Serve
   if (tool === "propose" || tool === "correct") return;
   if (served.authorization?.purpose !== undefined) ctx = { ...ctx, sourcePurpose: served.authorization.purpose };
   function refuse(): never { throw new ServeError("error", "authorized evidence changed during request; retry"); }
+  for (const domain of served.authorization?.retrieval ?? []) if (!retrievalDomainCurrent(ctx, domain)) refuse();
   for (const deps of served.authorization?.world ?? []) if (!worldDependenciesCurrent(ctx, deps)) refuse();
   const eventIds = new Set(served.quoted.map((chunk) => chunk.event_id));
   const eventLabels = new Map(served.quoted.map((chunk) => [chunk.event_id, chunk.sensitivity]));

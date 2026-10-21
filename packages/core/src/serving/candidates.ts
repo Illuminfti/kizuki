@@ -1,3 +1,4 @@
+import { currentSemanticNomination, type RetrievalDomain } from "./retrieval-domain";
 import { denyClassesOf } from "../agents";
 import { searchableText, servedTextMatcher } from "./search-match";
 import type { AuditDenial, AuditItem } from "../agents";
@@ -243,7 +244,7 @@ export function loadSubjectGaps(db: Database, wanted: string[] | undefined, canR
 export async function collectPieces(
   ctx: ServeContext,
   request: PieceRequest,
-): Promise<{ pieces: Piece[]; withheld: AuditDenial[]; degraded: string[] }> {
+): Promise<{ pieces: Piece[]; withheld: AuditDenial[]; degraded: string[]; retrieval: readonly RetrievalDomain[] }> {
   const withheld: AuditDenial[] = [];
   const grant = ctx.principal.grant;
   const nominated = request.query === undefined || !request.include.includes("canon")
@@ -252,7 +253,7 @@ export async function collectPieces(
       scope: "canon", limit: CANDIDATE_LIMIT, ceiling: grant.ceiling,
       ...(request.subjects === undefined ? {} : { subjects: request.subjects }),
       ...(request.types === undefined ? {} : { types: request.types }),
-    });
+    }, { canon: CANON_EXCERPT });
   const index = loadCanon(ctx);
   const pieces: Piece[] = [];
   const packed = new Set<string>();
@@ -270,6 +271,7 @@ export async function collectPieces(
     const fromPort: CanonPage[] = nominated.ids.flatMap((id) => {
       const page = id.startsWith("page:") ? index.byId.get(bareRetrievalId(id)) : undefined;
       if (page === undefined) return [];
+      if ("semantic" in nominated && nominated.semantic !== undefined && !currentSemanticNomination(ctx, index, nominated.semantic, id)) return [];
       if (request.subjects !== undefined && !stringArray(page.data["subjects"]).some((id) => request.subjects!.includes(id))) return [];
       return [page];
     });
@@ -332,7 +334,7 @@ export async function collectPieces(
         if (!decision.allow) continue;
         if (matcher !== undefined) {
           const title = typeof page.data["title"] === "string" ? page.data["title"] : "";
-          if (!matcher.matches(searchableText(title, undefined, ctx.servingSecrets), searchableText(page.body, CANON_EXCERPT, ctx.servingSecrets))) continue;
+          if (!(nominated.ids.includes(`page:${page.id}`) && currentSemanticNomination(ctx, index, "semantic" in nominated ? nominated.semantic : undefined, `page:${page.id}`)) && !matcher.matches(searchableText(title, undefined, ctx.servingSecrets), searchableText(page.body, CANON_EXCERPT, ctx.servingSecrets))) continue;
         }
         if (queryPages.has(page.id)) queryMatched = true;
         packed.add(page.id);
@@ -533,5 +535,5 @@ export async function collectPieces(
   ) {
     nominated.degraded.push(NO_MATCH_LABEL);
   }
-  return { pieces, withheld, degraded: nominated.degraded };
+  return { pieces, withheld, degraded: nominated.degraded, retrieval: "semantic" in nominated && nominated.semantic ? [nominated.semantic] : [] };
 }
