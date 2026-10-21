@@ -56,3 +56,38 @@ test("object constraints still exclude null and arrays after compaction", () => 
     expect(after([]).valid).toBe(false);
   }
 });
+
+test("repeated typed reference definitions are shared without changing recursive validation or literal examples", () => {
+  const ref = z.strictObject({ kind: z.enum(["page", "source", "claim"]), token: z.string().regex(/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/) });
+  const schema: Record<string, unknown> = z.toJSONSchema(z.strictObject({ first: ref, second: z.array(ref).max(4), third: z.union([ref, z.null()]) }), { target: "draft-7" });
+  const compact = compactToolSchema(schema), provider = new AjvJsonSchemaValidator();
+  expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(schema).length);
+  expect(compact).toHaveProperty("definitions");
+  const before = provider.getValidator(schema), after = provider.getValidator(compact);
+  const valid = { kind: "page", token: "A".repeat(43) };
+  for (const first of [valid, { ...valid, token: "invalid" }, { ...valid, extra: true }, { kind: "event", token: valid.token }, null])
+    for (const third of [valid, null, {}, []]) {
+      const input = { first, second: [valid], third };
+      expect(after(input).valid).toBe(before(input).valid);
+    }
+});
+
+
+test("output schema namespace compaction preserves the exact enum including newline refusal", () => {
+  const values = ["concept-card", "situation-card", "procedure-card", "framework-card", "artifact-version", "observation", "prediction", "forecast-score"].map(name => `kizuki.${name}/v1`);
+  const schema = { type: "string", enum: values };
+  const compact = compactToolSchema(schema, { omitDefaults: true });
+  expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(schema).length);
+  expect(compactToolSchema(schema)).toEqual({ enum: values });
+  const provider = new AjvJsonSchemaValidator(), before = provider.getValidator(schema), after = provider.getValidator(compact);
+  for (const value of [...values, ...values.map(value => value + "\n"), ...values.map(value => value.replace("kizuki.", "kizukiX")), "kizuki.unknown/v1", {}, null, 1]) expect(after(value).valid).toBe(before(value).valid);
+});
+
+
+test("namespace factoring retains existing patterns and contradictory type constraints", () => {
+  const values = Array.from({length: 8}, (_, i) => `kizuki.item-${i}/v1`), provider = new AjvJsonSchemaValidator();
+  for (const constraint of [{type:"string",pattern:"item-0"}, {type:"object"}, {type:["string","null"]}]) {
+    const schema = {...constraint, enum:values}, before=provider.getValidator(schema), after=provider.getValidator(compactToolSchema(schema,{omitDefaults:true}));
+    for(const value of [...values, null, {}, 0]) expect(after(value).valid).toBe(before(value).valid);
+  }
+});
