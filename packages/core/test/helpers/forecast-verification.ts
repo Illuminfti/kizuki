@@ -21,7 +21,7 @@ const PURPOSES = ["capture", "derive", "recall", "correction", "export"] as cons
  * Every record comes from the bounded job and independently filed evidence;
  * no forecast or admission journal row is synthesized for the matrix. */
 export async function forecastVerificationFixture(db: Database) {
-  const f = await cardFixture(db, { model: EMPTY_SUMMARY_MODEL, purposes: [...PURPOSES, "extract"] });
+  const f = await cardFixture(db, { model: EMPTY_SUMMARY_MODEL, purposes: [...PURPOSES] });
   try {
     await f.write("world.kind", vocabulary("world/situation"), { subject: FORECAST_BOARD });
     await f.write("situation.label", literal("Forecast verification board"), { subject: FORECAST_BOARD });
