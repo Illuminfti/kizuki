@@ -1,7 +1,7 @@
 import { isWorldWireToken } from "@kizuki/core/world";
 import type { WorldData } from "@kizuki/core/world";
 import { clean } from "../../../output";
-import { CURRENT, coverageLine } from "./shared";
+import { KNOWN_OPTIONS, KNOWN_BOUNDS, temporalInput, coverageLine } from "./shared";
 import type { WorldCliOp } from "./types";
 
 const LABELS: Readonly<Record<string, string>> = {
@@ -12,14 +12,14 @@ const LABELS: Readonly<Record<string, string>> = {
 };
 
 export const situationCli: WorldCliOp<Extract<WorldData, { schema: "kizuki.situation-card/v1" }>> = {
-  usage: "--ref TOKEN [--prior-view TOKEN] [--share]",
-  options: ["--ref"],
-  bounds: { "--ref": "32-byte base64url object token" },
+  usage: "--ref TOKEN [--prior-view TOKEN] [--share] [--known-at TIME | --snapshot TOKEN] [--valid-at TIME]",
+  options: ["--ref", ...KNOWN_OPTIONS],
+  bounds: { ...KNOWN_BOUNDS, "--ref": "32-byte base64url object token" },
   buildInput: (options) => {
-    const ref = options.get("--ref");
-    return ref === undefined || !isWorldWireToken(ref)
+    const ref = options.get("--ref"), when = temporalInput(options);
+    return ref === undefined || !isWorldWireToken(ref) || when === null
       ? null
-      : { situation: { kind: "object", token: ref }, ...CURRENT };
+      : { situation: { kind: "object", token: ref }, ...when };
   },
   render: (data) => [
     clean(data.situation.labels.map((label) => label.text).join(" / ")) || "Situation",

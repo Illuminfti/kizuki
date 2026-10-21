@@ -38,7 +38,7 @@ const lookup = (
   ref: { kind: "object"; token: string },
   kind = "concept",
   valid: unknown = { kind: "all" },
-) => ({ operation: kind, [kind]: ref, valid, knownAt: { kind: "current" } });
+) => ({ operation: kind, [kind]: ref, valid, knownAt: { kind: "current" as const } });
 test("an admitted supported concept is discoverable and returns evidence-qualified definitions", async () => {
   const db = openLedger(":memory:");
   try {
@@ -96,7 +96,7 @@ test("tokens are principal-bound and source revocation is indistinguishable from
       operation: "find_concepts",
       label: "Bayesian",
       valid: { kind: "all" },
-      knownAt: { kind: "current" },
+      knownAt: { kind: "current" as const },
     });
     if (
       "status" in discovery ||
@@ -235,7 +235,7 @@ const find = (label = "") => ({
   operation: "find_concepts",
   label,
   valid: { kind: "all" },
-  knownAt: { kind: "current" },
+  knownAt: { kind: "current" as const },
 });
 function matches(ctx: Parameters<typeof readWorldView>[0], label = "") {
   const result = readWorldView(ctx, find(label));

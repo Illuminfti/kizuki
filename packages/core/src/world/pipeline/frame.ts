@@ -1,3 +1,4 @@
+import { lastStateSql, type KnownCutoff } from "../known/cutoff";
 import type { ServeContext } from "../../serving/types";
 import type { WorldValidQuery } from "../../serving/world-view";
 import type { WorldDependencies } from "../dependencies";
@@ -15,14 +16,8 @@ export function charge(budget: ReadBudget, value: string): void {
   if (budget.bytes > READ_BYTE_LIMIT) throw new WorldProjectionBudgetError();
 }
 
-/**
- * Which recorded past a read is served from. Only the present is servable, so
- * a `knownAt` time or snapshot is refused before a frame exists. Known-at
- * history widens this type and `claimVisibleSql`, the one place the collect
- * stage names a claim status in SQL. `eligibleWorldClaim` checks the status
- * of the row it loads and moves with it.
- */
-export type RecordedCutoff = { readonly kind: "current" };
+/** Current state or a private exact committed history cutoff. */
+export type RecordedCutoff = { readonly kind: "current" } | ({ readonly kind: "recorded" } & KnownCutoff);
 
 /** Everything one read carries through collect, enrich, group and assemble. */
 export interface ReadFrame {
@@ -42,12 +37,13 @@ export function newReadFrame(
   ns: WorldNamespace,
   valid: WorldValidQuery,
   dependencies?: WorldDependencies,
+  cutoff: RecordedCutoff = { kind: "current" },
 ): ReadFrame {
   const frame: ReadFrame = {
     ctx,
     ns,
     valid,
-    cutoff: { kind: "current" },
+    cutoff,
     budget: { bytes: 0 },
     stats: newReadStats(),
     dependencies,
@@ -61,6 +57,8 @@ export function claimVisibleSql(frame: ReadFrame, alias: string): string {
   switch (frame.cutoff.kind) {
     case "current":
       return `${alias}.status='live'`;
+    case "recorded":
+      return `${alias}.status<>'purged' AND ${lastStateSql(frame.cutoff, `${alias}.claim_id`)}='live'`;
   }
 }
 

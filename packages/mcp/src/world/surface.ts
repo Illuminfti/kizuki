@@ -94,8 +94,8 @@ export function buildWorldSurface(ops: readonly McpWorldOp[]) {
 
   const description = [
     ...ops.map((op) => op.summary),
-    'valid defaults to {kind:"all"} and knownAt to {kind:"current"} where an operation takes them.',
-    "Valid lookups that are absent, erased, or inaccessible return not_found.",
+    'Defaults: valid=all; knownAt=current.',
+    "Unavailable objects return not_found.",
   ].join(" ");
 
   // What the SDK fills in for an omitted field; the server withholds it from an operation that takes no such key.

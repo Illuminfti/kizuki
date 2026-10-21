@@ -23,6 +23,8 @@ export interface KnownSnapshotInput {
   readonly valid: WorldValidQuery;
   /** Exact retained-history position. It stays inside the cache payload. */
   readonly cutoff: KnownSnapshotCutoff;
+  /** Reserve the paired retained-view slot atomically before publishing. */
+  readonly reserveView?: boolean;
 }
 
 type SnapshotPayload = {
@@ -82,7 +84,7 @@ function decodePayload(bytes: Uint8Array): SnapshotPayload | null {
 function validWithin(requested: WorldValidQuery, saved: WorldValidQuery): boolean {
   if (saved.kind === "all") return true;
   if (saved.kind === "unknown_only") return requested.kind === "unknown_only";
-  if (saved.kind === "at") return requested.kind === "at" && requested.at === saved.at;
+  if (saved.kind === "at") return requested.kind === "at" && compareRfc3339(requested.at, "at", saved.at, "at") === 0;
   if (requested.kind === "at")
     return compareRfc3339(saved.from, "from", requested.at, "at") <= 0 &&
       compareRfc3339(requested.at, "at", saved.until, "until") < 0;
@@ -123,6 +125,7 @@ export function issueKnownSnapshot(
       dependencyRefs(ctx.db, ns, dependencies),
       now,
       SNAPSHOT_DOMAIN,
+      input.reserveView ?? false,
     ))();
     return issued === null ? null : { kind: "snapshot", token: issued.token };
   } catch (error) {

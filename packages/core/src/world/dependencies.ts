@@ -1,13 +1,15 @@
 import type { ServeContext } from "../serving/types";
 import type { Database } from "bun:sqlite";
 import type { Eligible } from "./pipeline/eligible";
-import { authorizedSupportSql } from "./policy-sql";
+import { authorizedClaimSql } from "./policy-sql";
+import { knownSupportSql, knownHeldSql, cutoffSequence, type KnownCutoff } from "./known/cutoff";
 import { issueWorldRef, type WorldNamespace } from "./references";
 import { sourceCoverage, type SourceCoverageGap } from "./coverage";
 
 /** Complete authorized evidence used by a projection, including evidence omitted from its wire body. */
 export interface WorldDependencies {
   readonly claims: Set<string>;
+  cutoff?: KnownCutoff;
   readonly supports: Set<string>;
   readonly events: Set<string>;
   /** Authorized sources and the completeness/backlog gaps observed during assembly. */
@@ -37,7 +39,13 @@ export function dependencyRefs(db: Database, ns: WorldNamespace, deps: WorldDepe
 
 /** Revalidate support consent and authorized source coverage; hidden state contributes no returned rows. */
 export function worldDependenciesCurrent(ctx: ServeContext, deps: WorldDependencies): boolean {
-  const permitted = authorizedSupportSql(ctx);
+  const permitted = knownSupportSql(ctx, deps.cutoff);
+  const claim = authorizedClaimSql(ctx), held = knownHeldSql(ctx, "base", deps.cutoff);
+  const retained = deps.cutoff === undefined ? "base.status='live'" : `base.status<>'purged' AND EXISTS(SELECT 1 FROM claim_lifecycle_history kh WHERE kh.claim_id=base.claim_id AND kh.sequence<=${cutoffSequence(deps.cutoff)})`;
+  const claims = ctx.db.query<{ n: number }, (string | number)[]>(`SELECT count(*) AS n FROM claims base WHERE base.claim_id IN (SELECT value FROM json_each(?))
+    AND ${retained} AND ${claim.sql} AND NOT ${held.sql}`)
+    .get(JSON.stringify([...deps.claims]), ...claim.bindings, ...held.bindings);
+  if (claims?.n !== deps.claims.size) return false;
   const row = ctx.db.query<{ n: number }, (string | number)[]>(`
     SELECT count(*) AS n FROM claim_v2_support s
     WHERE s.support_key IN (SELECT value FROM json_each(?)) AND ${permitted.sql}

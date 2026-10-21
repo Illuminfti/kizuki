@@ -75,7 +75,7 @@ test("overlap validity must end after it starts", () => {
   ).toThrow(WorldViewError);
 });
 
-test("a snapshot knownAt explicitly reports unavailable history", () => {
+test("an unknown snapshot uniformly requires a new view", () => {
   expect(
     readWorldView(
       ctx(),
@@ -83,7 +83,7 @@ test("a snapshot knownAt explicitly reports unavailable history", () => {
         knownAt: { kind: "snapshot", ref: { kind: "snapshot", token: SNAPSHOT } },
       }),
     ),
-  ).toEqual({ schema:"kizuki.world-view/v1",operation:"situation",result:{status:"unavailable",reason:"history"} });
+  ).toEqual({ schema:"kizuki.world-view/v1",operation:"situation",result:{status:"new_view_required"} });
 });
 
  test("noncanonical base64 pad bits are refused",()=> {

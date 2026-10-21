@@ -111,6 +111,7 @@ export function issueView(
   refs: readonly string[],
   now: string,
   domain: ViewCacheDomain = "view",
+  reserveView = false,
 ): IssuedView | null {
   if (projection.byteLength > VIEW_TOKEN_BYTES) return null;
   const validUntil = new Date(Date.parse(now) + VIEW_TTL_MS).toISOString();
@@ -123,8 +124,11 @@ export function issueView(
     const hash = cacheWireDigest(token, domain);
     if (db.query("SELECT 1 FROM world_view_tokens WHERE token_hash=?").get(hash) !== null) continue;
     db.query("DELETE FROM world_view_tokens WHERE partition_id=? AND expires_at<=?").run(partition, now);
-    db.query(MAKE_ROOM).run(partition, VIEW_SLOTS - 1, VIEW_PRINCIPAL_BYTES - projection.byteLength);
-    insert.run(hash, partition, ns.id, queryDigest, projection, fingerprintOf(projection), projection.byteLength, now, validUntil);
+    // A temporal body can issue both capabilities in the same transaction.
+    // Reserve the second bounded projection before either token is published.
+    const paired = domain === "known-snapshot" && reserveView;
+    db.query(MAKE_ROOM).run(partition, VIEW_SLOTS - (paired ? 2 : 1), VIEW_PRINCIPAL_BYTES - projection.byteLength - (paired ? VIEW_TOKEN_BYTES : 0));
+    insert.run(hash, partition, ns.id, queryDigest, projection, domain === "view" ? fingerprintOf(projection) : fingerprintOf(Buffer.from(domain)), projection.byteLength, now, validUntil);
     const link = db.query(
       `INSERT OR IGNORE INTO world_view_token_deps(token_hash,namespace_id,wire_ref)
        SELECT ?,namespace_id,wire_ref FROM world_wire_refs WHERE namespace_id=? AND wire_ref=?`,

@@ -25,7 +25,7 @@ export const KNOWLEDGE_NODE_SCHEMA = "kizuki.knowledge-node/v1" as const;
 export const RELATION_SCHEMA = "kizuki.relation/v1" as const;
 
 export type WorldWireKind =
-  "object" | "claim" | "admission" | "event_version" | "snapshot";
+  "object" | "claim" | "admission" | "event_version" | "snapshot" | "receipt";
 export type WorldWireRef<K extends WorldWireKind = WorldWireKind> = {
   readonly kind: K;
   readonly token: string;
@@ -243,7 +243,7 @@ function predicate(value: unknown): value is string {
   );
 }
 
-function knownTime(value: unknown): value is KnownTime {
+export function knownTime(value: unknown): value is KnownTime {
   if (!isPlainObject(value) || typeof value.kind !== "string") return false;
   if (value.kind === "unknown") return exact(value, ["kind"]);
   if (value.kind !== "known" || !exact(value, ["kind", "from", "until"]))

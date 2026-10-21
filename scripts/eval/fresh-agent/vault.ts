@@ -71,7 +71,7 @@ function scriptedModel(records: RecordSpec[]): LlmPort {
 }
 
 export function discoveredCards(ctx: ServeContext, kind: "concept" | "situation", label: string) {
-  const query = { valid: { kind: "all" }, knownAt: { kind: "current" } };
+  const query = { valid: { kind: "all" }, knownAt: { kind: "current" as const } };
   const discovery = serveWorldView(ctx, { ...query, operation: kind === "concept" ? "find_concepts" : "find_situations", label });
   const result = discovery.data;
   if ("status" in result || result.result.status === "unavailable" || !("matches" in result.result.data)) return [discovery];

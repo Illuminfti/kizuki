@@ -1,3 +1,4 @@
+import { historyFragment } from "./history";
 import { conceptFragment } from "./concept";
 import { describeFragment } from "./describe";
 import { discoverConceptsFragment, discoverSituationsFragment } from "./discover";
@@ -16,6 +17,7 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   describeFragment,
   // slot: CARD
   // slot: KNOWN
+  historyFragment,
   // slot: VIEW
   shareFragment, resumeFragment,
   // slot: QUEST

@@ -15,7 +15,7 @@ afterEach(() => setSystemTime());
 
 const view = (label: string, cursor?: string) => ({
   operation: "find_concepts", label, ...(cursor === undefined ? {} : { cursor }),
-  valid: { kind: "all" }, knownAt: { kind: "current" },
+  valid: { kind: "all" }, knownAt: { kind: "current" as const },
 });
 
 function page(ctx: ServeContext, label = "", cursor?: string) {
@@ -49,7 +49,7 @@ test("discovery joins aliases once, filters their combined labels and serves the
       expect(page(first.ctx, "absent").matches).toEqual([]);
       const card = readWorldView(first.ctx, {
         operation: "concept", concept: all.matches[0]!.ref,
-        valid: { kind: "all" }, knownAt: { kind: "current" },
+        valid: { kind: "all" }, knownAt: { kind: "current" as const },
       });
       if (!("result" in card) || card.result.status === "unavailable") throw new Error("card unavailable");
       expect((card.result.data as ConceptCard).concept.labels.map((label) => label.text).sort())
@@ -75,7 +75,7 @@ test("a saturated alias cannot crowd the requested anchor out of its grouped car
     const members = [handleOf(db, "topic:full-alias"), handleOf(db, "topic:requested")];
     const read = () => readWorldView(requested.ctx, {
       operation: "concept", concept: requested.ref,
-      valid: { kind: "all" }, knownAt: { kind: "current" },
+      valid: { kind: "all" }, knownAt: { kind: "current" as const },
     });
     expect(read()).toMatchObject({ result: { status: "current" } });
     const grouped = withWorldPipeline({ groupers: [joinHandles(members)] }, read);

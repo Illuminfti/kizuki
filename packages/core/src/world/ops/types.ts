@@ -143,6 +143,8 @@ export interface ClaimsOp<Query = unknown> extends WorldOpBase {
    * partition and answers `unchanged` when nothing visible moved.
    */
   readonly views?: true;
+  /** This operation implements retained recorded-time cutoffs. */
+  readonly knownAt?: true;
   /**
    * Set when the operation is a read of one object, which `share` can hand to
    * another principal. Reads the object a semantic handle names for the

@@ -20,7 +20,7 @@ import type { WorldValidQuery } from "../../serving/world-view";
 import { canonicalJson } from "../../util/hash";
 import { assertionEndpoints } from "../allocation";
 import { heldUntilCorroborated } from "../corroboration";
-import { authorizedSupportSql } from "../policy-sql";
+import { knownState, knownSupportSql, type KnownCutoff } from "../known/cutoff";
 import { handleFor } from "../relation";
 import { charge, type ReadBudget } from "./frame";
 
@@ -75,16 +75,18 @@ export function eligibleWorldClaim(
   claimId: string,
   valid: WorldValidQuery,
   budget: ReadBudget,
-  options: { historical?: true; supportKeys?: readonly string[] } = {},
+  options: { historical?: true; supportKeys?: readonly string[]; cutoff?: KnownCutoff; includeInactive?: true } = {},
 ): Eligible | null {
   const claim = getClaim(ctx.db, claimId);
-  if (claim === null || (options.historical ? !["live", "superseded", "reverted"].includes(claim.status) : claim.status !== "live")) return null;
+  if (claim === null || (options.cutoff !== undefined ? claim.status === "purged" : options.historical ? !["live", "superseded", "reverted"].includes(claim.status) : claim.status !== "live")) return null;
   if (ctx.db.query("SELECT 1 FROM claims WHERE claim_id=? AND is_world_typed=1").get(claimId) === null) return null;
   const semantic = readClaimV2Semantic(ctx.db, claimId);
+  const state = options.cutoff === undefined ? null : knownState(ctx.db, claimId, options.cutoff);
+  if (options.cutoff !== undefined && (state === null || (!options.includeInactive && state.after_status !== "live"))) return null;
   if (
     semantic === null ||
     semantic.discriminator !== "assertion" ||
-    !validFor(semantic, valid)
+    !validFor(state === null ? semantic : { ...semantic, valid_to: state.valid_to }, valid)
   )
     return null;
   // Existing registry predicates retain their declared literal shape in v2.
@@ -112,7 +114,7 @@ export function eligibleWorldClaim(
     return null;
   const supports: EligibleSupport[] = [];
   let overflow = false;
-  const permitted = authorizedSupportSql(ctx);
+  const permitted = knownSupportSql(ctx, options.cutoff);
   for (const row of ctx.db
     .query<
       Support,
@@ -260,12 +262,13 @@ export function eligibleWorldClaim(
   // Current reads hold model authority claims until their permitted support
   // corroborates them. Historical validation still verifies the recorded basis.
   if (!options.historical && supports.length > 0 &&
-      heldUntilCorroborated(ctx.db, claimId, permitted)) return null;
+      (heldUntilCorroborated(ctx.db, claimId, permitted) ||
+       (options.cutoff !== undefined && heldUntilCorroborated(ctx.db, claimId, knownSupportSql(ctx))))) return null;
   return supports.length === 0
     ? null
     : {
         claimId,
-        semantic: supports[0]!.admission.semantic,
+        semantic: state === null ? supports[0]!.admission.semantic : { ...supports[0]!.admission.semantic, valid_to: state.valid_to },
         supports,
         overflow,
       };

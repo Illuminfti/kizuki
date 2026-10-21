@@ -6,7 +6,8 @@ export const WORLD_OBJECT_REF = z.strictObject({
   kind: z.literal("object"),
   token: WIRE_TOKEN,
 });
-const WORLD_SNAPSHOT_REF = z.strictObject({
+export const WORLD_CONCEPT_FIELD = WORLD_OBJECT_REF.optional();
+export const WORLD_SNAPSHOT_REF = z.strictObject({
   kind: z.literal("snapshot"),
   token: WIRE_TOKEN,
 });
@@ -97,6 +98,6 @@ export const worldNode = <K extends string>(kind: K) =>
 /** What every card carries beside its own fields. */
 export const worldCommon = {
   summary: z.strictObject({ text: z.string().max(1200), admissions: z.array(worldRef("admission")).max(256) }).nullable(),
-  knownAt: z.strictObject({ kind: z.literal("current") }),
+  knownAt: z.union([z.strictObject({ kind: z.literal("current") }), z.strictObject({ kind: z.literal("snapshot"), ref: WORLD_SNAPSHOT_REF })]),
   coverage: worldCoverage,
 };

@@ -6,7 +6,7 @@ import { worldDependencies } from "../../src/world/dependencies";
 import { issueKnownSnapshot, lookupKnownSnapshot } from "../../src/world/known/snapshots";
 import type { WorldValidQuery } from "../../src/world/ops/types";
 import { worldNamespace } from "../../src/world/references";
-import { wireDigest } from "../../src/world/views/store";
+import { wireDigest, issueView } from "../../src/world/views/store";
 import { worldFixture } from "../serving/world-fixture";
 
 const databases: ReturnType<typeof openLedger>[] = [];
@@ -116,4 +116,23 @@ test("dependency erasure and namespace replacement are uniform misses", async ()
 
   const unbound = { id: "no-longer-current", principalId: ns.principalId };
   expect(lookupKnownSnapshot(world.ctx, unbound, ref, "semantic:bayes", VALID, NOW)).toBeNull();
+});
+
+
+test("paired snapshot and view reserve two shared slots even when the cache clock rolls back", async () => {
+  const { db, world, ns, dependencies } = await fixture();
+  db.exec("DELETE FROM world_view_tokens");
+  for (let i=0;i<16;i++) issueKnownSnapshot(world.ctx,ns,{handle:"semantic:bayes",valid:VALID,cutoff:{at:NOW,sequence:i}},dependencies,"2026-10-21T10:01:00.000Z");
+  expect(db.query<{n:number},[]>("SELECT count(*) AS n FROM world_view_tokens").get()!.n).toBe(16);
+  const first = db.query<{fingerprint:string},[]>("SELECT fingerprint FROM world_view_tokens LIMIT 1").get()!.fingerprint;
+  expect(new Set(db.query<{fingerprint:string},[]>("SELECT fingerprint FROM world_view_tokens").all().map(row=>row.fingerprint)).size).toBe(1);
+  const paired=db.transaction(()=>{
+    const ref=issueKnownSnapshot(world.ctx,ns,{handle:"semantic:bayes",valid:VALID,cutoff:{at:NOW,sequence:99},reserveView:true},dependencies,NOW)!;
+    const partition=db.query<{partition_id:number},[string]>("SELECT partition_id FROM world_view_partitions WHERE principal_id=?").get(ns.principalId)!.partition_id;
+    const view=issueView(db,partition,ns,"a".repeat(64),Buffer.from("{\"safe\":true}"),[],NOW);
+    return {ref,view};
+  })();
+  expect(paired.view).not.toBeNull();expect(lookupKnownSnapshot(world.ctx,ns,paired.ref,"semantic:bayes",VALID,NOW)).toEqual({at:NOW,sequence:99});
+  expect(db.query<{n:number},[]>("SELECT count(*) AS n FROM world_view_tokens").get()!.n).toBe(16);
+  expect(first).not.toBe("");
 });
