@@ -8,6 +8,8 @@ import { caseInput, responseMeanings, scoreRun } from "./score";
 import { runnerDigest } from "./fingerprint";
 import { extractionV2SystemContent } from "../../packages/core/src/producer/prompt-v2";
 import type { runQualification } from "./run";
+import { REVIEWED_QUALIFICATIONS, type QualificationApproval } from "./approvals";
+export { REVIEWED_QUALIFICATIONS, type QualificationApproval } from "./approvals";
 
 export const registryDigest = (registry: WorldRegistry) => sha256(canonicalJson({
   kinds: registry.kinds.filter(row => row.offeredToProducer), offered: registry.offered,
@@ -25,9 +27,6 @@ export function candidateRegistry(modules: readonly WorldVocabularyModule[], kin
 /** Only a reviewed receipt verifier can create this in memory; response-file assertions cannot. */
 const CHECKED = new WeakSet<object>();
 export interface CheckedQualification { registry_sha256: string; report_sha256: string; kinds: readonly string[]; predicates: readonly string[] }
-export interface QualificationApproval { file: string; sha256: string; endpoint_evidence: string }
-/** Deliberately empty until a real run and its provider identity evidence receive exact-artifact review. */
-export const REVIEWED_QUALIFICATIONS: readonly QualificationApproval[] = [];
 
 export function verifyQualificationReceipt(bytes: string, approval: QualificationApproval, registry: WorldRegistry, root?: string): CheckedQualification {
   if (!/^[a-f0-9]{64}$/.test(approval.sha256) || sha256(bytes) !== approval.sha256 || !/^[a-f0-9]{64}$/.test(approval.endpoint_evidence)) throw new Error("qualification review pin mismatch");
