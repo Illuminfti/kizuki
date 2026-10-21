@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   addUid,
+  addUids,
   chunk,
   countUids,
   formatSet,
@@ -44,6 +45,16 @@ describe("sequence sets", () => {
     expect(formatSet(addUid(parseSet("1:3"), 3))).toBe("1:3");
     expect(formatSet(addUid([], 10))).toBe("10");
     expect(formatSet(addUid(parseSet("1:3"), 9))).toBe("1:3,9");
+  });
+
+  test("adding many is adding one at a time, in any order and with repeats", () => {
+    const added = [9, 4, 4, 1, 2, 30];
+    let one = parseSet("3,5:6");
+    for (const uid of added) one = addUid(one, uid);
+    expect(formatSet(addUids(parseSet("3,5:6"), added))).toBe(formatSet(one));
+    expect(formatSet(addUids(parseSet("3,5:6"), []))).toBe("3,5:6");
+    expect(() => addUids([], [0])).toThrow();
+    expect(() => addUids([], [4294967296])).toThrow();
   });
 
   test("removing splits a range", () => {

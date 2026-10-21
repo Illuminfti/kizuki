@@ -35,9 +35,11 @@ export {
 export type { ImapState } from "./state";
 export {
   IMAP_CURSOR_SCHEMA,
-  decodeCursor,
+  cursorStoreDelta,
   emptyCursor,
-  encodeCursor,
+  encodeFolder,
+  loadCursor,
+  wireCursor,
 } from "./cursor";
 export type { ImapCursor, ImapFolderCursor } from "./cursor";
 export { BATCH, EXPUNGE_CHUNK, WINDOW, walkMailboxes } from "./mailbox";
@@ -72,6 +74,7 @@ export type {
 } from "./transport";
 export {
   addUid,
+  addUids,
   chunk,
   countUids,
   formatSet,

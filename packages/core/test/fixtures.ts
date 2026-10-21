@@ -19,6 +19,14 @@ export function validEvent(): CaptureEventInput {
   };
 }
 
+/**
+ * A document event. The deterministic floor stages a verbatim capture note for
+ * it; for a conversational event (`message`, `email`) it stages none.
+ */
+export function documentEvent(): CaptureEventInput {
+  return { ...validEvent(), kind: "file" };
+}
+
 /** Same event as a mutable bag, for building reject cases. */
 export function rawEvent(): Record<string, unknown> {
   return validEvent() as unknown as Record<string, unknown>;

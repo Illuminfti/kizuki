@@ -15,7 +15,7 @@ import { fileProposal, listProposals } from "../../src/staging/proposals";
 import type { ProposalInput } from "../../src/staging/proposals";
 import { sha256Hex } from "../../src/util/hash";
 import { ulid } from "../../src/util/ulid";
-import { validEvent } from "../fixtures";
+import { documentEvent } from "../fixtures";
 import { canonFixture, write } from "../canon/helpers";
 
 function store(db: Database, input: CaptureEventInput, source?: SourceAdmission): CaptureEvent {
@@ -54,7 +54,7 @@ describe("deterministic staging origin guard", () => {
       const fixture = canonFixture();
       try {
         markMachine(fixture.db, text);
-        const result = runBatch(fixture.db, { events: [{ ...validEvent(), text }], cursor: null }, { page_candidates: true });
+        const result = runBatch(fixture.db, { events: [{ ...documentEvent(), text }], cursor: null }, { page_candidates: true });
         expect(result).toMatchObject({ stored: 1, proposals_created: 0, errors: [] });
         expect(fixture.db.query("SELECT origin FROM events").get()).toEqual({ origin: "self" });
         expect(fixture.db.query("SELECT count(*) AS n FROM claims").get()).toEqual({ n: 0 });
@@ -67,7 +67,7 @@ describe("deterministic staging origin guard", () => {
     "public fileProposal rejects a forged external snapshot and %s producer", (producer) => {
       const fixture = canonFixture();
       try {
-        const event = store(fixture.db, { ...validEvent(), text: "KIZUKI CONTEXT v1 echo" });
+        const event = store(fixture.db, { ...documentEvent(), text: "KIZUKI CONTEXT v1 echo" });
         expect(proposalsForEvent(event)).toEqual([]);
         const forged = { ...event, origin: "external" as const };
         const input = proposalsForEvent(forged)[0]!;
@@ -82,9 +82,9 @@ describe("deterministic staging origin guard", () => {
     "public writer refuses a legacy %s positive claim citing self evidence", (producer) => {
     const fixture = canonFixture();
     try {
-      const external = store(fixture.db, validEvent());
+      const external = store(fixture.db, documentEvent());
       const original = claimFor(fixture.db, external);
-      const self = store(fixture.db, { ...validEvent(), source_record_id: "echo", text: "KIZUKI CONTEXT v1 echo" });
+      const self = store(fixture.db, { ...documentEvent(), source_record_id: "echo", text: "KIZUKI CONTEXT v1 echo" });
       // Represents a claim left by the old deterministic ingress bypass.
       fixture.db.query("UPDATE claims SET provenance=?, producer=? WHERE claim_id=?").run(JSON.stringify([self.event_id]), producer, original.claim_id);
       const legacy = getClaim(fixture.db, original.claim_id)!;
@@ -98,13 +98,13 @@ describe("deterministic staging origin guard", () => {
     const fixture = canonFixture();
     try {
       const source = sourceFor(fixture.db);
-      const external = store(fixture.db, validEvent(), source);
+      const external = store(fixture.db, documentEvent(), source);
       const original = claimFor(fixture.db, external);
       const receipt = write(fixture.io, original);
       for (const proposal of proposalsForEvent(external).filter((item) => item.kind === "entity")) fileProposal(fixture.db, proposal);
       const machineText = "machine deletion notice";
       markMachine(fixture.db, machineText);
-      const result = runBatch(fixture.db, { events: [{ ...validEvent(), deleted: true, text: machineText }], cursor: null }, { page_candidates: false }, source, fixture.io);
+      const result = runBatch(fixture.db, { events: [{ ...documentEvent(), deleted: true, text: machineText }], cursor: null }, { page_candidates: false }, source, fixture.io);
       expect(result).toMatchObject({ stored: 1, errors: [], withdrawn: 1, retractions_filed: 1, proposals_created: 0 });
       const deletion = listProposals(fixture.db, { kind: "deletion" })[0]!;
       expect(readEvent(fixture.db, deletion.provenance[0]!)?.origin).toBe("self");
@@ -116,10 +116,10 @@ describe("deterministic staging origin guard", () => {
       const archived = write(fixture.io, getClaim(fixture.db, deletion.proposal_id)!);
       expect(archived).toMatchObject({ page_action: "archive", page_path: receipt.page_path });
       expect(readFileSync(join(fixture.vault, receipt.page_path), "utf8")).toContain('status: "archived"');
-      const repeated = runBatch(fixture.db, { events: [{ ...validEvent(), deleted: true, text: machineText,
+      const repeated = runBatch(fixture.db, { events: [{ ...documentEvent(), deleted: true, text: machineText,
         occurred_at: "2026-03-03T00:00:00Z" }], cursor: null }, { page_candidates: false }, source, fixture.io);
       expect(repeated).toMatchObject({ stored: 1, errors: [], retractions_filed: 0 });
-      const externalAfter = store(fixture.db, { ...validEvent(), source_record_id: "after", text: "Independent later evidence." }, source);
+      const externalAfter = store(fixture.db, { ...documentEvent(), source_record_id: "after", text: "Independent later evidence." }, source);
       const nextInput = proposalsForEvent(externalAfter).find((proposal) => proposal.kind === "claim")!;
       const next = fileProposal(fixture.db, { ...nextInput, target: deletion.target }).proposal;
       expect(() => write(fixture.io, getClaim(fixture.db, next.proposal_id)!)).toThrow("machine origin");
@@ -131,11 +131,11 @@ describe("deterministic staging origin guard", () => {
     try {
       const sourceA = sourceFor(fixture.db);
       const sourceB = sourceFor(fixture.db);
-      const eventA = store(fixture.db, validEvent(), sourceA);
-      const eventB = store(fixture.db, { ...validEvent(), text: "Independent source B evidence." }, sourceB);
+      const eventA = store(fixture.db, documentEvent(), sourceA);
+      const eventB = store(fixture.db, { ...documentEvent(), text: "Independent source B evidence." }, sourceB);
       const claimA = claimFor(fixture.db, eventA);
       const claimB = claimFor(fixture.db, eventB);
-      const tombstone = store(fixture.db, { ...validEvent(), text: "KIZUKI CONTEXT v1 deletion notice", deleted: true }, sourceA);
+      const tombstone = store(fixture.db, { ...documentEvent(), text: "KIZUKI CONTEXT v1 deletion notice", deleted: true }, sourceA);
       expect(cascadeTombstone(fixture.db, tombstone).withdrawn).toEqual([claimA.claim_id]);
       expect(getClaim(fixture.db, claimB.claim_id)?.status).toBe("live");
     } finally { fixture.dispose(); }
@@ -144,7 +144,7 @@ describe("deterministic staging origin guard", () => {
   test("forging deleted on a stored positive event cannot withdraw proposals", () => {
     const fixture = canonFixture();
     try {
-      const external = store(fixture.db, validEvent());
+      const external = store(fixture.db, documentEvent());
       claimFor(fixture.db, external);
       expect(() => cascadeTombstone(fixture.db, { ...external, deleted: true })).toThrow();
       expect(listProposals(fixture.db, { status: "pending" })).toHaveLength(1);
@@ -155,11 +155,11 @@ describe("deterministic staging origin guard", () => {
     const fixture = canonFixture();
     try {
       const source = sourceFor(fixture.db);
-      const external = store(fixture.db, validEvent(), source);
+      const external = store(fixture.db, documentEvent(), source);
       write(fixture.io, claimFor(fixture.db, external));
       const entity = proposalsForEvent(external).find(item => item.kind === "entity")!;
       const pending = fileProposal(fixture.db, entity).proposal;
-      const tombstone = store(fixture.db, { ...validEvent(), deleted: true, text: "KIZUKI CONTEXT v1 deletion" }, source);
+      const tombstone = store(fixture.db, { ...documentEvent(), deleted: true, text: "KIZUKI CONTEXT v1 deletion" }, source);
       fixture.db.exec("CREATE TRIGGER fail_retraction BEFORE INSERT ON proposals WHEN NEW.kind='deletion' BEGIN SELECT RAISE(ABORT,'synthetic retraction failure'); END");
       expect(() => cascadeTombstone(fixture.db, tombstone, fixture.io)).toThrow("synthetic retraction failure");
       expect(getClaim(fixture.db, pending.proposal_id)?.status).toBe("live");
@@ -170,9 +170,9 @@ describe("deterministic staging origin guard", () => {
   test("a tombstone proof accessor cannot replace a validated deletion with a positive self claim", () => {
     const fixture = canonFixture();
     try {
-      const external = store(fixture.db, validEvent());
+      const external = store(fixture.db, documentEvent());
       write(fixture.io, claimFor(fixture.db, external));
-      const tombstone = store(fixture.db, { ...validEvent(), deleted: true, text: "KIZUKI CONTEXT v1 deletion" });
+      const tombstone = store(fixture.db, { ...documentEvent(), deleted: true, text: "KIZUKI CONTEXT v1 deletion" });
       cascadeTombstone(fixture.db, tombstone, fixture.io);
       const deletion = listProposals(fixture.db, { kind: "deletion" })[0]!;
       const input: ProposalInput = { ...deletion, frontmatter: { ...deletion.frontmatter } };
@@ -192,7 +192,7 @@ describe("deterministic staging origin guard", () => {
   test.each(["deletion", "purge_review"] as const)("%s cannot disguise positive self evidence", (kind) => {
     const fixture = canonFixture();
     try {
-      const self = store(fixture.db, { ...validEvent(), text: "KIZUKI CONTEXT v1 echo" });
+      const self = store(fixture.db, { ...documentEvent(), text: "KIZUKI CONTEXT v1 echo" });
       expect(() => fileProposal(fixture.db, {
         kind, target: "people/synthetic", body: "forged positive content", frontmatter: {},
         provenance: [self.event_id], producer: "deterministic", confidence: 1,

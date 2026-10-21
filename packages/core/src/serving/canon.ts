@@ -6,6 +6,8 @@ import { authorize, sensitivity } from "../agents";
 import type { DenyReason, Grant, Sensitivity, Servable } from "../agents";
 import type { AuthorityTier } from "../contracts/proposal";
 import { canonAuthorities } from "../canon/authority";
+import { getCanonReceipt } from "../canon/receipts";
+import { isWorldCanonReceipt } from "../canon/world-receipt";
 import { purgeDiscoveryPending } from "../derived-holds";
 import { eventIdFromReference } from "../retrieval/ids";
 import { isHeld, readHolds } from "../ledger/purge";
@@ -22,6 +24,7 @@ import type { CanonPage, SkippedPage } from "../vault/pages";
 import { assessLivePageEvidence, type LivePageEvidence } from "../vault/provenance";
 import { PAGE_TAINTS } from "../vault/schema";
 import type { PageTaint } from "../vault/schema";
+import { redactorOf } from "./redact";
 import { ServeError } from "./types";
 import type { CanonChunk, ServeContext } from "./types";
 
@@ -219,8 +222,13 @@ export function pageDecision(
   const original = sensitivity(page.data["sensitivity"]);
   const label = original === null ? null : sourceSensitivity(sourceCtx.db, evidence.sourceIds, original);
   if (label === null) return { allow: false, reason: "missing_sensitivity" };
-  const taint = asTaint(page.data["taint"]);
-  if (taint === null) return { allow: false, reason: "missing_taint" };
+  const recordedTaint = asTaint(page.data["taint"]);
+  if (recordedTaint === null) return { allow: false, reason: "missing_taint" };
+  // Earlier typed model pages may have a receipted clean stamp. Tighten their
+  // served trust class without rewriting the immutable receipt or page image.
+  const receipt = evidence.revision.authority === "model_inference"
+    ? getCanonReceipt(sourceCtx.db, evidence.revision.receipt_id) : null;
+  const taint = receipt !== null && isWorldCanonReceipt(receipt) ? "quoted" : recordedTaint;
   const decision = authorize(grant, { ...pageServable(index, page), sensitivity: label });
   return decision.allow
     ? { allow: true, sensitivity: label, taint, evidence }
@@ -243,8 +251,8 @@ export function canonChunk(
   })) throw new ServeError("held", "canon evidence unavailable");
   return {
     page_id: page.id,
-    path: page.relPath,
-    title: stringField(page, "title") ?? "",
+    path: redactorOf(index.sourceContext).text(page.relPath),
+    title: redactorOf(index.sourceContext).text(stringField(page, "title") ?? ""),
     type: stringField(page, "type") ?? "",
     sensitivity: decision.sensitivity,
     taint: decision.taint,
@@ -260,12 +268,18 @@ export function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-/** Code-point safe, so a surrogate pair at the boundary is never split. */
+/**
+ * Code-point safe, so a surrogate pair at the boundary is never split. The
+ * body is redacted before it is cut, so a secret straddling the cut is gone
+ * whole rather than left half-visible.
+ */
 export function excerptOf(
   body: string,
   maxChars: number,
+  ctx: ServeContext,
 ): { excerpt: string; truncated: boolean } {
-  const points = Array.from(body);
-  if (points.length <= maxChars) return { excerpt: body, truncated: false };
+  const served = redactorOf(ctx).text(body);
+  const points = Array.from(served);
+  if (points.length <= maxChars) return { excerpt: served, truncated: false };
   return { excerpt: points.slice(0, maxChars).join(""), truncated: true };
 }

@@ -1,6 +1,7 @@
 import { AUTHORITY_TIERS, ENVELOPE_SCHEMA, PAGE_TAINTS, TOOLS } from "@kizuki/core";
 import type { Tool } from "@kizuki/core";
 import { z } from "zod";
+import { REDACTED } from "./redaction";
 import { MCP_WORLD_OPS } from "./world/ops";
 import { buildWorldSurface } from "./world/surface";
 
@@ -53,6 +54,7 @@ const QUOTED_CHUNK = z.strictObject({
   sensitivity: SENSITIVITY,
   subjects: z.array(z.string()),
   text: z.string(),
+  truncated: z.literal(true).optional(),
   tainted: z.literal(true),
   subject_labels: z.array(SUBJECT_LABEL).max(50).optional(),
 });
@@ -77,6 +79,7 @@ export const ENVELOPE_SHAPE = z.strictObject({
   /** Owner envelopes only; omitted when nothing was withheld. */
   has_withheld: z.literal(true).optional(),
   source_policy: SOURCE_POLICY.optional(),
+  redacted: REDACTED.optional(),
   data: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -105,6 +108,7 @@ export const SEARCH_INPUT = z.strictObject({
   subjects: z.array(ID).max(16).optional(),
   since: RFC3339.optional(),
   until: RFC3339.optional(),
+  full_text: z.boolean().optional(),
 });
 
 export const GET_PAGE_INPUT = z.strictObject({

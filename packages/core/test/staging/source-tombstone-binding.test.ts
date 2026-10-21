@@ -13,12 +13,12 @@ import { fileProposal, listProposals } from "../../src/staging/proposals";
 import { sha256Hex } from "../../src/util/hash";
 import { ulid } from "../../src/util/ulid";
 import { parseFrontmatter, serializePage } from "../../src/vault/frontmatter";
-import { validEvent } from "../fixtures";
+import { documentEvent } from "../fixtures";
 import { canonFixture, write, type CanonFixture } from "../canon/helpers";
 
 function setup(self: boolean) {
   const fixture = canonFixture();
-  const accepted = accept(fixture.db, validEvent());
+  const accepted = accept(fixture.db, documentEvent());
   if (accepted.status !== "stored") throw new Error("source admission failed");
   const proposal = fileProposal(fixture.db, proposalsForEvent(accepted.event).find(item => item.kind === "claim")!).proposal;
   const receipt = write(fixture.io, getClaim(fixture.db, proposal.proposal_id)!);
@@ -26,7 +26,7 @@ function setup(self: boolean) {
   if (self) commitMachineByteIntent(fixture.db, {
     receipt_id: ulid(), before_hash: null, after_hash: sha256Hex(text),
   }, () => {});
-  const deleted = accept(fixture.db, { ...validEvent(), deleted: true, text });
+  const deleted = accept(fixture.db, { ...documentEvent(), deleted: true, text });
   if (deleted.status !== "stored") throw new Error("tombstone admission failed");
   return { ...fixture, receipt, tombstone: deleted.event };
 }
@@ -105,7 +105,7 @@ describe("source tombstones bind the current canon object", () => {
       const fixture = setup(self);
       try {
         unlinkSync(join(fixture.vault, fixture.receipt.page_path));
-        const accepted = accept(fixture.db, { ...validEvent(), source_record_id: "unrelated-source-record",
+        const accepted = accept(fixture.db, { ...documentEvent(), source_record_id: "unrelated-source-record",
           text: "Independent replacement evidence" });
         if (accepted.status !== "stored") throw new Error("replacement evidence admission failed");
         const input = proposalsForEvent(accepted.event).find(item => item.kind === "claim")!;
@@ -125,7 +125,7 @@ describe("source tombstones bind the current canon object", () => {
       try {
         cascadeTombstone(fixture.db, fixture.tombstone, fixture.io);
         const deletion = listProposals(fixture.db, { kind: "deletion" })[0]!;
-        const accepted = accept(fixture.db, { ...validEvent(), source_record_id: "other-record",
+        const accepted = accept(fixture.db, { ...documentEvent(), source_record_id: "other-record",
           text: "A later independent page contribution" });
         if (accepted.status !== "stored") throw new Error("later evidence admission failed");
         const input = proposalsForEvent(accepted.event).find(item => item.kind === "claim")!;
@@ -169,13 +169,13 @@ describe("source tombstones bind the current canon object", () => {
   test("missing vault context refuses the complete promoted-page cascade", () => {
     const fixture = setup(false);
     try {
-      const original = accept(fixture.db, { ...validEvent(), text: "still pending revision" });
+      const original = accept(fixture.db, { ...documentEvent(), text: "still pending revision" });
       if (original.status !== "stored") throw new Error("pending source admission failed");
       fileProposal(fixture.db, proposalsForEvent(original.event)[0]!);
       const before = effects(fixture);
       expect(() => cascadeTombstone(fixture.db, fixture.tombstone)).toThrow("source_tombstone_vault_required");
       expect(effects(fixture)).toEqual(before);
-      const result = runBatch(fixture.db, { events: [{ ...validEvent(), deleted: true,
+      const result = runBatch(fixture.db, { events: [{ ...documentEvent(), deleted: true,
         text: "later deletion without context" }], cursor: null }, { page_candidates: false });
       expect(result.errors).toEqual(["source_tombstone_vault_required"]);
       expect(result.stored).toBe(0);

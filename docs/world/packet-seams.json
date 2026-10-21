@@ -1,0 +1,48 @@
+[
+  {
+    "packet": 482,
+    "workstream": "F1B",
+    "scope": "Projection stages and card codecs for the implemented Concept and Situation reads; this row does not claim the whole packet is shipped",
+    "core": "@kizuki/core/world: readWorldView and serveWorldView",
+    "cli": "kizuki world: concept, situation, find_concepts, find_situations (text and --json)",
+    "mcp": "world_view: concept, situation, find_concepts, find_situations",
+    "http": "/v1/world_view",
+    "app": "World cards and discovery through /app/v1/world_view",
+    "seams": {
+      "core": ["packages/core/src/world/public.ts", "packages/core/src/world/pipeline/read.ts", "packages/core/src/contracts/world-card-kit.ts"],
+      "cli": ["packages/cli/src/commands/world.ts"],
+      "mcp": ["packages/mcp/src/world/surface.ts"],
+      "http": ["packages/core/src/serve/http.ts"],
+      "app": ["packages/cli/src/app/host.ts"]
+    },
+    "tests": [
+      "packages/core/test/world/pipeline-golden.test.ts",
+      "packages/core/test/world/pipeline.test.ts",
+      "packages/core/test/world/pipeline-noninterference.test.ts",
+      "packages/core/test/world/discovery-grouping.test.ts",
+      "packages/core/test/world/discovery-population.test.ts",
+      "packages/core/test/contracts/world-card-kit.test.ts",
+      "packages/cli/test/world-ops.test.ts",
+      "packages/mcp/test/world-ops.test.ts"
+    ]
+  },
+  {
+    "packet": 484,
+    "workstream": "F1B",
+    "scope": "Additive grouping, collection, enrichment and kind assembly for the first Concept; later identity convergence is separate",
+    "core": "@kizuki/core/world: readWorldView and serveWorldView",
+    "cli": "kizuki world: concept and find_concepts (text and --json)",
+    "mcp": "world_view: concept and find_concepts",
+    "http": "/v1/world_view",
+    "app": "Concept cards and discovery through /app/v1/world_view",
+    "tests": [
+      "packages/core/test/world/pipeline-golden.test.ts",
+      "packages/core/test/world/pipeline.test.ts",
+      "packages/core/test/world/pipeline-kinds.test.ts",
+      "packages/core/test/world/discovery-grouping.test.ts",
+      "packages/core/test/world/pipeline-noninterference.test.ts",
+      "packages/cli/test/world-ops.test.ts",
+      "packages/mcp/test/world-ops.test.ts"
+    ]
+  }
+]

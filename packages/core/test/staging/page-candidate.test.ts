@@ -18,7 +18,7 @@ import { parseFrontmatter } from "../../src/vault/frontmatter";
 import type { CaptureEvent } from "../../src/contracts/event";
 import type { ProposalInput } from "../../src/staging/proposals";
 import { write } from "../canon/helpers";
-import { validEvent } from "../fixtures";
+import { documentEvent } from "../fixtures";
 import { event, memoryDb, tempVault } from "./helpers";
 
 function candidateMetadata(
@@ -107,7 +107,7 @@ describe("a page candidate on an event", () => {
       "x-aliases": ["Ada L."],
       "x-born": 1815,
       "x-connector": "fixture",
-      "x-capture-kind": "message",
+      "x-capture-kind": "file",
       "x-source-record-id": "rec-1",
     });
     for (const reserved of ["id", "status", "sensitivity", "sources"]) {
@@ -249,7 +249,7 @@ describe("a migrated page through the receipted writer", () => {
     overrides: Record<string, unknown> = {},
     text = "Met at the fair.",
   ): Promise<Claim> {
-    const stored = accept(db, { ...validEvent(), text, metadata: candidateMetadata(overrides) });
+    const stored = accept(db, { ...documentEvent(), text, metadata: candidateMetadata(overrides) });
     if (stored.status !== "stored") throw new Error("expected a stored event");
     const [, input] = granted(stored.event);
     if (input === undefined) throw new Error("expected a candidate proposal");

@@ -221,6 +221,8 @@ export interface RunReceipt {
   readonly records_skipped?: number;
   /** Daemon-written brief pages the brief or doctor-sweep rail rewrote to pass the page schema. Absent when none. */
   readonly pages_repaired?: number;
+  /** Capture notes of conversational events the doctor-sweep closed out as skipped. Absent when none. */
+  readonly captures_skipped?: number;
   readonly canon_writes: number;
   readonly canon_reverts: number;
   readonly model: RunModelReport;

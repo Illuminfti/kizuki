@@ -20,6 +20,7 @@ import {
 import type { SignInIo } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { IMAP_CONNECTOR_ID, createImapConnector } from "../src/connector";
+import { ImapSignInInputError } from "../src/sign-in";
 import { parseImapState } from "../src/state";
 import { FakeImapServer } from "../src/testing/fake-imap";
 import { memoryDialer } from "../src/testing/memory-dialer";
@@ -109,6 +110,7 @@ describe("interactive sign-in", () => {
       "Username (usually your email address): ",
       "App password: ",
       "Folders to sync [INBOX]: ",
+      "Only mail since (YYYY-MM-DD) [all]: ",
     ]);
     expect(io.notices[0]).toContain("Folders on the server: ");
     expect(io.notices[0]).toContain("Archive/2026");
@@ -192,6 +194,37 @@ describe("interactive sign-in", () => {
       "INBOX",
       "Archive/2026",
     ]);
+  });
+
+  test("an owner-typed date floor lands in the state, and nothing is written for a bad one", async () => {
+    const connector = createImapConnector({}, { dial: memoryDialer(server()) });
+    const signIn = async (since: string): Promise<Uint8Array | null> => {
+      let bytes: Uint8Array | null = null;
+      await connector.signIn(scriptedIo([...HAPPY, since]), {
+        write: async (written) => {
+          bytes = written;
+        },
+      });
+      return bytes;
+    };
+    const kept = await signIn(" 2025-06-01 ");
+    expect(parseImapState(new TextDecoder().decode(kept ?? new Uint8Array())).since).toBe("2025-06-01");
+    const blank = await signIn("");
+    expect(parseImapState(new TextDecoder().decode(blank ?? new Uint8Array())).since).toBeUndefined();
+
+    for (const bad of ["yesterday", "2025-02-30", "06/01/2025"]) {
+      let wrote = false;
+      const failure = await connector
+        .signIn(scriptedIo([...HAPPY, bad]), {
+          write: async () => {
+            wrote = true;
+          },
+        })
+        .catch((caught: unknown) => caught);
+      expect(failure).toBeInstanceOf(ImapSignInInputError);
+      expect((failure as Error).message).not.toContain(bad);
+      expect(wrote).toBe(false);
+    }
   });
 
   test("a server without an INBOX is refused", async () => {

@@ -1,14 +1,18 @@
-import type { CaptureEventInput, SyncBatch } from "@kizuki/core";
+import type { CaptureEventInput, CursorStoreDelta, SyncBatch } from "@kizuki/core";
 import type { TelegramApi, TelegramDialog, TelegramUser } from "./api";
 import {
   BATCH_LIMIT,
   EDIT_WINDOW,
   MAX_DIALOGS,
   TELEGRAM_CURSOR_SCHEMA,
+  WALK_BUDGET_MS,
+  decodeDialogs,
+  digestDialogs,
   encodeCursor,
+  encodeDialog,
   parseCursor,
 } from "./cursor";
-import type { DialogCursor, TelegramCursor } from "./cursor";
+import type { DialogCursor, SyncPass } from "./cursor";
 import { mapMessage } from "./map";
 import type { PurgeIndex } from "./plan";
 import { waitSeconds } from "./sign-in";
@@ -22,6 +26,16 @@ export interface WalkDeps {
   plan: PurgeIndex;
   /** Dialogs listed earlier in this process, or `null` to list them again. */
   dialogs: TelegramDialog[] | null;
+  /** The per-dialog map the host committed with the last checkpoint. */
+  store: ReadonlyMap<string, string>;
+}
+
+/** What a walk works on: the wire cursor's fields plus the dialogs the host store holds. */
+interface Working {
+  dialogs: Record<string, DialogCursor>;
+  phase: "backfill" | "synced";
+  edit_watermark: number;
+  pass: SyncPass | null;
 }
 
 /** What one dialog listing showed; absent when the pass needed no listing. */
@@ -38,6 +52,8 @@ export interface WalkResult {
   listing: DialogListing | null;
   /** Records this pass read for the first time, skipped ones included. */
   read: number;
+  /** True when the returned cursor describes a finished, exhausted account. */
+  settled: boolean;
 }
 
 interface Batch {
@@ -70,7 +86,7 @@ async function listDialogs(
 function seedCursor(
   dialogs: TelegramDialog[],
   startedAt: number,
-): TelegramCursor {
+): Working {
   const entries: Record<string, DialogCursor> = {};
   for (const dialog of dialogs) {
     entries[dialog.peer_id] = {
@@ -80,11 +96,59 @@ function seedCursor(
     };
   }
   return {
-    schema: TELEGRAM_CURSOR_SCHEMA,
     dialogs: entries,
     phase: "backfill",
     edit_watermark: startedAt,
     pass: null,
+  };
+}
+
+function isSettled(cursor: Working): boolean {
+  return (
+    cursor.phase === "synced" &&
+    cursor.pass === null &&
+    Object.values(cursor.dialogs).every((entry) => entry.exhausted)
+  );
+}
+
+/** Entries the host store has to change to hold `dialogs`; absent when it already does. */
+function storeDelta(
+  held: ReadonlyMap<string, string>,
+  dialogs: Record<string, DialogCursor>,
+): CursorStoreDelta | undefined {
+  const delta: Record<string, string | null> = {};
+  for (const peer of Object.keys(dialogs)) {
+    const value = encodeDialog(dialogs[peer] as DialogCursor);
+    if (held.get(peer) !== value) delta[peer] = value;
+  }
+  for (const peer of held.keys()) {
+    if (!Object.hasOwn(dialogs, peer)) delta[peer] = null;
+  }
+  return Object.keys(delta).length === 0 ? undefined : delta;
+}
+
+function finish(
+  cursor: Working,
+  deps: WalkDeps,
+  hasMore: boolean,
+  events: CaptureEventInput[],
+): { batch: SyncBatch; settled: boolean } {
+  const delta = storeDelta(deps.store, cursor.dialogs);
+  return {
+    batch: {
+      events,
+      cursor: encodeCursor({
+        schema: TELEGRAM_CURSOR_SCHEMA,
+        phase: cursor.phase,
+        edit_watermark: cursor.edit_watermark,
+        pass: cursor.pass,
+        map_digest: digestDialogs(cursor.dialogs),
+        legacy_dialogs: null,
+      }),
+      ...(delta === undefined ? {} : { cursor_store: delta }),
+      has_more: hasMore,
+    },
+    settled: isSettled(cursor),
   };
 }
 
@@ -98,23 +162,35 @@ export async function walk(
   mode: WalkMode,
   deps: WalkDeps,
 ): Promise<WalkResult> {
+  const began = deps.now();
   const stored = cursorText === null ? null : parseCursor(cursorText);
+  const held =
+    stored === null ? {} : (stored.legacy_dialogs ?? decodeDialogs(deps.store));
   if (mode === "backfill" && stored !== null && stored.phase === "synced") {
     // Nothing is left to read, so nothing is worth asking for: a listing here
     // would only spend a request, and one more chance to be told to wait.
-    return {
-      batch: { events: [], cursor: encodeCursor(stored), has_more: false },
-      floodUntil: null,
-      listing: null,
-      read: 0,
-    };
+    const done = finish(
+      { dialogs: held, phase: stored.phase, edit_watermark: stored.edit_watermark, pass: stored.pass },
+      deps,
+      false,
+      [],
+    );
+    return { ...done, floodUntil: null, listing: null, read: 0 };
   }
+  // A backfill in progress always has a dialog left to read, so a cursor that
+  // says so over an empty map has lost its map. Starting again is safe (the
+  // ledger deduplicates what was already stored); finishing on it is not.
+  const lost =
+    stored !== null &&
+    stored.phase === "backfill" &&
+    Object.keys(held).length === 0;
   // The listing supplies the titles and hints the mapper needs, so it is not
   // free to skip; it is only free to reuse. Only a walk that is starting has
   // to see the account afresh; the batches that continue it keep the dialogs
   // it began with, which is cheaper and more consistent than re-walking every
   // dialog once per batch of five hundred events.
-  const starting = stored === null || (mode === "sync" && stored.pass === null);
+  const starting =
+    stored === null || lost || (mode === "sync" && stored.pass === null);
   const carried = starting ? null : deps.dialogs;
   let dialogs: TelegramDialog[];
   let limitReached: boolean | null = null;
@@ -134,6 +210,7 @@ export async function walk(
         floodUntil: deps.now() + seconds * 1000,
         listing: null,
         read: 0,
+        settled: false,
       };
     }
     dialogs = listed.dialogs;
@@ -141,7 +218,14 @@ export async function walk(
   } else {
     dialogs = carried;
   }
-  const cursor = stored ?? seedCursor(dialogs, Math.floor(deps.now() / 1000));
+  const cursor: Working = stored === null || lost
+    ? seedCursor(dialogs, Math.floor(deps.now() / 1000))
+    : {
+        dialogs: held,
+        phase: stored.phase,
+        edit_watermark: stored.edit_watermark,
+        pass: stored.pass,
+      };
   const byPeer = new Map(
     dialogs.map((dialog) => [dialog.peer_id, dialog] as const),
   );
@@ -176,6 +260,7 @@ export async function walk(
   let index = resume === null ? 0 : Math.max(0, keys.indexOf(resume));
   let stoppedAt: string | null = null;
   let floodUntil: number | null = null;
+  let worked = 0;
 
   for (; index < keys.length; index += 1) {
     const peer = keys[index];
@@ -187,6 +272,14 @@ export async function walk(
     // entry alone keeps the backfill honestly unfinished, and lets a chat that
     // comes back to the listing resume rather than start again.
     if (dialog === undefined) continue;
+    // One batch must end well inside the host's per-call deadline, however
+    // slow the account is to answer. It stops between dialogs, never inside
+    // one, and always after at least one, so the walk cannot stall on the clock.
+    if (worked > 0 && deps.now() - began >= WALK_BUDGET_MS) {
+      stoppedAt = peer;
+      break;
+    }
+    worked += 1;
     let outcome: DialogOutcome;
     try {
       outcome = await readDialog(deps, dialog, dialogCursor, batch);
@@ -228,15 +321,16 @@ export async function walk(
     // every edit made while it ran is later than that.
     cursor.phase = "synced";
   }
+  const done = finish(
+    cursor,
+    deps,
+    snapshotHasMore(cursor, dialogs, floodUntil),
+    batch.events,
+  );
   return {
-    batch: {
-      events: batch.events,
-      cursor: encodeCursor(cursor),
-      has_more: snapshotHasMore(cursor, dialogs, floodUntil),
-    },
+    ...done,
     floodUntil,
-    listing:
-      limitReached === null ? null : { dialogs, limitReached },
+    listing: limitReached === null ? null : { dialogs, limitReached },
     read: batch.read,
   };
 }
@@ -248,7 +342,7 @@ export async function walk(
  * a later run rather than spinning this one.
  */
 function snapshotHasMore(
-  cursor: TelegramCursor,
+  cursor: Working,
   dialogs: TelegramDialog[],
   floodUntil: number | null,
 ): boolean {
@@ -268,7 +362,7 @@ function snapshotHasMore(
  * the entries this connector can no longer read anything from.
  */
 function boundDialogs(
-  cursor: TelegramCursor,
+  cursor: Working,
   listed: ReadonlyMap<string, TelegramDialog>,
 ): void {
   let overflow = Object.keys(cursor.dialogs).length - MAX_DIALOGS;

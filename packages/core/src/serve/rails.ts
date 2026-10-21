@@ -4,6 +4,7 @@ import { CanonRecoveryError, inspectCanonRecovery } from "../canon/write-intent"
 import { retryCanonProjectionObligations } from "../canon/projection-obligations";
 import { pidAlive, readBootId } from "./leases";
 import type { Database } from "bun:sqlite";
+import { skipCaptureFanoutClaims } from "../claims/capture-fanout";
 import { pendingRetrievalOps, retryRetrievalOps } from "../claims/store";
 import type { ClaimsIo } from "../claims/store";
 import type { BudgetTracker } from "../canon/budget";
@@ -18,7 +19,7 @@ import { composeBrief, repairBriefPages, type BriefRepair } from "./brief";
 import { parseFrontmatter } from "../vault/frontmatter";
 import { inspectServeDoctor } from "./doctor";
 import { createFileNotifier, briefPath } from "./notifier-file";
-import { coalesceNoopReceipt, recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
+import { CAPTURE_REPAIR_RECEIPT_PENDING, stageCaptureRepairReceipt, coalesceNoopReceipt, recoverRunJournal, getRunReceipt, persistRunReceipt, pruneRunReceipts, redactReceiptError } from "./receipts";
 import { applyRailPeriod, initServe, listSchedules } from "./schema";
 import {
   InjectedCrash,
@@ -347,6 +348,8 @@ async function runDoctorSweep(
   vaultPath: string,
   hooks: AnyRailHooks | undefined,
   now: string,
+  runId: string,
+  execution: RunExecution,
 ): Promise<Partial<RunReceipt>> {
   const health = inspectPurgeHealth(db, now);
   const recovery = inspectCanonRecovery(db);
@@ -364,12 +367,37 @@ async function runDoctorSweep(
     ...doctor.failures.map(redactReceiptError),
   ].slice(0, SWEEP_FAILURES);
   const repair = repairReport(await repairBriefPages(vaultPath));
+  const captures = closeCaptureFanout(db, vaultPath, now, runId, execution);
   const allErrors = [...errors, ...(repair.errors ?? [])].slice(0, SWEEP_FAILURES);
   return {
     ...repair,
+    ...(captures === 0 ? {} : { captures_skipped: captures }),
     status: allErrors.length === 0 ? "ok" : "degraded",
     errors: allErrors,
   };
+}
+
+/**
+ * Closes out capture notes filed for conversational events by earlier
+ * revisions. It takes the canon writer's lock so a claim is never skipped
+ * while the writer is materializing it; a busy writer leaves it to the next sweep.
+ */
+function closeCaptureFanout(db: Database, vaultPath: string, now: string, runId: string, execution: RunExecution): number {
+  try {
+    return withVaultMutationSync({ db, vault_path: vaultPath }, () => {
+      // A released lock is not proof of completion: an interrupted writer's
+      // admission still guards these claims until its durable intent finishes.
+      if (inspectCanonRecovery(db).pending) return 0;
+      return skipCaptureFanoutClaims(db, now, undefined, (skipped) => stageCaptureRepairReceipt(db, {
+        ...emptyRunTotals(), run_id: runId, rail: "doctor-sweep", execution,
+        started_at: now, finished_at: now, status: "failed", stopped: CAPTURE_REPAIR_RECEIPT_PENDING,
+        captures_skipped: skipped, errors: [],
+      }));
+    });
+  } catch (error) {
+    if (error instanceof VaultMutationError && error.code === "writer_busy") return 0;
+    throw error;
+  }
 }
 
 function runJournalPrune(
@@ -428,6 +456,9 @@ async function runRailImpl(
   try {
     const now = options.now ?? (() => new Date().toISOString());
     const started = now();
+    const execution = options.execution ?? {
+      instance_id: processInstance, pid: process.pid, boot_id: readBootId(), trigger: "manual" as const, due_at: null,
+    };
     const totals = emptyRunTotals();
     let partial: Partial<RunReceipt> = {};
     let hooks: AnyRailHooks | undefined;
@@ -448,7 +479,7 @@ async function runRailImpl(
         try { recoverCanonWrites({ db, vault_path: vaultPath }); }
         catch (error) { if (!(error instanceof CanonRecoveryError)) throw error; }
       }
-      recoverRunJournal(db, vaultPath);
+      recoverRunJournal(db, vaultPath, activeRuns);
       try {
         withVaultMutationSync({ db, vault_path: vaultPath }, () => {
           for (const orphan of db.query<{ run_id: string; holder_pid: number; model_ref: string | null; metrics: string; created_at: string }, []>("SELECT * FROM extract_usage").all()) {
@@ -494,7 +525,7 @@ async function runRailImpl(
           partial = await runBrief(db, vaultPath, started, hooks?.model_ref ?? null);
           break;
         case "doctor-sweep":
-          partial = await runDoctorSweep(db, vaultPath, hooks, started);
+          partial = await runDoctorSweep(db, vaultPath, hooks, started, runId, execution);
           break;
         case "journal-prune":
           partial = runJournalPrune(db, vaultPath, started, config.journal_retention_days);
@@ -522,14 +553,16 @@ async function runRailImpl(
       partial = { ...partial, ...metrics, model: { ...metrics.model, model_ref: usage.model_ref } };
       if (metrics.model.usage_unknown === true) partial = { ...partial, status: "failed", errors: [...(partial.errors ?? []), "model attempt interrupted; token usage unknown"] };
     }
+    const repairProgress = getRunReceipt(db, runId);
+    if (repairProgress?.stopped === CAPTURE_REPAIR_RECEIPT_PENDING) {
+      partial = { ...partial, captures_skipped: repairProgress.captures_skipped! };
+    }
     const finished = now();
     const receipt: RunReceipt = {
       ...totals,
       ...partial,
       run_id: runId,
-      execution: options.execution ?? {
-        instance_id: processInstance, pid: process.pid, boot_id: readBootId(), trigger: "manual", due_at: null,
-      },
+      execution,
       rail,
       started_at: started,
       finished_at: finished,

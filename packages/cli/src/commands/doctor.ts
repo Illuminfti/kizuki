@@ -6,6 +6,7 @@ import {
   PURGE_SLA_SECONDS,
   PortError,
   count,
+  countCaptureFanout,
   countClaims,
   countUnwrittenLiveClaims,
   countLiveClaimsByProducer,
@@ -17,13 +18,14 @@ import {
   inspectCanonRecoveryDetail,
   inspectPurgeHealth,
   inspectServeDoctor,
+  isCaptureFanoutSkip,
   latestReceiptForPage,
   listClaims,
   listCanonPagesReport,
   readHolds,
   readVaultId,
 } from "@kizuki/core";
-import type { ClaimStatus, LiveClaimProducers } from "@kizuki/core";
+import type { CaptureFanoutCounts, ClaimStatus, LiveClaimProducers } from "@kizuki/core";
 import { readSqliteRuntime } from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
@@ -94,6 +96,8 @@ interface DoctorReport {
     filed: number;
     written: number;
     unwritten: number;
+    /** Capture notes of conversational events: closed out as skipped, and still live awaiting the doctor-sweep. */
+    capture_fanout: CaptureFanoutCounts;
     /** Live claims by producer: model extraction versus deterministic page mirrors. */
     by_producer: LiveClaimProducers;
   };
@@ -463,7 +467,7 @@ async function collect(
   const liveClaims = listClaims(ctx.db, { status: "live", limit: 8 }).map(
     toDoctorClaim,
   );
-  const filedClaims = listClaims(ctx.db, { status: "skipped", limit: 8 }).map(
+  const filedClaims = listClaims(ctx.db, { status: "skipped", limit: 8, filter: (claim) => !isCaptureFanoutSkip(claim) }).map(
     toDoctorClaim,
   );
 
@@ -478,6 +482,7 @@ async function collect(
       filed: countClaims(ctx.db, { status: "skipped" }),
       written: countWrittenLiveClaims(ctx.db),
       unwritten: countUnwrittenLiveClaims(ctx.db),
+      capture_fanout: countCaptureFanout(ctx.db),
       by_producer: countLiveClaimsByProducer(ctx.db),
     },
     live_claims: liveClaims,
@@ -511,6 +516,11 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   io.out(
     `claims live=${report.claims.live} filed=${report.claims.filed} written=${report.claims.written} unwritten=${report.claims.unwritten} superseded=${report.claims.superseded} skipped=${report.claims.skipped} purged=${report.claims.purged}` +
       ` live_by_producer model_extracted=${producers.model} deterministic_floor=${producers.deterministic} owner=${producers.owner} agent=${producers.agent}`,
+  );
+  const fanout = report.claims.capture_fanout;
+  io.out(
+    `capture fan-out skipped=${fanout.skipped} pending=${fanout.pending}` +
+      (fanout.pending > 0 ? " repair: kizuki serve run doctor-sweep" : ""),
   );
   const derived = report.serve.stores.derived;
   io.out(

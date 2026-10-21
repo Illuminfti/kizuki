@@ -1858,7 +1858,7 @@ test("real runBatch compatibility proposal payload is erased from owned SQLite a
     grant(db, a);
     const { runBatch } = await import("../src/index");
     const sentinel = "qzxcompatproposalprivate73915";
-    runBatch(db, { events: [{ ...event(), text: sentinel, subjects: [], metadata: {} }], cursor: null }, { page_candidates: false }, { source_key: a, expected_revision: 1 });
+    runBatch(db, { events: [{ ...event(), kind: "file", text: sentinel, subjects: [], metadata: {} }], cursor: null }, { page_candidates: false }, { source_key: a, expected_revision: 1 });
     expect(JSON.stringify(db.query("SELECT * FROM proposals").all())).toContain(sentinel);
     revokeSourceGrant(db, { source_key: a, expected_revision: 1, operation_id: "proposal-revoke" });
     const done = await resumeSourceRevocation(db, dir, "proposal-revoke", { ownedRetrieval: { stores: async () => ({ stores: [], absent_store_ids: [] }) } });
@@ -1877,8 +1877,8 @@ test("compatibility erasure covers joint and rejected proposals, preserves indep
     grant(db, a);
     setSourceGrant(db, { source_key: b, expected_revision: 0, operation_id: "compat-b", policy: policy() });
     const { runBatch } = await import("../src/index");
-    runBatch(db, { events: [{ ...event(), source_record_id: "a1", text: "Joint A payload" }, { ...event(), source_record_id: "a2", text: "Rejected A payload" }], cursor: null }, { page_candidates: false }, { source_key: a, expected_revision: 1 });
-    runBatch(db, { events: [{ ...event(), source_record_id: "b", text: "Independent B payload" }], cursor: null }, { page_candidates: false }, { source_key: b, expected_revision: 1 });
+    runBatch(db, { events: [{ ...event(), kind: "file", source_record_id: "a1", text: "Joint A payload" }, { ...event(), kind: "file", source_record_id: "a2", text: "Rejected A payload" }], cursor: null }, { page_candidates: false }, { source_key: a, expected_revision: 1 });
+    runBatch(db, { events: [{ ...event(), kind: "file", source_record_id: "b", text: "Independent B payload" }], cursor: null }, { page_candidates: false }, { source_key: b, expected_revision: 1 });
     const bId = db.query<{
         event_id: string;
     }, [
@@ -1952,7 +1952,7 @@ test("source purge replaces claim and compatibility body hashes with content-fre
     const first = accept(db, { ...event(), text: "yes" }, { source: { source_key: a, expected_revision: 1 } });
     if (first.status !== "stored") throw new Error("synthetic capture failed");
     const claim = await storeClaim(db, first.event.event_id, { body: "yes" });
-    runBatch(db, { events: [{ ...event(), source_record_id: "second", text: "no", subjects: [], metadata: {} }], cursor: null }, { page_candidates: false }, { source_key: a, expected_revision: 1 });
+    runBatch(db, { events: [{ ...event(), kind: "file", source_record_id: "second", text: "no", subjects: [], metadata: {} }], cursor: null }, { page_candidates: false }, { source_key: a, expected_revision: 1 });
     const originals = db.query<{ body_hash: string; body: string }, []>("SELECT body_hash,body FROM claims UNION ALL SELECT body_hash,body FROM proposals").all();
     expect(originals.some(row => row.body_hash === sha256Hex("yes"))).toBe(true);
     expect(originals.length).toBeGreaterThan(1);

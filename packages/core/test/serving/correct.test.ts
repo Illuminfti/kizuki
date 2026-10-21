@@ -343,7 +343,8 @@ describe("serveCorrect retires what the owner says is wrong", () => {
       ],
     ).toEqual([hashed(relayed.data?.claim_id as string), hashed(wrong)]);
 
-    // The claim a low-ceiling agent may not read is one it may not retire.
+    // The claim a low-ceiling agent may not read is one it may not retire, and
+    // the refusal is the one a claim that does not exist gets: no tier is named.
     const other = await fileClaim(
       live,
       "Grace is based in Lagos.",
@@ -361,7 +362,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
           }),
         )
       ).code,
-    ).toBe("above_ceiling");
+    ).toBe("invalid_arguments");
     expect(
       (
         await refusal(() =>
@@ -371,7 +372,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
           }),
         )
       ).code,
-    ).toBe("subject_out_of_scope");
+    ).toBe("invalid_arguments");
   });
 
   test("a refile after a correction is a duplicate, never suppressed", async () => {
@@ -505,7 +506,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
         target: { claim_id: wrong },
       }),
     );
-    expect(windowed.code).toBe("time_out_of_scope");
+    expect(windowed.code).toBe("invalid_arguments");
 
     const typed = await refusal(() =>
       serveCorrect(live.agent("typed"), {
@@ -513,7 +514,7 @@ describe("serveCorrect retires what the owner says is wrong", () => {
         target: { claim_id: wrong },
       }),
     );
-    expect(typed.code).toBe("type_out_of_scope");
+    expect(typed.code).toBe("invalid_arguments");
     expect(getClaim(live.db, wrong)?.status).toBe("live");
   });
 

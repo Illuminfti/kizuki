@@ -1,7 +1,7 @@
 import { expect,test } from "bun:test";
 import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 
-test("ledger33 represents retained and erased typed canon receipts in the existing receipt table",()=>{
+test("ledger 33 and later represent retained and erased typed canon receipts in the existing receipt table",()=>{
  const db=openLedger(":memory:");try {
   const columns=db.query<{name:string},[]>("PRAGMA table_info(canon_receipts)").all().map(row=>row.name);
   expect(columns).toContain("record_codec");

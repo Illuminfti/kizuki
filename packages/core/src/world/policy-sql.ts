@@ -69,6 +69,29 @@ export function authorizedSupportSql(
   }
   return { sql: clauses.join(" AND "), bindings };
 }
+
+/** Claim-level grant limits, before candidate LIMITs and work accounting. */
+export function authorizedClaimSql(
+  ctx: ServeContext,
+  alias = "base",
+): { sql: string; bindings: (string | number)[] } {
+  const grant = ctx.principal.grant;
+  const clauses = [`${alias}.is_world_typed=1`];
+  const bindings: (string | number)[] = [];
+  if (grant.types !== null) {
+    clauses.push(`${alias}.kind IN (SELECT value FROM json_each(?))`);
+    bindings.push(JSON.stringify(grant.types));
+  }
+  if (grant.since !== null) {
+    clauses.push(`${instantPairSql(`${alias}.asserted_at`)} >= (?,?)`);
+    bindings.push(...instantBoundPair(grant.since, "since"));
+  }
+  if (grant.until !== null) {
+    clauses.push(`${instantPairSql(`${alias}.asserted_at`)} <= (?,?)`);
+    bindings.push(...instantBoundPair(grant.until, "until"));
+  }
+  return { sql: clauses.join(" AND "), bindings };
+}
 export function validMeaningSql(
   valid: WorldValidQuery,
   alias = "c",

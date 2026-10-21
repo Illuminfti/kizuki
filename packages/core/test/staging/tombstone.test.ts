@@ -16,7 +16,7 @@ import {
   initStaging,
   listProposals,
 } from "../../src/staging/proposals";
-import { validEvent } from "../fixtures";
+import { documentEvent } from "../fixtures";
 
 function vaultDb(): Database {
   const db = openLedger(":memory:");
@@ -34,7 +34,7 @@ function stored(db: Database, input: CaptureEventInput): CaptureEvent {
 
 function tombstoneInput(): CaptureEventInput {
   return {
-    ...validEvent(),
+    ...documentEvent(),
     text: "",
     subjects: [],
     attachments: [],
@@ -47,7 +47,7 @@ function tombstoneInput(): CaptureEventInput {
 describe("cascadeTombstone", () => {
   test("withdraws pending proposals keyed by the source record, not the tombstone id", () => {
     const db = vaultDb();
-    const original = stored(db, validEvent());
+    const original = stored(db, documentEvent());
     for (const input of proposalsForEvent(original)) fileProposal(db, input);
     expect(listProposals(db, { status: "pending" })).toHaveLength(2);
 

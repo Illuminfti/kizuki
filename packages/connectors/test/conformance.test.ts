@@ -315,7 +315,7 @@ function batteryFor(
         purgeFixture: imapPurgeFixture,
         unavailable: { connector: createImapConnector({}) },
         tombstone: {
-          prepare: async () => (await imap.backfill(null)).cursor,
+          prepare: async (host) => (await host.backfill(null)).cursor,
           mutate: async () => {
             imapServer.expunge("INBOX", 1);
           },

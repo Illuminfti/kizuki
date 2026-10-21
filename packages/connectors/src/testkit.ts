@@ -7,6 +7,7 @@ export type {
 } from "./ledger";
 export { runConformance } from "./conformance";
 export type {
+  ConformanceHost,
   ConformanceOptions,
   ConformanceResult,
   TombstoneConformanceHooks,

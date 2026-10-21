@@ -32,6 +32,7 @@ export {
   EDIT_WINDOW,
   MAX_DIALOGS,
   TELEGRAM_CURSOR_SCHEMA,
+  WALK_BUDGET_MS,
   encodeCursor,
   parseCursor,
 } from "./cursor";

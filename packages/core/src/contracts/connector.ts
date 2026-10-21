@@ -5,6 +5,16 @@ export const CONNECTOR_SCHEMA = "kizuki.connector/v1" as const;
 
 /** Opaque resume tokens larger than this are refused before any persist. */
 export const MAX_CURSOR_BYTES = 8 * 1024;
+/**
+ * Ceiling on the side map a connector declaring `cursor_store: "host"` may
+ * keep per connection: key and value bytes together. The wire cursor stays
+ * under MAX_CURSOR_BYTES; per-dialog or per-folder state lives here instead.
+ */
+export const MAX_CURSOR_STORE_BYTES = 1024 * 1024;
+/** Entry ceiling for the same map. */
+export const MAX_CURSOR_STORE_ENTRIES = 10_000;
+/** One key of that map, in bytes. */
+export const MAX_CURSOR_STORE_KEY_BYTES = 1024;
 /** One SyncBatch may not materialize more events than this. */
 export const MAX_SYNC_BATCH_EVENTS = 1_000;
 /** Serialized event payload ceiling for one SyncBatch. */
@@ -71,6 +81,16 @@ export interface ManifestCapabilities {
    * one opaque cursor schema.
    */
   sync_from_backfill_before_first_success?: boolean;
+  /**
+   * `"host"` lets the connector keep a bounded side map (per-dialog or
+   * per-folder state) that the host stores in the same transaction as the
+   * checkpoint, so the wire cursor stays small. The host hands the committed
+   * map to `backfill` and `sync` in `RunContext` and applies the batch's
+   * `cursor_store` delta only when the run's checkpoint advances. A batch
+   * that carries a delta without this declaration is refused. Absent means
+   * the connector keeps everything in its cursor.
+   */
+  cursor_store?: "host";
 }
 
 export interface Manifest {
@@ -117,6 +137,9 @@ export function freezeManifest(manifest: Manifest): Manifest {
   const required_secrets = [...manifest.required_secrets];
   const auth_modes = [...manifest.auth_modes];
   const capabilities = { ...manifest.capabilities };
+  if (capabilities.cursor_store !== undefined && capabilities.cursor_store !== "host") {
+    throw new TypeError('manifest.capabilities.cursor_store must be "host" when present');
+  }
   if (
     capabilities.sync_from_backfill_before_first_success !== undefined &&
     typeof capabilities.sync_from_backfill_before_first_success !== "boolean"
@@ -229,10 +252,25 @@ export type SecretResolver = (secret_ref: string) => Promise<string>;
 
 export type SyncBatchStatus = "ok" | "unavailable";
 
+/**
+ * Changes to a connector's host-held side map: a string sets a key, null
+ * deletes it. Applied with the checkpoint, so a batch the host does not
+ * commit changes nothing.
+ */
+export type CursorStoreDelta = Readonly<Record<string, string | null>>;
+
+/** What the host lends a connector whose manifest declares `cursor_store: "host"`. */
+export interface RunContext {
+  /** The side map as of the last committed checkpoint. */
+  readonly cursor_store: ReadonlyMap<string, string>;
+}
+
 export interface SyncBatch {
   events: CaptureEventInput[];
   /** Durable resume checkpoint; null may also mark an exhausted source. */
   cursor: Cursor | null;
+  /** Side-map changes that commit with `cursor`; needs `capabilities.cursor_store`. */
+  cursor_store?: CursorStoreDelta;
   /**
    * False explicitly completes this requested snapshot after its batch commits,
    * retaining a nonnull checkpoint for future runs. True or absent preserves
@@ -263,9 +301,9 @@ export interface Connector {
   health(): Promise<HealthReport>;
   connect(resolve: SecretResolver): Promise<void>;
   /** Historical sweep. Idempotent: replaying the same cursor yields the same events. */
-  backfill(cursor: Cursor | null): Promise<SyncBatch>;
+  backfill(cursor: Cursor | null, context?: RunContext): Promise<SyncBatch>;
   /** Incremental sweep from a checkpoint; emits tombstones as `deleted: true` events. */
-  sync(cursor: Cursor | null): Promise<SyncBatch>;
+  sync(cursor: Cursor | null, context?: RunContext): Promise<SyncBatch>;
   revoke(): Promise<void>;
   /**
    * Interactive sign-in (phone code, browser OAuth, app

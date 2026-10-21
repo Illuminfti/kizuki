@@ -25,6 +25,20 @@
   receipt. `kizuki purge --suppressions` lists the refusals
   and `kizuki purge --lift-suppression RECEIPT` lifts them. Purges recorded
   earlier refuse too until lifted.
+- Chat, session and email records no longer file one capture-note claim each
+  onto a single per-day `captures/<connector>/<day>` page. That page was
+  recomposed from all of its live claims on every write and outgrew the canon
+  page limit on a busy day. Their text stays in the ledger, so search,
+  timeline and context read it with no model, and typed extraction turns it
+  into claims when a model is configured. Markdown, wiki and other page-kind
+  events keep their capture notes.
+- The doctor sweep closes out the capture notes earlier revisions filed for
+  such records: each unwritten one becomes `skipped` with reason
+  `message_capture_fanout`, is never deleted, creates no canon page, and is
+  counted as `captures_skipped` on the run receipt. Doctor reports them on a
+  `capture fan-out` line (JSON `claims.capture_fanout`), apart from unwritten
+  claims, names `kizuki serve run doctor-sweep` while any are pending, and no
+  longer lists them among leftover skipped rows.
 
 ### Operator safety
 
@@ -58,7 +72,16 @@
   it with `--verify`. The manifest and command output report the vault entries
   a snapshot does not carry (non-canon pages, `.kizuki` configuration), and
   restore checks page bytes against their receipts before publishing.
-
+- A connector can now declare `capabilities.cursor_store: "host"` and keep a
+  bounded side map (up to 1 MiB and 10,000 entries per connection) that the
+  host writes in the same transaction as the checkpoint. The wire cursor still
+  has to fit 8 KiB. The map is lent to `backfill` and `sync` as
+  `RunContext.cursor_store` and updated through `SyncBatch.cursor_store`; a
+  run that does not commit its cursor leaves the map alone. This is ledger
+  version 35 (`connector_cursor_store`); existing vaults migrate on open.
+- IMAP sign-in ends with an optional date floor (`Only mail since
+  (YYYY-MM-DD) [all]:`, stored as `since`). Mail received before it, by
+  INTERNALDATE at midnight UTC, is not fetched or remembered.
 - `kizuki agent list [--json]` shows enrolled agents with their state, grant
   epoch and grant summary, and never a credential. `kizuki agent grant NAME
   --grant FILE --operation-id ID` replaces an enrolled agent's grant in place:
@@ -158,6 +181,17 @@
   current boot, and a failed write of it no longer stops the daemon.
 - [Integration recipes](docs/integrations.md) for Claude Code, Codex and any
   stdio MCP client.
+- Everything Kizuki serves to an agent passes one output seam that reuses the
+  model-prompt scrubber. PEM blocks, JWTs, `sk-`, `ghp_`, `github_pat_`, `xox`
+  and `AKIA` tokens, `Authorization: Bearer` values, `NAME=value` secret
+  assignments and mnemonic-like word runs become `[redacted:<kind>]` in search,
+  `get_page`, `timeline` and its expansion, every `context_packet` section,
+  `query_entities`, `graph_neighbors` and `world_view`, over MCP stdio, loopback
+  HTTP and the session hook. The envelope adds `redacted`, the per-kind count of
+  replaced spans, and never a value. Redaction runs before an excerpt, preview
+  or expansion window is cut and before a packet is packed, so a secret cannot
+  survive a cut and the token budget stays exact. The owner keeps raw text. The
+  scrubber is a heuristic; see [what an agent is served](docs/agent-enrollment.md#what-an-agent-is-served).
 
 ### Fixed
 
@@ -196,6 +230,25 @@
 - A claim's `corroboration` count rises only for a source record it did not
   already rest on, on both the typed and the staged path. A re-sync of the same
   record, whatever its bytes, no longer counts as a second witness.
+- A first Telegram backfill of an account with more than about 125 dialogs
+  stored nothing and repeated forever, because the per-dialog cursor passed
+  the 8 KiB checkpoint bound. The per-dialog map now lives in the host cursor
+  store, so accounts up to the 5,000 listed dialogs backfill, and a batch stops
+  between dialogs after about 40 seconds so a slow account takes more batches
+  instead of hitting the 60 second call limit. Cursors written by the old
+  version still read and migrate. The cursor schema is
+  `kizuki.telegram-cursor/v2`.
+- IMAP mailboxes with many UID gaps (30 percent gaps at 5,000 UIDs already
+  passed 8 KiB) could not checkpoint. The per-folder seen set and retry list
+  now live in the host cursor store; the cursor schema is
+  `kizuki.imap-cursor/v2` and v1 cursors still read and migrate. Marking the
+  messages of a page as seen is one merge per page instead of one per message.
+- Machine output is no longer cut off when stdout is a pipe. The CLI wrote
+  through an asynchronous stream and then exited, so a `--json` document larger
+  than the pipe buffer (64 KiB or less, depending on the reader) reached
+  `| jq` or a hook truncated and unparseable. Every command's stdout and stderr
+  now go out with a synchronous write that waits for a slow reader; a reader
+  that closes early ends the output quietly.
 - The daily brief is stamped private when it names a page that ever received a
   private receipt (a repair never lowers it), says when rail failure groups
   were omitted, and the brief repair also rewrites the run-id
@@ -322,9 +375,36 @@
 - Doctor reads the newest 2,000 sync receipts and the newest 200 of each other
   rail instead of a week of receipts, and the `doctor-sweep` rail now records
   the failures doctor would report, so its status matches.
+- Captured and canon text in a context packet is blockquoted line by line, and
+  titles and paths stay on one line, so a page or capture that contains a line
+  imitating a packet stamp cannot pass for one. Unicode tag characters and
+  bidirectional controls are removed from served text for every principal.
+- `system_health` for an agent reports counts over what its grant can read and
+  the connections that feed that view; the vault-wide page, event and claim
+  totals, agent counts, runtime, derived-index times, retrieval backlog and
+  per-connection run results are owner only.
+- `correct`, `propose` and a `context_packet` task capture refuse an id the agent
+  cannot read exactly as they refuse one that does not exist, so neither
+  existence nor tier can be probed. A denied task capture no longer reports
+  `reason: "denied"`.
+- A claim object or a task-capture value with a Unicode line separator can no
+  longer start a packet line of its own, and the packet hash covers the served
+  path. `world_view` labels lengthened by redaction are cut back to the schema
+  bound, `system_health` for an agent reports `counts_capped` when its counts
+  stop at the bound and derives connections without that bound, and an unreadable
+  provenance or correction target is refused generically while the owner's audit
+  row keeps the real reason.
 
 ### Changed
 
+- Ledger hits from `kizuki query` and the MCP `search` tool carry an excerpt of
+  the captured text, at most 600 characters, instead of the whole record, and
+  mark it `truncated: true` when it was cut. `kizuki query --full-text` and the
+  `full_text` search argument return whole records. Canon hits are unchanged.
+- `bun run test` and `bun run verify` run `bun test --timeout 120000`, so a
+  loaded machine does not fail tests at Bun's 5-second default. A test's own
+  explicit timeout is unchanged. The CLI test helper kills a child process that
+  has not exited after 90 seconds and fails that test with a clear message.
 - A refused `kizuki export` now names the sources that block it and the exact
   grant or revocation command that clears each one, instead of a bare
   `source_export_denied`. The consent rule is unchanged: export still needs the

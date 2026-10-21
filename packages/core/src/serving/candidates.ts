@@ -24,6 +24,8 @@ import {
 } from "./canon";
 import { ENTITY_TYPES } from "./entities";
 import { collectAuthorizedTimeline } from "./ledger";
+import { blockquote, oneLine, redactorOf, stripInvisible } from "./redact";
+import type { Redactor } from "./redact";
 import { retrievalCandidates, retrievalGraphCandidates } from "./retrieval";
 import type { PacketSection, SessionSection } from "./sections";
 import type { CanonChunk, QuotedChunk, ServeContext } from "./types";
@@ -41,18 +43,20 @@ const GRAPH_CHUNKS = 10;
 function canonBlock(chunk: CanonChunk): string {
   const origin = isMachineOriginPath(chunk.path) ? "machine" : "human";
   const stamps = `s=${chunk.sensitivity} taint=${chunk.taint} auth=${chunk.authority ?? "none"} origin=${origin}`;
-  // A page read out of captured text is data, not produced prose: it is
-  // quoted line by line, so a reader cannot take it for the vault's voice.
+  const title = oneLine(chunk.title);
+  // Quoted pages retain their trust class while every excerpt line uses the
+  // shared quoting primitive, including invisible-character sanitization.
   if (chunk.taint === "quoted") {
     return (
-      `- [page:${collapseWhitespace(chunk.page_id)}] tainted ${stamps} :: ${collapseWhitespace(chunk.title)}\n` +
-      `${chunk.excerpt.split(/\r\n?|\n/).map((line) => `> ${line}`).join("\n")}\n`
+      `- [page:${oneLine(chunk.page_id)}] tainted ${stamps} :: ${title}\n` +
+      `${blockquote(chunk.excerpt)}\n`
     );
   }
+  // Clean page text is quoted too: it cannot open a packet stamp of its own.
   return (
-    `- [page:${chunk.page_id}] ${stamps} :: ${chunk.title}\n` +
-    `### ${chunk.title} (${chunk.path}, ${stamps}) [page:${chunk.page_id}]\n` +
-    `${chunk.excerpt}\n`
+    `- [page:${chunk.page_id}] ${stamps} :: ${title}\n` +
+    `### ${title} (${oneLine(chunk.path)}, ${stamps}) [page:${chunk.page_id}]\n` +
+    `${blockquote(chunk.excerpt)}\n`
   );
 }
 
@@ -66,7 +70,7 @@ function pageHeading(chunk: CanonChunk, heading: string): string {
 function quotedBlock(chunk: QuotedChunk): string {
   return (
     `- [event:${chunk.event_id}] tainted src=${chunk.connector_id} ::\n` +
-    `> ${chunk.text} (ev:${chunk.event_id} ${chunk.connector_id} ${chunk.kind} ${chunk.occurred_at})\n`
+    `${blockquote(chunk.text)} (ev:${chunk.event_id} ${chunk.connector_id} ${chunk.kind} ${chunk.occurred_at})\n`
   );
 }
 
@@ -123,7 +127,7 @@ export function boundCanonAtom(
 
 /** Keep every claim-controlled scalar on its stamped line. */
 export function inline(value: string): string {
-  return JSON.stringify(value).slice(1, -1).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  return JSON.stringify(stripInvisible(value)).slice(1, -1).replace(/\u0085/g, "\\u0085").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
 
 function confidenceLabel(value: number): string {
@@ -131,13 +135,15 @@ function confidenceLabel(value: number): string {
 }
 
 /** One stamped working-knowledge line; every claim-controlled scalar stays escaped. */
-export function claimLine(claim: Claim): string {
-  const object = claim.object ?? "";
+export function claimLine(claim: Claim, redactor?: Redactor): string {
+  // The object is redacted before it is quoted, so a value in quotes still
+  // reads as a value to the scrubber, and escaped so no line break survives.
+  const object = redactor === undefined ? claim.object ?? "" : redactor.text(claim.object ?? "");
   return (
     `- [claim:${inline(claim.claim_id)}] c=${confidenceLabel(claim.confidence)}` +
     ` s=${claim.sensitivity} taint=${claim.taint} auth=${claim.authority} status=${claim.status}` +
     ` polarity=${claim.polarity} valid_from=${inline(claim.valid_from)} valid_to=${inline(claim.valid_to ?? "null")}` +
-    ` :: ${inline(claim.subject ?? "-")} ${inline(claim.predicate ?? "-")} ${JSON.stringify(object)}\n`
+    ` :: ${inline(claim.subject ?? "-")} ${inline(claim.predicate ?? "-")} "${inline(object)}"\n`
   );
 }
 
@@ -286,7 +292,7 @@ export async function collectPieces(
       const decision = pageDecision(index, grant, page);
       if (!decision.allow) continue;
       packed.add(page.id);
-      const { excerpt, truncated } = excerptOf(page.body, CANON_EXCERPT);
+      const { excerpt, truncated } = excerptOf(page.body, CANON_EXCERPT, ctx);
       const chunk = canonChunk(index, page, decision, excerpt, truncated);
       pieces.push({
         section: "canon",
@@ -328,6 +334,7 @@ export async function collectPieces(
       const { excerpt, truncated } = excerptOf(
         collapseWhitespace(target.body),
         RELATED_EXCERPT,
+        ctx,
       );
       const chunk = canonChunk(liveIndex, target, decision, excerpt, truncated);
       pieces.push({
@@ -406,7 +413,7 @@ export async function collectPieces(
       pieces.push({
         section: "claims",
         heading: "## working knowledge",
-        block: claimLine(claim),
+        block: claimLine(claim, redactorOf(ctx)),
         audit: reader.auditClaim(claim.claim_id),
       });
     }

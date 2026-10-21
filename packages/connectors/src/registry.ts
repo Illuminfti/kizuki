@@ -225,8 +225,8 @@ export function sealConnector(
     manifest: () => manifest,
     health: () => connector.health(),
     connect: (resolve) => connector.connect(resolve),
-    backfill: (cursor) => connector.backfill(cursor),
-    sync: (cursor) => connector.sync(cursor),
+    backfill: (cursor, context) => connector.backfill(cursor, context),
+    sync: (cursor, context) => connector.sync(cursor, context),
     revoke: () => connector.revoke(),
     ...(typeof connector.signIn === "function"
       ? {

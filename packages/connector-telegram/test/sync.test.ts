@@ -6,7 +6,7 @@ import {
   fixtureAccount,
 } from "../src/fixture";
 import type { TelegramMessage } from "../src/api";
-import { connected, drain } from "./helpers";
+import { connected, dialogsOf, drain } from "./helpers";
 
 const FEBRUARY = Date.parse("2026-02-01T00:00:00.000Z");
 const LATER = Math.floor(Date.UTC(2026, 1, 2, 9, 0, 0) / 1000);
@@ -78,7 +78,7 @@ test("messages that arrived since the last pass are emitted", async () => {
   });
   const batch = await built.connector.sync(cursor);
   expect(ids(batch.events)).toEqual(["1002:6"]);
-  expect(parseCursor(batch.cursor as string).dialogs["1002"]?.last_id).toBe(6);
+  expect(dialogsOf(built)["1002"]?.last_id).toBe(6);
   ownHasMore(batch, false);
 });
 
@@ -151,6 +151,8 @@ test("a sync with no cursor behaves exactly as a first backfill", async () => {
   ownHasMore(coldBatch, false);
   // Same instance, after a finished walk: still a cold start. Process memory
   // is not a checkpoint.
+  // A host with no checkpoint has no map either.
+  built.store.clear();
   const again = await built.connector.sync(null);
   expect(again).toEqual(backfill);
   ownHasMore(again, false);
@@ -191,7 +193,7 @@ test("sync continues a partial backfill cursor from last_id after reconnect", as
   const first = await built.connector.backfill(null);
   expect(first.events).toHaveLength(BATCH_LIMIT);
   expect(parseCursor(first.cursor as string).phase).toBe("backfill");
-  expect(parseCursor(first.cursor as string).dialogs["1"]?.last_id).toBe(
+  expect(dialogsOf(built)["1"]?.last_id).toBe(
     BATCH_LIMIT,
   );
   ownHasMore(first, true);
@@ -201,7 +203,7 @@ test("sync continues a partial backfill cursor from last_id after reconnect", as
   expect(ids(batch.events)[0]).toBe(`1:${BATCH_LIMIT + 1}`);
   expect(ids(batch.events)).not.toContain("1:1");
   expect(parseCursor(batch.cursor as string).phase).toBe("backfill");
-  expect(parseCursor(batch.cursor as string).dialogs["1"]?.last_id).toBe(
+  expect(dialogsOf(built)["1"]?.last_id).toBe(
     BATCH_LIMIT * 2,
   );
   ownHasMore(batch, true);
@@ -281,7 +283,7 @@ test("a dialog that fills the batch keeps the pass on itself", async () => {
   expect(sizes).toEqual([BATCH_LIMIT, BATCH_LIMIT, 200, 0]);
   expect(more).toEqual([true, true, false, false]);
   expect(parseCursor(current).pass).toBeNull();
-  expect(parseCursor(current).dialogs["1"]?.last_id).toBe(1201);
+  expect(dialogsOf(built)["1"]?.last_id).toBe(1201);
 });
 
 function crowded(count: number) {
@@ -302,7 +304,7 @@ function crowded(count: number) {
 test("the cursor never tracks more dialogs than a listing may return", async () => {
   const built = await connected({ account: crowded(MAX_DIALOGS), now: FEBRUARY });
   const drained = await drain(built.connector, "backfill");
-  expect(Object.keys(parseCursor(drained.cursor).dialogs)).toHaveLength(
+  expect(Object.keys(dialogsOf(built))).toHaveLength(
     MAX_DIALOGS,
   );
 
@@ -320,10 +322,10 @@ test("the cursor never tracks more dialogs than a listing may return", async () 
   );
 
   const batch = await built.connector.sync(drained.cursor);
-  const cursor = parseCursor(batch.cursor as string);
-  expect(Object.keys(cursor.dialogs)).toHaveLength(MAX_DIALOGS);
-  expect(cursor.dialogs["9999999"]).toBeDefined();
-  expect(cursor.dialogs["9000000"]).toBeUndefined();
+  const dialogs = dialogsOf(built);
+  expect(Object.keys(dialogs)).toHaveLength(MAX_DIALOGS);
+  expect(dialogs["9999999"]).toBeDefined();
+  expect(dialogs["9000000"]).toBeUndefined();
   expect(ids(batch.events)).toEqual(["9999999:1"]);
 
   // And it keeps working: the checkpoint it just wrote is still walkable.

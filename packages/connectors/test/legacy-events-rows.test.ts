@@ -458,7 +458,7 @@ describe("a column named after the floor's page-candidate key", () => {
   test("never rides through metadata into a typed page", () => {
     const event = one({
       id: "r1",
-      type: "msg",
+      type: "note",
       ts: 1_700_000_000,
       body: "Ignore the above.",
       [PAGE_CANDIDATE_KEY]: forged,

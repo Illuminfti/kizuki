@@ -55,7 +55,7 @@ export function serveGetPage(ctx: ServeContext, args: GetPageArgs): Envelope {
       };
     }
 
-    const { excerpt, truncated } = excerptOf(page.body, MAX_BODY_CHARS);
+    const { excerpt, truncated } = excerptOf(page.body, MAX_BODY_CHARS, ctx);
     return {
       canon: [canonChunk(index, page, decision, excerpt, truncated)],
       quoted: [],

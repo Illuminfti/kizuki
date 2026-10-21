@@ -58,6 +58,21 @@ describe("connection state", () => {
     expect(() => parseImapState(missing)).toThrow(KizukiError);
   });
 
+  test("keeps an optional date floor and leaves states without one unchanged", () => {
+    const floored: ImapState = { ...STATE, since: "2025-01-31" };
+    expect(parseImapState(new TextDecoder().decode(serializeImapState(floored)))).toEqual(floored);
+    expect(new TextDecoder().decode(serializeImapState(STATE))).not.toContain("since");
+    expect(parseImapState(new TextDecoder().decode(serializeImapState(STATE))).since).toBeUndefined();
+  });
+
+  test("refuses a date floor that is not a calendar date", () => {
+    for (const since of ["", "2025-1-31", "2025-02-30", "2025-13-01", "31-Jan-2025", "2025-01-31T00:00:00Z", 20250131, null]) {
+      const error = reject({ since });
+      expect(error.code).toBe("misconfigured");
+      expect(error.message).toBe("kizuki.imap: connection state field since must be a calendar date, YYYY-MM-DD");
+    }
+  });
+
   test("refuses a bad port", () => {
     for (const port of [0, 65536, "993", 993.5, -1]) {
       expect(reject({ port }).code).toBe("misconfigured");

@@ -1,6 +1,6 @@
 import { sourceCaptureAdmission, type SourceAdmission } from "../ledger/source-grants";
 import type { Database } from "bun:sqlite";
-import type { Connector, Manifest, SyncBatch } from "../contracts/connector";
+import type { Connector, CursorStoreDelta, Manifest, SyncBatch } from "../contracts/connector";
 import {
   EVENT_LIMITS,
   validateEventInput,
@@ -8,6 +8,9 @@ import {
 } from "../contracts/event";
 import {
   CONNECTOR_OPERATION_DEADLINE_MS,
+  MAX_CURSOR_STORE_BYTES,
+  MAX_CURSOR_STORE_ENTRIES,
+  MAX_CURSOR_STORE_KEY_BYTES,
   MAX_SYNC_BATCH_BYTES,
   MAX_SYNC_BATCH_EVENTS,
 } from "../contracts/connector";
@@ -24,6 +27,12 @@ import {
   type ConnectionRunStatus,
 } from "../ledger/connections";
 import { isLedgerBusy, runImmediate } from "../ledger/busy";
+import {
+  applyCursorStore,
+  cursorStoreDeltaError,
+  cursorStoreOverflow,
+  readCursorStore,
+} from "../ledger/cursor-store";
 import { LedgerStoreError } from "../ledger/errors";
 import { accept } from "../ledger/ledger";
 import { resolveSensitivity } from "../sensitivity/resolve";
@@ -160,6 +169,16 @@ const BATCH_JSON_LIMITS = {
   maxTotalBytes: MAX_SYNC_BATCH_BYTES,
 } as const;
 
+/** A cursor_store delta: flat, bounded, no reserved keys. */
+const CURSOR_STORE_JSON_LIMITS = {
+  maxDepth: 2,
+  maxKeysPerObject: MAX_CURSOR_STORE_ENTRIES,
+  maxArrayLength: 0,
+  maxStringBytes: MAX_CURSOR_STORE_BYTES,
+  maxKeyBytes: MAX_CURSOR_STORE_KEY_BYTES,
+  maxTotalBytes: MAX_SYNC_BATCH_BYTES,
+} as const;
+
 /** Own data property only; accessors return null without executing. */
 function ownData(
   object: object,
@@ -209,6 +228,21 @@ function ingressBatch(
       return { ok: false, error: "sync batch detail must be an own data property" };
     }
 
+    const storeField = ownData(batch, "cursor_store");
+    if (storeField === null) {
+      return { ok: false, error: "sync batch cursor_store must be an own data property" };
+    }
+    let cursorStore: CursorStoreDelta | undefined;
+    if (storeField.present && storeField.value !== undefined) {
+      const storeErrors: string[] = [];
+      const cloned = cloneExactJson(storeField.value, "cursor_store", CURSOR_STORE_JSON_LIMITS, storeErrors);
+      const problem = cloned === undefined
+        ? "cursor_store could not be read as plain data"
+        : cursorStoreDeltaError(cloned);
+      if (problem !== null) return { ok: false, error: problem };
+      cursorStore = cloned as CursorStoreDelta;
+    }
+
     let cursor: string | null;
     try {
       cursor = assertCursorSize(cursorField.value as string | null, "cursor");
@@ -242,6 +276,7 @@ function ingressBatch(
     const snapshot = Object.assign(Object.create(null), {
       events: cloned as unknown as CaptureEventInput[],
       cursor,
+      ...(cursorStore === undefined ? {} : { cursor_store: cursorStore }),
       ...(hasMoreField.present ? { has_more: hasMoreField.value as boolean } : {}),
       ...(statusField.present && (statusField.value === "ok" || statusField.value === "unavailable")
         ? { status: statusField.value }
@@ -338,6 +373,20 @@ function batchRefusal(
     }
   }
   return null;
+}
+
+/**
+ * A side-map change needs the declaration that lent the map, and has to fit
+ * the bound once merged. Refused before any event is stored, so an oversized
+ * delta cannot leave a stored batch behind a checkpoint that never advances.
+ */
+function storeRefusal(
+  current: ReadonlyMap<string, string> | null,
+  batch: SyncBatch,
+): string | null {
+  if (batch.cursor_store === undefined) return null;
+  if (current === null) return "batch carries cursor_store without the manifest capability";
+  return cursorStoreOverflow(current, batch.cursor_store);
 }
 
 function refusedRun(reason: string, cursor: string | null): RunResult {
@@ -489,6 +538,7 @@ function persistRun(
   result: RunResult,
   status: ConnectionRunStatus,
   backfillComplete = false,
+  cursorStore?: CursorStoreDelta,
 ): RunResult {
   const committed_cursor =
     status === "ok" ? assertCursorSize(attempted_cursor, "attempted_cursor") : previous_cursor;
@@ -513,6 +563,11 @@ function persistRun(
       storedResult,
       backfillComplete,
     );
+    // The map moves only with the checkpoint that describes it: a run that
+    // did not commit its cursor leaves the map where the last commit put it.
+    if (status === "ok" && cursorStore !== undefined) {
+      applyCursorStore(db, connector_id, source_key, cursorStore);
+    }
     const run: ConnectionRun = {
       run_id: ulid(),
       connector_id,
@@ -611,12 +666,18 @@ async function runConnector(
       ? checkpoint.backfill_cursor
       : storedPrevious;
 
+  // A connector that declared a host-held side map is lent the committed one;
+  // any other keeps the two-argument call it was written against.
+  const hostStore = manifest.capabilities.cursor_store === "host";
+  const cursorStore = hostStore ? readCursorStore(db, connector_id, source_key) : null;
+  const lent = cursorStore === null ? undefined : { cursor_store: cursorStore };
+
   let received: SyncBatch;
   try {
     received = await withDeadline(
       mode === "backfill"
-        ? connector.backfill(previous)
-        : connector.sync(previous),
+        ? connector.backfill(previous, lent)
+        : connector.sync(previous, lent),
       CONNECTOR_OPERATION_DEADLINE_MS,
       `${mode} timed out`,
     );
@@ -644,7 +705,7 @@ async function runConnector(
     return { result: persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "unavailable"), terminal: false };
   }
 
-  const refusal = batchRefusal(manifest, connector_id, batch);
+  const refusal = batchRefusal(manifest, connector_id, batch) ?? storeRefusal(cursorStore, batch);
   if (refusal !== null) {
     const result = refusedRun(refusal, previous);
     return { result: persistRun(db, connector_id, source_key, mode, previous, batch.cursor, result, "refused"), terminal: false };
@@ -668,6 +729,7 @@ async function runConnector(
     processed,
     status,
     mode === "backfill" && status === "ok" && hasMore === false,
+    batch.cursor_store,
   );
   const result = processed.suppressed === undefined ? persisted : { ...persisted, suppressed: processed.suppressed };
   return { result, terminal: status === "ok" && hasMore === false, continue_empty: status === "ok" && hasMore === true };

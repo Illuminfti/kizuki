@@ -44,6 +44,38 @@ that a provider application or account does not exist.
 WHOOP remains a component without CLI enrollment. See
 [not enrollable](#not-enrollable-from-this-cli).
 
+## What a message connector contributes
+
+Chat, coding-session and email connectors (Telegram, WhatsApp, Beeper, IMAP,
+Gmail, the ChatGPT and Claude exports, and the coding-session transcripts)
+emit `message` or `email` events. Their text is evidence, and it stays in the
+ledger. Kizuki files no capture-note claim for a message, so a busy chat can
+never grow one canon page per connector and day.
+
+Without a model, once a source grant permits capture and recall:
+
+- search finds the text;
+- the timeline lists the messages in order;
+- context packets quote relevant messages as `quoted capture` lines, tainted
+  data and not instructions;
+- doctor, audit and undo work as for any other source.
+
+With a configured model and a source grant that includes `extract` for that
+model's destination, the sync rail also runs typed extraction over the same
+events. It admits source-anchored claims about concepts and situations, and
+the receipted writer turns them into canon pages. Each claim cites the message
+it came from. A message that yields no claim writes no page.
+
+The entity stubs for speakers and chats that a message names (for example a
+session role or a project id) are still proposed without a model. Markdown,
+wiki and other page-kind sources are unchanged: their pages and verbatim
+capture notes are still filed with no model.
+
+Earlier revisions filed one capture note per message. The doctor sweep closes
+those out as `skipped` with reason `message_capture_fanout`; see
+[doctor](cli.md#doctor). Nothing is deleted, and the messages themselves stay in
+the ledger.
+
 ## Connection design
 
 Public documentation checked on 2026-09-04: Sealgate's Connect setup uses
@@ -130,8 +162,8 @@ as a command-line flag. Run this from an interactive local terminal:
 kizuki connect imap --sensitivity private
 ```
 
-Kizuki asks for the server, port, username, app password, and folders. The app
-password is hidden while typed. Standard input and output must be terminals, so
+Kizuki asks for the server, port, username, app password, and folders, then
+for an optional date floor. The app password is hidden while typed. Standard input and output must be terminals, so
 piped input and automation cannot supply credentials. Kizuki keeps the resulting
 connector state in its owner-only connection-state store; it does not put mail
 credentials in config, CLI output, or the ledger. Re-running the command
@@ -143,6 +175,23 @@ After enrollment, grant the intended policy with `kizuki connect grant --source 
 --policy POLICY.json --expected-revision 0 --operation-id imap-grant`, then run
 `kizuki backfill imap`. The connector uses TLS and reads
 mail without sending, deleting, moving, or marking messages read.
+
+The date floor (`Only mail since (YYYY-MM-DD) [all]:`) is empty by default,
+which reads each folder from its oldest message. With a date, mail whose
+INTERNALDATE (the time the server received it, read at midnight UTC) is earlier
+is never fetched and never remembered: it is not captured, and a later sync
+does not treat it as deleted. The floor applies to messages not yet walked; it
+does not remove anything already captured, and a source that already
+backfilled keeps what it has. Re-running `kizuki connect imap` sets it again.
+
+A mailbox is walked in pages of 200 messages. The list of UIDs already read is
+kept in the ledger beside the checkpoint rather than inside it, so a mailbox
+with many gaps (deleted or archived mail leaves holes in the UID sequence)
+still checkpoints. That list is capped at 1 MiB per source across all
+folders, which holds on the order of 400,000 messages at 30 percent gaps; past
+that a batch is refused with `cursor_store would exceed 1048576 bytes`, and a
+date floor is the way to bring a larger mailbox under it. `kizuki doctor` shows
+the refusal as the source's last error.
 
 Background sync, backfill and doctor check source capture permission before
 opening provider transport. An explicit enrollment or reconnect can validate
@@ -169,7 +218,11 @@ After `connect grant`, the first backfill reads every dialog back to its
 beginning: there is no date floor, batches hold at most 500 events, and at most
 5,000 dialogs are listed, after which health reports a truncated view. Each
 later pass re-reads the last 200 messages of a dialog to catch edits; older
-edits, deletions and secret chats are not captured.
+edits, deletions and secret chats are not captured. Where each dialog has got
+to is kept in the ledger beside the checkpoint, not inside it, so an account of
+any listed size checkpoints. A batch stops between dialogs after about 40
+seconds, well inside the 60 second limit on one call, and the next batch
+resumes there; a slow account therefore takes more batches, not a timeout.
 
 Project app credentials (`KIZUKI_TELEGRAM_API_ID` and
 `KIZUKI_TELEGRAM_API_HASH`) are required. Missing credentials refuse before

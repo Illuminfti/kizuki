@@ -11,6 +11,7 @@ import type {
   Cursor,
   Manifest,
   PurgePlan,
+  RunContext,
   SecretResolver,
   SignInDisplay,
   SignInIo,
@@ -29,12 +30,12 @@ import {
 import { degradedDetail } from "./degraded";
 import { PurgeIndex } from "./plan";
 import { FIXTURE_OBSERVED_AT, fixtureAccount } from "./fixture";
-import { notConnected, notSignedIn, revoked } from "./refusals";
+import { noCursorStore, notConnected, notSignedIn, revoked } from "./refusals";
 import { disconnectQuietly, openSession } from "./session";
 import type { SessionDeps } from "./session";
 import { enroll, waitSeconds } from "./sign-in";
 import { encodeState, type TelegramState } from "./state";
-import { TELEGRAM_CURSOR_SCHEMA, parseCursor } from "./cursor";
+import { TELEGRAM_CURSOR_SCHEMA } from "./cursor";
 import { testDataCenter } from "./test-dc";
 import { walk } from "./walk";
 import type { DialogListing } from "./walk";
@@ -77,6 +78,8 @@ const TELEGRAM_MANIFEST = {
     // First sync with a null mode cursor may reuse the committed backfill token.
     // Direct `sync(null)` stays a cold walk.
     sync_from_backfill_before_first_success: true,
+    // The per-dialog map is far larger than a checkpoint may be.
+    cursor_store: "host",
   },
   // The session is created by sign-in, not required up front.
   required_secrets: [],
@@ -249,14 +252,14 @@ export class TelegramConnector implements Connector {
     return new HealthReport({ state: "ok", checked_at, ...success });
   }
 
-  backfill(cursor: Cursor | null): Promise<SyncBatch> {
-    return this.#advance(cursor, "backfill");
+  backfill(cursor: Cursor | null, context?: RunContext): Promise<SyncBatch> {
+    return this.#advance(cursor, "backfill", context);
   }
 
-  sync(cursor: Cursor | null): Promise<SyncBatch> {
+  sync(cursor: Cursor | null, context?: RunContext): Promise<SyncBatch> {
     // A missing token is a cold historical walk. Any resume token, including a
     // backfill snapshot the host hands over, is an incremental pass.
-    return this.#advance(cursor, cursor === null ? "backfill" : "sync");
+    return this.#advance(cursor, cursor === null ? "backfill" : "sync", context);
   }
 
   async revoke(): Promise<void> {
@@ -320,7 +323,11 @@ export class TelegramConnector implements Connector {
     return events;
   }
 
-  async #advance(cursor: Cursor | null, mode: "backfill" | "sync"): Promise<SyncBatch> {
+  async #advance(
+    cursor: Cursor | null,
+    mode: "backfill" | "sync",
+    context: RunContext | undefined,
+  ): Promise<SyncBatch> {
     this.#assertOpen();
     if (this.#activeWalks++ > 0) this.#coverage = null;
     else if (cursor === null) {
@@ -330,7 +337,7 @@ export class TelegramConnector implements Connector {
     const coverage = this.#coverage;
     if (coverage) coverage.complete = false;
     try {
-      const batch = await this.#walk(cursor, mode);
+      const { batch, settled } = await this.#walk(cursor, mode, context?.cursor_store);
       if (coverage !== null && this.#coverage === coverage) {
         const listing = this.#listing;
         const dialogs = listing === null ? null : JSON.stringify(listing.dialogs.map(dialog =>
@@ -339,9 +346,7 @@ export class TelegramConnector implements Connector {
         else {
           coverage.dialogs = dialogs;
           coverage.cursor = batch.cursor;
-          const next = batch.cursor === null ? null : parseCursor(batch.cursor);
-          coverage.complete = this.#floodUntil <= this.#deps.now() && next?.phase === "synced" && next.pass === null &&
-            Object.values(next.dialogs).every(dialog => dialog.exhausted);
+          coverage.complete = this.#floodUntil <= this.#deps.now() && settled;
         }
       }
       return batch;
@@ -351,7 +356,8 @@ export class TelegramConnector implements Connector {
   async #walk(
     cursor: Cursor | null,
     mode: "backfill" | "sync",
-  ): Promise<SyncBatch> {
+    store: ReadonlyMap<string, string> | undefined,
+  ): Promise<{ batch: SyncBatch; settled: boolean }> {
     this.#assertOpen();
     if (this.#revoked) throw revoked();
     const api = this.#api;
@@ -364,6 +370,7 @@ export class TelegramConnector implements Connector {
       // connector's word for an account with nothing left to give.
       throw this.#waiting();
     }
+    if (store === undefined) throw noCursorStore();
     const result = await walk(cursor, mode, {
       api: {
         dialogs: limit => this.#guardIteration(() => api.dialogs(limit)),
@@ -373,13 +380,14 @@ export class TelegramConnector implements Connector {
       now: this.#deps.now,
       plan: this.#plan,
       dialogs: this.#listing?.dialogs ?? null,
+      store,
     });
     this.#assertOpen();
     // A pass that listed nothing says nothing about the account's dialogs.
     if (result.listing !== null) this.#listing = result.listing;
     if (result.floodUntil === null) {
       this.#lastSuccessAt = this.#nowIso();
-      return result.batch;
+      return { batch: result.batch, settled: result.settled };
     }
     // The pass stopped where the provider told it to, not where it meant to:
     // that instant is the last failure, not the last success.
@@ -400,9 +408,13 @@ export class TelegramConnector implements Connector {
       // cannot be drained immediately: the next call would only return the
       // same wait. Omitting `has_more` leaves the cursor unfinished without
       // making runToCompletion spend that second request.
-      return { events: [], cursor: result.batch.cursor };
+      const { events, cursor: resume, cursor_store } = result.batch;
+      return {
+        batch: { events, cursor: resume, ...(cursor_store === undefined ? {} : { cursor_store }) },
+        settled: result.settled,
+      };
     }
-    return result.batch;
+    return { batch: result.batch, settled: result.settled };
   }
 
   async *#guardIteration<T>(create: () => AsyncIterable<T>): AsyncGenerator<T> {

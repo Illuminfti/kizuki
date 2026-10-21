@@ -140,7 +140,31 @@ and names the limit, so a truncated view is visible rather than silent. A
 dialog that drops out of the listing is skipped rather than written off: its
 entry keeps the id it reached and the backfill stays unfinished, so a chat
 that comes back resumes instead of starting again. At the bound, the resume
-cursor may drop such a peer to stay within the same 5000, finished ones first.
+map may drop such a peer to stay within the same 5000, finished ones first.
+
+## Where progress is kept
+
+The checkpoint cursor is small and fixed in size: the phase, the edit
+watermark, the position of a pass in flight, and a digest of the per-dialog
+map. The map itself (for each dialog its type, the last message id read and
+whether it is finished, about 25 bytes an entry) lives in the host's cursor
+store, which the manifest asks for with `cursor_store: "host"`. The host lends
+the committed map on every call and writes the batch's changes in the same
+transaction as the checkpoint, so a fresh process resumes exactly where the
+last committed batch stopped, and a batch that did not commit changes nothing.
+The digest changes whenever the map does, which is how a caller draining the
+walk sees progress. Without the store a 5,000 dialog account would need about
+350 KB of cursor against the host's 8 KiB bound; the first version of this
+connector kept it in the cursor and stopped storing anything at about 125
+dialogs. A checkpoint written by that version still reads: its dialogs move to
+the store on the next batch. A cursor that says a backfill is in progress over
+an empty map has lost its map, and the walk starts the account again (the
+ledger deduplicates what was already stored) rather than declaring it done.
+
+A batch also stops between dialogs once about 40 seconds of wall clock are
+spent, so an account that answers slowly takes more batches instead of running
+into the host's 60 second limit on one call. It always finishes at least one
+dialog first.
 
 Waits are obeyed. When Telegram asks for a pause, a pass that had already
 covered ground ends early with a cursor describing exactly the events it

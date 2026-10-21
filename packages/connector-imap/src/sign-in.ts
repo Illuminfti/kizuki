@@ -12,6 +12,7 @@ import {
   serializeImapState,
   validateHost,
   validatePort,
+  validateSince,
 } from "./state";
 import type { ImapState } from "./state";
 import type { ImapDialer } from "./transport";
@@ -151,6 +152,14 @@ export async function signInImap(
     throw error;
   }
 
-  await writer.write(serializeImapState({ ...probe, folders }));
+  const rawSince = (await io.prompt("Only mail since (YYYY-MM-DD) [all]: ")).trim();
+  const since = rawSince.length === 0 ? undefined : checkedInput(() => validateSince(rawSince));
+  await writer.write(
+    serializeImapState({
+      ...probe,
+      folders,
+      ...(since === undefined ? {} : { since }),
+    }),
+  );
   return { display: username };
 }

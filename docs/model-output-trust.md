@@ -1,6 +1,6 @@
 # Model output trust
 
-Evidence date: 30 September 2026. This describes ledger schema 35 and the typed
+Evidence date: 21 October 2026. This describes ledger schema 36 and the typed
 extraction path (`kizuki.producer-response/v2`). It is implemented behavior, not
 direction.
 
@@ -57,6 +57,11 @@ The authority hold is stricter: it counts enrolled sources, not records.
 
 ## Known limits
 
+- On upgrade, earlier typed model pages retain their recorded bytes and receipts.
+  The serving boundary derives `quoted` from their hash-bound typed model receipt,
+  so context consumers receive them in the quoted channel even if their recorded
+  stamp was `clean`. The upgrade does not rewrite historical claim classifications
+  or restamp event origins. Current authority holds apply to their reads too.
 - The instruction detector is a list of shapes, not a classifier. It refuses the
   common injection idioms and leaves ordinary prose alone; a novel phrasing
   passes it; external model prose still stays quoted, and authority terms still

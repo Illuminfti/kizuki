@@ -1,7 +1,7 @@
 import { KizukiError, type CaptureEventInput, type Cursor, type SyncBatch } from "@kizuki/core";
-import { decodeCursor, emptyCursor, encodeCursor } from "./cursor";
-import type { ImapCursor, ImapFolderCursor } from "./cursor";
-import { folderLabel, messageEvent, tombstoneEvent } from "./events";
+import { cursorStoreDelta, loadCursor, wireCursor } from "./cursor";
+import type { ImapFolderCursor } from "./cursor";
+import { folderLabel, messageEvent, parseInternalDate, tombstoneEvent } from "./events";
 import { ImapSession } from "./imap/session";
 import type { MessageSummary, SessionOptions } from "./imap/session";
 import type { StructurePart } from "./mime/structure";
@@ -11,6 +11,7 @@ import type { ImapState } from "./state";
 import type { ImapDialer } from "./transport";
 import {
   addUid,
+  addUids,
   chunk,
   countUids,
   formatSet,
@@ -47,6 +48,8 @@ export interface WalkDeps {
   dial: ImapDialer;
   state: ImapState;
   now: () => Date;
+  /** The folder map the host committed with the last checkpoint. */
+  store: ReadonlyMap<string, string>;
   session?: SessionOptions;
 }
 
@@ -142,8 +145,7 @@ export async function walkMailboxes(
   rawCursor: Cursor | null,
   mode: "backfill" | "sync",
 ): Promise<WalkResult> {
-  const cursor: ImapCursor =
-    rawCursor === null ? emptyCursor() : decodeCursor(rawCursor);
+  const cursor = loadCursor(rawCursor, deps.store);
   const observedAt = deps.now().toISOString();
   const events: CaptureEventInput[] = [];
   const notes: string[] = [];
@@ -220,6 +222,7 @@ export async function walkMailboxes(
           session,
           plan,
           deps.state.max_message_bytes,
+          deps.state.since,
           observedAt,
           events.length + folderTombstones.length,
           folderEvents,
@@ -244,10 +247,12 @@ export async function walkMailboxes(
     throw error;
   }
 
+  const delta = cursorStoreDelta(deps.store, cursor);
   return {
     batch: {
       events,
-      cursor: encodeCursor(cursor),
+      cursor: wireCursor(cursor),
+      ...(delta === undefined ? {} : { cursor_store: delta }),
       has_more: more || events.length >= BATCH,
     },
     notes,
@@ -285,6 +290,7 @@ async function retryPending(
     const room = BATCH - (alreadyEmitted + into.length);
     const selected = summaries.slice(0, room);
     const bodies = await fetchBodiesFor(session, selected, maxMessageBytes);
+    const read: number[] = [];
     for (const summary of selected) {
       const body = bodies.get(summary.uid);
       if (body === undefined) continue;
@@ -302,17 +308,31 @@ async function retryPending(
           observedAt,
         }),
       );
-      entry.known = formatSet(addUid(parseSet(entry.known), summary.uid));
+      read.push(summary.uid);
       pending = removeUid(pending, summary.uid);
     }
+    entry.known = formatSet(addUids(parseSet(entry.known), read));
   }
   entry.pending = formatSet(pending);
+}
+
+/**
+ * The owner's date floor: a message received before it is neither read nor
+ * remembered. INTERNALDATE decides, at midnight UTC. The session has already
+ * refused a date this cannot parse; if one ever got through, the message stays
+ * rather than being lost to a floor.
+ */
+function onOrAfter(internaldate: string, since: string | undefined): boolean {
+  if (since === undefined) return true;
+  const received = parseInternalDate(internaldate);
+  return received === null || received >= `${since}T00:00:00.000Z`;
 }
 
 async function pageFolder(
   session: ImapSession,
   plan: FolderPlan,
   maxMessageBytes: number,
+  since: string | undefined,
   observedAt: string,
   alreadyEmitted: number,
   into: CaptureEventInput[],
@@ -328,13 +348,17 @@ async function pageFolder(
     const summaries = (
       await session.fetchSummaries(`${entry.scan_from}:${windowEnd}`)
     ).filter(
-      (summary) => summary.uid >= entry.scan_from && summary.uid <= windowEnd,
+      (summary) =>
+        summary.uid >= entry.scan_from &&
+        summary.uid <= windowEnd &&
+        onOrAfter(summary.internaldate, since),
     );
     const room = BATCH - (alreadyEmitted + into.length);
     const selected = summaries.slice(0, room);
     const truncated = selected.length < summaries.length;
     const bodies = await fetchBodiesFor(session, selected, maxMessageBytes);
 
+    const read: number[] = [];
     for (const summary of selected) {
       const body = bodies.get(summary.uid);
       if (body === undefined) {
@@ -360,8 +384,9 @@ async function pageFolder(
           observedAt,
         }),
       );
-      entry.known = formatSet(addUid(parseSet(entry.known), summary.uid));
+      read.push(summary.uid);
     }
+    entry.known = formatSet(addUids(parseSet(entry.known), read));
 
     const lastSelected = selected[selected.length - 1];
     entry.scan_from =

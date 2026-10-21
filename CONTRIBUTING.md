@@ -93,6 +93,12 @@ bun run typecheck
 bun run verify
 ```
 
+`bun run test` (and `bun run verify`, which calls it) runs `bun test
+--timeout 120000`, a default that suits a loaded host or CI runner. Bun's own
+default is 5 seconds. A test that sets its own timeout keeps it. When you run
+`bun test` by hand on a busy machine, pass `--timeout 120000` too. The CLI test
+helper kills a child that has not exited after 90 seconds.
+
 CLI tests drive `packages/cli/src/main.ts` as a process against a temporary
 vault. Core tests cover rollback, replay, purge, and provenance. Do not weaken
 a test to hide a defect.

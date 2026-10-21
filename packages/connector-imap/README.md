@@ -34,8 +34,8 @@ the same way in `metadata.charset_fallback`.
 
 When a server answers a body fetch without the body — the message was
 expunged between the two fetches of one page, say — that UID is left out of
-the batch and out of the checkpoint's seen set, and goes on the checkpoint's
-retry list instead. Every later walk re-requests it, and it leaves the list
+the batch and out of the folder's seen set, and goes on the folder's retry
+list instead. Every later walk re-requests it, and it leaves the list
 only once the body arrives or the server stops listing the UID at all. While
 anything is on that list the run's health report says
 `message bodies not returned: <folder> (<n>)`.
@@ -61,6 +61,7 @@ Username (usually your email address): you@example.org
 App password:
 Folders on the server: INBOX, Archive, Sent, Lists/dev
 Folders to sync [INBOX]: INBOX, Archive
+Only mail since (YYYY-MM-DD) [all]:
 ```
 
 The host and port are validated before anything is dialled. INBOX is always
@@ -76,14 +77,49 @@ password never reach SQLite: the ledger's CHECK constraints allow a connection
 row to hold only a core-minted source key, a fixed config literal and one
 `file:connections/<id>.state` reference.
 
-Folder names are not secret and are not hidden. The checkpoint cursor is keyed
-by folder, and every event carries `metadata.folder`, so both are in the
-ledger. `packages/connector-imap/test/sign-in.test.ts` asserts exactly that
+Folder names are not secret and are not hidden. The per-folder progress kept
+beside the checkpoint is keyed by folder, and every event carries
+`metadata.folder`, so both are in the ledger. `packages/connector-imap/test/sign-in.test.ts` asserts exactly that
 split against a real database file.
 
 To change the folder list, run the sign-in again through
 `ConnectionStateStore.replace`. The connection keeps its identity and the
 state file is replaced atomically.
+
+## Date floor
+
+The last sign-in prompt is an optional floor, `YYYY-MM-DD`, stored as `since`
+in the connection state. Left empty, every folder is read from its oldest
+message. With a date, a message whose INTERNALDATE (when the server received
+it, not the `Date:` header) falls before midnight UTC on that day is never
+fetched and never remembered: it produces no event, does not enter the seen
+set, and so a later sync never tombstones it. A date that is not a real
+calendar day is refused and nothing is written. The floor applies to the part
+of a folder not yet walked. It does not remove mail already captured, and
+changing it later does not go back for mail that was skipped. Skipped mail is
+still listed by the server (only summaries are fetched, a thousand UIDs at a
+time), so a floor saves bodies and ledger rows, not the pass over the UID
+range.
+
+## Where progress is kept
+
+The checkpoint cursor is a digest and a schema name. Each folder's progress
+(UIDVALIDITY, the next UID window, UIDNEXT, the set of UIDs already emitted
+as ranges, and the retry list) lives in the host's cursor store, which the
+manifest asks for with `cursor_store: "host"`. The host lends the committed
+map on every call and writes the batch's changes in the same transaction as the
+checkpoint, so a fresh process resumes where the last committed batch stopped.
+The seen set is one range per run of consecutive UIDs, so it grows with the
+gaps that deleted and archived mail leave: about 5 bytes a message at 50
+percent gaps and about 2.5 at 30 percent. The first version kept it in the
+cursor, which passes the host's 8 KiB bound near 1,700 messages at 50 percent
+gaps and near 3,400 at 30 percent. The store holds 1 MiB for all of an
+account's folders together, roughly 400,000 messages at 30 percent gaps; a
+mailbox past that is refused with
+`cursor_store would exceed 1048576 bytes` until a date floor brings it under.
+`kizuki doctor` shows that refusal as the source's last error.
+A checkpoint written by the first version still reads and moves its folders to
+the store on the next batch.
 
 ## Provider support (checked 2026-09-02)
 

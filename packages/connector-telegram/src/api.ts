@@ -98,6 +98,7 @@ export type TelegramErrorCode =
   | "placeholder_credentials"
   | "invalid_test_dc"
   | "missing_session"
+  | "missing_cursor_store"
   | "corrupt_state"
   | "invalid_phone"
   | "sign_in_aborted"

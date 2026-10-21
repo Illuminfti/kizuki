@@ -12,6 +12,7 @@ import type {
   HealthState,
   Manifest,
   PurgePlan,
+  RunContext,
   SecretResolver,
   SignInDisplay,
   SignInIo,
@@ -59,8 +60,10 @@ const MANIFEST: Manifest = freezeManifest({
     tombstones: true,
     purge: true,
     fixture: true,
-    // backfill and sync share kizuki.imap-cursor/v1, including `known`.
+    // backfill and sync share kizuki.imap-cursor/v2 and its folder map.
     sync_from_backfill_before_first_success: true,
+    // The seen-UID set of a real mailbox is far larger than a checkpoint may be.
+    cursor_store: "host",
   },
   // Empty because sign-in mints the state; `connect` still fails closed.
   required_secrets: [],
@@ -227,10 +230,23 @@ export class ImapConnector implements Connector {
   private async walk(
     cursor: Cursor | null,
     mode: "backfill" | "sync",
+    context: RunContext | undefined,
   ): Promise<SyncBatch> {
     const state = this.requireState();
+    if (context === undefined) {
+      throw new KizukiError(
+        "misconfigured",
+        "kizuki.imap: the host did not lend its cursor store",
+      );
+    }
     const result = await walkMailboxes(
-      { dial: this.dial, state, now: this.now, session: this.sessionOptions },
+      {
+        dial: this.dial,
+        state,
+        now: this.now,
+        store: context.cursor_store,
+        session: this.sessionOptions,
+      },
       cursor,
       mode,
     );
@@ -239,12 +255,12 @@ export class ImapConnector implements Connector {
     return result.batch;
   }
 
-  async backfill(cursor: Cursor | null): Promise<SyncBatch> {
-    return this.walk(cursor, "backfill");
+  async backfill(cursor: Cursor | null, context?: RunContext): Promise<SyncBatch> {
+    return this.walk(cursor, "backfill", context);
   }
 
-  async sync(cursor: Cursor | null): Promise<SyncBatch> {
-    return this.walk(cursor, "sync");
+  async sync(cursor: Cursor | null, context?: RunContext): Promise<SyncBatch> {
+    return this.walk(cursor, "sync", context);
   }
 
   async revoke(): Promise<void> {

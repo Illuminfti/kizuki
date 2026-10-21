@@ -224,7 +224,7 @@ describe("structured task sections", () => {
       budget_tokens: 2_000,
       task_event_id: privateId,
     });
-    expect(denied.data?.task).toEqual({ status: "unavailable", reason: "denied" });
+    expect(denied.data?.task).toEqual({ status: "unavailable" });
     expect(denied.quoted).toEqual([]);
     expect(JSON.stringify(denied)).not.toContain(PRIVATE_CONSTRAINT);
 
@@ -291,7 +291,7 @@ describe("structured task sections", () => {
       budget_tokens: 2_000,
       task_event_id: privateHintId,
     });
-    expect(denied.data?.task).toEqual({ status: "unavailable", reason: "denied" });
+    expect(denied.data?.task).toEqual({ status: "unavailable" });
     expect(JSON.stringify(denied)).not.toContain("facts/secret-hint.md");
     expect(JSON.stringify(denied)).not.toContain(PRIVATE_CONSTRAINT);
 
