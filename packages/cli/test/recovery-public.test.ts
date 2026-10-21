@@ -117,7 +117,7 @@ test.each(['undo', 'undo-write', 'correct', 'correct-prior-projection', 'correct
     try { await retryCanonProjectionObligations({ ...f.io, retrieval: port }); } finally { await port.close(); }
   } else if (kind === 'correct' || kind === 'undo-write') failReceipt(f.db);
   if (kind === 'correct-unrelated-write') {
-    const secondEvent = putEvent(f.db), second = await storeClaim(f.db, secondEvent, {
+    const secondEvent = putEvent(f.db, { text: 'Ada works at Acme.' }), second = await storeClaim(f.db, secondEvent, {
       target: 'people/ada', subject: 'person:ada', subjects: ['person:ada'], body: 'Ada works at Acme.',
       frontmatter: { type: 'person', title: 'Ada' },
     });
@@ -191,7 +191,7 @@ test('actual tell repeats an older page projection hold without duplicating owne
 
 test('actual tell never attributes an unrelated pending receipt or page to the authorized correction', async () => {
   const f = await fixture();
-  const secondEvent = putEvent(f.db), second = await storeClaim(f.db, secondEvent, {
+  const secondEvent = putEvent(f.db, { text: 'Ada works at Acme.' }), second = await storeClaim(f.db, secondEvent, {
     target: 'people/ada', subject: 'person:ada', subjects: ['person:ada'], body: 'Ada works at Acme.',
     frontmatter: { type: 'person', title: 'Ada' },
   });

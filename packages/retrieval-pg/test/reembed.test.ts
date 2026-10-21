@@ -26,6 +26,33 @@ async function vectorHits(port: Awaited<ReturnType<typeof openEmbeddedRetrievalP
   return result.hits.map((hit) => hit.doc_id).sort();
 }
 
+test("cancelling a rebuild during a stalled embedding preserves the active generation and permits retry", async () => {
+  const fixture = temporaryPortContext();
+  const embedding = new FixtureEmbeddingPort(FIXTURE_SPACE);
+  const port = await openEmbeddedRetrievalPort(fixture.ctx, { embedding });
+  const original = embedding.embedDocs.bind(embedding);
+  let enter!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  let finish!: () => void;
+  const stalled = new Promise<void>(resolve => { finish = resolve; });
+  try {
+    await port.rebuildFromDocuments([SYNTHETIC_DOCS[0]!]);
+    embedding.embedDocs = async chunks => { enter(); await stalled; return original(chunks); };
+    const stop = new AbortController();
+    const rebuilding = port.rebuildFromDocuments([SYNTHETIC_DOCS[1]!], { signal: stop.signal });
+    await entered;
+    const started = performance.now();
+    stop.abort();
+    await expect(rebuilding).rejects.toMatchObject({ name: "AbortError" });
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect((await port.search({ ...SYNTHETIC_QUERY, mode: "lexical" })).hits.map(hit => hit.doc_id)).toEqual(["page:grace"]);
+    finish();
+    embedding.embedDocs = original;
+    await port.rebuildFromDocuments([SYNTHETIC_DOCS[1]!]);
+    expect((await port.search({ ...SYNTHETIC_QUERY, mode: "lexical" })).hits.map(hit => hit.doc_id)).toEqual(["claim:grace-email"]);
+  } finally { finish(); await port.close(); fixture.cleanup(); }
+});
+
 test("changing embedding space is a full re-embed; a failed rebuild keeps the previous generation", async () => {
   const fixture = temporaryPortContext();
   const docs = [SYNTHETIC_DOCS[0]!, SYNTHETIC_DOCS[1]!];

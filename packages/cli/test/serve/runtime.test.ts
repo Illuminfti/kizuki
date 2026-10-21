@@ -1,7 +1,7 @@
 import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { listCanonReceipts, listClaims, listRunReceipts, setSourceGrant, sourcePolicyEpoch, ConnectionStateStore } from "@kizuki/core";
+import { listCanonReceipts, listClaims, listRunReceipts, setSourceGrant, sourcePolicyEpoch, ConnectionStateStore, runServeDaemon, withAbortSignal } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
 import { createServeRuntime } from "../../src/serve-runtime";
 import { DIRECT_RETRIEVAL_DESCRIPTOR, ReferenceRetrievalPort } from "../../../core/test/contracts/reference-retrieval";
@@ -277,6 +277,38 @@ test("offline serve keeps the host retrieval capability bound for recovery sweep
     // The caller owns the shared retrieval lifetime; closing model bindings leaves it usable.
     expect((await retrieval.health()).status).toBe("ready");
   } finally { await runtime.close(); await retrieval.close(); temporary.cleanup(); db.close(); }
+});
+
+test("stopping a daemon during host retrieval refresh cancels the wait and records the stop before further derived work", async () => {
+  const setup = tempVault();
+  const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  const temporary = temporaryPortContext(DIRECT_RETRIEVAL_DESCRIPTOR);
+  let enter!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  let refreshed = false;
+  let seenSignal: AbortSignal | undefined;
+  const retrieval = Object.assign(new ReferenceRetrievalPort(temporary.ctx), {
+    rebuildFromDocuments: async (_docs: unknown, options?: { signal?: AbortSignal }) => {
+      seenSignal = options?.signal;
+      enter();
+      await withAbortSignal(new Promise<void>(() => {}), seenSignal);
+      refreshed = true;
+    },
+  });
+  const stop = new AbortController();
+  try {
+    const daemon = runServeDaemon(db, setup.vault, {
+      once: true, rails: ["retrieval-sweep"], http: false, signal: stop.signal,
+      acquireRuntime: ({ signal }) => createServeRuntime({ db, vaultPath: setup.vault,
+        store: new ConnectionStateStore(join(setup.vault, ".kizuki")), env: setup.env, err: () => {}, retrieval, signal }),
+    });
+    await entered;
+    stop.abort();
+    await daemon;
+    expect(seenSignal?.aborted).toBe(true);
+    expect(refreshed).toBe(false);
+    expect(listRunReceipts(db)).toMatchObject([{ status: "stopped", stopped: "serve:stop_requested", errors: [] }]);
+  } finally { await retrieval.close(); temporary.cleanup(); db.close(); }
 });
 
 test("the daemon's rail hooks carry the same embedding-configured fact doctor and serve status read", async () => {

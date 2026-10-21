@@ -98,7 +98,7 @@ describe("daily brief", () => {
       f.at("2026-09-26T10:00:00.000Z");
       const early = write(
         f.io,
-        await storeClaim(f.db, putEvent(f.db), {
+        await storeClaim(f.db, putEvent(f.db, { text: "An early source report describes Grace's role." }), {
           ...LOOSE,
           target: "notes/too-early",
         }),
@@ -107,7 +107,7 @@ describe("daily brief", () => {
       f.at("2026-09-28T09:00:00.000Z");
       const created = write(
         f.io,
-        await storeClaim(f.db, putEvent(f.db), {
+        await storeClaim(f.db, putEvent(f.db, { text: "A new source report describes Grace's role." }), {
           ...LOOSE,
           target: "people/grace",
         }),
@@ -115,7 +115,7 @@ describe("daily brief", () => {
       f.at("2026-09-28T09:05:00.000Z");
       write(
         f.io,
-        await storeClaim(f.db, putEvent(f.db), {
+        await storeClaim(f.db, putEvent(f.db, { text: "Another source report adds detail about Grace's role." }), {
           ...LOOSE,
           target: "people/grace",
           kind: "merge",
@@ -125,7 +125,7 @@ describe("daily brief", () => {
       f.at("2026-09-28T09:10:00.000Z");
       const corrected = write(
         f.io,
-        await storeClaim(f.db, putEvent(f.db), {
+        await storeClaim(f.db, putEvent(f.db, { text: "A source report provides a correction about Grace." }), {
           ...LOOSE,
           target: "people/grace",
           kind: "merge",
@@ -138,7 +138,7 @@ describe("daily brief", () => {
       f.at("2026-09-28T09:20:00.000Z");
       const undone = write(
         f.io,
-        await storeClaim(f.db, putEvent(f.db), {
+        await storeClaim(f.db, putEvent(f.db, { text: "A source report describes the Berlin venue." }), {
           ...LOOSE,
           target: "places/berlin",
         }),
@@ -152,14 +152,14 @@ describe("daily brief", () => {
         f.at(`2026-09-28T10:${String(index).padStart(2, "0")}:00.000Z`);
         write(
           f.io,
-          await storeClaim(f.db, putEvent(f.db), {
+          await storeClaim(f.db, putEvent(f.db, { text: `A source report describes topic item ${index}.` }), {
             ...LOOSE,
             target: `topics/item-${index}`,
           }),
         );
       }
       // Unwritten live claim: extraction backlog.
-      await storeClaim(f.db, putEvent(f.db), {
+      await storeClaim(f.db, putEvent(f.db, { text: "A source report describes the pending topic." }), {
         ...LOOSE,
         target: "topics/pending",
       });

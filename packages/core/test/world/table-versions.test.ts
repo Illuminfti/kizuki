@@ -115,7 +115,7 @@ describe("registry", () => {
 });
 
 describe("world table integrity", () => {
-  const next = WORLD_MIGRATION_BASE + 1;
+  const next = LEDGER_SCHEMA_VERSION + 1;
   const spec = (overrides: Partial<WorldTableSpec> = {}): WorldTableSpec => ({
     name: "world_synth_rows",
     class: "derived",

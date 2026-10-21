@@ -1,4 +1,4 @@
-// Writes one canon page after another into the vault named by argv[2] until killed.
+// A bounded stream of canon writes into the synthetic vault named by argv[2].
 import { applyCanonWrite } from "../../src/canon/apply";
 import { resolveTarget } from "../../src/canon/arbiter";
 import { createBudgetTracker } from "../../src/canon/budget";
@@ -7,7 +7,7 @@ import { putEvent, storeClaim } from "../canon/helpers";
 
 const vault = process.argv[2]!;
 const db = openLedger(`${vault}/.kizuki/kizuki.db`);
-for (let i = 0; ; i++) {
+for (let i = 0; i < 128; i++) {
   const event = putEvent(db, { source_record_id: `live-${i}`, text: `Person ${i} works at Acme.` });
   const claim = await storeClaim(db, event, {
     target: `people/person-${i}`, subject: `person:${i}`, body: `Person ${i} works at Acme.`,
@@ -20,4 +20,7 @@ for (let i = 0; ; i++) {
     if ((error as { code?: string }).code !== "writer_busy") throw error;
   }
   if (i === 2) console.log("ready");
+  // Give snapshots an acquisition window even when local writes are very fast.
+  await Bun.sleep(10);
 }
+db.close();
