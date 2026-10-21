@@ -1,7 +1,9 @@
 import { validateProcedureCard, type ProcedureCard } from "../../contracts/procedure-card";
 import { sealCard, type KindAssembler } from "./kit";
 export const procedureAssembler: KindAssembler = {
-  kind: "procedure", assemble({ node, own, summary, coverage, outcomeUsefulness }) {
+  kind: "procedure",
+  sliceConstraint: relation => ["procedure.step", "procedure.prerequisite", "procedure.required_capability", "procedure.failure_mode", "procedure.counterexample", "procedure.success_check", "procedure.standard"].includes(relation.predicate),
+  assemble({ node, own, summary, coverage, outcomeUsefulness }) {
     const by = (name: string) => own.filter(r => r.predicate === `procedure.${name}`);
     const lastValidated = by("last_validated");
     const ordinal = (r: typeof own[number]) => r.object.kind === "literal" ? Number(/^([1-9][0-9]{0,2})\. /.exec(r.object.value)?.[1] ?? Infinity) : Infinity;

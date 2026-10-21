@@ -22,6 +22,8 @@ export interface ServeContext {
   db: Database;
   vaultPath: string;
   principal: Principal;
+  /** Internal shared byte budget for one composed world read; never a wire argument. */
+  worldReadBudget?: import("../world/pipeline/frame").ReadBudget;
   sourcePurpose?: import("../ledger/source-grants").SourcePurpose;
   /** One host-owned engine nominates IDs; core rechecks current evidence and grants. */
   retrieval?: RetrievalPort;

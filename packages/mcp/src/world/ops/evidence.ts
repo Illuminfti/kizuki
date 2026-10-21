@@ -6,5 +6,5 @@ export const evidenceFragment: McpWorldOp = {
   name: "evidence",
   fields: { evidence: worldTextEvidence.optional() },
   data: { "kizuki.world-evidence/v1": { evidence: worldTextEvidence } },
-  summary: "evidence takes the complete text EvidenceRef from a relation and resolves its exact admitted span under current permissions; captured text appears only in quoted, is untrusted and integrity-pinned.",
+  summary: "evidence: text EvidenceRef; current access, integrity-pinned untrusted quotes.",
 };

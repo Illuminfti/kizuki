@@ -15,7 +15,7 @@ export const discoverConceptsFragment: McpWorldOp = {
   fields: { label: LABEL, cursor: CURSOR },
   data: { "kizuki.concept-matches/v1": matches },
   summary:
-    "find_concepts lists admitted Concepts whose label contains an optional label (default empty), a page at a time; pass the returned cursor to read the next page.",
+    "find_concepts: label pages (default empty); continue with cursor.",
 };
 
 export const discoverSituationsFragment: McpWorldOp = {
@@ -23,5 +23,5 @@ export const discoverSituationsFragment: McpWorldOp = {
   fields: { label: LABEL, cursor: CURSOR },
   data: { "kizuki.situation-matches/v1": matches },
   summary:
-    "find_situations lists admitted Situations the same way.",
+    "find_situations: Situation label pages.",
 };

@@ -27,6 +27,7 @@ function lifecycle(statuses: readonly Relation[], answers: readonly Relation[]):
 
 export const questionAssembler: KindAssembler = {
   kind: "question",
+  sliceConstraint: relation => ["question.text", "gap.kind"].includes(relation.predicate),
   assemble({ node, own, summary, coverage }) {
     const by = (predicate: string) => own.filter(item => item.predicate === predicate);
     const answers = by("question.candidate_answer"), statusEvidence = by("question.status");

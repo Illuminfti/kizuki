@@ -16,5 +16,5 @@ export const diffFragment: McpWorldOp = {
       truncated: z.boolean(),
     },
   },
-  summary: "diff takes of:{operation:objectOperation, objectField:objectRef} and a required priorView from that object's same query; compares authorized qualified assertions. Incomplete reads return the fresh card, and unusable baselines require a new view.",
+  summary: "diff: of+same-query priorView; changes, incomplete card or new_view_required.",
 };
