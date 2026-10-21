@@ -5,6 +5,20 @@ import { WORLD_MIGRATION_VERSIONS } from "./versions";
 /** Frozen authority journal. It never feeds claims, canon, retrieval or confidence. */
 export function applyForecasts(db: Database): void {
   db.exec(`
+CREATE TABLE IF NOT EXISTS world_forecast_outcome_admissions (
+  claim_id TEXT PRIMARY KEY REFERENCES claims(claim_id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL UNIQUE CHECK(sequence BETWEEN 1 AND 9007199254740991)
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS world_forecast_outcome_admitted AFTER INSERT ON claims
+WHEN NEW.is_world_typed=0 AND NEW.status<>'purged' AND NEW.predicate IN ('outcome.self_report','outcome.provider_ack','outcome.observation','outcome.review')
+BEGIN
+  UPDATE claim_history_clock SET last_sequence=last_sequence+1,last_recorded_at=max(last_recorded_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=1;
+  INSERT INTO world_forecast_outcome_admissions(claim_id,sequence) SELECT NEW.claim_id,last_sequence FROM claim_history_clock WHERE id=1;
+END;
+CREATE TRIGGER IF NOT EXISTS world_forecast_outcome_position_immutable BEFORE UPDATE ON world_forecast_outcome_admissions
+BEGIN SELECT RAISE(ABORT,'outcome admission position is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS world_forecast_outcome_purged AFTER UPDATE OF status ON claims WHEN NEW.status='purged'
+BEGIN DELETE FROM world_forecast_outcome_admissions WHERE claim_id=NEW.claim_id; END;
 CREATE TABLE IF NOT EXISTS world_forecasts (
   forecast_id TEXT PRIMARY KEY,
   handle_id TEXT NOT NULL REFERENCES semantic_handles(handle_id) ON DELETE CASCADE,
@@ -33,6 +47,7 @@ CREATE TABLE IF NOT EXISTS world_forecast_resolutions (
   status TEXT NOT NULL CHECK(status IN ('resolved_met','resolved_not_met','censored','invalidated')),
   resolved_at TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
+  recorded_sequence INTEGER NOT NULL CHECK(recorded_sequence BETWEEN 0 AND 9007199254740991),
   proof TEXT NOT NULL CHECK(json_valid(proof) AND json_type(proof)='array' AND length(proof)<=262144),
   CHECK((status='invalidated' AND proof='[]') OR (status<>'invalidated' AND json_array_length(proof)>0))
 ) STRICT;
@@ -47,7 +62,8 @@ CREATE TRIGGER IF NOT EXISTS world_forecast_immutable BEFORE UPDATE ON world_for
 CREATE TRIGGER IF NOT EXISTS world_forecast_inputs_immutable BEFORE UPDATE ON world_forecast_inputs BEGIN SELECT RAISE(ABORT,'forecast inputs are append only'); END;
 CREATE TRIGGER IF NOT EXISTS world_forecast_resolution_immutable BEFORE UPDATE ON world_forecast_resolutions
 WHEN NOT (OLD.status<>'invalidated' AND NEW.status='invalidated' AND NEW.forecast_id=OLD.forecast_id AND NEW.proof='[]'
-  AND NEW.resolved_at=(SELECT frozen_at FROM world_forecasts WHERE forecast_id=OLD.forecast_id) AND NEW.recorded_at=NEW.resolved_at)
+  AND NEW.resolved_at=(SELECT frozen_at FROM world_forecasts WHERE forecast_id=OLD.forecast_id) AND NEW.recorded_at=NEW.resolved_at
+  AND NEW.recorded_sequence=(SELECT frozen_sequence FROM world_forecasts WHERE forecast_id=OLD.forecast_id))
 BEGIN SELECT RAISE(ABORT,'forecast resolution is append only'); END;
 `);
   // Input loss removes the prediction. Resolution-only loss erases its private
@@ -58,7 +74,8 @@ BEGIN SELECT RAISE(ABORT,'forecast resolution is append only'); END;
     SELECT forecast_id FROM world_forecast_inputs i WHERE ${condition.replaceAll("DEPS", "i.proof")});
     UPDATE world_forecast_resolutions SET status='invalidated',proof='[]',
       resolved_at=(SELECT frozen_at FROM world_forecasts f WHERE f.forecast_id=world_forecast_resolutions.forecast_id),
-      recorded_at=(SELECT frozen_at FROM world_forecasts f WHERE f.forecast_id=world_forecast_resolutions.forecast_id)
+      recorded_at=(SELECT frozen_at FROM world_forecasts f WHERE f.forecast_id=world_forecast_resolutions.forecast_id),
+      recorded_sequence=(SELECT frozen_sequence FROM world_forecasts f WHERE f.forecast_id=world_forecast_resolutions.forecast_id)
     WHERE status<>'invalidated' AND forecast_id IN (
       SELECT r.forecast_id FROM world_forecast_resolutions r,json_each(r.proof) pin WHERE ${condition.replaceAll("DEPS", "pin.value")});`;
   for (const [name, timing, table, condition, when] of [
@@ -71,10 +88,17 @@ BEGIN SELECT RAISE(ABORT,'forecast resolution is append only'); END;
     ["receipt_erased","BEFORE DELETE","canon_receipts","json_extract(DEPS,'$.receipt')=OLD.receipt_id",""],
   ] as const) db.exec(`CREATE TRIGGER IF NOT EXISTS world_forecast_${name} ${timing} ON ${table} ${when} BEGIN ${erase(condition)} END;`);
 }
+/** Private restore staging imports positions verbatim; it must never fabricate
+ * original admission positions from timestamps or claim insertion order. */
+export function beginForecastRestore(db:Database):void {
+  if(!db.inTransaction)throw new Error("forecast restore requires a transaction");
+  db.exec("DROP TRIGGER IF EXISTS world_forecast_outcome_admitted");
+}
 export const FORECAST_TABLE_SPECS: readonly WorldTableSpec[] = [
+  {name:"world_forecast_outcome_admissions",class:"authority",since:WORLD_MIGRATION_VERSIONS.fcst,columns:["claim_id","sequence"],erasure:{via:"cascade",parent:"claims"},create:applyForecasts},
   { name: "world_forecasts", class: "authority", since: WORLD_MIGRATION_VERSIONS.fcst,
     columns: ["forecast_id","handle_id","question","record_class","frozen_at","frozen_sequence","rule_version","probability","due_at","conditions","basis_key","basis_digest"],
     erasure: { via: "trigger", triggers: ["world_forecast_history_reset","world_forecast_event_erased","world_forecast_support_erased","world_forecast_claim_erased","world_forecast_claim_changed","world_forecast_grant_changed","world_forecast_grant_erased","world_forecast_receipt_erased"] }, create: applyForecasts },
   { name: "world_forecast_inputs", class: "authority", since: WORLD_MIGRATION_VERSIONS.fcst, columns: ["forecast_id","claim_id","proof"], erasure: { via: "cascade", parent: "world_forecasts" } },
-  { name: "world_forecast_resolutions", class: "authority", since: WORLD_MIGRATION_VERSIONS.fcst, columns: ["forecast_id","status","resolved_at","recorded_at","proof"], erasure: { via: "cascade", parent: "world_forecasts" } },
+  { name: "world_forecast_resolutions", class: "authority", since: WORLD_MIGRATION_VERSIONS.fcst, columns: ["forecast_id","status","resolved_at","recorded_at","recorded_sequence","proof"], erasure: { via: "cascade", parent: "world_forecasts" } },
 ];

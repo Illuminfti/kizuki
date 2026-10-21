@@ -32,7 +32,7 @@ function publicEvidence(value: StoredOutcomeEvidence | null): OutcomeEvidence | 
  * A node-deliverable consumer first projects that exact ArtifactVersion with this
  * frame, retaining its authority dependencies, then supplies its stable binding.
  * An unqualified standalone read never upgrades an opaque binding to completion. */
-export function collectOutcomeEntries(frame: ReadFrame, subject: string, subjectRef?: string, artifactBinding?: string): { entries: OutcomeEntry[]; overflow: boolean } {
+export function collectOutcomeEntries(frame: ReadFrame, subject: string, subjectRef?: string, artifactBinding?: string, admittedThrough?:number): { entries: OutcomeEntry[]; overflow: boolean } {
   const { ctx } = frame;
   const reader = claimReader(ctx.db, ctx.principal.grant, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall" });
   const policy = reader.visibility;
@@ -40,7 +40,8 @@ export function collectOutcomeEntries(frame: ReadFrame, subject: string, subject
     AND predicate IN ('outcome.self_report','outcome.provider_ack','outcome.observation','outcome.review','outcome.reached','outcome.missed')
     AND ${policy.sql}${subjectRef === undefined ? "" : " AND json_extract(CASE WHEN json_valid(object) THEN object ELSE '{}' END,'$.subjectRef')=?"}
     ${artifactBinding === undefined ? "" : "AND json_extract(CASE WHEN json_valid(object) THEN object ELSE '{}' END,'$.artifactVersion.kind')='artifact_binding' AND json_extract(CASE WHEN json_valid(object) THEN object ELSE '{}' END,'$.artifactVersion.digest')=?"}
-    ORDER BY claim_id LIMIT 129`).all(subject, ...policy.bindings, ...(subjectRef === undefined ? [] : [subjectRef]), ...(artifactBinding === undefined ? [] : [artifactBinding]));
+    ${admittedThrough===undefined?"":"AND claim_id IN (SELECT claim_id FROM world_forecast_outcome_admissions WHERE sequence<=?)"}
+    ORDER BY claim_id LIMIT 129`).all(subject, ...policy.bindings, ...(subjectRef === undefined ? [] : [subjectRef]), ...(artifactBinding === undefined ? [] : [artifactBinding]),...(admittedThrough===undefined?[]:[admittedThrough]));
   frame.stats.rowsExamined += rows.length;
   const eventsPolicy = authorizedEventSql(ctx);
   const entries: OutcomeEntry[] = [];

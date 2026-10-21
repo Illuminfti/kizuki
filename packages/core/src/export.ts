@@ -1,4 +1,5 @@
-import { validateForecastJournal } from "./world/forecast/store";
+import { beginForecastRestore } from "./world/tables/forecasts";
+import { validateForecastJournal } from "./world/forecast/validate";
 import { beginClaimHistoryRestore, prepareClaimHistoryImport, finishClaimHistoryRestore } from "./world/tables/known";
 import { createWorldTables, exportedWorldTables, resetWorldTables } from "./world/tables/registry";
 import { assertWorldState } from "./world/integrity";
@@ -2894,6 +2895,7 @@ export function restoreVault(
       options.onProgress?.("ledger");
       db.transaction(() => {
         beginClaimHistoryRestore(db);
+        beginForecastRestore(db);
         if (eventFormat === "legacy") {
           // This database is private restore staging. No readers or file publication
           // exist until legacy validation, backfill and guard restoration commit.

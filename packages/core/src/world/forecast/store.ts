@@ -14,7 +14,7 @@ export interface ForecastRow {
   forecast_id:string;handle_id:string;question:ForecastQuestion;record_class:"prediction"|"analysis";
   frozen_at:string;frozen_sequence:number;rule_version:"dependency-v1";probability:number;due_at:string|null;conditions:string|null;basis_key:string;basis_digest:string;
 }
-export interface ResolutionRow { status:Exclude<ForecastStatus,"unresolved">|"invalidated";resolved_at:string;recorded_at:string;proof:string }
+export interface ResolutionRow { status:Exclude<ForecastStatus,"unresolved">|"invalidated";resolved_at:string;recorded_at:string;recorded_sequence:number;proof:string }
 export function forecastDigest(row: Omit<ForecastRow,"forecast_id"|"basis_digest">, proofs: readonly ForecastProof[]): string {
   return sha256Hex(canonicalJson([row,[...proofs].sort((a,b)=>a.claim.localeCompare(b.claim))]));
 }
@@ -41,12 +41,12 @@ export function resolutionProofs(row:ResolutionRow):ForecastProof[]|null {
 }
 export function insertResolution(db:Database,id:string,status:Exclude<ResolutionRow["status"],"invalidated">,observedAt:string,at:string,proofs:readonly ForecastProof[]):void {
   if(proofs.length===0||proofs.length>256||proofs.some(p=>parseForecastProof(p)===null))throw new Error("invalid forecast resolution");
-  db.query("INSERT OR IGNORE INTO world_forecast_resolutions(forecast_id,status,resolved_at,recorded_at,proof) VALUES (?,?,?,?,?)").run(id,status,observedAt,at,canonicalJson([...proofs].sort((a,b)=>a.claim.localeCompare(b.claim))));
+  db.query("INSERT OR IGNORE INTO world_forecast_resolutions(forecast_id,status,resolved_at,recorded_at,recorded_sequence,proof) VALUES (?,?,?,?,(SELECT last_sequence FROM claim_history_clock WHERE id=1),?)").run(id,status,observedAt,at,canonicalJson([...proofs].sort((a,b)=>a.claim.localeCompare(b.claim))));
 }
 export function forecastFingerprint(db:Database,id:string,includeResolution=true):string|null {
   const row=db.query<ForecastRow,[string]>("SELECT * FROM world_forecasts WHERE forecast_id=?").get(id);
   if(row===null)return null;
-  const resolution=includeResolution?db.query<ResolutionRow,[string]>("SELECT status,resolved_at,recorded_at,proof FROM world_forecast_resolutions WHERE forecast_id=?").get(id):null;
+  const resolution=includeResolution?db.query<ResolutionRow,[string]>("SELECT status,resolved_at,recorded_at,recorded_sequence,proof FROM world_forecast_resolutions WHERE forecast_id=?").get(id):null;
   return sha256Hex(canonicalJson([row,resolution]));
 }
 /** Check the declared frozen prefix and replay the fixed rule from only its saved inputs. */
@@ -64,7 +64,8 @@ export function validForecastRecord(db:Database,row:ForecastRow,proofs:readonly 
       if(state===null||state.after_status!=="live"||Date.parse(state.recorded_at)>Date.parse(row.frozen_at))return false;
     } else {
       const claim=db.query<{asserted_at:string},[string]>("SELECT asserted_at FROM claims WHERE claim_id=? AND is_world_typed=0").get(proof.claim);
-      if(claim===null||Date.parse(claim.asserted_at)>Date.parse(row.frozen_at))return false;
+      const admission=db.query<{sequence:number},[string]>("SELECT sequence FROM world_forecast_outcome_admissions WHERE claim_id=?").get(proof.claim);
+      if(claim===null||admission===null||admission.sequence>row.frozen_sequence||Date.parse(claim.asserted_at)>Date.parse(row.frozen_at))return false;
     }
   }
   const claims=proofs.filter(p=>p.kind==="typed").map(p=>readClaimV2Semantic(db,p.claim)).filter(c=>c?.discriminator==="assertion");
@@ -77,14 +78,4 @@ export function validForecastRecord(db:Database,row:ForecastRow,proofs:readonly 
   if(row.probability!==(late?0.25:0.5))return false;
   let conditions:unknown;try{conditions=row.conditions===null?null:JSON.parse(row.conditions);}catch{return false;}
   return row.basis_key===sha256Hex(canonicalJson([row.due_at,row.record_class,row.probability,conditions,[...proofs].sort((a,b)=>a.claim.localeCompare(b.claim))]));
-}
-/** Archive corruption is refused. Inputs never get reconstructed from a later state. */
-export function validateForecastJournal(db:Database):void {
-  for(const row of db.query<ForecastRow,[]>("SELECT * FROM world_forecasts").iterate()){
-    const proofs=forecastInputs(db,row.forecast_id);
-    if(proofs===null||!validForecastRecord(db,row,proofs))throw new Error("invalid frozen forecast journal");
-    const resolution=db.query<ResolutionRow,[string]>("SELECT status,resolved_at,recorded_at,proof FROM world_forecast_resolutions WHERE forecast_id=?").get(row.forecast_id);
-    if(resolution?.status==="invalidated"&&(resolution.resolved_at!==row.frozen_at||resolution.recorded_at!==row.frozen_at))throw new Error("invalid erased forecast resolution");
-    if(resolution!==null&&(resolutionProofs(resolution)===null||!isRfc3339(resolution.resolved_at)||!isRfc3339(resolution.recorded_at)||Date.parse(resolution.recorded_at)<Date.parse(row.frozen_at)||Date.parse(resolution.resolved_at)>Date.parse(resolution.recorded_at)))throw new Error("invalid forecast resolution journal");
-  }
 }
