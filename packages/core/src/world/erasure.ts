@@ -9,7 +9,7 @@ export function eraseWorldEventSupports(db: Database, eventId: string): void {
   const rows = db
     .query<{ support_key: string; claim_id: string }, [string]>(
       `SELECT s.support_key,s.claim_id FROM claim_v2_support s JOIN claim_v2_support_events e USING(support_key)
-    WHERE e.event_id=? AND json_extract(s.admission,'$.schema')='kizuki.world-admission/v1'`,
+    WHERE e.event_id=? AND json_extract(s.admission,'$.schema') IN ('kizuki.world-admission/v1','kizuki.world-admission/v2')`,
     )
     .all(eventId);
   for (const row of rows) {

@@ -986,6 +986,29 @@ export function sourceEventsAllowed(
   return true;
 }
 
+/** Model-egress policy before a candidate LIMIT; text is still rechecked by sourceEventsAllowed before sending. */
+export function sourceExtractionSql(db: Database, port: object): { sql: string; bindings: (string | number)[] } {
+  const base = sourceServingSql(db, { owner: false, purpose: "extract" }, null);
+  const clauses = [base?.sql ?? "1"], bindings: (string | number)[] = [...base?.bindings ?? []];
+  // Catalog grounding is always source-bound, including historical epoch zero.
+  clauses.push(`EXISTS(SELECT 1 FROM source_event_bindings eb JOIN source_grants eg ON eg.source_key=eb.source_key
+    WHERE eb.event_id=events.event_id AND eg.status='active'
+      AND EXISTS(SELECT 1 FROM json_each(eg.policy,'$.allowed_fields') f WHERE f.value='text')`);
+  const model = modelPorts.get(port), judge = judgePorts.get(port);
+  if (!localPorts.has(port) && model === undefined) return { sql: "0", bindings: [] };
+  const destination = (value: ModelDestination, judgeMode: boolean): void => {
+    const primary = `(json_extract(eg.policy,'$.egress.model_endpoint')=? AND json_extract(eg.policy,'$.egress.model')=?)`;
+    clauses.push(`AND (${primary}${judgeMode ? " OR (json_extract(eg.policy,'$.egress.judge_endpoint')=? AND json_extract(eg.policy,'$.egress.judge_model')=?)" : ""})
+      AND json_extract(eg.policy,'$.egress.external_retention') IN (SELECT value FROM json_each(?))`);
+    bindings.push(value.model_endpoint, value.model, ...(judgeMode ? [value.model_endpoint, value.model] : []),
+      JSON.stringify(EXTERNAL_RETENTION_CLASSES.filter(retention => retentionAccepted(retention, value.retention))));
+  };
+  if (model !== undefined) destination(model, false);
+  if (judge !== undefined) destination(judge, true);
+  clauses.push(")");
+  return { sql: `(${clauses[0]} AND ${clauses.slice(1).join(" ")})`, bindings };
+}
+
 function allowedFieldSql(field: (typeof SOURCE_FIELDS)[number]): string {
   const empty =
     field === "text"

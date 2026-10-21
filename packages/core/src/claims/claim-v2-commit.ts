@@ -1,3 +1,4 @@
+import { groundingDigest, validateWorldAdmissionProofs, witnessEventIds } from "./world-grounding";
 import type { Database } from "bun:sqlite";
 import type { Sensitivity } from "../agents/types";
 import type { AuthorityTier } from "../contracts/proposal";
@@ -285,6 +286,7 @@ function derivedWorldAdmission(
   return {
     schema: supplied.schema,
     semantic: supplied.semantic,
+    ...(supplied.schema === "kizuki.world-admission/v2" ? { grounding: supplied.grounding } : {}),
     rendering: supplied.rendering,
     authority,
     confidence,
@@ -343,9 +345,20 @@ export function commitClaimV2(
   }
   const supportOrigin = input.support.origin ?? "source";
   if (supportOrigin === "native_owner") requireNativeOwnerSupport(db, input.support);
-  else requireAdmittedSource(db, input.support, input.scope);
+  else {
+    const witness = suppliedWorld?.schema === "kizuki.world-admission/v2" ? new Set(witnessEventIds(suppliedWorld)) : null;
+    requireAdmittedSource(db, witness === null ? input.support : { ...input.support, events: input.support.events.filter(e => witness.has(e.event_id)) }, input.scope);
+    requireSourceEvents(db, input.support.events.map(e => e.event_id), input.scope);
+  }
   if (suppliedWorld !== null && mapped.value.discriminator === "assertion") {
     validateWorldAssertionAgainstRegistry(db, suppliedWorld.semantic);
+    if (suppliedWorld.schema === "kizuki.world-admission/v2") {
+      if (supportOrigin !== "source" || input.accepted_world?.authority !== "model_inference") throw new ClaimError("schema_invalid", "grounded identity requires model inference");
+      const grounded = validateWorldAdmissionProofs(db, suppliedWorld, input.support.source_key, { scope: input.scope });
+      const ids = new Set([...witnessEventIds(suppliedWorld), ...grounded.map(e => e.event_id)]);
+      if (ids.size !== input.support.events.length || input.support.events.some(e => !ids.has(e.event_id)))
+        throw new ClaimError("provenance_unresolved", "grounded identity support differs from its witness and grounding");
+    }
     if(input.accepted_world===undefined) throw new ClaimError("schema_invalid","qualified world authority must come from the shared writer");
     const expectedAnchors=completeWorldAnchors(suppliedWorld.semantic);
     if(canonicalJson(expectedAnchors)!==canonicalJson(input.support.anchors))
@@ -393,6 +406,7 @@ export function commitClaimV2(
 
   const supportKeyValue = supportKey({
     support_origin: supportOrigin,
+    ...(suppliedWorld === null ? {} : { grounding_digest: groundingDigest(suppliedWorld) }),
     semantic_key: row.semantic_key,
     source_key: input.support.source_key,
     grant_revision: input.support.grant_revision,
@@ -457,7 +471,7 @@ export function commitClaimV2(
     input.support.events.map((event) => event.event_id),
   );
   if (suppliedWorld !== null) {
-    ensureClaimOccurrences(db, suppliedWorld.semantic, supportOrigin === "native_owner" ? null : input.support.source_key);
+    if (suppliedWorld.schema === "kizuki.world-admission/v1") ensureClaimOccurrences(db, suppliedWorld.semantic, supportOrigin === "native_owner" ? null : input.support.source_key);
     allocateWorldEndpoints(db, suppliedWorld.semantic, supportKeyValue, input.support.admitted_at);
   }
 
