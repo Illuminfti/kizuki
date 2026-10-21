@@ -9,6 +9,8 @@ import { newReadFrame } from "../pipeline/frame";
 import { readWorldCard, readWorldMatches } from "../pipeline/read";
 import { resolveWorldObject } from "../references";
 import type { WorldFrame, WorldWhen } from "../ops/types";
+import type { WorldWireRef } from "../../contracts/world-card-kit";
+import type { KindAssembler } from "../kinds/kit";
 import { sourceCoverage } from "../coverage";
 
 export interface SliceCandidates {
@@ -34,6 +36,24 @@ function relations(card: unknown): readonly Relation[] {
   return [...found.values()].sort((a, b) => a.claim.token.localeCompare(b.claim.token));
 }
 
+/** Reused for public task views and selected session cards; never re-reads a claim. */
+export function cardSliceItems(kind: string, node: WorldWireRef<"object">, card: unknown, assembler: KindAssembler) {
+  const constraints: SliceItem[] = [], detail: SliceItem[] = [];
+  for (const relation of relations(card)) {
+    const evidence = [...new Map([...relation.perspective.evidence, ...relation.assessments.flatMap(one => one.evidence)]
+      .map(one => [JSON.stringify(one), one])).values()];
+    const item: SliceItem = { kind, node, relation, evidence };
+    const required = assembler.sliceConstraint?.(relation) === true || relation.polarity === "negative" || relation.conflict !== "none_observed" ||
+      relation.perspective.mode !== "asserted" || relation.perspective.interpretation !== "explicit";
+    (required ? constraints : detail).push(item);
+  }
+  return { constraints, detail };
+}
+
+export function sliceAssembler(kind: string) {
+  return KIND_ASSEMBLERS.find(one => one.kind === kind && one.cardSchema !== undefined) ?? KIND_ASSEMBLERS.find(one => one.kind === kind);
+}
+
 /** One bounded source of candidates for the public slice and session-start renderer. */
 export function collectSlice(frame: WorldFrame, kinds: readonly string[], when: WorldWhen): SliceCandidates {
   const constraints: SliceItem[] = [], detail: SliceItem[] = [], providers: ProviderCoverage[] = [];
@@ -41,7 +61,7 @@ export function collectSlice(frame: WorldFrame, kinds: readonly string[], when: 
   const read = newReadFrame(frame.ctx, frame.ns, when.valid, frame.dependencies);
   let truncated = false;
   for (const id of [...kinds].sort()) {
-    const kind = activeWorldRegistry().kind(id), assembler = KIND_ASSEMBLERS.find(one => one.kind === id);
+    const kind = activeWorldRegistry().kind(id), assembler = sliceAssembler(id);
     if (kind === undefined || assembler?.sliceConstraint === undefined) {
       providers.push({ kind: id, status: "unavailable", reason: "not_landed" }); gaps.add("coverage"); continue;
     }
@@ -53,17 +73,11 @@ export function collectSlice(frame: WorldFrame, kinds: readonly string[], when: 
     if (matches.cursor !== null || matches.matches.length > 4) { truncated = true; gaps.add("traversal_limit"); }
     for (const match of [...matches.matches].sort((a, b) => a.ref.token.localeCompare(b.ref.token)).slice(0, 4)) {
       const handle = resolveWorldObject(frame.ctx.db, frame.ns, match.ref.token);
-      const card = handle === null ? null : readWorldCard(read, handle, id);
+      const card = handle === null ? null : readWorldCard(read, handle, id, assembler.cardSchema);
       if (card === null) continue;
       for (const gap of card.coverage.gaps) gaps.add(gap);
-      for (const relation of relations(card)) {
-        const evidence = [...new Map([...relation.perspective.evidence, ...relation.assessments.flatMap(one => one.evidence)]
-          .map(one => [JSON.stringify(one), one])).values()];
-        const item: SliceItem = { kind: id, node: match.ref, relation, evidence };
-        const required = assembler.sliceConstraint(relation) || relation.polarity === "negative" || relation.conflict !== "none_observed" ||
-          relation.perspective.mode !== "asserted" || relation.perspective.interpretation !== "explicit";
-        (required ? constraints : detail).push(item);
-      }
+      const items = cardSliceItems(id, match.ref, card, assembler);
+      constraints.push(...items.constraints); detail.push(...items.detail);
     }
   }
   return { constraints, detail, providers, gaps: [...gaps], truncated };

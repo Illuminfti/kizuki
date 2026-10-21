@@ -1,6 +1,6 @@
 # Bounded task views
 
-The `slice` operation collects authorized Concept, Situation, Question and Person
+The `slice` operation collects authorized Concept, Situation, Question, Person, Skill, Framework and Procedure
 cards through the existing projection pipeline. Each kind's assembler declares
 which whole relations are constraints. Negative, conflicting, attributed or
 inferred statements retain their qualifications. Constraints precede optional
@@ -37,12 +37,18 @@ with that capability reports unchanged only while its evidence and permissions
 remain current. A wrong-principal, revoked, expired or erased capability requires
 a new view. Historical slices are explicitly unavailable in this checkpoint.
 
-## Remaining integration
+## Session compilation and integration
 
-This checkpoint implements SLICE-1 through SLICE-4 for the registered kinds
-listed above. The context-packet session compiler (SLICE-5) is still being
-integrated; its current collector is not claimed to use this compiler. Additional
-kind assemblers must declare their constraint provider during composition.
+This implementation covers SLICE-1 through SLICE-5 for the registered kinds
+listed above. The context-packet v2 session sections use the same mandatory-first compiler and
+card-to-relation providers. The existing source-bound owner identity selector
+chooses a Person; it never substitutes every visible Person. Legacy owner facts
+remain the model-free fallback. Current Situation cards supply now, commitments
+and uncertainty, including all examined dependencies for final publication even
+when completed commitments are omitted. Required context that cannot fit makes
+the packet incomplete; optional detail yields first. The v1 packet retains its
+existing compatibility renderer. Additional kind assemblers must declare their
+constraint provider during composition.
 
 The original design fixture's positive 80-token example is incompatible with
 the full Relation and EvidenceRef codec. The public 80-token case therefore
@@ -59,3 +65,7 @@ history boundaries. The central verification matrix checks seven hidden-source
 mutations and purge. `packages/cli/test/world-verification-parity.test.ts`
 exercises Core, CLI text and JSON, actual stdio MCP, HTTP and the App host.
 The App client test exercises the task form, retained refresh and privacy clear.
+`packages/core/test/world/slice-session.test.ts` compares the exact qualified
+constraint and evidence in the public slice and session packet, and verifies
+pending extraction, mandatory overflow and source revocation. Existing Person
+and Situation outcome tests exercise final-publication revocation races.

@@ -73,6 +73,7 @@ describe("a command-line spec builds only the keys its core operation takes", ()
   const SAMPLE_TOKEN = "A".repeat(43);
   const samples = new Map([
     ["--label", "flux"],
+    ["--card", "kizuki.situation-card/v2"],
     ["--task", "Prepare the session"],
     ["--budget-tokens", "2000"],
     ["--kinds", "concept,situation"],
