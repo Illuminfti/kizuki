@@ -1079,10 +1079,10 @@ export function supersessionsForReceipt(
  */
 export function skipUnwrittenClaim(db: Database, claimId: string, at: string): boolean {
   return db.transaction(() => {
-    const skipped = db.query<never, [string, string]>(
+    const skipped = db.query<{ claim_id: string }, [string, string]>(
       `UPDATE claims SET status = 'skipped', retracted_at = ?
-        WHERE claim_id = ? AND status = 'live' AND receipt_id IS NULL`,
-    ).run(at, claimId).changes === 1;
+        WHERE claim_id = ? AND status = 'live' AND receipt_id IS NULL RETURNING claim_id`,
+    ).get(at, claimId) !== null;
     if (skipped) db.query("UPDATE proposals SET status = 'withdrawn' WHERE proposal_id = ? AND status = 'pending'").run(claimId);
     return skipped;
   })();
