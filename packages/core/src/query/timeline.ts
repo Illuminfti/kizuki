@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { MAX_GRANT_SCOPE_ITEMS, type Sensitivity } from "../agents/types";
+import { tableExists } from "../ledger/schema";
 import { LIVE_PREDICATE } from "../ledger/ledger";
 import { sourceServingSql, type SourcePurpose } from "../ledger/source-grants";
 import { placeholders } from "../util/sql";
@@ -22,6 +23,8 @@ export interface TimelineOptions {
   after?: { occurred_at: string; event_id: string };
   /** Push compatible source-policy into SQL before LIMIT. */
   source?: { owner: boolean; purpose?: SourcePurpose };
+  /** Internal coverage check, applied after policy and before the result cap. */
+  missingSearchIndex?: boolean;
 }
 
 export interface TimelineEntry {
@@ -175,6 +178,12 @@ function timelinePlan(
       clauses.push(source.sql);
       bindings.push(...source.bindings);
     }
+  }
+  if (opts.missingSearchIndex && tableExists(db, "search_documents") && tableExists(db, "search_docs")) {
+    clauses.push(`NOT EXISTS (
+      SELECT 1 FROM search_documents d JOIN search_docs f ON f.rowid=d.rowid AND f.doc_id=d.doc_id
+      WHERE d.doc_id='event:' || events.event_id AND d.scope='ledger'
+    )`);
   }
   bindings.push(limit);
 

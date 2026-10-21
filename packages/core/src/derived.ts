@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { reconcileCanonGraph } from "./canon/graph-maintenance";
+import { refreshSearchHealth } from "./derived-health";
 import {
   derivedMetaNeedsRebuild,
   readDerivedMeta,
@@ -26,6 +27,7 @@ import {
   rebuildSearchLayer,
   removeDoc,
   replacePage,
+  refreshSearchCounts,
 } from "./search/indexer";
 import type { SearchRebuildResult } from "./search/indexer";
 import { initSearch } from "./search/schema";
@@ -145,16 +147,21 @@ export function refreshDerivedPage(
         if (!changed) checkpointGraphEvidence(db);
       }
       else deferGraphProjection(db);
+      refreshSearchCounts(db);
     }).immediate();
     return;
   }
   reconcileCanonGraph(db, vaultPath);
   const signatures = scanCanonSignatures(vaultPath);
   const report = graphRegistryCurrent(db, signatures, page) ? null : listCanonPagesReport(vaultPath);
+  // Search validation must not turn a current graph registry into a rebuild.
+  const healthReport = report ?? (readDerivedMeta(db, "search")?.status === "ok" ? null : listCanonPagesReport(vaultPath));
   db.transaction(() => {
     replacePage(db, page);
     if (report === null) refreshRegisteredPage(db, page, signatures);
     else refreshPageEdges(db, page, report.pages, report.skipped.length, report.signatures);
+    if (healthReport !== null) refreshSearchHealth(db, healthReport);
+    else refreshSearchCounts(db);
   }).immediate();
 }
 
@@ -176,15 +183,20 @@ export function removeDerivedPage(
         if (!changed) checkpointGraphEvidence(db);
       }
       else deferGraphProjection(db);
+      refreshSearchCounts(db);
     }).immediate();
     return;
   }
   reconcileCanonGraph(db, vaultPath);
   const signatures = scanCanonSignatures(vaultPath);
   const report = graphRegistryCurrent(db, signatures, { id: pageId }) ? null : listCanonPagesReport(vaultPath);
+  // Search validation must not turn a current graph registry into a rebuild.
+  const healthReport = report ?? (readDerivedMeta(db, "search")?.status === "ok" ? null : listCanonPagesReport(vaultPath));
   db.transaction(() => {
     removeDoc(db, "canon", pageId);
     if (report === null) removeRegisteredPage(db, pageId);
     else removePageEdges(db, pageId, report.pages, report.skipped.length, report.signatures);
+    if (healthReport !== null) refreshSearchHealth(db, healthReport);
+    else refreshSearchCounts(db);
   }).immediate();
 }

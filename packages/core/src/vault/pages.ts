@@ -116,6 +116,7 @@ interface WalkState {
   bytes: number;
   truncated: boolean;
   cache: CanonPageCache | null;
+  excludedPaths: ReadonlySet<string>;
   /** Files remembered by this walk; replaces the cache when the walk ends. */
   remembered: Map<string, ParsedFile>;
   signatures: Map<string, string>;
@@ -274,6 +275,7 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
     if (depth === 0 && (entry.name === ".kizuki" || entry.name === "archive")) continue;
     const target = join(directory, entry.name);
     const relPath = relDirectory === "" ? entry.name : `${relDirectory}/${entry.name}`;
+    if (state.excludedPaths.has(relPath)) continue;
     if (entry.isSymbolicLink()) {
       if (isCanonPagePath(relPath)) {
         if (depth + 1 > MAX_CANON_DEPTH) {
@@ -309,7 +311,7 @@ function walk(state: WalkState, directory: string, vaultPath: string, depth: num
   }
 }
 
-function newWalkState(cache: CanonPageCache | null, statOnly: boolean): WalkState {
+function newWalkState(cache: CanonPageCache | null, statOnly: boolean, excludedPaths: ReadonlySet<string> = new Set()): WalkState {
   return {
     pages: [],
     skipped: [],
@@ -318,6 +320,7 @@ function newWalkState(cache: CanonPageCache | null, statOnly: boolean): WalkStat
     bytes: 0,
     truncated: false,
     cache,
+    excludedPaths,
     remembered: new Map(),
     signatures: new Map(),
     statOnly,
@@ -327,8 +330,9 @@ function newWalkState(cache: CanonPageCache | null, statOnly: boolean): WalkStat
 export function listCanonPagesReport(
   vaultPath: string,
   cache?: CanonPageCache,
+  excludedPaths: ReadonlySet<string> = new Set(),
 ): CanonPageReport {
-  const state = newWalkState(cache ?? null, false);
+  const state = newWalkState(cache ?? null, false, excludedPaths);
   walk(state, vaultPath, vaultPath, 0);
   if (cache !== undefined) cache.files = state.remembered;
   state.skipped.sort((left, right) => compareName(left.relPath, right.relPath));

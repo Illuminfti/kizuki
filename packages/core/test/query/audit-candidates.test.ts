@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import * as core from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
-import { indexPage } from "../../src/search/indexer";
+import { rebuildDerived } from "../../src/derived";
 import { initSearch } from "../../src/search/schema";
 import * as publicSearch from "../../src/search";
 import * as publicQuery from "../../src/query";
@@ -29,11 +29,11 @@ test("search audit candidates retain bounded rank/filter order without projectin
         status: "active", sensitivity: sensitivity ?? "private", taint: "clean",
       }, "ceilingaudit PRIVATE_AUDIT_BODY_CANARY");
     }
-    for (const page of core.listCanonPages(vault.path)) indexPage(db, page);
+    rebuildDerived(db, vault.path);
     // Preserve the synthetic missing-label case only in the derived index;
     // the canonical pages and their writer receipts retain their real authority.
     db.query("UPDATE search_docs SET sensitivity = 'unlabeled' WHERE doc_id = ?").run("page:fact:3");
-    expect(db.query("SELECT doc_id, sensitivity, authority FROM search_docs ORDER BY doc_id").all()).toEqual([
+    expect(db.query("SELECT doc_id, sensitivity, authority FROM search_docs WHERE scope='canon' ORDER BY doc_id").all()).toEqual([
       { doc_id: "page:fact:1", sensitivity: "private", authority: "model_inference" },
       { doc_id: "page:fact:2", sensitivity: "public", authority: "model_inference" },
       { doc_id: "page:fact:3", sensitivity: "unlabeled", authority: "model_inference" },

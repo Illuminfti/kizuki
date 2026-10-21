@@ -58,8 +58,8 @@ describe("serveSearch enforces the grant below the prompt layer", () => {
       query: "kettle",
     }));
     expect(pageIds(priv)).toContain("fact:kettle");
-    // Vault-wide index health belongs to the owner; hidden invalid pages
-    // must not change an agent's response diagnostics.
+    // Unlabeled pages and pages with unavailable evidence cannot be read by
+    // this principal, so they do not disclose a vault-wide health flag.
     expect(priv.data).toBeUndefined();
   });
 

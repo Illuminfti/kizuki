@@ -1,4 +1,6 @@
+import { visibleIndexDegraded, visibleLedgerIndexMissing } from "./index-health";
 import type { Database } from "bun:sqlite";
+import { authorize } from "../agents";
 import type { AuditDenial, AuditItem, Grant } from "../agents";
 import { canonReadGeneration } from "../canon/write-intent";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
@@ -20,7 +22,7 @@ import {
   scopedWindow,
   text,
 } from "./arguments";
-import { canonChunk, eligible, excerptOf, loadCanon, pageDecision } from "./canon";
+import { canonChunk, eligible, excerptOf, loadCanon, pageDecision, pageScope } from "./canon";
 import type { CanonIndex } from "./canon";
 import { eventsCitedByPages } from "./dedupe";
 import { claimsEpoch } from "./epoch";
@@ -236,6 +238,10 @@ export async function serveSearch(
     const classified: Classification = { canon: [], quoted: [], withheld: [] };
     const rankedOpts = {
       ...base,
+      ...(ctx.principal.kind === "owner" ? {} : {
+        ceiling: grant.ceiling,
+        canonPaths: index.pages.filter(page => authorize(narrowed, pageScope(page)).allow).map(page => page.relPath),
+      }),
       limit: MAX_RETRIEVAL_LIMIT,
       ceiling: grant.ceiling,
       canonIds: index.pages.filter(page => eligible(page) && pageDecision(index, narrowed, page).allow).map(page => `page:${page.id}`),
@@ -258,7 +264,7 @@ export async function serveSearch(
         ...rankedOpts,
         ...(offset === 0 ? {} : { offset }),
       });
-      for (const reason of ranked.degraded) degraded.add(reason);
+      for (const reason of ranked.degraded) if (!reason.startsWith("index-")) degraded.add(reason);
       if (ranked.candidates.length === 0) break;
       const pageKey = ranked.candidates.map((hit) => hit.doc_id).join("\0");
       if (pageKey === previousPage) break;
@@ -317,6 +323,8 @@ export async function serveSearch(
       .map(chunk => boundedQuote(chunk, fullText, index.sourceContext));
     if (canon.length + quoted.length > 0) degraded.delete(NO_MATCH_LABEL);
     else if (question) degraded.add(NO_MATCH_LABEL);
+    if ((scope !== "ledger" && visibleIndexDegraded(index, narrowed, "search"))
+      || (scope !== "canon" && visibleLedgerIndexMissing(ctx, narrowed))) degraded.add("index-degraded");
     const canonicalSubjects = new Map(canon.map(chunk => [chunk.page_id, canonSubjects(index, index.byId.get(chunk.page_id)!)]));
     const projection = projectSubjectLabels(index, narrowed, at, [...canonicalSubjects.values()].flat().concat(quoted.flatMap(chunk => chunk.subjects)), canon.length + quoted.length);
     const audit = new Map<string, AuditItem>();

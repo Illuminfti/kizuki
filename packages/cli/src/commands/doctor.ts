@@ -524,7 +524,7 @@ function printHuman(io: CliIo, report: DoctorReport): void {
   );
   const derived = report.serve.stores.derived;
   io.out(
-    `derived search=${derived.search.rebuilt_at ?? "never"} docs=${derived.search.doc_count} graph=${derived.graph.rebuilt_at ?? "never"} docs=${derived.graph.doc_count}`,
+    `derived search=${derived.search.rebuilt_at ?? "never"} docs=${derived.search.doc_count} watermark=${clean(derived.search.ledger_watermark ?? "none")} graph=${derived.graph.rebuilt_at ?? "never"} docs=${derived.graph.doc_count} watermark=${clean(derived.graph.ledger_watermark ?? "none")}`,
   );
   io.out(report.serve.stores.vector_layer.detail);
   const stores = report.serve.stores;
@@ -541,11 +541,11 @@ function printHuman(io: CliIo, report: DoctorReport): void {
     io.out("canon walk truncated: the skipped-file list above may be incomplete");
   }
   if (stores.skipped_pages_total === 0 && stores.held_pages === 0) {
-    // Incremental refreshes do not restamp a layer, so a fixed page leaves the old stamp behind.
+    // Compatibility: a vault not yet visited by an incremental pass can retain an old stamp.
     for (const layer of ["search", "graph"] as const) {
       const stamp = derived[layer];
       if (stamp.status !== null && stamp.status !== "ok" && stamp.skipped_count > 0) {
-        io.out(`derived ${layer} stamp is ${stamp.status} with ${stamp.skipped_count} skipped, but no canon file is skipped or held now; the stamp may be stale; kizuki rebuild --layer ${layer} re-evaluates it`);
+        io.out(`derived ${layer} stamp is ${stamp.status} with ${stamp.skipped_count} skipped, but no canon file is skipped or held now; the stamp may be stale; the next incremental pass re-evaluates it`);
       }
     }
   }

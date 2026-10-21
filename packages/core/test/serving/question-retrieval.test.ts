@@ -201,7 +201,7 @@ describe("bounded scan of withheld candidates", () => {
       const envelope = await serveSearch(live.owner(), { query: "common widget", scope: "ledger", limit: 10 });
       expect(envelope.quoted).toHaveLength(10);
       expect(envelope.denied).toEqual([]);
-      expect(envelope.data?.degraded).not.toContain("scan-bound");
+      expect(envelope.data?.degraded ?? []).toEqual([]);
     } finally { live.dispose(); }
   });
 

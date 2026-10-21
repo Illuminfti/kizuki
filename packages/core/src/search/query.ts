@@ -218,6 +218,7 @@ function searchPlan(
   source?: { owner: boolean; purpose?: SourcePurpose },
   offset?: number,
   canonIds?: readonly string[],
+  canonPaths?: readonly string[],
 ): SearchPlan {
   const ftsQuery = toFtsQuery(validQueryText(query));
   const degraded: string[] = [];
@@ -243,7 +244,7 @@ function searchPlan(
 
   const clauses: string[] = [];
   const bindings: (string | number)[] = [];
-  const heldPaths = [...readDerivedHolds(db).paths];
+  const heldPaths = canonIds === undefined && canonPaths === undefined ? [...readDerivedHolds(db).paths] : [];
   if (heldPaths.length > 0) {
     clauses.push(
       `(search_docs.scope != 'canon' OR path NOT IN (${placeholders(heldPaths.length)}))`,
@@ -289,6 +290,10 @@ function searchPlan(
   if (excludePaths !== undefined && excludePaths.length > 0) {
     clauses.push(`path NOT IN (${placeholders(excludePaths.length)})`);
     bindings.push(...excludePaths);
+  }
+  if (canonPaths !== undefined) {
+    clauses.push("(search_docs.scope != 'canon' OR path IN (SELECT value FROM json_each(?)))");
+    bindings.push(JSON.stringify(canonPaths));
   }
   if (source !== undefined) {
     const predicate = sourceServingSql(db, source, ceiling);
@@ -412,15 +417,17 @@ export function searchAuditCandidates(
   db: Database,
   query: string,
   opts: Omit<SearchOptions, "ceiling"> & {
+    ceiling?: Sensitivity;
+    /** Canon paths admitted to this request before indexing work or result caps. */
+    canonPaths?: readonly string[];
     source?: { owner: boolean; purpose?: SourcePurpose };
     /** Ranked-window skip for serving. Absent from SearchOptions and public search(). */
     offset?: number;
     /** Serving admits live provenance before matching, limiting and ranking. */
     canonIds?: readonly string[];
-    ceiling?: Sensitivity;
   },
 ): { candidates: AuditCandidate[]; degraded: string[] } {
-  const { source, offset, canonIds, ceiling, ...rest } = opts;
+  const { source, offset, canonIds, canonPaths, ceiling, ...rest } = opts;
   const plan = searchPlan(
     db,
     query,
@@ -429,6 +436,7 @@ export function searchAuditCandidates(
     source,
     offset,
     canonIds,
+    canonPaths,
   );
   const candidates = plan.tail === null ? [] : db
     .query<AuditCandidate, (string | number)[]>(
