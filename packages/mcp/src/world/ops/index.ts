@@ -1,4 +1,5 @@
 import { observationFragment } from "./observation";
+import { forecastFragment, forecastScoresFragment } from "./forecast";
 import { attentionFragment } from "./attention";
 import { atlasFragment } from "./atlas";
 import { sliceFragment } from "./slice";
@@ -50,6 +51,7 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   // slot: ATTN
   attentionFragment,
   // slot: FCST
+  forecastFragment, forecastScoresFragment,
   // slot: ATLAS
   atlasFragment,
 ];

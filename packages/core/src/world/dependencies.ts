@@ -1,5 +1,6 @@
 import { canonicalJson, sha256Hex } from "../util/hash";
 import { readDurableObservation } from "../claims/observations";
+import { forecastFingerprint } from "./forecast/store";
 import { claimReader, claimPublicationFingerprint } from "../serving/claims";
 import { getClaim } from "../claims/store";
 import { identityReceiptCurrent } from "./identity-receipt";
@@ -17,6 +18,7 @@ export interface WorldDependencies {
   readonly children: WorldDependencies[];
   readonly claims: Set<string>;
   readonly observations: Map<string, string>;
+  readonly forecasts: Map<string,{readonly fingerprint:string;readonly resolution:boolean}>;
   readonly legacyClaims: Map<string, string>;
   cutoff?: KnownCutoff;
   /** A returned temporal capability can retain an older, byte-equivalent cutoff. */
@@ -34,7 +36,7 @@ export interface WorldDependencies {
 }
 
 export function worldDependencies(): WorldDependencies {
-  return { children: [], observations: new Map(), claims: new Set(), legacyClaims: new Map(), supports: new Set(), events: new Set(), identityReceipts: new Map(), consolidations: new Map(), coverage: null };
+  return { children: [], forecasts: new Map(), observations: new Map(), claims: new Set(), legacyClaims: new Map(), supports: new Set(), events: new Set(), identityReceipts: new Map(), consolidations: new Map(), coverage: null };
 }
 
 export function recordWorldDependencies(deps: WorldDependencies, item: Eligible): void {
@@ -68,6 +70,7 @@ export function worldEvidenceCurrent(ctx: ServeContext, deps: WorldDependencies,
     const observation = readDurableObservation(ctx.db, id);
     if (observation === null || sha256Hex(canonicalJson(observation.record)) !== hash) return false;
   }
+  for (const [id,pin] of deps.forecasts) if (forecastFingerprint(ctx.db,id,pin.resolution)!==pin.fingerprint) return false;
   for (const [basis, summary] of deps.consolidations) {
     const row = ctx.db.query<{ response_hash: string; completed_at: string; expires_at: string }, [string]>(
       "SELECT response_hash,completed_at,expires_at FROM world_consolidation WHERE basis_digest=? AND status='complete'",

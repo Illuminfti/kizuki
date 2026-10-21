@@ -1,3 +1,4 @@
+import { forecastJob } from "../world/forecast/job";
 import type { ConsolidationConfig, ConsolidationRunReport } from "../contracts/consolidation";
 import type { LlmPort } from "../contracts/llm";
 import { consolidationJob } from "./consolidate";
@@ -37,6 +38,7 @@ export const WORLD_JOBS: readonly WorldJob[] = [
   // slot: consol
   consolidationJob,
   // slot: fcst
+  forecastJob,
 ];
 
 let registered: readonly WorldJob[] = [];
