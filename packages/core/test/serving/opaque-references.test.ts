@@ -9,14 +9,16 @@ import { worldNamespace } from "../../src/world/references";
 import { wireDigest } from "../../src/world/views/store";
 import { issuedOpaqueFields } from "../../src/util/issued-opaque";
 import { hiddenScene } from "../helpers/noninterference";
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 
 // A real 32-byte generated wire identity that happens to contain a credential prefix.
 const COLLISION = "gqmPUP5-sk-TmqqDmrkxvBtq0EwM4vte68qMKLDBKB0";
 const WHEN = { valid: { kind: "all" }, knownAt: { kind: "current" } } as const;
 
 test.each(["claim", "admission", "event_version"] as const)("a credential-shaped issued %s identity survives serving and remains usable", async (kind) => {
-  const f = await hiddenScene();
+  const f = await hiddenScene({ model: EMPTY_SUMMARY_MODEL });
   try {
+    await completeEmptyWorldSummaries(f.db, f.vaultPath);
     const agent = addAgent(f.db, "opaque-correction-reader", { ...OWNER_AGENT_GRANT, ceiling: "public" });
     const ctx = { ...f.reader, principal: authenticate(f.db, agent.token)! };
     const found = serveWorldView(ctx, { operation: "find_concepts", label: "Bayesian updating", ...WHEN }).data;
@@ -93,8 +95,11 @@ function cloneCacheToken(db: Database, oldHash: string, newHash: string) {
 }
 
 test("validated prior views and supplied historical snapshots retain credential-shaped identities", async () => {
-  const f = await hiddenScene();
+  const f = await hiddenScene({ model: EMPTY_SUMMARY_MODEL });
   try {
+    // The historical cutoff must already include the synthetic completion.
+    const completedAt = f.db.query<{ at: string }, []>("SELECT max(recorded_at) AS at FROM claim_lifecycle_history").get()!.at;
+    await completeEmptyWorldSummaries(f.db, f.vaultPath, () => completedAt);
     const input = { operation: "concept", concept: f.refs.concept, ...WHEN };
     const first = serveWorldView(f.reader, input).data;
     if (!("result" in first) || first.result.status !== "current" || !("kind" in first.result.view)) throw new Error("missing view");
