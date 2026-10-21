@@ -19,6 +19,7 @@ import { LEDGER_ID_MAX, LEDGER_KIND_MAX, MAX_READ_SINCE, REPLAY_PAGE_SIZE } from
 import { findPurgeSuppression } from "./purge-suppression";
 import { tableExists } from "./schema";
 import { placeholders } from "../util/sql";
+import { indexEvent } from "../search/indexer";
 
 export type AcceptErrorKind = "validation" | "infrastructure";
 
@@ -242,6 +243,7 @@ export function recordNativeCorrectionEvent(db: Database, input: CaptureEventInp
       if (nativeRequestDigest(db, stored.event_id) !== requestDigest) {
         throw new Error("correction recording conflicts with existing evidence");
       }
+      indexEvent(db, stored);
       return { event_id: stored.event_id, duplicate: true };
     }
     // Exact replay is read-only. New native evidence shares the caller's
@@ -254,6 +256,10 @@ export function recordNativeCorrectionEvent(db: Database, input: CaptureEventInp
     proof.run(eventId, requestDigest, event.observed_at, computeContentHash(event));
     const stored = readEvent(db, eventId);
     if (stored === null) throw new Error("native correction recording failed");
+    // This writer bypasses connector ingestion. Keep its independently readable
+    // evidence searchable in the same transaction, even if source-backed canon
+    // is later withheld. The ordinary event index preserves quoted authority.
+    indexEvent(db, stored);
     return { event_id: stored.event_id, duplicate: false };
   }).immediate();
 }

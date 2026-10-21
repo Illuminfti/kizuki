@@ -120,6 +120,21 @@ against the grant as it is now, so narrowing it takes effect on the next call.
 The claim's source must still allow the correction purpose. A denied or invalid
 call leaves an audit row.
 
+## Native evidence in search
+
+Native correction recording indexes the owner's statement in the same SQLite
+transaction as its ledger event and native authority proof. An indexing failure
+rolls back that recording; retry can record it once. The local search floor can
+return the independently authorized event immediately as quoted evidence, without
+waiting for maintenance or rebuilding search. This does not make source-backed
+canon or typed classification authoritative after its source is revoked.
+
+Search matches the statement's own words. A structured subject is not an indexed
+label, and a withdrawn imported label is not copied into native evidence. Context
+packet time windows have an exclusive end: a statement recorded exactly at that
+end belongs to the following interval. These boundaries remain in effect after a
+correction and after search rebuild.
+
 ## Refreshed world
 
 `refresh_world: { operation: "concept" | "situation", concept | situation: ObjectRef }`
@@ -174,5 +189,6 @@ bun test packages/core/test/serving/world-correct-modes.test.ts
 bun test packages/mcp/test/correct-modes.test.ts packages/mcp/test/tools-list.test.ts packages/mcp/test/schema.test.ts
 bun test packages/cli/test/tell-modes.test.ts packages/cli/test/tell-shapes.test.ts packages/cli/test/app-world-correction.test.ts
 bun test packages/core/test/serving/world-occurrence-correction.test.ts
+bun test packages/core/test/correction/native-search.test.ts
 bun run typecheck
 ```
