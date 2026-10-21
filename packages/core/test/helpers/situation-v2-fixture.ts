@@ -10,8 +10,8 @@ import { cardFixture } from "../world/card-fixture";
 export const SITUATION_V2_WHEN = { valid: { kind: "all" }, knownAt: { kind: "current" } } as const;
 export const literal = (value: string) => ({ kind: "literal" as const, value });
 export const vocabulary = (id: string) => ({ kind: "vocabulary" as const, ref: { kind: "vocabulary" as const, id } });
-export async function situationV2Fixture(database?: Database) {
-  const f = await cardFixture(database);
+export async function situationV2Fixture(database?: Database, options: Parameters<typeof cardFixture>[1] = {}) {
+  const f = await cardFixture(database, options);
   try {
     const declare = async (subject: string, kind: string, label: string) => {
       await f.write("world.kind", vocabulary(`world/${kind}`), { subject });

@@ -1,3 +1,4 @@
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
 import { expect, test } from "bun:test";
 import { addAgent, authenticate, OWNER_AGENT_GRANT } from "../../src/agents";
 import { serveWorldView } from "../../src/serving/world-view";
@@ -6,6 +7,7 @@ import { serveContextPacket } from "../../src/serving/packet";
 import { undoReceipt } from "../../src/canon/undo";
 import { purgeEvents } from "../../src/ledger/purge";
 import { revokeSourceGrant } from "../../src/ledger/source-grants";
+import { inspectSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
 import { rebuildWorldLayer } from "../../src/derived";
 import { collectReadFrames } from "../../src/world/pipeline/frame";
 import { situationV2Fixture, literal, vocabulary } from "../helpers/situation-v2-fixture";
@@ -13,6 +15,19 @@ import { cardFixture } from "./card-fixture";
 
 const node = (f: Awaited<ReturnType<typeof cardFixture>>, id: string) => ({kind:"subject" as const,ref:f.ref(id)});
 const dueValues = (f: Awaited<ReturnType<typeof situationV2Fixture>>) => f.readSituation().commitments.find(c=>c.label?.object.kind === "literal" && c.label.object.value === "Review draft")!.due.map(r=>r.object);
+
+test("exact deadlines use complete source evidence without requiring optional summary text",async()=>{
+ const f=await situationV2Fixture();try{
+  const read=(at:string)=>f.readSituation(f.ctx,{valid:{kind:"at",at}}).commitments.find(c=>c.label?.object.kind==="literal"&&c.label.object.value==="Review draft")!;
+  expect(f.readSituation().coverage.gaps).toContain("pending_consolidation");
+  expect(read("2026-10-23T00:00:00Z").overdue).toBe(false);
+  expect(read("2026-10-24T23:59:59Z").overdue).toBe(false);
+  expect(read("2026-10-25T00:00:00Z").overdue).toBe(true);
+  const grant=inspectSourceGrant(f.db,f.sourceKey)!;
+  setSourceGrant(f.db,{source_key:f.sourceKey,expected_revision:grant.revision,operation_id:"incomplete-extraction",policy:{...grant.policy,purposes:[...grant.policy.purposes,"extract"]}});
+  expect(read("2026-10-25T00:00:00Z").overdue).toBe("unknown");
+ }finally{f.dispose();}
+},120_000);
 
 test("the writer rejects simultaneous same-perspective cycles, permits disjoint time and distinct holders, and ignores held edges", async()=>{
  const f=await situationV2Fixture(); try {
@@ -65,7 +80,8 @@ test("nested KNOWN reads exclude Wednesday-learned Monday-valid commitments on T
 },120_000);
 
 test("purge removes nested dates from current and snapshots, rebuild cannot resurrect them, and revoke wins over retained views",async()=>{
- const f=await situationV2Fixture();try{
+ const f=await situationV2Fixture(undefined,{model:EMPTY_SUMMARY_MODEL});try{
+  await completeEmptyWorldSummaries(f.db,f.ctx.vaultPath);
   const input=f.situationInput(),first=serveWorldView(f.ctx,input).data;
   const historical=f.readSituation(f.ctx,{knownAt:{kind:"time",at:new Date().toISOString()}});
   purgeEvents(f.db,f.ctx.vaultPath,{event_id:f.c2.event.event_id},"synthetic situation deadline erasure");
@@ -82,7 +98,8 @@ test("purge removes nested dates from current and snapshots, rebuild cannot resu
 },120_000);
 
 test("hidden nested commitments cannot change a narrow reader's bytes or work and object refs remain principal-bound",async()=>{
- const f=await situationV2Fixture();try{
+ const f=await situationV2Fixture(undefined,{model:EMPTY_SUMMARY_MODEL});try{
+  await completeEmptyWorldSummaries(f.db,f.ctx.vaultPath);
   const agent=addAgent(f.db,"situation-reader",{...OWNER_AGENT_GRANT,ceiling:"public"}),ctx={...f.ctx,principal:authenticate(f.db,agent.token)!};
   const input=f.situationInput(ctx),before=collectReadFrames(()=>serveWorldView(ctx,input));
   if(!("result"in before.result.data)||!("view"in before.result.data.result))throw Error("view missing");

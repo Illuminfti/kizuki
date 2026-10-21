@@ -36,7 +36,7 @@ test("commitments keep their own identity, dates, and holder perspectives; compl
   const f = await situationV2Fixture();
   try {
     await f.write("commitment.status",vocabulary("commitment/done"),{subject:"commitment:notes"});
-    const card = f.readSituation();
+    const card = f.readSituation(f.ctx,{valid:{kind:"at",at:"2026-10-21T00:00:00Z"}});
     expect(card.commitments).toHaveLength(2);
     const notes = card.commitments.find(c => c.label?.object.kind === "literal" && c.label.object.value === "Prepare notes")!;
     expect(notes.status).toBe("claimed_done");

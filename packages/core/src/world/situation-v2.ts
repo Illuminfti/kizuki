@@ -130,6 +130,9 @@ export function collectSituationDetails(frame: ReadFrame, cluster: Cluster, body
     if (target) dependencies.push({ predicate: relation.predicate as SituationDependency["predicate"], from: relation.subject, to: relation.object.ref, relation });
   }
   if (commitments.length === 0 && decisions.length === 0) gaps.add("coverage");
-  const complete = coverageOf(frame,body.overflow === true,[...body.gaps,...gaps]).status === "complete_for_query";
+  // Optional summary work is unrelated to deadline completeness. Source
+  // extraction backlog still contributes its own pending_consolidation gap.
+  const complete = coverageOf(frame,body.overflow === true,
+    [...body.gaps.filter(gap => gap !== "pending_consolidation"),...gaps]).status === "complete_for_query";
   return { commitments: commitments.map(c => ({...c,overdue: overdue(c.due,complete,frame)})), decisions, dependencies, uncertainty, gaps: [...gaps] };
 }
