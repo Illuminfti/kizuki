@@ -812,6 +812,12 @@ function worldKnowledgeNode(data) {
   for (const kind of ['concept', 'situation', 'procedure', 'skill', 'framework']) if (data?.[kind]?.ref) return { kind, node: data[kind] };
   return null;
 }
+function worldViewActions(section, result, knowledge) {
+  if (!knowledge?.node.ref) return;
+  const ref = knowledge.node.ref, of = { operation: knowledge.kind, [knowledge.kind === 'artifact_version' ? 'artifact' : knowledge.kind]: ref };
+  section.append(button('Share a resume handle', () => loadWorld(ref, { operation: 'share', of }), 'secondary'));
+  if (result.view?.kind === 'view') section.append(button('Check for changes', () => loadWorld(ref, { operation: 'diff', of, priorView: result.view }), 'secondary'));
+}
 function worldUseful(data) {
   const usefulness = data?.taskUsefulness;
   if (!usefulness || usefulness.status === 'unknown') return el('p', {}, usefulness?.reason === 'history' ? 'Usefulness is unknown at this historical point.' : 'Usefulness is unknown: no independent, matched outcome evidence.');
@@ -860,6 +866,15 @@ function renderWorld() {
     if (result.status === 'unavailable') section.append(empty('World view is not available here.', result.reason === 'history' ? 'Historical world snapshots are not available yet.' : 'Kizuki cannot read this world view right now.', button('Try again', retry, 'primary')));
     else if (result.status === 'new_view_required') section.append(empty('Read a fresh view.', 'This view or resume handle can no longer be used.', button('Browse again', () => loadWorld(null), 'primary')));
     else if (result.data?.schema === 'kizuki.resume-handle/v1') section.append(el('article', { class: 'result-item' }, el('h2', {}, 'Resume in another client'), el('code', {}, result.data.handle), el('p', {}, `Expires ${result.data.expiresAt}. The other client reads under its own access.`), button('Back to item', retry, 'quiet')));
+    else if (result.data?.schema === 'kizuki.world-diff/v1' || (state.world.operation === 'diff' && result.status === 'unchanged')) {
+      const changes = result.data;
+      section.append(el('article', { class: 'result-item' }, el('h2', {}, 'Changes since your previous read'),
+        result.status === 'unchanged' ? el('p', { role: 'status' }, 'No visible change since your previous read.') : el('p', {}, `${changes.added.length} added statements · ${changes.removed.length} removed statements · ${changes.changed.length} changed statements`),
+        changes?.truncated ? el('p', { class: 'search-hint' }, 'This comparison is partial. Read the current item for the available information.') : null,
+        ...(changes?.changed || []).map(change => el('p', {}, `Statement changed: ${change.fields.join(', ')}.`)),
+        button('Read current item', () => loadWorld(state.worldRef, state.world.diffOf), 'primary'),
+        result.view?.kind === 'view' && state.world.diffOf ? button('Check for more changes', () => loadWorld(state.worldRef, { operation: 'diff', of: state.world.diffOf, priorView: result.view }), 'secondary') : null));
+    }
     else {
       if (result.status === 'unchanged') section.append(el('p', { role: 'status' }, 'No visible change since your previous read.'));
       const data = result.data, matches = Array.isArray(data?.matches) ? data.matches : null;
@@ -870,7 +885,7 @@ function renderWorld() {
         const knowledge = worldKnowledgeNode(data);
         if (['kizuki.procedure-card/v1', 'kizuki.skill-card/v1', 'kizuki.framework-card/v1', 'kizuki.outcome-card/v1'].includes(data.schema)) {
           section.append(worldKnowledgeCard(data));
-          if (knowledge) section.append(button('Share a resume handle', () => loadWorld(knowledge.node.ref, { operation: 'share', of: { operation: knowledge.kind, [knowledge.kind]: knowledge.node.ref } }), 'secondary'));
+          worldViewActions(section, result, knowledge);
           if (result.validUntil) section.append(el('p', { class: 'search-hint' }, `View valid until ${result.validUntil}. Access is checked on every read.`));
           return section;
         }
@@ -887,7 +902,7 @@ function renderWorld() {
           related.length ? el('details', { class: 'result-details' }, el('summary', {}, 'Related statements'),
             el('p', {}, 'These statements explain the current view. Confidence reflects the assessment of each statement. Original source text is not included here.'),
             ...related.map(worldRelation)) : null));
-        if (node?.ref) section.append(button('Share a resume handle', () => loadWorld(node.ref, { operation: 'share', of: { operation: data.artifact ? 'artifact_version' : data.concept ? 'concept' : 'situation', [data.artifact ? 'artifact' : data.concept ? 'concept' : 'situation']: node.ref } }), 'secondary'));
+        worldViewActions(section, result, knowledge);
         if (result.validUntil) section.append(el('p', { class: 'search-hint' }, `View valid until ${result.validUntil}. Access is checked on every read.`));
       }
     }
@@ -909,7 +924,8 @@ async function loadWorld(ref = state.worldRef, request = null) {
   if (state.view === 'world') render();
   try {
     const world = await api('world_view', payload); if (!current()) return;
-    if (world.result?.status === 'unchanged' && previous?.result?.data) world.result.data = previous.result.data;
+    if (world.result?.status === 'unchanged' && request?.operation !== 'diff' && previous?.result?.data) world.result.data = previous.result.data;
+    if (request?.operation === 'diff') world.diffOf = request.of;
     const knowledge = worldKnowledgeNode(world.result?.data);
     if (knowledge) state.worldDetailKind = knowledge.kind;
     if (request?.operation === 'resume') {

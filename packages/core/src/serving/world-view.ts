@@ -1,4 +1,6 @@
 import type { PersonCard } from "../contracts/person-card";
+import type { WorldDiff } from "../contracts/world-diff";
+import { compareWorldViews } from "../world/views/diff";
 import { resolvePrincipal, toolAllowed, type Principal } from "../agents";
 import { tableExists } from "../ledger/schema";
 import type { HistoryPage } from "../contracts/world-history";
@@ -26,6 +28,7 @@ import type {
   WorldOp,
   WorldOpOutcome,
   WorldOpRegistry,
+  WorldRecord,
   WorldSnapshotRef,
   WorldUnavailableReason,
   WorldValidQuery,
@@ -62,6 +65,7 @@ export type {
 
 /** The typed request of the shipped operations; the reader itself takes `unknown` and the registry decides. */
 export type WorldReadInput =
+  | { readonly operation: "diff"; readonly of: WorldRecord; readonly priorView: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "person"; readonly person: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "find_people"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "artifact_version"; readonly artifact: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
@@ -128,6 +132,7 @@ export type WorldReadInput =
 
 /** The bodies the shipped operations return; each operation's `dataSchemas` say which one it is. */
 export type WorldData =
+  | WorldDiff
   | ConceptCard
   | PersonCard
   | ArtifactCard
@@ -237,8 +242,22 @@ function present(op: WorldOp, outcome: WorldOpOutcome, view: ViewSession | null,
   // Compare and retain the final served projection. The gate redacts the raw
   // body once for output and counts, including after a bounded reprojection.
   const projection = worldViewProjection(ctx, data);
-  const result = settleView(ctx.db, view, op.name, projection, dependencies);
-  return { quoted: outcome.quoted ?? [], data: answer(op.name, "data" in result ? { ...result, data } : result) };
+  let responseData: WorldData = data;
+  if (op.name === "diff") {
+    if (view.baseline === null) return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+    let retained: unknown;
+    try { retained = JSON.parse(Buffer.from(view.baseline.projection).toString("utf8")); }
+    catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+    }
+    if (!isPlainObject(retained) || retained.operation !== view.operation || !isPlainObject(retained.data))
+      return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+    responseData = compareWorldViews(retained.data, projection);
+    if (responseData.truncated) return withoutQuotes(answer(op.name, { status: "incomplete", data: responseData, reasons: ["traversal_limit"] }));
+  }
+  const result = settleView(ctx.db, view, view.operation, projection, dependencies);
+  return { quoted: outcome.quoted ?? [], data: answer(op.name, "data" in result ? { ...result, data: responseData } : result) };
 }
 
 /**
@@ -295,8 +314,12 @@ function read(ctx: ServeContext, input: unknown, registry: WorldOpRegistry, depe
         const live = { ...ctx, principal: current };
         const ns = worldNamespace(ctx.db, current);
         // The baseline is judged before any projection work, so an unusable one costs the same for every cause.
-        const view = op.views === true ? openView(live, ns, input, prior) : null;
+        const viewInput = op.name === "diff" ? { ...(query as WorldRecord), valid, knownAt } : input;
+        const view = op.views === true ? openView(live, ns, viewInput, prior) : null;
         if (view?.stale === true) return withoutQuotes(answer(op.name, { status: "new_view_required" }));
+        if (view !== null && prior !== null) dependencies.priorView = {
+          current: reader => !openView(reader, worldNamespace(reader.db, reader.principal), viewInput, prior).stale,
+        };
         return present(op, op.run({ ctx: live, ns, registry, dependencies, ...(view === null ? {} : { view }) }, query, { valid, knownAt }), view, live, dependencies);
       })
       .immediate();

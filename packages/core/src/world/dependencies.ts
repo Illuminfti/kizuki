@@ -16,6 +16,8 @@ export interface WorldDependencies {
   cutoff?: KnownCutoff;
   /** A returned temporal capability can retain an older, byte-equivalent cutoff. */
   snapshot?: { readonly cutoff: KnownCutoff; readonly current: (ctx: ServeContext) => boolean };
+  /** A conditional result also depends on the continued authority of its retained baseline. */
+  priorView?: { readonly current: (ctx: ServeContext) => boolean };
   readonly supports: Set<string>;
   readonly events: Set<string>;
   /** Exact receipt ownership used to activate native identity, rechecked at publication. */
@@ -83,6 +85,7 @@ export function worldEvidenceCurrent(ctx: ServeContext, deps: WorldDependencies,
 
 /** Revalidate evidence, retained capabilities and coverage without a global write epoch. */
 export function worldDependenciesCurrent(ctx: ServeContext, deps: WorldDependencies): boolean {
+  if (deps.priorView !== undefined && !deps.priorView.current(ctx)) return false;
   if (!worldEvidenceCurrent(ctx, deps)) return false;
   if (deps.snapshot !== undefined && (!deps.snapshot.current(ctx) || !worldEvidenceCurrent(ctx, deps, deps.snapshot.cutoff))) return false;
   if (deps.coverage === null) return true;

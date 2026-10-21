@@ -41,6 +41,7 @@ function cliArgs(name: VerificationOperation, input: Record<string, any>): strin
     case "history": return ["--ref", input.concept.token];
     case "find_concepts": case "find_situations": case "find_questions": case "find_people": case "find_procedures": case "find_artifacts": return ["--label", input.label];
     case "share": return ["--of-operation", input.of.operation, "--ref", input.of.concept.token];
+    case "diff": return ["--of-operation", input.of.operation, "--ref", input.of.concept.token, "--prior-view", input.priorView.token];
     case "resume": return ["--resume", input.handle];
     case "evidence": return ["--admission", input.evidence.admission.token, "--event-version", input.evidence.eventVersion.token,
       "--start-utf16", String(input.evidence.span.startUtf16), "--end-utf16", String(input.evidence.span.endUtf16)];
@@ -64,6 +65,7 @@ const TEXT: Record<VerificationOperation, readonly string[]> = {
   framework: ["framework:quality", "Nested component", "Coverage:"],
   outcome: ["Outcome evidence", "agent_reported", "independent: false", "Coverage:"],
   find_artifacts: ["Artifact"], artifact_version: ["Artifact", "text/markdown", "Coverage:"],
+  diff: ["Unchanged since the prior view."],
 };
 
 test("every world operation agrees through Core, CLI text and JSON, stdio MCP, HTTP and App", async () => {
@@ -85,7 +87,13 @@ test("every world operation agrees through Core, CLI text and JSON, stdio MCP, H
     mcp = await stdioClient(scene.vaultPath, ["--owner"], {});
     http = await startLoopback(scene.db, scene.vaultPath);
     for (const name of WORLD_VERIFICATION_OPERATIONS) {
-      const input = inputs[name], expected = serveWorldView(ctx, input);
+      const input = inputs[name];
+      if (name === "diff") {
+        const baseline = serveWorldView(ctx, { ...(input.of as Record<string, unknown>), valid: { kind: "all" }, knownAt: { kind: "current" } }).data;
+        if (!("result" in baseline) || baseline.result.status !== "current" || !("kind" in baseline.result.view)) throw Error("fresh parity baseline required");
+        input.priorView = baseline.result.view;
+      }
+      const expected = serveWorldView(ctx, input);
       expect(expected.data, name).toHaveProperty("result");
       const remote = envelopeOf(await mcp.call("world_view", input));
       expect(meaning(remote.data), `${name}: MCP`).toEqual(meaning(expected.data));
@@ -100,7 +108,11 @@ test("every world operation agrees through Core, CLI text and JSON, stdio MCP, H
         expect(meaning(app.data.data), `${name}: App`).toEqual(meaning(expected.data));
         expect(app.data.quoted, name).toEqual(expected.quoted);
       } else expect(meaning(app.data), `${name}: App`).toEqual(meaning(expected.data));
-      const args = ["--vault", scene.vaultPath, "world", "--operation", name, ...cliArgs(name, input)];
+      // Opaque base64url tokens may start with `--`; the documented inline
+      // value grammar keeps them from being mistaken for another option.
+      const options = cliArgs(name, input), inline: string[] = [];
+      for (let i = 0; i < options.length; i += 2) inline.push(`${options[i]}=${options[i + 1]}`);
+      const args = ["--vault", scene.vaultPath, "world", "--operation", name, ...inline];
       const json = h.runCli(env, ...args, "--json");
       expect(json.exitCode, `${name}: ${json.stderr}`).toBe(0);
       const envelope = JSON.parse(json.stdout).data;

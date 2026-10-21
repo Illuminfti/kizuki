@@ -14,6 +14,8 @@ import { dependencyRefs, type WorldDependencies } from "../dependencies";
 /** What a view-issuing read carries from the moment it is admitted to the moment it answers. */
 export interface ViewSession {
   readonly ns: WorldNamespace;
+  /** The object operation retained by this view; a diff retains its target card. */
+  readonly operation: string;
   /** Null when the principal holds no partition: the read is served with view `not_issued`. */
   readonly partition: number | null;
   /** Binds a token to the exact request it was issued for, `priorView` excluded. */
@@ -45,7 +47,7 @@ export function openView(ctx: ServeContext, ns: WorldNamespace, input: WorldReco
   const digest = requestDigest(input);
   const baseline =
     prior === null || partition === null ? null : lookupView(ctx, partition, ns.id, digest, prior.token, now);
-  return { ns, partition, digest, prior, baseline, stale: prior !== null && baseline === null, now, requestRefs: wireRefs(input) };
+  return { ns, operation: input.operation as string, partition, digest, prior, baseline, stale: prior !== null && baseline === null, now, requestRefs: wireRefs(input) };
 }
 
 function sameBytes(baseline: StoredView, bytes: Uint8Array): boolean {
@@ -79,7 +81,7 @@ export function settleView<T extends WorldOpData>(
     try {
       // A nested transaction is a savepoint: a refused insert leaves no half-issued token.
       const issued = db.transaction(() =>
-        issueView(db, partition, session.ns, session.digest, bytes, [...new Set([...session.requestRefs, ...wireRefs(data), ...dependencyRefs(db, session.ns, dependencies)])], session.now),
+        issueView(db, partition, session.ns, session.digest, bytes, [...new Set([...session.requestRefs, ...wireRefs(data), ...dependencyRefs(db, session.ns, dependencies)])], session.now, "view", false, prior?.token ?? null),
       )();
       if (issued !== null)
         return { status: "current", view: issuedOpaqueFields({ kind: "view" as const, token: issued.token }, ["token"]), data, validUntil: issued.validUntil };
