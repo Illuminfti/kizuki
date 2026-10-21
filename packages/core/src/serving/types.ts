@@ -60,6 +60,8 @@ export interface QuotedChunk {
   sensitivity: Sensitivity;
   subjects: string[];
   text: string;
+  /** Present only when `text` is a bounded excerpt of a longer record. */
+  truncated?: true;
   tainted: true;
   subject_labels?: SubjectLabel[];
 }

@@ -54,6 +54,7 @@ const QUOTED_CHUNK = z.strictObject({
   sensitivity: SENSITIVITY,
   subjects: z.array(z.string()),
   text: z.string(),
+  truncated: z.literal(true).optional(),
   tainted: z.literal(true),
   subject_labels: z.array(SUBJECT_LABEL).max(50).optional(),
 });
@@ -107,6 +108,7 @@ export const SEARCH_INPUT = z.strictObject({
   subjects: z.array(ID).max(16).optional(),
   since: RFC3339.optional(),
   until: RFC3339.optional(),
+  full_text: z.boolean().optional(),
 });
 
 export const GET_PAGE_INPUT = z.strictObject({

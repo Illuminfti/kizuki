@@ -64,9 +64,12 @@ function vault() {
   return { path, db: openLedger(join(path, ".kizuki", "kizuki.db")) };
 }
 
-/** Minute `n` after 2026-10-01T00:00:00Z, later than any event these tests accept. */
-const minute = (n: number): string =>
-  new Date(Date.parse("2026-10-01T00:00:00Z") + n * 60_000).toISOString();
+/**
+ * Minute `n` after a base on the next whole hour at least an hour from now. Captured events take the
+ * real clock, so the runs must come later than any event these tests accept on whatever day they run.
+ */
+const RUN_BASE = Math.ceil((Date.now() + 3_600_000) / 3_600_000) * 3_600_000;
+const minute = (n: number): string => new Date(RUN_BASE + n * 60_000).toISOString();
 
 let serial = 0;
 function run(

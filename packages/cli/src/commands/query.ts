@@ -18,8 +18,8 @@ function parseLimit(raw: string): number {
   return value;
 }
 
-function formatHit(hit: SearchHit): string {
-  const snippet = clean(hit.snippet);
+function formatHit(hit: SearchHit & { truncated?: true }): string {
+  const snippet = clean(hit.snippet) + (hit.truncated === true ? "…" : "");
   if (hit.scope === "canon") {
     return `page ${hit.doc_id} ${hit.path} ${hit.sensitivity} ${snippet}`;
   }
@@ -28,14 +28,14 @@ function formatHit(hit: SearchHit): string {
 
 export const QUERY_SCHEMA = {
   options: ["--scope", "--limit"],
-  flags: ["--json", "--degraded"],
+  flags: ["--json", "--degraded", "--full-text"],
   defaults: { "--scope": "all", "--limit": "20" },
   bounds: { "--scope": "canon|ledger|all", "--limit": "1..50" },
 } as const satisfies CommandHelpSchema;
 
 export const queryCommand: Command = {
   name: "query",
-  usage: "query <text> [--scope canon|ledger|all] [--limit 1..50] [--json] [--degraded]",
+  usage: "query <text> [--scope canon|ledger|all] [--limit 1..50] [--json] [--degraded] [--full-text]",
   summary: "search current authorized evidence through configured retrieval and the lexical floor",
   schema: QUERY_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -53,6 +53,7 @@ export const queryCommand: Command = {
     const rawLimit = parsed.options.get("--limit");
     const limit = rawLimit === undefined ? Number(QUERY_SCHEMA.defaults["--limit"]) : parseLimit(rawLimit);
     const allowDegraded = parsed.flags.has("--degraded");
+    const fullText = parsed.flags.has("--full-text");
 
     return withReadVault(io, async (ctx) => {
       const freshness = indexFreshness(ctx.db, ctx.vaultPath);
@@ -66,19 +67,20 @@ export const queryCommand: Command = {
       const envelope = await serveSearch({
         db: ctx.db, vaultPath: ctx.vaultPath, principal: OWNER,
         ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }), ...(ctx.retrievalUnavailable ? { retrievalUnavailable: ctx.retrievalUnavailable } : {}),
-      }, { query: text, scope: rawScope as SearchScope, limit });
-      const hits: SearchHit[] = [
+      }, { query: text, scope: rawScope as SearchScope, limit, ...(fullText ? { full_text: true } : {}) });
+      const hits: (SearchHit & { truncated?: true })[] = [
         ...envelope.canon.map((chunk, index): SearchHit => ({
           doc_id: retrievalDocId("page", chunk.page_id), scope: "canon", title: chunk.title,
           path: chunk.path, page_type: chunk.type, sensitivity: chunk.sensitivity,
           taint: chunk.taint, authority: chunk.authority ?? "model_inference", occurred_at: "",
           connector_id: "", subjects: chunk.subjects, snippet: chunk.excerpt, rank: index,
         })),
-        ...envelope.quoted.map((chunk, index): SearchHit => ({
+        ...envelope.quoted.map((chunk, index): SearchHit & { truncated?: true } => ({
           doc_id: retrievalDocId("event", chunk.event_id), scope: "ledger", title: `${chunk.connector_id} ${chunk.kind}`,
           path: "", page_type: chunk.kind, sensitivity: chunk.sensitivity,
           taint: "quoted", authority: "connector_evidence", occurred_at: chunk.occurred_at,
           connector_id: chunk.connector_id, subjects: chunk.subjects, snippet: chunk.text, rank: index,
+          ...(chunk.truncated === true ? { truncated: true as const } : {}),
         })),
       ];
       ctx.assertCurrent();
