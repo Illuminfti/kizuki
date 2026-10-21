@@ -43,7 +43,7 @@ The stored subject binding is stable across callers; the reader exposes only
 
 Read `world_view` with `operation: "outcome"`, the legacy `subject`,
 `valid: {"kind":"all"}` and `knownAt: {"kind":"current"}`.
-CLI uses `kizuki world outcome --subject SUBJECT`; all adapters dispatch to Core.
+CLI uses `kizuki world --operation outcome --subject SUBJECT`; all adapters dispatch to Core.
 `kizuki.outcome-card/v1` keeps stages and their quoted evidence separate from
 derived evaluations. Legacy `outcome.reached` and `outcome.missed` are readable
 as self-reports with unknown evaluations.
