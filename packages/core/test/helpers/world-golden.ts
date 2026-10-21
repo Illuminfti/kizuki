@@ -32,7 +32,7 @@ import type { ServeContext } from "../../src/serving/types";
 import { serveWorldView } from "@kizuki/core/world";
 import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
-import { enrollSource, worldSeed } from "./world-seed";
+import { enrollSource, worldSeed, type WorldSeedOptions } from "./world-seed";
 import { tempVault } from "./vault";
 
 export const CONNECTOR = "world.fixture";
@@ -252,13 +252,13 @@ export interface GoldenScene {
  * a hedged one, a required Concept, a learning facet), two Situations (one
  * clean, one contested), and a private source the narrow reader cannot see.
  */
-export async function goldenScene(): Promise<GoldenScene> {
+export async function goldenScene(options: Pick<WorldSeedOptions, "model"> = {}): Promise<GoldenScene> {
   const vault = tempVault("kizuki-golden-");
   const db = openLedger(join(vault.path, ".kizuki", "kizuki.db"));
   try {
     initSearch(db);
     initGraph(db);
-    const publicSource = enrollSource(db, CONNECTOR, "public");
+    const publicSource = enrollSource(db, CONNECTOR, "public", undefined, options.model);
     await worldSeed(db, {
       sourceKey: publicSource,
       subject: "topic:probability",
@@ -385,6 +385,7 @@ export async function goldenScene(): Promise<GoldenScene> {
       ],
     });
     await worldSeed(db, {
+      ...options,
       subject: "topic:hidden",
       label: "Bayesian priors",
       floor: "private",

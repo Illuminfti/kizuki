@@ -28,7 +28,7 @@ import { initSearch } from "../../src/search/schema";
 import { serveWorldView } from "../../src/serving/world-view";
 import type { ServeContext } from "../../src/serving/types";
 import { tempVault } from "./vault";
-import { worldSeed, type WorldSeed } from "./world-seed";
+import { worldSeed, type WorldSeed, type WorldSeedOptions } from "./world-seed";
 
 export type WorkStats = Readonly<Record<string, number>>;
 
@@ -91,17 +91,19 @@ const VISIBLE_SUBJECTS = ["topic:bayes", "project:launch"] as const;
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
 /** Fresh ledger in a temporary vault with public visible objects and a private hidden one. */
-export async function hiddenScene(): Promise<NoninterferenceScene> {
+export async function hiddenScene(options: Pick<WorldSeedOptions, "model"> = {}): Promise<NoninterferenceScene> {
   const vault = tempVault("kizuki-noninterference-");
   const db = openLedger(join(vault.path, ".kizuki", "kizuki.db"));
   try {
     initSearch(db);
     initGraph(db);
     const concept = await worldSeed(db, {
+      ...options,
       subject: "topic:bayes",
       label: "Bayesian updating",
     });
     const situation = await worldSeed(db, {
+      ...options,
       kind: "situation",
       subject: "project:launch",
       label: "Launch plan",
@@ -116,6 +118,7 @@ export async function hiddenScene(): Promise<NoninterferenceScene> {
       throw new Error("the narrow reader did not authenticate");
     const reader: ServeContext = { db, vaultPath: vault.path, principal };
     const hidden = await worldSeed(db, {
+      ...options,
       subject: "topic:hidden",
       label: "Bayesian priors",
       floor: "private",

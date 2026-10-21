@@ -1,3 +1,4 @@
+import { witnessEventIds } from "../claims/world-grounding";
 import { sha256Hex } from "../util/hash";
 import { isPlainObject } from "../util/validate";
 import type { EligibleSupport } from "./pipeline/eligible";
@@ -40,7 +41,8 @@ export function supportLineage(frame: ReadFrame, input: readonly EligibleSupport
   for (const support of supports) {
     const keys = new Set<string>([`source:${support.row.source_key}`]);
     let status: Independence = "independent";
-    for (const pin of support.events) {
+    const witnesses = new Set(witnessEventIds(support.admission));
+    for (const pin of support.events.filter(e => witnesses.has(e.event_id))) {
       let event = events.get(pin.event_id);
       if (!event) {
         const row = frame.ctx.db.query<{ content_hash: string; text_hash: string; text: string; metadata: string; origin: string }, [string]>(
@@ -56,7 +58,14 @@ export function supportLineage(frame: ReadFrame, input: readonly EligibleSupport
       if (event.content_hash !== pin.event_content_hash || sha256Hex(event.text) !== event.text_hash) { status = "unknown"; continue; }
       keys.add(`version:${event.content_hash}`);
       keys.add(`text:${event.text_hash}`);
-      for (const anchor of support.admission.semantic.anchors.filter((a) => a.event_id === pin.event_id)) {
+      const anchored = support.admission.semantic.anchors.filter((a) => a.event_id === pin.event_id);
+      // Candidate mention spans name endpoints; they are not copied witness
+      // statements. For v2 fingerprint only maximal quoted evidence spans, so
+      // the shared names Alpha/Beta do not collapse independent testimony.
+      const statements = support.admission.schema === "kizuki.world-admission/v2"
+        ? anchored.filter(a => !anchored.some(b => b !== a && b.start_utf16 <= a.start_utf16 && b.end_utf16 >= a.end_utf16 &&
+            (b.start_utf16 < a.start_utf16 || b.end_utf16 > a.end_utf16))) : anchored;
+      for (const anchor of statements) {
         keys.add(`occurrence:${sha256Hex(event.text.slice(anchor.start_utf16, anchor.end_utf16))}`);
       }
       let metadata: unknown;

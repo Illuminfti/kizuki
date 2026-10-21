@@ -1,8 +1,8 @@
+import { groundingDigest, validateWorldAdmissionProofs, witnessEventIds, type GroundingReadCache } from "../../claims/world-grounding";
 import { authorize } from "../../agents";
 import { compareRfc3339 } from "../../agents/time";
 import { semanticKey, supportKey } from "../../claims/claim-v2-keys";
 import { readClaimV2Semantic } from "../../claims/claim-v2-commit";
-import { validateWorldEndpointProofs } from "../../claims/occurrences";
 import { isRegisteredPredicate } from "../../claims/predicates";
 import { getClaim } from "../../claims/store";
 import type { ClaimMeaning, ClaimV2Assertion } from "../../contracts/claim-v2";
@@ -22,9 +22,10 @@ import { assertionEndpoints } from "../allocation";
 import { heldUntilCorroborated } from "../corroboration";
 import { knownState, knownSupportSql, type KnownCutoff } from "../known/cutoff";
 import { handleFor } from "../relation";
-import { charge, type ReadBudget } from "./frame";
+import { charge, WorldProjectionBudgetError, type ReadBudget } from "./frame";
 
 const MAX_SUPPORTS = 32;
+const groundingReads = new WeakMap<ReadBudget, GroundingReadCache>();
 
 type Support = {
   support_origin: "source" | "native_owner";
@@ -134,14 +135,18 @@ export function eligibleWorldClaim(
       semanticKey(admission.semantic) !== semanticKey(semantic)
     )
       continue;
+    let cache = groundingReads.get(budget);
+    if (cache === undefined) { cache = new Map(); groundingReads.set(budget, cache); }
+    let grounding: readonly { event_id: string; event_content_hash: string }[];
     try {
-      validateWorldEndpointProofs(
+      grounding = validateWorldAdmissionProofs(
         ctx.db,
-        admission.semantic,
+        admission,
         row.support_origin === "native_owner" ? null : row.source_key,
-        { restore: true },
+        { restore: true, charge: value => charge(budget, value), cache },
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof WorldProjectionBudgetError) throw error;
       continue;
     }
     const events = ctx.db
@@ -151,6 +156,10 @@ export function eligibleWorldClaim(
       >("SELECT event_id,event_content_hash FROM claim_v2_support_events WHERE support_key=? ORDER BY event_id")
       .all(row.support_key);
     if (events.length === 0 || events.length > 64) continue;
+    if (admission.schema === "kizuki.world-admission/v2") {
+      const expected = new Set([...witnessEventIds(admission), ...grounding.map(e => e.event_id)]);
+      if (row.support_origin !== "source" || expected.size !== events.length || events.some(e => !expected.has(e.event_id))) continue;
+    }
     const facts = readServableEvents(
       ctx.db,
       events.map((e) => e.event_id),
@@ -195,7 +204,7 @@ export function eligibleWorldClaim(
               stored.native_valid === 1 &&
               row.source_key === "native-owner" &&
               row.grant_revision === 0
-            : stored.source_key === row.source_key) &&
+            : stored.source_key === row.source_key || grounding.some(e => e.event_id === event.event_id && e.event_content_hash === event.event_content_hash)) &&
           eventDecision(ctx.principal.grant, fact, ctx).allow
         );
       })
@@ -231,6 +240,7 @@ export function eligibleWorldClaim(
       canonicalJson(storedAnchors) !== canonicalJson(anchors) ||
       supportKey({
         support_origin: row.support_origin,
+        grounding_digest: groundingDigest(admission),
         semantic_key: semanticKey(semantic),
         source_key: row.source_key,
         grant_revision: row.grant_revision,

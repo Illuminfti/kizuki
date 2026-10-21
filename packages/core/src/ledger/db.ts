@@ -1,3 +1,4 @@
+import { applyConsolidation } from "../world/tables/consolidation";
 import { applyWorldCanonV33 } from "../canon/world-schema";
 import { Database } from "bun:sqlite";
 import { manageDatabaseLifetime } from "./lifetime";
@@ -243,6 +244,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION, apply: applyScopedClaimIdempotency },
   { version: WORLD_MIGRATION_VERSIONS.known, apply: applyClaimHistorySchema },
   { version: WORLD_MIGRATION_VERSIONS.refs, apply: applyKnownRefs },
+  { version: WORLD_MIGRATION_VERSIONS.consol, apply: applyConsolidation },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

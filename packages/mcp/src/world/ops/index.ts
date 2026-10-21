@@ -1,3 +1,4 @@
+import { personFragment, findPeopleFragment } from "./person";
 import { historyFragment } from "./history";
 import { conceptFragment } from "./concept";
 import { describeFragment } from "./describe";
@@ -26,6 +27,7 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   // slot: QUEST
   questionFragment, findQuestionsFragment, frontierFragment,
   // slot: PEOPLE
+  personFragment, findPeopleFragment,
   // slot: SKILL
   // slot: ART
   // slot: OUTCOME

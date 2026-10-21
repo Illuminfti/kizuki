@@ -388,10 +388,12 @@ function supersededRefs(io: CanonIo, decision: TargetDecision): CanonReceipt["su
     const loser = getClaim(io.db, claimId);
     const key = loser?.claim_key ?? (loser?.superseded_by === null || loser?.superseded_by === undefined
       ? null : getClaim(io.db, loser.superseded_by)?.claim_key);
-    if (loser === null || key == null) {
-      throw new CanonWriteError("decision_stale", `superseded claim ${claimId} has no conflict key`);
+    if (loser === null) {
+      throw new CanonWriteError("decision_stale", `superseded claim ${claimId} is gone`);
     }
-    return { claim_id: claimId, claim_key: key };
+    // Exact legacy corrections have no conflict key; preserve that fact in the
+    // durable receipt instead of inventing a group identity.
+    return { claim_id: claimId, claim_key: key ?? null };
   });
 }
 

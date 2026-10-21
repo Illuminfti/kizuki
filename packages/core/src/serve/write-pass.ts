@@ -1,3 +1,5 @@
+import type { LlmPort } from "../contracts/llm";
+import type { ConsolidationConfig, ConsolidationRunReport } from "../contracts/consolidation";
 import { pendingWorldCanonClaims, worldCanonPath, worldCanonTarget } from "../canon/world-materialization";
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding } from "../canon/source-tombstone";
 import { restoreReturnedSources, returnedSourceArchives } from "../canon/source-restore";
@@ -85,6 +87,7 @@ const SETTLE_POLL_MS = 25;
 const PAGE_GAP_MS = 2 * SETTLE_POLL_MS;
 
 export interface WritePassResult {
+  readonly consolidation?: ConsolidationRunReport;
   readonly revived: number;
   readonly claims_extracted: number;
   readonly claims_written: number;
@@ -109,8 +112,8 @@ export interface WritePassResult {
 
 /** A pass's totals, kept across its short writer holds. */
 type PassTally = {
-  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "claims_skipped" | "model" | "oversized" | "errors" | "records_prefiltered" | "canon_quarantined">]: WritePassResult[K];
-} & { readonly oversized: { segments: number; skipped: number }; readonly claims_skipped: Record<string, number>; readonly records_prefiltered: Record<string, number>; readonly errors: string[]; readonly canon_quarantined: CanonQuarantineNotice[] };
+  -readonly [K in Exclude<keyof WritePassResult, "claims_rejected" | "claims_skipped" | "model" | "oversized" | "errors" | "records_prefiltered" | "canon_quarantined" | "consolidation">]: WritePassResult[K];
+} & { consolidation?: ConsolidationRunReport; readonly oversized: { segments: number; skipped: number }; readonly claims_skipped: Record<string, number>; readonly records_prefiltered: Record<string, number>; readonly errors: string[]; readonly canon_quarantined: CanonQuarantineNotice[] };
 
 function emptyTally(): PassTally {
   return {
@@ -264,6 +267,8 @@ export interface WritePassOptions {
   readonly budget: BudgetTracker;
   /** Owner throughput settings; absent keeps the one-request pass. */
   readonly extraction?: ExtractionConfig;
+  readonly consolidation?: ConsolidationConfig;
+  readonly llm?: LlmPort;
   /** Read before every extraction step; true ends the pass there as `serve:stop_requested`. */
   readonly stopRequested?: () => boolean;
   readonly run_id?: string;
@@ -351,7 +356,7 @@ export async function runWritePass(
   vaultPath: string,
   options: WritePassOptions,
 ): Promise<WritePassResult> {
-  const { budget, extraction, stopRequested, run_id, model_ref, producer, claims, now } = options;
+  const { budget, extraction, consolidation, llm, stopRequested, run_id, model_ref, producer, claims, now } = options;
   let capturedClaims: ClaimsIo | undefined;
   if (claims !== undefined) {
     const { db: claimsDb, retrieval, vault_path, now: claimsNow, historical_source_write } = claims;
@@ -364,6 +369,8 @@ export async function runWritePass(
   }
   options = Object.freeze({ budget,
     ...(extraction === undefined ? {} : { extraction }),
+    ...(consolidation === undefined ? {} : { consolidation }),
+    ...(llm === undefined ? {} : { llm }),
     ...(stopRequested === undefined ? {} : { stopRequested }),
     ...(run_id === undefined ? {} : { run_id }),
     ...(model_ref === undefined ? {} : { model_ref }),
@@ -393,9 +400,12 @@ export async function runWritePass(
   const jobs = await runWorldJobs({
     db, vaultPath, now: options.now ?? (() => new Date().toISOString()),
     stopRequested: options.stopRequested ?? (() => false), modelConfigured: modelConfigured(options),
+    ...(options.llm === undefined ? {} : { llm: options.llm }),
+    ...(options.consolidation === undefined ? {} : { consolidation: options.consolidation }),
   });
+  if (jobs.consolidation !== undefined) tally.consolidation = jobs.consolidation;
   tally.errors.push(...jobs.errors);
-  if (jobs.stopped) { tally.stopped = STOP_REQUESTED; return result(); }
+  if (jobs.stopped) { tally.stopped = jobs.reason ?? STOP_REQUESTED; return result(); }
   // No model configured: claims stay live and unwritten; doctor says so.
   if (!modelConfigured(options)) return result();
   const errorsBeforeRestore = tally.errors.length;

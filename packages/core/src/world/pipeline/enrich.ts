@@ -1,3 +1,4 @@
+import type { Cluster } from "./group";
 import type { Relation, ViewGap } from "../../contracts/concept-card";
 import type { ConceptCard } from "../../contracts/concept-card";
 import type { ConceptLearning } from "../../contracts/concept-card";
@@ -21,6 +22,7 @@ export interface CardBody {
   readonly gaps: readonly ViewGap[];
   readonly summary: CardSummary | null;
   readonly overflow?: boolean;
+  readonly consolidation?: { readonly cluster: Cluster; readonly kind: string };
   readonly learning?: readonly ConceptLearning[];
 }
 
@@ -36,6 +38,7 @@ export function enrich(
   items: readonly Eligible[],
   enrichers: readonly Enricher[],
   overflow = false,
+  consolidation?: CardBody["consolidation"],
 ): CardBody {
   const start: CardBody = {
     claims: items.map((eligible) => ({
@@ -45,6 +48,7 @@ export function enrich(
     gaps: [],
     summary: null,
     overflow,
+    ...(consolidation === undefined ? {} : { consolidation }),
   };
   return enrichers.reduce((body, enricher) => {
     const next = enricher(frame, body);

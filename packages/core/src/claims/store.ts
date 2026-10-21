@@ -1,3 +1,4 @@
+import { validateWorldAdmissionProofs } from "./world-grounding";
 import type { ClaimVisibility } from "./visibility";
 import { UNWRITTEN_CAPTURE_NOTE_WHERE } from "./capture-fanout";
 import { pageClaimKey } from "./hash";
@@ -351,6 +352,8 @@ function preparedWorldCommit(
   if (!native && (grant === null || grant.status !== "active")) {
     throw new ClaimError("provenance_unresolved", "world admission source grant is not active");
   }
+  const grounding = admission.schema === "kizuki.world-admission/v2"
+    ? validateWorldAdmissionProofs(db, admission, sourceKey, { scope }) : [];
   return {
     semantic: input.semantic,
     support: {
@@ -359,7 +362,7 @@ function preparedWorldCommit(
       grant_revision: native ? 0 : grant!.revision,
       events: supportEventIds.map((eventId, index) => ({ event_id: eventId, event_content_hash: native
         ? db.query<{ content_hash: string }, [string]>("SELECT content_hash FROM events WHERE event_id=?").get(eventId)?.content_hash ?? ""
-        : bindings[index]!.content_hash })),
+        : bindings[index]!.content_hash })).concat(grounding),
       anchors,
       admission: { schema: admission.schema, rendering: admission.rendering, epistemicKind: admission.epistemicKind },
       admitted_at: at,
@@ -1258,6 +1261,51 @@ export function supersedePageRevisions(db: Database, winnerId: string, at: strin
     db.query("UPDATE proposals SET status = 'withdrawn' WHERE proposal_id = ? AND status = 'pending'").run(loser.claim_id);
     writeSupersession(db, winner.claim_id, loser.claim_id, "R3", loser.valid_to, at);
   }
+}
+
+/**
+ * A legacy claim without a key retires by exact identity.  It shares the
+ * supersession journal and retrieval outbox transaction with keyed and typed
+ * corrections, while ensuring a correction cannot broaden to a sibling.
+ */
+export function supersedeExactClaim(
+  io: Pick<ClaimsIo, "db" | "retrieval">,
+  winner: Claim,
+  loserId: string,
+  at: string,
+): void {
+  const { db } = io;
+  if (!db.inTransaction)
+    throw new ClaimError("schema_invalid", "exact supersession requires the claim transaction");
+  const loser = getClaim(db, loserId);
+  if (
+    loser === null ||
+    loser.status !== "live" ||
+    loser.claim_key !== null ||
+    winner.status !== "live" ||
+    winner.claim_id === loserId
+  )
+    throw new ClaimError("schema_invalid", "unkeyed correction target changed");
+  const superseded = {
+    ...loser,
+    status: "superseded" as const,
+    superseded_by: winner.claim_id,
+    retracted_at: at,
+    valid_to: minTimestamp(loser.valid_to, winner.valid_from),
+  };
+  persistClaim(db, superseded);
+  writeSupersession(db, winner.claim_id, loser.claim_id, "R5", loser.valid_to, at);
+  const retrieval = io.retrieval;
+  const retrievalAllowed =
+    sourcePolicyEpoch(db) === 0 ||
+    (retrieval !== undefined &&
+      isLocalSourcePort(retrieval) &&
+      sourceEventsAllowed(db, superseded.provenance, {
+        owner: true,
+        purpose: "correction",
+        port: retrieval,
+      }));
+  enqueueRetrieval(db, retrievalAllowed ? io : { db }, superseded, at);
 }
 
 /** Typed targeted correction shares the existing supersession journal and retrieval outbox transaction. */

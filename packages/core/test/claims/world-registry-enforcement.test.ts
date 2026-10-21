@@ -53,7 +53,7 @@ describe("audit probes are permanent refusals at the shared writer", () => {
     const w = worldWriter();
     try {
       await expect(
-        w.classify("person:ada", "world/person"),
+        w.classify("future:node", "world/unregistered"),
       ).rejects.toMatchObject({ code: "world_vocabulary_value" });
       expect(claimCount(w.db)).toBe(0);
     } finally {
