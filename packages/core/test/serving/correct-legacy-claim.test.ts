@@ -60,23 +60,39 @@ test("an owner correction retires exactly one legacy claim, replays, and undoes"
   expect(readFileSync(join(live.vaultPath, pagePath), "utf8")).toBe(before);
 });
 
-test("an interrupted exact legacy correction stays pending until recovery, then undoes", async () => {
+for (const principal of ["owner", "agent"] as const) test(`an interrupted ${principal} legacy correction stays pending until recovery, then undoes`, async () => {
   fixture = await serveFixture({ held: false });
   const live = fixture;
   const { claimId, pagePath } = await writtenUnkeyed(live, "facts:compiler", "The compiler ships nightly.", live.events.public!);
   const before = readFileSync(join(live.vaultPath, pagePath), "utf8");
+  const ctx = principal === "owner" ? live.owner() : live.agent("reader-public");
   const args = { statement: "The compiler ships weekly.", target: { claim_id: claimId } };
   live.db.exec("CREATE TRIGGER synthetic_legacy_receipt_failure BEFORE INSERT ON canon_receipts BEGIN SELECT RAISE(FAIL,'synthetic-legacy-receipt-failure'); END");
-  const first = await serveCorrect(live.owner(), args);
-  expect(readCanonWriteIntent(live.db)?.receipt.claim_ids).toContain(first.data?.claim_id);
+  const first = await serveCorrect(ctx, args);
+  expect(readCanonWriteIntent(live.db)?.receipt.claim_ids).toContain(first.data!.claim_id!);
   expect(correctionRecoveryPending(live.db, first.data!.claim_id!).length).toBeGreaterThan(0);
-  expect(first.data?.recovery_pending?.length).toBeGreaterThan(0);
+  expect(first.data?.recovery_pending).toBeDefined();
+  if (principal === "owner") expect(first.data?.recovery_pending?.length).toBeGreaterThan(0);
+  else {
+    expect(first.data?.recovery_pending).toEqual([]);
+    expect(JSON.stringify(first)).not.toContain(pagePath);
+  }
   expect(first.data?.receipt_id).toBeNull();
-  expect(first.data?.answer).toContain("recovery");
+  expect(first.data?.rewritten).toEqual([]);
+  expect(first.data?.answer).not.toContain("kizuki undo");
+  const state = () => live.db.query<{ filing_state: string }, [string]>(
+    "SELECT filing_state FROM native_owner_evidence WHERE event_id=?",
+  ).get(first.data!.event_id!)?.filing_state;
+  expect(state()).toBe("recorded");
   expect(readFileSync(join(live.vaultPath, pagePath), "utf8")).toContain("weekly");
-  const retry = await serveCorrect(live.owner(), args);
+  const retry = await serveCorrect(ctx, args);
   expect(retry.data?.claim_id).toBe(first.data?.claim_id);
   expect(retry.data?.recovery_pending).toEqual(first.data?.recovery_pending);
+  expect(state()).toBe("recorded");
+  expect(retry.data?.receipt_id).toBeNull();
+  expect(retry.data?.rewritten).toEqual([]);
+  expect(retry.data?.answer).toContain("recovery remains pending");
+  if (principal === "agent") expect(JSON.stringify(retry)).not.toContain(pagePath);
   live.db.exec("DROP TRIGGER synthetic_legacy_receipt_failure");
   expect(recoverCanonWrites({ db: live.db, vault_path: live.vaultPath }).pending).toBe(false);
   const receiptId = getClaim(live.db, first.data!.claim_id!)?.receipt_id;

@@ -111,12 +111,10 @@ function boundPages(ctx: ServeContext, claimKeys: string[]): string[] {
 
 /** The caller has authorized this correction claim and its inherited evidence. */
 export function pendingCanonRewrite(ctx: ServeContext, claim: Claim): CanonRecoveryPending[] | undefined {
-  const index = ctx.principal.kind === "owner" ? undefined : loadCanon({ ...ctx, sourcePurpose: "recall" });
-  const pending = correctionRecoveryPending(ctx.db, claim.claim_id).filter(item => {
-    if (index === undefined) return true;
-    const page = index.byPath.get(item.page_path);
-    return page !== undefined && pageDecision(index, ctx.principal.grant, page).allow;
-  });
+  // The caller has authorized this claim. Its pending state remains true even
+  // while recovery makes its page unreadable. Scope only the disclosed details:
+  // erasing the state here would let a retry mutate the exact event guard.
+  const pending = correctionRecoveryPending(ctx.db, claim.claim_id);
   const bound = boundPages(ctx, claim.claim_key === null ? [] : [claim.claim_key]);
   for (const path of bound) {
     for (const item of correctionRecoveryPending(ctx.db, claim.claim_id, path)) {
