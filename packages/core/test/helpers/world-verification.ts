@@ -26,6 +26,8 @@ export async function verificationScene(): Promise<NoninterferenceScene> {
       predicates: [{ predicate: "person.role", object: { kind: "literal", value: "Reviewer" } }] });
     const agent = addAgent(base.db, "verification-reader", {
       ...OWNER_AGENT_GRANT, ceiling: "public", subjects: ["topic:bayes", "project:launch", QUESTION, PERSON],
+      // Four observations per operation plus setup reads; production limits stay unchanged.
+      rate_limit_per_minute: 4 * WORLD_VERIFICATION_OPERATIONS.length + 16,
     });
     const reader = { ...base.reader, principal: authenticate(base.db, agent.token)! };
     const ref = (operation: string, label: string) => {
