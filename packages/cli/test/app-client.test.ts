@@ -163,6 +163,15 @@ test('real due cue opens typed commitments with separate dates, holders and hone
         expect(client.main.textContent).toContain('This handle opens the base situation view, without typed commitments.');
         const again = client.evaluate<Promise<void>>('loadWorld()'); expect((await respond()).card).toBe('kizuki.situation-card/v2'); await again;
         const ref = client.evaluate('state.worldRef');
+        const changes = all(client.main).find(node => node.tag === 'button' && node.textContent === 'Check for changes')!;
+        const comparing = changes.fire('click'); expect((await respond()).of.card).toBe('kizuki.situation-card/v2'); await comparing;
+        expect(client.main.textContent).toContain('No visible change since your previous read.');
+        const readCurrent = all(client.main).find(node => node.tag === 'button' && node.textContent === 'Read current item')!;
+        const refreshing = readCurrent.fire('click'); expect((await respond()).card).toBe('kizuki.situation-card/v2'); await refreshing;
+        const atlasChanges = all(client.main).find(node => node.tag === 'button' && node.textContent === 'Changes in Atlas')!;
+        const openingAtlas = atlasChanges.fire('click'); expect((await respond()).focus.card).toBe('kizuki.situation-card/v2'); await openingAtlas;
+        expect(client.main.textContent).not.toContain('The previous view is no longer available.');
+        expect(client.evaluate<{ operation: string }>('state.world').operation).toBe('atlas');
         const defaultRead = client.evaluate<Promise<void>>(`loadWorld(null).then(() => loadWorld(${JSON.stringify(ref)}))`);
         await respond(); expect((await respond()).card).toBeUndefined(); await defaultRead;
         expect(client.main.textContent).not.toContain('Due date assertions');

@@ -48,7 +48,7 @@ function cliArgs(name: VerificationOperation, input: Record<string, any>): strin
     case "evidence": return ["--admission", input.evidence.admission.token, "--event-version", input.evidence.eventVersion.token,
       "--start-utf16", String(input.evidence.span.startUtf16), "--end-utf16", String(input.evidence.span.endUtf16)];
     case "outcome": return ["--subject", input.subject];
-    case "describe": case "frontier": return [];
+    case "describe": case "frontier": case "attention": return [];
   }
 }
 
@@ -66,6 +66,7 @@ const TEXT: Record<VerificationOperation, readonly string[]> = {
   skill: ["skill:inspection", "Independent mastery: unknown", "Coverage:"],
   framework: ["framework:quality", "Nested component", "Coverage:"],
   outcome: ["Outcome evidence", "agent_reported", "independent: false", "Coverage:"],
+  attention: ["Coverage:"],
   atlas: ["Atlas", "People", "Coverage:"],
   slice: ["Task: Resume the launch", "Coverage:"],
   find_artifacts: ["Artifact"], artifact_version: ["Artifact", "text/markdown", "Coverage:"],

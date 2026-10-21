@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setSystemTime, test } from "bun:test";
 import { addAgent, authenticate, OWNER_AGENT_GRANT } from "../../src/agents";
 import { servePropose } from "../../src/serving/propose";
 import { serveContextPacket } from "../../src/serving/packet";
@@ -12,9 +12,9 @@ import { validEvent } from "../fixtures";
 import { enrollSource } from "../helpers/world-seed";
 import { situationV2Fixture, literal, vocabulary } from "../helpers/situation-v2-fixture";
 
-async function fixture() {
+async function fixture(model = false) {
   const purposes = ["capture","derive","recall","correction","export","session"] as const;
-  const f = await situationV2Fixture(undefined,{purposes});
+  const f = await situationV2Fixture(undefined,{purposes,...(model?{model:EMPTY_SUMMARY_MODEL}:{})});
   await f.write("commitment.deliverable",literal("required fields reviewed"),{subject:"commitment:review"});
   await f.write("commitment.status",vocabulary("commitment/done"),{subject:"commitment:review"});
   const actors = ["reporter","observer","reviewer"].map(name => {
@@ -183,3 +183,55 @@ for(const loss of ["revoke","purge"] as const)test(`node deliverable completion 
   expect(f.entry().status).toBe("claimed_done");
  }finally{artifacts.dispose();f.dispose();}
 },120_000);
+
+
+import { serveWorldView } from "../../src/serving/world-view";
+import { runBackfill } from "../../src/ingest/run";
+import { connector } from "../connections-helpers";
+import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/world-consolidation";
+import type { Attention } from "../../src/contracts/attention";
+
+test("attention rechecks completion evidence for a commitment omitted before publication", async () => {
+  setSystemTime(new Date("2030-01-01T12:00:00.000Z"));
+  const f = await fixture(true);
+  try {
+    await f.write("situation.objective", literal("Complete the review"), { subject: "project:launch" });
+    await f.file(0, "outcome.self_report", "met");
+    await f.file(1, "outcome.observation", "met");
+    await f.file(2, "outcome.review", "accepted");
+    for (const source of [{ connector: "card.fixture", source: f.sourceKey }, ...f.actors]) {
+      const capture = connector(async () => ({ display: "synthetic" })), manifest = capture.manifest();
+      capture.manifest = () => ({ ...manifest, connector_id: source.connector, capabilities: { ...manifest.capabilities, backfill: true } });
+      capture.backfill = async () => ({ events: [], cursor: "complete", has_more: false });
+      expect((await runBackfill(f.db, capture, source.connector, source.source)).errors).toEqual([]);
+    }
+    await completeEmptyWorldSummaries(f.db, f.ctx.vaultPath);
+    expect(f.entry().status).toBe("done");
+    expect(f.entry().overdue).toBe(true);
+    const request = { operation: "attention", valid: { kind: "all" }, knownAt: { kind: "current" } };
+    const cues = (value: ReturnType<typeof serveWorldView>) => {
+      const data = value.data;
+      if (!("result" in data) || !("data" in data.result) || data.result.data.schema !== "kizuki.attention/v1") throw Error("attention required");
+      return (data.result.data as Attention).states.filter(row => row.state === "candidate" && row.source === "commitment_due");
+    };
+    expect(cues(serveWorldView(f.ctx, request))).toHaveLength(0);
+    let changed = false;
+    const db = new Proxy(f.db, { get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (key === "transaction") return (run: () => unknown) => {
+        const tx = target.transaction(run), finish = (result: unknown) => {
+          if (!changed && !target.inTransaction && result !== null && typeof result === "object" && "withheld" in result) {
+            changed = true;
+            target.exec("UPDATE claims SET status='reverted' WHERE predicate='outcome.observation'");
+          }
+          return result;
+        };
+        return Object.assign(() => finish(tx()), { immediate: () => finish(tx.immediate()), deferred: () => finish(tx.deferred()), exclusive: () => finish(tx.exclusive()) });
+      };
+      return typeof value === "function" ? value.bind(target) : value;
+    } }) as Database;
+    expect(cues(serveWorldView({ ...f.ctx, db }, request))).toHaveLength(1);
+    expect(changed).toBe(true);
+    expect(f.entry().status).toBe("claimed_done");
+  } finally { f.dispose(); setSystemTime(); }
+}, 120_000);

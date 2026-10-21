@@ -38,15 +38,6 @@ function key(frame: WorldFrame, cue: SituationCue, subject: string): string {
   const basis = cue.grounds.map(visibleMeaning).sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b)));
   return createHash("sha256").update(canonicalJson({ namespace: frame.ns.id, provider: cue.source, subject, basis, ...(cue.detail === undefined ? {} : { detail: cue.detail }) })).digest("base64url");
 }
-function mergeDependencies(target: WorldDependencies | undefined, source: WorldDependencies): void {
-  if (target === undefined) return;
-  for (const id of source.claims) target.claims.add(id);
-  for (const id of source.supports) target.supports.add(id);
-  for (const id of source.events) target.events.add(id);
-  for (const [id, receipt] of source.identityReceipts) target.identityReceipts.set(id, receipt);
-  for (const [id, summary] of source.consolidations) target.consolidations.set(id, summary);
-  target.coverage = source.coverage;
-}
 /** Must run in the caller's current authorization transaction. It writes no attention state. */
 export function readAttention(frame: WorldFrame, valid: WorldValidQuery, now = new Date().toISOString()): AttentionRead {
   const scan = newReadFrame(frame.ctx, frame.ns, valid, frame.dependencies);
@@ -74,7 +65,8 @@ export function readAttention(frame: WorldFrame, valid: WorldValidQuery, now = n
       if (job !== null && ["rejected", "truncated", "unavailable", "error"].includes(job.outcome ?? "")) failures.add("provider_error");
       else if (loadConfiguredModelRef(frame.ctx.vaultPath) === null) failures.add("model_unavailable");
     }
-    mergeDependencies(frame.dependencies, dependencies);
+    // The bounded card closure also includes completion evidence that suppresses a cue.
+    frame.dependencies?.children.push(dependencies);
     for (const cue of [...situationCues(card), ...(detailed === null ? [] : commitmentCues(detailed))]) {
       const cueKey = key(frame, cue, card.situation.ref.token);
       const stored = frame.ctx.db.query<{ disposition: AttentionCandidate["disposition"]; snoozed_until: string | null; delivered_at: string | null }, [string, string]>(

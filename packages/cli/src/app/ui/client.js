@@ -815,10 +815,11 @@ function worldKnowledgeNode(data) {
 function worldViewActions(section, result, knowledge) {
   if (!knowledge?.node.ref) return;
   const ref = knowledge.node.ref, of = { operation: knowledge.kind, [knowledge.kind === 'artifact_version' ? 'artifact' : knowledge.kind]: ref };
-  section.append(button(result.data?.schema === 'kizuki.situation-card/v2' ? 'Share base situation' : 'Share a resume handle', () => loadWorld(ref, { operation: 'share', of }), 'secondary'));
-  const diffOf = result.data?.schema === 'kizuki.situation-card/v2' ? { ...of, card: 'kizuki.situation-card/v2' } : of;
+  const typedSituation = result.data?.schema === 'kizuki.situation-card/v2';
+  const comparison = typedSituation ? { ...of, card: 'kizuki.situation-card/v2' } : of;
+  section.append(button(typedSituation ? 'Share base situation' : 'Share a resume handle', () => loadWorld(ref, { operation: 'share', of }), 'secondary'));
   if (result.view?.kind === 'view') { state.worldAtlasFocus = { focus: { operation: knowledge.kind, ref, ...(result.data?.schema === "kizuki.situation-card/v2" ? { card: "kizuki.situation-card/v2" } : {}) }, baselineView: result.view }; section.append(button('Changes in Atlas', () => loadAtlas('changed'), 'secondary'), button('Corrections and impact', () => loadAtlas('corrections'), 'secondary')); }
-  if (result.view?.kind === 'view') section.append(button('Check for changes', () => loadWorld(ref, { operation: 'diff', of: diffOf, priorView: result.view }), 'secondary'));
+  if (result.view?.kind === 'view') section.append(button('Check for changes', () => loadWorld(ref, { operation: 'diff', of: comparison, priorView: result.view }), 'secondary'));
 }
 function worldUseful(data) {
   const usefulness = data?.taskUsefulness;
@@ -852,6 +853,22 @@ function worldKnowledgeCard(data) {
     article.append(el('p', {}, data.goalAchieved ? 'The matched goal criteria are met.' : 'Goal achievement is not established.'), ...data.stages.map(stage => el('section', {}, el('h3', {}, ({ agent_reported: 'Agent reported', provider_acknowledged: 'Provider acknowledged', observed: 'Observed', reviewed: 'Reviewed' })[stage.stage]), el('blockquote', {}, stage.quoted), el('p', {}, stage.independent ? 'Independent of the reporting evidence.' : 'Independent support is not established.'))), el('h3', {}, 'Matched evaluations'), ...data.evaluations.map(worldEvaluation));
   }
   return article;
+}
+const atlasPanelLabels = { home: 'Overview', resume: 'Resume my work', changed: 'What changed', people: 'People', questions: 'Questions', commitments: 'Commitments', stale: 'Stale evidence', corrections: 'Corrections and impact' };
+function loadAtlas(panel = state.worldAtlasPanel) {
+  state.worldAtlasPanel = panel;
+  return loadWorld(null, { operation: 'atlas', panel, ...(['home', 'changed', 'corrections'].includes(panel) && state.worldAtlasFocus ? state.worldAtlasFocus : {}) });
+}
+function worldAtlas(data) {
+  return el('div', { class: 'result-list', 'aria-label': 'Atlas panels' }, ...data.panels.map(panel => {
+    const reason = { not_landed: 'This view is not available in this version.', baseline_required: 'Open an item first to keep a view for comparison.', baseline_unusable: 'The previous view is no longer available. Open the item again.', budget: 'This view exceeds the current read limit.', storage: 'This view cannot be read right now.', history: 'This historical view is not available.' }[panel.reason];
+    return el('article', { class: 'result-item', 'aria-label': panel.title }, el('h2', {}, panel.title),
+      el('p', { role: 'status' }, panel.status === 'empty' ? 'No matching information in this view.' : panel.status === 'partial' ? 'This view is incomplete.' : panel.status === 'unavailable' ? reason || 'This view is unavailable.' : 'Current view'), worldCoverage(panel.coverage),
+      ...panel.entries.map(entry => el('section', {}, el('h3', {}, entry.title), ...entry.facts.map(fact => el('p', {}, `${fact.label}: ${fact.value}`)), ...entry.relations.map(worldRelation), entry.ref && entry.operation ? button('Open item', () => loadWorld(entry.ref, { operation: entry.operation, [entry.operation === 'artifact_version' ? 'artifact' : entry.operation]: entry.ref }), 'quiet') : null)),
+      panel.change ? el('div', {}, el('p', {}, 'Visible differences; these changes are not necessarily caused by corrections.'),
+        ...panel.change.added.map(ref => el('p', {}, `Added statement: ${ref.token}`)), ...panel.change.removed.map(ref => el('p', {}, `Removed statement: ${ref.token}`)), ...panel.change.changed.map(item => el('p', {}, `Changed statement: ${item.claim.token}; ${item.fields.join(', ')}`)), panel.change.truncated ? el('p', {}, 'More changes may exist beyond this bounded view.') : null) : null,
+      panel.nextView && state.worldAtlasFocus ? button('Keep this comparison', () => { state.worldAtlasFocus = { ...state.worldAtlasFocus, baselineView: panel.nextView }; loadAtlas(panel.panel); }, 'secondary') : null);
+  }));
 }
 function worldSituationV2(data) {
   // Keep each statement and holder separate. Dates and completion are supplied
@@ -899,22 +916,6 @@ async function changeAttention(cue, action) {
     await api('attention_disposition', { cue, action, ...(action === 'snooze' ? { until: new Date(Date.now() + 86400000).toISOString() } : {}) });
     if (current() && state.worldKind === 'attention') await loadWorld(null);
   } catch (error) { if (current() && error?.code !== 'stale_response') message('The cue changed or could not be updated. Read attention again.'); }
-}
-const atlasPanelLabels = { home: 'Overview', resume: 'Resume my work', changed: 'What changed', people: 'People', questions: 'Questions', commitments: 'Commitments', stale: 'Stale evidence', corrections: 'Corrections and impact' };
-function loadAtlas(panel = state.worldAtlasPanel) {
-  state.worldAtlasPanel = panel;
-  return loadWorld(null, { operation: 'atlas', panel, ...(['home', 'changed', 'corrections'].includes(panel) && state.worldAtlasFocus ? state.worldAtlasFocus : {}) });
-}
-function worldAtlas(data) {
-  return el('div', { class: 'result-list', 'aria-label': 'Atlas panels' }, ...data.panels.map(panel => {
-    const reason = { not_landed: 'This view is not available in this version.', baseline_required: 'Open an item first to keep a view for comparison.', baseline_unusable: 'The previous view is no longer available. Open the item again.', budget: 'This view exceeds the current read limit.', storage: 'This view cannot be read right now.', history: 'This historical view is not available.' }[panel.reason];
-    return el('article', { class: 'result-item', 'aria-label': panel.title }, el('h2', {}, panel.title),
-      el('p', { role: 'status' }, panel.status === 'empty' ? 'No matching information in this view.' : panel.status === 'partial' ? 'This view is incomplete.' : panel.status === 'unavailable' ? reason || 'This view is unavailable.' : 'Current view'), worldCoverage(panel.coverage),
-      ...panel.entries.map(entry => el('section', {}, el('h3', {}, entry.title), ...entry.facts.map(fact => el('p', {}, `${fact.label}: ${fact.value}`)), ...entry.relations.map(worldRelation), entry.ref && entry.operation ? button('Open item', () => loadWorld(entry.ref, { operation: entry.operation, [entry.operation === 'artifact_version' ? 'artifact' : entry.operation]: entry.ref }), 'quiet') : null)),
-      panel.change ? el('div', {}, el('p', {}, 'Visible differences; these changes are not necessarily caused by corrections.'),
-        ...panel.change.added.map(ref => el('p', {}, `Added statement: ${ref.token}`)), ...panel.change.removed.map(ref => el('p', {}, `Removed statement: ${ref.token}`)), ...panel.change.changed.map(item => el('p', {}, `Changed statement: ${item.claim.token}; ${item.fields.join(', ')}`)), panel.change.truncated ? el('p', {}, 'More changes may exist beyond this bounded view.') : null) : null,
-      panel.nextView && state.worldAtlasFocus ? button('Keep this comparison', () => { state.worldAtlasFocus = { ...state.worldAtlasFocus, baselineView: panel.nextView }; loadAtlas(panel.panel); }, 'secondary') : null);
-  }));
 }
 function renderWorld() {
   const kind = state.worldKind, field = el('input', { id: 'world-query', type: 'search', placeholder: `Find ${kind}…`, 'aria-label': `Find ${kind}`, autocomplete: 'off' }); field.value = state.worldQuery; if (kind === 'outcomes') { field.setAttribute('placeholder', 'Outcome subject'); field.setAttribute('aria-label', 'Outcome subject'); }
@@ -974,8 +975,8 @@ function renderWorld() {
           return section;
         }
         const node = data.concept || data.situation || data.artifact;
-        const primary = data.artifact ? (data.inspections || []) : data.concept ? (data.definitions || []) : [data.objective, ...(data.commitments || []), data.blocker, data.recentChange, ...(data.uncertainty || [])].filter(Boolean);
         const typedSituation = data.schema === 'kizuki.situation-card/v2';
+        const primary = data.artifact ? (data.inspections || []) : data.concept ? (data.definitions || []) : [data.objective, ...(data.commitments || []), data.blocker, data.recentChange, ...(data.uncertainty || [])].filter(Boolean);
         const related = data.concept ? (data.relations || []) : [];
         section.append(typedSituation ? worldSituationV2(data) : el('article', { class: 'result-item' },
           el('h2', {}, worldTitle(node)),
@@ -1002,7 +1003,7 @@ async function loadWorld(ref = state.worldRef, request = null) {
   if (!request && operation === 'outcome' && !state.worldQuery.trim()) { state.world = null; state.worldRef = null; state.worldLoading = false; if (state.view === 'world') render(); return; }
   state.worldRequest = request;
   const previous = state.world;
-  const card = request?.card || request?.of?.card || (request?.operation === 'share' && ref?.token === state.worldRef?.token ? state.worldCard : null) || (!request && operation === 'situation' && ref?.token === state.worldRef?.token ? state.worldCard : null);
+  const card = request?.card || (request?.operation === 'share' && ref?.token === state.worldRef?.token ? state.worldCard : null) || (!request && operation === 'situation' && ref?.token === state.worldRef?.token ? state.worldCard : null);
   const prior = !request && previous?.operation === operation && ref && state.worldRef?.token === ref.token && previous?.result?.data && previous?.result?.view?.kind === 'view' ? previous.result.view : null;
   const payload = { ...(request || { operation, ...(operation === 'attention' ? {} : ref ? { [operation === 'artifact_version' ? 'artifact' : operation]: ref, ...(card ? { card } : {}) } : operation === 'outcome' ? { subject: state.worldQuery.trim() } : { label: state.worldQuery }) }), ...(prior ? { priorView: prior } : {}), valid: { kind: 'all' }, knownAt: { kind: 'current' } };
   state.worldRef = ref; state.worldCard = card; if (!ref) state.worldDetailKind = null;

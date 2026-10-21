@@ -10,7 +10,7 @@ import { situationAssembler } from "./situation";
 import { questionAssembler } from "./question";
 
 /**
- * One assembler per kind that has a card. A kind file adds its assembler on
+ * One default assembler per kind, with distinct explicit card variants. A kind file adds its assembler on
  * the line under its marker; a registered kind with no assembler here has no
  * card to serve.
  */
