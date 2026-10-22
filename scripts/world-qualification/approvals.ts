@@ -21,14 +21,21 @@ export const HISTORICAL_QUALIFICATIONS: readonly QualificationApproval[] = [{
   endpoint_evidence: "aa5c067cd97da53101f8bd5080e7c9071ea84e128296baa3c1749cc3710483da",
 }];
 
-/** Independently reviewed Core12 transport and prepared-admission semantics; wider kinds remain unapproved. */
-export const REVIEWED_QUALIFICATIONS: readonly QualificationApproval[] = [{
+/** INVALID historical evidence, never an active qualification. All 12 measured
+ * inputs exceeded their declared 8,192-token cap. The previous scorer omitted
+ * that check. Keep the original report and review bytes; no retroactive rescore,
+ * larger budget, waiver, or receipt makes this campaign accepted. */
+export const INVALID_HISTORICAL_QUALIFICATIONS = [{
   file: "core-semantic-core12-20261022.json",
   sha256: "33a925dd8bff2712ce4aa2979d2f3c598404c9c83dc67961fdbd9ca009c83891",
   endpoint_evidence: "c09f582552fdd003e7ad3fc2cbff501943a0c4b925704be11e7e49ccd720d436",
   protocol: "core-semantic-v3",
   body_review: { file: "core-semantic-core12-review-20261022.json", sha256: "e477df82455dda4e41899abf2222d659f153e28a30a0ec26e7e8bef08660cd83" },
-}];
+  status: "INVALID", reason: "all_measured_inputs_exceeded_declared_budget",
+}] as const;
+
+/** A fresh split under the repaired planning method and actual independent review are required. */
+export const REVIEWED_QUALIFICATIONS: readonly QualificationApproval[] = [];
 
 /** Continuation permission only. This does not qualify any kind or endorse semantic results. */
 export const RESUMABLE_RUNS = [{

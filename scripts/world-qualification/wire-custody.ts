@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { MAX_V2_ANCHORS, MAX_V2_QUOTED_UTF16, type ExtractResponseV2, type ProduceInputV2, type ProducerV2ParseInput, type TextAnchor } from "../../packages/core/src/contracts/producer-v2";
+import { qualificationInputPlanning, type QualificationInputPolicy, type QualificationInputPlanning } from "./input-planning";
 import { planModelExtractionV2 } from "../../packages/core/src/producer/model-v2";
 import {
   MODEL_EXTRACTION_WIRE_RECEIPT_SCHEMA,
@@ -22,6 +23,8 @@ export interface ModelWireAdapterIdentity {
 }
 
 export interface CoreSemanticWireEvidence {
+  readonly input_planning: QualificationInputPlanning;
+  readonly producer_input_token_overhead: number;
   readonly case_id: string;
   readonly transport_response_sha256: string;
   readonly adapter_source_sha256: string;
@@ -30,6 +33,8 @@ export interface CoreSemanticWireEvidence {
 }
 
 export interface CoreSemanticWireBinding {
+  readonly input_planning: QualificationInputPlanning | null;
+  readonly producer_input_token_overhead: number | null;
   readonly wire_schema: string | null;
   readonly receipt_schema: string | null;
   readonly adapter_source_sha256: string | null;
@@ -41,6 +46,8 @@ export interface CoreSemanticWireBinding {
 }
 
 export const emptyWireBinding = (): CoreSemanticWireBinding => ({
+  input_planning: null,
+  producer_input_token_overhead: null,
   wire_schema: null,
   receipt_schema: null,
   adapter_source_sha256: null,
@@ -59,8 +66,8 @@ export function modelWireAdapterIdentity(root = resolve(import.meta.dir, "../.."
   };
 }
 
-function expectedOutbound(input: ProduceInputV2): ProducerV2ParseInput | null {
-  const plan = planModelExtractionV2(input);
+function expectedOutbound(input: ProduceInputV2, policy: QualificationInputPolicy): ProducerV2ParseInput | null {
+  const plan = planModelExtractionV2(input, policy.input_token_overhead);
   return plan.status === "ready" ? plan.outbound : null;
 }
 
@@ -114,6 +121,8 @@ function verifyResolutions(receipt: Record<string, unknown>, outbound: ProducerV
 /** Independently verifies the adapter's canonical custody record without parsing private model wire again. */
 export function inspectCoreSemanticWireEvidence(args: {
   readonly case_id: string;
+  readonly input_policy: QualificationInputPolicy;
+  readonly input_planning_sha256: string | null;
   readonly input: ProduceInputV2;
   readonly response: ExtractResponseV2 | null;
   readonly transport_response_sha256: string | null;
@@ -124,6 +133,8 @@ export function inspectCoreSemanticWireEvidence(args: {
   const matches = args.evidence.filter(row => row.case_id === args.case_id), row = matches[0], errors: string[] = [];
   if (matches.length !== 1 || row === undefined) return { binding: emptyWireBinding(), errors: ["wire_receipt_count"] };
   const binding: CoreSemanticWireBinding = {
+    input_planning: row.input_planning ?? null,
+    producer_input_token_overhead: row.producer_input_token_overhead ?? null,
     wire_schema: isPlainObject(row.receipt) && typeof row.receipt.wire_schema === "string" ? row.receipt.wire_schema : null,
     receipt_schema: isPlainObject(row.receipt) && typeof row.receipt.schema === "string" ? row.receipt.schema : null,
     adapter_source_sha256: row.adapter_source_sha256,
@@ -145,7 +156,13 @@ export function inspectCoreSemanticWireEvidence(args: {
     errors.push("wire_schema_mismatch");
     return { binding, errors };
   }
-  const outbound = expectedOutbound(args.input);
+  if (row.producer_input_token_overhead !== args.input_policy.input_token_overhead) errors.push("wire_producer_reservation_mismatch");
+  try {
+    const planning = qualificationInputPlanning(args.input, args.input_policy);
+    if (canonicalJson(row.input_planning) !== canonicalJson(planning) || args.input_planning_sha256 !== planning.planning_sha256)
+      errors.push("wire_input_planning_mismatch");
+  } catch { errors.push("wire_input_planning_rejected"); }
+  const outbound = expectedOutbound(args.input, args.input_policy);
   if (outbound === null || row.receipt.outbound_sha256 !== sha256(canonicalJson(outbound))) errors.push("wire_outbound_mismatch");
   if (outbound !== null) {
     const expectedEvents = outbound.events.map(event => ({ event_id: event.event_id, text_sha256: sha256(event.text), utf16_length: event.text.length }));

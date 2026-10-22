@@ -16,6 +16,8 @@ import freeze from "./core-semantic-freeze.json";
 import type { Observation } from "./score";
 import { inspectCoreSemanticWireEvidence, type CoreSemanticWireEvidence, type ModelWireAdapterIdentity } from "./wire-custody";
 
+import { DEFAULT_QUALIFICATION_INPUT_POLICY, validateQualificationInputPolicy, type QualificationInputPolicy } from "./input-planning";
+
 export const CORE_SEMANTIC_PROTOCOL = "core-semantic-v3" as const;
 export const LEGACY_CORE_SEMANTIC_PROTOCOL = "core-semantic-v2" as const;
 type Category = "positive" | "reported" | "historical" | "name_negative" | "template_negative" | "hypothetical_negative";
@@ -115,13 +117,14 @@ export function validateCoreSemanticAssets(): void {
   }
 }
 
-export function coreSemanticCaseInput(item: CoreSemanticCase, registry: WorldRegistry): ProduceInputV2 {
+export function coreSemanticCaseInput(item: CoreSemanticCase, registry: WorldRegistry, rawPolicy: QualificationInputPolicy = DEFAULT_QUALIFICATION_INPUT_POLICY): ProduceInputV2 {
+  const policy = validateQualificationInputPolicy(rawPolicy);
   const events = item.records.map((record, index) => ({ event_id: eventId(index), text: record.text }));
   const supplied = item.records.flatMap((record, index) => record.subjects.map(subject => {
     const anchor = span(record, subject.quote);
     return { id: subject.id, anchors: [{ ...anchor, event_id: eventId(index) }] };
   }));
-  return withWorldRegistry(registry, () => worldProduceInput(events as never, supplied, { max_input_tokens: 8_192, max_output_tokens: 8_192 }));
+  return withWorldRegistry(registry, () => worldProduceInput(events as never, supplied, { max_input_tokens: policy.max_input_tokens, max_output_tokens: policy.max_output_tokens }));
 }
 
 /** The fixture is host-owned and derives exclusively from the exact quoted request. */
@@ -222,8 +225,9 @@ export function prepareCoreSemanticObservation(observed: Observation, registry: 
 }
 
 export interface CoreSemanticEvidence {
+  readonly input_policy: QualificationInputPolicy;
   readonly source_commit: string;
-  readonly traces: readonly { readonly case_id: string; readonly response_sha256: string | null; readonly model_response_sha256: string | null }[];
+  readonly traces: readonly { readonly case_id: string; readonly response_sha256: string | null; readonly model_response_sha256: string | null; readonly input_planning_sha256?: string }[];
   readonly wire_adapter: ModelWireAdapterIdentity;
   readonly wire_receipts: readonly CoreSemanticWireEvidence[];
 }
@@ -276,12 +280,12 @@ function sourceKey(rule: PropositionRule, item: CoreSemanticCase, response: NonN
   return matches.length === 1 ? `mention:${matches[0]!.id}` : null;
 }
 
-function scoreCoreSemanticCase(item: CoreSemanticCase, rule: ExtractRule | AbstainRule, observed: Observation | undefined, registry: WorldRegistry, prepared?: ReadonlyMap<string, readonly TextAnchor[]>) {
+function scoreCoreSemanticCase(item: CoreSemanticCase, rule: ExtractRule | AbstainRule, observed: Observation | undefined, registry: WorldRegistry, policy: QualificationInputPolicy, prepared?: ReadonlyMap<string, readonly TextAnchor[]>) {
   const gates = { observation: [] as string[], schema: [] as string[], usage: [] as string[], abstention: [] as string[], structure: [] as string[], attribution: [] as string[], time: [] as string[] };
   let legacyExtras: RichClaimDraft[] = [];
   if (observed === undefined) gates.observation.push("not_run");
   else {
-    const expectedInput = coreSemanticCaseInput(item, registry);
+    const expectedInput = coreSemanticCaseInput(item, registry, policy);
     if (observed.case_id !== item.id || canonicalJson(observed.input) !== canonicalJson(expectedInput)) gates.observation.push("input_mismatch");
     if (observed.status !== "ok" || observed.response === null) gates.observation.push(observed.status);
     if (observed.response !== null) {
@@ -320,10 +324,11 @@ function scoreCoreSemanticCase(item: CoreSemanticCase, rule: ExtractRule | Absta
           if (!exactTime(claim, detail.time)) gates.time.push(`${detail.predicate}:time`);
         }
       }
-      if (observed.usage.calls !== 1 || observed.usage.input_tokens === null || observed.usage.output_tokens === null) gates.usage.push("unmeasured_usage");
-      for (const count of [observed.usage.input_tokens, observed.usage.output_tokens]) if (count !== null && (!Number.isSafeInteger(count) || count < 0 || count > 100_000_000)) gates.usage.push("invalid_usage");
-      if ((observed.usage.output_tokens ?? 0) > observed.input.budget.max_output_tokens) gates.usage.push("output_budget_exceeded");
     }
+    if (observed.usage.calls !== 1 || observed.usage.input_tokens === null || observed.usage.output_tokens === null) gates.usage.push("unmeasured_usage");
+    for (const count of [observed.usage.input_tokens, observed.usage.output_tokens]) if (count !== null && (!Number.isSafeInteger(count) || count < 0 || count > 100_000_000)) gates.usage.push("invalid_usage");
+    if ((observed.usage.input_tokens ?? 0) > policy.max_input_tokens) gates.usage.push("input_budget_exceeded");
+    if ((observed.usage.output_tokens ?? 0) > policy.max_output_tokens) gates.usage.push("output_budget_exceeded");
   }
   const responseSha256 = observed?.response === null || observed?.response === undefined ? null : sha256(canonicalJson(observed.response));
   return { case_id: item.id, expectation: rule.expectation, automated_passed: Object.values(gates).every(errors => errors.length === 0), gates,
@@ -335,16 +340,18 @@ function scoreCoreSemanticCase(item: CoreSemanticCase, rule: ExtractRule | Absta
 }
 
 export function scoreCoreSemanticRun(observations: readonly Observation[], registry: WorldRegistry, evidence: CoreSemanticEvidence) {
+  const policy = validateQualificationInputPolicy(evidence.input_policy);
   if (new Set(observations.map(row => row.case_id)).size !== observations.length || observations.some(row => !coreSemanticCorpus.cases.some(item => item.id === row.case_id))) throw new Error("unknown or duplicate core semantic observation");
   const cases = coreSemanticCorpus.cases.map(item => {
     const observed = observations.find(row => row.case_id === item.id), rule = coreSemanticContract.cases.find(row => row.case_id === item.id)!;
-    const raw = scoreCoreSemanticCase(item, rule, observed, registry);
+    const raw = scoreCoreSemanticCase(item, rule, observed, registry, policy);
     const pipeline = observed?.response ? prepareCoreSemanticObservation(observed, registry) : null;
     const anchors = new Map(pipeline?.drafts.map((draft,index) => [observed!.response!.claims[index]?.id ?? "", draft.semantic.perspective.anchors]));
-    const prepared = scoreCoreSemanticCase(item, rule, observed, registry, anchors);
+    const prepared = scoreCoreSemanticCase(item, rule, observed, registry, policy, anchors);
     const matches = evidence.traces.filter(row => row.case_id === item.id), transportSha = matches.length === 1 ? matches[0]!.response_sha256 : null;
     const modelResponseSha = matches.length === 1 ? matches[0]!.model_response_sha256 : null;
-    const custody = inspectCoreSemanticWireEvidence({ case_id: item.id, input: observed?.input ?? coreSemanticCaseInput(item, registry),
+    const custody = inspectCoreSemanticWireEvidence({ case_id: item.id, input: observed?.input ?? coreSemanticCaseInput(item, registry, policy), input_policy: policy,
+      input_planning_sha256: matches.length === 1 ? matches[0]!.input_planning_sha256 ?? null : null,
       response: observed?.response ?? null, transport_response_sha256: transportSha, model_response_sha256: modelResponseSha,
       adapter: evidence.wire_adapter, evidence: evidence.wire_receipts });
     const pipelineErrors = [...(pipeline?.errors ?? ["not_prepared"])];
@@ -363,16 +370,16 @@ export function scoreCoreSemanticRun(observations: readonly Observation[], regis
         prepared_admissions_sha256: pipeline?.prepared_admissions_sha256 ?? null, ...custody.binding } };
   });
   return { schema: "kizuki.core-semantic-result/v3" as const, protocol: CORE_SEMANTIC_PROTOCOL, stage: "prepared_admission" as const,
-    source_commit: evidence.source_commit, corpus_sha256: coreSemanticCorpusSha256, contract_sha256: coreSemanticContractSha256,
+    source_commit: evidence.source_commit, input_policy: policy, corpus_sha256: coreSemanticCorpusSha256, contract_sha256: coreSemanticContractSha256,
     raw_model_automated_passed: cases.every(row => row.raw_model.automated_passed),
     automated_passed: cases.every(row => row.automated_passed), status: "pending_manual_review" as const, cases };
 }
 
 export function expectedCoreSemanticReview(reportSha256: string, result: ReturnType<typeof scoreCoreSemanticRun>) {
   return { schema: "kizuki.core-semantic-review/v3" as const, stage: "prepared_admission" as const, source_commit: result.source_commit, independent: true, status: "passed" as const, report_sha256: reportSha256,
-    corpus_sha256: result.corpus_sha256, contract_sha256: result.contract_sha256,
+    input_policy: result.input_policy, corpus_sha256: result.corpus_sha256, contract_sha256: result.contract_sha256,
     cases: result.cases.map(row => { const rule = coreSemanticContract.cases.find(candidate => candidate.case_id === row.case_id)!;
-      const binding = { transport_response_sha256: row.manual_review.transport_response_sha256,
+      const binding = { input_planning: row.manual_review.input_planning, producer_input_token_overhead: row.manual_review.producer_input_token_overhead, transport_response_sha256: row.manual_review.transport_response_sha256,
         input_manifest_sha256: row.manual_review.input_manifest_sha256, sent_window_manifest_sha256: row.manual_review.sent_window_manifest_sha256,
         prepared_admissions_sha256: row.manual_review.prepared_admissions_sha256, wire_schema: row.manual_review.wire_schema,
         receipt_schema: row.manual_review.receipt_schema, adapter_source_sha256: row.manual_review.adapter_source_sha256,

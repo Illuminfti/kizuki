@@ -8,6 +8,48 @@ they cannot be rescored or approved as v3 evidence. A fresh sealed split and a
 separate review of its actual responses are required. The corpus, contract,
 method, prompt, adapter, parser, and runner files are frozen before any call.
 
+## Input budget repair (2026-10-22)
+
+The prospective runner now binds an explicit `input_policy` with total input and
+output caps and a trusted `input_token_overhead` reservation. For an endpoint
+that needs 24,000 tokens of framing, the prospective profile is total input
+32,000, overhead 24,000 and output 8,192. This leaves at most 8,000 estimated
+message tokens. It changes no global default and cannot repair an earlier run.
+
+```bash
+bun --no-env-file --config=/dev/null scripts/world-qualification/run.ts \
+  --protocol core-semantic-v3 --kinds concept,situation \
+  --max-input-tokens 32000 --input-token-overhead 24000 \
+  --max-output-tokens 8192 --out /absolute/new-report.json
+```
+
+The runner configures the actual LLM port with that reserve, checks the factory's
+trusted producer metadata, and checks each actual outgoing message estimate and
+output cap before transport. Each case binds the actual production planner's
+scrubbed outbound hash, estimated message tokens, overhead, reserved total and
+caps into a canonical planning hash. The random fence nonce is excluded; its
+fixed-length messages still contribute to the measured planning estimate. The
+trace, wire evidence, prepared result and independent review all bind that same
+commitment. Wire evidence also records the overhead read from the actual live
+factory identity, including inherited wrappers; fabricated port properties and
+different wrapper metadata cannot attest the run policy. The verifier
+reconstructs the case budget and invokes the actual
+planner with the report-bound reserve. Missing policy, stale runner hashes,
+changed reserves or caps, altered commitments and planning overflow fail closed.
+
+Measured input and output usage must each be within the declared cap, including
+when the product rejects a response. Counts are retained exactly as reported;
+the reservation is never subtracted from observed usage. Core12's earlier report
+and review are preserved as **INVALID historical evidence**: all 12 measured
+inputs exceeded their declared 8,192-token budget. Its active approval is
+withdrawn. Core13 stopped after three over-budget calls and has no accepted
+receipt. Neither campaign may be rescored, waived or assigned a larger cap.
+A fresh sealed split, frozen runner, all 12 calls once and a new independent
+review are required. Scripted controls remain pending manual review.
+The runner stops after the first observed automated case failure, preserves the
+attempt and reports `automated_failure`. An incomplete failed run never qualifies
+and cannot be resumed or resampled as a successful campaign.
+
 ## Two distinct results
 
 The translated model result keeps the existing typed, identity, role, time,
