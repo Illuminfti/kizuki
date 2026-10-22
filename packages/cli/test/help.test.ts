@@ -838,7 +838,7 @@ describe("help", () => {
       };
       expect(body.data.name).toBe("serve");
       expect(body.data.options).toEqual(["--port", "--crash-after"]);
-      expect(body.data.flags).toEqual(["--once", "--no-http", "--json", "--install", "--uninstall"]);
+      expect(body.data.flags).toEqual(["--once", "--no-http", "--json", "--install", "--uninstall", "--canon-only"]);
       expect(body.data.irreversible).toBe(false);
     }
     const text = runCli(env, "serve", "--help");

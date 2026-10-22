@@ -569,6 +569,7 @@ describe("public surface", () => {
       "rotateToken",
       "runBackfill",
       "runBatch",
+      "runCanonWritePass",
       "runContractConformance",
       "runDrivenConformance",
       "runEmbeddingConformance",
