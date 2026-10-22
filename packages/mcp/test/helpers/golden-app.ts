@@ -25,13 +25,13 @@ function extraction(request: SeenRequest): Response {
   const handles = /supplied-handles>>>\n([^\n]+)\n<<<KZ-END/.exec(user)?.[1];
   const events = [...user.matchAll(/<<<KZ-QUOTE ([a-f0-9]{32}) event:([0-9A-HJKMNP-TV-Z]{26})>>>\n([\s\S]*?)\n<<<KZ-END \1>>>/g)];
   if (events.length === 0) return defaultChatCompletion("Synthetic connection works.");
-  const refs = JSON.parse(handles ?? "[]") as { id: string; anchors: { event_id: string; start_utf16: number; end_utf16: number }[] }[];
+  const refs = JSON.parse(handles ?? "[]") as { id: string; anchors: { event_id: string; quote: string; select?: string }[] }[];
   const claims: unknown[] = [], mentions: unknown[] = [];
   for (const [, , event, text] of events) {
     if (text !== ORIGINAL && text !== REVISED && text !== RICH) throw new Error("unexpected GOLDEN fixture source");
     const handle = refs.find(row => row.anchors.some(anchor => anchor.event_id === event));
     if (handle === undefined) throw new Error("GOLDEN source lacks its connector-bound document handle");
-    const anchors = [...handle.anchors, { event_id: event!, start_utf16: 0, end_utf16: text!.length }];
+    const anchors = [...handle.anchors, { event_id: event!, quote: text! }];
     const specs = [["world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } }],
       ["concept.label", { kind: "literal", value: LABEL }], ["concept.definition", { kind: "literal", value: text === RICH ? ORIGINAL : text }]] as const;
     for (const [predicate, object] of specs) claims.push({ id: `c${claims.length}`, subject: { kind: "supplied", id: handle.id }, predicate, object,
@@ -40,8 +40,8 @@ function extraction(request: SeenRequest): Response {
   }
   const richEvent = events.find(row => row[3] === RICH);
   if (richEvent) {
-    const event = richEvent[2]!, whole = { event_id: event, start_utf16: 0, end_utf16: RICH.length };
-    const mention = (label: string) => { const id = `m${mentions.length}`, start = RICH.indexOf(label); const anchor = { event_id: event, start_utf16: start, end_utf16: start + label.length }; mentions.push({ id, label, anchor, candidate_refs: [] }); return { ref: { kind: "mention", id }, anchor }; };
+    const event = richEvent[2]!, whole = { event_id: event, quote: RICH };
+    const mention = (label: string) => { const id = `m${mentions.length}`, anchor = { event_id: event, quote: label }; mentions.push({ id, label, anchor, candidate_refs: [] }); return { ref: { kind: "mention", id }, anchor }; };
     const situation = mention("Orchard release"), decision = mention("format X"), procedure = mention("Verify delivery receipt");
     const add = (node: ReturnType<typeof mention>, predicate: string, object: unknown, related?: ReturnType<typeof mention>, mode = "asserted") => claims.push({ id: `c${claims.length}`, subject: node.ref, predicate, object,
       perspective: { holder: null, speaker: null, addressee: null, mode, interpretation: "explicit", anchors: [] }, context: [], polarity: "positive", body: predicate,
@@ -56,7 +56,7 @@ function extraction(request: SeenRequest): Response {
     add(procedure, "world.kind", vocabulary("world/procedure")); add(procedure, "procedure.label", literal("Verify delivery receipt"));
     add(procedure, "procedure.step", literal("1. Read the receipt.")); add(procedure, "procedure.step", literal("2. Check required fields."));
   }
-  return defaultChatCompletion(JSON.stringify({ schema: "kizuki.producer-response/v2", mentions, claims }));
+  return defaultChatCompletion(JSON.stringify({ schema: "kizuki.model-extraction/quote-anchors-v1", mentions, claims }));
 }
 
 export async function goldenApp(options: { rich?: boolean } = {}) {
@@ -84,7 +84,7 @@ export async function goldenApp(options: { rich?: boolean } = {}) {
     return value.data;
   }
   async function done(id: string): Promise<any> {
-    for (let count = 0; count < 1000; count++) { const result = await call("operation", { id }); if (result.state !== "running") { expect(result.state).toBe("succeeded"); return result.result; } await Bun.sleep(10); }
+    for (let count = 0; count < 1000; count++) { const result = await call("operation", { id }); if (result.state !== "running") { expect(result.state, JSON.stringify(result)).toBe("succeeded"); return result.result; } await Bun.sleep(10); }
     throw new Error("GOLDEN App operation deadline");
   }
   const operate = async (route: string, body: unknown = {}) => done((await call(route, body)).operation_id);
