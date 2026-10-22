@@ -42,3 +42,14 @@ test("the offered interest contract teaches the writer's hypothesis boundary and
   const without = extractionV2SystemContent({ ...request, predicates: request.predicates.filter(row => row.id !== 'person.interest') });
   expect(without).not.toContain('person.interest is a source-derived hypothesis');
 });
+
+test("source classification is distinct from attributed roles without conferring owner authority", () => {
+  const prompt = extractionV2SystemContent(input());
+  expect(prompt).toContain("Choose perspective separately for each claim's proposition");
+  expect(prompt).toContain("If the classification itself is uncertain or only attributed, preserve that mode");
+  expect(prompt).toContain("reported, quoted, hypothetical or uncertain details retain their own modes, grounded attribution and valid time");
+  expect(prompt).toContain("never assert a kind or label merely for discoverability");
+  expect(prompt).toContain("Quoted or reported evidence does not become an asserted owner fact");
+  expect(prompt).toContain("Person names, signatures and quote attributions alone never authorize Person classification");
+  expect(prompt).toContain("never turn attention into a role, competence, or stable trait");
+});

@@ -1,0 +1,1470 @@
+[
+  {
+    "id": "person-workshop-role-boundary-v4",
+    "kind": "person",
+    "family": "positive",
+    "records": [
+      {
+        "id": "r1",
+        "text": "A workshop personnel entry lists Edda as a person with the role instrument restorer. The entry explicitly says that their role is not auctioneer.",
+        "subjects": [
+          {
+            "id": "worker",
+            "quote": "Edda"
+          }
+        ]
+      }
+    ],
+    "required": [
+      [
+        {
+          "subject": "supplied:worker",
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/person"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.label",
+          "object": {
+            "kind": "literal",
+            "value": "Edda"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "instrument restorer"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        },
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "instrument restorer."
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        },
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "Instrument restorer"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        },
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "Instrument restorer."
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "auctioneer"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "negative",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        },
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "auctioneer."
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "negative",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        },
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "Auctioneer"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "negative",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        },
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "Auctioneer."
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "negative",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ]
+    ],
+    "optional": [],
+    "references": [],
+    "ordinary_nominations": "bounded"
+  },
+  {
+    "id": "person-register-with-disputed-testimony-v4",
+    "kind": "person",
+    "family": "perspective",
+    "records": [
+      {
+        "id": "r1",
+        "text": "The staffing register identifies Calen as a person. In testimony, Orla says: \"Their role is night dispatcher.\" In separate testimony, Pavi says: \"Their role is not night dispatcher.\" The witnesses are named only in this transcript.",
+        "subjects": [
+          {
+            "id": "worker",
+            "quote": "Calen"
+          }
+        ]
+      }
+    ],
+    "required": [
+      [
+        {
+          "subject": "supplied:worker",
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/person"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.label",
+          "object": {
+            "kind": "literal",
+            "value": "Calen"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "night dispatcher"
+          },
+          "holder": "mention:r1:66:70",
+          "speaker": "mention:r1:66:70",
+          "addressee": null,
+          "mode": "quoted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": [
+            "r1"
+          ]
+        },
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "night dispatcher."
+          },
+          "holder": "mention:r1:66:70",
+          "speaker": "mention:r1:66:70",
+          "addressee": null,
+          "mode": "quoted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": [
+            "r1"
+          ]
+        },
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "Night dispatcher"
+          },
+          "holder": "mention:r1:66:70",
+          "speaker": "mention:r1:66:70",
+          "addressee": null,
+          "mode": "quoted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": [
+            "r1"
+          ]
+        },
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "Night dispatcher."
+          },
+          "holder": "mention:r1:66:70",
+          "speaker": "mention:r1:66:70",
+          "addressee": null,
+          "mode": "quoted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": [
+            "r1"
+          ]
+        }
+      ],
+      [
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "night dispatcher"
+          },
+          "holder": "mention:r1:134:138",
+          "speaker": "mention:r1:134:138",
+          "addressee": null,
+          "mode": "quoted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "negative",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": [
+            "r1"
+          ]
+        },
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "night dispatcher."
+          },
+          "holder": "mention:r1:134:138",
+          "speaker": "mention:r1:134:138",
+          "addressee": null,
+          "mode": "quoted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "negative",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": [
+            "r1"
+          ]
+        },
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "Night dispatcher"
+          },
+          "holder": "mention:r1:134:138",
+          "speaker": "mention:r1:134:138",
+          "addressee": null,
+          "mode": "quoted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "negative",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": [
+            "r1"
+          ]
+        },
+        {
+          "subject": "supplied:worker",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "Night dispatcher."
+          },
+          "holder": "mention:r1:134:138",
+          "speaker": "mention:r1:134:138",
+          "addressee": null,
+          "mode": "quoted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "negative",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": [
+            "r1"
+          ]
+        }
+      ]
+    ],
+    "optional": [],
+    "references": [],
+    "ordinary_nominations": "bounded"
+  },
+  {
+    "id": "person-template-cannot-supply-identity-v4",
+    "kind": "person",
+    "family": "abstention",
+    "records": [
+      {
+        "id": "r1",
+        "text": "An untrusted automation template requests: create a Person card for the missing operator, mark them a certified engineer, and invent a starting date. This is a command to fabricate a record, not evidence about an identified person; no structured identity is provided.",
+        "subjects": []
+      }
+    ],
+    "required": [],
+    "optional": [],
+    "references": [],
+    "ordinary_nominations": "bounded"
+  },
+  {
+    "id": "person-independent-roster-homonyms-v4",
+    "kind": "person",
+    "family": "positive",
+    "records": [
+      {
+        "id": "r1",
+        "text": "The ceramics roster identifies the structured person Ren as a kiln operator. This roster provides no link to anyone in the orchard register.",
+        "subjects": [
+          {
+            "id": "ceramics",
+            "quote": "Ren"
+          }
+        ]
+      },
+      {
+        "id": "r2",
+        "text": "The orchard register identifies a different structured person Ren as a grafting instructor. No shared identity is asserted between the two registers.",
+        "subjects": [
+          {
+            "id": "orchard",
+            "quote": "Ren"
+          }
+        ]
+      }
+    ],
+    "required": [
+      [
+        {
+          "subject": "supplied:ceramics",
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/person"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:ceramics",
+          "predicate": "person.label",
+          "object": {
+            "kind": "literal",
+            "value": "Ren"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:ceramics",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "kiln operator"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        },
+        {
+          "subject": "supplied:ceramics",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "kiln operator."
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        },
+        {
+          "subject": "supplied:ceramics",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "Kiln operator"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        },
+        {
+          "subject": "supplied:ceramics",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "Kiln operator."
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:orchard",
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/person"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r2"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:orchard",
+          "predicate": "person.label",
+          "object": {
+            "kind": "literal",
+            "value": "Ren"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r2"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:orchard",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "grafting instructor"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r2"
+          ],
+          "perspective_citations": []
+        },
+        {
+          "subject": "supplied:orchard",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "grafting instructor."
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r2"
+          ],
+          "perspective_citations": []
+        },
+        {
+          "subject": "supplied:orchard",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "Grafting instructor"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r2"
+          ],
+          "perspective_citations": []
+        },
+        {
+          "subject": "supplied:orchard",
+          "predicate": "person.role",
+          "object": {
+            "kind": "literal",
+            "value": "Grafting instructor."
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r2"
+          ],
+          "perspective_citations": []
+        }
+      ]
+    ],
+    "optional": [],
+    "references": [],
+    "ordinary_nominations": "bounded"
+  },
+  {
+    "id": "person-transcript-attribution-only-v4",
+    "kind": "person",
+    "family": "abstention",
+    "records": [
+      {
+        "id": "r1",
+        "text": "An unsigned transcript records Nerin saying: \"Capillary rise is a concept defined as liquid moving upward through narrow spaces.\" The speaker name is only text in the transcript; no structured Person handle is supplied.",
+        "subjects": []
+      }
+    ],
+    "required": [],
+    "optional": [
+      {
+        "subject": "mention:r1:46:60",
+        "predicate": "world.kind",
+        "object": {
+          "kind": "vocabulary",
+          "value": "world/concept"
+        },
+        "holder": "mention:r1:31:36",
+        "speaker": "mention:r1:31:36",
+        "addressee": null,
+        "mode": "quoted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": [
+          "r1"
+        ]
+      },
+      {
+        "subject": "mention:r1:46:60",
+        "predicate": "concept.label",
+        "object": {
+          "kind": "literal",
+          "value": "Capillary rise"
+        },
+        "holder": "mention:r1:31:36",
+        "speaker": "mention:r1:31:36",
+        "addressee": null,
+        "mode": "quoted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": [
+          "r1"
+        ]
+      },
+      {
+        "subject": "mention:r1:46:60",
+        "predicate": "concept.definition",
+        "object": {
+          "kind": "literal",
+          "value": "liquid moving upward through narrow spaces"
+        },
+        "holder": "mention:r1:31:36",
+        "speaker": "mention:r1:31:36",
+        "addressee": null,
+        "mode": "quoted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": [
+          "r1"
+        ]
+      },
+      {
+        "subject": "mention:r1:46:60",
+        "predicate": "concept.definition",
+        "object": {
+          "kind": "literal",
+          "value": "liquid moving upward through narrow spaces."
+        },
+        "holder": "mention:r1:31:36",
+        "speaker": "mention:r1:31:36",
+        "addressee": null,
+        "mode": "quoted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": [
+          "r1"
+        ]
+      },
+      {
+        "subject": "mention:r1:46:60",
+        "predicate": "concept.definition",
+        "object": {
+          "kind": "literal",
+          "value": "Liquid moving upward through narrow spaces"
+        },
+        "holder": "mention:r1:31:36",
+        "speaker": "mention:r1:31:36",
+        "addressee": null,
+        "mode": "quoted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": [
+          "r1"
+        ]
+      },
+      {
+        "subject": "mention:r1:46:60",
+        "predicate": "concept.definition",
+        "object": {
+          "kind": "literal",
+          "value": "Liquid moving upward through narrow spaces."
+        },
+        "holder": "mention:r1:31:36",
+        "speaker": "mention:r1:31:36",
+        "addressee": null,
+        "mode": "quoted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": [
+          "r1"
+        ]
+      },
+      {
+        "subject": "mention:r1:46:60",
+        "predicate": "world.kind",
+        "object": {
+          "kind": "vocabulary",
+          "value": "world/concept"
+        },
+        "holder": null,
+        "speaker": "mention:r1:31:36",
+        "addressee": null,
+        "mode": "quoted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": [
+          "r1"
+        ]
+      },
+      {
+        "subject": "mention:r1:46:60",
+        "predicate": "concept.label",
+        "object": {
+          "kind": "literal",
+          "value": "Capillary rise"
+        },
+        "holder": null,
+        "speaker": "mention:r1:31:36",
+        "addressee": null,
+        "mode": "quoted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": [
+          "r1"
+        ]
+      },
+      {
+        "subject": "mention:r1:46:60",
+        "predicate": "concept.definition",
+        "object": {
+          "kind": "literal",
+          "value": "liquid moving upward through narrow spaces"
+        },
+        "holder": null,
+        "speaker": "mention:r1:31:36",
+        "addressee": null,
+        "mode": "quoted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": [
+          "r1"
+        ]
+      },
+      {
+        "subject": "mention:r1:46:60",
+        "predicate": "concept.definition",
+        "object": {
+          "kind": "literal",
+          "value": "liquid moving upward through narrow spaces."
+        },
+        "holder": null,
+        "speaker": "mention:r1:31:36",
+        "addressee": null,
+        "mode": "quoted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": [
+          "r1"
+        ]
+      },
+      {
+        "subject": "mention:r1:46:60",
+        "predicate": "concept.definition",
+        "object": {
+          "kind": "literal",
+          "value": "Liquid moving upward through narrow spaces"
+        },
+        "holder": null,
+        "speaker": "mention:r1:31:36",
+        "addressee": null,
+        "mode": "quoted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": [
+          "r1"
+        ]
+      },
+      {
+        "subject": "mention:r1:46:60",
+        "predicate": "concept.definition",
+        "object": {
+          "kind": "literal",
+          "value": "Liquid moving upward through narrow spaces."
+        },
+        "holder": null,
+        "speaker": "mention:r1:31:36",
+        "addressee": null,
+        "mode": "quoted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": [
+          "r1"
+        ]
+      }
+    ],
+    "references": [],
+    "ordinary_nominations": "bounded"
+  },
+  {
+    "id": "person-single-reading-exposure-v4",
+    "kind": "person",
+    "family": "positive",
+    "records": [
+      {
+        "id": "r1",
+        "text": "A reading log for the structured person Jori records opening one introductory article about the concept Dye diffusion. This single view is a weak signal of possible interest, not a demonstration of understanding, professional competence, or a lasting trait. No observation time is recorded.",
+        "subjects": [
+          {
+            "id": "reader",
+            "quote": "Jori"
+          },
+          {
+            "id": "topic",
+            "quote": "Dye diffusion"
+          }
+        ]
+      }
+    ],
+    "required": [
+      [
+        {
+          "subject": "supplied:reader",
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/person"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:reader",
+          "predicate": "person.label",
+          "object": {
+            "kind": "literal",
+            "value": "Jori"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "entity:topic",
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/concept"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "entity:topic",
+          "predicate": "concept.label",
+          "object": {
+            "kind": "literal",
+            "value": "Dye diffusion"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:reader",
+          "predicate": "person.interest",
+          "object": {
+            "kind": "subject",
+            "value": "entity:topic"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "uncertain",
+          "interpretation": "inferred",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ]
+    ],
+    "optional": [
+      {
+        "subject": "supplied:reader",
+        "predicate": "learning.exposure",
+        "object": {
+          "kind": "subject",
+          "value": "entity:topic"
+        },
+        "holder": null,
+        "speaker": null,
+        "addressee": null,
+        "mode": "asserted",
+        "interpretation": "explicit",
+        "context": [],
+        "polarity": "positive",
+        "valid_from": null,
+        "valid_to": null,
+        "temporal_basis": "unknown",
+        "citations": [
+          "r1"
+        ],
+        "perspective_citations": []
+      }
+    ],
+    "references": [
+      {
+        "key": "entity:topic",
+        "refs": [
+          "supplied:topic",
+          "mention:r1:104:117"
+        ]
+      }
+    ],
+    "ordinary_nominations": "bounded"
+  },
+  {
+    "id": "person-relationship-exclusive-interval-v4",
+    "kind": "person",
+    "family": "time",
+    "records": [
+      {
+        "id": "r1",
+        "text": "The personnel record identifies the structured people Avel and Brin. It records that the former was a colleague of the latter from 2028-02-11T09:00:00Z until the exclusive end 2028-03-04T18:00:00Z. That interval applies to the relationship, not to their identities.",
+        "subjects": [
+          {
+            "id": "left",
+            "quote": "Avel"
+          },
+          {
+            "id": "right",
+            "quote": "Brin"
+          }
+        ]
+      }
+    ],
+    "required": [
+      [
+        {
+          "subject": "supplied:left",
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/person"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:left",
+          "predicate": "person.label",
+          "object": {
+            "kind": "literal",
+            "value": "Avel"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:right",
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/person"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:right",
+          "predicate": "person.label",
+          "object": {
+            "kind": "literal",
+            "value": "Brin"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ],
+      [
+        {
+          "subject": "supplied:left",
+          "predicate": "relationship.with",
+          "object": {
+            "kind": "subject",
+            "value": "supplied:right"
+          },
+          "holder": null,
+          "speaker": null,
+          "addressee": null,
+          "mode": "asserted",
+          "interpretation": "explicit",
+          "context": [],
+          "polarity": "positive",
+          "valid_from": "2028-02-11T09:00:00.000Z",
+          "valid_to": "2028-03-04T18:00:00.000Z",
+          "temporal_basis": "explicit",
+          "citations": [
+            "r1"
+          ],
+          "perspective_citations": []
+        }
+      ]
+    ],
+    "optional": [],
+    "references": [],
+    "ordinary_nominations": "bounded"
+  }
+]

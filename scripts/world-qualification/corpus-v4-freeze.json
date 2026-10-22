@@ -1,0 +1,52 @@
+{
+  "schema": "kizuki.world-qualification-corpus-freeze/v1",
+  "frozen_at": "2026-10-21T14:26:28.541Z",
+  "status": "authored_pre_observation_not_execution_approved",
+  "version": "world-kinds-20261021-v4-person",
+  "new_person_model_observations_at_freeze": 0,
+  "new_person_cases": 7,
+  "retained_v3_cases": 55,
+  "runner_base_commit": "7cc25ebda7b9e1e274d576953a6c9f697e964f73",
+  "corpus_sha256": "2d1eb21504325a0ad588a7bd4d50180208840b33fb4e947fd7d10d2940115efe",
+  "person_file_sha256": "53c6b9e1c1cdebd9fb423cad024a61665b7220e0e0e4a81b213cd2bdc75b1215",
+  "retained_v3_file_sha256": "7cf94958815f75b892652849a4e824cc8e70ff0771e3614d5879f2bb5d7278ba",
+  "authoring_registry_sha256": "9aec3c141363eaad29042928d41102522ab4f7a86363f7d03a47dd8461052803",
+  "authoring_prompt_file_sha256": "dc6515582863c191e40425145d20133237e19914e2e824ca68ae9180776b9947",
+  "fresh_cases": [
+    {
+      "id": "person-workshop-role-boundary-v4",
+      "case_sha256": "65bee73da4139adf91c385181194fd34d63bbe7035071d271a9ae73bf9335497",
+      "prompt_sha256": "44ba90db26a014e1776b87573eee8cdc5902a5d46099ae76b57029929d380b15"
+    },
+    {
+      "id": "person-register-with-disputed-testimony-v4",
+      "case_sha256": "649395dab67e35faed9b9ad10a91e2c8edc96210a85f82c2fffb6b86c4771a80",
+      "prompt_sha256": "44ba90db26a014e1776b87573eee8cdc5902a5d46099ae76b57029929d380b15"
+    },
+    {
+      "id": "person-template-cannot-supply-identity-v4",
+      "case_sha256": "a86847e9402e859f556aa2f243bf09e389922291c6647dd16d7d452dc8ed09c2",
+      "prompt_sha256": "44ba90db26a014e1776b87573eee8cdc5902a5d46099ae76b57029929d380b15"
+    },
+    {
+      "id": "person-independent-roster-homonyms-v4",
+      "case_sha256": "4cb3dd74397fac8698d40ff0ecab52f53188c5b64495b68b75b0c067bf1550bd",
+      "prompt_sha256": "44ba90db26a014e1776b87573eee8cdc5902a5d46099ae76b57029929d380b15"
+    },
+    {
+      "id": "person-transcript-attribution-only-v4",
+      "case_sha256": "2c8672276aaf14e9fa6ad0a2623368121f114dd6878d0e7b5f2ddc6ffba4739e",
+      "prompt_sha256": "44ba90db26a014e1776b87573eee8cdc5902a5d46099ae76b57029929d380b15"
+    },
+    {
+      "id": "person-single-reading-exposure-v4",
+      "case_sha256": "2a7c233d39bf8449709e6ec74c5c33ae7f744f5aa0d31cbfef5c1c35c7aab00d",
+      "prompt_sha256": "44ba90db26a014e1776b87573eee8cdc5902a5d46099ae76b57029929d380b15"
+    },
+    {
+      "id": "person-relationship-exclusive-interval-v4",
+      "case_sha256": "329eaa7d5813f57b04e85551a5509829c72f96b463cf4cdd469f13f2ee7f0720",
+      "prompt_sha256": "44ba90db26a014e1776b87573eee8cdc5902a5d46099ae76b57029929d380b15"
+    }
+  ]
+}

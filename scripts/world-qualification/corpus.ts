@@ -1,2 +1,2 @@
-/** Current fresh split. Earlier reports retain their original immutable corpus bytes. */
-export { qualificationCorpus } from "./corpus-v3";
+/** Current composition: fresh Person split plus unchanged non-Person v3 cases. */
+export { qualificationCorpus } from "./corpus-v4";
