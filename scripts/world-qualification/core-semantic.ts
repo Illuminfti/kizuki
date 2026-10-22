@@ -9,6 +9,7 @@ import type { WorldRegistry } from "../../packages/core/src/contracts/world-kind
 import { withWorldRegistry } from "../../packages/core/src/contracts/world-vocabulary";
 import { worldProduceInput } from "../../packages/core/src/serve/extract-v2";
 import { PREDICATE_REGISTRY } from "../../packages/core/src/claims/predicates";
+import { isPlainObject } from "../../packages/core/src/util/validate";
 import { canonicalJson, sha256 } from "../evaluate-extraction";
 import corpusJson from "./core-semantic-corpus.json";
 import contractJson from "./core-semantic-contract.json";
@@ -24,27 +25,44 @@ type Category = "positive" | "reported" | "historical" | "name_negative" | "temp
 type SourceType = "direct_record" | "person_statement" | "document_report";
 export interface CoreSemanticRecord { id: string; text: string; subjects: { id: string; quote: string }[] }
 export interface CoreSemanticCase { id: string; kind: "concept" | "situation"; category: Category; source_type: SourceType; records: CoreSemanticRecord[] }
-interface CoreSemanticCorpus { schema: string; synthetic: true; split: "held_out"; version: string; cases: CoreSemanticCase[] }
+export interface CoreSemanticCorpus { schema: string; synthetic: true; split: "held_out"; version: string; cases: CoreSemanticCase[] }
 type TimeRule = "unknown" | { valid_from: string; valid_to: string; temporal_basis: "explicit"; witness: string };
 type PerspectiveRule = "direct" | "person_statement" | "document_report";
 interface MentionRule { mode: "mention"; record: string; quote: string; label: string; attribution_witness: string }
 type SourceRule = string | MentionRule;
-interface PropositionRule { witness: string; perspective: PerspectiveRule; source?: SourceRule; equivalent_mention?: MentionRule; attribution_witness?: string; time: TimeRule }
-interface DetailRule extends PropositionRule { predicate: string; object_kind: "literal"; required_atoms: string[] }
+export interface PropositionRule { witness: string; perspective: PerspectiveRule; source?: SourceRule; equivalent_mention?: MentionRule; attribution_witness?: string; time: TimeRule }
+export interface DetailRule extends PropositionRule { predicate: string; object_kind: "literal"; required_atoms: string[] }
 interface TargetRule { mode: "mention"; record: string; quote: string }
-interface ExtractRule {
+interface LegacyExtractRule {
   case_id: string; expectation: "extract"; target: TargetRule;
   classification: PropositionRule & { kind: "world/concept" | "world/situation"; label: string };
   label_alternatives?: PropositionRule[];
+  label_rule?: LabelRule;
   details: DetailRule[]; forbidden_assertions: string[];
 }
-interface AbstainRule { case_id: string; expectation: "abstain"; forbidden_assertions: string[] }
-interface CoreSemanticContract { schema: string; protocol: string; corpus_version: string; legacy_extra_policy: { forbidden_predicates: string[] }; cases: (ExtractRule | AbstainRule)[] }
+export interface LabelRule extends PropositionRule { value: string; naming: "explicit" | "source_description"; naming_witness?: string }
+export interface CoreSemanticExtractBranch extends Omit<LegacyExtractRule, "case_id" | "expectation"> { id: string }
+interface BranchedExtractRule { case_id: string; expectation: "extract"; branches: CoreSemanticExtractBranch[] }
+type ExtractRule = LegacyExtractRule | BranchedExtractRule;
+export interface AbstainRule { case_id: string; expectation: "abstain"; forbidden_assertions: string[] }
+export interface CoreSemanticContract { schema: string; protocol: string; corpus_version: string; legacy_extra_policy: { forbidden_predicates: string[] }; cases: (ExtractRule | AbstainRule)[] }
 
 export const coreSemanticCorpus = corpusJson as CoreSemanticCorpus;
 export const coreSemanticContract = contractJson as CoreSemanticContract;
 export const coreSemanticCorpusSha256 = freeze.files["core-semantic-corpus.json"].sha256;
 export const coreSemanticContractSha256 = freeze.files["core-semantic-contract.json"].sha256;
+export const CORE_SEMANTIC_REPRESENTATION_METHOD = "complete-authored-branches/v1" as const;
+export function coreSemanticBranches(rule: ExtractRule): readonly CoreSemanticExtractBranch[] {
+  if ("branches" in rule) return rule.branches;
+  const { case_id: _case, expectation: _expectation, ...branch } = rule;
+  return [{ id: "legacy-primary", ...branch }];
+}
+export function coreSemanticBranchRule(case_id: string, branch: CoreSemanticExtractBranch): LegacyExtractRule {
+  const { id: _id, ...fields } = branch;
+  return { case_id, expectation: "extract", ...fields };
+}
+export const coreSemanticRulePredicates = (rule: ExtractRule | AbstainRule): readonly string[] => rule.expectation === "abstain" ? [] :
+  [...new Set(coreSemanticBranches(rule).flatMap(branch => ["world.kind", `${branch.classification.kind.slice(6)}.label`, ...branch.details.map(detail => detail.predicate)]))];
 const eventId = (index: number) => String(index + 1).padStart(26, "0");
 const normalized = (value: string) => value.normalize("NFC").trim().replace(/\s+/g, " ");
 const legacyPredicates = new Set(PREDICATE_REGISTRY.map(row => row.id));
@@ -56,63 +74,118 @@ function span(record: CoreSemanticRecord, quote: string) {
   return { event_id: "", start_utf16: start, end_utf16: start + quote.length };
 }
 
+function validateAuthoredBranch(item: CoreSemanticCase, branch: CoreSemanticExtractBranch): void {
+  const exact = (value: unknown, required: readonly string[], optional: readonly string[] = []) => isPlainObject(value) &&
+    required.every(key => Object.hasOwn(value, key)) && Object.keys(value).every(key => [...required, ...optional].includes(key));
+  const text = (value: unknown, max = 1_000): value is string => typeof value === "string" && value.length > 0 && value.length <= max && value.trim() === value;
+  const proposition = (value: PropositionRule, extra: readonly string[], optional: readonly string[] = []) => {
+    if (!exact(value, ["witness", "perspective", "time", ...extra], ["source", "equivalent_mention", "attribution_witness", ...optional]) ||
+        !text(value.witness, 8_000) || !["direct", "person_statement", "document_report"].includes(value.perspective) ||
+        (value.time !== "unknown" && !exact(value.time, ["valid_from", "valid_to", "temporal_basis", "witness"]))) throw new Error("invalid authored proposition");
+    for (const source of [value.source, value.equivalent_mention]) if (source !== undefined && typeof source !== "string" &&
+        !exact(source, ["mode", "record", "quote", "label", "attribution_witness"])) throw new Error("invalid authored source");
+  };
+  if (!exact(branch, ["id", "target", "classification", "label_rule", "details", "forbidden_assertions"]) ||
+      !exact(branch.target, ["mode", "record", "quote"]) || !text(branch.target.quote, 8_000) ||
+      !Array.isArray(branch.details) || branch.details.length < 1 || branch.details.length > 4 ||
+      !Array.isArray(branch.forbidden_assertions) || branch.forbidden_assertions.length < 1 || branch.forbidden_assertions.length > 32 ||
+      branch.forbidden_assertions.some(value => !text(value)) || new Set(branch.forbidden_assertions).size !== branch.forbidden_assertions.length)
+    throw new Error("invalid authored representation branch");
+  proposition(branch.classification, ["kind", "label"]);
+  const label = branch.label_rule;
+  if (!label || !text(label.value) || label.value !== branch.classification.label || label.value !== branch.target.quote ||
+      !["explicit", "source_description"].includes(label.naming)) throw new Error("invalid authored label");
+  proposition(label, ["value", "naming"], ["naming_witness"]);
+  const record = item.records.find(row => row.id === branch.target.record);
+  if (!record || !label.witness.includes(branch.target.quote)) throw new Error("unbound authored label");
+  if (label.naming === "explicit") {
+    if (!text(label.naming_witness, 8_000) || !label.naming_witness.includes(branch.target.quote)) throw new Error("missing naming witness");
+    span(record, label.naming_witness);
+  } else if (item.kind !== "situation" || label.naming_witness !== undefined || label.perspective !== "document_report" ||
+      label.time === "unknown" || canonicalJson(label.time) !== canonicalJson(branch.classification.time) ||
+      branch.details.some(detail => detail.perspective !== "document_report" || canonicalJson(detail.source) !== canonicalJson(label.source) ||
+        canonicalJson(detail.time) !== canonicalJson(label.time))) throw new Error("unbound descriptive situation label");
+  for (const detail of branch.details) {
+    proposition(detail, ["predicate", "object_kind", "required_atoms"]);
+    if (!detail.predicate.startsWith(`${item.kind}.`) || detail.predicate === `${item.kind}.label` ||
+        !Array.isArray(detail.required_atoms) || detail.required_atoms.length < 1 || detail.required_atoms.length > 16 ||
+        detail.required_atoms.some(atom => !text(atom)) || new Set(detail.required_atoms).size !== detail.required_atoms.length)
+      throw new Error("invalid authored detail atoms");
+  }
+}
+
 /** Frozen before calls; no observed answer can add an atom, alternative, or case. */
 export function validateCoreSemanticAssets(): void {
   for (const name of ["core-semantic-corpus.json", "core-semantic-contract.json", "core-semantic.md"] as const) {
     const bytes = readFileSync(new URL(name, import.meta.url)), pin = freeze.files[name];
     if (bytes.length !== pin.bytes || sha256(bytes) !== pin.sha256) throw new Error("core semantic asset changed");
   }
+  validateCoreSemanticContract(coreSemanticCorpus, coreSemanticContract);
+}
+
+/** Static author checks run before any observation; branches never come from responses. */
+export function validateCoreSemanticContract(corpus: CoreSemanticCorpus, contract: CoreSemanticContract): void {
   const categories: Category[] = ["positive", "reported", "historical", "name_negative", "template_negative", "hypothetical_negative"];
-  if (coreSemanticCorpus.schema !== "kizuki.core-semantic-corpus/v1" || coreSemanticCorpus.synthetic !== true || coreSemanticCorpus.split !== "held_out" ||
-      coreSemanticContract.schema !== "kizuki.core-semantic-contract/v1" || coreSemanticContract.protocol !== CORE_SEMANTIC_PROTOCOL || coreSemanticContract.corpus_version !== coreSemanticCorpus.version ||
-      canonicalJson(coreSemanticContract.legacy_extra_policy.forbidden_predicates) !== canonicalJson(forbiddenLegacyPredicates) ||
-      coreSemanticCorpus.cases.length !== 12 || coreSemanticContract.cases.length !== 12 ||
-      canonicalJson(coreSemanticCorpus.cases.map(row => row.id)) !== canonicalJson(coreSemanticContract.cases.map(row => row.case_id))) throw new Error("invalid core semantic assets");
-  for (const kind of ["concept", "situation"] as const) if (canonicalJson(coreSemanticCorpus.cases.filter(row => row.kind === kind).map(row => row.category)) !== canonicalJson(categories)) throw new Error("invalid core semantic coverage");
-  for (const item of coreSemanticCorpus.cases) {
+  if (corpus.schema !== "kizuki.core-semantic-corpus/v1" || corpus.synthetic !== true || corpus.split !== "held_out" ||
+      !["kizuki.core-semantic-contract/v1", "kizuki.core-semantic-contract/v2"].includes(contract.schema) || contract.protocol !== CORE_SEMANTIC_PROTOCOL || contract.corpus_version !== corpus.version ||
+      canonicalJson(contract.legacy_extra_policy.forbidden_predicates) !== canonicalJson(forbiddenLegacyPredicates) ||
+      corpus.cases.length !== 12 || contract.cases.length !== 12 || new Set(corpus.cases.map(row => row.id)).size !== 12 ||
+      new Set(contract.cases.map(row => row.case_id)).size !== 12 ||
+      canonicalJson(corpus.cases.map(row => row.id)) !== canonicalJson(contract.cases.map(row => row.case_id))) throw new Error("invalid core semantic assets");
+  for (const kind of ["concept", "situation"] as const) if (canonicalJson(corpus.cases.filter(row => row.kind === kind).map(row => row.category)) !== canonicalJson(categories)) throw new Error("invalid core semantic coverage");
+  for (const item of corpus.cases) {
     if (!/^[a-z0-9-]{1,80}$/.test(item.id) || item.records.length !== 1 || item.records[0]!.text.length > 8_000 || new Set(item.records[0]!.subjects.map(row => row.id)).size !== item.records[0]!.subjects.length) throw new Error("invalid core semantic case");
     for (const subject of item.records[0]!.subjects) span(item.records[0]!, subject.quote);
-    const rule = coreSemanticContract.cases.find(row => row.case_id === item.id)!;
+    const rule = contract.cases.find(row => row.case_id === item.id)!;
     if ((item.category.endsWith("negative")) !== (rule.expectation === "abstain")) throw new Error("core semantic expectation mismatch");
     if (rule.expectation === "extract") {
-      const subjectIds = new Set(item.records[0]!.subjects.map(row => row.id));
-      const targetRecord = item.records.find(record => record.id === rule.target.record);
-      if (rule.target.mode !== "mention" || targetRecord === undefined || targetRecord.subjects.some(subject => subject.quote === rule.target.quote) || span(targetRecord, rule.target.quote).end_utf16 <= 0 ||
-          rule.details.length < 1 || rule.details.length > 4 || new Set(rule.details.map(row => row.predicate)).size !== rule.details.length ||
-          rule.classification.kind !== `world/${item.kind}` || rule.details.some(row => row.object_kind !== "literal" || row.required_atoms.length < 1)) throw new Error("invalid core semantic extraction rule");
-      for (const proposition of [rule.classification, ...(rule.label_alternatives ?? []), ...rule.details]) {
-        span(item.records[0]!, proposition.witness);
-        if (proposition.perspective === "direct") { if (proposition.source !== undefined) throw new Error("invalid core semantic attribution rule"); }
-        else if (proposition.source === undefined) throw new Error("invalid core semantic attribution rule");
-        else if (typeof proposition.source === "string") { if (!subjectIds.has(proposition.source)) throw new Error("invalid core semantic attribution rule"); }
-        else {
-          const source = proposition.source, sourceRecord = item.records.find(record => record.id === source.record);
-          if (source.mode !== "mention" || sourceRecord === undefined || sourceRecord.subjects.some(subject => subject.quote === source.quote) ||
-              span(sourceRecord, source.quote).end_utf16 <= 0 || span(sourceRecord, source.attribution_witness).end_utf16 <= 0 ||
-              normalized(source.label).length === 0) throw new Error("invalid core semantic attribution rule");
+      const branches = coreSemanticBranches(rule);
+      if (branches.length < 1 || branches.length > 3 || new Set(branches.map(branch => branch.id)).size !== branches.length ||
+          branches.some(branch => !/^[a-z][a-z0-9-]{0,63}$/.test(branch.id)) ||
+          (contract.schema === "kizuki.core-semantic-contract/v2" && (!("branches" in rule) ||
+            Object.keys(rule).sort().join() !== ["branches", "case_id", "expectation"].sort().join()))) throw new Error("invalid core semantic representation branches");
+      for (const branch of branches) {
+        const rule = coreSemanticBranchRule(item.id, branch);
+        if (contract.schema === "kizuki.core-semantic-contract/v2") validateAuthoredBranch(item, branch);
+        const subjectIds = new Set(item.records[0]!.subjects.map(row => row.id));
+        const targetRecord = item.records.find(record => record.id === rule.target.record);
+        if (rule.target.mode !== "mention" || targetRecord === undefined || targetRecord.subjects.some(subject => subject.quote === rule.target.quote) || span(targetRecord, rule.target.quote).end_utf16 <= 0 ||
+            rule.details.length < 1 || rule.details.length > 4 || new Set(rule.details.map(row => row.predicate)).size !== rule.details.length ||
+            rule.classification.kind !== `world/${item.kind}` || rule.details.some(row => row.object_kind !== "literal" || row.required_atoms.length < 1)) throw new Error("invalid core semantic extraction rule");
+        for (const proposition of [rule.classification, ...(rule.label_alternatives ?? []), ...(rule.label_rule ? [rule.label_rule] : []), ...rule.details]) {
+          span(item.records[0]!, proposition.witness);
+          if (proposition.perspective === "direct") { if (proposition.source !== undefined) throw new Error("invalid core semantic attribution rule"); }
+          else if (proposition.source === undefined) throw new Error("invalid core semantic attribution rule");
+          else if (typeof proposition.source === "string") { if (!subjectIds.has(proposition.source)) throw new Error("invalid core semantic attribution rule"); }
+          else {
+            const source = proposition.source, sourceRecord = item.records.find(record => record.id === source.record);
+            if (source.mode !== "mention" || sourceRecord === undefined || sourceRecord.subjects.some(subject => subject.quote === source.quote) ||
+                span(sourceRecord, source.quote).end_utf16 <= 0 || span(sourceRecord, source.attribution_witness).end_utf16 <= 0 ||
+                normalized(source.label).length === 0) throw new Error("invalid core semantic attribution rule");
+          }
+          if (proposition.equivalent_mention !== undefined) {
+            const source = proposition.equivalent_mention, record = item.records.find(row => row.id === source.record);
+            if (typeof proposition.source !== "string" || source.mode !== "mention" || record === undefined ||
+                span(record, source.quote).end_utf16 <= 0 || span(record, source.attribution_witness).end_utf16 <= 0 ||
+                normalized(source.label).length === 0) throw new Error("invalid equivalent attribution ref");
+            const supplied = record.subjects.find(row => row.id === proposition.source);
+            const occurrence = span(record, source.quote), suppliedSpan = supplied === undefined ? null : span(record, supplied.quote);
+            if (suppliedSpan === null || occurrence.start_utf16 < suppliedSpan.start_utf16 || occurrence.end_utf16 > suppliedSpan.end_utf16) throw new Error("unrelated equivalent attribution ref");
+          }
+          const roleWitness = proposition.attribution_witness ?? (typeof proposition.source === "object" ? proposition.source.attribution_witness : undefined);
+          if (proposition.perspective !== "direct" && roleWitness === undefined) throw new Error("missing attribution role witness");
+          if (roleWitness !== undefined) span(item.records[0]!, roleWitness);
+          if (proposition.time !== "unknown" && (!(Date.parse(proposition.time.valid_from) < Date.parse(proposition.time.valid_to)) || proposition.time.temporal_basis !== "explicit" ||
+              new Date(proposition.time.valid_from).toISOString() !== proposition.time.valid_from || new Date(proposition.time.valid_to).toISOString() !== proposition.time.valid_to ||
+              span(item.records[0]!, proposition.time.witness).end_utf16 <= 0)) throw new Error("invalid core semantic time rule");
         }
-        if (proposition.equivalent_mention !== undefined) {
-          const source = proposition.equivalent_mention, record = item.records.find(row => row.id === source.record);
-          if (typeof proposition.source !== "string" || source.mode !== "mention" || record === undefined ||
-              span(record, source.quote).end_utf16 <= 0 || span(record, source.attribution_witness).end_utf16 <= 0 ||
-              normalized(source.label).length === 0) throw new Error("invalid equivalent attribution ref");
-          const supplied = record.subjects.find(row => row.id === proposition.source);
-          const occurrence = span(record, source.quote), suppliedSpan = supplied === undefined ? null : span(record, supplied.quote);
-          if (suppliedSpan === null || occurrence.start_utf16 < suppliedSpan.start_utf16 || occurrence.end_utf16 > suppliedSpan.end_utf16) throw new Error("unrelated equivalent attribution ref");
-        }
-        const roleWitness = proposition.attribution_witness ?? (typeof proposition.source === "object" ? proposition.source.attribution_witness : undefined);
-        if (proposition.perspective !== "direct" && roleWitness === undefined) throw new Error("missing attribution role witness");
-        if (roleWitness !== undefined) span(item.records[0]!, roleWitness);
-        if (proposition.time !== "unknown" && (!(Date.parse(proposition.time.valid_from) < Date.parse(proposition.time.valid_to)) || proposition.time.temporal_basis !== "explicit" ||
-            new Date(proposition.time.valid_from).toISOString() !== proposition.time.valid_from || new Date(proposition.time.valid_to).toISOString() !== proposition.time.valid_to ||
-            span(item.records[0]!, proposition.time.witness).end_utf16 <= 0)) throw new Error("invalid core semantic time rule");
+        const expectedPerspective = item.category === "reported" ? "person_statement" : item.category === "historical" ? "document_report" : "direct";
+        if (rule.classification.perspective !== "direct" || rule.details.some(row => row.perspective !== expectedPerspective)) throw new Error("core semantic source role mismatch");
+        if (rule.label_alternatives !== undefined && (item.category !== "historical" || ![1, 2].includes(rule.label_alternatives.length) ||
+            (rule.label_alternatives.length === 2 && rule.label_alternatives[0]!.perspective !== "direct") ||
+            rule.label_alternatives.at(-1)!.perspective !== "document_report" ||
+            rule.label_alternatives.some(row => canonicalJson(row.time) !== canonicalJson(rule.classification.time)))) throw new Error("invalid label alternatives");
       }
-      const expectedPerspective = item.category === "reported" ? "person_statement" : item.category === "historical" ? "document_report" : "direct";
-      if (rule.classification.perspective !== "direct" || rule.details.some(row => row.perspective !== expectedPerspective)) throw new Error("core semantic source role mismatch");
-      if (rule.label_alternatives !== undefined && (item.category !== "historical" || ![1, 2].includes(rule.label_alternatives.length) ||
-          (rule.label_alternatives.length === 2 && rule.label_alternatives[0]!.perspective !== "direct") ||
-          rule.label_alternatives.at(-1)!.perspective !== "document_report" ||
-          rule.label_alternatives.some(row => canonicalJson(row.time) !== canonicalJson(rule.classification.time)))) throw new Error("invalid label alternatives");
     }
   }
 }
@@ -280,7 +353,7 @@ function sourceKey(rule: PropositionRule, item: CoreSemanticCase, response: NonN
   return matches.length === 1 ? `mention:${matches[0]!.id}` : null;
 }
 
-function scoreCoreSemanticCase(item: CoreSemanticCase, rule: ExtractRule | AbstainRule, observed: Observation | undefined, registry: WorldRegistry, policy: QualificationInputPolicy, prepared?: ReadonlyMap<string, readonly TextAnchor[]>) {
+export function scoreCoreSemanticCase(item: CoreSemanticCase, rule: LegacyExtractRule | AbstainRule, observed: Observation | undefined, registry: WorldRegistry, policy: QualificationInputPolicy, prepared?: ReadonlyMap<string, readonly TextAnchor[]>) {
   const gates = { observation: [] as string[], schema: [] as string[], usage: [] as string[], abstention: [] as string[], structure: [] as string[], attribution: [] as string[], time: [] as string[] };
   let legacyExtras: RichClaimDraft[] = [];
   if (observed === undefined) gates.observation.push("not_run");
@@ -310,10 +383,10 @@ function scoreCoreSemanticCase(item: CoreSemanticCase, rule: ExtractRule | Absta
             new Set(typedClaims.map(claim => rawRefKey(claim.subject))).size !== 1) gates.structure.push("target_mismatch");
         const classification = typedClaims.find(row => row.predicate === "world.kind"), label = typedClaims.find(row => row.predicate === labelPredicate);
         if (!classification || classification.object.kind !== "vocabulary" || classification.object.ref.id !== rule.classification.kind || classification.polarity !== "positive") gates.structure.push("classification_mismatch");
-        if (!label || label.object.kind !== "literal" || normalized(label.object.value) !== rule.classification.label || label.polarity !== "positive" ||
+        if (!label || label.object.kind !== "literal" || (rule.label_rule?.naming === "source_description" ? label.object.value !== rule.label_rule.value : normalized(label.object.value) !== rule.classification.label) || label.polarity !== "positive" ||
             !label.anchors.some(anchor => canonicalJson(anchor) === canonicalJson(targetAnchor))) gates.structure.push("label_mismatch");
         for (const claim of [classification, label]) if (claim) {
-          const alternatives = claim === label ? rule.label_alternatives ?? [rule.classification] : [rule.classification];
+          const alternatives = claim === label ? rule.label_rule ? [rule.label_rule] : rule.label_alternatives ?? [rule.classification] : [rule.classification];
           if (!alternatives.some(proposition => propositionMatches(claim, proposition, item, observed.response!, observed.input, prepared?.get(claim.id)))) gates.attribution.push(`${claim.predicate}:perspective`);
           if (!alternatives.some(proposition => exactTime(claim, proposition.time))) gates.time.push(`${claim.predicate}:time`);
         }
@@ -339,15 +412,35 @@ function scoreCoreSemanticCase(item: CoreSemanticCase, rule: ExtractRule | Absta
         forbidden_assertions: rule.forbidden_assertions } };
 }
 
+/** Every candidate runs the same closed scorer. Selection never joins partial branches. */
+export function scoreCoreSemanticRepresentations(item: CoreSemanticCase, rule: ExtractRule | AbstainRule, observed: Observation | undefined,
+  registry: WorldRegistry, policy: QualificationInputPolicy, prepared?: ReadonlyMap<string, readonly TextAnchor[]>) {
+  const branches = rule.expectation === "abstain" ? [] : coreSemanticBranches(rule);
+  const candidates = rule.expectation === "abstain"
+    ? [scoreCoreSemanticCase(item, rule, observed, registry, policy, prepared)]
+    : branches.map(branch => scoreCoreSemanticCase(item, coreSemanticBranchRule(item.id, branch), observed, registry, policy, prepared));
+  const index = candidates.findIndex(candidate => candidate.automated_passed), score = candidates[index < 0 ? 0 : index]!;
+  const branch = rule.expectation === "extract" && index >= 0 ? branches[index]! : null;
+  const binding = { selected_branch_id: branch?.id ?? null, selected_branch_sha256: branch === null ? null : sha256(canonicalJson(branch)),
+    selected_branch: branch === null ? null : structuredClone(branch) };
+  const representation = rule.expectation === "extract" && index < 0 ? ["no_complete_representation_branch"] : [];
+  return { ...score, ...binding, automated_passed: score.automated_passed && representation.length === 0,
+    gates: { ...score.gates, representation },
+    branch_results: branches.map((branch, candidate) => ({ branch_id: branch.id, branch_sha256: sha256(canonicalJson(branch)),
+      automated_passed: candidates[candidate]!.automated_passed, gates: candidates[candidate]!.gates })),
+    manual_review: { ...score.manual_review, ...binding } };
+}
+
 export function scoreCoreSemanticRun(observations: readonly Observation[], registry: WorldRegistry, evidence: CoreSemanticEvidence) {
   const policy = validateQualificationInputPolicy(evidence.input_policy);
   if (new Set(observations.map(row => row.case_id)).size !== observations.length || observations.some(row => !coreSemanticCorpus.cases.some(item => item.id === row.case_id))) throw new Error("unknown or duplicate core semantic observation");
   const cases = coreSemanticCorpus.cases.map(item => {
     const observed = observations.find(row => row.case_id === item.id), rule = coreSemanticContract.cases.find(row => row.case_id === item.id)!;
-    const raw = scoreCoreSemanticCase(item, rule, observed, registry, policy);
     const pipeline = observed?.response ? prepareCoreSemanticObservation(observed, registry) : null;
     const anchors = new Map(pipeline?.drafts.map((draft,index) => [observed!.response!.claims[index]?.id ?? "", draft.semantic.perspective.anchors]));
-    const prepared = scoreCoreSemanticCase(item, rule, observed, registry, policy, anchors);
+    const prepared = scoreCoreSemanticRepresentations(item, rule, observed, registry, policy, anchors);
+    const diagnosticBranch = rule.expectation === "extract" ? prepared.selected_branch ?? coreSemanticBranches(rule)[0]! : null;
+    const raw = scoreCoreSemanticCase(item, rule.expectation === "abstain" ? rule : coreSemanticBranchRule(item.id, diagnosticBranch!), observed, registry, policy);
     const matches = evidence.traces.filter(row => row.case_id === item.id), transportSha = matches.length === 1 ? matches[0]!.response_sha256 : null;
     const modelResponseSha = matches.length === 1 ? matches[0]!.model_response_sha256 : null;
     const custody = inspectCoreSemanticWireEvidence({ case_id: item.id, input: observed?.input ?? coreSemanticCaseInput(item, registry, policy), input_policy: policy,
@@ -360,7 +453,7 @@ export function scoreCoreSemanticRun(observations: readonly Observation[], regis
     return { ...prepared, stage: "prepared_admission" as const,
       automated_passed: prepared.automated_passed && pipelineErrors.length === 0,
       gates: { ...prepared.gates, pipeline: pipelineErrors },
-      raw_model: { stage: "raw_model" as const, automated_passed: raw.automated_passed, gates: raw.gates },
+      raw_model: { stage: "raw_model" as const, selected_branch_id: prepared.selected_branch_id, diagnostic_branch_id: diagnosticBranch?.id ?? null, automated_passed: raw.automated_passed, gates: raw.gates },
       raw_citation_precision: { passed: raw.gates.observation.length === 0 && raw.gates.schema.length === 0 && raw.gates.attribution.length === 0, failures: raw.gates.attribution },
       pipeline: pipeline === null ? null : { input_manifest_sha256: pipeline.input_manifest_sha256,
         sent_window_manifest_sha256: pipeline.sent_window_manifest_sha256, prepared_admissions_sha256: pipeline.prepared_admissions_sha256,
@@ -370,16 +463,19 @@ export function scoreCoreSemanticRun(observations: readonly Observation[], regis
         prepared_admissions_sha256: pipeline?.prepared_admissions_sha256 ?? null, ...custody.binding } };
   });
   return { schema: "kizuki.core-semantic-result/v3" as const, protocol: CORE_SEMANTIC_PROTOCOL, stage: "prepared_admission" as const,
-    source_commit: evidence.source_commit, input_policy: policy, corpus_sha256: coreSemanticCorpusSha256, contract_sha256: coreSemanticContractSha256,
+    representation_method: CORE_SEMANTIC_REPRESENTATION_METHOD, source_commit: evidence.source_commit, input_policy: policy, corpus_sha256: coreSemanticCorpusSha256, contract_sha256: coreSemanticContractSha256,
     raw_model_automated_passed: cases.every(row => row.raw_model.automated_passed),
     automated_passed: cases.every(row => row.automated_passed), status: "pending_manual_review" as const, cases };
 }
 
 export function expectedCoreSemanticReview(reportSha256: string, result: ReturnType<typeof scoreCoreSemanticRun>) {
+  if (!result.automated_passed || result.cases.some(row => !row.automated_passed || (row.expectation === "extract" && row.selected_branch === null)))
+    throw new Error("core semantic review requires complete passing branches");
   return { schema: "kizuki.core-semantic-review/v3" as const, stage: "prepared_admission" as const, source_commit: result.source_commit, independent: true, status: "passed" as const, report_sha256: reportSha256,
-    input_policy: result.input_policy, corpus_sha256: result.corpus_sha256, contract_sha256: result.contract_sha256,
-    cases: result.cases.map(row => { const rule = coreSemanticContract.cases.find(candidate => candidate.case_id === row.case_id)!;
-      const binding = { input_planning: row.manual_review.input_planning, producer_input_token_overhead: row.manual_review.producer_input_token_overhead, transport_response_sha256: row.manual_review.transport_response_sha256,
+    representation_method: result.representation_method, input_policy: result.input_policy, corpus_sha256: result.corpus_sha256, contract_sha256: result.contract_sha256,
+    cases: result.cases.map(row => {
+      const rule = row.expectation === "abstain" ? { expectation: "abstain" as const } : coreSemanticBranchRule(row.case_id, row.selected_branch!);
+      const binding = { selected_branch_id: row.selected_branch_id, selected_branch_sha256: row.selected_branch_sha256, selected_branch: row.selected_branch, input_planning: row.manual_review.input_planning, producer_input_token_overhead: row.manual_review.producer_input_token_overhead, transport_response_sha256: row.manual_review.transport_response_sha256,
         input_manifest_sha256: row.manual_review.input_manifest_sha256, sent_window_manifest_sha256: row.manual_review.sent_window_manifest_sha256,
         prepared_admissions_sha256: row.manual_review.prepared_admissions_sha256, wire_schema: row.manual_review.wire_schema,
         receipt_schema: row.manual_review.receipt_schema, adapter_source_sha256: row.manual_review.adapter_source_sha256,
@@ -391,7 +487,7 @@ export function expectedCoreSemanticReview(reportSha256: string, result: ReturnT
         : { ...binding, case_id: row.case_id, response_sha256: row.manual_review.response_sha256, status: "passed" as const,
           atoms: rule.details.flatMap(detail => detail.required_atoms.map(atom => ({ predicate: detail.predicate, atom, status: "supported" as const }))), literal_consistency: "passed" as const,
           body_fidelity: "passed" as const,
-          evidence: ["world.kind", `${coreSemanticCorpus.cases.find(item => item.id === row.case_id)!.kind}.label`, ...rule.details.map(detail => detail.predicate)]
+          evidence: ["world.kind", `${rule.classification.kind.slice(6)}.label`, ...rule.details.map(detail => detail.predicate)]
             .map(predicate => ({ predicate, anchors_jointly_support_claim: "passed" as const, role_and_time_supported: "passed" as const })), unsupported_additions: [],
           legacy_extras: (row.manual_review.legacy_extras ?? []).map(extra => ({ ...extra, literal_supported: "passed" as const, body_fidelity: "passed" as const,
             references_grounded: "passed" as const, anchors_jointly_support_claim: "passed" as const, role_and_time_supported: "passed" as const,

@@ -8,6 +8,51 @@ they cannot be rescored or approved as v3 evidence. A fresh sealed split and a
 separate review of its actual responses are required. The corpus, contract,
 method, prompt, adapter, parser, and runner files are frozen before any call.
 
+## Complete authored representations (prospective, 2026-10-22)
+
+Fresh `kizuki.core-semantic-contract/v2` positive cases contain one to three
+complete `branches`, each with a unique bounded `id`, exact target,
+classification, `label_rule`, required typed details and semantic atoms, source
+witnesses, perspective, time and forbidden assertions. Each branch must preserve
+the whole source-supported meaning being tested. Alternatives cannot offer
+different convenient subsets of required domain facts. A combined objective and
+blocker response needs its own complete authored branch; uncontracted typed
+extras still fail. The unchanged legacy-extra policy and negative controls apply.
+
+The existing closed scorer evaluates every branch independently. The first
+wholly passing prepared branch in authored order is selected; no facts or gates
+are joined across branches. If none passes, the case fails with no selection.
+The raw diagnostic evaluates that same selected prepared branch, even when
+another branch would make its raw citations look better. Branch diagnostics
+retain the independent role, time, polarity and structure failures.
+
+An explicit label has an exact source naming witness, including an unambiguous
+heading where applicable. A descriptive Situation label uses the exact source
+condition phrase and an explicit dated document-report label rule, matching the
+details' report source and interval. It describes what the source reports; it
+does not assert that the source formally named the condition. Every branch's
+target, predicate and label still need independent source justification.
+An objective expresses a stated requested action and enabling condition; a
+blocker expresses a stated obstruction and its work relation. One predicate
+cannot stand in for the other merely because its wording is convenient.
+
+Case results, pending manual-review records and independent review cases bind
+`selected_branch_id`, `selected_branch_sha256` and the entire `selected_branch`.
+The hash covers canonical JSON of the complete authored branch, including its
+id. The result and review identify `complete-authored-branches/v1`. The verifier
+recomputes selection, branch contracts, all existing pipeline and custody gates,
+and measured budgets. A failed or unselected positive case cannot generate a
+passing review template.
+
+Semantic atoms remain an independent review of each actual literal object,
+including supported paraphrases. There is no exact-string whitelist, automatic
+entailment grader, or repair from a body or neighboring claim. Missing literal
+facts, unsupported naming, wrong source roles or time, and unsupported additions
+fail that review. Prior v1-shaped rules remain historical scripted controls;
+the failed Core14 report and frozen source remain unchanged and cannot be
+rescored or accepted by this prospective method. A separately authored fresh
+12-case split and new independent review are required before any real run.
+
 ## Input budget repair (2026-10-22)
 
 The prospective runner now binds an explicit `input_policy` with total input and

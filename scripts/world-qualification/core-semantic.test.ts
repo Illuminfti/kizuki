@@ -6,7 +6,7 @@ import { parseExtractResponseV2, type DraftRef, type ExtractResponseV2, type Ric
 import { WORLD_VOCABULARY_MODULES } from "./candidate-modules";
 import { candidateRegistry, checkOfferedQualification, registryDigest, verifyQualificationReceipt } from "./registry";
 import { canonicalJson, sha256 } from "../evaluate-extraction";
-import { coreSemanticCaseInput, coreSemanticContract, coreSemanticCorpus, expectedCoreSemanticReview, scoreCoreSemanticRun as actualScoreCoreSemanticRun, prepareCoreSemanticObservation, validateCoreSemanticAssets, verifyCoreSemanticReview, type CoreSemanticCase } from "./core-semantic";
+import { coreSemanticBranchRule, coreSemanticBranches, coreSemanticCaseInput, coreSemanticContract, coreSemanticCorpus, expectedCoreSemanticReview, scoreCoreSemanticRun as actualScoreCoreSemanticRun, prepareCoreSemanticObservation, validateCoreSemanticAssets, verifyCoreSemanticReview, type CoreSemanticCase } from "./core-semantic";
 import type { Observation } from "./score";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,7 +26,7 @@ import { startFakeEndpoint } from "../../packages/llm/test/fake-endpoint";
 // Scripted development controls only; no historical observed campaign is rescored.
 const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation"]);
 type Rule = (typeof coreSemanticContract.cases)[number];
-type ExtractRule = Extract<Rule, { expectation: "extract" }>;
+type ExtractRule = ReturnType<typeof coreSemanticBranchRule>;
 
 function selectedCase(kind: CoreSemanticCase["kind"], category: CoreSemanticCase["category"]): CoreSemanticCase {
   const item = coreSemanticCorpus.cases.find(row => row.kind === kind && row.category === category);
@@ -36,7 +36,7 @@ function selectedCase(kind: CoreSemanticCase["kind"], category: CoreSemanticCase
 function extractionRule(item: CoreSemanticCase): ExtractRule {
   const rule = coreSemanticContract.cases.find(row => row.case_id === item.id);
   if (rule?.expectation !== "extract") throw new Error("missing authored extraction contract");
-  return rule;
+  return coreSemanticBranchRule(item.id, coreSemanticBranches(rule)[0]!);
 }
 
 function uniqueSpan(item: CoreSemanticCase, quote: string): TextAnchor {
@@ -47,12 +47,12 @@ function uniqueSpan(item: CoreSemanticCase, quote: string): TextAnchor {
 }
 
 function scripted(item: CoreSemanticCase, policy: QualificationInputPolicy = DEFAULT_QUALIFICATION_INPUT_POLICY): Observation {
-  const input = coreSemanticCaseInput(item, registry, policy), rule = coreSemanticContract.cases.find(row => row.case_id === item.id)!;
+  const input = coreSemanticCaseInput(item, registry, policy), authored = coreSemanticContract.cases.find(row => row.case_id === item.id)!, rule = authored.expectation === "abstain" ? authored : extractionRule(item);
   if (rule.expectation === "abstain") return { case_id: item.id, input, status: "ok", response: { schema: "kizuki.producer-response/v2", mentions: [], claims: [] }, dropped: 0,
     usage: { calls: 1, input_tokens: 100, output_tokens: 10 } };
   const targetAnchor = uniqueSpan(item, rule.target.quote), target: DraftRef = { kind: "mention", id: "m-target" };
   const mentionSources = new Map<string, { ref: DraftRef; anchor: TextAnchor; attributionAnchor: TextAnchor; label: string }>();
-  for (const contract of [rule.classification, ...rule.details]) if (contract.source !== undefined && typeof contract.source !== "string") {
+  for (const contract of [rule.classification, ...(rule.label_rule ? [rule.label_rule] : []), ...rule.details]) if (contract.source !== undefined && typeof contract.source !== "string") {
     const key = canonicalJson(contract.source), anchor = uniqueSpan(item, contract.source.quote);
     if (!mentionSources.has(key)) mentionSources.set(key, { ref: { kind: "mention", id: `m-source-${mentionSources.size + 1}` }, anchor,
       attributionAnchor: uniqueSpan(item, contract.source.attribution_witness), label: contract.source.label });
@@ -76,7 +76,7 @@ function scripted(item: CoreSemanticCase, policy: QualificationInputPolicy = DEF
   };
   const claims: RichClaimDraft[] = [
     proposition("c1", "world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: rule.classification.kind } }, rule.classification, `${rule.classification.label} is classified as ${rule.classification.kind}.`),
-    proposition("c2", `${item.kind}.label`, { kind: "literal", value: rule.classification.label }, rule.label_alternatives?.[0] ?? rule.classification, `The source names it ${rule.classification.label}.`),
+    proposition("c2", `${item.kind}.label`, { kind: "literal", value: rule.classification.label }, rule.label_rule ?? rule.label_alternatives?.[0] ?? rule.classification, `The source names it ${rule.classification.label}.`),
     ...rule.details.map((detail, index) => { const literal = detail.witness; return proposition(`c${index + 3}`, detail.predicate, { kind: "literal", value: literal }, detail, literal); }),
   ];
   const mentions = [{ id: "m-target", label: rule.target.quote, anchor: targetAnchor, candidate_refs: [] },
@@ -420,7 +420,7 @@ describe("predeclared core semantic protocol", () => {
   });
 
   test("parser-valid adjacent anchors cannot bypass the original single-span literal guard", () => {
-    const id = selectedCase("concept", "positive").id, source = observations(), item = coreSemanticCorpus.cases.find(row => row.id === id)!, rule = coreSemanticContract.cases.find(row => row.case_id === id)!;
+    const id = selectedCase("concept", "positive").id, source = observations(), item = coreSemanticCorpus.cases.find(row => row.id === id)!, rule = extractionRule(item);
     if (rule.expectation !== "extract") throw new Error("invalid test rule");
     const witness = uniqueSpan(item, rule.details[0]!.witness), midpoint = witness.start_utf16 + Math.floor((witness.end_utf16 - witness.start_utf16) / 2);
     const changed = mutate(source, id, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === rule.details[0]!.predicate
@@ -438,8 +438,7 @@ describe("predeclared core semantic protocol", () => {
 
   test("prepared evidence may pass while missing raw role words remains failed and immutable", () => {
     const source = observations(), item = selectedCase("concept", "reported");
-    const rule = coreSemanticContract.cases.find(row => row.case_id === item.id)!;
-    if (rule.expectation !== "extract") throw new Error("test rule");
+    const rule = extractionRule(item);
     const detail = rule.details[0]!, witness = uniqueSpan(item, detail.witness);
     const named = detail.equivalent_mention ?? (typeof detail.source === "object" ? detail.source : undefined);
     if (!named) throw new Error("test requires an already authored equivalent occurrence");

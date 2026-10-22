@@ -79,7 +79,7 @@ function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: Qualifi
     if (sha256(reviewBytes) !== reviewPin.sha256) throw new Error("core semantic review pin mismatch");
     verifyCoreSemanticReview(approval.sha256, result, JSON.parse(reviewBytes));
   } finally { closeSync(reviewFd); }
-  const predicates = [...new Set(coreSemanticContract.cases.flatMap(rule => rule.expectation === "abstain" ? [] : ["world.kind", `${rule.classification.kind.slice(6)}.label`, ...rule.details.map(row => row.predicate)]))];
+  const predicates = [...new Set(result.cases.flatMap(row => row.selected_branch === null ? [] : ["world.kind", `${row.selected_branch.classification.kind.slice(6)}.label`, ...row.selected_branch.details.map(detail => detail.predicate)]))];
   const checked = { registry_sha256: report.registry_sha256, report_sha256: approval.sha256, kinds: report.selected_kinds, predicates };
   CHECKED.add(checked);
   return checked;

@@ -17,7 +17,7 @@ import { scoreSupplementalRun, validateFreshCore } from "./supplemental";
 import { runnerDigest, sourceProvenance } from "./fingerprint";
 import { responsePacer, RESPONSE_GAP_MS } from "./pacing";
 import { validateResume, type ResumeEvidence, type Trace } from "./resume";
-import { CORE_SEMANTIC_PROTOCOL, coreSemanticCaseInput, coreSemanticContract, coreSemanticCorpus, scoreCoreSemanticRun, validateCoreSemanticAssets, type CoreSemanticCase } from "./core-semantic";
+import { CORE_SEMANTIC_PROTOCOL, coreSemanticCaseInput, coreSemanticContract, coreSemanticRulePredicates, coreSemanticCorpus, scoreCoreSemanticRun, validateCoreSemanticAssets, type CoreSemanticCase } from "./core-semantic";
 import { modelWireAdapterIdentity, type CoreSemanticWireEvidence } from "./wire-custody";
 
 export interface RunOptions {
@@ -77,7 +77,7 @@ async function runQualificationImpl(options: RunOptions) {
   const missing = options.kinds.flatMap(kind => !existing.includes(kind) ? [`${kind}:module_missing`] : !corpus.cases.some(item => item.kind === kind) ? [`${kind}:corpus_missing`] : []);
   if (coreSemantic) for (const item of selected) {
     const rule = coreSemanticContract.cases.find(row => row.case_id === item.id)!;
-    const predicates = rule.expectation === "abstain" ? [] : ["world.kind", `${item.kind}.label`, ...rule.details.map(row => row.predicate)];
+    const predicates = coreSemanticRulePredicates(rule);
     if (predicates.some(id => !registry.offered.vocabulary.some(predicate => predicate.predicate === id))) { const reason = `${item.id}:vocabulary_missing`; if (!missing.includes(reason)) missing.push(reason); }
   } else for (const item of selected as typeof qualificationCorpus.cases) for (const alternatives of item.required) {
     if (!alternatives.some(row => registry.offered.vocabulary.some(predicate => predicate.predicate === row.predicate) &&
