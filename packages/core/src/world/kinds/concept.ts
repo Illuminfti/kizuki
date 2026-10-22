@@ -18,7 +18,7 @@ export const conceptAssembler: KindAssembler = {
       relations: own.filter(
         (item) =>
           item.predicate !== "concept.definition" &&
-          item.predicate !== "concept.label" &&
+          (item.predicate !== "concept.label" || item.perspective.mode === "reported") &&
           item.predicate !== "world.kind",
       ),
       learning: learning.filter((item) => item.assertion.object.kind === "node" && item.assertion.object.ref.token === node.ref.token),

@@ -22,6 +22,7 @@ export async function cardFixture(database?: Database, options: Pick<WorldSeedOp
     subject?: string; polarity?: "positive" | "negative"; context?: string[];
     from?: string | null; until?: string | null; text?: string; metadata?: Record<string, unknown>;
     floor?: "public" | "private"; mode?: ClaimV2Assertion["perspective"]["mode"];
+    interpretation?: ClaimV2Assertion["perspective"]["interpretation"];
     holder?: string; speaker?: string; addressee?: string;
     span?: { start: number; end: number };
   } = {}) {
@@ -37,7 +38,7 @@ export async function cardFixture(database?: Database, options: Pick<WorldSeedOp
     const semantic: ClaimV2Assertion = {
       schema: "kizuki.claim/v2", discriminator: "assertion", subject: ref(subject), predicate, object,
       perspective: { holder: options.holder ? ref(options.holder) : null, speaker: options.speaker ? ref(options.speaker) : null, addressee: options.addressee ? ref(options.addressee) : null,
-        mode: options.mode ?? "asserted", interpretation: "explicit", anchors: options.holder || options.speaker || options.addressee ? [{ event_id: result.event.event_id, start_utf16: 0, end_utf16: result.event.text.length }] : [] },
+        mode: options.mode ?? "asserted", interpretation: options.interpretation ?? "explicit", anchors: options.holder || options.speaker || options.addressee ? [{ event_id: result.event.event_id, start_utf16: 0, end_utf16: result.event.text.length }] : [] },
       context: (options.context ?? []).map(ref), polarity: options.polarity ?? "positive",
       valid_from: options.from === undefined ? "2026-01-01T00:00:00.000Z" : options.from,
       valid_to: options.until ?? null, temporal_basis: options.from === null ? "unknown" : "explicit",

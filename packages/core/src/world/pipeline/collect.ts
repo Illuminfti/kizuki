@@ -208,8 +208,9 @@ export interface MatchFilter {
 
 /**
  * Handles of `kind` in id order after `after`, each with its currently
- * authorized label texts. Folding happens here, in one place, because SQL has
- * no Unicode case folding.
+ * authorized asserted label texts. A nonempty query can also match a qualified
+ * reported label, but that alias is never returned as a display label. Folding
+ * happens here, in one place, because SQL has no Unicode case folding.
  */
 export function scanMatches(
   frame: ReadFrame,
@@ -269,26 +270,50 @@ export function scanMatches(
   const candidates = ctx.db.query<{ claim_id: string }, (string | number)[]>(
     `SELECT c.claim_id ${joins}
       WHERE b.handle_id=? AND c.discriminator='assertion' AND c.predicate IN ('world.kind',?)
+      AND c.polarity='positive' AND json_extract(c.payload,'$.perspective.mode')='asserted'
       AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
       AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}
       ORDER BY CASE c.predicate WHEN 'world.kind' THEN 0 ELSE 1 END,c.claim_id LIMIT ?`,
   );
-  const cache = new Map<string, { labels: string[]; overflow: boolean } | null>();
+  const aliasCandidates = wanted.length === 0 ? null : ctx.db.query<{ claim_id: string }, (string | number)[]>(
+    `SELECT c.claim_id ${joins}
+      WHERE b.handle_id=? AND c.discriminator='assertion' AND c.predicate=? AND c.polarity='positive'
+      AND json_extract(c.payload,'$.perspective.mode')='reported'
+      AND json_extract(c.payload,'$.perspective.interpretation')='explicit'
+      AND (json_extract(c.payload,'$.perspective.holder') IS NOT NULL OR json_extract(c.payload,'$.perspective.speaker') IS NOT NULL)
+      AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql}
+      AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}
+      ORDER BY c.claim_id LIMIT ?`,
+  );
+  const cache = new Map<string, { labels: string[]; searchAliases: string[]; overflow: boolean } | null>();
   const matchOf = (handle: string) => {
     if (cache.has(handle)) return cache.get(handle)!;
     const rows = candidates.all(handle, kind.labelPredicate, ...claim.bindings, ...time.bindings, ...permitted.bindings, ...held.bindings, MAX_RELATIONS + 1);
-    frame.stats.rowsExamined += rows.length;
-    const labels: string[] = [];
+    const aliasRows = aliasCandidates?.all(handle, kind.labelPredicate, ...claim.bindings, ...time.bindings,
+      ...permitted.bindings, ...held.bindings, MAX_RELATIONS + 1) ?? [];
+    frame.stats.rowsExamined += rows.length + aliasRows.length;
+    if (aliasRows.length > MAX_RELATIONS) throw new WorldProjectionBudgetError();
+    const labels: string[] = [], searchAliases: string[] = [];
     let classified = false;
     for (const row of rows.slice(0, MAX_RELATIONS)) {
       const item = verifyClaim(frame, row.claim_id);
       if (item === null) continue;
       const semantic = item.semantic;
-      if (semantic.polarity !== "positive" || semantic.perspective.mode !== "asserted") continue;
-      if (semantic.predicate === "world.kind" && semantic.object.kind === "vocabulary" && semantic.object.ref.id === kind.vocabularyId)
+      if (semantic.polarity !== "positive") continue;
+      if (semantic.predicate === "world.kind" && semantic.perspective.mode === "asserted" &&
+          semantic.object.kind === "vocabulary" && semantic.object.ref.id === kind.vocabularyId)
         classified = true;
-      if (semantic.predicate === kind.labelPredicate && semantic.object.kind === "literal")
-        labels.push(semantic.object.value);
+      if (semantic.predicate === kind.labelPredicate && semantic.perspective.mode === "asserted" &&
+          semantic.object.kind === "literal") labels.push(semantic.object.value);
+    }
+    for (const row of aliasRows.slice(0, MAX_RELATIONS)) {
+      const item = verifyClaim(frame, row.claim_id);
+      if (item === null) continue;
+      const semantic = item.semantic;
+      if (semantic.predicate === kind.labelPredicate && semantic.polarity === "positive" && semantic.object.kind === "literal" &&
+          semantic.perspective.mode === "reported" && semantic.perspective.interpretation === "explicit" &&
+          (semantic.perspective.holder !== null || semantic.perspective.speaker !== null))
+        searchAliases.push(semantic.object.value);
     }
     if (classified && related !== null) {
       const links = ctx.db.query<{ claim_id: string }, (string | number)[]>(
@@ -299,7 +324,7 @@ export function scanMatches(
       if (links.length > MAX_RELATIONS) throw new WorldProjectionBudgetError();
       classified = links.some(link => verifyClaim(frame, link.claim_id) !== null);
     }
-    const match = classified ? { labels, overflow: rows.length > MAX_RELATIONS } : null;
+    const match = classified ? { labels, searchAliases, overflow: rows.length > MAX_RELATIONS } : null;
     cache.set(handle, match);
     return match;
   };
@@ -324,6 +349,7 @@ export function scanMatches(
       if (own === null) continue;
       visibleHandles += 1;
       let labels = own.labels;
+      let searchAliases = own.searchAliases;
       let overflow = own.overflow;
       if (groupers.length > 0) {
         const proposed = group(frame, row.handle_id, groupers);
@@ -341,10 +367,13 @@ export function scanMatches(
         if (eligible.reduce((count, member) => count + member.labels.length, 0) > MAX_MATCH_LABELS)
           throw new WorldProjectionBudgetError();
         labels = eligible.flatMap((member) => member.labels);
+        searchAliases = eligible.flatMap((member) => member.searchAliases);
+        if (wanted.length > 0 && labels.length + searchAliases.length > MAX_MATCH_LABELS)
+          throw new WorldProjectionBudgetError();
         overflow ||= eligible.some((member) => member.overflow);
       }
       if (
-        wanted.length > 0 && !labels.some((text) => labelMatches(preview.text(text), wanted))
+        wanted.length > 0 && ![...labels, ...searchAliases].some((text) => labelMatches(preview.text(text), wanted))
       )
         continue;
       if (found.length === MAX_WORLD_MATCHES) {
