@@ -84,6 +84,35 @@ describe("host sent evidence context", () => {
     expect(result.perspective.anchors).toEqual([f.name, f.role]);
   });
 
+  test("an exact reported literal stays explicit while a determiner paraphrase is downgraded before sent context", () => {
+    const f = fixture("Priya said Cobalt pause is the paced recall practice.");
+    const exact = "the paced recall practice", fact = span(f.text, exact);
+    const body = "Priya describes Cobalt pause as a paced recall practice.";
+    const input: ProduceInputV2 = { ...f.input, predicates: [{ id: "concept.definition", object_kinds: ["literal"] }] };
+    const { budget: _budget, ...parseInput } = input;
+    for (const value of [exact, "a paced recall practice"]) {
+      const claim = f.claim({ subject: { kind: "mention", id: "m1" }, object: { kind: "literal", value }, body,
+        anchors: [f.fact, fact] });
+      const wire: ExtractResponseV2 = { ...f.response(claim), mentions: [...f.response().mentions,
+        { id: "m1", label: "Cobalt pause", anchor: f.fact, candidate_refs: [] }] };
+      const parsed = parseExtractResponseV2(JSON.stringify(wire), parseInput);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) throw new Error("scripted literal control must parse");
+      expect(parsed.dropped).toEqual([]);
+      const prepared = prepareWorldDrafts(parsed.response, input, f.context);
+      expect(prepared.dropped).toEqual([]);
+      expect(prepared.drafts).toHaveLength(1);
+      const draft = prepared.drafts[0]!;
+      expect(draft.semantic.object).toEqual({ kind: "literal", value });
+      expect(draft.semantic.perspective.speaker).not.toEqual(draft.semantic.subject);
+      expect(draft.semantic.perspective).toMatchObject(value === exact
+        ? { mode: "reported", interpretation: "explicit" } : { mode: "uncertain", interpretation: "inferred" });
+      expect(draft.semantic.perspective.anchors).toEqual(value === exact
+        ? [f.name, f.role, { event_id: eventId, start_utf16: 0, end_utf16: f.text.length }] : [f.name, f.role]);
+      expect(draft.world_admission.rendering.body).toBe(body);
+    }
+  });
+
   test("a segment adds its sent prefix and never the unseen suffix", () => {
     const prefix = "Priya said Cobalt pause.";
     const f = fixture(`${prefix} The unseen suffix records a different statement.`);

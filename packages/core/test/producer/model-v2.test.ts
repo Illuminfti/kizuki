@@ -72,7 +72,14 @@ test("v2 fails closed for an unavailable or malformed configured judge", async (
 
 test("v2 consumes a real fenced prompt and returns local drafts without durable ids", async () => {
   expect(validateProduceResult({ status: "ok", response, usage: { calls: 1, input_tokens: 1, output_tokens: 1 } }, "kizuki.producer/v2", { events: input.events, supplied_refs: input.supplied_refs, vocabulary_refs: input.vocabulary_refs, predicates: input.predicates }).result.status).toBe("ok");
-  const { port, llm } = producer(request => { const prompt = request.messages[1]!.content; expect(prompt).toContain("<<<KZ-QUOTE"); expect(prompt).toContain("Mira joined Northwind."); return JSON.stringify(response); });
+  const { port, llm } = producer(request => {
+    expect(request.messages[0]!.content).toContain("copy object.value verbatim from one contiguous source passage within a cited anchor span");
+    expect(request.messages[0]!.content).toContain("preserving determiners, modality and negation");
+    expect(request.messages[0]!.content).toContain("The body may faithfully render the same proposition without adding meaning");
+    const prompt = request.messages[1]!.content;
+    expect(prompt).toContain("<<<KZ-QUOTE"); expect(prompt).toContain("Mira joined Northwind.");
+    return JSON.stringify(response);
+  });
   const result = await port.produce(input);
   expect(result).toMatchObject({ status: "ok", response: { claims: [{ subject: { kind: "mention", id: "m0" } }] }, usage: { calls: 1 } });
   expect(llm.requests).toHaveLength(1);
