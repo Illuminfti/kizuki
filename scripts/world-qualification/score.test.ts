@@ -159,6 +159,13 @@ test("a clean surrounding Git commit cannot attest an untracked or modified runn
     writeFileSync(join(directory, "scripts/world-qualification/registry.ts"), "synthetic\n");
     writeFileSync(join(directory, "scripts/world-qualification/score.ts"), "changed scorer\n");
     expect(runnerDigest(directory)).not.toBe(digest);
+    writeFileSync(join(directory, "scripts/world-qualification/score.ts"), "synthetic\n");
+    for (const path of ["packages/core/src/claims/store.ts", "packages/core/src/claims/claim-v2-commit.ts"]) {
+      writeFileSync(join(directory, path), "changed claim admission\n");
+      expect(runnerDigest(directory)).not.toBe(digest);
+      writeFileSync(join(directory, path), "synthetic\n");
+      expect(runnerDigest(directory)).toBe(digest);
+    }
     writeFileSync(join(directory, RUNNER_FILES[0]), "changed\n");
     expect(sourceProvenance(directory).source_clean).toBe(false);
   } finally { rmSync(directory, { recursive: true, force: true }); }
