@@ -105,8 +105,9 @@ function within(anchor: TextAnchor, window: SentEvidenceWindow): boolean {
 
 /**
  * Adds only the host's exact sent context to an already-grounded attributed
- * literal. This runs after guardClaim, so context can explain a role witness
- * but can never rescue a bad fact or restore a downgraded interpretation.
+ * literal, including a holder-attributed suggestion. This runs after guardClaim,
+ * so it can explain a role witness but never rescue a bad fact or restore a
+ * downgraded interpretation.
  */
 function addSentAttributionContext(
   guarded: ClaimV2Assertion,
@@ -114,7 +115,9 @@ function addSentAttributionContext(
   windows: () => readonly SentEvidenceWindow[],
   eventById: ReadonlyMap<string, WorldDraftEvent>,
 ): ClaimV2Assertion | null {
-  if (guarded.object.kind !== "literal" || !["reported", "quoted"].includes(guarded.perspective.mode) ||
+  const attributed = ["reported", "quoted"].includes(guarded.perspective.mode) ||
+    (guarded.perspective.mode === "suggested" && guarded.perspective.holder !== null);
+  if (guarded.object.kind !== "literal" || !attributed ||
       [original.perspective.holder, original.perspective.speaker, original.perspective.addressee].every(role => role === null) ||
       original.perspective.anchors.length === 0) return guarded;
   const literal = guarded.object.value;
