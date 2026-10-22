@@ -139,7 +139,14 @@ test("a 60k-character record is extracted in three segments whose anchors valida
 });
 
 test("a segment shrinks to what max_input_tokens can carry", async () => {
-  const f = vaultWith([SIXTY_K], "[extraction]\nmax_calls_per_pass = 32\nmax_input_tokens = 4000\n");
+  // Keep this a reduced record-text budget as the fixed protocol instructions evolve.
+  const minimum = planModelExtractionV2(worldProduceInput([
+    { event_id: "00000000000000000000000001", text: "x" } as never,
+  ], [], DEFAULT_EXTRACTION_CONFIG));
+  if (minimum.status !== "ready") throw new Error("minimal extraction request must fit");
+  const maxInputTokens = minimum.input_tokens + 1_500;
+  expect(maxInputTokens).toBeLessThan(DEFAULT_EXTRACTION_CONFIG.max_input_tokens);
+  const f = vaultWith([SIXTY_K], `[extraction]\nmax_calls_per_pass = 32\nmax_input_tokens = ${maxInputTokens}\n`);
   const [e0] = f.eventIds as [string];
   const model = segmentModelProducer(f.vault);
   const receipt = await sync(f, model.producer);
