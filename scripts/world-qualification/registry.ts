@@ -12,6 +12,7 @@ import { RESPONSE_GAP_MS } from "./pacing";
 import { extractionV2SystemContent } from "../../packages/core/src/producer/prompt-v2";
 import type { runQualification } from "./run";
 import { REVIEWED_QUALIFICATIONS, type QualificationApproval } from "./approvals";
+import { CORE_SEMANTIC_PROTOCOL, coreSemanticCaseInput, coreSemanticContract, coreSemanticCorpus, scoreCoreSemanticRun, validateCoreSemanticAssets, verifyCoreSemanticReview } from "./core-semantic";
 export { REVIEWED_QUALIFICATIONS, type QualificationApproval } from "./approvals";
 
 export const registryDigest = (registry: WorldRegistry) => sha256(canonicalJson({
@@ -31,9 +32,61 @@ export function candidateRegistry(modules: readonly WorldVocabularyModule[], kin
 const CHECKED = new WeakSet<object>();
 export interface CheckedQualification { registry_sha256: string; report_sha256: string; kinds: readonly string[]; predicates: readonly string[] }
 
+type QualificationReport = Awaited<ReturnType<typeof runQualification>>;
+type CoreSemanticReport = Extract<QualificationReport, { protocol: typeof CORE_SEMANTIC_PROTOCOL }>;
+type BaselineReport = Exclude<QualificationReport, CoreSemanticReport>;
+
+function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: QualificationApproval, registry: WorldRegistry, root?: string): CheckedQualification {
+  validateCoreSemanticAssets();
+  const projectRoot = root ?? resolve(import.meta.dir, "../..");
+  if (report.schema !== "kizuki.world-qualification-run/v2" || report.evidence !== "runner_observed_transport" || report.synthetic !== true ||
+      report.source_clean !== true || !/^[a-f0-9]{40}$/.test(report.source_commit) || report.runner_sha256 !== runnerDigest(projectRoot) ||
+      report.registry_sha256 !== registryDigest(registry) || report.missing.length !== 0 || !report.model || !report.endpoint_host ||
+      canonicalJson(report.corpus) !== canonicalJson(coreSemanticCorpus) || canonicalJson([...report.selected_kinds].sort()) !== canonicalJson(["concept", "situation"]) ||
+      report.selected_extensions.length !== 0 || canonicalJson(report.selected_cases) !== canonicalJson(coreSemanticCorpus.cases.map(row => row.id)) ||
+      report.resumed_from !== null || report.halt_reason !== null || report.response_gap_ms !== RESPONSE_GAP_MS || report.attempts !== coreSemanticCorpus.cases.length ||
+      report.observations.length !== coreSemanticCorpus.cases.length || report.traces.length !== coreSemanticCorpus.cases.length ||
+      canonicalJson(report.observations.map(row => row.case_id)) !== canonicalJson(report.selected_cases) || canonicalJson(report.traces.map(row => row.case_id)) !== canonicalJson(report.selected_cases) ||
+      report.case_states.some(row => row.status !== "observed") || canonicalJson(report.case_states.map(row => row.case_id)) !== canonicalJson(report.selected_cases))
+    throw new Error("core semantic report mismatch");
+  const result = scoreCoreSemanticRun(report.observations, registry);
+  if (!result.automated_passed || canonicalJson(result) !== canonicalJson(report.core_semantic)) throw new Error("core semantic automated checks failed");
+  let previousCompletion: number | null = null;
+  for (const item of coreSemanticCorpus.cases) {
+    const observed = report.observations.find(row => row.case_id === item.id), matches = report.traces.filter(row => row.case_id === item.id), trace = matches[0];
+    const expectedInput = coreSemanticCaseInput(item, registry), prompt = sha256(extractionV2SystemContent(expectedInput));
+    if (!observed || canonicalJson(observed.input) !== canonicalJson(expectedInput) || matches.length !== 1 || !trace || trace.origin !== "observed_v2" || trace.transport !== "ok" ||
+        trace.http_status === null || trace.http_status < 200 || trace.http_status >= 300 || trace.prompt_sha256 !== prompt || report.prompt_sha256_by_case[item.id] !== prompt ||
+        !/^[a-f0-9]{64}$/.test(trace.request_sha256) || !/^[a-f0-9]{64}$/.test(trace.response_sha256 ?? "") || trace.completed_at === null ||
+        !Number.isFinite(Date.parse(trace.started_at)) || !Number.isFinite(Date.parse(trace.completed_at)) || Date.parse(trace.completed_at) < Date.parse(trace.started_at) ||
+        (previousCompletion !== null && Date.parse(trace.started_at) - previousCompletion < RESPONSE_GAP_MS)) throw new Error("core semantic transport evidence missing");
+    previousCompletion = Date.parse(trace.completed_at);
+  }
+  if (report.prompt_sha256 !== report.prompt_sha256_by_case[coreSemanticCorpus.cases[0]!.id]) throw new Error("core semantic prompt mismatch");
+  const reviewPin = approval.body_review;
+  if (!reviewPin || !/^[a-z0-9-]+\.json$/.test(reviewPin.file) || !/^[a-f0-9]{64}$/.test(reviewPin.sha256)) throw new Error("core semantic independent review missing");
+  const reviewFd = openSync(join(projectRoot, "scripts/fixtures/world-qualification", reviewPin.file), constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(reviewFd);
+    if (!stat.isFile() || stat.size < 1 || stat.size > 1024 * 1024) throw new Error("invalid core semantic review file");
+    const reviewBytes = readFileSync(reviewFd, "utf8");
+    if (sha256(reviewBytes) !== reviewPin.sha256) throw new Error("core semantic review pin mismatch");
+    verifyCoreSemanticReview(approval.sha256, result, JSON.parse(reviewBytes));
+  } finally { closeSync(reviewFd); }
+  const predicates = [...new Set(coreSemanticContract.cases.flatMap(rule => rule.expectation === "abstain" ? [] : ["world.kind", `${rule.classification.kind.slice(6)}.label`, ...rule.details.map(row => row.predicate)]))];
+  const checked = { registry_sha256: report.registry_sha256, report_sha256: approval.sha256, kinds: report.selected_kinds, predicates };
+  CHECKED.add(checked);
+  return checked;
+}
+
 export function verifyQualificationReceipt(bytes: string, approval: QualificationApproval, registry: WorldRegistry, root?: string): CheckedQualification {
   if (!/^[a-f0-9]{64}$/.test(approval.sha256) || sha256(bytes) !== approval.sha256 || !/^[a-f0-9]{64}$/.test(approval.endpoint_evidence)) throw new Error("qualification review pin mismatch");
-  const report = JSON.parse(bytes) as Omit<Awaited<ReturnType<typeof runQualification>>, "schema"> & { schema: string };
+  const parsed = JSON.parse(bytes) as QualificationReport;
+  if ("protocol" in parsed) {
+    if (parsed.protocol !== CORE_SEMANTIC_PROTOCOL) throw new Error("unknown qualification protocol");
+    return verifyCoreSemanticReceipt(parsed, approval, registry, root);
+  }
+  const report = parsed as Omit<BaselineReport, "schema"> & { schema: string };
   if (!["kizuki.world-qualification-run/v1", "kizuki.world-qualification-run/v2"].includes(report.schema) || report.evidence !== "runner_observed_transport" || report.synthetic !== true ||
       report.source_clean !== true || !/^[a-f0-9]{40}$/.test(report.source_commit) || report.runner_sha256 !== runnerDigest(root) ||
       report.registry_sha256 !== registryDigest(registry) || report.missing.length !== 0 || !report.model || !report.endpoint_host ||

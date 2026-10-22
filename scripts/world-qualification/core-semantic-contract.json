@@ -1,0 +1,158 @@
+{
+  "schema": "kizuki.core-semantic-contract/v1",
+  "corpus_version": "core-semantic-20261022",
+  "automated_gate": {
+    "required": [
+      "all twelve ordered cases observed exactly once",
+      "status ok and a response for every case",
+      "public producer-v2 parser accepts the response with zero parser drops",
+      "observation reports zero downstream drops",
+      "exactly one measured call with finite nonnegative token counts inside request budget",
+      "response hash is bound into the review",
+      "negative cases contain zero claims",
+      "positive cases contain every contracted typed predicate exactly once on one canonical target",
+      "classification, label, attribution, evidence, and explicit time satisfy the case contract",
+      "any additional claim uses a production-offered legacy predicate and is not a forbidden identity merge or ownership predicate"
+    ],
+    "success_without_review": "pending_manual_review"
+  },
+  "attribution_profiles": {
+    "direct": {
+      "holder": null,
+      "speaker": null,
+      "addressee": null,
+      "modes": ["asserted"],
+      "interpretation": "explicit",
+      "perspective_anchors": "may be empty or contain valid source anchors; independent review decides whether any supplied anchors support rather than contradict the proposition"
+    },
+    "person_statement": {
+      "holder": "null or the same exact grounded source ref as speaker; neither rendering is required over the other",
+      "speaker": "the exact grounded source ref named by the case, supplied where declared or otherwise the one exact contracted mention",
+      "addressee": null,
+      "modes": ["reported", "quoted"],
+      "interpretation": "explicit",
+      "perspective_anchors": "must ground the contracted speaker ref and jointly support the speaker role; mention-mode cases declare a separate attribution_witness"
+    },
+    "document_report": {
+      "holder": "the exact supplied source ref named by the case",
+      "speaker": "null unless separately grounded; these cases provide none",
+      "addressee": "null unless separately grounded; these cases provide none",
+      "modes": ["reported"],
+      "interpretation": "explicit",
+      "perspective_anchors": "must ground the supplied holder"
+    }
+  },
+  "temporal_profiles": {
+    "unknown": { "valid_from": null, "valid_to": null, "temporal_basis": "unknown" },
+    "explicit_interval": "exact RFC3339 equality; valid_to is exclusive"
+  },
+  "legacy_extra_policy": {
+    "eligible": "only predicates in the production PREDICATE_REGISTRY; world.kind and offered typed predicates are never extras",
+    "forbidden_predicates": ["identity.same_as", "project.owns"],
+    "automated": "the public parser must accept every extra with no drop; contracted typed claims keep their exact predicate, target, structure, attribution, and time checks",
+    "manual": "the independent reviewer must separately approve every extra claim's literal, body, references, anchors, role, time, and source entailment, and must reject unsupported ownership, authority, identity merge, or other additions"
+  },
+  "manual_gate": {
+    "independent": true,
+    "bound_to": ["report_sha256", "contract_sha256", "corpus_sha256", "ordered case_id and response_sha256"],
+    "per_positive_case": [
+      "the claim literal alone entails every required meaning atom",
+      "the claim literal does not contradict the automated structured polarity, attribution, or time fields; it need not duplicate those fields in prose",
+      "the body faithfully renders the literal without changing its meaning",
+      "for every claim, the actual response anchors jointly support the proposition and every required atom, plus any structured attribution and explicit time",
+      "neither literal nor body contains an unsupported addition",
+      "neither literal nor body contains a forbidden assertion",
+      "every legacy extra receives its own exact claim-hash-bound literal/body/reference/anchor/role/time/source-entailment review"
+    ],
+    "per_negative_case": ["the exact response contains no claim"],
+    "success": "passed only when every automated and manual check passes"
+  },
+  "cases": [
+    {
+      "case_id": "core6-concept-positive-ridge-veil",
+      "expectation": "extract",
+      "target": { "mode": "mention", "record": "r1", "quote": "Ridge veil" },
+      "classification": { "kind": "world/concept", "label": "Ridge veil", "witness": "Ridge veil is a concept", "perspective": "direct", "time": "unknown" },
+      "details": [{
+        "predicate": "concept.definition",
+        "object_kind": "literal",
+        "witness": "the band of cooler air that remains below a sunlit slope after dawn",
+        "required_atoms": ["a band of air", "the air is cooler", "the air remains below a sunlit slope", "the condition is after dawn"],
+        "perspective": "direct",
+        "time": "unknown"
+      }],
+      "forbidden_assertions": ["Ridge veil is a weather alert", "the source establishes who owns the hillside", "the source establishes a person role or activity"]
+    },
+    {
+      "case_id": "core6-concept-reported-seam-echo",
+      "expectation": "extract",
+      "target": { "mode": "mention", "record": "r1", "quote": "Seam echo" },
+      "classification": { "kind": "world/concept", "label": "Seam echo", "witness": "Seam echo — Concept", "perspective": "direct", "time": "unknown" },
+      "details": [{
+        "predicate": "concept.definition",
+        "object_kind": "literal",
+        "witness": "the delayed reflection heard where two wall panels meet",
+        "required_atoms": ["a reflection", "the reflection is delayed", "it is heard where two wall panels meet"],
+        "perspective": "person_statement",
+        "source": "source-core6-concept-reported",
+        "time": "unknown"
+      }],
+      "forbidden_assertions": ["Mara owns the room", "Mara installed the panels", "the attributed definition is an unqualified owner fact"]
+    },
+    {
+      "case_id": "core6-concept-historical-amber-interval",
+      "expectation": "extract",
+      "target": { "mode": "mention", "record": "r1", "quote": "Amber interval" },
+      "classification": { "kind": "world/concept", "label": "Amber interval", "witness": "used Amber interval as the name of a concept", "perspective": "direct", "time": { "valid_from": "2013-02-01T00:00:00.000Z", "valid_to": "2015-06-01T00:00:00.000Z", "temporal_basis": "explicit", "witness": "From 2013-02-01T00:00:00Z until 2015-06-01T00:00:00Z, with the end excluded" } },
+      "details": [{
+        "predicate": "concept.definition",
+        "object_kind": "literal",
+        "witness": "the waiting period between sealing a specimen jar and reading its first stable temperature",
+        "required_atoms": ["a waiting period", "the period starts when a specimen jar is sealed", "the period ends at the jar's first stable temperature reading"],
+        "perspective": "document_report",
+        "source": "source-core6-concept-historical",
+        "time": { "valid_from": "2013-02-01T00:00:00.000Z", "valid_to": "2015-06-01T00:00:00.000Z", "temporal_basis": "explicit", "witness": "From 2013-02-01T00:00:00Z until 2015-06-01T00:00:00Z, with the end excluded" }
+      }],
+      "forbidden_assertions": ["Amber interval remains current after 2015-06-01", "the Fenwick Handbook is a speaker", "a person owns or endorses the concept"]
+    },
+    { "case_id": "core6-concept-negative-name", "expectation": "abstain", "forbidden_assertions": ["a bare name establishes a concept"] },
+    { "case_id": "core6-concept-negative-template", "expectation": "abstain", "forbidden_assertions": ["blank placeholders establish a concept"] },
+    { "case_id": "core6-concept-negative-hypothetical", "expectation": "abstain", "forbidden_assertions": ["a possible future term is adopted or defined", "a hypothetical establishes a concept"] },
+    {
+      "case_id": "core6-situation-positive-lamp-audit",
+      "expectation": "extract",
+      "target": { "mode": "mention", "record": "r1", "quote": "Lamp audit" },
+      "classification": { "kind": "world/situation", "label": "Lamp audit", "witness": "Lamp audit is an active situation", "perspective": "direct", "time": "unknown" },
+      "details": [
+        { "predicate": "situation.objective", "object_kind": "literal", "witness": "verify every emergency lamp before the quay reopens", "required_atoms": ["verify every emergency lamp", "verification occurs before the quay reopens"], "perspective": "direct", "time": "unknown" },
+        { "predicate": "situation.blocker", "object_kind": "literal", "witness": "the lift battery has not arrived", "required_atoms": ["the lift battery has not arrived", "the missing battery is the blocker"], "perspective": "direct", "time": "unknown" }
+      ],
+      "forbidden_assertions": ["the record assigns an owner", "the quay has reopened", "the audit is complete"]
+    },
+    {
+      "case_id": "core6-situation-reported-west-stack",
+      "expectation": "extract",
+      "target": { "mode": "mention", "record": "r1", "quote": "West stack inspection" },
+      "classification": { "kind": "world/situation", "label": "West stack inspection", "witness": "West stack inspection — Situation", "perspective": "direct", "time": "unknown" },
+      "details": [
+        { "predicate": "situation.objective", "object_kind": "literal", "witness": "inspect all four exhaust stacks before Friday", "required_atoms": ["inspect all four exhaust stacks", "inspection is due before Friday"], "perspective": "person_statement", "source": { "mode": "mention", "record": "r1", "quote": "Dalen", "label": "Dalen", "attribution_witness": "Dalen reported" }, "time": "unknown" },
+        { "predicate": "situation.blocker", "object_kind": "literal", "witness": "the calibrated gas meter is still with the laboratory", "required_atoms": ["the calibrated gas meter remains with the laboratory", "the unavailable meter is the blocker"], "perspective": "person_statement", "source": { "mode": "mention", "record": "r1", "quote": "Dalen", "label": "Dalen", "attribution_witness": "Dalen reported" }, "time": "unknown" }
+      ],
+      "forbidden_assertions": ["Dalen owns the inspection", "the inspection is complete", "Friday is a validity interval"]
+    },
+    {
+      "case_id": "core6-situation-historical-reed-transfer",
+      "expectation": "extract",
+      "target": { "mode": "mention", "record": "r1", "quote": "Reed-bed transfer" },
+      "classification": { "kind": "world/situation", "label": "Reed-bed transfer", "witness": "Reed-bed transfer was an operational situation", "perspective": "direct", "time": { "valid_from": "2018-04-03T00:00:00.000Z", "valid_to": "2018-04-18T00:00:00.000Z", "temporal_basis": "explicit", "witness": "from 2018-04-03T00:00:00Z until 2018-04-18T00:00:00Z, with the end excluded" } },
+      "details": [
+        { "predicate": "situation.objective", "object_kind": "literal", "witness": "move twelve trays to the north greenhouse", "required_atoms": ["move twelve trays", "the destination is the north greenhouse"], "perspective": "document_report", "source": "source-core6-situation-historical", "time": { "valid_from": "2018-04-03T00:00:00.000Z", "valid_to": "2018-04-18T00:00:00.000Z", "temporal_basis": "explicit", "witness": "from 2018-04-03T00:00:00Z until 2018-04-18T00:00:00Z, with the end excluded" } },
+        { "predicate": "situation.blocker", "object_kind": "literal", "witness": "a flooded footpath was the blocker", "required_atoms": ["a footpath was flooded", "the flooded footpath was the blocker"], "perspective": "document_report", "source": "source-core6-situation-historical", "time": { "valid_from": "2018-04-03T00:00:00.000Z", "valid_to": "2018-04-18T00:00:00.000Z", "temporal_basis": "explicit", "witness": "from 2018-04-03T00:00:00Z until 2018-04-18T00:00:00Z, with the end excluded" } }
+      ],
+      "forbidden_assertions": ["Reed-bed transfer is current after 2018-04-18", "the transfer was completed", "the field log is a speaker", "the source identifies an owner"]
+    },
+    { "case_id": "core6-situation-negative-name", "expectation": "abstain", "forbidden_assertions": ["a portfolio name establishes a situation", "the name establishes an objective or blocker"] },
+    { "case_id": "core6-situation-negative-template", "expectation": "abstain", "forbidden_assertions": ["blank placeholders establish a situation"] },
+    { "case_id": "core6-situation-negative-hypothetical", "expectation": "abstain", "forbidden_assertions": ["conditional future work is approved, started, committed, blocked, or changed", "a hypothetical project establishes a situation"] }
+  ]
+}
