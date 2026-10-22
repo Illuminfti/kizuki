@@ -1,3 +1,4 @@
+import { resolveModelExtractionWire, type ModelExtractionWireReceipt } from "./model-v2-wire";
 import { registerModelProducerIdentity } from "./fingerprint";
 import type { LlmPort } from "../contracts/llm";
 import { PortError, validatePortDescriptor } from "../contracts/ports";
@@ -173,7 +174,7 @@ export function planModelExtractionV2(raw: unknown): ModelExtractionV2Plan {
   return { status: "ready", input, outbound, redactions, redacted, nonce, messages, input_tokens: inputTokens, max_output_tokens: Math.min(MAX_V2_OUTPUT_TOKENS, input.budget.max_output_tokens) };
 }
 
-export function createModelProducerV2Port(ctx: PortContext, options: ModelProducerV2Options): ProducerV2Port {
+export function createModelProducerV2Port(ctx: PortContext, options: ModelProducerV2Options & { readonly onWireReceipt?: (receipt: ModelExtractionWireReceipt) => void }): ProducerV2Port {
   const config = parseModelProducerConfig(ctx.config), llm = options?.llm, systemone = options?.systemone;
   if (llm === undefined || typeof llm.complete !== "function") throw new PortError("config_invalid", "model producer requires a bound llm port", false);
   let closed = false;
@@ -210,7 +211,10 @@ export function createModelProducerV2Port(ctx: PortContext, options: ModelProduc
       let decoded: unknown; try { decoded = JSON.parse(unwrapJsonCodeFence(outcome.response.text)); } catch { decoded = null; }
       if (decoded !== null && hasParsedFenceLeak(decoded, plan.nonce)) return { status: "rejected", reason: "fence_leak", usage };
       // The model answered over the scrubbed text, so it is parsed and judged there and only then moved back.
-      const parsed = parseExtractResponseV2(outcome.response.text, plan.outbound);
+      const resolved = resolveModelExtractionWire(outcome.response.text, plan.outbound);
+      if (!resolved.ok) return { status: "rejected", reason: "schema_invalid", usage, diagnostic: { stage: "response", rule: "bad_response" } };
+      options.onWireReceipt?.(resolved.receipt);
+      const parsed = parseExtractResponseV2(resolved.text, plan.outbound);
       if (!parsed.ok) return { status: "rejected", reason: "schema_invalid", usage, diagnostic: { stage: "response", rule: "bad_response" } };
       const admitted = await admitExtractedClaimsV2(parsed.response, plan.outbound, systemone, config.deadline_ms);
       if (admitted.status === "unavailable") return { status: "unavailable", reason: "unavailable", usage };

@@ -1,3 +1,4 @@
+import { modelQuoteWire } from "./quote-wire-helper";
 import { afterEach, expect, test } from "bun:test";
 import { EXTRACT_RESPONSE_V2_SCHEMA, type ProduceInputV2 } from "../../src/contracts/producer-v2";
 import { EXTRACTION_V2_SYSTEM_PROMPT, extractionV2SystemContent } from "../../src/producer/prompt-v2";
@@ -18,7 +19,7 @@ const input: ProduceInputV2 = {
 };
 const response = { schema: EXTRACT_RESPONSE_V2_SCHEMA, mentions: [{ id: "m0", label: "Mira", anchor: { event_id: "00000000000000000000000001", start_utf16: 0, end_utf16: 4 }, candidate_refs: [{ kind: "supplied", id: "s0" }] }], claims: [{ id: "c0", subject: { kind: "mention", id: "m0" }, predicate: "classification.instance_of", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "v-person" } }, perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] }, context: [], polarity: "positive", body: "Mira is a person.", valid_from: null, valid_to: null, temporal_basis: "unknown", confidence: 0.8, sensitivity: "personal", anchors: [{ event_id: "00000000000000000000000001", start_utf16: 0, end_utf16: 4 }] }] };
 const cleanups: (() => void)[] = []; afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
-function producer(script: Parameters<typeof scriptedLlm>[0]) { const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR); cleanups.push(temp.cleanup); const llm = scriptedLlm(script); return { port: createModelProducerV2Port(temp.ctx, { llm }), llm }; }
+function producer(script: Parameters<typeof scriptedLlm>[0]) { const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR); cleanups.push(temp.cleanup); const llm = scriptedLlm(request => { const result = script(request); try { return JSON.stringify(modelQuoteWire(JSON.parse(result), input.events)); } catch { return result; } }); return { port: createModelProducerV2Port(temp.ctx, { llm }), llm }; }
 
 function judgedProducer(evaluate: (request: SystemOneRequest) => Promise<SystemOneResponse>, model_ref: string | null = "test-judge", health: () => Promise<PortHealth> = async () => ({ status: "ready", detail: {} })) {
   const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR);
@@ -27,7 +28,7 @@ function judgedProducer(evaluate: (request: SystemOneRequest) => Promise<SystemO
     descriptor: validatePortDescriptor({ id: "test.systemone.v2", kind: "systemone", contract: "kizuki.systemone/v1", contract_minor: 0, supports: ["evaluate"], requires_lease: false, optional_package: null }),
     model_ref, evaluate, health, async close() {},
   };
-  const llm = scriptedLlm(() => JSON.stringify(response));
+  const llm = scriptedLlm(() => JSON.stringify(modelQuoteWire(response, input.events)));
   return createModelProducerV2Port(temp.ctx, { llm, systemone: judge });
 }
 
@@ -87,7 +88,7 @@ test("v2 consumes a real fenced prompt and returns local drafts without durable 
 
 test("typed producer binds through the public registry and releases its own capability", async () => {
   const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR); cleanups.push(temp.cleanup);
-  const registry = new PortRegistry(), llm = scriptedLlm(() => JSON.stringify(response));
+  const registry = new PortRegistry(), llm = scriptedLlm(() => JSON.stringify(modelQuoteWire(response, input.events)));
   registerModelProducerV2Port(() => llm, registry);
   await expect(registry.bindFromConfig<ProducerV2Port>("producer", { producer: MODEL_PRODUCER_V2_ID }, temp.ctx)).rejects.toThrow("contract");
   const bound = await registry.bindFromConfig<ProducerV2Port>("producer", { producer: MODEL_PRODUCER_V2_ID }, temp.ctx, PRODUCER_V2_CONTRACT);
@@ -98,11 +99,11 @@ test("typed producer binds through the public registry and releases its own capa
   expect((await llm.health()).status).toBe("ready");
 });
 
-test("v2 rejects injected fence leaks, discards unanchored mentions, and never admits an invalid reference", async () => {
+test("v2 rejects injected fence leaks and unmatched quotes, and never admits an invalid reference", async () => {
   const { port } = producer(() => `{"schema":"${EXTRACT_RESPONSE_V2_SCHEMA}","mentions":[],"claims":[],"x":"<<<KZ-QUOTE"}`);
   expect((await port.produce(input)).status).toBe("rejected");
   const unanchored = JSON.stringify({ ...response, mentions: [{ ...response.mentions[0], anchor: { event_id: "00000000000000000000000001", start_utf16: 0, end_utf16: 99 } }] });
-  expect(await producer(() => unanchored).port.produce(input)).toMatchObject({ status: "ok", response: { mentions: [], claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
+  expect(await producer(() => unanchored).port.produce(input)).toMatchObject({ status: "rejected", reason: "schema_invalid", usage: { calls: 1 } });
   const forged = JSON.stringify({ ...response, claims: [{ ...response.claims[0], subject: { kind: "supplied", id: "durable-id" } }] });
   const result = await producer(() => forged).port.produce(input);
   expect(result).toMatchObject({ status: "ok", response: { claims: [] }, dropped: [{ reason: "invalid_claim", id: "c0" }] });
@@ -216,4 +217,41 @@ test("the extraction prompt keeps identity candidates and attribution roles tied
     "Assert a label only when the evidence presents that name directly as the subject's adopted name; if a speaker, holder, document, or historical source is the one said to use the name, preserve the label's attribution and valid time.",
     "Treat a document, log, transcript, note, or record as a holder or source of an attributed proposition, never as the person speaker. Use an existing supplied ref for an attribution role only when the quoted source shows that it identifies the same attribution referent. When an attribution referent is evidenced but no supplied ref identifies it, use a distinct mention anchored to the actual speaker or holder.",
   ]) expect(prompt).toContain(rule);
+});
+
+test("quote resolution receipts bind scrubbed coordinates before ordinary restoration", async () => {
+  const { planModelExtractionV2 } = await import("../../src/producer/model-v2");
+  const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR); cleanups.push(temp.cleanup);
+  const text = `Bearer ${"x".repeat(40)} Mira joined Northwind.`;
+  const start = text.indexOf("Mira");
+  const originalAnchor = { event_id: input.events[0]!.event_id, start_utf16: start, end_utf16: start + 4 };
+  const changedInput = { ...input, events: [{ event_id: originalAnchor.event_id, text }], supplied_refs: [{ id: "s0", anchors: [originalAnchor] }] };
+  const plan = planModelExtractionV2(changedInput);
+  if (plan.status !== "ready") throw new Error("planning failed");
+  const outboundAnchor = plan.outbound.supplied_refs[0]!.anchors[0]!;
+  const publicFixture = { ...response, mentions: [{ ...response.mentions[0]!, anchor: outboundAnchor }], claims: [{ ...response.claims[0]!, anchors: [outboundAnchor] }] };
+  const receipts: unknown[] = [];
+  const llm = scriptedLlm(() => JSON.stringify(modelQuoteWire(publicFixture, plan.outbound.events)));
+  const port = createModelProducerV2Port(temp.ctx, { llm, onWireReceipt: receipt => receipts.push(receipt) });
+  const result = await port.produce(changedInput);
+  expect(result).toMatchObject({ status: "ok", response: { mentions: [{ anchor: originalAnchor }], claims: [{ anchors: [originalAnchor] }] } });
+  expect(receipts).toHaveLength(1);
+  expect(receipts[0]).toMatchObject({ resolutions: [{ anchor: outboundAnchor }, { anchor: outboundAnchor }] });
+  expect(outboundAnchor.start_utf16).not.toBe(start);
+  expect(llm.requests).toHaveLength(1);
+});
+
+test("quote spans preserve exact supplied grounding and fail once without receipts on ambiguity", async () => {
+  const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR); cleanups.push(temp.cleanup);
+  let receiptCount = 0;
+  const fixture = { ...response, mentions: [], claims: [{ ...response.claims[0]!, subject: { kind: "supplied", id: "s0" }, anchors: [{ event_id: input.events[0]!.event_id, start_utf16: 0, end_utf16: input.events[0]!.text.length }] }] };
+  const llm = scriptedLlm(() => JSON.stringify(modelQuoteWire(fixture, input.events)));
+  const port = createModelProducerV2Port(temp.ctx, { llm, onWireReceipt: () => receiptCount++ });
+  expect(await port.produce(input)).toMatchObject({ status: "ok", response: { claims: [] }, dropped: [{ id: "c0", reason: "invalid_claim" }] });
+  expect(receiptCount).toBe(1); // Conversion is separate from unchanged strict grounding.
+  const bad = scriptedLlm(() => JSON.stringify({ schema: "kizuki.model-extraction/quote-anchors-v1", mentions: [{ id: "m", label: "Mira", candidate_refs: [], anchor: { event_id: input.events[0]!.event_id, quote: "Mira" } }], claims: [] }));
+  const rejected = createModelProducerV2Port(temp.ctx, { llm: bad, onWireReceipt: () => receiptCount++ });
+  expect(await rejected.produce({ ...input, events: [{ ...input.events[0]!, text: "Mira Mira" }] })).toMatchObject({ status: "rejected", reason: "schema_invalid", usage: { calls: 1 } });
+  expect(receiptCount).toBe(1);
+  expect(bad.requests).toHaveLength(1);
 });

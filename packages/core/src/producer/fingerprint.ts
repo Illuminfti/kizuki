@@ -6,7 +6,7 @@ import { extractionV2SystemContent } from "./prompt-v2";
 
 /** Bump for producer semantics outside the prompt/registry. This is identity,
  * not a claim that the producer has been independently qualified. */
-const IMPLEMENTATION = "kizuki.producer.model.v2/replay-identity-1";
+const IMPLEMENTATION = "kizuki.producer.model.v2/quote-anchors-1";
 const identities = new WeakMap<object, () => string | null>();
 
 function fingerprint(): string {
