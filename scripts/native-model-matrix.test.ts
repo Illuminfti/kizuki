@@ -115,12 +115,14 @@ test("strict native query refuses exit-zero degradation, warnings, stderr and ma
   expect(() => readStrictNativeQuery({ ...result, exit_code: 1 })).toThrow();
 });
 test("scripted model response preserves the v2 request fence and refuses another model", () => {
-  const event = "01K5KM2BGNWBTY6K8R0W9TZAQX", request = { model: "native-lifecycle-synthetic", messages: [{ content: "system" }, { content: `event:${event}\nsource evidence` }] };
+  const event = "01K5KM2BGNWBTY6K8R0W9TZAQX", request = { model: "native-lifecycle-synthetic", messages: [{ content: "system" }, { content: `<<<KZ-QUOTE ${"a".repeat(32)} event:${event}>>>\nAda source evidence\n<<<KZ-END ${"a".repeat(32)}>>>` }] };
   const completion = syntheticModelReply(request) as { choices: { message: { content: string } }[] };
   const response = JSON.parse(completion.choices[0]!.message.content);
-  expect(response.schema).toBe("kizuki.producer-response/v2");
+  expect(response.schema).toBe("kizuki.model-extraction/quote-anchors-v1");
   expect(response.mentions[0]!.anchor.event_id).toBe(event);
+  expect(response.mentions[0]!.anchor.quote).toBe("Ada");
   expect(response.claims[0]!.anchors[0]!.event_id).toBe(event);
+  expect(response.claims[0]!.anchors[0]!.quote).toBe("Ada");
   expect(response.claims[0]).not.toHaveProperty("event_ids");
   expect(() => syntheticModelReply({ ...request, model: "foreign-model" })).toThrow("request_shape");
   expect(() => syntheticModelReply({ ...request, tools: [] })).toThrow("request_shape");
