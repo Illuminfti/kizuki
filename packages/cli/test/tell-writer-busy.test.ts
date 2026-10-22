@@ -1,8 +1,11 @@
-import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
+import { afterEach, expect, test, setDefaultTimeout, spyOn } from "bun:test";
 import { join } from "node:path";
+import * as core from "@kizuki/core";
 import { accept, applyCanonWrite, createBudgetTracker, insertClaim, resolveTarget, runWritePass } from "@kizuki/core";
 import type { CaptureEventInput, Claim, ProducerPort } from "@kizuki/core";
 import { openLedger } from "@kizuki/core/testing";
+import { withVaultMutationAsync } from "../../core/src/vault/mutation-scope";
+import { tellCommand } from "../src/commands/tell";
 import { createHelpers } from "./helpers";
 
 setDefaultTimeout(90_000);
@@ -39,6 +42,58 @@ async function file(db: ReturnType<typeof openLedger>, name: string): Promise<Cl
   if (stored.outcome !== "stored") throw new Error(`fixture claim was ${stored.outcome}`);
   return stored.claim;
 }
+
+test("legacy tell retries an observed busy writer without repeating correction effects", async () => {
+  const setup = tempVault();
+  const db = openLedger(join(setup.vault, ".kizuki", "kizuki.db"));
+  try {
+    const first = await file(db, "grace");
+    applyCanonWrite({ db, vault_path: setup.vault }, first, resolveTarget({ db, vault_path: setup.vault }, first), {
+      writer: "loop", budget: createBudgetTracker({ canon_writes_per_run: 4 }),
+    });
+    const effects = () => ["events", "claims", "canon_receipts"].map(table =>
+      db.query(`SELECT * FROM ${table} ORDER BY rowid`).all());
+    const before = effects();
+    let busy!: () => void, release!: () => void;
+    const firstBusy = new Promise<void>(resolve => { busy = resolve; });
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const original = core.correct;
+    const observed = spyOn(core, "correct").mockImplementation(async (...args) => {
+      try { return await original(...args); }
+      catch (error) {
+        if (error instanceof core.CorrectError && error.code === "writer_busy") busy();
+        throw error;
+      }
+    });
+    const held = withVaultMutationAsync({ vault_path: setup.vault, db }, () => released);
+    const stdout: string[] = [], stderr: string[] = [];
+    let command: Promise<number> | undefined;
+    try {
+      command = tellCommand.run({ env: setup.env, vaultOverride: setup.vault,
+        stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false,
+        out: line => stdout.push(line), err: line => stderr.push(line),
+        prompt: async () => { throw new Error("unexpected prompt"); },
+      }, ["grace is at initech now, not acme", "--claim", first.claim_id, "--json"]);
+      await Promise.race([firstBusy, command.then(() => { throw new Error("tell finished before a busy refusal was observed"); })]);
+      expect(effects()).toEqual(before);
+      release();
+      await held;
+      expect(await command).toBe(0);
+      expect(stderr).toEqual([]);
+      expect(stdout).toHaveLength(1);
+      expect(JSON.parse(stdout[0]!).data.receipt_id).toBeString();
+      expect(observed.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(effects().map(rows => rows.length)).toEqual(before.map(rows => rows.length + 1));
+    } finally {
+      release();
+      try { await held; }
+      finally {
+        try { await command?.catch(() => undefined); }
+        finally { observed.mockRestore(); }
+      }
+    }
+  } finally { db.close(); }
+});
 
 test("a tell issued while the loop writes canon waits for a page, not the pass, and lands", async () => {
   const setup = tempVault();

@@ -172,7 +172,7 @@ export const tellCommand: Command = {
           for (const warning of derived.degraded) io.err(`degraded: ${warning}`);
           return pending ? 1 : 0;
         }
-        const result = await correct(
+        const result = await whileWriterBusy(() => correct(
           { db: ctx.db, vault_path: ctx.vaultPath, ...(ctx.retrieval === undefined ? {} : { retrieval: ctx.retrieval }) },
           {
             statement,
@@ -182,7 +182,7 @@ export const tellCommand: Command = {
               : { scope: { ...(since === undefined ? {} : { since }), ...(until === undefined ? {} : { until }) } }),
             ...(parsed.flags.has("--dry-run") ? { dry_run: true } : {}),
           },
-        );
+        ));
         const pending = result.recovery_pending !== undefined;
         const derived = pending ? { degraded: [] as string[] } : tryRefreshDerived(ctx.db, ctx.vaultPath);
         if (parsed.flags.has("--json")) {
