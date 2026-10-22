@@ -2,175 +2,175 @@
   "schema": "kizuki.core-semantic-corpus/v1",
   "synthetic": true,
   "split": "held_out",
-  "version": "core11-prospective-unseen-20261022",
+  "version": "core12-prospective-unseen-20261022",
   "cases": [
     {
-      "id": "core11-concept-positive-retry-sieve",
+      "id": "core12-concept-positive-loom-margin",
       "kind": "concept",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Retry Sieve — Concept. Definition: a retry design rule that retries only requests without a terminal receipt and reuses the original idempotency key for every retry.",
+          "text": "Loom Margin — Concept. Its definition is a weaving rule that counts edge loops separately from central repeats before calculating the yarn allowance.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core11-concept-reported-hush-reference",
+      "id": "core12-concept-reported-bolt-partition",
       "kind": "concept",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Hush Reference — Concept. Workshop transcript. Selin Varo reported: \"Its definition is an acoustic baseline method that measures the empty chamber noise before testing a specimen and subtracts that baseline from the specimen trace.\"",
+          "text": "Bolt Partition — Concept. Elia Merrow reported: \"Its definition is a fastener testing rule that groups trials by torque bracket while keeping reused bolts in a separate group.\"",
           "subjects": [
             {
-              "id": "source-core11-concept-reported",
-              "quote": "Selin Varo reported"
+              "id": "source-core12-concept-reported",
+              "quote": "Elia Merrow reported"
             }
           ]
         }
       ]
     },
     {
-      "id": "core11-concept-historical-crate-gradient",
+      "id": "core12-concept-historical-loanword-gate",
       "kind": "concept",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "During the interval beginning 2016-08-03T06:20:00.000Z and ending exclusively at 2016-11-22T14:10:00.000Z, Crate Gradient — Concept. For that same interval only, Dispatch lexicon DL-83 states: \"Its definition was a greenhouse freight rule that sorts seedling crates by remaining chilled transit allowance before assigning them to loading bays.\"",
+          "text": "During the interval beginning 2013-05-17T08:35:00.000Z and ending exclusively at 2013-07-29T16:50:00.000Z, Loanword Gate — Concept. For that interval only, Annotation ledger AL-46 states that its definition was a language annotation rule that marks borrowed words before counting native syllable patterns.",
           "subjects": [
             {
-              "id": "source-core11-concept-historical",
-              "quote": "Dispatch lexicon DL-83 states"
+              "id": "source-core12-concept-historical",
+              "quote": "Annotation ledger AL-46 states"
             }
           ]
         }
       ]
     },
     {
-      "id": "core11-concept-name-negative-quartz-ladle",
+      "id": "core12-concept-name-negative-silver-trestle",
       "kind": "concept",
       "category": "name_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Quartz Ladle.",
+          "text": "Silver Trestle.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core11-concept-template-negative-blank-glossary",
+      "id": "core12-concept-template-negative-empty-term-card",
       "kind": "concept",
       "category": "template_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Unfilled glossary form\nConcept term: <TERM SLOT>\nMeaning: <MEANING SLOT>\nSupporting passage: <PASSAGE SLOT>",
+          "text": "Empty term card\nConcept: {INSERT TERM}\nDefinition: {INSERT MEANING}\nEvidence: {INSERT QUOTE}",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core11-concept-hypothetical-negative-parcel-echo",
+      "id": "core12-concept-hypothetical-negative-satin-fulcrum",
       "kind": "concept",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Naming question only: could an imaginary concept be called Parcel Echo? No existence, adoption, use, or meaning is asserted.",
+          "text": "Unanswered naming question: might an imaginary concept be called Satin Fulcrum? No referent or definition is asserted.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core11-situation-positive-vial-census",
+      "id": "core12-situation-positive-proof-bundle",
       "kind": "situation",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Vial Census — Situation. Its objective is to reconcile freezer tray labels with sealed vial counts before the sample transfer. It is blocked because the rack barcode is unreadable.",
+          "text": "Proof Bundle — Situation. Its objective is to collate the numbered proof sheets before the press inspection. Its blocker is that the folding guide is missing.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core11-situation-reported-baffle-reset",
+      "id": "core12-situation-reported-drain-pass",
       "kind": "situation",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Baffle Reset — Situation. Calibration transcript. Tomas Iven reported: \"Its objective is to measure the reference speaker response at all four corners of the test room. It is blocked because the reference microphone is awaiting a replacement cable.\"",
+          "text": "Drain Pass — Situation. Nadi Corven reported: \"Its objective is to flush the west drain line before the dye test. Its blocker is that the isolation valve is stuck shut.\"",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core11-situation-historical-trolley-merge",
+      "id": "core12-situation-historical-cushion-turn",
       "kind": "situation",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "During the interval beginning 2018-02-14T05:40:00.000Z and ending exclusively at 2018-04-09T19:25:00.000Z, Trolley Merge — Situation. For that same interval only, Dispatch circular DC-62 states: \"Its objective was to stage insulated crates at the loading gate before the refrigerated truck arrives; its dispatch order changed from oldest packing time to shortest remaining cold-storage allowance.\"",
+          "text": "During the interval beginning 2015-09-08T07:15:00.000Z and ending exclusively at 2015-10-21T18:40:00.000Z, Cushion Turn — Situation. For that interval only, Upholstery log UL-58 states that its objective was to fit seat webbing before adding foam; the fastening order changed from the rear edge first to the front edge first.",
           "subjects": [
             {
-              "id": "source-core11-situation-historical",
-              "quote": "Dispatch circular DC-62 states"
+              "id": "source-core12-situation-historical",
+              "quote": "Upholstery log UL-58 states"
             }
           ]
         }
       ]
     },
     {
-      "id": "core11-situation-name-negative-cobalt-apron",
+      "id": "core12-situation-name-negative-ochre-pocket",
       "kind": "situation",
       "category": "name_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Cobalt Apron.",
+          "text": "Ochre Pocket.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core11-situation-template-negative-blank-transfer",
+      "id": "core12-situation-template-negative-empty-work-card",
       "kind": "situation",
       "category": "template_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Unfilled transfer form\nSituation title: <TITLE SLOT>\nObjective: <GOAL SLOT>\nBlocker: <OBSTACLE SLOT>\nChange: <DELTA SLOT>",
+          "text": "Empty work card\nSituation: {INSERT TITLE}\nObjective: {INSERT AIM}\nBlocker: {INSERT OBSTACLE}\nChange: {INSERT REVISION}",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core11-situation-hypothetical-negative-amber-queue",
+      "id": "core12-situation-hypothetical-negative-indigo-bracket",
       "kind": "situation",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Counterfactual naming question: if a situation called Amber Queue existed, what might its title mean? This question asserts no situation, objective, blocker, status, or change.",
+          "text": "Counterfactual naming question only: if a situation called Indigo Bracket existed, could that be its title? No existence, objective, blocker, state, or change is asserted.",
           "subjects": []
         }
       ]
