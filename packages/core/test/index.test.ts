@@ -461,6 +461,7 @@ describe("public surface", () => {
       "ownerEdited",
       "pageRelPath",
       "parseEmptySegmentReplayPlan",
+      "parseEmptySegmentReplaySupersessionPlan",
       "parseExtractResponse",
       "parseFrontmatter",
       "parseMassWithdrawalDetail",
