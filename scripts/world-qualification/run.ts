@@ -15,6 +15,7 @@ import { runnerDigest, sourceProvenance } from "./fingerprint";
 import { responsePacer, RESPONSE_GAP_MS } from "./pacing";
 import { validateResume, type ResumeEvidence, type Trace } from "./resume";
 import { CORE_SEMANTIC_PROTOCOL, coreSemanticCaseInput, coreSemanticContract, coreSemanticCorpus, scoreCoreSemanticRun, validateCoreSemanticAssets, type CoreSemanticCase } from "./core-semantic";
+import { modelWireAdapterIdentity, type CoreSemanticWireEvidence } from "./wire-custody";
 
 export interface RunOptions {
   kinds: readonly string[]; base_url?: string; model?: string; token_file?: string;
@@ -78,7 +79,8 @@ async function runQualificationImpl(options: RunOptions) {
       const reason = `${item.id}:vocabulary_missing`; if (!missing.includes(reason)) missing.push(reason);
     }
   }
-  const observations: Observation[] = [], traces: Trace[] = [];
+  const observations: Observation[] = [], traces: Trace[] = [], wireReceipts: CoreSemanticWireEvidence[] = [];
+  const wireAdapter = modelWireAdapterIdentity();
   const first = selected[0];
   const prompt = first === undefined ? null : sha256(extractionV2SystemContent(inputFor(first)));
   const promptByCase = Object.fromEntries(selected.map(item => [item.id, sha256(extractionV2SystemContent(inputFor(item)))]));
@@ -91,14 +93,14 @@ async function runQualificationImpl(options: RunOptions) {
   if (resumed !== null) { observations.push(...resumed.observations); traces.push(...resumed.traces); }
   let haltReason: "requested_stop" | "transport_refused" | null = null;
   const report = () => {
-    const common = { schema: "kizuki.world-qualification-run/v2" as const,
+    const common = { schema: coreSemantic ? "kizuki.world-qualification-run/v3" as const : "kizuki.world-qualification-run/v2" as const,
       evidence: "runner_observed_transport" as const, synthetic: true, selected_kinds: [...options.kinds], selected_extensions: [...(options.extensions ?? [])],
       model: options.model ?? null, endpoint_host: options.base_url === undefined ? null : new URL(options.base_url).host,
       ...sourceProvenance(),
       runner_sha256: runnerDigest(), registry_sha256: registryDigest(registry), prompt_sha256: prompt, prompt_sha256_by_case: promptByCase,
       corpus, observations, traces, missing, selected_cases: tuple.selected_cases,
       resumed_from: resumedFrom, halt_reason: haltReason, response_gap_ms: RESPONSE_GAP_MS,
-      attempts: (resumed?.attempts ?? 0) + traces.filter(row => row.origin === "observed_v2").length,
+      attempts: (resumed?.attempts ?? 0) + traces.filter(row => row.origin === (coreSemantic ? "observed_v3" : "observed_v2")).length,
       case_states: selected.map(item => { const trace = traces.find(row => row.case_id === item.id); return { case_id: item.id,
         status: trace === undefined ? "not_run" : trace.transport === "pending" ? "in_flight" : trace.transport === "failed" ? "transport_failed" : "observed" }; }),
       limitations: ["Typed semantic extraction only; free-text rendering, durable filing and consumer behavior require their separate gates.",
@@ -106,7 +108,8 @@ async function runQualificationImpl(options: RunOptions) {
         "This fixed authored split must not be used to tune prompts or select responses; changes require a fresh unseen split.",
         coreSemantic ? "Open-text meaning and body fidelity remain pending until a separately pinned independent semantic review passes." : "Supplemental deterministic checks do not review free-text bodies. Independent forbidden-interpretation/body review remains pending."] };
     const successful = observations.filter(row => traces.some(trace => trace.case_id === row.case_id && trace.transport === "ok"));
-    if (coreSemantic) return { ...common, protocol: CORE_SEMANTIC_PROTOCOL, core_semantic: scoreCoreSemanticRun(successful, registry, { source_commit: common.source_commit, traces }) };
+    if (coreSemantic) return { ...common, protocol: CORE_SEMANTIC_PROTOCOL, wire_adapter: wireAdapter, wire_receipts: wireReceipts,
+      core_semantic: scoreCoreSemanticRun(successful, registry, { source_commit: common.source_commit, traces, wire_adapter: wireAdapter, wire_receipts: wireReceipts }) };
     return { ...common, supplemental: scoreSupplementalRun(successful), score: scoreRun(qualificationCorpus, successful) };
   };
   let fd: number | undefined, rawFd: number | undefined, rawBytes = 0;
@@ -138,7 +141,7 @@ async function runQualificationImpl(options: RunOptions) {
       const started_at = new Date().toISOString();
       const first = (request.body as { messages: { role: string; content: string }[] }).messages[0];
       if (first?.role !== "system" || sha256(first.content) !== promptByCase[activeCase]) throw new Error("qualification prompt changed");
-      const trace: Trace = { case_id: activeCase, prompt_sha256: promptByCase[activeCase]!, started_at, completed_at: null, request_sha256: sha256(canonicalJson(request.body)), response_sha256: null, transport: "pending", http_status: null, origin: "observed_v2" };
+      const trace: Trace = { case_id: activeCase, prompt_sha256: promptByCase[activeCase]!, started_at, completed_at: null, request_sha256: sha256(canonicalJson(request.body)), response_sha256: null, transport: "pending", http_status: null, origin: coreSemantic ? "observed_v3" : "observed_v2" };
       traces.push(trace); save();
       const response = await fetchTransport(request);
       pacer.completed();
@@ -170,7 +173,13 @@ async function runQualificationImpl(options: RunOptions) {
       secrets: async () => { if (token === null) throw new Error("qualification token unavailable"); return token; }, clock: () => new Date().toISOString(), logger: () => {} });
     const llm = createOpenAiCompatibleLlmPort(context({ base_url: options.base_url, model: options.model, max_retries: 0,
       timeout_ms: 180_000, reasoning_effort: "medium", ...(token === null ? {} : { secret_ref: "env:KIZUKI_QUALIFICATION_TOKEN" }) }), { transport });
-    const producer = createModelProducerV2Port(context({ deadline_ms: 180_000 }), { llm });
+    const producer = createModelProducerV2Port(context({ deadline_ms: 180_000 }), { llm, ...(coreSemantic ? { onWireReceipt: receipt => {
+      const trace = traces.find(row => row.case_id === activeCase);
+      if (activeCase.length === 0 || trace?.transport !== "ok" || trace.response_sha256 === null || wireReceipts.some(row => row.case_id === activeCase))
+        throw new Error("model wire receipt is not bound to one completed transport");
+      wireReceipts.push({ case_id: activeCase, transport_response_sha256: trace.response_sha256,
+        adapter_source_sha256: wireAdapter.source_sha256, resolution_receipt_sha256: sha256(canonicalJson(receipt)), receipt });
+    } } : {}) });
     try {
       for (const item of selected) {
         if (observations.some(row => row.case_id === item.id)) continue;

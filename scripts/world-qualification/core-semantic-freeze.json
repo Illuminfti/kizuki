@@ -7,11 +7,11 @@
     },
     "core-semantic-contract.json": {
       "bytes": 19150,
-      "sha256": "003f2c373a766fb7a40ebc57652d44ef1dd6c97d2c8c69fcebad8bcb5a307dfd"
+      "sha256": "7a4c30bc27ed2beae7620808c1b88a5069ee195dafb0827b7341a00282996c32"
     },
     "core-semantic.md": {
-      "bytes": 2248,
-      "sha256": "cf70c1be7efc7989b9202595a73e4ca50775ee30d504afa8c7dfba58e85fa132"
+      "bytes": 2437,
+      "sha256": "63ec634ccffb1bca0b08313760f44431b355d2a2a025be486ac43632e4e51533"
     }
   }
 }

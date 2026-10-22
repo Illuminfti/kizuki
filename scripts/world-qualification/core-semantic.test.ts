@@ -12,11 +12,12 @@ import { dirname, join } from "node:path";
 import { runQualification } from "./run";
 import { RUNNER_FILES, runnerDigest } from "./fingerprint";
 import { extractionV2SystemContent } from "../../packages/core/src/producer/prompt-v2";
+import { planModelExtractionV2 } from "../../packages/core/src/producer/model-v2";
 import { RESPONSE_GAP_MS } from "./pacing";
+import { modelWireAdapterIdentity, type CoreSemanticWireEvidence } from "./wire-custody";
+import type { ModelExtractionWireReceipt } from "../../packages/core/src/producer/model-v2-wire";
 
 // Scripted development controls only; no historical observed campaign is rescored.
-const scoreCoreSemanticRun = (rows: readonly Observation[], selected: ReturnType<typeof candidateRegistry>) => actualScoreCoreSemanticRun(rows, selected,
-  { source_commit: "a".repeat(40), traces: rows.map(row => ({ case_id: row.case_id, response_sha256: "b".repeat(64) })) });
 const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation"]);
 type Rule = (typeof coreSemanticContract.cases)[number];
 type ExtractRule = Extract<Rule, { expectation: "extract" }>;
@@ -79,6 +80,38 @@ function scripted(item: CoreSemanticCase): Observation {
 }
 
 const observations = () => coreSemanticCorpus.cases.map(scripted);
+function wireEvidence(rows: readonly Observation[], transport = "b".repeat(64)): CoreSemanticWireEvidence[] {
+  const adapter = modelWireAdapterIdentity();
+  return rows.map(row => {
+    const plan = planModelExtractionV2(row.input);
+    if (plan.status !== "ready" || row.response === null) throw new Error("wire evidence control requires a ready response");
+    const anchors = [
+      ...row.response.mentions.map((mention, index) => ({ path: `mentions[${index}].anchor`, anchor: mention.anchor })),
+      ...row.response.claims.flatMap((claim, index) => [
+        ...claim.anchors.map((anchor, anchorIndex) => ({ path: `claims[${index}].anchors[${anchorIndex}]`, anchor })),
+        ...claim.perspective.anchors.map((anchor, anchorIndex) => ({ path: `claims[${index}].perspective.anchors[${anchorIndex}]`, anchor })),
+      ]),
+    ];
+    const resolutions = anchors.map(({ path, anchor }) => {
+      const text = plan.outbound.events.find(event => event.event_id === anchor.event_id)?.text;
+      const selected = text?.slice(anchor.start_utf16, anchor.end_utf16) ?? "";
+      const quote = text !== undefined && selected.length > 0 && text.indexOf(selected) === anchor.start_utf16 && text.indexOf(selected, anchor.start_utf16 + 1) < 0
+        ? selected
+        : "unbound-control-anchor";
+      return { path, descriptor: { event_id: anchor.event_id, quote }, anchor };
+    });
+    const receipt: ModelExtractionWireReceipt = { schema: adapter.receipt_schema, wire_schema: adapter.wire_schema,
+      raw_response_sha256: sha256(JSON.stringify(row.response)), outbound_sha256: sha256(canonicalJson(plan.outbound)),
+      events: plan.outbound.events.map(event => ({ event_id: event.event_id, text_sha256: sha256(event.text), utf16_length: event.text.length })),
+      resolutions, translated_response_sha256: sha256(canonicalJson(row.response)) };
+    return { case_id: row.case_id, transport_response_sha256: transport, adapter_source_sha256: adapter.source_sha256,
+      resolution_receipt_sha256: sha256(canonicalJson(receipt)), receipt };
+  });
+}
+const coreEvidence = (rows: readonly Observation[], traces = rows.map(row => ({ case_id: row.case_id, response_sha256: "b".repeat(64) }))) => ({
+  source_commit: "a".repeat(40), traces, wire_adapter: modelWireAdapterIdentity(), wire_receipts: wireEvidence(rows),
+});
+const scoreCoreSemanticRun = (rows: readonly Observation[], selected: ReturnType<typeof candidateRegistry>) => actualScoreCoreSemanticRun(rows, selected, coreEvidence(rows));
 const mutate = (rows: Observation[], id: string, change: (response: ExtractResponseV2) => ExtractResponseV2) => rows.map(row => row.case_id === id ? { ...row, response: change(structuredClone(row.response!)) } : row);
 const parsedObservation = (rows: Observation[], id: string) => {
   const row = rows.find(candidate => candidate.case_id === id)!;
@@ -329,7 +362,9 @@ describe("predeclared core semantic protocol", () => {
     expect(scoreCoreSemanticRun(changed, registry)).toEqual(result);
     const review = expectedCoreSemanticReview("d".repeat(64), result);
     expect(() => verifyCoreSemanticReview("d".repeat(64), result, review)).not.toThrow();
-    for (const field of ["transport_response_sha256", "input_manifest_sha256", "sent_window_manifest_sha256", "prepared_admissions_sha256"] as const) {
+    for (const field of ["transport_response_sha256", "input_manifest_sha256", "sent_window_manifest_sha256", "prepared_admissions_sha256",
+      "wire_schema", "receipt_schema", "adapter_source_sha256", "raw_model_response_sha256", "outbound_sha256",
+      "resolution_receipt_sha256", "translated_response_sha256"] as const) {
       const bad = structuredClone(review); bad.cases[0]![field] = "0".repeat(64);
       expect(() => verifyCoreSemanticReview("d".repeat(64), result, bad)).toThrow("review mismatch");
     }
@@ -383,12 +418,12 @@ describe("predeclared core semantic protocol", () => {
   });
 
   test("prepared results require an exact source and one transport binding per case", () => {
-    const rows = observations(), traces = rows.map(row => ({ case_id: row.case_id, response_sha256: "b".repeat(64) }));
+    const rows = observations(), traces = rows.map(row => ({ case_id: row.case_id, response_sha256: "b".repeat(64) })), custody = coreEvidence(rows, traces);
     for (const evidence of [
-      { source_commit: "UNFROZEN", traces },
-      { source_commit: "a".repeat(40), traces: traces.slice(1) },
-      { source_commit: "a".repeat(40), traces: [...traces, traces[0]!] },
-      { source_commit: "a".repeat(40), traces: traces.map((trace, index) => index === 0 ? { ...trace, response_sha256: null } : trace) },
+      { ...custody, source_commit: "UNFROZEN" },
+      { ...custody, traces: traces.slice(1) },
+      { ...custody, traces: [...traces, traces[0]!] },
+      { ...custody, traces: traces.map((trace, index) => index === 0 ? { ...trace, response_sha256: null } : trace) },
     ]) {
       const result = actualScoreCoreSemanticRun(rows, registry, evidence);
       expect(result.automated_passed).toBe(false);
@@ -396,18 +431,41 @@ describe("predeclared core semantic protocol", () => {
     }
   });
 
+  test("v3 custody rejects every broken transport-to-public-response link", () => {
+    const rows = observations(), baseline = coreEvidence(rows), first = baseline.wire_receipts[0]!;
+    const changed: ReturnType<typeof coreEvidence>[] = [];
+    changed.push({ ...baseline, wire_receipts: baseline.wire_receipts.slice(1) });
+    changed.push({ ...baseline, wire_receipts: [...baseline.wire_receipts, first] });
+    changed.push({ ...baseline, wire_receipts: baseline.wire_receipts.map((row, index) => index === 0 ? { ...row, transport_response_sha256: "0".repeat(64) } : row) });
+    changed.push({ ...baseline, wire_receipts: baseline.wire_receipts.map((row, index) => index === 0 ? { ...row, adapter_source_sha256: "0".repeat(64) } : row) });
+    const mutateReceipt = (change: (receipt: ModelExtractionWireReceipt) => ModelExtractionWireReceipt) => ({ ...baseline,
+      wire_receipts: baseline.wire_receipts.map((row, index) => { if (index !== 0) return row; const receipt = change(structuredClone(row.receipt));
+        return { ...row, receipt, resolution_receipt_sha256: sha256(canonicalJson(receipt)) }; }) });
+    changed.push(mutateReceipt(receipt => ({ ...receipt, outbound_sha256: "0".repeat(64) })));
+    changed.push(mutateReceipt(receipt => ({ ...receipt, translated_response_sha256: "0".repeat(64) })));
+    changed.push(mutateReceipt(receipt => ({ ...receipt, events: receipt.events.map((event, index) => index === 0 ? { ...event, text_sha256: "0".repeat(64) } : event) })));
+    if (first.receipt.resolutions.length === 0) throw new Error("custody control requires a resolved descriptor");
+    changed.push(mutateReceipt(receipt => ({ ...receipt, resolutions: receipt.resolutions.map((resolution, index) => index === 0
+      ? { ...resolution, anchor: { ...resolution.anchor, start_utf16: resolution.anchor.start_utf16 + 1 } } : resolution) })));
+    for (const evidence of changed) {
+      const result = actualScoreCoreSemanticRun(rows, registry, evidence);
+      expect(result.automated_passed).toBe(false);
+      expect(result.cases.some(row => row.gates.pipeline.some(error => error.startsWith("custody:")))).toBe(true);
+    }
+  });
+
   test("runner mode fixes the full split and emits only a pending core result without a model", async () => {
     const directory = mkdtempSync(join(tmpdir(), "core-semantic-runner-"));
     try {
       await expect(runQualification({ protocol: "unknown" as never, kinds: ["concept", "situation"] })).rejects.toThrow("unknown qualification protocol");
-      await expect(runQualification({ protocol: "core-semantic-v2", kinds: ["concept", "situation"], case_ids: [coreSemanticCorpus.cases[0]!.id] })).rejects.toThrow("fixed core split");
-      const output = join(directory, "pending.json"), result = await runQualification({ protocol: "core-semantic-v2", kinds: ["concept", "situation"], output });
+      await expect(runQualification({ protocol: "core-semantic-v3", kinds: ["concept", "situation"], case_ids: [coreSemanticCorpus.cases[0]!.id] })).rejects.toThrow("fixed core split");
+      const output = join(directory, "pending.json"), result = await runQualification({ protocol: "core-semantic-v3", kinds: ["concept", "situation"], output });
       expect(result.core_semantic.status).toBe("pending_manual_review");
       expect(result.core_semantic.automated_passed).toBe(false);
       expect(result.traces).toEqual([]);
       expect(result.missing).toContain("model_unconfigured");
       const stored = JSON.parse(readFileSync(output, "utf8"));
-      expect(stored.protocol).toBe("core-semantic-v2");
+      expect(stored.protocol).toBe("core-semantic-v3");
       expect(Object.hasOwn(stored, "score")).toBe(false);
       expect(Object.hasOwn(stored, "supplemental")).toBe(false);
     } finally { rmSync(directory, { recursive: true, force: true }); }
@@ -417,7 +475,7 @@ describe("predeclared core semantic protocol", () => {
     const directory = mkdtempSync(join(tmpdir(), "core-semantic-cli-"));
     try {
       const path = join(directory, "report.json");
-      for (const report of [null, {}, { protocol: "core-semantic-v1" }, { protocol: "baseline" }]) {
+      for (const report of [null, {}, { protocol: "core-semantic-v1" }, { protocol: "core-semantic-v2" }, { protocol: "baseline" }]) {
         const bytes = JSON.stringify(report); writeFileSync(path, bytes);
         const result = Bun.spawnSync([process.execPath, join(import.meta.dir, "verify-core-semantic.ts"),
           "--report", path, "--report-sha256", sha256(bytes), "--review-file", "unused.json",
@@ -433,23 +491,24 @@ describe("predeclared core semantic protocol", () => {
     const directory = mkdtempSync(join(tmpdir(), "core-semantic-review-"));
     try {
       for (const path of RUNNER_FILES) { mkdirSync(dirname(join(directory, path)), { recursive: true }); writeFileSync(join(directory, path), readFileSync(join(import.meta.dir, "../..", path))); }
-      const rows = observations(), result = scoreCoreSemanticRun(rows, registry), started = Date.UTC(2026, 9, 22);
+      const rows = observations(), evidence = coreEvidence(rows), result = actualScoreCoreSemanticRun(rows, registry, evidence), started = Date.UTC(2026, 9, 22);
       const traces = rows.map((row, index) => ({ case_id: row.case_id, prompt_sha256: sha256(extractionV2SystemContent(row.input)), transport: "ok" as const,
-        request_sha256: "a".repeat(64), response_sha256: "b".repeat(64), origin: "observed_v2" as const, http_status: 200,
+        request_sha256: "a".repeat(64), response_sha256: "b".repeat(64), origin: "observed_v3" as const, http_status: 200,
         started_at: new Date(started + index * (RESPONSE_GAP_MS + 1_000)).toISOString(), completed_at: new Date(started + index * (RESPONSE_GAP_MS + 1_000) + 1_000).toISOString() }));
-      const report = { schema: "kizuki.world-qualification-run/v2" as const, protocol: "core-semantic-v2" as const, evidence: "runner_observed_transport" as const,
+      const report = { schema: "kizuki.world-qualification-run/v3" as const, protocol: "core-semantic-v3" as const, evidence: "runner_observed_transport" as const,
         synthetic: true, source_clean: true, source_commit: "a".repeat(40), runner_sha256: runnerDigest(directory), registry_sha256: registryDigest(registry),
         model: "synthetic-verifier-control", endpoint_host: "127.0.0.1:1", selected_kinds: ["concept", "situation"], selected_extensions: [],
         corpus: coreSemanticCorpus, observations: rows, traces, missing: [], selected_cases: rows.map(row => row.case_id), resumed_from: null, halt_reason: null,
         response_gap_ms: RESPONSE_GAP_MS, attempts: rows.length, case_states: rows.map(row => ({ case_id: row.case_id, status: "observed" as const })),
         prompt_sha256: traces[0]!.prompt_sha256, prompt_sha256_by_case: Object.fromEntries(traces.map(trace => [trace.case_id, trace.prompt_sha256])),
-        limitations: ["synthetic verifier control"], core_semantic: result };
+        limitations: ["synthetic verifier control"], wire_adapter: evidence.wire_adapter, wire_receipts: evidence.wire_receipts, core_semantic: result };
       const bytes = JSON.stringify(report), reportSha256 = sha256(bytes), review = JSON.stringify(expectedCoreSemanticReview(reportSha256, result));
       const fixture = join(directory, "scripts/fixtures/world-qualification/core-semantic-review.json");
       mkdirSync(dirname(fixture), { recursive: true }); writeFileSync(fixture, review);
       const approval = { file: "core-semantic-control.json", sha256: reportSha256, endpoint_evidence: "c".repeat(64),
-        body_review: { file: "core-semantic-review.json", sha256: sha256(review) } };
-      expect(() => verifyQualificationReceipt(bytes, { file: approval.file, sha256: approval.sha256, endpoint_evidence: approval.endpoint_evidence }, registry, directory)).toThrow("independent review missing");
+        protocol: "core-semantic-v3" as const, body_review: { file: "core-semantic-review.json", sha256: sha256(review) } };
+      expect(() => verifyQualificationReceipt(bytes, { file: approval.file, sha256: approval.sha256, endpoint_evidence: approval.endpoint_evidence,
+        protocol: "core-semantic-v3" }, registry, directory)).toThrow("independent review missing");
       const checked = verifyQualificationReceipt(bytes, approval, registry, directory);
       expect(verifyCoreSemanticReport(bytes, approval, directory)).toEqual(checked);
       for (const protocol of [undefined, "core-semantic-v1", "baseline"]) {
@@ -457,6 +516,14 @@ describe("predeclared core semantic protocol", () => {
         expect(() => verifyCoreSemanticReport(wrong, { ...approval, sha256: sha256(wrong) }, directory)).toThrow("core semantic protocol required");
       }
       expect(() => checkOfferedQualification(registry, [checked])).not.toThrow();
+      for (const changed of [
+        { ...report, wire_adapter: { ...report.wire_adapter, source_sha256: "0".repeat(64) } },
+        { ...report, wire_receipts: report.wire_receipts.slice(1) },
+        { ...report, wire_receipts: report.wire_receipts.map((row, index) => index === 0 ? { ...row, resolution_receipt_sha256: "0".repeat(64) } : row) },
+      ]) {
+        const changedBytes = JSON.stringify(changed);
+        expect(() => verifyQualificationReceipt(changedBytes, { ...approval, sha256: sha256(changedBytes) }, registry, directory)).toThrow();
+      }
       const changedReview = JSON.stringify({ ...JSON.parse(review), independent: false }); writeFileSync(fixture, changedReview);
       expect(() => verifyQualificationReceipt(bytes, { ...approval, body_review: { ...approval.body_review, sha256: sha256(changedReview) } }, registry, directory)).toThrow("review mismatch");
     } finally { rmSync(directory, { recursive: true, force: true }); }

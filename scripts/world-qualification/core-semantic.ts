@@ -14,8 +14,10 @@ import corpusJson from "./core-semantic-corpus.json";
 import contractJson from "./core-semantic-contract.json";
 import freeze from "./core-semantic-freeze.json";
 import type { Observation } from "./score";
+import { inspectCoreSemanticWireEvidence, type CoreSemanticWireEvidence, type ModelWireAdapterIdentity } from "./wire-custody";
 
-export const CORE_SEMANTIC_PROTOCOL = "core-semantic-v2" as const;
+export const CORE_SEMANTIC_PROTOCOL = "core-semantic-v3" as const;
+export const LEGACY_CORE_SEMANTIC_PROTOCOL = "core-semantic-v2" as const;
 type Category = "positive" | "reported" | "historical" | "name_negative" | "template_negative" | "hypothetical_negative";
 type SourceType = "direct_record" | "person_statement" | "document_report";
 export interface CoreSemanticRecord { id: string; text: string; subjects: { id: string; quote: string }[] }
@@ -35,7 +37,7 @@ interface ExtractRule {
   details: DetailRule[]; forbidden_assertions: string[];
 }
 interface AbstainRule { case_id: string; expectation: "abstain"; forbidden_assertions: string[] }
-interface CoreSemanticContract { schema: string; corpus_version: string; legacy_extra_policy: { forbidden_predicates: string[] }; cases: (ExtractRule | AbstainRule)[] }
+interface CoreSemanticContract { schema: string; protocol: string; corpus_version: string; legacy_extra_policy: { forbidden_predicates: string[] }; cases: (ExtractRule | AbstainRule)[] }
 
 export const coreSemanticCorpus = corpusJson as CoreSemanticCorpus;
 export const coreSemanticContract = contractJson as CoreSemanticContract;
@@ -60,7 +62,7 @@ export function validateCoreSemanticAssets(): void {
   }
   const categories: Category[] = ["positive", "reported", "historical", "name_negative", "template_negative", "hypothetical_negative"];
   if (coreSemanticCorpus.schema !== "kizuki.core-semantic-corpus/v1" || coreSemanticCorpus.synthetic !== true || coreSemanticCorpus.split !== "held_out" ||
-      coreSemanticContract.schema !== "kizuki.core-semantic-contract/v1" || coreSemanticContract.corpus_version !== coreSemanticCorpus.version ||
+      coreSemanticContract.schema !== "kizuki.core-semantic-contract/v1" || coreSemanticContract.protocol !== CORE_SEMANTIC_PROTOCOL || coreSemanticContract.corpus_version !== coreSemanticCorpus.version ||
       canonicalJson(coreSemanticContract.legacy_extra_policy.forbidden_predicates) !== canonicalJson(forbiddenLegacyPredicates) ||
       coreSemanticCorpus.cases.length !== 12 || coreSemanticContract.cases.length !== 12 ||
       canonicalJson(coreSemanticCorpus.cases.map(row => row.id)) !== canonicalJson(coreSemanticContract.cases.map(row => row.case_id))) throw new Error("invalid core semantic assets");
@@ -222,6 +224,8 @@ export function prepareCoreSemanticObservation(observed: Observation, registry: 
 export interface CoreSemanticEvidence {
   readonly source_commit: string;
   readonly traces: readonly { readonly case_id: string; readonly response_sha256: string | null }[];
+  readonly wire_adapter: ModelWireAdapterIdentity;
+  readonly wire_receipts: readonly CoreSemanticWireEvidence[];
 }
 
 function rawRefKey(ref: { kind: "supplied" | "mention"; id: string }): string { return `${ref.kind}:${ref.id}`; }
@@ -339,8 +343,11 @@ export function scoreCoreSemanticRun(observations: readonly Observation[], regis
     const anchors = new Map(pipeline?.drafts.map((draft,index) => [observed!.response!.claims[index]?.id ?? "", draft.semantic.perspective.anchors]));
     const prepared = scoreCoreSemanticCase(item, rule, observed, registry, anchors);
     const matches = evidence.traces.filter(row => row.case_id === item.id), transportSha = matches.length === 1 ? matches[0]!.response_sha256 : null;
+    const custody = inspectCoreSemanticWireEvidence({ case_id: item.id, input: observed?.input ?? coreSemanticCaseInput(item, registry),
+      response: observed?.response ?? null, transport_response_sha256: transportSha, adapter: evidence.wire_adapter, evidence: evidence.wire_receipts });
     const pipelineErrors = [...(pipeline?.errors ?? ["not_prepared"])];
     if (!/^[a-f0-9]{40}$/.test(evidence.source_commit) || !/^[a-f0-9]{64}$/.test(transportSha ?? "")) pipelineErrors.push("unbound_pipeline_evidence");
+    pipelineErrors.push(...custody.errors.map(error => `custody:${error}`));
     return { ...prepared, stage: "prepared_admission" as const,
       automated_passed: prepared.automated_passed && pipelineErrors.length === 0,
       gates: { ...prepared.gates, pipeline: pipelineErrors },
@@ -351,21 +358,24 @@ export function scoreCoreSemanticRun(observations: readonly Observation[], regis
         correspondence: pipeline.correspondence, prepared_admissions: pipeline.drafts.map(row => row.world_admission) },
       manual_review: { ...prepared.manual_review, stage: "prepared_admission" as const, transport_response_sha256: transportSha,
         input_manifest_sha256: pipeline?.input_manifest_sha256 ?? null, sent_window_manifest_sha256: pipeline?.sent_window_manifest_sha256 ?? null,
-        prepared_admissions_sha256: pipeline?.prepared_admissions_sha256 ?? null } };
+        prepared_admissions_sha256: pipeline?.prepared_admissions_sha256 ?? null, ...custody.binding } };
   });
-  return { schema: "kizuki.core-semantic-result/v2" as const, protocol: CORE_SEMANTIC_PROTOCOL, stage: "prepared_admission" as const,
+  return { schema: "kizuki.core-semantic-result/v3" as const, protocol: CORE_SEMANTIC_PROTOCOL, stage: "prepared_admission" as const,
     source_commit: evidence.source_commit, corpus_sha256: coreSemanticCorpusSha256, contract_sha256: coreSemanticContractSha256,
     raw_model_automated_passed: cases.every(row => row.raw_model.automated_passed),
     automated_passed: cases.every(row => row.automated_passed), status: "pending_manual_review" as const, cases };
 }
 
 export function expectedCoreSemanticReview(reportSha256: string, result: ReturnType<typeof scoreCoreSemanticRun>) {
-  return { schema: "kizuki.core-semantic-review/v2" as const, stage: "prepared_admission" as const, source_commit: result.source_commit, independent: true, status: "passed" as const, report_sha256: reportSha256,
+  return { schema: "kizuki.core-semantic-review/v3" as const, stage: "prepared_admission" as const, source_commit: result.source_commit, independent: true, status: "passed" as const, report_sha256: reportSha256,
     corpus_sha256: result.corpus_sha256, contract_sha256: result.contract_sha256,
     cases: result.cases.map(row => { const rule = coreSemanticContract.cases.find(candidate => candidate.case_id === row.case_id)!;
       const binding = { transport_response_sha256: row.manual_review.transport_response_sha256,
         input_manifest_sha256: row.manual_review.input_manifest_sha256, sent_window_manifest_sha256: row.manual_review.sent_window_manifest_sha256,
-        prepared_admissions_sha256: row.manual_review.prepared_admissions_sha256 };
+        prepared_admissions_sha256: row.manual_review.prepared_admissions_sha256, wire_schema: row.manual_review.wire_schema,
+        receipt_schema: row.manual_review.receipt_schema, adapter_source_sha256: row.manual_review.adapter_source_sha256,
+        raw_model_response_sha256: row.manual_review.raw_model_response_sha256, outbound_sha256: row.manual_review.outbound_sha256,
+        resolution_receipt_sha256: row.manual_review.resolution_receipt_sha256, translated_response_sha256: row.manual_review.translated_response_sha256 };
       return rule.expectation === "abstain"
         ? { ...binding, case_id: row.case_id, response_sha256: row.manual_review.response_sha256, status: "passed" as const, abstention: "confirmed" as const }
         : { ...binding, case_id: row.case_id, response_sha256: row.manual_review.response_sha256, status: "passed" as const,

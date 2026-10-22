@@ -473,7 +473,7 @@
       ]
     }
   ],
-  "protocol": "core-semantic-v2",
+  "protocol": "core-semantic-v3",
   "evaluation_stage": "prepared_admission",
   "raw_citation_precision": {
     "stage": "raw_model",

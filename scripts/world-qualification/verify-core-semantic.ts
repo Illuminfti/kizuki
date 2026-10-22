@@ -12,7 +12,7 @@ function readReport(path: string): string {
   } finally { closeSync(fd); }
 }
 
-/** The protocol-specific CLI must not relabel a valid baseline receipt. */
+/** The protocol-specific CLI accepts only the active v3 custody method. */
 export function verifyCoreSemanticReport(bytes: string, approval: QualificationApproval, root?: string) {
   const report: unknown = JSON.parse(bytes);
   if (report === null || typeof report !== "object" || !("protocol" in report) || report.protocol !== CORE_SEMANTIC_PROTOCOL)
@@ -31,7 +31,7 @@ if (import.meta.main) {
     const report = value("--report"), reportSha256 = value("--report-sha256"), reviewFile = value("--review-file"), reviewSha256 = value("--review-sha256"), endpointEvidence = value("--endpoint-evidence");
     if ([report, reportSha256, reviewFile, reviewSha256, endpointEvidence].some(item => item === undefined)) throw new Error("required arguments missing");
     const checked = verifyCoreSemanticReport(readReport(report!), { file: report!.split("/").at(-1)!, sha256: reportSha256!, endpoint_evidence: endpointEvidence!,
-      body_review: { file: reviewFile!, sha256: reviewSha256! } });
+      protocol: CORE_SEMANTIC_PROTOCOL, body_review: { file: reviewFile!, sha256: reviewSha256! } });
     console.log(JSON.stringify({ status: "passed", protocol: CORE_SEMANTIC_PROTOCOL, stage: "prepared_admission", report_sha256: checked.report_sha256,
       body_review_sha256: reviewSha256, endpoint_evidence_sha256: endpointEvidence,
       registry_sha256: checked.registry_sha256, kinds: checked.kinds, predicates: checked.predicates }));

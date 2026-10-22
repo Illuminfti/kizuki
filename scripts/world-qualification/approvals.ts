@@ -1,4 +1,11 @@
-export interface QualificationApproval { file: string; sha256: string; endpoint_evidence: string; body_review?: { file: string; sha256: string } }
+export interface QualificationApproval {
+  file: string;
+  sha256: string;
+  endpoint_evidence: string;
+  /** Required for the active core semantic method; absent only on baseline or historical evidence. */
+  protocol?: "core-semantic-v3";
+  body_review?: { file: string; sha256: string };
+}
 
 /** Review pins are separate from the evaluator fingerprint, so approving its immutable output is possible.
  * Each entry pins an actual report and independently reviewed endpoint identity evidence. */

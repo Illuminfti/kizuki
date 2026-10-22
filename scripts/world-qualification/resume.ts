@@ -6,7 +6,7 @@ import type { WorldRegistry } from "../../packages/core/src/contracts/world-kind
 import { RESUMABLE_RUNS } from "./approvals";
 
 export interface LegacyTrace { case_id: string; prompt_sha256: string; started_at: string; completed_at: string | null; request_sha256: string; response_sha256: string | null; transport: "pending" | "ok" | "failed" }
-export interface Trace extends LegacyTrace { http_status: number | null; origin: "inherited_v1" | "observed_v2" }
+export interface Trace extends LegacyTrace { http_status: number | null; origin: "inherited_v1" | "observed_v2" | "observed_v3" }
 export interface ResumeTuple { selected_kinds: readonly string[]; selected_extensions: readonly string[]; model: string | null; endpoint_host: string | null; registry_sha256: string; prompt_sha256_by_case: Record<string, string>; selected_cases: readonly string[] }
 export interface ResumePin { sha256: string; source_commit: string; runner_sha256: string }
 export interface ResumeEvidence { sha256: string; bytes: string }

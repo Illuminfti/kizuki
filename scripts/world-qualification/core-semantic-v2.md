@@ -1,5 +1,9 @@
 # Core semantic qualification at prepared admission
 
+Historical method only. `core-semantic-v3` supersedes this method for active
+qualification, and the release verifier rejects v2 receipts. Retained v2
+artifacts may be inspected as prior evidence but cannot be rescored as v3.
+
 `core-semantic-v2` evaluates the actual production `prepareWorldDrafts` output.
 It is a prospective method. The retained prior split and scripted answers are
 unaccepted development controls; they do not qualify a prior observed campaign.
