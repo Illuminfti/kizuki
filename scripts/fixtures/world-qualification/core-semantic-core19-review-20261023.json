@@ -1,0 +1,1248 @@
+{
+  "schema": "kizuki.core-semantic-review/v3",
+  "stage": "prepared_admission",
+  "source_commit": "9eda565ee84b1051015e21735637467dba3f7bca",
+  "independent": true,
+  "status": "passed",
+  "report_sha256": "15facd756f0dc48a8e5a350fac7ca01c5821648f7187d1522331587281f84098",
+  "representation_method": "complete-authored-branches/v1",
+  "input_policy": {
+    "schema": "kizuki.qualification-input-policy/v1",
+    "max_input_tokens": 32000,
+    "max_output_tokens": 8192,
+    "input_token_overhead": 24000
+  },
+  "corpus_sha256": "8621cc5b10bc204084c7a18c62c9983048c473d5c35914bd0dff62f5a0602d30",
+  "contract_sha256": "87e9b22e746e6cadff4527beb1dd85ac7397901ee840746a481b058f0a646d4c",
+  "cases": [
+    {
+      "selected_branch_id": "situation-positive-carmine-map-cabinet",
+      "selected_branch_sha256": "d12817aa2dbdb32fb49b1bbb427c8f16b76ef443b55791b471e5988348610a2d",
+      "selected_branch": {
+        "id": "situation-positive-carmine-map-cabinet",
+        "target": {
+          "mode": "mention",
+          "record": "r1",
+          "quote": "Carmine Map Cabinet"
+        },
+        "classification": {
+          "kind": "world/situation",
+          "label": "Carmine Map Cabinet",
+          "witness": "Carmine Map Cabinet — Situation",
+          "perspective": "direct",
+          "time": "unknown"
+        },
+        "details": [
+          {
+            "predicate": "situation.objective",
+            "object_kind": "literal",
+            "witness": "Its objective is to sort the vellum survey sheets.",
+            "required_atoms": [
+              "sorting the vellum survey sheets"
+            ],
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          {
+            "predicate": "situation.blocker",
+            "object_kind": "literal",
+            "witness": "the lower drawer is swollen",
+            "required_atoms": [
+              "the lower drawer is swollen",
+              "the swollen lower drawer is a stated blocker of Carmine Map Cabinet"
+            ],
+            "perspective": "direct",
+            "time": "unknown"
+          }
+        ],
+        "forbidden_assertions": [
+          "Carmine Map Cabinet is complete",
+          "the owner owns or leads Carmine Map Cabinet",
+          "the sorting has been completed",
+          "the source establishes a purpose, enabling relation or commitment for the sorting"
+        ],
+        "label_rule": {
+          "value": "Carmine Map Cabinet",
+          "naming": "explicit",
+          "naming_witness": "Carmine Map Cabinet — Situation",
+          "witness": "Carmine Map Cabinet — Situation",
+          "perspective": "direct",
+          "time": "unknown"
+        }
+      },
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "b3851cfaede69e338d0ca32258e3305dd85d189cd4dc86799706a87697581d20",
+        "estimated_input_tokens": 4510,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28510,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "441adec9e334e3ad8574eb64c0d229da4354c9eae800d1f6c71668e0feb9a124"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "dcb7a9ddc6aa26025f4a480421779eddd5176094ac017ae9367723b16877782f",
+      "input_manifest_sha256": "221dbd9c2dba9678ffaf0a9557da763158154e2caea9dad5d5c71bc082658155",
+      "sent_window_manifest_sha256": "ef202444d5ae94cb1eda33c90d1631361b97f10833bca1850c59db1a601e72c5",
+      "prepared_admissions_sha256": "72ed3a6eea59d0bd7bec9718b4a3d783023183fd2b37689083f61e14497f064c",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "b63692b297fa8034dfc7c00345b9023e592e02114cc88960b0ca88c9c1d7ac56",
+      "transport_model_response_sha256": "b63692b297fa8034dfc7c00345b9023e592e02114cc88960b0ca88c9c1d7ac56",
+      "outbound_sha256": "b3851cfaede69e338d0ca32258e3305dd85d189cd4dc86799706a87697581d20",
+      "resolution_receipt_sha256": "25f2dcbab4eaee0e35ee399e2fc8777712c0b26d36e427194f93608f2cc5515d",
+      "translated_response_sha256": "8a6ac9c9c8f0742ae188ae8b8ba6436cfa7f6901e9d2548d1d9e8afca0b1b70c",
+      "case_id": "core17-situation-positive-carmine-map-cabinet",
+      "response_sha256": "8a6ac9c9c8f0742ae188ae8b8ba6436cfa7f6901e9d2548d1d9e8afca0b1b70c",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "situation.objective",
+          "atom": "sorting the vellum survey sheets",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.blocker",
+          "atom": "the lower drawer is swollen",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.blocker",
+          "atom": "the swollen lower drawer is a stated blocker of Carmine Map Cabinet",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.objective",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.blocker",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "Carmine Map Cabinet is complete",
+          "status": "absent"
+        },
+        {
+          "assertion": "the owner owns or leads Carmine Map Cabinet",
+          "status": "absent"
+        },
+        {
+          "assertion": "the sorting has been completed",
+          "status": "absent"
+        },
+        {
+          "assertion": "the source establishes a purpose, enabling relation or commitment for the sorting",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "selected_branch_id": "situation-reported-vermilion-inlet",
+      "selected_branch_sha256": "3e4c3bec4c13684ab22286c984208f860d25f4dacf2595b9e21e19a432ae2224",
+      "selected_branch": {
+        "id": "situation-reported-vermilion-inlet",
+        "target": {
+          "mode": "mention",
+          "record": "r1",
+          "quote": "Vermilion Inlet"
+        },
+        "classification": {
+          "kind": "world/situation",
+          "label": "Vermilion Inlet",
+          "witness": "Vermilion Inlet — Situation",
+          "perspective": "direct",
+          "time": "unknown"
+        },
+        "details": [
+          {
+            "predicate": "situation.objective",
+            "object_kind": "literal",
+            "witness": "route the dye pulses through the inlet manifold before the transit test",
+            "required_atoms": [
+              "the stated objective is to route dye pulses through the inlet manifold",
+              "routing the dye pulses precedes the transit test"
+            ],
+            "perspective": "person_statement",
+            "time": "unknown",
+            "source": {
+              "mode": "mention",
+              "record": "r1",
+              "quote": "Sova Kelm",
+              "label": "Sova Kelm",
+              "attribution_witness": "Sova Kelm stated"
+            },
+            "attribution_witness": "Sova Kelm stated"
+          },
+          {
+            "predicate": "situation.blocker",
+            "object_kind": "literal",
+            "witness": "the outlet baffle is warped",
+            "required_atoms": [
+              "the outlet baffle is warped",
+              "the warped outlet baffle is a stated blocker of Vermilion Inlet"
+            ],
+            "perspective": "person_statement",
+            "time": "unknown",
+            "source": {
+              "mode": "mention",
+              "record": "r1",
+              "quote": "Sova Kelm",
+              "label": "Sova Kelm",
+              "attribution_witness": "Sova Kelm stated"
+            },
+            "attribution_witness": "Sova Kelm stated"
+          }
+        ],
+        "forbidden_assertions": [
+          "Vermilion Inlet is complete",
+          "Sova Kelm owns or leads Vermilion Inlet"
+        ],
+        "label_rule": {
+          "value": "Vermilion Inlet",
+          "naming": "explicit",
+          "naming_witness": "Vermilion Inlet — Situation",
+          "witness": "Vermilion Inlet — Situation",
+          "perspective": "direct",
+          "time": "unknown"
+        }
+      },
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "78474898a2e9f029830d0e80f9d8517a0ff30d56bd3460742382b6e501a22576",
+        "estimated_input_tokens": 4525,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28525,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "ef0b2a3ddf06250ea3505c02b75585836e40150f6cc64877478152bd93cdf7c9"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "f8b0e3b269f0f220a0a6a758c29d39a5744b347fa165f89b15526db6aebdf2d3",
+      "input_manifest_sha256": "30b99b4ca1656b2840c08c257d5abcb5198f3f699da45a81d7cab23f7fe49408",
+      "sent_window_manifest_sha256": "7c2904b37953d523cf0ad1e51a74a50bb2661e2edb0586e6e03274e2ba03ff1e",
+      "prepared_admissions_sha256": "6cc76587c9e6292e5a92f4d6c5af6e888d213dd8f0234a4183eb7012e815d3fe",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "8750fd5d00d5d8154dade4cf0a67c619bf8a20ff4cc4231088778285dde39a73",
+      "transport_model_response_sha256": "8750fd5d00d5d8154dade4cf0a67c619bf8a20ff4cc4231088778285dde39a73",
+      "outbound_sha256": "78474898a2e9f029830d0e80f9d8517a0ff30d56bd3460742382b6e501a22576",
+      "resolution_receipt_sha256": "2775c9bf4eb73eb4697c51d88b0f6cd68fa4cf183c6a93d282a6737d4f597091",
+      "translated_response_sha256": "88beb3aded239bd521f270ee3b5cbebd29bf98ea07d3554b25dc0bac5642c827",
+      "case_id": "core16-situation-reported-vermilion-inlet",
+      "response_sha256": "88beb3aded239bd521f270ee3b5cbebd29bf98ea07d3554b25dc0bac5642c827",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "situation.objective",
+          "atom": "the stated objective is to route dye pulses through the inlet manifold",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.objective",
+          "atom": "routing the dye pulses precedes the transit test",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.blocker",
+          "atom": "the outlet baffle is warped",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.blocker",
+          "atom": "the warped outlet baffle is a stated blocker of Vermilion Inlet",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.objective",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.blocker",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "Vermilion Inlet is complete",
+          "status": "absent"
+        },
+        {
+          "assertion": "Sova Kelm owns or leads Vermilion Inlet",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "selected_branch_id": "historical-mica-harmonic-objective",
+      "selected_branch_sha256": "62c4df37140a376da852450018af8f6e086ae3c7bb569bc3133a6e5ae6924309",
+      "selected_branch": {
+        "id": "historical-mica-harmonic-objective",
+        "target": {
+          "mode": "mention",
+          "record": "r1",
+          "quote": "Mica Harmonic Hold"
+        },
+        "classification": {
+          "kind": "world/situation",
+          "label": "Mica Harmonic Hold",
+          "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.",
+          "perspective": "direct",
+          "time": {
+            "valid_from": "2009-05-11T06:40:00.000Z",
+            "valid_to": "2009-08-23T17:10:00.000Z",
+            "temporal_basis": "explicit",
+            "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+          }
+        },
+        "forbidden_assertions": [
+          "the pitch carriage has been freed",
+          "the harmonic-ratio measurement proceeded or completed",
+          "the requested remedy resolved the condition",
+          "Mica Harmonic Hold is complete",
+          "Mica Harmonic Hold is current outside the explicit interval",
+          "the report title is Mica Harmonic Hold",
+          "the record establishes a project, owner, leadership, execution, or current count"
+        ],
+        "label_rule": {
+          "value": "Mica Harmonic Hold",
+          "naming": "explicit",
+          "naming_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+          "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+          "perspective": "document_report",
+          "source": "source-core16-situation-historical",
+          "attribution_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+          "time": {
+            "valid_from": "2009-05-11T06:40:00.000Z",
+            "valid_to": "2009-08-23T17:10:00.000Z",
+            "temporal_basis": "explicit",
+            "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+          }
+        },
+        "details": [
+          {
+            "predicate": "situation.objective",
+            "object_kind": "literal",
+            "witness": "Free the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement so that the measurement can proceed.",
+            "required_atoms": [
+              "freeing the pitch carriage is requested rather than asserted to have been performed",
+              "the pitch carriage is already seized and still blocks an unresolved harmonic-ratio measurement",
+              "the requested remedy is to free the pitch carriage",
+              "freeing the pitch carriage is presented as enabling that unresolved harmonic-ratio measurement to proceed"
+            ],
+            "perspective": "document_report",
+            "source": "source-core16-situation-historical",
+            "attribution_witness": "For that entire interval, that record requests this action list for the named condition",
+            "time": {
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+            }
+          }
+        ]
+      },
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "cb132d62216d0d9fd537898da0f35319565988adba7d65640359259df73be97b",
+        "estimated_input_tokens": 4815,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28815,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "cd472ad687590e25c363703cadb88353e0af5fa2a9c0b95d5a1cba7f9b531e66"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "105c51e01fe091a99970872c0c7f657aef53cd4e66a5ac0f2e30f823d775b29c",
+      "input_manifest_sha256": "405f2ec32318450e8e1bf0e274505e1cdd95588ddda71d61e7aaafbd428fbdb8",
+      "sent_window_manifest_sha256": "2200efbf5603681afed9753906e7e527bd72af094437a82f0d7dc69b1057f8a5",
+      "prepared_admissions_sha256": "46f3e2c4c1f3e078300721aade8d04773a5e79742b179a296c13067a65788356",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "4f4d10be85db9eb3a3da5d38a5bb23eed27481d232da5d140ad8c049852fe7af",
+      "transport_model_response_sha256": "4f4d10be85db9eb3a3da5d38a5bb23eed27481d232da5d140ad8c049852fe7af",
+      "outbound_sha256": "cb132d62216d0d9fd537898da0f35319565988adba7d65640359259df73be97b",
+      "resolution_receipt_sha256": "313218592f40d5bc8719482cf2392af15d24ac1abaefdb2ca51350c5a85c9ff2",
+      "translated_response_sha256": "2f71f296c32cbac46afe0e49a1a0f9cf2ab7bad88a548fae704a40b66cda617e",
+      "case_id": "core16-situation-historical-mica-harmonic-hold",
+      "response_sha256": "2f71f296c32cbac46afe0e49a1a0f9cf2ab7bad88a548fae704a40b66cda617e",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "situation.objective",
+          "atom": "freeing the pitch carriage is requested rather than asserted to have been performed",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.objective",
+          "atom": "the pitch carriage is already seized and still blocks an unresolved harmonic-ratio measurement",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.objective",
+          "atom": "the requested remedy is to free the pitch carriage",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.objective",
+          "atom": "freeing the pitch carriage is presented as enabling that unresolved harmonic-ratio measurement to proceed",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.objective",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "the pitch carriage has been freed",
+          "status": "absent"
+        },
+        {
+          "assertion": "the harmonic-ratio measurement proceeded or completed",
+          "status": "absent"
+        },
+        {
+          "assertion": "the requested remedy resolved the condition",
+          "status": "absent"
+        },
+        {
+          "assertion": "Mica Harmonic Hold is complete",
+          "status": "absent"
+        },
+        {
+          "assertion": "Mica Harmonic Hold is current outside the explicit interval",
+          "status": "absent"
+        },
+        {
+          "assertion": "the report title is Mica Harmonic Hold",
+          "status": "absent"
+        },
+        {
+          "assertion": "the record establishes a project, owner, leadership, execution, or current count",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "selected_branch_id": null,
+      "selected_branch_sha256": null,
+      "selected_branch": null,
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "61e4a655cd8b0289a59fb6197e1b7f79c7707e2ac645ff7aba46d94980b4048c",
+        "estimated_input_tokens": 4481,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28481,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "c168b837d59804b107d9f92fbb932eda60cac909d51164c3f2967fd15a67cecd"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "81ce57c78cdd25b3405aea5e6fa93df9d10be48826eedb429ee2858b45f6917a",
+      "input_manifest_sha256": "f8636191194ec895beb7d75d25e629a5e503eb3272e338a4d8c8cd0abf1b7df2",
+      "sent_window_manifest_sha256": "4f27c16e57a2b2a6d3bfc42851674e3a2755ba28fa6a34eb41da6a877ddedf70",
+      "prepared_admissions_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "transport_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "outbound_sha256": "61e4a655cd8b0289a59fb6197e1b7f79c7707e2ac645ff7aba46d94980b4048c",
+      "resolution_receipt_sha256": "f9ab0650c798ce997e68022b2bd6fd387ea209ea4623d646342ef2ec71f34990",
+      "translated_response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "case_id": "core15-situation-name-negative-juniper-rill",
+      "response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "status": "passed",
+      "abstention": "confirmed"
+    },
+    {
+      "selected_branch_id": null,
+      "selected_branch_sha256": null,
+      "selected_branch": null,
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "3bd9e73230a0160d52602e9d6980b23693caea9d7ae4f7beef8641014d8f0c48",
+        "estimated_input_tokens": 4509,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28509,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "b55ed6f38a2f29fe291e1ab212e3705f1759ae755172c51ad1168e5a99058886"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "04b24600abcb8d45bd1c5fae6fdb1c8f3cc8dd3169a72c4f0118a09062c8eae8",
+      "input_manifest_sha256": "f3f586f822315dd2a6349b1b8d94a2dff33f35a1abaac68843bcbada091e014b",
+      "sent_window_manifest_sha256": "4a729d8b6e9b9969765fabe93ace9d8c0c1122cec068722fdf571b0936d3f7eb",
+      "prepared_admissions_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "transport_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "outbound_sha256": "3bd9e73230a0160d52602e9d6980b23693caea9d7ae4f7beef8641014d8f0c48",
+      "resolution_receipt_sha256": "3c852b5f47ddd45a759e52256c4ae8be80d0a287aed0f08f1e94b23aba5400a9",
+      "translated_response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "case_id": "core15-situation-template-negative-unfilled-equipment-card",
+      "response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "status": "passed",
+      "abstention": "confirmed"
+    },
+    {
+      "selected_branch_id": null,
+      "selected_branch_sha256": null,
+      "selected_branch": null,
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "c2b5a2276399957f53cf164a3946f81fc2f435146d4bb093505a15b334041557",
+        "estimated_input_tokens": 4494,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28494,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "516aa66ef7d48a3a876cdf4ab2df8afc1b40aca4fdddd6fc5e60881f6f167c35"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "cf69bb80c8a4e7a5b99cae3c6a3ff8a4436f3f00fdaca15931c6027dda94c31f",
+      "input_manifest_sha256": "01721e1658686dac6a6079356ba88a27b5a7f9c471d74bb3a9a9b89225a38cc6",
+      "sent_window_manifest_sha256": "0cdc693d93ca04eafc05cdd9efc186f82065168d481930c1a4f29a0095f2bd67",
+      "prepared_admissions_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "transport_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "outbound_sha256": "c2b5a2276399957f53cf164a3946f81fc2f435146d4bb093505a15b334041557",
+      "resolution_receipt_sha256": "fc41465f02208766a7ba6a1bd8e2f6e78e499ea8c9f9a57ad1f91feda439c253",
+      "translated_response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "case_id": "core15-situation-hypothetical-negative-silver-sluice",
+      "response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "status": "passed",
+      "abstention": "confirmed"
+    },
+    {
+      "selected_branch_id": "concept-positive-linen-compass",
+      "selected_branch_sha256": "71cb30420f9a580f0323aa0312483d58171a5e6f10dd56907aced819a32016fb",
+      "selected_branch": {
+        "id": "concept-positive-linen-compass",
+        "target": {
+          "mode": "mention",
+          "record": "r1",
+          "quote": "Linen Compass"
+        },
+        "classification": {
+          "kind": "world/concept",
+          "label": "Linen Compass",
+          "witness": "Linen Compass — Concept",
+          "perspective": "direct",
+          "time": "unknown"
+        },
+        "details": [
+          {
+            "predicate": "concept.definition",
+            "object_kind": "literal",
+            "witness": "a textile sampling rule that groups thread offcuts by weave before comparing dye lots",
+            "required_atoms": [
+              "it is a textile sampling rule",
+              "thread offcuts are grouped by weave",
+              "grouping precedes comparing dye lots"
+            ],
+            "perspective": "direct",
+            "time": "unknown"
+          }
+        ],
+        "forbidden_assertions": [
+          "Linen Compass has an owner, creator, or endorsement",
+          "Linen Compass is identical to another concept"
+        ],
+        "label_rule": {
+          "value": "Linen Compass",
+          "naming": "explicit",
+          "naming_witness": "Linen Compass — Concept",
+          "witness": "Linen Compass — Concept",
+          "perspective": "direct",
+          "time": "unknown"
+        }
+      },
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "19c70d52a8070b8f41e2a15dde7dffe523bef9427f265895e81012ba4e83e6a8",
+        "estimated_input_tokens": 4510,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28510,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "dfdf2fdd5918670ea5dfd8ac5f33070d04f487b00ecfb6738d3248cc09a2c750"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "7ed0dc3bd03cde825199c721b27191c32325e8c84b9717778734192ddfec1848",
+      "input_manifest_sha256": "25b9c24753b2c8eb92d56cdd1b52124f290a5f2169dc53919102f4104a0ddf7d",
+      "sent_window_manifest_sha256": "cbac7e9e4b21c8b3f3dcc509a0590917408ee558ce6923ca8a5c75b0ad0baee3",
+      "prepared_admissions_sha256": "6db85cf6e9daf304a9bed5521f3a40db6ef9f528f8d2f1d21f162b6fd4ca6b0d",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "fc392febce9309e0c7c1b7a9e711d236cbdc8d2216c65452bc2743700a9e73cc",
+      "transport_model_response_sha256": "fc392febce9309e0c7c1b7a9e711d236cbdc8d2216c65452bc2743700a9e73cc",
+      "outbound_sha256": "19c70d52a8070b8f41e2a15dde7dffe523bef9427f265895e81012ba4e83e6a8",
+      "resolution_receipt_sha256": "ed944ac7846f7adf68ca84ed16d184d094784761c65c413912ba863ddc7e8717",
+      "translated_response_sha256": "b7a3ecaabce64e08397947c272e94f94036e0a91b82a622c55472047987ac858",
+      "case_id": "core15-concept-positive-linen-compass",
+      "response_sha256": "b7a3ecaabce64e08397947c272e94f94036e0a91b82a622c55472047987ac858",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "concept.definition",
+          "atom": "it is a textile sampling rule",
+          "status": "supported"
+        },
+        {
+          "predicate": "concept.definition",
+          "atom": "thread offcuts are grouped by weave",
+          "status": "supported"
+        },
+        {
+          "predicate": "concept.definition",
+          "atom": "grouping precedes comparing dye lots",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "concept.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "concept.definition",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "Linen Compass has an owner, creator, or endorsement",
+          "status": "absent"
+        },
+        {
+          "assertion": "Linen Compass is identical to another concept",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "selected_branch_id": "concept-reported-opal-balance",
+      "selected_branch_sha256": "0b0442dcaef92fb76b983aea822630e25c77559f3ded6f466daa5394d483c77c",
+      "selected_branch": {
+        "id": "concept-reported-opal-balance",
+        "target": {
+          "mode": "mention",
+          "record": "r1",
+          "quote": "Opal Balance"
+        },
+        "classification": {
+          "kind": "world/concept",
+          "label": "Opal Balance",
+          "witness": "Opal Balance — Concept",
+          "perspective": "direct",
+          "time": "unknown"
+        },
+        "details": [
+          {
+            "predicate": "concept.definition",
+            "object_kind": "literal",
+            "witness": "a mineral-log rule that sorts specimens by fracture pattern while keeping polished fragments in a separate row",
+            "required_atoms": [
+              "it is a mineral-log rule",
+              "specimens are sorted by fracture pattern",
+              "polished fragments are kept in a separate row"
+            ],
+            "perspective": "person_statement",
+            "time": "unknown",
+            "source": "source-core15-concept-reported",
+            "attribution_witness": "Daro Kest reported",
+            "equivalent_mention": {
+              "mode": "mention",
+              "record": "r1",
+              "quote": "Daro Kest",
+              "label": "Daro Kest",
+              "attribution_witness": "Daro Kest reported"
+            }
+          }
+        ],
+        "forbidden_assertions": [
+          "the owner reported or endorses Opal Balance",
+          "Daro Kest is the owner",
+          "Opal Balance is identical to another concept"
+        ],
+        "label_rule": {
+          "value": "Opal Balance",
+          "naming": "explicit",
+          "naming_witness": "Opal Balance — Concept",
+          "witness": "Opal Balance — Concept",
+          "perspective": "direct",
+          "time": "unknown"
+        }
+      },
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "1eaf47dbc87be250b5928bee01d0f6963ae67bd3a4fc45a478f3bcb22c33811e",
+        "estimated_input_tokens": 4552,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28552,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "5fa94cf078b846b80cf949e76016f6e21b76433783f7b7851316015850a2bea3"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "15f9f4ca530453c0459bb25c04cae85eedea405ad748c5138fca9021c4b1efd2",
+      "input_manifest_sha256": "a9adc9cc79d602ddac49fb210860c935f6b42baeeb9bff5df3a4e4627ace1acd",
+      "sent_window_manifest_sha256": "28121bea51f67b3fb9e04d584dc58c792b835b0799e20a363ec5549c87ce30c1",
+      "prepared_admissions_sha256": "a8440069d5a85caa2c47932c79824e85d9675ca81e88cb1e7bbb94a70849c16b",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "e53ebd61db99c075f48a895bd9dca280422f1fcbc8a2bb779bbac7fe327f96a4",
+      "transport_model_response_sha256": "e53ebd61db99c075f48a895bd9dca280422f1fcbc8a2bb779bbac7fe327f96a4",
+      "outbound_sha256": "1eaf47dbc87be250b5928bee01d0f6963ae67bd3a4fc45a478f3bcb22c33811e",
+      "resolution_receipt_sha256": "c1cb43d067421b21069100fa7b5196ec86690404bcfa058fce074f93047be679",
+      "translated_response_sha256": "5f50e234f356ae57bdf112eadc1e8ad369a99f92ea254817707d35c9fed37af6",
+      "case_id": "core15-concept-reported-opal-balance",
+      "response_sha256": "5f50e234f356ae57bdf112eadc1e8ad369a99f92ea254817707d35c9fed37af6",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "concept.definition",
+          "atom": "it is a mineral-log rule",
+          "status": "supported"
+        },
+        {
+          "predicate": "concept.definition",
+          "atom": "specimens are sorted by fracture pattern",
+          "status": "supported"
+        },
+        {
+          "predicate": "concept.definition",
+          "atom": "polished fragments are kept in a separate row",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "concept.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "concept.definition",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "the owner reported or endorses Opal Balance",
+          "status": "absent"
+        },
+        {
+          "assertion": "Daro Kest is the owner",
+          "status": "absent"
+        },
+        {
+          "assertion": "Opal Balance is identical to another concept",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "selected_branch_id": "concept-historical-velvet-register",
+      "selected_branch_sha256": "c06e6352a2a9f9cc4d124bd3e54cd216d65cfc550132bd749100089dbcb973b6",
+      "selected_branch": {
+        "id": "concept-historical-velvet-register",
+        "target": {
+          "mode": "mention",
+          "record": "r1",
+          "quote": "Velvet Register"
+        },
+        "classification": {
+          "kind": "world/concept",
+          "label": "Velvet Register",
+          "witness": "the exact name of this concept is Velvet Register",
+          "perspective": "direct",
+          "time": {
+            "valid_from": "2012-09-17T07:20:00.000Z",
+            "valid_to": "2012-11-06T19:40:00.000Z",
+            "temporal_basis": "explicit",
+            "witness": "observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z"
+          }
+        },
+        "details": [
+          {
+            "predicate": "concept.definition",
+            "object_kind": "literal",
+            "witness": "a rehearsal-index rule that marks silent cues before ordering spoken passages",
+            "required_atoms": [
+              "it is a rehearsal-index rule",
+              "silent cues are marked",
+              "marking precedes ordering spoken passages"
+            ],
+            "perspective": "document_report",
+            "time": {
+              "valid_from": "2012-09-17T07:20:00.000Z",
+              "valid_to": "2012-11-06T19:40:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z"
+            },
+            "source": "source-core15-concept-historical",
+            "attribution_witness": "Archive entry AE-53 states"
+          }
+        ],
+        "forbidden_assertions": [
+          "Velvet Register is current outside the explicit interval",
+          "the interval is its lifespan",
+          "Velvet Register has an owner or endorsement"
+        ],
+        "label_rule": {
+          "value": "Velvet Register",
+          "naming": "explicit",
+          "naming_witness": "the exact name of this concept is Velvet Register",
+          "witness": "the exact name of this concept is Velvet Register",
+          "perspective": "direct",
+          "time": {
+            "valid_from": "2012-09-17T07:20:00.000Z",
+            "valid_to": "2012-11-06T19:40:00.000Z",
+            "temporal_basis": "explicit",
+            "witness": "observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z"
+          }
+        }
+      },
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "0fa0b5624c0902ebdf3646120d4e4db65159f5d85f1bb9b32febbe75046cb68e",
+        "estimated_input_tokens": 4590,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28590,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "084856ab076c6e69c3f2ca114df74b97cdeb47e10a2bdac51d21c9adac643df2"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "9b6d89e4dc90cdc9fda34576f2b3f3b493c20167065ca9f44c9f50b5b2860a45",
+      "input_manifest_sha256": "d5516f31e0a649a2032b9991786c09de55fe4c53ac9ec775ebeafba5330e346a",
+      "sent_window_manifest_sha256": "cc4ff03019710920620a6ad84532e50ae612b776b2c1184b1bcf7a44bc32c1d6",
+      "prepared_admissions_sha256": "c793d8d5443d1800816e5eb7f5da5fa37607d9a922b5134358de87766fa67f1e",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "4957a4155a11eeed76054f87cd014ee4406c32f706f28c0ab18e4ecc445fe774",
+      "transport_model_response_sha256": "4957a4155a11eeed76054f87cd014ee4406c32f706f28c0ab18e4ecc445fe774",
+      "outbound_sha256": "0fa0b5624c0902ebdf3646120d4e4db65159f5d85f1bb9b32febbe75046cb68e",
+      "resolution_receipt_sha256": "91d6f4effdefea0c74661624a3785e147285a8f9fc4dfa6862b157a3c40258ad",
+      "translated_response_sha256": "e0ca8f2a9722771753d5e1896cf392e77c04df524d6d51d55fad95df51f267c5",
+      "case_id": "core15-concept-historical-velvet-register",
+      "response_sha256": "e0ca8f2a9722771753d5e1896cf392e77c04df524d6d51d55fad95df51f267c5",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "concept.definition",
+          "atom": "it is a rehearsal-index rule",
+          "status": "supported"
+        },
+        {
+          "predicate": "concept.definition",
+          "atom": "silent cues are marked",
+          "status": "supported"
+        },
+        {
+          "predicate": "concept.definition",
+          "atom": "marking precedes ordering spoken passages",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "concept.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "concept.definition",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "Velvet Register is current outside the explicit interval",
+          "status": "absent"
+        },
+        {
+          "assertion": "the interval is its lifespan",
+          "status": "absent"
+        },
+        {
+          "assertion": "Velvet Register has an owner or endorsement",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "selected_branch_id": null,
+      "selected_branch_sha256": null,
+      "selected_branch": null,
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "b9829c2de2d73656b0708aef60eb25ad7702531ebd942fcad87f6a408b80b4b7",
+        "estimated_input_tokens": 4480,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28480,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "1c56a97b1604f7a5033249315712c494551f0b60b5ce1467639156aaaeae7920"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "c9ed11b728fffcd95fce237e620d86bbd10b509e6421ce29f8aa32485117abfe",
+      "input_manifest_sha256": "5edc6e0a494c450d5584bb92f8f492d4276ce6cbab6c5c2c08b59e37d9b433ad",
+      "sent_window_manifest_sha256": "e4c06093cd2a808826c27314381fdaf78ed19a61c367ef5a7148379692a810e5",
+      "prepared_admissions_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "transport_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "outbound_sha256": "b9829c2de2d73656b0708aef60eb25ad7702531ebd942fcad87f6a408b80b4b7",
+      "resolution_receipt_sha256": "46ce80f1d30edaf9bf567a27ceae034a1ec30e859bd8015dba5d97cbbd25a302",
+      "translated_response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "case_id": "core15-concept-name-negative-umber-dial",
+      "response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "status": "passed",
+      "abstention": "confirmed"
+    },
+    {
+      "selected_branch_id": null,
+      "selected_branch_sha256": null,
+      "selected_branch": null,
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "9055deb24d0969a88a35fdd058fba00d5802c6b9874cbfad8258177c2e8b435d",
+        "estimated_input_tokens": 4505,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28505,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "8e5073c5b6d36f34b7ffde645caaa1fca6e933f4020aaf3cecfc58fce649dd1c"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "1f702271eae21c6c52ffd3b4bd1338a9e0fb3306cca42a58c5d310fad6787752",
+      "input_manifest_sha256": "dea6155fcf810e4ce62e5cbc6e36469a60c2d64835ee68234ffb9073aae3e43c",
+      "sent_window_manifest_sha256": "ee22904ba365f6473b471d32769bb3df1ead78e3854537e9841a148368d0ec40",
+      "prepared_admissions_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "transport_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "outbound_sha256": "9055deb24d0969a88a35fdd058fba00d5802c6b9874cbfad8258177c2e8b435d",
+      "resolution_receipt_sha256": "0e236bcc4872905164147b072a75a313cff111978b9e89f463a72c4f52b99e90",
+      "translated_response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "case_id": "core15-concept-template-negative-unfilled-glossary-leaf",
+      "response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "status": "passed",
+      "abstention": "confirmed"
+    },
+    {
+      "selected_branch_id": null,
+      "selected_branch_sha256": null,
+      "selected_branch": null,
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "1992e4cee0872fe043d30412eb05543ae2948f2b9d5ebed485595f669c052f16",
+        "estimated_input_tokens": 4489,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28489,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "a5e82e51b5b69c3c89a7601b74a513b9156ce919ad96693ee3fc00b35bd735b5"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "7d343d491d39f86df82c9e611ed6f3e6411c7e8dbdc09e7dc99945f04e67d518",
+      "input_manifest_sha256": "c87085807d78d052ac42f1a739fab1082a22fc735b5939c4e2612af105338349",
+      "sent_window_manifest_sha256": "10fd5a0fe3f8f3be0778393032d2f37e8bbc8dd9272d09e467194856b063d9b2",
+      "prepared_admissions_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "transport_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "outbound_sha256": "1992e4cee0872fe043d30412eb05543ae2948f2b9d5ebed485595f669c052f16",
+      "resolution_receipt_sha256": "291a9366e60dea60c1b97c22e8910e64d37a6972d87ad5ab9165412a345c8434",
+      "translated_response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "case_id": "core15-concept-hypothetical-negative-frost-loom",
+      "response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "status": "passed",
+      "abstention": "confirmed"
+    },
+    {
+      "selected_branch_id": "maintenance-whole-action-suggested",
+      "selected_branch_sha256": "3cf9d5c0058714a1e9c27a4f984df3e9bebacd1b0b52d7b3356f821db640ebff",
+      "selected_branch": {
+        "target": {
+          "mode": "mention",
+          "record": "r1",
+          "quote": "Amber Relay Hold"
+        },
+        "classification": {
+          "kind": "world/situation",
+          "label": "Amber Relay Hold",
+          "witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report.",
+          "perspective": "direct",
+          "time": "unknown"
+        },
+        "label_rule": {
+          "value": "Amber Relay Hold",
+          "naming": "explicit",
+          "naming_witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+          "witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+          "perspective": "document_report",
+          "source": "source-core19-maintenance-report",
+          "attribution_witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+          "time": "unknown"
+        },
+        "details": [
+          {
+            "predicate": "situation.objective",
+            "object_kind": "literal",
+            "witness": "Reconcile all 34 unmatched relay labels with their acceptance records so that the continuity audit can proceed.",
+            "required_atoms": [
+              "the requested remedy is to reconcile all 34 unmatched relay labels with their acceptance records",
+              "all 34 unmatched relay labels are within the requested work, rather than a generic unquantified heading",
+              "the reconciliation is requested rather than asserted to have been performed",
+              "the requested reconciliation is presented as enabling the continuity audit to proceed"
+            ],
+            "perspective": "document_suggestion",
+            "source": "source-core19-maintenance-report",
+            "attribution_witness": "IR-63 recommends this requested action for the condition:",
+            "time": "unknown"
+          },
+          {
+            "predicate": "situation.blocker",
+            "object_kind": "literal",
+            "witness": "34 relay labels lack matching acceptance records, preventing the continuity audit",
+            "required_atoms": [
+              "34 relay labels lack matching acceptance records",
+              "that absence of matching acceptance records prevents the continuity audit"
+            ],
+            "perspective": "document_report",
+            "source": "source-core19-maintenance-report",
+            "attribution_witness": "IR-63 records the condition's blocker:",
+            "time": "unknown"
+          }
+        ],
+        "forbidden_assertions": [
+          "the relay labels have been reconciled",
+          "the continuity audit proceeded or completed",
+          "the condition has been resolved",
+          "the report establishes a current backlog of 34 relay labels",
+          "the report publication date is an action-validity interval",
+          "the requested work is adopted, attempted, performed, completed, or owned by an invented person or project"
+        ],
+        "id": "maintenance-whole-action-suggested"
+      },
+      "input_planning": {
+        "schema": "kizuki.qualification-input-planning/v1",
+        "outbound_sha256": "841f2625a7e83ca9a81585cd7c8fd9bdfe2a92887def95cf75d120fe833b9c6a",
+        "estimated_input_tokens": 4660,
+        "input_token_overhead": 24000,
+        "reserved_input_tokens": 28660,
+        "max_input_tokens": 32000,
+        "max_output_tokens": 8192,
+        "planning_sha256": "27ca9d3f25e46d780b7dda072cab48200f02cce8e19dd3b6f0e253f7860e41e6"
+      },
+      "producer_input_token_overhead": 24000,
+      "transport_response_sha256": "f7375968687f0291a237b86c03ad53601c3a52730a0eaf0c47b6a03494cc1a03",
+      "input_manifest_sha256": "c838010d6bb4b47abc46449a497db2ea2f5725f5c606d8e56a310abe84998344",
+      "sent_window_manifest_sha256": "260efcbc9133dbb6a28a129948e65af90bd50c803a49f4b071df089d4413ef81",
+      "prepared_admissions_sha256": "885a98a710ce26e7609cf4d71ee2a92718557dab297e6404f95c7225160c622a",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "792718f8a9ed70a57bebf65abd18c2c77760e2fa20743383a821e23a3dd19ae8",
+      "transport_model_response_sha256": "792718f8a9ed70a57bebf65abd18c2c77760e2fa20743383a821e23a3dd19ae8",
+      "outbound_sha256": "841f2625a7e83ca9a81585cd7c8fd9bdfe2a92887def95cf75d120fe833b9c6a",
+      "resolution_receipt_sha256": "9d57b6783fa8c4a603ca6afe4501e7b632f9727e443f5fbf93ac19371601e89f",
+      "translated_response_sha256": "d969e6e5d4ba04c0db1e33fe8126ba3db01cc8be1947ac9aee4ff514d54ca998",
+      "case_id": "core19-situation-maintenance-outline-amber-relay-hold",
+      "response_sha256": "d969e6e5d4ba04c0db1e33fe8126ba3db01cc8be1947ac9aee4ff514d54ca998",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "situation.objective",
+          "atom": "the requested remedy is to reconcile all 34 unmatched relay labels with their acceptance records",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.objective",
+          "atom": "all 34 unmatched relay labels are within the requested work, rather than a generic unquantified heading",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.objective",
+          "atom": "the reconciliation is requested rather than asserted to have been performed",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.objective",
+          "atom": "the requested reconciliation is presented as enabling the continuity audit to proceed",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.blocker",
+          "atom": "34 relay labels lack matching acceptance records",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.blocker",
+          "atom": "that absence of matching acceptance records prevents the continuity audit",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.objective",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.blocker",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "the relay labels have been reconciled",
+          "status": "absent"
+        },
+        {
+          "assertion": "the continuity audit proceeded or completed",
+          "status": "absent"
+        },
+        {
+          "assertion": "the condition has been resolved",
+          "status": "absent"
+        },
+        {
+          "assertion": "the report establishes a current backlog of 34 relay labels",
+          "status": "absent"
+        },
+        {
+          "assertion": "the report publication date is an action-validity interval",
+          "status": "absent"
+        },
+        {
+          "assertion": "the requested work is adopted, attempted, performed, completed, or owned by an invented person or project",
+          "status": "absent"
+        }
+      ]
+    }
+  ]
+}

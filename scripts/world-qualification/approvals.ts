@@ -19,6 +19,13 @@ export const HISTORICAL_QUALIFICATIONS: readonly QualificationApproval[] = [{
   file: "concept-only-confirmation-20261022.json",
   sha256: "cf17a26a9f7b4d8325f2854555fd3f65d42d8924f49c1b7987ae0e746061243e",
   endpoint_evidence: "aa5c067cd97da53101f8bd5080e7c9071ea84e128296baa3c1749cc3710483da",
+}, {
+  // Superseded for the active producer by the fresh thirteen-case Core19 receipt.
+  file: "core-semantic-core18-20261022.json",
+  sha256: "88d7d3fc67abafc67a6fef6897ba76bedd1746915c27d9e9141da86d17638272",
+  endpoint_evidence: "c09f582552fdd003e7ad3fc2cbff501943a0c4b925704be11e7e49ccd720d436",
+  protocol: "core-semantic-v3",
+  body_review: { file: "core-semantic-core18-review-20261022.json", sha256: "f7da58b63cd493fe35d515922fb6edb80d473147f55c830168aafb057e0206a8" },
 }];
 
 /** INVALID historical evidence, never an active qualification. All 12 measured
@@ -34,13 +41,13 @@ export const INVALID_HISTORICAL_QUALIFICATIONS = [{
   status: "INVALID", reason: "all_measured_inputs_exceeded_declared_budget",
 }] as const;
 
-/** Fresh twelve-case split, measured within the declared budget and independently reviewed. */
+/** Fresh thirteen-case split, measured within the declared budget and independently reviewed. */
 export const REVIEWED_QUALIFICATIONS: readonly QualificationApproval[] = [{
-  file: "core-semantic-core18-20261022.json",
-  sha256: "88d7d3fc67abafc67a6fef6897ba76bedd1746915c27d9e9141da86d17638272",
+  file: "core-semantic-core19-20261023.json",
+  sha256: "15facd756f0dc48a8e5a350fac7ca01c5821648f7187d1522331587281f84098",
   endpoint_evidence: "c09f582552fdd003e7ad3fc2cbff501943a0c4b925704be11e7e49ccd720d436",
   protocol: "core-semantic-v3",
-  body_review: { file: "core-semantic-core18-review-20261022.json", sha256: "f7da58b63cd493fe35d515922fb6edb80d473147f55c830168aafb057e0206a8" },
+  body_review: { file: "core-semantic-core19-review-20261023.json", sha256: "7227462abc470b35a1742ebd47e4c3df7ecbe6db457da6e1388dfab2c05d9369" },
 }];
 
 /** Continuation permission only. This does not qualify any kind or endorse semantic results. */
