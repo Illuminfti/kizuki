@@ -224,19 +224,19 @@ describe("predeclared core semantic protocol", () => {
     expect(scoreCoreSemanticRun(wrong, registry).automated_passed).toBe(false);
   });
 
-  test("reported historical labels keep document roles and the exact interval", () => {
+  test("reported historical details keep document roles and the exact interval", () => {
     const source = observations(), id = selectedCase("concept", "historical").id;
     const changed = mutate(source, id, response => {
       const definition = response.claims.find(claim => claim.predicate === "concept.definition")!;
-      return { ...response, claims: response.claims.map(claim => claim.predicate === "concept.label" ? { ...claim,
-        perspective: definition.perspective, anchors: definition.anchors } : claim) };
+      return { ...response, claims: response.claims.map(claim => claim.predicate === "concept.definition" ? { ...claim,
+        perspective: definition.perspective } : claim) };
     });
     expect(parsedObservation(changed, id).ok).toBe(true);
     expect(scoreCoreSemanticRun(changed, registry).automated_passed).toBe(true);
-    const speaker = mutate(changed, id, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === "concept.label"
+    const speaker = mutate(changed, id, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === "concept.definition"
       ? { ...claim, perspective: { ...claim.perspective, speaker: claim.perspective.holder, holder: null } } : claim) }));
     expect(scoreCoreSemanticRun(speaker, registry).automated_passed).toBe(false);
-    const flattened = mutate(changed, id, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === "concept.label"
+    const flattened = mutate(changed, id, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === "concept.definition"
       ? { ...claim, perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] } } : claim) }));
     expect(parsedObservation(flattened, id).ok).toBe(true);
     expect(scoreCoreSemanticRun(flattened, registry).automated_passed).toBe(false);
