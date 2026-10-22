@@ -1,6 +1,6 @@
 {
-  "schema": "kizuki.core-semantic-contract/v1",
-  "corpus_version": "core14-fresh-synthetic-20261022",
+  "schema": "kizuki.core-semantic-contract/v2",
+  "corpus_version": "core15-fresh-synthetic-20261022",
   "automated_gate": {
     "required": [
       "all twelve ordered cases observed exactly once",
@@ -81,7 +81,10 @@
       "evaluation stage prepared_admission",
       "ordered case transport_response_sha256",
       "ordered case input_manifest_sha256 and sent_window_manifest_sha256",
-      "ordered case prepared_admissions_sha256"
+      "ordered case prepared_admissions_sha256",
+      "selected_branch_id",
+      "selected_branch_sha256",
+      "selected_branch"
     ],
     "per_positive_case": [
       "For each required detail atom, the claim's closed typed subject/predicate/object proposition R_P(S, O) entails the atom using only the bound identity of S, the exact relation and direction of P in semantic_method, and facts entailed by O.value. P supplies only that relation; S supplies only bound identity. O.value supplies every entity, property, state, quantity, comparison, modality, negation, scope, ordering, and other domain qualifier absent from the relation. Body, anchors, source window, neighboring claims, and structured polarity, perspective/role, context, or valid-time fields cannot repair missing domain meaning. Unmapped predicates borrow no meaning; classification and legacy extras retain their separate existing checks.",
@@ -102,343 +105,422 @@
   },
   "cases": [
     {
-      "case_id": "core14-situation-positive-maple-quay",
+      "case_id": "core15-situation-positive-pebble-chamber",
       "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Maple Quay"
-      },
-      "classification": {
-        "kind": "world/situation",
-        "label": "Maple Quay",
-        "witness": "Maple Quay — Situation",
-        "perspective": "direct",
-        "time": "unknown"
-      },
-      "details": [
+      "branches": [
         {
-          "predicate": "situation.objective",
-          "object_kind": "literal",
-          "witness": "catalogue the tide samples before the salinity comparison",
-          "required_atoms": [
-            "the stated objective is to catalogue tide samples",
-            "cataloguing precedes the salinity comparison"
-          ],
-          "perspective": "direct",
-          "time": "unknown"
-        },
-        {
-          "predicate": "situation.blocker",
-          "object_kind": "literal",
-          "witness": "the sample labels are damp",
-          "required_atoms": [
-            "the sample labels are damp",
-            "the damp labels are a stated blocker of Maple Quay"
-          ],
-          "perspective": "direct",
-          "time": "unknown"
-        }
-      ],
-      "forbidden_assertions": [
-        "Maple Quay is complete",
-        "the owner owns or leads Maple Quay"
-      ]
-    },
-    {
-      "case_id": "core14-situation-reported-violet-relay",
-      "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Violet Relay"
-      },
-      "classification": {
-        "kind": "world/situation",
-        "label": "Violet Relay",
-        "witness": "Violet Relay — Situation",
-        "perspective": "direct",
-        "time": "unknown"
-      },
-      "details": [
-        {
-          "predicate": "situation.objective",
-          "object_kind": "literal",
-          "witness": "align the signal flags before the harbor drill",
-          "required_atoms": [
-            "the stated objective is to align signal flags",
-            "alignment precedes the harbor drill"
-          ],
-          "perspective": "person_statement",
-          "time": "unknown",
-          "source": {
+          "id": "situation-positive-pebble-chamber",
+          "target": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Toma Wren",
-            "label": "Toma Wren",
-            "attribution_witness": "Toma Wren reported"
+            "quote": "Pebble Chamber"
           },
-          "attribution_witness": "Toma Wren reported"
-        },
-        {
-          "predicate": "situation.blocker",
-          "object_kind": "literal",
-          "witness": "the mast clip is bent",
-          "required_atoms": [
-            "the mast clip is bent",
-            "the bent clip is a stated blocker of Violet Relay"
+          "classification": {
+            "kind": "world/situation",
+            "label": "Pebble Chamber",
+            "witness": "Pebble Chamber — Situation",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "sequence the ceramic test coupons before the cooling comparison",
+              "required_atoms": [
+                "the stated objective is to sequence ceramic test coupons",
+                "sequencing precedes the cooling comparison"
+              ],
+              "perspective": "direct",
+              "time": "unknown"
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "the tray dividers are missing",
+              "required_atoms": [
+                "the tray dividers are missing",
+                "the missing tray dividers are a stated blocker of Pebble Chamber"
+              ],
+              "perspective": "direct",
+              "time": "unknown"
+            }
           ],
-          "perspective": "person_statement",
-          "time": "unknown",
-          "source": {
-            "mode": "mention",
-            "record": "r1",
-            "quote": "Toma Wren",
-            "label": "Toma Wren",
-            "attribution_witness": "Toma Wren reported"
-          },
-          "attribution_witness": "Toma Wren reported"
-        }
-      ],
-      "forbidden_assertions": [
-        "Violet Relay is complete",
-        "Toma Wren owns or leads Violet Relay"
-      ]
-    },
-    {
-      "case_id": "core14-situation-historical-cedar-vent-note",
-      "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Cedar Vent Note"
-      },
-      "classification": {
-        "kind": "world/situation",
-        "label": "Cedar Vent Note",
-        "witness": "MV-88 service note — Cedar Vent Note",
-        "perspective": "direct",
-        "time": {
-          "valid_from": "2018-02-11T05:45:00.000Z",
-          "valid_to": "2018-03-23T16:30:00.000Z",
-          "temporal_basis": "explicit",
-          "witness": "observation interval beginning 2018-02-11T05:45:00.000Z and ending exclusively at 2018-03-23T16:30:00.000Z"
-        }
-      },
-      "details": [
-        {
-          "predicate": "situation.blocker",
-          "object_kind": "literal",
-          "witness": "Replace the worn intake seal so unresolved flow verification can proceed.",
-          "required_atoms": [
-            "the intake seal is worn",
-            "flow verification is unresolved",
-            "the requested seal replacement is presented as enabling unresolved flow verification to proceed"
+          "forbidden_assertions": [
+            "Pebble Chamber is complete",
+            "the owner owns or leads Pebble Chamber"
           ],
-          "perspective": "document_report",
-          "time": {
-            "valid_from": "2018-02-11T05:45:00.000Z",
-            "valid_to": "2018-03-23T16:30:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "observation interval beginning 2018-02-11T05:45:00.000Z and ending exclusively at 2018-03-23T16:30:00.000Z"
-          },
-          "source": "source-core14-situation-historical",
-          "attribution_witness": "Maintenance folio MF-88 states"
-        }
-      ],
-      "forbidden_assertions": [
-        "Cedar Vent Note is complete",
-        "flow verification completed",
-        "the requested replacement resolved the seal or verification",
-        "Cedar Vent Note is current outside the explicit interval",
-        "the record establishes a project, owner, or current count"
-      ],
-      "label_alternatives": [
-        {
-          "witness": "MV-88 service note — Cedar Vent Note",
-          "perspective": "document_report",
-          "source": "source-core14-situation-historical",
-          "attribution_witness": "Maintenance folio MF-88 states",
-          "time": {
-            "valid_from": "2018-02-11T05:45:00.000Z",
-            "valid_to": "2018-03-23T16:30:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "observation interval beginning 2018-02-11T05:45:00.000Z and ending exclusively at 2018-03-23T16:30:00.000Z"
+          "label_rule": {
+            "value": "Pebble Chamber",
+            "naming": "explicit",
+            "naming_witness": "Pebble Chamber — Situation",
+            "witness": "Pebble Chamber — Situation",
+            "perspective": "direct",
+            "time": "unknown"
           }
         }
       ]
     },
     {
-      "case_id": "core14-situation-name-negative-ember-rook",
-      "expectation": "abstain",
-      "forbidden_assertions": [
-        "Ember Rook is a situation",
-        "Ember Rook has an asserted objective, blocker, state, or change"
-      ]
-    },
-    {
-      "case_id": "core14-situation-template-negative-blank-service-slip",
-      "expectation": "abstain",
-      "forbidden_assertions": [
-        "the blank slip establishes an actual situation",
-        "ENTER TITLE, ENTER AIM, ENTER CONDITION, or ENTER REVISION is an asserted fact"
-      ]
-    },
-    {
-      "case_id": "core14-situation-hypothetical-negative-river-circuit",
-      "expectation": "abstain",
-      "forbidden_assertions": [
-        "River Circuit is an actual situation",
-        "River Circuit has an asserted objective, blocker, state, change, completion, or current status"
-      ]
-    },
-    {
-      "case_id": "core14-concept-positive-moss-ledger",
+      "case_id": "core15-situation-reported-saffron-beacon",
       "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Moss Ledger"
-      },
-      "classification": {
-        "kind": "world/concept",
-        "label": "Moss Ledger",
-        "witness": "Moss Ledger — Concept",
-        "perspective": "direct",
-        "time": "unknown"
-      },
-      "details": [
+      "branches": [
         {
-          "predicate": "concept.definition",
-          "object_kind": "literal",
-          "witness": "a garden-record rule that lists seed packets by bed before totaling the planting notes",
-          "required_atoms": [
-            "it is a garden-record rule",
-            "seed packets are listed by bed",
-            "listing precedes totaling planting notes"
-          ],
-          "perspective": "direct",
-          "time": "unknown"
-        }
-      ],
-      "forbidden_assertions": [
-        "Moss Ledger has an owner, creator, or endorsement",
-        "Moss Ledger is identical to another concept"
-      ]
-    },
-    {
-      "case_id": "core14-concept-reported-cobalt-method",
-      "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Cobalt Method"
-      },
-      "classification": {
-        "kind": "world/concept",
-        "label": "Cobalt Method",
-        "witness": "Cobalt Method — Concept",
-        "perspective": "direct",
-        "time": "unknown"
-      },
-      "details": [
-        {
-          "predicate": "concept.definition",
-          "object_kind": "literal",
-          "witness": "a glazing log rule that sorts test marks by kiln shelf while keeping repaired tiles in a separate column",
-          "required_atoms": [
-            "it is a glazing log rule",
-            "test marks are sorted by kiln shelf",
-            "repaired tiles are kept in a separate column"
-          ],
-          "perspective": "person_statement",
-          "time": "unknown",
-          "source": "source-core14-concept-reported",
-          "attribution_witness": "Risa Pell reported",
-          "equivalent_mention": {
+          "id": "situation-reported-saffron-beacon",
+          "target": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Risa Pell",
-            "label": "Risa Pell",
-            "attribution_witness": "Risa Pell reported"
+            "quote": "Saffron Beacon"
+          },
+          "classification": {
+            "kind": "world/situation",
+            "label": "Saffron Beacon",
+            "witness": "Saffron Beacon — Situation",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "secure the canvas markers before the ridge survey",
+              "required_atoms": [
+                "the stated objective is to secure canvas markers",
+                "securing the markers precedes the ridge survey"
+              ],
+              "perspective": "person_statement",
+              "time": "unknown",
+              "source": {
+                "mode": "mention",
+                "record": "r1",
+                "quote": "Neri Voss",
+                "label": "Neri Voss",
+                "attribution_witness": "Neri Voss reported"
+              },
+              "attribution_witness": "Neri Voss reported"
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "the upper clamp is loose",
+              "required_atoms": [
+                "the upper clamp is loose",
+                "the loose upper clamp is a stated blocker of Saffron Beacon"
+              ],
+              "perspective": "person_statement",
+              "time": "unknown",
+              "source": {
+                "mode": "mention",
+                "record": "r1",
+                "quote": "Neri Voss",
+                "label": "Neri Voss",
+                "attribution_witness": "Neri Voss reported"
+              },
+              "attribution_witness": "Neri Voss reported"
+            }
+          ],
+          "forbidden_assertions": [
+            "Saffron Beacon is complete",
+            "Neri Voss owns or leads Saffron Beacon"
+          ],
+          "label_rule": {
+            "value": "Saffron Beacon",
+            "naming": "explicit",
+            "naming_witness": "Saffron Beacon — Situation",
+            "witness": "Saffron Beacon — Situation",
+            "perspective": "direct",
+            "time": "unknown"
           }
         }
-      ],
-      "forbidden_assertions": [
-        "the owner reported or endorses Cobalt Method",
-        "Risa Pell is the owner",
-        "Cobalt Method is identical to another concept"
       ]
     },
     {
-      "case_id": "core14-concept-historical-hearth-index",
+      "case_id": "core15-situation-historical-lantern-spindle-hold",
       "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Hearth Index"
-      },
-      "classification": {
-        "kind": "world/concept",
-        "label": "Hearth Index",
-        "witness": "Hearth Index — Concept",
-        "perspective": "direct",
-        "time": {
-          "valid_from": "2014-06-09T10:05:00.000Z",
-          "valid_to": "2014-07-14T15:55:00.000Z",
-          "temporal_basis": "explicit",
-          "witness": "observation interval beginning 2014-06-09T10:05:00.000Z and ending exclusively at 2014-07-14T15:55:00.000Z"
-        }
-      },
-      "details": [
+      "branches": [
         {
-          "predicate": "concept.definition",
-          "object_kind": "literal",
-          "witness": "a library sorting rule that marks translated titles before arranging local editions",
-          "required_atoms": [
-            "it is a library sorting rule",
-            "translated titles are marked",
-            "marking precedes arranging local editions"
-          ],
-          "perspective": "document_report",
-          "time": {
-            "valid_from": "2014-06-09T10:05:00.000Z",
-            "valid_to": "2014-07-14T15:55:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "observation interval beginning 2014-06-09T10:05:00.000Z and ending exclusively at 2014-07-14T15:55:00.000Z"
+          "id": "situation-historical-lantern-spindle-hold",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Lantern Spindle Hold"
           },
-          "source": "source-core14-concept-historical",
-          "attribution_witness": "Catalog record CR-27 states"
+          "classification": {
+            "kind": "world/situation",
+            "label": "Lantern Spindle Hold",
+            "witness": "An actual operational condition was observed throughout the observation interval beginning 2017-01-16T04:35:00.000Z and ending exclusively at 2017-04-02T13:25:00.000Z.",
+            "perspective": "direct",
+            "time": {
+              "valid_from": "2017-01-16T04:35:00.000Z",
+              "valid_to": "2017-04-02T13:25:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2017-01-16T04:35:00.000Z and ending exclusively at 2017-04-02T13:25:00.000Z"
+            }
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Replace the cracked indexing pawl so the unresolved spindle-position check can proceed.",
+              "required_atoms": [
+                "the indexing pawl is already cracked when replacement is requested",
+                "the spindle-position check is unresolved",
+                "replacement of the cracked indexing pawl is requested rather than asserted to have been performed",
+                "the requested replacement is presented as enabling the unresolved spindle-position check to proceed"
+              ],
+              "perspective": "document_report",
+              "time": {
+                "valid_from": "2017-01-16T04:35:00.000Z",
+                "valid_to": "2017-04-02T13:25:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2017-01-16T04:35:00.000Z and ending exclusively at 2017-04-02T13:25:00.000Z"
+              },
+              "source": "source-core15-situation-historical",
+              "attribution_witness": "Workshop log WL-64 names this condition Lantern Spindle Hold and requests this action list for it"
+            }
+          ],
+          "forbidden_assertions": [
+            "the indexing pawl has been replaced",
+            "the spindle-position check proceeded or completed",
+            "the requested remedy resolved the condition",
+            "Lantern Spindle Hold is complete",
+            "Lantern Spindle Hold is current outside the explicit interval",
+            "the report title is Lantern Spindle Hold",
+            "the record establishes a project, owner, leadership, execution, or current count"
+          ],
+          "label_rule": {
+            "value": "Lantern Spindle Hold",
+            "naming": "explicit",
+            "naming_witness": "Workshop log WL-64 names this condition Lantern Spindle Hold and requests this action list for it",
+            "witness": "Workshop log WL-64 names this condition Lantern Spindle Hold and requests this action list for it",
+            "perspective": "document_report",
+            "source": "source-core15-situation-historical",
+            "attribution_witness": "Workshop log WL-64 names this condition Lantern Spindle Hold and requests this action list for it",
+            "time": {
+              "valid_from": "2017-01-16T04:35:00.000Z",
+              "valid_to": "2017-04-02T13:25:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2017-01-16T04:35:00.000Z and ending exclusively at 2017-04-02T13:25:00.000Z"
+            }
+          }
         }
-      ],
-      "forbidden_assertions": [
-        "Hearth Index is current outside the explicit interval",
-        "the interval is its lifespan",
-        "Hearth Index has an owner or endorsement"
       ]
     },
     {
-      "case_id": "core14-concept-name-negative-willow-marker",
+      "case_id": "core15-situation-name-negative-juniper-rill",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Willow Marker is a concept",
-        "Willow Marker has an asserted definition"
+        "Juniper Rill is a situation",
+        "Juniper Rill has an asserted objective, blocker, state, or change"
       ]
     },
     {
-      "case_id": "core14-concept-template-negative-blank-notion-slip",
+      "case_id": "core15-situation-template-negative-unfilled-equipment-card",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "the blank slip establishes a concept",
-        "ENTER TERM or ENTER MEANING is an asserted concept"
+        "the unfilled card establishes an actual situation",
+        "CONDITION NAME, REQUESTED RESULT, OBSTACLE, or OBSERVED SHIFT is an asserted fact"
       ]
     },
     {
-      "case_id": "core14-concept-hypothetical-negative-rose-fulcrum",
+      "case_id": "core15-situation-hypothetical-negative-silver-sluice",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Rose Fulcrum is actual or adopted",
-        "Rose Fulcrum has an asserted definition"
+        "Silver Sluice is an actual situation",
+        "Silver Sluice has an asserted objective, blocker, state, change, completion, or current status"
+      ]
+    },
+    {
+      "case_id": "core15-concept-positive-linen-compass",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "concept-positive-linen-compass",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Linen Compass"
+          },
+          "classification": {
+            "kind": "world/concept",
+            "label": "Linen Compass",
+            "witness": "Linen Compass — Concept",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "concept.definition",
+              "object_kind": "literal",
+              "witness": "a textile sampling rule that groups thread offcuts by weave before comparing dye lots",
+              "required_atoms": [
+                "it is a textile sampling rule",
+                "thread offcuts are grouped by weave",
+                "grouping precedes comparing dye lots"
+              ],
+              "perspective": "direct",
+              "time": "unknown"
+            }
+          ],
+          "forbidden_assertions": [
+            "Linen Compass has an owner, creator, or endorsement",
+            "Linen Compass is identical to another concept"
+          ],
+          "label_rule": {
+            "value": "Linen Compass",
+            "naming": "explicit",
+            "naming_witness": "Linen Compass — Concept",
+            "witness": "Linen Compass — Concept",
+            "perspective": "direct",
+            "time": "unknown"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core15-concept-reported-opal-balance",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "concept-reported-opal-balance",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Opal Balance"
+          },
+          "classification": {
+            "kind": "world/concept",
+            "label": "Opal Balance",
+            "witness": "Opal Balance — Concept",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "concept.definition",
+              "object_kind": "literal",
+              "witness": "a mineral-log rule that sorts specimens by fracture pattern while keeping polished fragments in a separate row",
+              "required_atoms": [
+                "it is a mineral-log rule",
+                "specimens are sorted by fracture pattern",
+                "polished fragments are kept in a separate row"
+              ],
+              "perspective": "person_statement",
+              "time": "unknown",
+              "source": "source-core15-concept-reported",
+              "attribution_witness": "Daro Kest reported",
+              "equivalent_mention": {
+                "mode": "mention",
+                "record": "r1",
+                "quote": "Daro Kest",
+                "label": "Daro Kest",
+                "attribution_witness": "Daro Kest reported"
+              }
+            }
+          ],
+          "forbidden_assertions": [
+            "the owner reported or endorses Opal Balance",
+            "Daro Kest is the owner",
+            "Opal Balance is identical to another concept"
+          ],
+          "label_rule": {
+            "value": "Opal Balance",
+            "naming": "explicit",
+            "naming_witness": "Opal Balance — Concept",
+            "witness": "Opal Balance — Concept",
+            "perspective": "direct",
+            "time": "unknown"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core15-concept-historical-velvet-register",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "concept-historical-velvet-register",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Velvet Register"
+          },
+          "classification": {
+            "kind": "world/concept",
+            "label": "Velvet Register",
+            "witness": "the term Velvet Register — Concept is recorded under that exact name",
+            "perspective": "direct",
+            "time": {
+              "valid_from": "2012-09-17T07:20:00.000Z",
+              "valid_to": "2012-11-06T19:40:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z"
+            }
+          },
+          "details": [
+            {
+              "predicate": "concept.definition",
+              "object_kind": "literal",
+              "witness": "a rehearsal-index rule that marks silent cues before ordering spoken passages",
+              "required_atoms": [
+                "it is a rehearsal-index rule",
+                "silent cues are marked",
+                "marking precedes ordering spoken passages"
+              ],
+              "perspective": "document_report",
+              "time": {
+                "valid_from": "2012-09-17T07:20:00.000Z",
+                "valid_to": "2012-11-06T19:40:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z"
+              },
+              "source": "source-core15-concept-historical",
+              "attribution_witness": "Archive entry AE-53 states"
+            }
+          ],
+          "forbidden_assertions": [
+            "Velvet Register is current outside the explicit interval",
+            "the interval is its lifespan",
+            "Velvet Register has an owner or endorsement"
+          ],
+          "label_rule": {
+            "value": "Velvet Register",
+            "naming": "explicit",
+            "naming_witness": "the term Velvet Register — Concept is recorded under that exact name",
+            "witness": "the term Velvet Register — Concept is recorded under that exact name",
+            "perspective": "direct",
+            "time": {
+              "valid_from": "2012-09-17T07:20:00.000Z",
+              "valid_to": "2012-11-06T19:40:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core15-concept-name-negative-umber-dial",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Umber Dial is a concept",
+        "Umber Dial has an asserted definition"
+      ]
+    },
+    {
+      "case_id": "core15-concept-template-negative-unfilled-glossary-leaf",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "the unfilled leaf establishes a concept",
+        "UNASSIGNED TERM or UNWRITTEN MEANING is an asserted concept"
+      ]
+    },
+    {
+      "case_id": "core15-concept-hypothetical-negative-frost-loom",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Frost Loom is actual or adopted",
+        "Frost Loom has an asserted definition"
       ]
     }
   ],

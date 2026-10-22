@@ -2,175 +2,175 @@
   "schema": "kizuki.core-semantic-corpus/v1",
   "synthetic": true,
   "split": "held_out",
-  "version": "core14-fresh-synthetic-20261022",
+  "version": "core15-fresh-synthetic-20261022",
   "cases": [
     {
-      "id": "core14-situation-positive-maple-quay",
+      "id": "core15-situation-positive-pebble-chamber",
       "kind": "situation",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Maple Quay — Situation. Its objective is to catalogue the tide samples before the salinity comparison. Its blocker is that the sample labels are damp.",
+          "text": "Pebble Chamber — Situation. Its objective is to sequence the ceramic test coupons before the cooling comparison. Its blocker is that the tray dividers are missing.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core14-situation-reported-violet-relay",
+      "id": "core15-situation-reported-saffron-beacon",
       "kind": "situation",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Violet Relay — Situation. Toma Wren reported: \"Its objective is to align the signal flags before the harbor drill. Its blocker is that the mast clip is bent.\"",
+          "text": "Saffron Beacon — Situation. Neri Voss reported: \"Its objective is to secure the canvas markers before the ridge survey. Its blocker is that the upper clamp is loose.\"",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core14-situation-historical-cedar-vent-note",
+      "id": "core15-situation-historical-lantern-spindle-hold",
       "kind": "situation",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "MV-88 service note — Cedar Vent Note. During the observation interval beginning 2018-02-11T05:45:00.000Z and ending exclusively at 2018-03-23T16:30:00.000Z, Maintenance folio MF-88 states:\n- Replace the worn intake seal so unresolved flow verification can proceed.\n- Brush the intake rim before fitting the replacement seal.\n- Place the removed seal in the marked paper sleeve.\n- Leave the lower hatch clear for the verification check.\n\nArchive notes\n- The copper brush is set beside the intake cover.\n- A folded cloth rests on the lower shelf.\n- The route sketch is clipped to the board.\n- The hand lamp hangs from its hook.\n- A plain tag is stored in the drawer.\n- The hatch mat lies flat by the threshold.\n- The spare rag is folded in the tin.\n- The wooden wedge rests near the doorstop.\n- A clean funnel hangs from the pegboard.\n- The slate marker sits beside the ruler.\n- The paper sleeve is kept under the tray.\n- The dry brush is returned to the cabinet.",
+          "text": "An actual operational condition was observed throughout the observation interval beginning 2017-01-16T04:35:00.000Z and ending exclusively at 2017-04-02T13:25:00.000Z.\nFor that entire interval, Workshop log WL-64 names this condition Lantern Spindle Hold and requests this action list for it:\n- Replace the cracked indexing pawl so the unresolved spindle-position check can proceed.\n\nArchive inventory\n- The violet chalk is kept in the narrow rack.\n- A woolen pouch rests beside the balance scale.\n- The steel square hangs above the workbench.\n- A brass thimble lies in the shallow dish.\n- The linen measuring strip is folded on the stool.\n- A blue wax crayon is stored in the side compartment.\n- The cork pad sits beneath the small vise.\n- A clean oilcan stands near the wall bracket.\n- The canvas tool roll is fastened with a ribbon.\n- A reed basket occupies the bottom cubby.\n- The leather apron is hung beside the cabinet.\n- A white ceramic saucer rests on the corner shelf.\n- The short wooden mallet is laid across the felt pad.\n- A green binder clip holds the blank tally leaves.\n- The nickel ruler lies alongside the cork sheet.\n- A coiled cotton tie remains in the open tin.",
           "subjects": [
             {
-              "id": "source-core14-situation-historical",
-              "quote": "Maintenance folio MF-88 states"
+              "id": "source-core15-situation-historical",
+              "quote": "Workshop log WL-64 names this condition"
             }
           ]
         }
       ]
     },
     {
-      "id": "core14-situation-name-negative-ember-rook",
+      "id": "core15-situation-name-negative-juniper-rill",
       "kind": "situation",
       "category": "name_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Ember Rook.",
+          "text": "Juniper Rill.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core14-situation-template-negative-blank-service-slip",
+      "id": "core15-situation-template-negative-unfilled-equipment-card",
       "kind": "situation",
       "category": "template_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Blank service slip\nSituation: {ENTER TITLE}\nObjective: {ENTER AIM}\nBlocker: {ENTER CONDITION}\nChange: {ENTER REVISION}",
+          "text": "Unfilled equipment card\nSituation: {CONDITION NAME}\nObjective: {REQUESTED RESULT}\nBlocker: {OBSTACLE}\nChange: {OBSERVED SHIFT}",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core14-situation-hypothetical-negative-river-circuit",
+      "id": "core15-situation-hypothetical-negative-silver-sluice",
       "kind": "situation",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Counterfactual naming question only: if a situation called River Circuit existed, could that be its title? No existence, objective, blocker, state, change, completion, or current status is asserted.",
+          "text": "If there were a situation named Silver Sluice, would that name fit?",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core14-concept-positive-moss-ledger",
+      "id": "core15-concept-positive-linen-compass",
       "kind": "concept",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Moss Ledger — Concept. Its definition is a garden-record rule that lists seed packets by bed before totaling the planting notes.",
+          "text": "Linen Compass — Concept. Its definition is a textile sampling rule that groups thread offcuts by weave before comparing dye lots.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core14-concept-reported-cobalt-method",
+      "id": "core15-concept-reported-opal-balance",
       "kind": "concept",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Cobalt Method — Concept. Risa Pell reported: \"Its definition is a glazing log rule that sorts test marks by kiln shelf while keeping repaired tiles in a separate column.\"",
+          "text": "Opal Balance — Concept. Daro Kest reported: \"Its definition is a mineral-log rule that sorts specimens by fracture pattern while keeping polished fragments in a separate row.\"",
           "subjects": [
             {
-              "id": "source-core14-concept-reported",
-              "quote": "Risa Pell reported"
+              "id": "source-core15-concept-reported",
+              "quote": "Daro Kest reported"
             }
           ]
         }
       ]
     },
     {
-      "id": "core14-concept-historical-hearth-index",
+      "id": "core15-concept-historical-velvet-register",
       "kind": "concept",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "During the observation interval beginning 2014-06-09T10:05:00.000Z and ending exclusively at 2014-07-14T15:55:00.000Z, Catalog record CR-27 states that Hearth Index — Concept had a definition: a library sorting rule that marks translated titles before arranging local editions.",
+          "text": "For the observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z, the term Velvet Register — Concept is recorded under that exact name. Archive entry AE-53 states that its definition during that interval was a rehearsal-index rule that marks silent cues before ordering spoken passages.",
           "subjects": [
             {
-              "id": "source-core14-concept-historical",
-              "quote": "Catalog record CR-27 states"
+              "id": "source-core15-concept-historical",
+              "quote": "Archive entry AE-53 states"
             }
           ]
         }
       ]
     },
     {
-      "id": "core14-concept-name-negative-willow-marker",
+      "id": "core15-concept-name-negative-umber-dial",
       "kind": "concept",
       "category": "name_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Willow Marker.",
+          "text": "Umber Dial.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core14-concept-template-negative-blank-notion-slip",
+      "id": "core15-concept-template-negative-unfilled-glossary-leaf",
       "kind": "concept",
       "category": "template_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Blank notion slip\nConcept: {ENTER TERM}\nDefinition: {ENTER MEANING}\nEvidence: {ENTER QUOTE}",
+          "text": "Unfilled glossary leaf\nConcept: {UNASSIGNED TERM}\nDefinition: {UNWRITTEN MEANING}\nEvidence: {UNCOPIED PASSAGE}",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core14-concept-hypothetical-negative-rose-fulcrum",
+      "id": "core15-concept-hypothetical-negative-frost-loom",
       "kind": "concept",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Naming question only: might an imaginary concept be called Rose Fulcrum? No referent, adoption, or definition is asserted.",
+          "text": "Could an imagined concept be called Frost Loom?",
           "subjects": []
         }
       ]
