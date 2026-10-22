@@ -1,3 +1,5 @@
+import { createModelProducerV2Port, MODEL_PRODUCER_V2_DESCRIPTOR, planModelExtractionV2 } from "../../src/producer/model-v2";
+import { scriptedLlm, temporaryProducerContext } from "../producer/helpers";
 import { readClaimV2Semantic } from "../../src/claims/claim-v2-commit";
 import type { ClaimV2Assertion } from "../../src/contracts/claim-v2";
 import type { LlmPort, LlmRequest } from "../../src/contracts/llm";
@@ -406,4 +408,24 @@ test("consolidation retains retired grounding proof and erasure wins before fina
       assertWorldState(f.db);
     } finally { f.close(); }
   }
+});
+
+test("world grounding drops optional proof when trusted overhead makes the full plan exceed its budget", async () => {
+  const f = await fixture();
+  const context = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR);
+  try {
+    const witness = f.witness("Witness states Alpha and Beta designate one concept.");
+    const full = groundedWorldInput(f.db, [witness.event], DEFAULT_EXTRACTION_CONFIG, f.producer);
+    expect(full.grounding.size).toBe(2);
+    const plan = planModelExtractionV2(full.input);
+    if (plan.status !== "ready") throw new Error("synthetic full plan unavailable");
+    const reserve = 1_000;
+    const real = bindLocalSourcePort(createModelProducerV2Port(context.ctx, {
+      llm: { ...scriptedLlm(() => { throw new Error("planning must not call the model"); }), input_token_overhead: reserve },
+    }), { store_id: "local:identity-budget" });
+    const limited = groundedWorldInput(f.db, [witness.event], { ...DEFAULT_EXTRACTION_CONFIG, max_input_tokens: plan.input_tokens + reserve - 1 }, real);
+    expect(limited.grounding.size).toBe(0);
+    expect(limited.events).toHaveLength(1);
+    expect(planModelExtractionV2(limited.input, reserve).status).toBe("ready");
+  } finally { context.cleanup(); f.close(); }
 });

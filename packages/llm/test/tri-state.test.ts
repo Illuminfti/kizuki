@@ -90,6 +90,7 @@ describe("llm port tri-state", () => {
         detail: {
           model_ref: "kizuki.llm.openai-compatible:synthetic@127.0.0.1",
           host: "127.0.0.1",
+          input_token_overhead: 0,
         },
       });
     } finally {

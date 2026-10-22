@@ -220,11 +220,12 @@ export function createOpenAiCompatibleLlmPort(
   return {
     descriptor: OPENAI_COMPATIBLE_LLM_DESCRIPTOR,
     model_ref: ref,
+    input_token_overhead: config.input_token_overhead,
     async health(): Promise<PortHealth> {
       if (closed) {
         return { status: "unavailable", reason: "llm port is closed" };
       }
-      return { status: "ready", detail: { model_ref: ref, host } };
+      return { status: "ready", detail: { model_ref: ref, host, input_token_overhead: config.input_token_overhead } };
     },
     async complete(request: LlmRequest): Promise<LlmResponse> {
       assertOpen();

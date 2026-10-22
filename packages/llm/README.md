@@ -19,6 +19,7 @@ port; the receipted writer owns canon. Tests use a loopback fake endpoint.
 | `model` | yes (openai-compatible) | Wire model id, sent as `model`. |
 | `secret_ref` | no | `env:` or `file:` only. A literal key is a startup failure. |
 | `timeout_ms` | no | Default `60000`, at most `600000`. It is the only limit on a request: the transport turns off Bun's own five-minute fetch cutoff, so a value above `300000` is honoured. |
+| `input_token_overhead` | no | Local conservative input-token allowance per call, safe integer `0..32000`, default `0`. Exposed as LLM port metadata and health detail; never sent to the endpoint or added to measured usage. |
 | `max_retries` | no | Default `2`, at most `8`. Bounded retries for network failures, timeouts and HTTP 429/502/503/504 share the request deadline. |
 | `reasoning_effort` | no | `none`, `minimal`, `low`, `medium` or `high`, sent as the chat-completions `reasoning_effort`. Absent sends nothing. Hidden reasoning counts against the output reservation, so a lower effort leaves more of it for the answer. Providers accept different subsets; an unsupported value is refused by the provider. |
 | `temperature` | no | A number from `0` to `2`, sent as `temperature`. Absent sends nothing and the provider default (often 0.8 to 1.0) applies. Extraction wants `0`. |
@@ -26,6 +27,23 @@ port; the receipted writer owns canon. Tests use a loopback fake endpoint.
 | `retention` | no | The class the owner declares for this destination: `zero_retention`, `logged_no_training` or `logged_and_trained`. Never sent on the wire. Source consent compares it with the class each grant accepts (see the [retention classes](#retention-classes)). Absent means undeclared, which counts as `logged_and_trained`. |
 
 The request body carries `temperature`, `response_format` and `provider` only when they are configured, so a config that sets none of them sends the same bytes as before.
+
+### Input budget allowance
+
+LLM contract minor 1 adds the optional `input_token_overhead` host declaration.
+Absent declarations reserve zero. Minor 0 ports accept only absent or zero declarations; a nonzero allowance requires minor 1. Extraction and consolidation
+require the estimated message tokens plus this allowance to fit the configured
+total input budget. V1 extraction reserves it once per planned call. This is a
+conservative configured allowance, not a measured or guaranteed overhead. Actual
+reported input and output usage remains authoritative: an over-budget response
+is rejected whole before claims, admission, or summary publication, with its full
+usage retained. An extraction budget refusal stops the pass without retrying,
+filing claims, or advancing its checkpoint.
+
+For example, a bridge profile with `input_token_overhead = 24000` and total
+`[extraction] max_input_tokens = 32000` leaves 8000 estimated message tokens.
+The global extraction default remains 8000 and maximum remains 32000. This
+example does not configure a profile or establish provider qualification.
 
 ### Retention classes
 

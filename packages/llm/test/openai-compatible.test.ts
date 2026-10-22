@@ -28,6 +28,7 @@ describe("openai-compatible config", () => {
       base_url: "http://127.0.0.1:11434/v1",
       model: "synthetic",
       secret_ref: "env:KIZUKI_MODEL_KEY",
+      input_token_overhead: 0,
       timeout_ms: 60_000,
       max_retries: 2,
       reasoning_effort: null,

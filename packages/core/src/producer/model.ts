@@ -1,3 +1,5 @@
+import { llmInputTokenOverhead, validateInputTokenOverhead } from "../contracts/llm";
+import { registerModelProducerPlanning } from "./fingerprint";
 import type { SubjectRef } from "../contracts/event";
 import type { LlmMessage, LlmPort, LlmResponse } from "../contracts/llm";
 import {
@@ -347,8 +349,18 @@ export type ModelExtractionPlan =
   | { readonly status: "ready"; readonly input: ProduceInput; readonly calls: readonly PlannedModelCall[] }
   | { readonly status: "rejected"; readonly diagnostic: BudgetDiagnostic };
 
+/** Measured usage is authoritative even when an estimate or configured allowance was too small. */
+export function measuredBudgetDiagnostic(usage: ModelUsage, budget: ProduceInput["budget"]): BudgetDiagnostic | undefined {
+  for (const rule of ["max_input_tokens", "max_output_tokens"] as const) {
+    const used = rule === "max_input_tokens" ? usage.input_tokens : usage.output_tokens;
+    if (used > budget[rule]) return { stage: "budget", rule, used, requested: 0, limit: budget[rule] };
+  }
+  return undefined;
+}
+
 /** Prepare and reserve the complete request set before any external call. */
-export function planModelExtraction(rawInput: ProduceInput): ModelExtractionPlan {
+export function planModelExtraction(rawInput: ProduceInput, inputTokenOverhead = 0): ModelExtractionPlan {
+  const overhead = validateInputTokenOverhead(inputTokenOverhead);
   const input = validateProduceInput(rawInput);
   const reject = (rule: BudgetDiagnostic["rule"], requested: number, limit: number): ModelExtractionPlan =>
     ({ status: "rejected", diagnostic: { stage: "budget", rule, used: 0, requested, limit } });
@@ -371,7 +383,7 @@ export function planModelExtraction(rawInput: ProduceInput): ModelExtractionPlan
       subjects: [...subjects.values()],
       known_claims: input.context.known_claims.filter(claim => claim.subject !== null && subjects.has(claim.subject)).map(claim => ({ ...claim, object: claim.object === null ? null : scrub(claim.object) })),
       predicates: input.context.predicates }, nonce);
-    inputReserved += estimateTokens(messages);
+    inputReserved += estimateTokens(messages) + overhead;
     if (inputReserved > input.budget.max_input_tokens) return reject("max_input_tokens", inputReserved, input.budget.max_input_tokens);
     const maxOutput = Math.min(EXTRACT_MAX_OUTPUT_TOKENS, input.budget.max_output_tokens - outputReserved);
     if (maxOutput < 1) return reject("max_output_tokens", outputReserved + 1, input.budget.max_output_tokens);
@@ -435,6 +447,7 @@ export function createModelProducerPort(
   if (llm === undefined || typeof llm.complete !== "function") {
     configError("model producer requires a bound llm port");
   }
+  const inputTokenOverhead = llmInputTokenOverhead(llm);
   const systemone = options?.systemone;
   let closed = false;
 
@@ -452,7 +465,7 @@ export function createModelProducerPort(
     });
   };
 
-  return {
+  const port: ModelProducerPort = {
     descriptor: MODEL_PRODUCER_DESCRIPTOR,
     get model_ref(): string | null {
       return llm.model_ref;
@@ -490,12 +503,20 @@ export function createModelProducerPort(
       };
       const claims: ClaimDraft[] = [];
       const dropped: DroppedDraft[] = [];
-      const plan = planModelExtraction(rawInput);
+      const plan = planModelExtraction(rawInput, inputTokenOverhead);
       if (plan.status === "rejected") return { status: "rejected", reason: "budget_exhausted", usage, diagnostic: plan.diagnostic };
       const predicates = new Set(plan.input.context.predicates);
 
       for (const batch of plan.calls) {
         assertOpen();
+        const requestedInput = estimateTokens(batch.messages) + inputTokenOverhead;
+        for (const [rule, used, requested] of [
+          ["max_input_tokens", usage.input_tokens, requestedInput],
+          ["max_output_tokens", usage.output_tokens, batch.max_output_tokens],
+        ] as const) {
+          if (used + requested > plan.input.budget[rule]) return { status: "rejected", reason: "budget_exhausted", usage,
+            diagnostic: { stage: "budget", rule, used, requested, limit: plan.input.budget[rule] } };
+        }
         const batchSubjects = new Set(batch.events.flatMap(event => event.subjects.map(subject => subject.subject_id)));
         const outcome = await callModel(llm, batch.messages, batch.max_output_tokens, config.deadline_ms);
         usage.calls += 1;
@@ -509,11 +530,14 @@ export function createModelProducerPort(
         if (outcome.kind === "rejected") {
           usage.input_tokens += outcome.usage?.input_tokens ?? 0;
           usage.output_tokens += outcome.usage?.output_tokens ?? 0;
-          return { status: "rejected", reason: outcome.reason, usage, diagnostic: outcome.diagnostic };
+          const diagnostic = measuredBudgetDiagnostic(usage, plan.input.budget);
+          return { status: "rejected", reason: diagnostic === undefined ? outcome.reason : "budget_exhausted", usage, diagnostic: diagnostic ?? outcome.diagnostic };
         }
         usage.input_tokens += outcome.response.usage.input_tokens;
         usage.output_tokens += outcome.response.usage.output_tokens;
 
+        const diagnostic = measuredBudgetDiagnostic(usage, plan.input.budget);
+        if (diagnostic !== undefined) return { status: "rejected", reason: "budget_exhausted", usage, diagnostic };
         const text = outcome.response.text;
         if (hasFenceLeak(text, batch.nonce)) {
           return { status: "rejected", reason: "fence_leak", usage };
@@ -623,6 +647,8 @@ export function createModelProducerPort(
       closed = true;
     },
   };
+  registerModelProducerPlanning(port, inputTokenOverhead);
+  return port;
 }
 
 /**

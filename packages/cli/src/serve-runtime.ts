@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   MODEL_PRODUCER_ID,
+  llmInputTokenOverhead,
   MODEL_PRODUCER_V2_ID,
   PRODUCER_CONTRACT,
   PRODUCER_V2_CONTRACT,
@@ -268,7 +269,7 @@ async function bindModel(options: ServeRuntimeOptions): Promise<{ llm: LlmPort; 
   )).port;
   const { signal } = options;
   const llm: LlmPort = signal === undefined ? boundLlm
-    : { ...boundLlm, complete: (request) => boundLlm.complete({ ...request, signal: request.signal === undefined ? signal : AbortSignal.any([signal, request.signal]) }) };
+    : { ...boundLlm, input_token_overhead: llmInputTokenOverhead(boundLlm), complete: (request) => boundLlm.complete({ ...request, signal: request.signal === undefined ? signal : AbortSignal.any([signal, request.signal]) }) };
   let producer: ProducerPort | ProducerV2Port | undefined;
   let systemone: SystemOnePort | undefined;
   let judge: ReturnType<typeof parseSystemOneJevConfig> | undefined;

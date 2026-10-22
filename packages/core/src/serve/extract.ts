@@ -1,5 +1,5 @@
 import { activeExtractReplay, activeExtractReplayEvent, ExtractReplayError, recordSegmentSettlement, type ActiveExtractReplay, type SegmentSettlement } from "./extract-replay";
-import { modelProducerFingerprint } from "../producer/fingerprint";
+import { modelProducerFingerprint, modelProducerInputTokenOverhead } from "../producer/fingerprint";
 import { validateWorldGrounding } from "../claims/world-grounding";
 import { groundedWorldInput } from "./world-grounding";
 import { sourcePolicyEpoch, sourceEventsAllowed, isEpochZeroProducerPort, sourcePortBindingDigest } from "../ledger/source-grants";
@@ -1318,7 +1318,7 @@ async function mineBatch(
     for (let count = 1; count <= whole; count++) {
       const candidate = worldInput(db, usable.slice(0, count), limits, producer);
       try {
-        const plan = planModelExtractionV2(candidate);
+        const plan = planModelExtractionV2(candidate, modelProducerInputTokenOverhead(producer));
         if (plan.status === "ready") { selectedCount = count; selectedInput = plan.input; }
       } catch {
         // Structural bounds are host-side refusal. A prefix over them never reaches the port.
@@ -1332,7 +1332,7 @@ async function mineBatch(
     // native preflight will publish an exact zero-call refusal, never a drop.
     for (let count = 1; count <= usable.length; count++) {
       const candidate = count === 1 ? selectedInput as ProduceInput : inputFor(usable.slice(0, count));
-      const plan = planModelExtraction(candidate);
+      const plan = planModelExtraction(candidate, modelProducerInputTokenOverhead(producer));
       // Capped context can change when a subject is added, so inspect every
       // prefix instead of assuming prompt size grows monotonically.
       if (plan.status === "ready" && plan.calls.length === 1) { selectedCount = count; selectedInput = candidate; }
@@ -1443,8 +1443,20 @@ async function mineRecordSegment(
   if (chars === 0) return { ...base, mined: { status: "empty" }, drafts: [] };
   const replay = activeExtractReplay(db, record.event_id, producer);
   const fingerprint = modelProducerFingerprint(producer);
-  const planned = planRecordSegment(db, record, start, limits, replay?.end_utf16);
+  const overhead = modelProducerInputTokenOverhead(producer);
+  // Check host capacity before looking for a text boundary: an unsplittable record
+  // cannot turn an impossible host allowance into permission to skip evidence.
+  if (overhead > 0) {
+    const end = Math.min(chars, start + ((record.text.codePointAt(start) ?? 0) > 0xffff ? 2 : 1));
+    const minimum = planModelExtractionV2(worldInput(db, [segmentEvent(record, start, end)], limits), overhead);
+    if (minimum.status === "rejected") return { ...base, mined: { status: "rejected", reason: "budget_exhausted" }, drafts: [] };
+  }
+  const planned = planRecordSegment(db, record, start, limits, replay?.end_utf16, overhead);
   if (replay !== null) base = { ...base, replay };
+  // A host allowance that leaves no request capacity is a budget refusal, not a bad record.
+  if (planned === "unfit" && overhead > 0) {
+    return { ...base, mined: { status: "rejected", reason: "budget_exhausted" }, drafts: [] };
+  }
   // No safe split, or no request that can carry even a small segment: the record
   // is passed over without a request and keeps a retry receipt, so it cannot hold
   // the cursor and `serve retry-skipped` or larger limits can decide it again.
@@ -1481,6 +1493,7 @@ function planRecordSegment(
   start: number,
   limits: WorldRequestLimits,
   replayEnd?: number,
+  inputTokenOverhead = 0,
 ): { readonly input: ProduceInputV2; readonly end: number } | "unsplittable" | "unfit" {
   let limit = MAX_V2_QUOTED_UTF16;
   for (let attempt = 0; attempt < 8 && limit > 0; attempt++) {
@@ -1488,7 +1501,7 @@ function planRecordSegment(
     const end = naturalEnd === null ? null : Math.min(naturalEnd, replayEnd ?? naturalEnd);
     if (end === null) return "unsplittable";
     let plan: ReturnType<typeof planModelExtractionV2>;
-    try { plan = planModelExtractionV2(worldInput(db, [segmentEvent(record, start, end)], limits)); }
+    try { plan = planModelExtractionV2(worldInput(db, [segmentEvent(record, start, end)], limits), inputTokenOverhead); }
     catch { return "unfit"; }
     if (plan.status === "ready") return { input: plan.input, end };
     if (plan.diagnostic.rule !== "max_input_tokens") return "unfit";

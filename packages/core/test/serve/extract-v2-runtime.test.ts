@@ -1,3 +1,8 @@
+import { createModelProducerV2Port, MODEL_PRODUCER_V2_DESCRIPTOR } from "../../src/producer/model-v2";
+import { modelProducerInputTokenOverhead } from "../../src/producer/fingerprint";
+import { scriptedLlm, temporaryProducerContext } from "../producer/helpers";
+import { DEFAULT_EXTRACTION_CONFIG } from "../../src/serve/types";
+import { readRejections } from "../../src/serve/extract-rejections";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -39,7 +44,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(supplied = false, role = false) {
+function fixture(supplied = false, role = false, text?: string) {
   const root = mkdtempSync(join(tmpdir(), "extract-v2-runtime-"));
   roots.push(root);
   const vault = join(root, "vault");
@@ -68,7 +73,7 @@ function fixture(supplied = false, role = false) {
     ...validEvent(),
     connector_id: "kizuki.fixture",
     source_record_id: "world-runtime",
-    text: role ? "Ada joined the orchard library project." : "Flux is a synthetic transformation.",
+    text: text ?? (role ? "Ada joined the orchard library project." : "Flux is a synthetic transformation."),
     subjects: supplied ? [{ subject_id: "concept:flux", role: "about", display_name: "Flux" }] : [],
   }, { source: { source_key: sourceKey, expected_revision: 1 } });
   if (accepted.status !== "stored") throw new Error("fixture capture failed");
@@ -278,4 +283,89 @@ test("revoked source cannot file a pending v2 decision", async () => {
   } finally {
     f.close();
   }
+});
+
+function budgetProducer(f: ReturnType<typeof fixture>, overhead: number, usage: { input_tokens: number; output_tokens: number }) {
+  const context = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR);
+  let wire = 0;
+  const requests: Parameters<ReturnType<typeof scriptedLlm>["complete"]>[0][] = [];
+  const llm = { ...scriptedLlm(() => "unused"), input_token_overhead: overhead, async complete(request: typeof requests[number]) {
+    requests.push(request);
+    return { model, text: '{"schema":"kizuki.model-extraction/quote-anchors-v1","mentions":[],"claims":[]}', usage };
+  } };
+  const producer = bindSourceModelPort(createModelProducerV2Port(context.ctx, { llm, onWireReceipt() { wire++; } }), { model_endpoint: endpoint, model });
+  return { producer, requests, wire: () => wire, cleanup: context.cleanup };
+}
+
+test("observed typed producer with no reserve capacity stops without calls, skipped records, history or checkpoint progress", async () => {
+  const f = fixture(false, false, "x".repeat(40_000)), bound = budgetProducer(f, 24_000, { input_tokens: 1, output_tokens: 1 });
+  try {
+    expect(modelProducerInputTokenOverhead(bound.producer)).toBe(24_000);
+    const result = await runWritePass(f.db, f.vault, { ...f.options(), producer: bound.producer });
+    expect(result.errors).toContain("budget_exhausted");
+    expect(result.model.calls).toBe(0);
+    expect(bound.requests).toHaveLength(0);
+    expect(readExtractCursor(f.db)).toBeNull();
+    expect(readRejections(f.db, new Date().toISOString())).toBeNull();
+    expect(result.oversized.skipped).toBe(0);
+    expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
+    expect(f.db.query("SELECT * FROM claims").all()).toEqual([]);
+  } finally { bound.cleanup(); f.close(); }
+});
+
+for (const dimension of ["input_tokens", "output_tokens"] as const) {
+  test(`observed typed measured ${dimension} excess retains usage and refuses all checkpoint or claim writes without retry`, async () => {
+    const f = fixture();
+    const usage = { input_tokens: 40, output_tokens: 40, [dimension]: dimension === "input_tokens" ? 32_001 : 2_001 };
+    const bound = budgetProducer(f, 24_000, usage);
+    try {
+      const result = await runWritePass(f.db, f.vault, { ...f.options(), producer: bound.producer,
+        extraction: { ...DEFAULT_EXTRACTION_CONFIG, max_input_tokens: 32_000, max_output_tokens: 2_000 } });
+      expect(result.errors).toContain("budget_exhausted");
+      expect(result.model).toMatchObject({ calls: 1, ...usage });
+      expect(bound.requests).toHaveLength(1);
+      expect(bound.wire()).toBe(0);
+      expect(readExtractCursor(f.db)).toBeNull();
+      expect(readRejections(f.db, new Date().toISOString())).toBeNull();
+      expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
+      expect(f.db.query("SELECT * FROM claims").all()).toEqual([]);
+      expect(result.claims_written).toBe(0);
+    } finally { bound.cleanup(); f.close(); }
+  });
+}
+
+test("host segment planner shrinks quoted text by the trusted reserve inherited through observation", async () => {
+  const f = fixture(false, false, "Synthetic sentence. ".repeat(1800));
+  const bound = budgetProducer(f, 24_000, { input_tokens: 32_001, output_tokens: 1 });
+  try {
+    const result = await runWritePass(f.db, f.vault, { ...f.options(), producer: bound.producer,
+      extraction: { ...DEFAULT_EXTRACTION_CONFIG, max_input_tokens: 32_000 } });
+    expect(result.errors).toContain("budget_exhausted");
+    expect(bound.requests).toHaveLength(1);
+    const estimate = Math.ceil(bound.requests[0]!.messages.reduce((sum, message) => sum + message.content.length, 0) / 4);
+    expect(estimate + 24_000).toBeLessThanOrEqual(32_000);
+    expect(JSON.stringify(bound.requests[0])).not.toContain("Synthetic sentence. ".repeat(1800));
+    expect(readExtractCursor(f.db)).toBeNull();
+    expect(bound.wire()).toBe(0);
+  } finally { bound.cleanup(); f.close(); }
+});
+
+test("host prefix planner reserves overhead for the selected event prefix", async () => {
+  const first = "First synthetic sentence. ".repeat(480), second = "Second synthetic sentence. ".repeat(480);
+  const f = fixture(false, false, first);
+  const bound = budgetProducer(f, 24_000, { input_tokens: 32_001, output_tokens: 1 });
+  try {
+    expect(accept(f.db, { ...validEvent(), connector_id: "kizuki.fixture", source_record_id: "second-budget-record", text: second, subjects: [] },
+      { source: { source_key: f.sourceKey, expected_revision: 1 } }).status).toBe("stored");
+    const result = await runWritePass(f.db, f.vault, { ...f.options(), producer: bound.producer,
+      extraction: { ...DEFAULT_EXTRACTION_CONFIG, max_input_tokens: 32_000 } });
+    expect(result.errors).toContain("budget_exhausted");
+    expect(bound.requests).toHaveLength(1);
+    const request = bound.requests[0]!;
+    const estimate = Math.ceil(request.messages.reduce((sum, message) => sum + message.content.length, 0) / 4);
+    expect(estimate + 24_000).toBeLessThanOrEqual(32_000);
+    expect(JSON.stringify(request)).toContain(first);
+    expect(JSON.stringify(request)).not.toContain(second);
+    expect(readExtractCursor(f.db)).toBeNull();
+  } finally { bound.cleanup(); f.close(); }
 });

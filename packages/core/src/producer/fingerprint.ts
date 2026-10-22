@@ -6,7 +6,25 @@ import { extractionV2SystemContent } from "./prompt-v2";
 
 /** Bump for producer semantics outside the prompt/registry. This is identity,
  * not a claim that the producer has been independently qualified. */
-const IMPLEMENTATION = "kizuki.producer.model.v2/quote-anchors-1";
+const IMPLEMENTATION = "kizuki.producer.model.v2/input-budget-2";
+const planning = new WeakMap<object, () => number>();
+
+/** Factory-owned planning metadata; arbitrary properties on a producer carry no authority. */
+export function registerModelProducerPlanning(port: { produce: unknown }, overhead: number): void {
+  const produce = port.produce;
+  planning.set(port, () => port.produce === produce ? overhead : 0);
+}
+
+export function modelProducerInputTokenOverhead(port: object): number {
+  return planning.get(port)?.() ?? 0;
+}
+
+export function inheritModelProducerPlanning<T extends { produce: unknown }>(source: object, target: T): T {
+  const produce = target.produce;
+  planning.set(target, () => target.produce === produce ? modelProducerInputTokenOverhead(source) : 0);
+  return target;
+}
+
 const identities = new WeakMap<object, () => string | null>();
 
 function fingerprint(): string {
@@ -33,6 +51,7 @@ export function registerModelProducerIdentity(port: ProducerV2Port, isClosed: ()
 /** Internal observation wrapper carries the factory's live identity, not a copy. */
 export function inheritModelProducerIdentity<T extends ProducerV2Port>(source: ProducerV2Port, target: T): T {
   const produce = target.produce;
+  inheritModelProducerPlanning(source, target);
   identities.set(target, () => target.produce === produce ? modelProducerFingerprint(source) : null);
   return Object.freeze(target);
 }
