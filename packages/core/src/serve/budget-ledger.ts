@@ -22,13 +22,29 @@ export function readDailyBudget(
   name: string,
 ): number {
   if (!tableExists(db, "budget_ledger")) return 0;
-  return (
+  const used = (
     db
       .query<{ used: number }, [string, string]>(
         "SELECT used FROM budget_ledger WHERE day = ? AND name = ?",
       )
       .get(day, name)?.used ?? 0
   );
+  if (name !== "model_output_tokens_per_day" || !tableExists(db, "source_backfill_attempts")) return used;
+  // A crashed/in-flight backfill has already consumed its one attempt. Reserve
+  // its configured output ceiling until the immutable result accounts for it.
+  const pending = db.query<{ plan: string }, [string]>(`SELECT a.plan FROM source_backfill_attempts a
+    WHERE substr(a.created_at,1,10)=? AND NOT EXISTS(
+      SELECT 1 FROM source_backfill_results r WHERE r.operation_id=a.operation_id) LIMIT 257`).all(day);
+  if (pending.length > 256) return Number.MAX_SAFE_INTEGER;
+  let reserved = 0;
+  for (const row of pending) {
+    try {
+      const amount: unknown = JSON.parse(row.plan)?.budget?.max_output_tokens;
+      if (!Number.isSafeInteger(amount) || Number(amount) < 1 || Number(amount) > 16384) return Number.MAX_SAFE_INTEGER;
+      reserved += Number(amount);
+    } catch { return Number.MAX_SAFE_INTEGER; }
+  }
+  return Number.isSafeInteger(used + reserved) ? used + reserved : Number.MAX_SAFE_INTEGER;
 }
 
 export function addDailyBudget(

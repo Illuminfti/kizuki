@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { join } from "node:path";
 import { exportVault, restoreVault } from "../../src/export";
-import { openLedger } from "../../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 import { purgeEvents } from "../../src/ledger/purge";
 import { bindSourceModelPort, revokeSourceGrant, setSourceGrant, sourcePolicyEpoch } from "../../src/ledger/source-grants";
 import { accept } from "../../src/ledger/ledger";
@@ -388,7 +388,7 @@ test("schema47 upgrade preserves source/checkpoints and source purge cascades re
   f.db.exec("DROP TRIGGER extract_replay_source_erased; ALTER TABLE extract_oversized_records DROP COLUMN replay_operation_id; DROP TABLE extract_segment_settlements; DROP TABLE extract_replay_receipts; UPDATE schema_version SET version=47");
   const upgraded = openLedger(f.ledger);
   try {
-    expect(upgraded.query("SELECT version FROM schema_version").get()).toEqual({ version: 48 });
+    expect(upgraded.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });
     expect(stable(f)).toEqual(before);
     expect(progress(f)).toEqual(oldProgress.map(row => ({ ...row, replay_operation_id: null })));
     apply(f);

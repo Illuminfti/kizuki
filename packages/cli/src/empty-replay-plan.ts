@@ -1,9 +1,10 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { ExtractReplayError, parseEmptySegmentReplayPlan, parseEmptySegmentReplaySupersessionPlan, sha256Hex, type ExtractReplayPlan } from "@kizuki/core";
+import { SourceBackfillError, parseSourceBackfillPlan, type SourceBackfillPlan } from "@kizuki/core";
 
 /** One private, bounded descriptor; hash and parse the identical bytes. */
-export function readEmptyReplayPlan(path: string, expectedSha256: string): ExtractReplayPlan {
+function readOwnerPlan(path: string, expectedSha256: string): unknown {
   let fd: number | undefined;
   try {
     if (!isAbsolute(path) || !/^[a-f0-9]{64}$/.test(expectedSha256)) throw new Error();
@@ -20,8 +21,19 @@ export function readEmptyReplayPlan(path: string, expectedSha256: string): Extra
     const after = fstatSync(fd, { bigint: true });
     if (["dev", "ino", "size", "mode", "nlink", "uid", "mtimeNs", "ctimeNs"].some(key =>
       before[key as keyof typeof before] !== after[key as keyof typeof after]) || sha256Hex(bytes) !== expectedSha256) throw new Error();
-    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch { throw new Error("invalid owner-local plan"); }
+  finally { if (fd !== undefined) closeSync(fd); }
+}
+
+export function readEmptyReplayPlan(path: string, expectedSha256: string): ExtractReplayPlan {
+  try {
+    const value = readOwnerPlan(path, expectedSha256) as { schema?: unknown } | null;
     return value?.schema === "kizuki.extract-empty-replay/v2" ? parseEmptySegmentReplaySupersessionPlan(value) : parseEmptySegmentReplayPlan(value);
   } catch { throw new ExtractReplayError("invalid_plan"); }
-  finally { if (fd !== undefined) closeSync(fd); }
+}
+
+export function readSourceBackfillPlan(path: string, expectedSha256: string): SourceBackfillPlan {
+  try { return parseSourceBackfillPlan(readOwnerPlan(path, expectedSha256)); }
+  catch { throw new SourceBackfillError("invalid_plan"); }
 }

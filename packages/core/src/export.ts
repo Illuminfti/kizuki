@@ -1,4 +1,5 @@
 import { EXTRACT_REPLAY_BACKUPS, extractReplayBackupRows, restoreExtractReplayRow, validateRestoredReplayLink, validateExtractReplayLineage } from "./serve/extract-replay";
+import { SOURCE_BACKFILL_BACKUPS, restoreSourceBackfillRow, sourceBackfillBackupRows, validateSourceBackfillBackup } from "./serve/source-backfill-backup";
 import { beginForecastRestore } from "./world/tables/forecasts";
 import { validateForecastJournal } from "./world/forecast/validate";
 import { beginClaimHistoryRestore, prepareClaimHistoryImport, finishClaimHistoryRestore } from "./world/tables/known";
@@ -6,7 +7,7 @@ import { applyCanonClaimRetries } from "./ledger/canon-claim-retry-schema";
 import { createWorldTables, exportedWorldTables, resetWorldTables } from "./world/tables/registry";
 import { assertWorldState } from "./world/integrity";
 import { removeObservationsWithoutHistory } from "./world/tables/observations";
-import { EXTRACT_REPLAY_SCHEMA_VERSION, OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION } from "./world/tables/versions";
+import { EXTRACT_REPLAY_SCHEMA_VERSION, OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION, SOURCE_BACKFILL_SCHEMA_VERSION } from "./world/tables/versions";
 import { capturePortableAdapter, capturePortableLocal, hashPortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
 export type { PortableLocalAdapter } from "./portable-local";
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
@@ -1940,7 +1941,9 @@ function exportVaultOwned(
       writeStream(staging, "serve/extract-deferred-inputs.jsonl", pageDeferredInputs(db), files, options.signal);
       writeStream(staging, EXTRACT_BATCH_BACKUP, pendingExtractBatch(db), files, options.signal);
       validateExtractReplayLineage(db);
+      validateSourceBackfillBackup(db);
       for (const spec of EXTRACT_REPLAY_BACKUPS) writeStream(staging, spec.path, extractReplayBackupRows(db, spec), files, options.signal);
+      for (const spec of SOURCE_BACKFILL_BACKUPS) writeStream(staging, spec.path, sourceBackfillBackupRows(db, spec), files, options.signal);
       writeStream(staging, OVERSIZED_RECORDS_BACKUP, pageOversizedRecords(db), files, options.signal);
 
       if ((files["ledger/events.jsonl"]?.count ?? 0) !== snapshot.event_count) {
@@ -2061,6 +2064,9 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
   }
   if (manifest.schema_versions.ledger >= EXTRACT_REPLAY_SCHEMA_VERSION && EXTRACT_REPLAY_BACKUPS.some(spec => spec.table !== "run_receipts" && manifest.files[spec.path] === undefined)) {
     throw new Error("backup extraction replay streams are missing");
+  }
+  if (manifest.schema_versions.ledger >= SOURCE_BACKFILL_SCHEMA_VERSION && SOURCE_BACKFILL_BACKUPS.some(spec => manifest.files[spec.path] === undefined)) {
+    throw new Error("backup source backfill streams are missing");
   }
   if (manifest.schema_versions.serve >= 9 && manifest.files[OVERSIZED_RECORDS_BACKUP] === undefined) {
     throw new Error("backup oversized extraction stream is missing");
@@ -2792,6 +2798,7 @@ function* streamRows(
     : relativePath === IDENTITY_BACKUP ? MAX_IDENTITY_BACKUP_ROW_BYTES
     : relativePath === "serve/extract-replay-runs.jsonl" ? 6_400_000
     : EXTRACT_REPLAY_BACKUPS.some(spec => spec.path === relativePath) ? 131_072
+    : SOURCE_BACKFILL_BACKUPS.some(spec => spec.path === relativePath) ? 131_072
     : relativePath === SOURCE_INVENTORY_BACKUP ? MAX_SOURCE_INVENTORY_ROW_BYTES
     : relativePath === "ledger/purge_ops.jsonl" ? MAX_PURGE_OP_ROW_BYTES
     : relativePath === "ledger/purge_batches.jsonl" || relativePath === "ledger/purge_batch_receipts.jsonl" ? 16_384
@@ -3020,6 +3027,13 @@ export function restoreVault(
           insertConnectorSensitivity(db, row);
         }
         restoreSourcePolicy(db, source, manifest, portable?.grants);
+        for (const spec of SOURCE_BACKFILL_BACKUPS) {
+          let count = 0;
+          for (const row of streamRows(source, manifest, spec.path, manifest.schema_versions.ledger >= SOURCE_BACKFILL_SCHEMA_VERSION)) {
+            restoreSourceBackfillRow(db, spec, row); count++;
+          }
+          if (manifest.files[spec.path] !== undefined && count !== manifest.files[spec.path]!.count) throw new Error("backup source backfill count mismatch");
+        }
         // Content classes are derived, so a restore recomputes them from the
         // restored events and source rules rather than trusting a carried copy.
         rebuildEventClasses(db);
@@ -3092,6 +3106,7 @@ export function restoreVault(
         assertTypedCanonReceipts(db, staging);
         validateDurableExtractStorage(db);
         validateExtractReplayLineage(db);
+        validateSourceBackfillBackup(db);
         finishClaimHistoryRestore(db, manifest.schema_versions.ledger);
         validateForecastJournal(db);
       }).immediate();

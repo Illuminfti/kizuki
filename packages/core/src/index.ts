@@ -1222,4 +1222,6 @@ export type { AppModelSettingsFailure, AppModelDocument, AppModelCredentialChang
 export { normalizeSourceModelEndpoint, normalizeSourceModelName } from "./ledger/source-grants";
 
 export { replayEmptyExtractSegment, parseEmptySegmentReplayPlan, parseEmptySegmentReplaySupersessionPlan, ExtractReplayError, type EmptySegmentReplayPlan, type EmptySegmentReplaySupersessionPlan, type ExtractReplayPlan, type EmptySegmentReplayReceipt } from "./serve/extract-replay";
+export { backfillSourceWindow, sourceBackfillSnapshot, parseSourceBackfillPlan, SourceBackfillError,
+  type SourceBackfillPlan, type SourceBackfillResult } from "./serve/source-backfill";
 export { modelProducerInputTokenOverhead, modelProducerFingerprint } from "./producer/fingerprint";

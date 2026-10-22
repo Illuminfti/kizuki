@@ -359,6 +359,10 @@ export function assertServableLedger(db: Database, expectedVersion: number): voi
     db.query("SELECT decision_id,event_id,producer_fingerprint FROM extract_segment_settlements LIMIT 0").all();
     db.query("SELECT replay_operation_id FROM extract_oversized_records LIMIT 0").all();
   }
+  if (expectedVersion >= 49) {
+    db.query("SELECT operation_id,event_id,producer_fingerprint,model_binding_digest,start_utf16,end_utf16,cap_utf16,plan_sha256,plan,created_at FROM source_backfill_attempts LIMIT 0").all();
+    db.query("SELECT operation_id,outcome,report,created_at FROM source_backfill_results LIMIT 0").all();
+  }
   // These authoritative surfaces used to be silently repaired by initAgents,
   // initServe and initCanon. Reads require them, without creating any object.
   for (const query of [

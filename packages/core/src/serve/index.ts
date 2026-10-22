@@ -146,3 +146,5 @@ export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./qualification"
 export type { QualificationProfile, QualificationRail, QualificationReceipt, QualificationProcess, QualificationSample } from "./qualification";
 
 export { replayEmptyExtractSegment, parseEmptySegmentReplayPlan, parseEmptySegmentReplaySupersessionPlan, ExtractReplayError, type EmptySegmentReplayPlan, type EmptySegmentReplaySupersessionPlan, type ExtractReplayPlan, type EmptySegmentReplayReceipt } from "./extract-replay";
+export { backfillSourceWindow, sourceBackfillSnapshot, parseSourceBackfillPlan, SourceBackfillError,
+  type SourceBackfillPlan, type SourceBackfillResult } from "./source-backfill";

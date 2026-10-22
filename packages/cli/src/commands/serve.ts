@@ -1,7 +1,8 @@
-import { readEmptyReplayPlan } from "../empty-replay-plan";
+import { readEmptyReplayPlan, readSourceBackfillPlan } from "../empty-replay-plan";
 import {
   detectSupervisorKind,
   inspectServeDoctor,
+  inspectCanonRecovery,
   installServeService,
   LedgerLeaseHeldError,
   isCrashPoint,
@@ -11,6 +12,7 @@ import {
   requestServeStop,
   retrySkippedRecords,
   replayEmptyExtractSegment,
+  backfillSourceWindow,
   ExtractReplayError,
   PRODUCER_V2_CONTRACT,
   ServeStopError,
@@ -48,7 +50,7 @@ export const SERVE_SCHEMA = {
 export const serveCommand: Command = {
   name: "serve",
   usage:
-    "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve stop | serve run <rail> [--json] | serve run sync --canon-only [--json] | serve retry-skipped [--json] | serve replay-empty --plan FILE --plan-sha256 SHA256 [--json]",
+    "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve stop | serve run <rail> [--json] | serve run sync --canon-only [--json] | serve retry-skipped [--json] | serve replay-empty --plan FILE --plan-sha256 SHA256 [--json] | serve backfill-source --plan FILE --plan-sha256 SHA256 [--json]",
   summary: "run the always-on loop, or install it as a user service",
   schema: SERVE_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -59,10 +61,12 @@ export const serveCommand: Command = {
     const [verb, rail] = parsed.positionals;
     const canonOnly = parsed.flags.has("--canon-only");
     const replayEmpty = verb === "replay-empty";
-    if (replayEmpty ? (parsed.positionals.length !== 1 || parsed.options.size !== 2 || !parsed.options.has("--plan") ||
+    const sourceBackfill = verb === "backfill-source";
+    if (replayEmpty || sourceBackfill ? (parsed.positionals.length !== 1 || parsed.options.size !== 2 || !parsed.options.has("--plan") ||
         !parsed.options.has("--plan-sha256") || [...parsed.flags].some(flag => flag !== "--json")) :
         (parsed.options.has("--plan") || parsed.options.has("--plan-sha256"))) throw new UsageError(this.usage);
     const replayPlan = replayEmpty ? readEmptyReplayPlan(parsed.options.get("--plan")!, parsed.options.get("--plan-sha256")!) : null;
+    const backfillPlan = sourceBackfill ? readSourceBackfillPlan(parsed.options.get("--plan")!, parsed.options.get("--plan-sha256")!) : null;
     if (canonOnly && (verb !== "run" || rail !== "sync" || parsed.positionals.length !== 2 ||
         [...parsed.flags].some(flag => flag !== "--canon-only" && flag !== "--json") ||
         [...parsed.options.keys()].some(option => option !== "--crash-after"))) {
@@ -188,14 +192,29 @@ export const serveCommand: Command = {
         return doctor.ok ? 0 : 1;
       }
 
-      if (replayPlan !== null) {
+      if (replayPlan !== null || backfillPlan !== null) {
         const runtime = await createServeRuntime({ ...ctx, env: io.env, err: io.err });
         try {
           const producer = runtime.hooks.producer;
           if (producer === undefined || producer.descriptor.contract !== PRODUCER_V2_CONTRACT || !("model_ref" in producer) || producer.model_ref === null) {
             throw new ExtractReplayError("producer_changed");
           }
-          const result = replayEmptyExtractSegment({ db: ctx.db, vault_path: ctx.vaultPath, producer }, replayPlan);
+          if (backfillPlan !== null) {
+            const result = await backfillSourceWindow({ db: ctx.db, vault_path: ctx.vaultPath, producer }, backfillPlan);
+            // Admission and filesystem projection have separate durable receipts.
+            // Canon-only cannot capture or issue another model request.
+            const canon = result.outcome === "settled" ? await runRail(ctx.db, ctx.vaultPath, "sync", {
+              syncMode: "canon-only", hooks: runtime.hooks,
+            }) : null;
+            const recovery = inspectCanonRecovery(ctx.db);
+            const missing = result.claims_added.some(id => ctx.db.query("SELECT 1 FROM claims WHERE claim_id=? AND receipt_id IS NOT NULL").get(id) === null);
+            const ok = result.outcome === "settled" && canon?.status === "ok" && canon.stopped === null &&
+              !recovery.pending && recovery.projection_pending === 0 && !missing;
+            if (parsed.flags.has("--json")) io.out(jsonEnvelope("serve", ok ? "ok" : "error", { admission: result, canon, projection_complete: ok }));
+            else io.out(`backfill=${result.outcome} operation_id=${result.operation_id} canon=${canon?.status ?? "not_started"}`);
+            return ok ? 0 : 1;
+          }
+          const result = replayEmptyExtractSegment({ db: ctx.db, vault_path: ctx.vaultPath, producer }, replayPlan!);
           if (parsed.flags.has("--json")) io.out(jsonEnvelope("serve", "ok", result));
           else io.out(`replay=${result.status} operation_id=${result.operation_id}`);
           return 0;
@@ -269,7 +288,7 @@ export const serveCommand: Command = {
       }
       if (result.http !== null) await result.http.stop();
       return 0;
-    }, { retrieval: canonOnly || replayEmpty || verb === "status" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required",
+    }, { retrieval: canonOnly || replayEmpty || sourceBackfill || verb === "status" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required",
       ...(daemon ? { nonblockingSeal: true } : {}),
     });
     // The long-running loop outwaits a held ledger; every other verb reports it.
