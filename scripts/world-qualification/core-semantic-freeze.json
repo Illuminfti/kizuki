@@ -2,12 +2,12 @@
   "schema": "kizuki.core-semantic-freeze/v1",
   "files": {
     "core-semantic-corpus.json": {
-      "bytes": 6019,
-      "sha256": "d44111afcbad50595f8575e19169565bca3269f3f1eb48152582ee89215d8d82"
+      "bytes": 6315,
+      "sha256": "5689842c85b3554ec79b21572e1d6055ac5abd34a9df7dad03a2dbdf0c88f7cd"
     },
     "core-semantic-contract.json": {
-      "bytes": 19964,
-      "sha256": "ade4338e01976640c75d6760513d65c42b344e159ff4c34d2fe31abca0a76f21"
+      "bytes": 20255,
+      "sha256": "78e6fa99c14722428701eb16de9141b8993e239a272fd9473c97cd4227073c08"
     },
     "core-semantic.md": {
       "bytes": 2248,

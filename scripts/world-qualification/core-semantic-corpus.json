@@ -2,175 +2,175 @@
   "schema": "kizuki.core-semantic-corpus/v1",
   "synthetic": true,
   "split": "held_out",
-  "version": "core8-unseen-20261022",
+  "version": "core9-unseen-20261022",
   "cases": [
     {
-      "id": "core8-concept-positive-drift-ledger",
+      "id": "core9-concept-positive-mosaic-loadline",
       "kind": "concept",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Record header: Drift Ledger — Concept. Field guide definition: It is a method for recording small route deviations together with their causes and corrections, so later plans can distinguish recurring drift from one-off detours.",
+          "text": "Concept catalog header: Mosaic Loadline — Concept. Definition: It is the planning principle that pairs every assumption with the observation that would invalidate it, so revisions can be limited to the affected steps.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core8-concept-reported-lantern-threshold",
+      "id": "core9-concept-reported-tideglass-margin",
       "kind": "concept",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Record header: Lantern Threshold — Concept. Workshop transcript. Inez Calder reported: \"It is a rule for starting a field check only after three independent visibility readings agree.\"",
+          "text": "Concept catalog header: Tideglass Margin — Concept. Interview record. Safiya Ren reported: \"It is the sizing principle that sets a reserve from the widest gap among independent forecasts instead of from their average.\"",
           "subjects": [
             {
-              "id": "source-core8-concept-reported",
-              "quote": "Inez Calder reported"
+              "id": "source-core9-concept-reported",
+              "quote": "Safiya Ren reported"
             }
           ]
         }
       ]
     },
     {
-      "id": "core8-concept-historical-harbor-ratio",
+      "id": "core9-concept-historical-quarry-fold",
       "kind": "concept",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "Archive memorandum HR-17 states: \"For the interval beginning 2024-04-01T00:00:00.000Z and ending exclusively at 2024-07-01T00:00:00.000Z, Harbor Ratio meant the share of inspection hours reserved for tide-dependent work.\"",
+          "text": "Historical terminology register QF-8 states: \"For the interval beginning 2022-02-10T08:00:00.000Z and ending exclusively at 2022-05-20T18:30:00.000Z, the concept named Quarry Fold denoted sorting field anomalies by the safety boundary they crossed before comparing their likely causes.\"",
           "subjects": [
             {
-              "id": "source-core8-concept-historical",
-              "quote": "Archive memorandum HR-17 states"
+              "id": "source-core9-concept-historical",
+              "quote": "Historical terminology register QF-8 states"
             }
           ]
         }
       ]
     },
     {
-      "id": "core8-concept-negative-name",
+      "id": "core9-concept-negative-name",
       "kind": "concept",
       "category": "name_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Reference index: Quiet Meridian.",
+          "text": "Glossary index entry: Lichen Span.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core8-concept-negative-template",
+      "id": "core9-concept-negative-template",
       "kind": "concept",
       "category": "template_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Concept worksheet\nName: [concept name]\nDefinition: [write a definition]\nExample: [add an example]",
+          "text": "Concept intake blank\nLabel: [enter concept label]\nMeaning: [enter established meaning]\nEvidence: [paste supporting text]",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core8-concept-negative-hypothetical",
+      "id": "core9-concept-negative-hypothetical",
       "kind": "concept",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "During a creativity exercise, suppose a fictional term called Ash Compass might someday describe choosing the least windy route. The facilitator confirmed that no such concept is currently defined or used.",
+          "text": "Brainstorming prompt: imagine a fictional notion called Velvet Radius that could describe arranging tools by shadow length. The note explicitly says that no such concept is established, adopted, or in use.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core8-situation-positive-orchid-relay-check",
+      "id": "core9-situation-positive-winterglass-survey",
       "kind": "situation",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Operations note. Orchid Relay Check is active. Its objective is to verify the backup radio link before the evening drill. The check is blocked because the replacement antenna has not arrived.",
+          "text": "Situation record header: Winterglass Survey — Situation. Status: active. Its objective is to compare the two soil-moisture sensors before the frost trial. It is blocked because the reference probe remains under calibration.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core8-situation-reported-maple-intake-review",
+      "id": "core9-situation-reported-meadow-signal-recovery",
       "kind": "situation",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Record header: Maple Intake Review — Situation. Dispatch transcript. Dario Venn reported: \"It is underway. Its objective is to reconcile the two intake counts before publishing the weekly total, and it is blocked because the northern ledger is still missing page nine.\"",
+          "text": "Situation record header: Meadow Signal Recovery — Situation. Dispatch interview. Tomas Vale reported: \"It is underway. Its objective is to restore the western beacon before the night-navigation test, and it is blocked because the replacement power coupler has not cleared inspection.\"",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core8-situation-historical-cedar-bay-transfer",
+      "id": "core9-situation-historical-bluefen-relay",
       "kind": "situation",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "Operations bulletin CB-42 states: \"For the interval beginning 2023-10-01T00:00:00.000Z and ending exclusively at 2023-12-16T00:00:00.000Z, Cedar Bay Transfer had the objective of moving the calibration crates to Annex Two. During that interval, its loading site changed from Pier Four to Pier Six.\"",
+          "text": "Operations archive BR-31 states: \"For the interval beginning 2021-11-03T06:15:00.000Z and ending exclusively at 2022-01-14T21:00:00.000Z, the situation named Bluefen Relay had the objective of moving sealed water samples from Station Three to the western laboratory. During that interval, its transport route changed from the east road to the ridge road.\"",
           "subjects": [
             {
-              "id": "source-core8-situation-historical",
-              "quote": "Operations bulletin CB-42 states"
+              "id": "source-core9-situation-historical",
+              "quote": "Operations archive BR-31 states"
             }
           ]
         }
       ]
     },
     {
-      "id": "core8-situation-negative-name",
+      "id": "core9-situation-negative-name",
       "kind": "situation",
       "category": "name_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Calendar label: Juniper Window.",
+          "text": "Calendar index label: Saffron Gate.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core8-situation-negative-template",
+      "id": "core9-situation-negative-template",
       "kind": "situation",
       "category": "template_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Situation template\nTitle: [name]\nObjective: [objective]\nBlocker: [blocker]\nStatus: [status]",
+          "text": "Situation intake blank\nTitle: [enter situation title]\nObjective: [enter objective]\nConstraint: [enter blocker]\nState: [enter status]",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core8-situation-negative-hypothetical",
+      "id": "core9-situation-negative-hypothetical",
       "kind": "situation",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Planning exercise only: suppose a fictional operation called Copper Kite might be delayed by imaginary fog. No actual operation, objective, commitment, blocker, or change is being reported.",
+          "text": "Scenario-writing prompt: suppose an imaginary situation called Chalkwing Assembly were delayed by a made-up shortage of blue tags. The prompt reports no real situation, objective, blocker, commitment, or change.",
           "subjects": []
         }
       ]
