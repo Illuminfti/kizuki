@@ -2,175 +2,175 @@
   "schema": "kizuki.core-semantic-corpus/v1",
   "synthetic": true,
   "split": "held_out",
-  "version": "core13-fresh-synthetic-r3-20261022",
+  "version": "core14-fresh-synthetic-20261022",
   "cases": [
     {
-      "id": "core13-concept-positive-juniper-index",
-      "kind": "concept",
-      "category": "positive",
-      "source_type": "direct_record",
-      "records": [
-        {
-          "id": "r1",
-          "text": "Juniper Index — Concept. Its definition is a greenhouse inventory rule that records seed trays by shelf before totaling the germination tags.",
-          "subjects": []
-        }
-      ]
-    },
-    {
-      "id": "core13-concept-reported-copper-signal",
-      "kind": "concept",
-      "category": "reported",
-      "source_type": "person_statement",
-      "records": [
-        {
-          "id": "r1",
-          "text": "Copper Signal — Concept. Mara Dovell reported: \"Its definition is a kiln logging rule that groups firing notes by chamber while keeping test tiles in a separate register.\"",
-          "subjects": [
-            {
-              "id": "source-core13-concept-reported",
-              "quote": "Mara Dovell reported"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "core13-concept-historical-amber-lexicon",
-      "kind": "concept",
-      "category": "historical",
-      "source_type": "document_report",
-      "records": [
-        {
-          "id": "r1",
-          "text": "During the interval beginning 2016-03-04T09:10:00.000Z and ending exclusively at 2016-04-18T17:25:00.000Z, Amber Lexicon — Concept. For that interval only, Terminology ledger TL-19 states that its definition was a cataloguing rule that marks inherited labels before sorting local names.",
-          "subjects": [
-            {
-              "id": "source-core13-concept-historical",
-              "quote": "Terminology ledger TL-19 states"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "core13-concept-name-negative-morrow-pennant",
-      "kind": "concept",
-      "category": "name_negative",
-      "source_type": "direct_record",
-      "records": [
-        {
-          "id": "r1",
-          "text": "Morrow Pennant.",
-          "subjects": []
-        }
-      ]
-    },
-    {
-      "id": "core13-concept-template-negative-blank-term-slip",
-      "kind": "concept",
-      "category": "template_negative",
-      "source_type": "direct_record",
-      "records": [
-        {
-          "id": "r1",
-          "text": "Blank term slip\nConcept: {ENTER TERM}\nDefinition: {ENTER MEANING}\nEvidence: {ENTER QUOTE}",
-          "subjects": []
-        }
-      ]
-    },
-    {
-      "id": "core13-concept-hypothetical-negative-cedar-keystone",
-      "kind": "concept",
-      "category": "hypothetical_negative",
-      "source_type": "direct_record",
-      "records": [
-        {
-          "id": "r1",
-          "text": "Naming question only: could an imaginary concept be called Cedar Keystone? No referent, adoption, or definition is asserted.",
-          "subjects": []
-        }
-      ]
-    },
-    {
-      "id": "core13-situation-positive-harbor-thread",
+      "id": "core14-situation-positive-maple-quay",
       "kind": "situation",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Harbor Thread — Situation. Its objective is to label the mooring samples before the saltwater comparison. Its blocker is that the waterproof ink is unavailable.",
+          "text": "Maple Quay — Situation. Its objective is to catalogue the tide samples before the salinity comparison. Its blocker is that the sample labels are damp.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core13-situation-reported-orchid-drift",
+      "id": "core14-situation-reported-violet-relay",
       "kind": "situation",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Orchid Drift — Situation. Iven Sato reported: \"Its objective is to calibrate the shade meter before the orchid survey. Its blocker is that the reference tile is cracked.\"",
+          "text": "Violet Relay — Situation. Toma Wren reported: \"Its objective is to align the signal flags before the harbor drill. Its blocker is that the mast clip is bent.\"",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core13-situation-historical-rill-valve-review",
+      "id": "core14-situation-historical-cedar-vent-note",
       "kind": "situation",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "MA-73 maintenance action list — Rill Valve Review. During the observation interval beginning 2017-08-12T06:20:00.000Z and ending exclusively at 2017-09-30T19:05:00.000Z, Maintenance ledger ML-73 states:\n- Replace the unreadable gauge window so unresolved pressure verification can proceed.\n- Wipe the gauge housing before fitting the replacement window.\n- Return the removed window to the labeled evidence sleeve.\n- Keep the access hatch clear for the pressure check.\n\nArchive notes\n- The brass key is stored in the upper tool drawer.\n- A cotton rag is folded beside the pipe wrench.\n- The hatch hinge received a thin coat of oil.\n- The blue chalk line remains visible on the floor seam.\n- A spare washer is taped inside the meter cabinet.\n- The wooden clipboard is returned to the wall hook.\n- The hand torch battery was placed in the charging cradle.\n- The drain cover was brushed free of dry leaves.\n- The access ladder has its rubber feet fitted.\n- A pencil sketch of the elbow joint is filed with the route map.\n- The north shelf holds the folded canvas cover.\n- The inspection mirror is wrapped in a clean cloth.\n- The rain hood is clipped to the storage rail.\n- A marker pen sits beside the laminated valve diagram.\n- The shallow tray contains two plain cork pads.\n- The cabinet latch closes without rubbing.\n- The paper tags are kept in an empty tin.\n- A small brush rests under the workbench lip.\n- The flexible ruler is coiled beside the pencil cup.\n- The gray bucket is inverted on the drying mat.\n- The spare lens cap is inside the canvas pouch.\n- A clean funnel hangs from the pegboard.\n- The red cord is looped around the hook by the door.\n- The brass plaque is wiped with a dry cloth.\n- The lower shelf carries the folded instruction sheet.\n- A chalk stub is placed beside the threshold strip.\n- The packing paper is stacked beneath the counter.\n- The steel ruler lies flat in the narrow drawer.\n- The cloth tape roll is stored with the labels.\n- The small tray is set under the lantern rack.\n- The handle of the brush points toward the doorway.\n- The spare glove is folded on the bench corner.\n- The cabinet interior is lit by the fixed lamp.\n- A plain envelope holds the pencil rubbings.\n- The wooden wedge rests beside the doorstop.\n- The route map has a crease at its lower edge.\n- The slate tile is placed under the empty mug.\n- The dustpan is hung on the final peg.",
+          "text": "MV-88 service note — Cedar Vent Note. During the observation interval beginning 2018-02-11T05:45:00.000Z and ending exclusively at 2018-03-23T16:30:00.000Z, Maintenance folio MF-88 states:\n- Replace the worn intake seal so unresolved flow verification can proceed.\n- Brush the intake rim before fitting the replacement seal.\n- Place the removed seal in the marked paper sleeve.\n- Leave the lower hatch clear for the verification check.\n\nArchive notes\n- The copper brush is set beside the intake cover.\n- A folded cloth rests on the lower shelf.\n- The route sketch is clipped to the board.\n- The hand lamp hangs from its hook.\n- A plain tag is stored in the drawer.\n- The hatch mat lies flat by the threshold.\n- The spare rag is folded in the tin.\n- The wooden wedge rests near the doorstop.\n- A clean funnel hangs from the pegboard.\n- The slate marker sits beside the ruler.\n- The paper sleeve is kept under the tray.\n- The dry brush is returned to the cabinet.",
           "subjects": [
             {
-              "id": "source-core13-situation-historical",
-              "quote": "Maintenance ledger ML-73 states"
+              "id": "source-core14-situation-historical",
+              "quote": "Maintenance folio MF-88 states"
             }
           ]
         }
       ]
     },
     {
-      "id": "core13-situation-name-negative-quiet-basin",
+      "id": "core14-situation-name-negative-ember-rook",
       "kind": "situation",
       "category": "name_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Quiet Basin.",
+          "text": "Ember Rook.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core13-situation-template-negative-blank-action-slip",
+      "id": "core14-situation-template-negative-blank-service-slip",
       "kind": "situation",
       "category": "template_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Blank action slip\nSituation: {ENTER TITLE}\nObjective: {ENTER AIM}\nBlocker: {ENTER CONDITION}\nChange: {ENTER REVISION}",
+          "text": "Blank service slip\nSituation: {ENTER TITLE}\nObjective: {ENTER AIM}\nBlocker: {ENTER CONDITION}\nChange: {ENTER REVISION}",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core13-situation-hypothetical-negative-slate-circuit",
+      "id": "core14-situation-hypothetical-negative-river-circuit",
       "kind": "situation",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Counterfactual naming question only: if a situation called Slate Circuit existed, could that be its title? No existence, objective, blocker, state, change, completion, or current status is asserted.",
+          "text": "Counterfactual naming question only: if a situation called River Circuit existed, could that be its title? No existence, objective, blocker, state, change, completion, or current status is asserted.",
+          "subjects": []
+        }
+      ]
+    },
+    {
+      "id": "core14-concept-positive-moss-ledger",
+      "kind": "concept",
+      "category": "positive",
+      "source_type": "direct_record",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Moss Ledger — Concept. Its definition is a garden-record rule that lists seed packets by bed before totaling the planting notes.",
+          "subjects": []
+        }
+      ]
+    },
+    {
+      "id": "core14-concept-reported-cobalt-method",
+      "kind": "concept",
+      "category": "reported",
+      "source_type": "person_statement",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Cobalt Method — Concept. Risa Pell reported: \"Its definition is a glazing log rule that sorts test marks by kiln shelf while keeping repaired tiles in a separate column.\"",
+          "subjects": [
+            {
+              "id": "source-core14-concept-reported",
+              "quote": "Risa Pell reported"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "core14-concept-historical-hearth-index",
+      "kind": "concept",
+      "category": "historical",
+      "source_type": "document_report",
+      "records": [
+        {
+          "id": "r1",
+          "text": "During the observation interval beginning 2014-06-09T10:05:00.000Z and ending exclusively at 2014-07-14T15:55:00.000Z, Catalog record CR-27 states that Hearth Index — Concept had a definition: a library sorting rule that marks translated titles before arranging local editions.",
+          "subjects": [
+            {
+              "id": "source-core14-concept-historical",
+              "quote": "Catalog record CR-27 states"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "core14-concept-name-negative-willow-marker",
+      "kind": "concept",
+      "category": "name_negative",
+      "source_type": "direct_record",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Willow Marker.",
+          "subjects": []
+        }
+      ]
+    },
+    {
+      "id": "core14-concept-template-negative-blank-notion-slip",
+      "kind": "concept",
+      "category": "template_negative",
+      "source_type": "direct_record",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Blank notion slip\nConcept: {ENTER TERM}\nDefinition: {ENTER MEANING}\nEvidence: {ENTER QUOTE}",
+          "subjects": []
+        }
+      ]
+    },
+    {
+      "id": "core14-concept-hypothetical-negative-rose-fulcrum",
+      "kind": "concept",
+      "category": "hypothetical_negative",
+      "source_type": "direct_record",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Naming question only: might an imaginary concept be called Rose Fulcrum? No referent, adoption, or definition is asserted.",
           "subjects": []
         }
       ]

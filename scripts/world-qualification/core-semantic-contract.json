@@ -1,6 +1,6 @@
 {
   "schema": "kizuki.core-semantic-contract/v1",
-  "corpus_version": "core13-fresh-synthetic-r3-20261022",
+  "corpus_version": "core14-fresh-synthetic-20261022",
   "automated_gate": {
     "required": [
       "all twelve ordered cases observed exactly once",
@@ -102,51 +102,208 @@
   },
   "cases": [
     {
-      "case_id": "core13-concept-positive-juniper-index",
+      "case_id": "core14-situation-positive-maple-quay",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Juniper Index"
+        "quote": "Maple Quay"
       },
       "classification": {
-        "kind": "world/concept",
-        "label": "Juniper Index",
-        "witness": "Juniper Index — Concept",
+        "kind": "world/situation",
+        "label": "Maple Quay",
+        "witness": "Maple Quay — Situation",
         "perspective": "direct",
         "time": "unknown"
       },
       "details": [
         {
-          "predicate": "concept.definition",
+          "predicate": "situation.objective",
           "object_kind": "literal",
-          "witness": "a greenhouse inventory rule that records seed trays by shelf before totaling the germination tags",
+          "witness": "catalogue the tide samples before the salinity comparison",
           "required_atoms": [
-            "it is a greenhouse inventory rule",
-            "seed trays are recorded by shelf",
-            "recording precedes totaling germination tags"
+            "the stated objective is to catalogue tide samples",
+            "cataloguing precedes the salinity comparison"
+          ],
+          "perspective": "direct",
+          "time": "unknown"
+        },
+        {
+          "predicate": "situation.blocker",
+          "object_kind": "literal",
+          "witness": "the sample labels are damp",
+          "required_atoms": [
+            "the sample labels are damp",
+            "the damp labels are a stated blocker of Maple Quay"
           ],
           "perspective": "direct",
           "time": "unknown"
         }
       ],
       "forbidden_assertions": [
-        "Juniper Index has an owner, creator, or endorsement",
-        "Juniper Index is identical to another concept"
+        "Maple Quay is complete",
+        "the owner owns or leads Maple Quay"
       ]
     },
     {
-      "case_id": "core13-concept-reported-copper-signal",
+      "case_id": "core14-situation-reported-violet-relay",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Copper Signal"
+        "quote": "Violet Relay"
+      },
+      "classification": {
+        "kind": "world/situation",
+        "label": "Violet Relay",
+        "witness": "Violet Relay — Situation",
+        "perspective": "direct",
+        "time": "unknown"
+      },
+      "details": [
+        {
+          "predicate": "situation.objective",
+          "object_kind": "literal",
+          "witness": "align the signal flags before the harbor drill",
+          "required_atoms": [
+            "the stated objective is to align signal flags",
+            "alignment precedes the harbor drill"
+          ],
+          "perspective": "person_statement",
+          "time": "unknown",
+          "source": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Toma Wren",
+            "label": "Toma Wren",
+            "attribution_witness": "Toma Wren reported"
+          },
+          "attribution_witness": "Toma Wren reported"
+        },
+        {
+          "predicate": "situation.blocker",
+          "object_kind": "literal",
+          "witness": "the mast clip is bent",
+          "required_atoms": [
+            "the mast clip is bent",
+            "the bent clip is a stated blocker of Violet Relay"
+          ],
+          "perspective": "person_statement",
+          "time": "unknown",
+          "source": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Toma Wren",
+            "label": "Toma Wren",
+            "attribution_witness": "Toma Wren reported"
+          },
+          "attribution_witness": "Toma Wren reported"
+        }
+      ],
+      "forbidden_assertions": [
+        "Violet Relay is complete",
+        "Toma Wren owns or leads Violet Relay"
+      ]
+    },
+    {
+      "case_id": "core14-situation-historical-cedar-vent-note",
+      "expectation": "extract",
+      "target": {
+        "mode": "mention",
+        "record": "r1",
+        "quote": "Cedar Vent Note"
+      },
+      "classification": {
+        "kind": "world/situation",
+        "label": "Cedar Vent Note",
+        "witness": "MV-88 service note — Cedar Vent Note",
+        "perspective": "direct",
+        "time": {
+          "valid_from": "2018-02-11T05:45:00.000Z",
+          "valid_to": "2018-03-23T16:30:00.000Z",
+          "temporal_basis": "explicit",
+          "witness": "observation interval beginning 2018-02-11T05:45:00.000Z and ending exclusively at 2018-03-23T16:30:00.000Z"
+        }
+      },
+      "details": [
+        {
+          "predicate": "situation.blocker",
+          "object_kind": "literal",
+          "witness": "Replace the worn intake seal so unresolved flow verification can proceed.",
+          "required_atoms": [
+            "the intake seal is worn",
+            "flow verification is unresolved",
+            "the requested seal replacement is presented as enabling unresolved flow verification to proceed"
+          ],
+          "perspective": "document_report",
+          "time": {
+            "valid_from": "2018-02-11T05:45:00.000Z",
+            "valid_to": "2018-03-23T16:30:00.000Z",
+            "temporal_basis": "explicit",
+            "witness": "observation interval beginning 2018-02-11T05:45:00.000Z and ending exclusively at 2018-03-23T16:30:00.000Z"
+          },
+          "source": "source-core14-situation-historical",
+          "attribution_witness": "Maintenance folio MF-88 states"
+        }
+      ],
+      "forbidden_assertions": [
+        "Cedar Vent Note is complete",
+        "flow verification completed",
+        "the requested replacement resolved the seal or verification",
+        "Cedar Vent Note is current outside the explicit interval",
+        "the record establishes a project, owner, or current count"
+      ],
+      "label_alternatives": [
+        {
+          "witness": "MV-88 service note — Cedar Vent Note",
+          "perspective": "document_report",
+          "source": "source-core14-situation-historical",
+          "attribution_witness": "Maintenance folio MF-88 states",
+          "time": {
+            "valid_from": "2018-02-11T05:45:00.000Z",
+            "valid_to": "2018-03-23T16:30:00.000Z",
+            "temporal_basis": "explicit",
+            "witness": "observation interval beginning 2018-02-11T05:45:00.000Z and ending exclusively at 2018-03-23T16:30:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core14-situation-name-negative-ember-rook",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Ember Rook is a situation",
+        "Ember Rook has an asserted objective, blocker, state, or change"
+      ]
+    },
+    {
+      "case_id": "core14-situation-template-negative-blank-service-slip",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "the blank slip establishes an actual situation",
+        "ENTER TITLE, ENTER AIM, ENTER CONDITION, or ENTER REVISION is an asserted fact"
+      ]
+    },
+    {
+      "case_id": "core14-situation-hypothetical-negative-river-circuit",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "River Circuit is an actual situation",
+        "River Circuit has an asserted objective, blocker, state, change, completion, or current status"
+      ]
+    },
+    {
+      "case_id": "core14-concept-positive-moss-ledger",
+      "expectation": "extract",
+      "target": {
+        "mode": "mention",
+        "record": "r1",
+        "quote": "Moss Ledger"
       },
       "classification": {
         "kind": "world/concept",
-        "label": "Copper Signal",
-        "witness": "Copper Signal — Concept",
+        "label": "Moss Ledger",
+        "witness": "Moss Ledger — Concept",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -154,88 +311,122 @@
         {
           "predicate": "concept.definition",
           "object_kind": "literal",
-          "witness": "a kiln logging rule that groups firing notes by chamber while keeping test tiles in a separate register",
+          "witness": "a garden-record rule that lists seed packets by bed before totaling the planting notes",
           "required_atoms": [
-            "it is a kiln logging rule",
-            "firing notes are grouped by chamber",
-            "test tiles are kept in a separate register"
+            "it is a garden-record rule",
+            "seed packets are listed by bed",
+            "listing precedes totaling planting notes"
           ],
-          "perspective": "person_statement",
-          "time": "unknown",
-          "source": "source-core13-concept-reported",
-          "attribution_witness": "Mara Dovell reported",
-          "equivalent_mention": {
-            "mode": "mention",
-            "record": "r1",
-            "quote": "Mara Dovell",
-            "label": "Mara Dovell",
-            "attribution_witness": "Mara Dovell reported"
-          }
+          "perspective": "direct",
+          "time": "unknown"
         }
       ],
       "forbidden_assertions": [
-        "the owner reported or endorses Copper Signal",
-        "Mara Dovell is the owner",
-        "Copper Signal is identical to another concept"
+        "Moss Ledger has an owner, creator, or endorsement",
+        "Moss Ledger is identical to another concept"
       ]
     },
     {
-      "case_id": "core13-concept-historical-amber-lexicon",
+      "case_id": "core14-concept-reported-cobalt-method",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Amber Lexicon"
+        "quote": "Cobalt Method"
       },
       "classification": {
         "kind": "world/concept",
-        "label": "Amber Lexicon",
-        "witness": "Amber Lexicon — Concept",
+        "label": "Cobalt Method",
+        "witness": "Cobalt Method — Concept",
+        "perspective": "direct",
+        "time": "unknown"
+      },
+      "details": [
+        {
+          "predicate": "concept.definition",
+          "object_kind": "literal",
+          "witness": "a glazing log rule that sorts test marks by kiln shelf while keeping repaired tiles in a separate column",
+          "required_atoms": [
+            "it is a glazing log rule",
+            "test marks are sorted by kiln shelf",
+            "repaired tiles are kept in a separate column"
+          ],
+          "perspective": "person_statement",
+          "time": "unknown",
+          "source": "source-core14-concept-reported",
+          "attribution_witness": "Risa Pell reported",
+          "equivalent_mention": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Risa Pell",
+            "label": "Risa Pell",
+            "attribution_witness": "Risa Pell reported"
+          }
+        }
+      ],
+      "forbidden_assertions": [
+        "the owner reported or endorses Cobalt Method",
+        "Risa Pell is the owner",
+        "Cobalt Method is identical to another concept"
+      ]
+    },
+    {
+      "case_id": "core14-concept-historical-hearth-index",
+      "expectation": "extract",
+      "target": {
+        "mode": "mention",
+        "record": "r1",
+        "quote": "Hearth Index"
+      },
+      "classification": {
+        "kind": "world/concept",
+        "label": "Hearth Index",
+        "witness": "Hearth Index — Concept",
         "perspective": "direct",
         "time": {
-          "valid_from": "2016-03-04T09:10:00.000Z",
-          "valid_to": "2016-04-18T17:25:00.000Z",
+          "valid_from": "2014-06-09T10:05:00.000Z",
+          "valid_to": "2014-07-14T15:55:00.000Z",
           "temporal_basis": "explicit",
-          "witness": "interval beginning 2016-03-04T09:10:00.000Z and ending exclusively at 2016-04-18T17:25:00.000Z"
+          "witness": "observation interval beginning 2014-06-09T10:05:00.000Z and ending exclusively at 2014-07-14T15:55:00.000Z"
         }
       },
       "details": [
         {
           "predicate": "concept.definition",
           "object_kind": "literal",
-          "witness": "a cataloguing rule that marks inherited labels before sorting local names",
+          "witness": "a library sorting rule that marks translated titles before arranging local editions",
           "required_atoms": [
-            "it is a cataloguing rule",
-            "inherited labels are marked",
-            "marking precedes sorting local names"
+            "it is a library sorting rule",
+            "translated titles are marked",
+            "marking precedes arranging local editions"
           ],
           "perspective": "document_report",
           "time": {
-            "valid_from": "2016-03-04T09:10:00.000Z",
-            "valid_to": "2016-04-18T17:25:00.000Z",
+            "valid_from": "2014-06-09T10:05:00.000Z",
+            "valid_to": "2014-07-14T15:55:00.000Z",
             "temporal_basis": "explicit",
-            "witness": "interval beginning 2016-03-04T09:10:00.000Z and ending exclusively at 2016-04-18T17:25:00.000Z"
+            "witness": "observation interval beginning 2014-06-09T10:05:00.000Z and ending exclusively at 2014-07-14T15:55:00.000Z"
           },
-          "source": "source-core13-concept-historical",
-          "attribution_witness": "Terminology ledger TL-19 states"
+          "source": "source-core14-concept-historical",
+          "attribution_witness": "Catalog record CR-27 states"
         }
       ],
       "forbidden_assertions": [
-        "Amber Lexicon is current outside the explicit interval",
+        "Hearth Index is current outside the explicit interval",
         "the interval is its lifespan",
-        "Amber Lexicon has an owner or endorsement"
+        "Hearth Index has an owner or endorsement"
       ]
     },
     {
-      "case_id": "core13-concept-name-negative-morrow-pennant",
+      "case_id": "core14-concept-name-negative-willow-marker",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Morrow Pennant is a concept",
-        "Morrow Pennant has an asserted definition"
+        "Willow Marker is a concept",
+        "Willow Marker has an asserted definition"
       ]
     },
     {
-      "case_id": "core13-concept-template-negative-blank-term-slip",
+      "case_id": "core14-concept-template-negative-blank-notion-slip",
       "expectation": "abstain",
       "forbidden_assertions": [
         "the blank slip establishes a concept",
@@ -243,204 +434,11 @@
       ]
     },
     {
-      "case_id": "core13-concept-hypothetical-negative-cedar-keystone",
+      "case_id": "core14-concept-hypothetical-negative-rose-fulcrum",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Cedar Keystone is actual or adopted",
-        "Cedar Keystone has an asserted definition"
-      ]
-    },
-    {
-      "case_id": "core13-situation-positive-harbor-thread",
-      "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Harbor Thread"
-      },
-      "classification": {
-        "kind": "world/situation",
-        "label": "Harbor Thread",
-        "witness": "Harbor Thread — Situation",
-        "perspective": "direct",
-        "time": "unknown"
-      },
-      "details": [
-        {
-          "predicate": "situation.objective",
-          "object_kind": "literal",
-          "witness": "label the mooring samples before the saltwater comparison",
-          "required_atoms": [
-            "the stated objective is to label mooring samples",
-            "labelling must precede the saltwater comparison"
-          ],
-          "perspective": "direct",
-          "time": "unknown"
-        },
-        {
-          "predicate": "situation.blocker",
-          "object_kind": "literal",
-          "witness": "the waterproof ink is unavailable",
-          "required_atoms": [
-            "the waterproof ink is unavailable",
-            "the unavailable ink is a stated blocker of Harbor Thread"
-          ],
-          "perspective": "direct",
-          "time": "unknown"
-        }
-      ],
-      "forbidden_assertions": [
-        "Harbor Thread is complete",
-        "the owner owns or leads Harbor Thread",
-        "the ink is damaged rather than unavailable"
-      ]
-    },
-    {
-      "case_id": "core13-situation-reported-orchid-drift",
-      "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Orchid Drift"
-      },
-      "classification": {
-        "kind": "world/situation",
-        "label": "Orchid Drift",
-        "witness": "Orchid Drift — Situation",
-        "perspective": "direct",
-        "time": "unknown"
-      },
-      "details": [
-        {
-          "predicate": "situation.objective",
-          "object_kind": "literal",
-          "witness": "calibrate the shade meter before the orchid survey",
-          "required_atoms": [
-            "the stated objective is to calibrate the shade meter",
-            "calibration must precede the orchid survey"
-          ],
-          "perspective": "person_statement",
-          "time": "unknown",
-          "source": {
-            "mode": "mention",
-            "record": "r1",
-            "quote": "Iven Sato",
-            "label": "Iven Sato",
-            "attribution_witness": "Iven Sato reported"
-          },
-          "attribution_witness": "Iven Sato reported"
-        },
-        {
-          "predicate": "situation.blocker",
-          "object_kind": "literal",
-          "witness": "the reference tile is cracked",
-          "required_atoms": [
-            "the reference tile is cracked",
-            "the cracked tile is a stated blocker of Orchid Drift"
-          ],
-          "perspective": "person_statement",
-          "time": "unknown",
-          "source": {
-            "mode": "mention",
-            "record": "r1",
-            "quote": "Iven Sato",
-            "label": "Iven Sato",
-            "attribution_witness": "Iven Sato reported"
-          },
-          "attribution_witness": "Iven Sato reported"
-        }
-      ],
-      "forbidden_assertions": [
-        "the owner reported Orchid Drift details",
-        "Iven Sato owns or leads Orchid Drift",
-        "Orchid Drift is complete"
-      ]
-    },
-    {
-      "case_id": "core13-situation-historical-rill-valve-review",
-      "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Rill Valve Review"
-      },
-      "classification": {
-        "kind": "world/situation",
-        "label": "Rill Valve Review",
-        "witness": "MA-73 maintenance action list — Rill Valve Review",
-        "perspective": "direct",
-        "time": {
-          "valid_from": "2017-08-12T06:20:00.000Z",
-          "valid_to": "2017-09-30T19:05:00.000Z",
-          "temporal_basis": "explicit",
-          "witness": "observation interval beginning 2017-08-12T06:20:00.000Z and ending exclusively at 2017-09-30T19:05:00.000Z"
-        }
-      },
-      "details": [
-        {
-          "predicate": "situation.blocker",
-          "object_kind": "literal",
-          "witness": "Replace the unreadable gauge window so unresolved pressure verification can proceed.",
-          "required_atoms": [
-            "the gauge window is unreadable",
-            "pressure verification is unresolved",
-            "the requested replacement of the unreadable gauge window is presented as enabling the unresolved pressure verification to proceed"
-          ],
-          "perspective": "document_report",
-          "time": {
-            "valid_from": "2017-08-12T06:20:00.000Z",
-            "valid_to": "2017-09-30T19:05:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "observation interval beginning 2017-08-12T06:20:00.000Z and ending exclusively at 2017-09-30T19:05:00.000Z"
-          },
-          "source": "source-core13-situation-historical",
-          "attribution_witness": "Maintenance ledger ML-73 states"
-        }
-      ],
-      "forbidden_assertions": [
-        "Rill Valve Review is complete",
-        "pressure verification completed",
-        "the requested replacement resolved the unreadable gauge or verification",
-        "Rill Valve Review is current outside the explicit interval",
-        "the record establishes a project, owner, or current count"
-      ],
-      "label_alternatives": [
-        {
-          "witness": "MA-73 maintenance action list — Rill Valve Review",
-          "perspective": "document_report",
-          "source": "source-core13-situation-historical",
-          "attribution_witness": "Maintenance ledger ML-73 states",
-          "time": {
-            "valid_from": "2017-08-12T06:20:00.000Z",
-            "valid_to": "2017-09-30T19:05:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "observation interval beginning 2017-08-12T06:20:00.000Z and ending exclusively at 2017-09-30T19:05:00.000Z"
-          }
-        }
-      ]
-    },
-    {
-      "case_id": "core13-situation-name-negative-quiet-basin",
-      "expectation": "abstain",
-      "forbidden_assertions": [
-        "Quiet Basin is a situation",
-        "Quiet Basin has an asserted objective, blocker, state, or change"
-      ]
-    },
-    {
-      "case_id": "core13-situation-template-negative-blank-action-slip",
-      "expectation": "abstain",
-      "forbidden_assertions": [
-        "the blank slip establishes an actual situation",
-        "ENTER TITLE, ENTER AIM, ENTER CONDITION, or ENTER REVISION is an asserted situation fact"
-      ]
-    },
-    {
-      "case_id": "core13-situation-hypothetical-negative-slate-circuit",
-      "expectation": "abstain",
-      "forbidden_assertions": [
-        "Slate Circuit is an actual situation",
-        "Slate Circuit has an asserted objective, blocker, state, change, completion, or current status"
+        "Rose Fulcrum is actual or adopted",
+        "Rose Fulcrum has an asserted definition"
       ]
     }
   ],
