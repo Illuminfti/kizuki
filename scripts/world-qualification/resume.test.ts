@@ -9,6 +9,7 @@ import { WORLD_VOCABULARY_MODULES } from "./candidate-modules";
 import { caseInput, scoreRun, type Observation } from "./score";
 import { extractionV2SystemContent } from "../../packages/core/src/producer/prompt-v2";
 import { sha256 } from "../evaluate-extraction";
+import { modelQuoteWire } from "../../packages/core/test/producer/quote-wire-helper";
 
 function fixture() {
   const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept"]);
@@ -117,7 +118,7 @@ test("stop during an active HTTP turn preserves its response before stopping the
   const server = startFakeEndpoint(async () => {
     stopped = true; await Bun.sleep(20);
     return Response.json({ id: "stop-control", model: "synthetic", object: "chat.completion", created: 1,
-      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }) } }],
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(modelQuoteWire({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }, [])) } }],
       usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } });
   });
   try {

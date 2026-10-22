@@ -61,7 +61,7 @@ function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: Qualifi
     const expectedInput = coreSemanticCaseInput(item, registry), prompt = sha256(extractionV2SystemContent(expectedInput));
     if (!observed || canonicalJson(observed.input) !== canonicalJson(expectedInput) || matches.length !== 1 || !trace || trace.origin !== "observed_v3" || trace.transport !== "ok" ||
         trace.http_status === null || trace.http_status < 200 || trace.http_status >= 300 || trace.prompt_sha256 !== prompt || report.prompt_sha256_by_case[item.id] !== prompt ||
-        !/^[a-f0-9]{64}$/.test(trace.request_sha256) || !/^[a-f0-9]{64}$/.test(trace.response_sha256 ?? "") || trace.completed_at === null ||
+        !/^[a-f0-9]{64}$/.test(trace.request_sha256) || !/^[a-f0-9]{64}$/.test(trace.response_sha256 ?? "") || !/^[a-f0-9]{64}$/.test(trace.model_response_sha256 ?? "") || trace.completed_at === null ||
         !Number.isFinite(Date.parse(trace.started_at)) || !Number.isFinite(Date.parse(trace.completed_at)) || Date.parse(trace.completed_at) < Date.parse(trace.started_at) ||
         (previousCompletion !== null && Date.parse(trace.started_at) - previousCompletion < RESPONSE_GAP_MS)) throw new Error("core semantic transport evidence missing");
     previousCompletion = Date.parse(trace.completed_at);

@@ -67,7 +67,8 @@ require the explicit `--allow-remote` option and existing authorization.
 The prospective Concept/Situation prepared-admission gate uses
 `--protocol core-semantic-v3` and its fixed twelve-case split. This method binds
 the raw transport, private quote-anchor resolution receipt, exact adapter
-source, translated public v2 response, sent windows, and prepared admissions.
+source, decoder-derived assistant-text hash, matching receipt model-text hash,
+translated public v2 response, sent windows, and prepared admissions.
 `core-semantic-v2` is historical and the active verifier rejects it; an old
 receipt cannot be relabeled or rescored under v3.
 

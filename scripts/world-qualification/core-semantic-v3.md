@@ -46,16 +46,18 @@ forbidden interpretations fail that review.
 
 ## Exact evidence binding
 
-The v3 report keeps the canonical transport-response hash and the translated
-public response. For every case it also records a canonical
+The v3 report keeps the canonical transport-response hash and separately hashes
+the exact assistant text returned by the same accepted ChatCompletion decoder
+used by the LLM port. For every case it also records a canonical
 `kizuki.model-extraction-anchor-resolution/v1` receipt containing the private
 wire schema, exact raw model-text hash, scrubbed outbound-input hash and event
 text hashes, each descriptor-to-UTF-16 resolution in traversal order, and the
 canonical translated-response hash. The case record binds that receipt hash to
-the same transport trace and the exact adapter source hash. The verifier
-independently recomputes the outbound, event, descriptor resolution, receipt,
-adapter, and translated-response hashes. A missing, duplicate, malformed, or
-mismatched link fails automated qualification.
+the same transport trace and the exact adapter source hash. The receipt's raw
+model-text hash must equal the trace's decoder-derived assistant-text hash. The
+verifier independently recomputes the outbound, event, descriptor resolution,
+receipt, adapter, and translated-response hashes. A missing, duplicate,
+malformed, or mismatched link fails automated qualification.
 
 The optional private raw-response archive retains the provider response body
 before parsing. It is diagnostic evidence, not scorer input. Its transport hash
@@ -66,7 +68,7 @@ Each prepared case retains the input fixture manifest, sent-window manifest,
 canonical actual admissions, and claim correspondence. The separate review uses
 `kizuki.core-semantic-review/v3` at `prepared_admission` and binds the exact
 report and Core source commit, corpus and contract, transport response, raw model
-text, adapter and wire schemas, scrubbed outbound input, resolution receipt,
+text and its independently captured trace hash, adapter and wire schemas, scrubbed outbound input, resolution receipt,
 translated public response, fixture, sent windows, and admissions. It reviews
 every required fact, role/time relationship, legacy extra, and forbidden
 interpretation. The report remains `pending_manual_review`; only the v3 receipt

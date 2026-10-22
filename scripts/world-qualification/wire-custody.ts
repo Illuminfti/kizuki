@@ -34,6 +34,7 @@ export interface CoreSemanticWireBinding {
   readonly receipt_schema: string | null;
   readonly adapter_source_sha256: string | null;
   readonly raw_model_response_sha256: string | null;
+  readonly transport_model_response_sha256: string | null;
   readonly outbound_sha256: string | null;
   readonly resolution_receipt_sha256: string | null;
   readonly translated_response_sha256: string | null;
@@ -44,6 +45,7 @@ export const emptyWireBinding = (): CoreSemanticWireBinding => ({
   receipt_schema: null,
   adapter_source_sha256: null,
   raw_model_response_sha256: null,
+  transport_model_response_sha256: null,
   outbound_sha256: null,
   resolution_receipt_sha256: null,
   translated_response_sha256: null,
@@ -115,6 +117,7 @@ export function inspectCoreSemanticWireEvidence(args: {
   readonly input: ProduceInputV2;
   readonly response: ExtractResponseV2 | null;
   readonly transport_response_sha256: string | null;
+  readonly model_response_sha256: string | null;
   readonly adapter: ModelWireAdapterIdentity;
   readonly evidence: readonly CoreSemanticWireEvidence[];
 }): { readonly binding: CoreSemanticWireBinding; readonly errors: readonly string[] } {
@@ -125,11 +128,13 @@ export function inspectCoreSemanticWireEvidence(args: {
     receipt_schema: isPlainObject(row.receipt) && typeof row.receipt.schema === "string" ? row.receipt.schema : null,
     adapter_source_sha256: row.adapter_source_sha256,
     raw_model_response_sha256: isPlainObject(row.receipt) && typeof row.receipt.raw_response_sha256 === "string" ? row.receipt.raw_response_sha256 : null,
+    transport_model_response_sha256: args.model_response_sha256,
     outbound_sha256: isPlainObject(row.receipt) && typeof row.receipt.outbound_sha256 === "string" ? row.receipt.outbound_sha256 : null,
     resolution_receipt_sha256: row.resolution_receipt_sha256,
     translated_response_sha256: isPlainObject(row.receipt) && typeof row.receipt.translated_response_sha256 === "string" ? row.receipt.translated_response_sha256 : null,
   };
   if (!HASH.test(row.transport_response_sha256) || row.transport_response_sha256 !== args.transport_response_sha256) errors.push("wire_transport_mismatch");
+  if (!HASH.test(args.model_response_sha256 ?? "") || !isPlainObject(row.receipt) || row.receipt.raw_response_sha256 !== args.model_response_sha256) errors.push("wire_raw_response_mismatch");
   if (!HASH.test(row.adapter_source_sha256) || row.adapter_source_sha256 !== args.adapter.source_sha256) errors.push("wire_adapter_mismatch");
   if (!HASH.test(row.resolution_receipt_sha256) || row.resolution_receipt_sha256 !== sha256(canonicalJson(row.receipt))) errors.push("wire_receipt_hash_mismatch");
   if (!isPlainObject(row.receipt) || !exactKeys(row.receipt, ["schema", "wire_schema", "raw_response_sha256", "outbound_sha256", "events", "resolutions", "translated_response_sha256"]) ||

@@ -2,6 +2,7 @@ import { constants, closeSync, fstatSync, ftruncateSync, fsyncSync, openSync, re
 import { createModelProducerV2Port } from "../../packages/core/src/producer/model-v2";
 import { extractionV2SystemContent } from "../../packages/core/src/producer/prompt-v2";
 import { createOpenAiCompatibleLlmPort } from "../../packages/llm/src/openai-compatible";
+import { parseChatCompletion } from "../../packages/llm/src/response";
 import { fetchTransport, type ChatTransport } from "../../packages/llm/src/transport";
 import { isLoopbackHost } from "../../packages/llm/src/config";
 import type { PortContext } from "../../packages/core/src/contracts/ports";
@@ -141,13 +142,18 @@ async function runQualificationImpl(options: RunOptions) {
       const started_at = new Date().toISOString();
       const first = (request.body as { messages: { role: string; content: string }[] }).messages[0];
       if (first?.role !== "system" || sha256(first.content) !== promptByCase[activeCase]) throw new Error("qualification prompt changed");
-      const trace: Trace = { case_id: activeCase, prompt_sha256: promptByCase[activeCase]!, started_at, completed_at: null, request_sha256: sha256(canonicalJson(request.body)), response_sha256: null, transport: "pending", http_status: null, origin: coreSemantic ? "observed_v3" : "observed_v2" };
+      const trace: Trace = { case_id: activeCase, prompt_sha256: promptByCase[activeCase]!, started_at, completed_at: null, request_sha256: sha256(canonicalJson(request.body)), response_sha256: null,
+        model_response_sha256: null, transport: "pending", http_status: null, origin: coreSemantic ? "observed_v3" : "observed_v2" };
       traces.push(trace); save();
       const response = await fetchTransport(request);
       pacer.completed();
       trace.completed_at = new Date().toISOString();
       trace.http_status = response.status === 0 ? null : response.status;
       trace.response_sha256 = sha256(response.ok ? canonicalJson(response.body) : `${response.kind}:${response.status}`);
+      if (coreSemantic && response.ok) {
+        try { trace.model_response_sha256 = sha256(parseChatCompletion(response.body, options.model!).text); }
+        catch { trace.model_response_sha256 = null; }
+      }
       trace.transport = response.ok ? "ok" : "failed";
       save();
       if (rawFd !== undefined) {
@@ -175,7 +181,8 @@ async function runQualificationImpl(options: RunOptions) {
       timeout_ms: 180_000, reasoning_effort: "medium", ...(token === null ? {} : { secret_ref: "env:KIZUKI_QUALIFICATION_TOKEN" }) }), { transport });
     const producer = createModelProducerV2Port(context({ deadline_ms: 180_000 }), { llm, ...(coreSemantic ? { onWireReceipt: receipt => {
       const trace = traces.find(row => row.case_id === activeCase);
-      if (activeCase.length === 0 || trace?.transport !== "ok" || trace.response_sha256 === null || wireReceipts.some(row => row.case_id === activeCase))
+      if (activeCase.length === 0 || trace?.transport !== "ok" || trace.response_sha256 === null || trace.model_response_sha256 === null ||
+          wireReceipts.some(row => row.case_id === activeCase))
         throw new Error("model wire receipt is not bound to one completed transport");
       wireReceipts.push({ case_id: activeCase, transport_response_sha256: trace.response_sha256,
         adapter_source_sha256: wireAdapter.source_sha256, resolution_receipt_sha256: sha256(canonicalJson(receipt)), receipt });

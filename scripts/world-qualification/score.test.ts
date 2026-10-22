@@ -22,6 +22,7 @@ import { startFakeEndpoint } from "../../packages/llm/test/fake-endpoint";
 import type { WorldRegistry } from "../../packages/core/src/contracts/world-kinds";
 import { RUNNER_FILES, SOURCE_FILES, runnerDigest, sourceProvenance } from "./fingerprint";
 import { extractionV2SystemContent } from "../../packages/core/src/producer/prompt-v2";
+import { modelQuoteWire } from "../../packages/core/test/producer/quote-wire-helper";
 
 /** A scorer control only. It never receives runner provenance or enables product flags. */
 export function scripted(item: QualificationCase, registry?: WorldRegistry): Observation {
@@ -114,7 +115,7 @@ test("grounding cases reach the actual conditional prompt and ProducerV2 parser"
   const item = historicalCorpus.cases.find(row => row.id === "concept-identity-independent-witness-v3")!;
   const control = scripted(item);
   const server = startFakeEndpoint(() => Response.json({ id: "grounding-control", model: "synthetic", object: "chat.completion", created: 1,
-    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(control.response) } }],
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(modelQuoteWire(control.response, control.input.events)) } }],
     usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }));
   // Historical identity witness remains covered through the same public producer port.
   const context = (config: Record<string, unknown>): PortContext => ({ config, vault_path: "/nonexistent", data_dir: "/nonexistent",
@@ -248,7 +249,7 @@ test("missing model or product module writes an honest not_run receipt and never
 
 test("actual port observation binds the exact prompt and usage but a single synthetic answer cannot qualify a kind", async () => {
   const server = startFakeEndpoint(() => Response.json({ id: "synthetic-control", model: "synthetic", object: "chat.completion", created: 1,
-    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }) } }],
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(modelQuoteWire({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }, [])) } }],
     usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }));
   try {
     const result = await runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", case_ids: ["c-template-only"] });

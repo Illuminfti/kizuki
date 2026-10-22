@@ -15,7 +15,8 @@ import { extractionV2SystemContent } from "../../packages/core/src/producer/prom
 import { planModelExtractionV2 } from "../../packages/core/src/producer/model-v2";
 import { RESPONSE_GAP_MS } from "./pacing";
 import { modelWireAdapterIdentity, type CoreSemanticWireEvidence } from "./wire-custody";
-import type { ModelExtractionWireReceipt } from "../../packages/core/src/producer/model-v2-wire";
+import { MODEL_EXTRACTION_WIRE_SCHEMA, type ModelExtractionWireReceipt } from "../../packages/core/src/producer/model-v2-wire";
+import { startFakeEndpoint } from "../../packages/llm/test/fake-endpoint";
 
 // Scripted development controls only; no historical observed campaign is rescored.
 const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation"]);
@@ -80,37 +81,44 @@ function scripted(item: CoreSemanticCase): Observation {
 }
 
 const observations = () => coreSemanticCorpus.cases.map(scripted);
-function wireEvidence(rows: readonly Observation[], transport = "b".repeat(64)): CoreSemanticWireEvidence[] {
+function wireControl(row: Observation, transport = "b".repeat(64)): { evidence: CoreSemanticWireEvidence; rawText: string } {
   const adapter = modelWireAdapterIdentity();
-  return rows.map(row => {
-    const plan = planModelExtractionV2(row.input);
-    if (plan.status !== "ready" || row.response === null) throw new Error("wire evidence control requires a ready response");
-    const anchors = [
-      ...row.response.mentions.map((mention, index) => ({ path: `mentions[${index}].anchor`, anchor: mention.anchor })),
-      ...row.response.claims.flatMap((claim, index) => [
-        ...claim.anchors.map((anchor, anchorIndex) => ({ path: `claims[${index}].anchors[${anchorIndex}]`, anchor })),
-        ...claim.perspective.anchors.map((anchor, anchorIndex) => ({ path: `claims[${index}].perspective.anchors[${anchorIndex}]`, anchor })),
-      ]),
-    ];
-    const resolutions = anchors.map(({ path, anchor }) => {
-      const text = plan.outbound.events.find(event => event.event_id === anchor.event_id)?.text;
-      const selected = text?.slice(anchor.start_utf16, anchor.end_utf16) ?? "";
-      const quote = text !== undefined && selected.length > 0 && text.indexOf(selected) === anchor.start_utf16 && text.indexOf(selected, anchor.start_utf16 + 1) < 0
-        ? selected
-        : "unbound-control-anchor";
-      return { path, descriptor: { event_id: anchor.event_id, quote }, anchor };
-    });
-    const receipt: ModelExtractionWireReceipt = { schema: adapter.receipt_schema, wire_schema: adapter.wire_schema,
-      raw_response_sha256: sha256(JSON.stringify(row.response)), outbound_sha256: sha256(canonicalJson(plan.outbound)),
-      events: plan.outbound.events.map(event => ({ event_id: event.event_id, text_sha256: sha256(event.text), utf16_length: event.text.length })),
-      resolutions, translated_response_sha256: sha256(canonicalJson(row.response)) };
-    return { case_id: row.case_id, transport_response_sha256: transport, adapter_source_sha256: adapter.source_sha256,
-      resolution_receipt_sha256: sha256(canonicalJson(receipt)), receipt };
+  const plan = planModelExtractionV2(row.input);
+  if (plan.status !== "ready" || row.response === null) throw new Error("wire evidence control requires a ready response");
+  const anchors = [
+    ...row.response.mentions.map((mention, index) => ({ path: `mentions[${index}].anchor`, anchor: mention.anchor })),
+    ...row.response.claims.flatMap((claim, index) => [
+      ...claim.anchors.map((anchor, anchorIndex) => ({ path: `claims[${index}].anchors[${anchorIndex}]`, anchor })),
+      ...claim.perspective.anchors.map((anchor, anchorIndex) => ({ path: `claims[${index}].perspective.anchors[${anchorIndex}]`, anchor })),
+    ]),
+  ];
+  const resolutions = anchors.map(({ path, anchor }) => {
+    const text = plan.outbound.events.find(event => event.event_id === anchor.event_id)?.text;
+    const selected = text?.slice(anchor.start_utf16, anchor.end_utf16) ?? "";
+    const quote = text !== undefined && selected.length > 0 && text.indexOf(selected) === anchor.start_utf16 && text.indexOf(selected, anchor.start_utf16 + 1) < 0
+      ? selected
+      : "unbound-control-anchor";
+    return { path, descriptor: { event_id: anchor.event_id, quote }, anchor };
   });
+  const descriptor = new Map(resolutions.map(row => [row.path, row.descriptor]));
+  const rawText = JSON.stringify({ ...row.response, schema: MODEL_EXTRACTION_WIRE_SCHEMA,
+    mentions: row.response.mentions.map((mention, index) => ({ ...mention, anchor: descriptor.get(`mentions[${index}].anchor`)! })),
+    claims: row.response.claims.map((claim, index) => ({ ...claim,
+      anchors: claim.anchors.map((_anchor, anchorIndex) => descriptor.get(`claims[${index}].anchors[${anchorIndex}]`)!),
+      perspective: { ...claim.perspective, anchors: claim.perspective.anchors.map((_anchor, anchorIndex) => descriptor.get(`claims[${index}].perspective.anchors[${anchorIndex}]`)!) } })) });
+  const receipt: ModelExtractionWireReceipt = { schema: adapter.receipt_schema, wire_schema: adapter.wire_schema,
+    raw_response_sha256: sha256(rawText), outbound_sha256: sha256(canonicalJson(plan.outbound)),
+    events: plan.outbound.events.map(event => ({ event_id: event.event_id, text_sha256: sha256(event.text), utf16_length: event.text.length })),
+    resolutions, translated_response_sha256: sha256(canonicalJson(row.response)) };
+  return { rawText, evidence: { case_id: row.case_id, transport_response_sha256: transport, adapter_source_sha256: adapter.source_sha256,
+    resolution_receipt_sha256: sha256(canonicalJson(receipt)), receipt } };
 }
-const coreEvidence = (rows: readonly Observation[], traces = rows.map(row => ({ case_id: row.case_id, response_sha256: "b".repeat(64) }))) => ({
-  source_commit: "a".repeat(40), traces, wire_adapter: modelWireAdapterIdentity(), wire_receipts: wireEvidence(rows),
-});
+const wireEvidence = (rows: readonly Observation[], transport = "b".repeat(64)) => rows.map(row => wireControl(row, transport).evidence);
+const coreEvidence = (rows: readonly Observation[], traces?: { case_id: string; response_sha256: string | null; model_response_sha256: string | null }[]) => {
+  const wireReceipts = wireEvidence(rows);
+  return { source_commit: "a".repeat(40), traces: traces ?? rows.map((row, index) => ({ case_id: row.case_id, response_sha256: "b".repeat(64),
+    model_response_sha256: wireReceipts[index]!.receipt.raw_response_sha256 })), wire_adapter: modelWireAdapterIdentity(), wire_receipts: wireReceipts };
+};
 const scoreCoreSemanticRun = (rows: readonly Observation[], selected: ReturnType<typeof candidateRegistry>) => actualScoreCoreSemanticRun(rows, selected, coreEvidence(rows));
 const mutate = (rows: Observation[], id: string, change: (response: ExtractResponseV2) => ExtractResponseV2) => rows.map(row => row.case_id === id ? { ...row, response: change(structuredClone(row.response!)) } : row);
 const parsedObservation = (rows: Observation[], id: string) => {
@@ -364,7 +372,7 @@ describe("predeclared core semantic protocol", () => {
     expect(() => verifyCoreSemanticReview("d".repeat(64), result, review)).not.toThrow();
     for (const field of ["transport_response_sha256", "input_manifest_sha256", "sent_window_manifest_sha256", "prepared_admissions_sha256",
       "wire_schema", "receipt_schema", "adapter_source_sha256", "raw_model_response_sha256", "outbound_sha256",
-      "resolution_receipt_sha256", "translated_response_sha256"] as const) {
+      "transport_model_response_sha256", "resolution_receipt_sha256", "translated_response_sha256"] as const) {
       const bad = structuredClone(review); bad.cases[0]![field] = "0".repeat(64);
       expect(() => verifyCoreSemanticReview("d".repeat(64), result, bad)).toThrow("review mismatch");
     }
@@ -418,7 +426,7 @@ describe("predeclared core semantic protocol", () => {
   });
 
   test("prepared results require an exact source and one transport binding per case", () => {
-    const rows = observations(), traces = rows.map(row => ({ case_id: row.case_id, response_sha256: "b".repeat(64) })), custody = coreEvidence(rows, traces);
+    const rows = observations(), custody = coreEvidence(rows), traces = custody.traces;
     for (const evidence of [
       { ...custody, source_commit: "UNFROZEN" },
       { ...custody, traces: traces.slice(1) },
@@ -438,10 +446,12 @@ describe("predeclared core semantic protocol", () => {
     changed.push({ ...baseline, wire_receipts: [...baseline.wire_receipts, first] });
     changed.push({ ...baseline, wire_receipts: baseline.wire_receipts.map((row, index) => index === 0 ? { ...row, transport_response_sha256: "0".repeat(64) } : row) });
     changed.push({ ...baseline, wire_receipts: baseline.wire_receipts.map((row, index) => index === 0 ? { ...row, adapter_source_sha256: "0".repeat(64) } : row) });
+    changed.push({ ...baseline, traces: baseline.traces.map((row, index) => index === 0 ? { ...row, model_response_sha256: "0".repeat(64) } : row) });
     const mutateReceipt = (change: (receipt: ModelExtractionWireReceipt) => ModelExtractionWireReceipt) => ({ ...baseline,
       wire_receipts: baseline.wire_receipts.map((row, index) => { if (index !== 0) return row; const receipt = change(structuredClone(row.receipt));
         return { ...row, receipt, resolution_receipt_sha256: sha256(canonicalJson(receipt)) }; }) });
     changed.push(mutateReceipt(receipt => ({ ...receipt, outbound_sha256: "0".repeat(64) })));
+    changed.push(mutateReceipt(receipt => ({ ...receipt, raw_response_sha256: "0".repeat(64) })));
     changed.push(mutateReceipt(receipt => ({ ...receipt, translated_response_sha256: "0".repeat(64) })));
     changed.push(mutateReceipt(receipt => ({ ...receipt, events: receipt.events.map((event, index) => index === 0 ? { ...event, text_sha256: "0".repeat(64) } : event) })));
     if (first.receipt.resolutions.length === 0) throw new Error("custody control requires a resolved descriptor");
@@ -471,6 +481,35 @@ describe("predeclared core semantic protocol", () => {
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
+  test("the actual runner binds the decoded ChatCompletion text and rejects a rehashed raw-message substitution", async () => {
+    const observed = scripted(coreSemanticCorpus.cases[0]!), control = wireControl(observed);
+    const completion = { id: "core-v3-custody-control", object: "chat.completion", created: 1, model: "synthetic",
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: control.rawText } }],
+      usage: { prompt_tokens: 100, completion_tokens: 100, total_tokens: 200 } };
+    let stop = false;
+    const server = startFakeEndpoint(() => { stop = true; return Response.json(completion); });
+    try {
+      const result = await runQualification({ protocol: "core-semantic-v3", kinds: ["concept", "situation"], base_url: server.base_url,
+        model: "synthetic", stopped: () => stop });
+      expect(server.requests).toHaveLength(1);
+      expect(result.observations).toHaveLength(1);
+      expect(result.traces).toHaveLength(1);
+      expect(result.wire_receipts).toHaveLength(1);
+      const trace = result.traces[0]!, receiptRow = result.wire_receipts[0]!;
+      expect(trace.response_sha256).toBe(sha256(canonicalJson(completion)));
+      expect(trace.model_response_sha256).toBe(sha256(control.rawText));
+      expect(receiptRow.receipt.raw_response_sha256).toBe(trace.model_response_sha256!);
+      expect(result.core_semantic.cases.find(row => row.case_id === observed.case_id)!.automated_passed).toBe(true);
+
+      const receipt = { ...receiptRow.receipt, raw_response_sha256: "0".repeat(64) };
+      const tampered = actualScoreCoreSemanticRun(result.observations, registry, { source_commit: result.source_commit, traces: result.traces,
+        wire_adapter: result.wire_adapter, wire_receipts: [{ ...receiptRow, receipt, resolution_receipt_sha256: sha256(canonicalJson(receipt)) }] });
+      const changed = tampered.cases.find(row => row.case_id === observed.case_id)!;
+      expect(changed.automated_passed).toBe(false);
+      expect(changed.gates.pipeline).toContain("custody:wire_raw_response_mismatch");
+    } finally { server.stop(); }
+  });
+
   test("the CLI refuses missing or wrong protocols without a success summary", () => {
     const directory = mkdtempSync(join(tmpdir(), "core-semantic-cli-"));
     try {
@@ -493,7 +532,8 @@ describe("predeclared core semantic protocol", () => {
       for (const path of RUNNER_FILES) { mkdirSync(dirname(join(directory, path)), { recursive: true }); writeFileSync(join(directory, path), readFileSync(join(import.meta.dir, "../..", path))); }
       const rows = observations(), evidence = coreEvidence(rows), result = actualScoreCoreSemanticRun(rows, registry, evidence), started = Date.UTC(2026, 9, 22);
       const traces = rows.map((row, index) => ({ case_id: row.case_id, prompt_sha256: sha256(extractionV2SystemContent(row.input)), transport: "ok" as const,
-        request_sha256: "a".repeat(64), response_sha256: "b".repeat(64), origin: "observed_v3" as const, http_status: 200,
+        request_sha256: "a".repeat(64), response_sha256: "b".repeat(64), model_response_sha256: evidence.wire_receipts[index]!.receipt.raw_response_sha256,
+        origin: "observed_v3" as const, http_status: 200,
         started_at: new Date(started + index * (RESPONSE_GAP_MS + 1_000)).toISOString(), completed_at: new Date(started + index * (RESPONSE_GAP_MS + 1_000) + 1_000).toISOString() }));
       const report = { schema: "kizuki.world-qualification-run/v3" as const, protocol: "core-semantic-v3" as const, evidence: "runner_observed_transport" as const,
         synthetic: true, source_clean: true, source_commit: "a".repeat(40), runner_sha256: runnerDigest(directory), registry_sha256: registryDigest(registry),

@@ -223,7 +223,7 @@ export function prepareCoreSemanticObservation(observed: Observation, registry: 
 
 export interface CoreSemanticEvidence {
   readonly source_commit: string;
-  readonly traces: readonly { readonly case_id: string; readonly response_sha256: string | null }[];
+  readonly traces: readonly { readonly case_id: string; readonly response_sha256: string | null; readonly model_response_sha256: string | null }[];
   readonly wire_adapter: ModelWireAdapterIdentity;
   readonly wire_receipts: readonly CoreSemanticWireEvidence[];
 }
@@ -343,8 +343,10 @@ export function scoreCoreSemanticRun(observations: readonly Observation[], regis
     const anchors = new Map(pipeline?.drafts.map((draft,index) => [observed!.response!.claims[index]?.id ?? "", draft.semantic.perspective.anchors]));
     const prepared = scoreCoreSemanticCase(item, rule, observed, registry, anchors);
     const matches = evidence.traces.filter(row => row.case_id === item.id), transportSha = matches.length === 1 ? matches[0]!.response_sha256 : null;
+    const modelResponseSha = matches.length === 1 ? matches[0]!.model_response_sha256 : null;
     const custody = inspectCoreSemanticWireEvidence({ case_id: item.id, input: observed?.input ?? coreSemanticCaseInput(item, registry),
-      response: observed?.response ?? null, transport_response_sha256: transportSha, adapter: evidence.wire_adapter, evidence: evidence.wire_receipts });
+      response: observed?.response ?? null, transport_response_sha256: transportSha, model_response_sha256: modelResponseSha,
+      adapter: evidence.wire_adapter, evidence: evidence.wire_receipts });
     const pipelineErrors = [...(pipeline?.errors ?? ["not_prepared"])];
     if (!/^[a-f0-9]{40}$/.test(evidence.source_commit) || !/^[a-f0-9]{64}$/.test(transportSha ?? "")) pipelineErrors.push("unbound_pipeline_evidence");
     pipelineErrors.push(...custody.errors.map(error => `custody:${error}`));
@@ -374,7 +376,8 @@ export function expectedCoreSemanticReview(reportSha256: string, result: ReturnT
         input_manifest_sha256: row.manual_review.input_manifest_sha256, sent_window_manifest_sha256: row.manual_review.sent_window_manifest_sha256,
         prepared_admissions_sha256: row.manual_review.prepared_admissions_sha256, wire_schema: row.manual_review.wire_schema,
         receipt_schema: row.manual_review.receipt_schema, adapter_source_sha256: row.manual_review.adapter_source_sha256,
-        raw_model_response_sha256: row.manual_review.raw_model_response_sha256, outbound_sha256: row.manual_review.outbound_sha256,
+        raw_model_response_sha256: row.manual_review.raw_model_response_sha256, transport_model_response_sha256: row.manual_review.transport_model_response_sha256,
+        outbound_sha256: row.manual_review.outbound_sha256,
         resolution_receipt_sha256: row.manual_review.resolution_receipt_sha256, translated_response_sha256: row.manual_review.translated_response_sha256 };
       return rule.expectation === "abstain"
         ? { ...binding, case_id: row.case_id, response_sha256: row.manual_review.response_sha256, status: "passed" as const, abstention: "confirmed" as const }
