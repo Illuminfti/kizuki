@@ -200,3 +200,13 @@ test("the extraction prompt separates evidenced classification from attributed d
     "Quoted or reported evidence does not become an asserted owner fact",
   ]) expect(prompt).toContain(rule);
 });
+
+test("the extraction prompt keeps identity candidates and attribution roles tied to their actual referents", () => {
+  const prompt = extractionV2SystemContent(worldProduceInput(input.events as never));
+  for (const rule of [
+    "Add a candidate only when the mention and candidate are the same referent and the quoted source explicitly supports that identity. Attribution, provenance, authorship, containment, topic, or other association never makes a source or document handle a candidate for the mentioned object.",
+    "Judge kind and label separately from each detail and from each other. A directly evidenced kind may be asserted even when the name or details are attributed.",
+    "Assert a label only when the evidence presents that name directly as the subject's adopted name; if a speaker, holder, document, or historical source is the one said to use the name, preserve the label's attribution and valid time.",
+    "Treat a document, log, transcript, note, or record as a holder or source of an attributed proposition, never as the person speaker. Use an existing supplied ref for an attribution role only when the quoted source shows that it identifies the same attribution referent. When an attribution referent is evidenced but no supplied ref identifies it, use a distinct mention anchored to the actual speaker or holder.",
+  ]) expect(prompt).toContain(rule);
+});
