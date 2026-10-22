@@ -1,3 +1,4 @@
+import { registerModelProducerIdentity } from "./fingerprint";
 import type { LlmPort } from "../contracts/llm";
 import { PortError, validatePortDescriptor } from "../contracts/ports";
 import type { PortContext, PortDescriptor, PortHealth } from "../contracts/ports";
@@ -176,8 +177,8 @@ export function createModelProducerV2Port(ctx: PortContext, options: ModelProduc
   const config = parseModelProducerConfig(ctx.config), llm = options?.llm, systemone = options?.systemone;
   if (llm === undefined || typeof llm.complete !== "function") throw new PortError("config_invalid", "model producer requires a bound llm port", false);
   let closed = false;
-  return {
-    descriptor: MODEL_PRODUCER_V2_DESCRIPTOR,
+  const port: ProducerV2Port = {
+    descriptor: Object.freeze({ ...MODEL_PRODUCER_V2_DESCRIPTOR, supports: Object.freeze([...MODEL_PRODUCER_V2_DESCRIPTOR.supports]) }),
     get model_ref() { return llm.model_ref; },
     async health(): Promise<PortHealth> {
       if (closed) return { status: "unavailable", reason: "producer port is closed" };
@@ -221,6 +222,8 @@ export function createModelProducerV2Port(ctx: PortContext, options: ModelProduc
     },
     async close() { closed = true; },
   };
+  registerModelProducerIdentity(port, () => closed);
+  return port;
 }
 
 /** Registers the typed producer with model and judge capabilities owned by its host. */

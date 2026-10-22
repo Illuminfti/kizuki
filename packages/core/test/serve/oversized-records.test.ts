@@ -302,7 +302,7 @@ test("an unsplittable 30k single-token line is skipped with a receipt and the cu
   // The receipt carries identity and size, never content.
   const stored = JSON.stringify(oversizedRows(f.db));
   expect(stored).not.toContain("kkkk");
-  expect(Object.keys(oversizedRows(f.db)[0] as object).sort()).toEqual(["chars", "done_utf16", "event_id", "pending_end_utf16", "status", "updated_at"]);
+  expect(Object.keys(oversizedRows(f.db)[0] as object).sort()).toEqual(["chars", "done_utf16", "event_id", "pending_end_utf16", "replay_operation_id", "status", "updated_at"]);
 
   // Doctor shows the count and the command; retry re-queues the record and it is decided again.
   expect(inspectServeDoctor(f.db, f.vault).oversized).toEqual({ segmenting: 0, skipped: 1, retry: "kizuki serve retry-skipped",
@@ -424,7 +424,7 @@ test("restore refuses segment offsets inside a surrogate pair", () => {
   const f = vaultWith([text]);
   const [e0] = f.eventIds as [string];
   const row = (fields: Record<string, unknown>) => ({ event_id: e0, status: "segmenting", chars: text.length, done_utf16: 0,
-    pending_end_utf16: null, updated_at: "2026-09-24T12:00:00.000Z", ...fields });
+    pending_end_utf16: null, replay_operation_id: null, updated_at: "2026-09-24T12:00:00.000Z", ...fields });
   const attempt = (name: string, fields: Record<string, unknown>) => {
     const backup = `${f.vault}-${name}-backup`, target = `${f.vault}-${name}-restored`;
     disposers.push(() => spawnSync("rm", ["-rf", backup, target]));

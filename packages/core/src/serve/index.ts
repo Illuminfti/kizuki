@@ -144,3 +144,5 @@ export { SERVE_SURFACE_ID, createServeSurfacePort } from "./surface";
 export type { ServeSurfaceOptions } from "./surface";
 export { evaluateQualification, QUALIFICATION_WINDOW_MS } from "./qualification";
 export type { QualificationProfile, QualificationRail, QualificationReceipt, QualificationProcess, QualificationSample } from "./qualification";
+
+export { replayEmptyExtractSegment, parseEmptySegmentReplayPlan, ExtractReplayError, type EmptySegmentReplayPlan, type EmptySegmentReplayReceipt } from "./extract-replay";

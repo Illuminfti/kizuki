@@ -1,3 +1,4 @@
+import { readEmptyReplayPlan } from "../empty-replay-plan";
 import {
   detectSupervisorKind,
   inspectServeDoctor,
@@ -9,6 +10,9 @@ import {
   readServePid,
   requestServeStop,
   retrySkippedRecords,
+  replayEmptyExtractSegment,
+  ExtractReplayError,
+  PRODUCER_V2_CONTRACT,
   ServeStopError,
   runRail,
   runServeDaemon,
@@ -37,14 +41,14 @@ const PRIVATE_LAUNCH_MODES = [
 ] as const;
 
 export const SERVE_SCHEMA = {
-  options: ["--port", "--crash-after"],
+  options: ["--port", "--crash-after", "--plan", "--plan-sha256"],
   flags: ["--once", "--no-http", "--json", "--install", "--uninstall", "--canon-only"],
 } as const satisfies CommandHelpSchema;
 
 export const serveCommand: Command = {
   name: "serve",
   usage:
-    "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve stop | serve run <rail> [--json] | serve run sync --canon-only [--json] | serve retry-skipped [--json]",
+    "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve stop | serve run <rail> [--json] | serve run sync --canon-only [--json] | serve retry-skipped [--json] | serve replay-empty --plan FILE --plan-sha256 SHA256 [--json]",
   summary: "run the always-on loop, or install it as a user service",
   schema: SERVE_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -54,6 +58,11 @@ export const serveCommand: Command = {
     });
     const [verb, rail] = parsed.positionals;
     const canonOnly = parsed.flags.has("--canon-only");
+    const replayEmpty = verb === "replay-empty";
+    if (replayEmpty ? (parsed.positionals.length !== 1 || parsed.options.size !== 2 || !parsed.options.has("--plan") ||
+        !parsed.options.has("--plan-sha256") || [...parsed.flags].some(flag => flag !== "--json")) :
+        (parsed.options.has("--plan") || parsed.options.has("--plan-sha256"))) throw new UsageError(this.usage);
+    const replayPlan = replayEmpty ? readEmptyReplayPlan(parsed.options.get("--plan")!, parsed.options.get("--plan-sha256")!) : null;
     if (canonOnly && (verb !== "run" || rail !== "sync" || parsed.positionals.length !== 2 ||
         [...parsed.flags].some(flag => flag !== "--canon-only" && flag !== "--json") ||
         [...parsed.options.keys()].some(option => option !== "--crash-after"))) {
@@ -179,6 +188,20 @@ export const serveCommand: Command = {
         return doctor.ok ? 0 : 1;
       }
 
+      if (replayPlan !== null) {
+        const runtime = await createServeRuntime({ ...ctx, env: io.env, err: io.err });
+        try {
+          const producer = runtime.hooks.producer;
+          if (producer === undefined || producer.descriptor.contract !== PRODUCER_V2_CONTRACT || !("model_ref" in producer) || producer.model_ref === null) {
+            throw new ExtractReplayError("producer_changed");
+          }
+          const result = replayEmptyExtractSegment({ db: ctx.db, vault_path: ctx.vaultPath, producer }, replayPlan);
+          if (parsed.flags.has("--json")) io.out(jsonEnvelope("serve", "ok", result));
+          else io.out(`replay=${result.status} operation_id=${result.operation_id}`);
+          return 0;
+        } finally { await runtime.close(); }
+      }
+
       if (verb === "retry-skipped") {
         if (rail !== undefined) throw new UsageError(this.usage);
         const requeued = retrySkippedRecords(ctx.db);
@@ -246,7 +269,7 @@ export const serveCommand: Command = {
       }
       if (result.http !== null) await result.http.stop();
       return 0;
-    }, { retrieval: canonOnly || verb === "status" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required",
+    }, { retrieval: canonOnly || replayEmpty || verb === "status" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required",
       ...(daemon ? { nonblockingSeal: true } : {}),
     });
     // The long-running loop outwaits a held ledger; every other verb reports it.
