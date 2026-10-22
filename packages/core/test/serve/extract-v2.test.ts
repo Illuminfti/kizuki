@@ -140,6 +140,34 @@ test("v2 extraction journals normalized world drafts and reopens without another
   }
 });
 
+test("v2 journaling supplies the exact sent record as post-guard attribution context", async () => {
+  const f = fixture();
+  try {
+    const mined = await mineLiveDrafts(f.db, f.producer);
+    if (mined.world === undefined) throw new Error("typed fixture decision is missing");
+    const name = { event_id: f.accepted.event_id, start_utf16: 0, end_utf16: 4 };
+    const role = { event_id: f.accepted.event_id, start_utf16: 0, end_utf16: 13 };
+    const fact = { event_id: f.accepted.event_id, start_utf16: 5, end_utf16: 18 };
+    const response = { ...mined.world.response,
+      claims: [{ ...mined.world.response.claims[0]!, object: { kind: "literal" as const, value: "explains flux" },
+        body: "explains flux", anchors: [name, fact], perspective: { holder: null,
+          speaker: { kind: "mention" as const, id: "m0" }, addressee: null, mode: "reported" as const,
+          interpretation: "explicit" as const, anchors: [name, role] } }],
+    };
+    expect(journalExtractBatch(f.db, { ...mined, world: { ...mined.world, response } },
+      f.producer.model_ref, f.producer).journaled).toBe(true);
+    const draft = readDurableExtractBatch(f.db, f.producer)!.filing_drafts[0]!;
+    if (!("semantic" in draft) || draft.semantic === undefined) throw new Error("typed fixture draft is missing");
+    const semantic = draft.semantic;
+    expect(semantic.perspective.anchors).toEqual([
+      name, role, { event_id: f.accepted.event_id, start_utf16: 0, end_utf16: f.accepted.text.length },
+    ]);
+    expect(semantic.anchors).toEqual([name, fact]);
+  } finally {
+    f.close();
+  }
+});
+
 test("v2 extraction reserves the producer output ceiling for a complete typed response", async () => {
   const f = fixture();
   try {

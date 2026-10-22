@@ -523,6 +523,14 @@ function journalWorldDrafts(
   if (canonicalJson(input) !== canonicalJson(mined.world.input)) {
     throw new Error("extraction inputs changed during model call");
   }
+  // Retain the exact pre-scrub window selected for this call before a segment
+  // decision expands its input back to the immutable full record.
+  const sentEvidenceWindows = mined.world.input.events.map(event => ({
+    event_id: event.event_id,
+    start_utf16: segment?.start ?? 0,
+    end_utf16: segment?.end ?? event.text.length,
+    text: event.text,
+  }));
   // A segment's anchors become record offsets before any draft is prepared.
   const decision = segment === undefined
     ? { input, response: mined.world.response }
@@ -549,6 +557,7 @@ function journalWorldDrafts(
     supplied_refs: planned.refs,
     grounding: planned.grounding,
     witness_event_ids: new Set(events.map(e => e.event_id)),
+    sent_evidence_windows: sentEvidenceWindows,
     model_ref: modelRef,
     admits: semantic => {
       if (worldAssertionViolation(db, semantic, { pending }) !== null) return false;
