@@ -10,6 +10,7 @@ import { canonicalJson, sha256 } from "../evaluate-extraction";
 import { qualificationCorpus } from "./corpus";
 import { candidateRegistry, registryDigest } from "./registry";
 import { caseInput, scoreRun, type Observation } from "./score";
+import { scoreSupplementalRun, validateFreshCore } from "./supplemental";
 import { runnerDigest, sourceProvenance } from "./fingerprint";
 import { responsePacer, RESPONSE_GAP_MS } from "./pacing";
 import { validateResume, type ResumeEvidence, type Trace } from "./resume";
@@ -48,6 +49,7 @@ function readResume(path: string, sha256: string): ResumeEvidence {
 
 /** No transport injection or response-file mode: this entry point observes its own real port calls. */
 export async function runQualification(options: RunOptions) {
+  validateFreshCore();
   if (options.kinds.length < 1 || options.kinds.length > 16 || new Set(options.kinds).size !== options.kinds.length) throw new Error("invalid kind selection");
   const existing = options.kinds.filter(kind => WORLD_VOCABULARY_MODULES.some(module => module.kind?.id === kind));
   const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, existing, options.extensions);
@@ -87,7 +89,9 @@ export async function runQualification(options: RunOptions) {
       status: trace === undefined ? "not_run" : trace.transport === "pending" ? "in_flight" : trace.transport === "failed" ? "transport_failed" : "observed" }; }),
     limitations: ["Typed semantic extraction only; free-text rendering, durable filing and consumer behavior require their separate gates.",
       "Transport observation alone does not establish provider identity. Reviewed endpoint/service evidence must accompany an approved report hash.",
-      "This fixed authored split must not be used to tune prompts or select responses; changes require a fresh unseen split."],
+      "This fixed authored split must not be used to tune prompts or select responses; changes require a fresh unseen split.",
+      "Supplemental deterministic checks do not review free-text bodies. Independent forbidden-interpretation/body review remains pending."],
+    supplemental: scoreSupplementalRun(observations.filter(row => traces.some(trace => trace.case_id === row.case_id && trace.transport === "ok"))),
     score: scoreRun(qualificationCorpus, observations.filter(row => traces.some(trace => trace.case_id === row.case_id && trace.transport === "ok"))) });
   let fd: number | undefined, rawFd: number | undefined, rawBytes = 0;
   const save = () => {
@@ -188,8 +192,8 @@ if (import.meta.main) {
       ...(value("--base-url") === undefined ? {} : { base_url: value("--base-url")! }), ...(value("--model") === undefined ? {} : { model: value("--model")! }),
       ...(value("--token-file") === undefined ? {} : { token_file: value("--token-file")! }), ...(value("--cases") === undefined ? {} : { case_ids: value("--cases")!.split(",") }),
       ...(value("--extensions") === undefined ? {} : { extensions: value("--extensions")!.split(",") }), allow_remote: args.includes("--allow-remote") });
-    console.log(JSON.stringify({ status: result.score.status, kinds: result.score.kinds.map(({ kind, status }) => ({ kind, status })), missing: result.missing, prompt_sha256: result.prompt_sha256 }));
-    process.exitCode = result.selected_kinds.every(kind => result.score.kinds.some(row => row.kind === kind && row.status === "passed")) ? 0 : 1;
+    console.log(JSON.stringify({ status: result.score.status, supplemental_passed: result.supplemental.deterministic_passed, body_review: result.supplemental.body_review, kinds: result.score.kinds.map(({ kind, status }) => ({ kind, status })), missing: result.missing, prompt_sha256: result.prompt_sha256 }));
+    process.exitCode = result.supplemental.deterministic_passed && result.selected_kinds.every(kind => result.score.kinds.some(row => row.kind === kind && row.status === "passed")) ? 0 : 1;
   } catch { console.error("qualification failed; no kind was enabled (check arguments, endpoint, credential custody and output path)"); process.exitCode = 2; }
   finally { process.off("SIGINT", stop); process.off("SIGTERM", stop); }
 }

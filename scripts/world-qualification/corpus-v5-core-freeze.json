@@ -1,0 +1,36 @@
+{
+  "schema": "kizuki.fresh-core-split-freeze/v1",
+  "sealed_at_utc": "2026-10-22T09:20:20.207858+00:00",
+  "independent_author": true,
+  "prompt_frozen_signal_received": true,
+  "parent_supplied_prompt_file_sha256": "f08f3f58d8bfb15695353618239ef0197297abc209160cc2b719862562f49780",
+  "prompt_bytes_inspected": false,
+  "prior_case_content_inspected": false,
+  "model_results_inspected": false,
+  "private_source_inspected": false,
+  "model_calls": 0,
+  "qualification_status": "not_run",
+  "source_checkout_head": "df0e2f94549795c10b485bf559678eeef1f8503a",
+  "files": {
+    "corpus.json": {
+      "byte_sha256": "e04be9a2a0dc88108846878601207d02a2612f7a57d7d47d2029c7ff9cffe1e6",
+      "bytes": 30847,
+      "sorted_compact_json_sha256": "c635198276031e116c8efa3fef6df0739c6cd4bae9001ffffae37af33633c548"
+    },
+    "semantic-oracle.json": {
+      "byte_sha256": "ea6285bccbf9a87ab81e162d5a4dbbabc31fa82b3b3f6be3030ee560cd6d7ee2",
+      "bytes": 22526,
+      "sorted_compact_json_sha256": "92adcaf2e7e7e8351a84661ba76342b2bdbb0b545a66c4873360d1db3808cd0c"
+    },
+    "validation.json": {
+      "byte_sha256": "b1e9c1735ef5600908ec9aac469fe484be280e56f81e36360e5f0a46f9571e5f",
+      "bytes": 873,
+      "sorted_compact_json_sha256": "c67b263da00675a39caffa9837f0c3b098793dac12dfb6b0c822490d2aeb4555"
+    },
+    "README.md": {
+      "byte_sha256": "af984baad2e69dee271951cff37698ae04d6f6dd352a73086f2e853062bea9fb",
+      "bytes": 7216
+    }
+  },
+  "change_policy": "Never change these cases or expectations from observed responses. Retain seal if producer prompt later changes. New independent split requires a new version and disclosure."
+}

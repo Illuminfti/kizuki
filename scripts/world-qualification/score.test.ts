@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 import { qualificationCorpus } from "./corpus-v2";
 import { qualificationCorpus as activeCorpus } from "./corpus";
+import { qualificationCorpus as historicalCorpus } from "./corpus-v3";
+import { scoreSupplementalCase, scoreSupplementalRun, validateFreshCore } from "./supplemental";
+import freshOracle from "./corpus-v5-core-semantic-oracle.json";
+import { loadReviewedQualifications } from "./registry";
+import { createModelProducerV2Port } from "../../packages/core/src/producer/model-v2";
+import { createOpenAiCompatibleLlmPort } from "../../packages/llm/src/openai-compatible";
+import type { PortContext } from "../../packages/core/src/contracts/ports";
 import { caseInput, scoreCase, scoreRun, type Observation, type QualificationCase } from "./score";
 import { candidateRegistry, checkOfferedQualification, registryDigest, verifyQualificationReceipt } from "./registry";
 import { WORLD_REGISTRY, WORLD_VOCABULARY_MODULES } from "../../packages/core/src/contracts/world-vocabulary";
@@ -103,21 +110,25 @@ test("grounding requires exact witness nominations and cannot count context as i
 });
 
 test("grounding cases reach the actual conditional prompt and ProducerV2 parser", async () => {
-  const item = activeCorpus.cases.find(row => row.id === "concept-identity-independent-witness-v3")!;
+  const item = historicalCorpus.cases.find(row => row.id === "concept-identity-independent-witness-v3")!;
   const control = scripted(item);
   const server = startFakeEndpoint(() => Response.json({ id: "grounding-control", model: "synthetic", object: "chat.completion", created: 1,
     choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(control.response) } }],
     usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }));
+  // Historical identity witness remains covered through the same public producer port.
+  const context = (config: Record<string, unknown>): PortContext => ({ config, vault_path: "/nonexistent", data_dir: "/nonexistent",
+    secrets: async () => { throw new Error("no credential"); }, clock: () => new Date().toISOString(), logger: () => {} });
+  const llm = createOpenAiCompatibleLlmPort(context({ base_url: server.base_url, model: "synthetic", max_retries: 0 }));
+  const producer = createModelProducerV2Port(context({}), { llm });
   try {
-    const result = await runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", case_ids: [item.id] });
-    expect(result.observations).toHaveLength(1);
-    expect(scoreCase(item, result.observations[0]!).errors).toEqual([]);
+    const result = await producer.produce(control.input);
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("synthetic response rejected");
+    expect(scoreCase(item, { ...control, response: result.response, dropped: result.dropped?.length ?? 0, usage: result.usage }).errors).toEqual([]);
     const body = server.requests[0]!.body as { messages: { content: string }[] };
     expect(body.messages[0]!.content).toContain("Identity grounding:");
-    expect(result.traces[0]!.prompt_sha256).toBe(sha256(body.messages[0]!.content));
-    expect(result.prompt_sha256_by_case[item.id]).toBe(result.traces[0]!.prompt_sha256);
-    expect(result.score.kinds.find(row => row.kind === "concept")?.status).toBe("failed");
-  } finally { server.stop(); }
+    expect(sha256(body.messages[0]!.content)).toBe(sha256(extractionV2SystemContent(control.input)));
+  } finally { await producer.close(); await llm.close(); server.stop(); }
 });
 
 test("response files cannot self-attest observed provider provenance or become reviewed qualifications", () => {
@@ -155,23 +166,52 @@ test("a clean surrounding Git commit cannot attest an untracked or modified runn
 test("the receipt verifier binds reviewed bytes, full cases, prompt, source and transport pacing", () => {
   const qualificationCorpus = activeCorpus;
   // Deliberately fabricated verifier control, never a real provider receipt or an entry in REVIEWED_QUALIFICATIONS.
-  const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["question"]);
-  const observations = qualificationCorpus.cases.filter(row => row.kind === "question").map(item => scripted(item, registry));
+  const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation"]);
+  const observations = qualificationCorpus.cases.map(item => scripted(item, registry));
   const control = { schema: "kizuki.world-qualification-run/v1", evidence: "runner_observed_transport", synthetic: true,
     source_clean: true, source_commit: "a".repeat(40), runner_sha256: runnerDigest(), registry_sha256: registryDigest(registry),
     prompt_sha256: sha256(extractionV2SystemContent(observations[0]!.input)), missing: [], model: "synthetic-verifier-control", endpoint_host: "127.0.0.1:1",
-    selected_kinds: ["question"], selected_extensions: [], corpus: qualificationCorpus, observations, score: scoreRun(qualificationCorpus, observations),
+    selected_kinds: ["concept", "situation"], selected_extensions: [], corpus: qualificationCorpus, observations, score: scoreRun(qualificationCorpus, observations), supplemental: scoreSupplementalRun(observations),
     prompt_sha256_by_case: Object.fromEntries(observations.map(row => [row.case_id, sha256(extractionV2SystemContent(row.input))])),
     traces: observations.map((row, index) => ({ case_id: row.case_id, prompt_sha256: sha256(extractionV2SystemContent(row.input)), transport: "ok", request_sha256: "a".repeat(64), response_sha256: "b".repeat(64),
       started_at: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(), completed_at: new Date(Date.UTC(2026, 0, 1, 0, index, 1)).toISOString() })) };
-  const verify = (value: unknown, pinned?: string) => { const bytes = JSON.stringify(value); return verifyQualificationReceipt(bytes,
-    { file: "synthetic-control.json", sha256: pinned ?? sha256(bytes), endpoint_evidence: "c".repeat(64) }, registry); };
-  expect(() => checkOfferedQualification(registry, [verify(control)])).not.toThrow();
+  const directory = mkdtempSync(join(tmpdir(), "qualification-body-review-"));
+  const reviewFile = join(directory, "scripts/fixtures/world-qualification/body-review.json");
+  for (const path of RUNNER_FILES) { mkdirSync(dirname(join(directory, path)), { recursive: true }); writeFileSync(join(directory, path), readFileSync(join(import.meta.dir, "../..", path))); }
+  mkdirSync(dirname(reviewFile), { recursive: true });
+  const review = (bytes: string) => ({ schema: "kizuki.fresh-core-body-review/v1", independent: true, status: "passed",
+    report_sha256: sha256(bytes), oracle_sha256: control.supplemental.oracle_sha256,
+    cases: control.supplemental.cases.map(row => ({ case_id: row.id, ...row.body_review, status: "passed" })) });
+  const verify = (value: unknown, pinned?: string) => { const bytes = JSON.stringify(value), body = JSON.stringify(review(bytes)); writeFileSync(reviewFile, body);
+    return verifyQualificationReceipt(bytes, { file: "synthetic-control.json", sha256: pinned ?? sha256(bytes), endpoint_evidence: "c".repeat(64),
+      body_review: { file: "body-review.json", sha256: sha256(body) } }, registry, directory); };
+  try {
+  expect(() => verify(control)).toThrow("fresh core");
   const v2 = { ...control, schema: "kizuki.world-qualification-run/v2", resumed_from: null, halt_reason: null, response_gap_ms: 61_000,
     selected_cases: observations.map(row => row.case_id), case_states: observations.map(row => ({ case_id: row.case_id, status: "observed" })), attempts: observations.length,
     traces: control.traces.map((row, index) => ({ ...row, origin: "observed_v2", http_status: 200,
       started_at: new Date(Date.UTC(2026, 0, 1) + index * 62_000).toISOString(), completed_at: new Date(Date.UTC(2026, 0, 1) + index * 62_000 + 1000).toISOString() })) };
   expect(() => checkOfferedQualification(registry, [verify(v2)])).not.toThrow();
+  const v2Bytes = JSON.stringify(v2), expectedReview = review(v2Bytes);
+  for (const changed of [
+    { ...expectedReview, status: "failed" }, { ...expectedReview, independent: false },
+    { ...expectedReview, report_sha256: "0".repeat(64) }, { ...expectedReview, oracle_sha256: "0".repeat(64) },
+    { ...expectedReview, cases: expectedReview.cases.slice(1) },
+    { ...expectedReview, cases: expectedReview.cases.map((row, index) => index === 0 ? { ...row, response_sha256: "0".repeat(64) } : row) },
+    { ...expectedReview, cases: expectedReview.cases.map((row, index) => index === 0 ? { ...row, forbidden_interpretations: [] } : row) },
+    { ...expectedReview, cases: expectedReview.cases.map((row, index) => index === 0 ? { ...row, status: "pending" } : row) },
+    { ...expectedReview, unexplained: true },
+  ]) {
+    const bytes = JSON.stringify(changed); writeFileSync(reviewFile, bytes);
+    expect(() => verifyQualificationReceipt(v2Bytes, { file: "synthetic-control.json", sha256: sha256(v2Bytes), endpoint_evidence: "c".repeat(64),
+      body_review: { file: "body-review.json", sha256: sha256(bytes) } }, registry, directory)).toThrow("body review mismatch");
+  }
+  writeFileSync(reviewFile, JSON.stringify(expectedReview));
+  for (const body_review of [undefined, { file: "body-review.json", sha256: "0".repeat(64) }, { file: "../body-review.json", sha256: sha256(JSON.stringify(expectedReview)) }])
+    expect(() => verifyQualificationReceipt(v2Bytes, { file: "synthetic-control.json", sha256: sha256(v2Bytes), endpoint_evidence: "c".repeat(64), ...(body_review === undefined ? {} : { body_review }) }, registry, directory)).toThrow();
+  for (const changed of [{ ...v2, supplemental: undefined }, { ...v2, supplemental: { ...v2.supplemental, deterministic_passed: false } },
+    { ...v2, selected_kinds: ["concept"] }, { ...v2, selected_cases: v2.selected_cases.slice(1) }, { ...v2, selected_extensions: ["situation.has_commitment"] }])
+    expect(() => verify(changed)).toThrow();
   for (const mutation of [{ ...v2, halt_reason: "transport_refused" }, { ...v2, response_gap_ms: 60_000 },
     { ...v2, attempts: observations.length - 1 }, { ...v2, traces: v2.traces.map(row => ({ ...row, origin: "inherited_v1" })) },
     { ...v2, traces: v2.traces.map(row => ({ ...row, http_status: null })) },
@@ -182,22 +222,23 @@ test("the receipt verifier binds reviewed bytes, full cases, prompt, source and 
     { ...control, observations: observations.slice(1), score: scoreRun(qualificationCorpus, observations.slice(1)) },
     { ...control, traces: control.traces.map(row => ({ ...row, started_at: control.traces[0]!.started_at })) },
     { ...control, traces: control.traces.slice(1) },
-  ]) expect(() => verify(mutation)).toThrow();
+  ]) expect(() => verify(mutation)).toThrow();  } finally { rmSync(directory, { recursive: true, force: true }); }
+
 });
 
 test("missing model or product module writes an honest not_run receipt and never overwrites an existing artifact", async () => {
   const directory = mkdtempSync(join(tmpdir(), "qualification-"));
   try {
     const output = join(directory, "not-run.json");
-    const result = await runQualification({ kinds: ["question"], output });
+    const result = await runQualification({ kinds: ["concept"], output });
     expect(result.score.status).toBe("not_run"); expect(result.traces).toEqual([]);
     expect(JSON.parse(readFileSync(output, "utf8")).missing).toContain("model_unconfigured");
-    await expect(runQualification({ kinds: ["question"], output })).rejects.toThrow();
+    await expect(runQualification({ kinds: ["concept"], output })).rejects.toThrow();
     const absent = await runQualification({ kinds: ["not_registered"] });
     expect(absent.missing).toContain("not_registered:module_missing");
     expect(absent.score.status).toBe("not_run");
     const sentinel = join(directory, "sentinel.json"); writeFileSync(sentinel, "unchanged");
-    await expect(runQualification({ kinds: ["question"], output: sentinel })).rejects.toThrow();
+    await expect(runQualification({ kinds: ["concept"], output: sentinel })).rejects.toThrow();
     expect(readFileSync(sentinel, "utf8")).toBe("unchanged");
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
@@ -207,11 +248,11 @@ test("actual port observation binds the exact prompt and usage but a single synt
     choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }) } }],
     usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }));
   try {
-    const result = await runQualification({ kinds: ["question"], base_url: server.base_url, model: "synthetic", case_ids: ["question-instruction-without-facts-v3"] });
+    const result = await runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", case_ids: ["c-template-only"] });
     expect(result.observations).toHaveLength(1); expect(result.traces).toHaveLength(1);
     expect(result.observations[0]!.usage).toEqual({ calls: 1, input_tokens: 100, output_tokens: 10 });
-    expect(result.score.kinds.find(row => row.kind === "question")?.status).toBe("failed");
-    expect(result.score.kinds.find(row => row.kind === "question")?.cases.find(row => row.family === "abstention")?.passed).toBe(true);
+    expect(result.score.kinds.find(row => row.kind === "concept")?.status).toBe("failed");
+    expect(result.score.kinds.find(row => row.kind === "concept")?.cases.find(row => row.id === "c-template-only")?.passed).toBe(true);
     const body = server.requests[0]!.body as { messages: { role: string; content: string }[]; max_tokens: number };
     expect(result.prompt_sha256).toBe(sha256(body.messages[0]!.content));
     expect(body.messages[1]!.content).not.toContain("required");
@@ -225,9 +266,9 @@ test("endpoint and credential custody failures cannot call the model or expose t
   const directory = mkdtempSync(join(tmpdir(), "qualification-token-"));
   const server = startFakeEndpoint(() => new Response("unexpected", { status: 500 }));
   try {
-    await expect(runQualification({ kinds: ["question"], base_url: "https://models.example.test/v1", model: "synthetic" })).rejects.toThrow("endpoint rejected");
+    await expect(runQualification({ kinds: ["concept"], base_url: "https://models.example.test/v1", model: "synthetic" })).rejects.toThrow("endpoint rejected");
     const path = join(directory, "token"); writeFileSync(path, "synthetic-private-marker", { mode: 0o644 });
-    await expect(runQualification({ kinds: ["question"], base_url: server.base_url, model: "synthetic", token_file: path, case_ids: ["question-instruction-without-facts-v3"] })).rejects.toThrow("token custody rejected");
+    await expect(runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", token_file: path, case_ids: ["c-template-only"] })).rejects.toThrow("token custody rejected");
     expect(server.requests).toHaveLength(0);
   } finally { server.stop(); rmSync(directory, { recursive: true, force: true }); }
 });
@@ -240,7 +281,7 @@ test("optional synthetic raw evidence keeps rejected pre-parser output and refus
   const server = startFakeEndpoint(() => Response.json({ id: "synthetic-control", model: "synthetic", object: "chat.completion", created: 1,
     choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }],
     usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }, { status }));
-  const request = { kinds: ["question"], base_url: server.base_url, model: "synthetic", token_file: tokenPath, case_ids: ["question-instruction-without-facts-v3"] };
+  const request = { kinds: ["concept"], base_url: server.base_url, model: "synthetic", token_file: tokenPath, case_ids: ["c-template-only"] };
   try {
     const raw = join(directory, "raw.jsonl");
     const result = await runQualification({ ...request, raw_responses: raw });
@@ -275,7 +316,7 @@ test("a candidate registry changes only isolated offered flags and fails the pro
   expect(candidate.kind("question")?.offeredToProducer).toBe(true);
   expect(JSON.stringify(WORLD_REGISTRY.offered)).toBe(before);
   expect(() => checkOfferedQualification(candidate, [])).toThrow("unqualified offered vocabulary");
-  expect(() => checkOfferedQualification(WORLD_REGISTRY, [])).not.toThrow();
+  expect(() => checkOfferedQualification(WORLD_REGISTRY, [])).toThrow("fresh core qualification pending");
 });
 
 test("an empty successful response proves abstention only; it cannot qualify positive, perspective or time cases", () => {
@@ -344,4 +385,93 @@ test("every declared reference choice and semantic alternative is a satisfiable 
       expect({ id: item.id, index, errors: scoreCase(item, scripted(variant)).errors }).toEqual({ id: item.id, index, errors: [] });
     }));
   }
+});
+
+test("sealed fresh core cases and every finite alternative satisfy both checkers, never model recall", () => {
+  validateFreshCore();
+  expect(activeCorpus.cases).toHaveLength(12);
+  expect(activeCorpus.cases.filter(row => row.family === "abstention")).toHaveLength(6);
+  expect(new Set(activeCorpus.cases.map(row => row.kind))).toEqual(new Set(["concept", "situation"]));
+  for (const item of activeCorpus.cases) {
+    const variants = [item, ...item.required.flatMap((group, index) => group.map(meaning => ({ ...item,
+      required: item.required.map((choices, at) => at === index ? [meaning] : choices) }))),
+      ...(item.references ?? []).flatMap(group => group.refs.map(ref => ({ ...item,
+        references: item.references!.map(row => row.key === group.key ? { ...row, refs: [ref] } : row) })))];
+    for (const variant of variants) {
+      const observed = scripted(variant, WORLD_REGISTRY), checked = scoreSupplementalCase(item, observed);
+      expect({ id: item.id, tuple: scoreCase(item, observed).errors, gates: checked.gates }).toEqual({ id: item.id,
+        tuple: [], gates: { tuple: [], anchors: [], substance: [], attribution: [], time: [], usage: [] } });
+      expect(checked.deterministic_passed).toBe(true);
+      expect(checked.body_review.status).toBe("pending");
+    }
+  }
+  const complete = scoreSupplementalRun(activeCorpus.cases.map(item => scripted(item, WORLD_REGISTRY)));
+  expect(complete.deterministic_passed).toBe(true);
+  expect(complete.body_review).toBe("pending");
+  expect(loadReviewedQualifications(import.meta.dir + "/../..", WORLD_REGISTRY)).toEqual([]);
+  expect(() => checkOfferedQualification(WORLD_REGISTRY, [])).toThrow("fresh core qualification pending");
+});
+
+test("same-record label anchors cannot stand in for substance, attribution or historical witnesses", () => {
+  for (const id of ["c-shelter-effect", "c-kiln-hysteresis", "c-floating-pause", "s-slide-digitisation"]) {
+    const item = activeCorpus.cases.find(row => row.id === id)!, good = scripted(item, WORLD_REGISTRY);
+    const rule = freshOracle.cases.find(row => row.case_id === id)!, label = rule.structural_requirements!.label_span;
+    const detailIndex = good.response!.claims.findIndex(row => row.predicate === rule.details![0]!.predicate);
+    const detail = good.response!.claims[detailIndex]!;
+    // Keep exact supplied identity anchors so the public parser and tuple scorer still accept it.
+    const identity = good.input.supplied_refs.flatMap(row => row.anchors);
+    const anchor = { event_id: good.input.events[0]!.event_id, start_utf16: label.start_utf16, end_utf16: label.end_utf16 };
+    const changed = { ...good, response: { ...good.response!, claims: good.response!.claims.map((claim, at) => at === detailIndex
+      ? { ...claim, anchors: [...new Map([...identity, anchor].map(row => [canonicalJson(row), row])).values()] } : claim) } };
+    expect(scoreCase(item, changed).passed).toBe(true);
+    expect(scoreSupplementalCase(item, changed).gates.anchors).toContain(`${detail.predicate}:detail_witness`);
+    if (rule.time_witness) expect(scoreSupplementalCase(item, changed).gates.time).toContain(`${detail.predicate}:historical_interval`);
+    if (detail.perspective.mode === "reported") {
+      const attribution = { ...good, response: { ...good.response!, claims: good.response!.claims.map((claim, at) => at === detailIndex
+        ? { ...claim, perspective: { ...claim.perspective, anchors: identity } } : claim) } };
+      expect(scoreCase(item, attribution).passed).toBe(true);
+      expect(scoreSupplementalCase(item, attribution).gates.attribution).toContain(`${detail.predicate}:attribution`);
+    }
+  }
+});
+
+test("missing detail, wrong historical perspective, drops and unsupported claims cannot pass supplemental checks", () => {
+  const item = activeCorpus.cases.find(row => row.id === "c-floating-pause")!, good = scripted(item, WORLD_REGISTRY);
+  const index = good.response!.claims.findIndex(row => row.predicate === "concept.definition");
+  const mutations: Observation[] = [
+    { ...good, response: { ...good.response!, claims: good.response!.claims.filter((_, at) => at !== index) } },
+    { ...good, dropped: 1 }, { ...good, status: "unavailable", response: null },
+    { ...good, usage: { ...good.usage, calls: 0 } },
+  ];
+  for (const change of [
+    { valid_from: null, valid_to: null, temporal_basis: "unknown" as const },
+    { perspective: { ...good.response!.claims[index]!.perspective, mode: "asserted" as const } },
+    { perspective: { ...good.response!.claims[index]!.perspective, speaker: null } },
+    { object: { kind: "literal" as const, value: "The owner completed the work today." } },
+  ]) {
+    const changed = { ...good, response: { ...good.response!, claims: good.response!.claims.map((claim, at) => at === index
+      ? { ...claim, ...change } : claim) } };
+    mutations.push(changed);
+  }
+  for (const changed of mutations) {
+    expect(scoreCase(item, changed).passed).toBe(false);
+    expect(scoreSupplementalCase(item, changed).deterministic_passed).toBe(false);
+  }
+  for (const negative of activeCorpus.cases.filter(row => row.family === "abstention")) {
+    const empty = scripted(negative, WORLD_REGISTRY);
+    expect(scoreSupplementalCase(negative, empty).deterministic_passed).toBe(true);
+    expect(scoreSupplementalCase(negative, { ...empty, status: "rejected", response: null }).deterministic_passed).toBe(false);
+  }
+});
+
+test("a contradictory free-text body remains explicitly unreviewed even when exact tuples and anchors pass", () => {
+  const item = activeCorpus.cases.find(row => row.id === "s-slide-digitisation")!, good = scripted(item, WORLD_REGISTRY);
+  const changed = { ...good, response: { ...good.response!, claims: good.response!.claims.map((claim, at) => at === 0
+    ? { ...claim, body: "The owner finished digitisation today and endorsed every action." } : claim) } };
+  expect(scoreCase(item, changed).passed).toBe(true); // Known strict-tuple scorer limitation.
+  const checked = scoreSupplementalCase(item, changed);
+  expect(checked.deterministic_passed).toBe(true);
+  expect(checked.body_review.status).toBe("pending");
+  expect(checked.body_review.response_sha256).not.toBe(scoreSupplementalCase(item, good).body_review.response_sha256);
+  expect(checked.body_review.forbidden_interpretations).toContain("Do not assert completion, later restart, owner leadership or a current pause.");
 });

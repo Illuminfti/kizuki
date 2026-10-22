@@ -2,9 +2,10 @@ import { createWorldRegistry, type WorldRegistry, type WorldVocabularyModule } f
 import { canonicalJson, sha256 } from "../evaluate-extraction";
 import baseline from "./preexisting.json";
 import { constants, closeSync, fstatSync, openSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { qualificationCorpus } from "./corpus";
 import { caseInput, responseMeanings, scoreRun } from "./score";
+import { scoreSupplementalRun, validateFreshCore } from "./supplemental";
 import { runnerDigest } from "./fingerprint";
 import { validateResume } from "./resume";
 import { RESPONSE_GAP_MS } from "./pacing";
@@ -40,6 +41,30 @@ export function verifyQualificationReceipt(bytes: string, approval: Qualificatio
   const score = scoreRun(qualificationCorpus, report.schema === "kizuki.world-qualification-run/v2" ? report.observations.filter(row => report.traces.some(trace => trace.case_id === row.case_id && trace.transport === "ok")) : report.observations);
   if (canonicalJson(score) !== canonicalJson(report.score) || report.selected_kinds.length === 0 || new Set(report.selected_kinds).size !== report.selected_kinds.length ||
       report.selected_kinds.some(kind => !score.kinds.some(row => row.kind === kind && row.status === "passed"))) throw new Error("qualification score failed");
+  validateFreshCore();
+  const supplemental = scoreSupplementalRun(report.observations.filter(row => report.traces.some(trace => trace.case_id === row.case_id && trace.transport === "ok")));
+  if (!supplemental.deterministic_passed || canonicalJson(supplemental) !== canonicalJson(report.supplemental) ||
+      report.schema !== "kizuki.world-qualification-run/v2" ||
+      canonicalJson([...report.selected_kinds].sort()) !== canonicalJson(["concept", "situation"]) ||
+      report.selected_extensions.length !== 0 || report.resumed_from !== null ||
+      canonicalJson(report.selected_cases) !== canonicalJson(qualificationCorpus.cases.map(row => row.id)))
+    throw new Error("fresh core supplemental or independent body review missing");
+  const body = approval.body_review;
+  if (!body || !/^[a-z0-9-]+\.json$/.test(body.file) || !/^[a-f0-9]{64}$/.test(body.sha256))
+    throw new Error("fresh core independent body review missing");
+  const bodyFd = openSync(join(root ?? resolve(import.meta.dir, "../.."), "scripts/fixtures/world-qualification", body.file), constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(bodyFd);
+    if (!stat.isFile() || stat.size < 1 || stat.size > 1024 * 1024) throw new Error("invalid body review file");
+    const bodyBytes = readFileSync(bodyFd, "utf8");
+    const expected = { schema: "kizuki.fresh-core-body-review/v1", independent: true, status: "passed",
+      report_sha256: approval.sha256, oracle_sha256: supplemental.oracle_sha256,
+      cases: supplemental.cases.map(row => ({ case_id: row.id, ...row.body_review,
+        // The automated report stays pending; only the separately reviewed artifact attests a pass.
+        status: "passed" })) };
+    if (sha256(bodyBytes) !== body.sha256 || canonicalJson(JSON.parse(bodyBytes)) !== canonicalJson(expected))
+      throw new Error("fresh core body review mismatch");
+  } finally { closeSync(bodyFd); }
   if (report.traces.length !== report.observations.length || report.traces.length > 100) throw new Error("qualification trace count mismatch");
   for (const observed of report.observations) {
     const item = qualificationCorpus.cases.find(row => row.id === observed.case_id)!;
@@ -103,4 +128,6 @@ export function checkOfferedQualification(registry: WorldRegistry, qualification
     if (!allowedPredicates.has(predicate.predicate)) changed.push(`predicate:${predicate.predicate}`);
   }
   if (changed.length > 0) throw new Error(`unqualified offered vocabulary: ${changed.join(", ")}`);
+  if (["concept", "situation"].some(kind => registry.kind(kind)?.offeredToProducer && !allowedKinds.has(kind)))
+    throw new Error("fresh core qualification pending");
 }
