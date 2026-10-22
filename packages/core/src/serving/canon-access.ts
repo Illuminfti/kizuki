@@ -54,6 +54,7 @@ export class CanonAccessPhase {
   private stamp = "";
   private inputs = "";
   private revision = 0;
+  private databaseRevision = 0;
   private chars = 0;
   private pages = new Map<CanonPage, PageRead>();
   private events = new Map<string, boolean>();
@@ -70,20 +71,35 @@ export class CanonAccessPhase {
     return this.index === index && this.grant === grant;
   }
 
-  private current(): number {
-    const ctx = this.index.sourceContext;
-    const row = ctx.db.query<{ changes: number; version: number; schema: number }, []>(
+  private clearPageReads(): void {
+    this.pages.clear(); this.resolver = undefined; this.resolverPaths.clear(); this.chars = 0;
+    this.revision += 1;
+  }
+
+  /** Raw event and policy facts depend on the database, not the reader's scope. */
+  private currentDatabase(): number {
+    const db = this.index.sourceContext.db;
+    const row = db.query<{ changes: number; version: number; schema: number }, []>(
       "SELECT total_changes() AS changes, (SELECT data_version FROM pragma_data_version) AS version, (SELECT schema_version FROM pragma_schema_version) AS schema",
     ).get()!;
     const stamp = `${row.changes}:${row.version}:${row.schema}`;
     // A savepoint rollback need not change total_changes(). Do not reuse reads
     // inside explicit transactions; final publication owns its own snapshot.
+    if (this.db !== db || stamp !== this.stamp || db.inTransaction) {
+      this.db = db; this.stamp = stamp;
+      this.clearPageReads(); this.events.clear(); this.grants.clear(); this.grantChars = 0;
+      this.databaseRevision += 1;
+    }
+    return this.databaseRevision;
+  }
+
+  private current(): number {
+    this.currentDatabase();
+    const ctx = this.index.sourceContext;
     const inputs = ctx.db.inTransaction ? null : inputKey([ctx.principal, this.grant, ctx.sourcePurpose ?? "recall", ctx.selection ?? null]);
-    if (this.db !== ctx.db || stamp !== this.stamp || inputs === null || inputs !== this.inputs) {
-      this.db = ctx.db; this.stamp = stamp; this.inputs = inputs ?? "";
-      this.pages.clear(); this.events.clear(); this.resolver = undefined; this.resolverPaths.clear(); this.chars = 0;
-      this.grants.clear(); this.grantChars = 0;
-      this.revision += 1;
+    if (inputs === null || inputs !== this.inputs) {
+      this.inputs = inputs ?? "";
+      this.clearPageReads();
     }
     return this.revision;
   }
@@ -119,21 +135,21 @@ export class CanonAccessPhase {
   }
 
   private liveExternalEvent = (id: string): boolean => {
-    const before = this.current();
+    const before = this.currentDatabase();
     const known = this.events.get(id);
     if (known !== undefined) return known;
     const valid = readLiveEvent(this.db, id)?.origin === "external";
-    if (this.current() === before && id.length <= 256 && this.events.size < MAX_EVENTS) this.events.set(id, valid);
+    if (this.currentDatabase() === before && id.length <= 256 && this.events.size < MAX_EVENTS) this.events.set(id, valid);
     return valid;
   };
 
   /** Reuse the full validated inspection, never a policy-only shortcut. */
   grantOf = (sourceKey: string): SourceGrant | null => {
-    const before = this.current();
+    const before = this.currentDatabase();
     if (this.grants.has(sourceKey)) return structuredClone(this.grants.get(sourceKey)!);
     const grant = inspectSourceGrant(this.db, sourceKey);
     const input = inputKey(grant);
-    if (this.current() === before && sourceKey.length <= 256 && input !== null
+    if (this.currentDatabase() === before && sourceKey.length <= 256 && input !== null
       && input.length <= 1024 * 1024 && this.grants.size < MAX_SOURCE_GRANTS
       && this.grantChars + input.length <= MAX_SOURCE_GRANT_CHARS) {
       this.grants.set(sourceKey, structuredClone(grant)); this.grantChars += input.length;

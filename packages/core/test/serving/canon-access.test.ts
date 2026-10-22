@@ -290,3 +290,70 @@ test("source lookup admission remains bounded and oversized inspections use the 
     expect(inspect).toHaveBeenCalledTimes(3);
   } finally { inspect.mockRestore(); f.dispose(); }
 });
+
+test("raw lookups avoid authorization-input walks while evidence keeps its full boundary checks", () => {
+  const f = consented(1), page = f.index.pages[0]!;
+  const descriptors = spyOn(Object, "getOwnPropertyDescriptors");
+  try {
+    const contextWalks = () => descriptors.mock.calls.filter(([value]) => value === f.ctx.principal).length;
+    expect(f.access.grantOf(f.sourceKey)!.policy.purposes).toContain("recall");
+    for (let i = 0; i < 20; i++) expect(f.access.grantOf(f.sourceKey)!.policy.purposes).toContain("recall");
+    expect(contextWalks()).toBe(0);
+    // One context check before and after evidence evaluation. Its raw event
+    // lookup must not recursively walk that same authorization context again.
+    expect(f.access.evidence(page).admitted).toBe(true);
+    expect(contextWalks()).toBe(2);
+  } finally { descriptors.mockRestore(); f.dispose(); }
+});
+
+test("reader context changes reuse raw facts but never an earlier authorization decision", () => {
+  const f = consented(1), page = f.index.pages[0]!;
+  setSourceGrant(f.db, { source_key: f.sourceKey, expected_revision: 1, operation_id: "access-recall-only",
+    policy: { ...f.policy, purposes: ["capture", "recall"] } });
+  const read = spyOn(ledger, "readLiveEvent"), inspect = spyOn(sourceGrants, "inspectSourceGrant");
+  try {
+    expect(f.access.decision(page).allow).toBe(true);
+    const parity = (allowed: boolean) => {
+      const reads = read.mock.calls.length, inspections = inspect.mock.calls.length;
+      const decision = f.access.decision(page);
+      expect(decision.allow).toBe(allowed);
+      expect(read.mock.calls.length).toBe(reads);
+      expect(inspect.mock.calls.length).toBe(inspections);
+      expect(decision).toEqual(pageDecision(f.index, f.grant, page));
+    };
+    f.grant.types = ["person"]; parity(false);
+    f.grant.types = null; parity(true);
+    f.ctx.sourcePurpose = "derive"; parity(false);
+    delete f.ctx.sourcePurpose; parity(true);
+    f.ctx.selection = { source: { sourceKey: null, captureEventId: "other-source" } }; parity(false);
+    delete f.ctx.selection; parity(true);
+    f.ctx.principal = { kind: "agent", grant: f.grant, grant_epoch: 1,
+      agent: { agent_id: "fixture", name: "fixture", created_at: "2026-01-01T00:00:00Z", revoked_at: null } };
+    parity(true);
+    f.ctx.principal.grant_epoch = 2; parity(true);
+  } finally { inspect.mockRestore(); read.mockRestore(); f.dispose(); }
+});
+
+test("equal database stamps never alias connections and transactions bypass raw policy reuse", () => {
+  const f = consented(1, true), a = new Database(f.path), b = new Database(f.path);
+  const inspect = spyOn(sourceGrants, "inspectSourceGrant");
+  const stamp = (db: Database) => db.query("SELECT total_changes(), (SELECT data_version FROM pragma_data_version), (SELECT schema_version FROM pragma_schema_version)").get();
+  try {
+    expect(stamp(a)).toEqual(stamp(b));
+    f.ctx.db = a;
+    expect(f.access.grantOf(f.sourceKey)!.status).toBe("active");
+    expect(f.access.grantOf(f.sourceKey)!.status).toBe("active");
+    expect(inspect).toHaveBeenCalledTimes(1);
+    f.ctx.db = b;
+    expect(f.access.grantOf(f.sourceKey)!.status).toBe("active");
+    expect(inspect).toHaveBeenCalledTimes(2);
+    b.exec("BEGIN");
+    expect(f.access.grantOf(f.sourceKey)!.status).toBe("active");
+    expect(f.access.grantOf(f.sourceKey)!.status).toBe("active");
+    expect(inspect).toHaveBeenCalledTimes(4);
+    b.exec("ROLLBACK");
+    expect(f.access.grantOf(f.sourceKey)!.status).toBe("active");
+    expect(f.access.grantOf(f.sourceKey)!.status).toBe("active");
+    expect(inspect).toHaveBeenCalledTimes(5);
+  } finally { inspect.mockRestore(); f.ctx.db = f.db; a.close(); b.close(); f.dispose(); }
+});
