@@ -248,6 +248,25 @@ describe("predeclared core semantic protocol", () => {
     expect(() => verifyCoreSemanticReview("d".repeat(64), changedStatus, statusReview)).toThrow("review mismatch");
   });
 
+  test("historical classification keeps its supported interval for both core kinds", () => {
+    const source = observations(), baseline = scoreCoreSemanticRun(source, registry);
+    for (const kind of ["concept", "situation"] as const) {
+      const item = selectedCase(kind, "historical"), rule = extractionRule(item);
+      if (rule.classification.time === "unknown") throw new Error("historical control requires an authored interval");
+      const passing = baseline.cases.find(row => row.case_id === item.id)!;
+      expect(passing.automated_passed).toBe(true);
+      expect(passing.gates.time).toEqual([]);
+      const changed = mutate(source, item.id, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === "world.kind"
+        ? { ...claim, valid_from: null, valid_to: null, temporal_basis: "unknown" } : claim) }));
+      const result = scoreCoreSemanticRun(changed, registry).cases.find(row => row.case_id === item.id)!;
+      expect(result.automated_passed).toBe(false);
+      expect(result.gates.time).toEqual(["world.kind:time"]);
+      expect(result.gates.pipeline).toEqual([]);
+      expect(canonicalJson(changed.find(row => row.case_id === item.id)!.response!.claims.filter(claim => claim.predicate !== "world.kind")) ===
+        canonicalJson(source.find(row => row.case_id === item.id)!.response!.claims.filter(claim => claim.predicate !== "world.kind"))).toBe(true);
+    }
+  });
+
   test("classification, witness, attribution, time and usage mutations are rejected", () => {
     const direct = selectedCase("concept", "positive").id, person = selectedCase("concept", "reported").id, document = selectedCase("concept", "historical").id;
     const source = observations();
