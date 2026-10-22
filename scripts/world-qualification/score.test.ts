@@ -1,3 +1,4 @@
+import { verifyCoreSemanticReport } from "./verify-core-semantic";
 import { expect, test } from "bun:test";
 import { qualificationCorpus } from "./corpus-v2";
 import { qualificationCorpus as activeCorpus } from "./corpus";
@@ -193,6 +194,8 @@ test("the receipt verifier binds reviewed bytes, full cases, prompt, source and 
       started_at: new Date(Date.UTC(2026, 0, 1) + index * 62_000).toISOString(), completed_at: new Date(Date.UTC(2026, 0, 1) + index * 62_000 + 1000).toISOString() })) };
   expect(() => checkOfferedQualification(registry, [verify(v2)])).not.toThrow();
   const v2Bytes = JSON.stringify(v2), expectedReview = review(v2Bytes);
+  expect(() => verifyCoreSemanticReport(v2Bytes, { file: "synthetic-control.json", sha256: sha256(v2Bytes), endpoint_evidence: "c".repeat(64),
+    body_review: { file: "body-review.json", sha256: sha256(JSON.stringify(expectedReview)) } }, directory)).toThrow("core semantic protocol required");
   for (const changed of [
     { ...expectedReview, status: "failed" }, { ...expectedReview, independent: false },
     { ...expectedReview, report_sha256: "0".repeat(64) }, { ...expectedReview, oracle_sha256: "0".repeat(64) },

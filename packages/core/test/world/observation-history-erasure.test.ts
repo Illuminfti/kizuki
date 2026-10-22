@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { backfillSupportObservations } from "../../src/claims/observations";
 import { rebuildWorldLayer } from "../../src/derived";
 import { exportVault, restoreVault, type ExportManifest } from "../../src/export";
-import { ensureLedgerSchema, openLedger } from "../../src/ledger/db";
+import { ensureLedgerSchema, LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 import { purgeEvents } from "../../src/ledger/purge";
 import { serveWorldView } from "../../src/serving/world-view";
 import { assertWorldState } from "../../src/world/integrity";
@@ -81,7 +81,7 @@ for (const version of [45, 46]) test(`schema ${version} observation upgrade clea
     ensureLedgerSchema(f.db);
     assertWorldState(f.db); expect(orphanCount(f.db)).toBe(0);
     expect(f.other()).toEqual(other);
-    expect(f.db.query("SELECT version FROM schema_version").get()).toEqual({ version: OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION });
+    expect(f.db.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });
     expect(f.db.query("SELECT 1 FROM world_wire_refs WHERE wire_ref=?").get(f.ref.token)).toBeNull();
     const after = observations(f.db);
     ensureLedgerSchema(f.db); expect(observations(f.db)).toEqual(after);

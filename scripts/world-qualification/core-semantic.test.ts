@@ -1,3 +1,4 @@
+import { verifyCoreSemanticReport } from "./verify-core-semantic";
 import { describe, expect, test } from "bun:test";
 import { parseExtractResponseV2, type DraftRef, type ExtractResponseV2, type RichClaimDraft, type TextAnchor } from "../../packages/core/src/contracts/producer-v2";
 import { WORLD_VOCABULARY_MODULES } from "./candidate-modules";
@@ -412,6 +413,22 @@ describe("predeclared core semantic protocol", () => {
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
+  test("the CLI refuses missing or wrong protocols without a success summary", () => {
+    const directory = mkdtempSync(join(tmpdir(), "core-semantic-cli-"));
+    try {
+      const path = join(directory, "report.json");
+      for (const report of [null, {}, { protocol: "core-semantic-v1" }, { protocol: "baseline" }]) {
+        const bytes = JSON.stringify(report); writeFileSync(path, bytes);
+        const result = Bun.spawnSync([process.execPath, join(import.meta.dir, "verify-core-semantic.ts"),
+          "--report", path, "--report-sha256", sha256(bytes), "--review-file", "unused.json",
+          "--review-sha256", "a".repeat(64), "--endpoint-evidence", "b".repeat(64)]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout.toString()).toBe("");
+        expect(result.stderr.toString().trim()).toBe("core semantic verification failed");
+      }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
   test("registry acceptance requires the exact report and separate hash-bound independent review", () => {
     const directory = mkdtempSync(join(tmpdir(), "core-semantic-review-"));
     try {
@@ -434,6 +451,11 @@ describe("predeclared core semantic protocol", () => {
         body_review: { file: "core-semantic-review.json", sha256: sha256(review) } };
       expect(() => verifyQualificationReceipt(bytes, { file: approval.file, sha256: approval.sha256, endpoint_evidence: approval.endpoint_evidence }, registry, directory)).toThrow("independent review missing");
       const checked = verifyQualificationReceipt(bytes, approval, registry, directory);
+      expect(verifyCoreSemanticReport(bytes, approval, directory)).toEqual(checked);
+      for (const protocol of [undefined, "core-semantic-v1", "baseline"]) {
+        const wrong = JSON.stringify({ ...report, protocol });
+        expect(() => verifyCoreSemanticReport(wrong, { ...approval, sha256: sha256(wrong) }, directory)).toThrow("core semantic protocol required");
+      }
       expect(() => checkOfferedQualification(registry, [checked])).not.toThrow();
       const changedReview = JSON.stringify({ ...JSON.parse(review), independent: false }); writeFileSync(fixture, changedReview);
       expect(() => verifyQualificationReceipt(bytes, { ...approval, body_review: { ...approval.body_review, sha256: sha256(changedReview) } }, registry, directory)).toThrow("review mismatch");

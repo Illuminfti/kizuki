@@ -1,7 +1,7 @@
 import { constants, closeSync, fstatSync, openSync, readFileSync } from "node:fs";
 import { WORLD_VOCABULARY_MODULES } from "./candidate-modules";
 import { CORE_SEMANTIC_PROTOCOL } from "./core-semantic";
-import { candidateRegistry, verifyQualificationReceipt } from "./registry";
+import { candidateRegistry, verifyQualificationReceipt, type QualificationApproval } from "./registry";
 
 function readReport(path: string): string {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -10,6 +10,14 @@ function readReport(path: string): string {
     if (!stat.isFile() || stat.size < 1 || stat.size > 32 * 1024 * 1024) throw new Error("invalid qualification report");
     return readFileSync(fd, "utf8");
   } finally { closeSync(fd); }
+}
+
+/** The protocol-specific CLI must not relabel a valid baseline receipt. */
+export function verifyCoreSemanticReport(bytes: string, approval: QualificationApproval, root?: string) {
+  const report: unknown = JSON.parse(bytes);
+  if (report === null || typeof report !== "object" || !("protocol" in report) || report.protocol !== CORE_SEMANTIC_PROTOCOL)
+    throw new Error("core semantic protocol required");
+  return verifyQualificationReceipt(bytes, approval, candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation"]), root);
 }
 
 if (import.meta.main) {
@@ -22,8 +30,8 @@ if (import.meta.main) {
     }
     const report = value("--report"), reportSha256 = value("--report-sha256"), reviewFile = value("--review-file"), reviewSha256 = value("--review-sha256"), endpointEvidence = value("--endpoint-evidence");
     if ([report, reportSha256, reviewFile, reviewSha256, endpointEvidence].some(item => item === undefined)) throw new Error("required arguments missing");
-    const checked = verifyQualificationReceipt(readReport(report!), { file: report!.split("/").at(-1)!, sha256: reportSha256!, endpoint_evidence: endpointEvidence!,
-      body_review: { file: reviewFile!, sha256: reviewSha256! } }, candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation"]));
+    const checked = verifyCoreSemanticReport(readReport(report!), { file: report!.split("/").at(-1)!, sha256: reportSha256!, endpoint_evidence: endpointEvidence!,
+      body_review: { file: reviewFile!, sha256: reviewSha256! } });
     console.log(JSON.stringify({ status: "passed", protocol: CORE_SEMANTIC_PROTOCOL, stage: "prepared_admission", report_sha256: checked.report_sha256,
       body_review_sha256: reviewSha256, endpoint_evidence_sha256: endpointEvidence,
       registry_sha256: checked.registry_sha256, kinds: checked.kinds, predicates: checked.predicates }));
