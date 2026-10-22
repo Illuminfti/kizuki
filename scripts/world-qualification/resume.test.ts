@@ -9,6 +9,7 @@ import { WORLD_VOCABULARY_MODULES } from "./candidate-modules";
 import { caseInput, scoreRun, type Observation } from "./score";
 import { extractionV2SystemContent } from "../../packages/core/src/producer/prompt-v2";
 import { sha256 } from "../evaluate-extraction";
+import { modelQuoteWire } from "../../packages/core/test/producer/quote-wire-helper";
 
 function fixture() {
   const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept"]);
@@ -76,28 +77,28 @@ test("even freshly pinned malformed predecessor provenance, pending turns or unr
 test("a diagnostic case subset preserves the offered registry without qualifying omitted kinds", async () => {
   const server = startFakeEndpoint(() => new Response("synthetic rate refusal", { status: 429 }));
   try {
-    const kinds = ["concept", "person", "procedure"];
+    const kinds = ["concept", "situation"];
     const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, kinds);
-    const result = await runQualification({ kinds, base_url: server.base_url, model: "synthetic", case_ids: ["concept-catalogue-detail-v3"] });
+    const result = await runQualification({ kinds, base_url: server.base_url, model: "synthetic", case_ids: ["c-shelter-effect"] });
     expect(result.missing).toEqual([]);
     expect(result.registry_sha256).toBe(registryDigest(registry));
     expect(result.selected_kinds).toEqual(kinds);
-    expect(result.selected_cases).toEqual(["concept-catalogue-detail-v3"]);
+    expect(result.selected_cases).toEqual(["c-shelter-effect"]);
     expect(server.requests).toHaveLength(1);
     expect(result.halt_reason).toBe("transport_refused");
-    for (const kind of ["person", "procedure"]) expect(result.score.kinds.find(row => row.kind === kind)?.status).toBe("not_run");
+    for (const kind of ["situation"]) expect(result.score.kinds.find(row => row.kind === kind)?.status).toBe("not_run");
   } finally { server.stop(); }
 });
 
 test("HTTP429 records explicit transport failure, halts without retries, and leaves remaining cases not_run", async () => {
   const server = startFakeEndpoint(() => new Response("synthetic rate refusal", { status: 429 }));
   try {
-    const result = await runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", case_ids: ["concept-catalogue-detail-v3", "concept-instruction-without-facts-v3"] });
+    const result = await runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", case_ids: ["c-shelter-effect", "c-template-only"] });
     expect(server.requests).toHaveLength(1);
     expect(result.traces[0]?.http_status).toBe(429);
     expect(result.halt_reason).toBe("transport_refused");
     expect(result.score.kinds.find(row => row.kind === "concept")?.status).toBe("not_run");
-    expect(result.case_states).toEqual([{ case_id: "concept-catalogue-detail-v3", status: "transport_failed" }, { case_id: "concept-instruction-without-facts-v3", status: "not_run" }]);
+    expect(result.case_states).toEqual([{ case_id: "c-shelter-effect", status: "transport_failed" }, { case_id: "c-template-only", status: "not_run" }]);
     expect(result.observations).toHaveLength(1);
   } finally { server.stop(); }
 });
@@ -117,11 +118,11 @@ test("stop during an active HTTP turn preserves its response before stopping the
   const server = startFakeEndpoint(async () => {
     stopped = true; await Bun.sleep(20);
     return Response.json({ id: "stop-control", model: "synthetic", object: "chat.completion", created: 1,
-      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }) } }],
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(modelQuoteWire({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }, [])) } }],
       usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } });
   });
   try {
-    const result = await runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", stopped: () => stopped, case_ids: ["concept-catalogue-detail-v3", "concept-instruction-without-facts-v3"] });
+    const result = await runQualification({ kinds: ["concept"], base_url: server.base_url, model: "synthetic", stopped: () => stopped, case_ids: ["c-shelter-effect", "c-template-only"] });
     expect(server.requests).toHaveLength(1); expect(result.halt_reason).toBe("requested_stop");
     expect(result.traces[0]?.http_status).toBe(200); expect(result.traces[0]?.completed_at).not.toBeNull();
     expect(result.observations).toHaveLength(1); expect(result.observations[0]?.response?.schema).toBe("kizuki.producer-response/v2");

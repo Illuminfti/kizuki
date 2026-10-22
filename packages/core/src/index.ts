@@ -1218,3 +1218,6 @@ export { inspectOwnerPageCorrectionTargets, inspectOwnerCorrectionPageCount } fr
 export { AppModelSettingsError, readAppModelConfiguration, saveAppModelConfiguration, readAppManagedModelCredential, classifyAppModelCredential, readAppModelFileCredential } from "./serve/model-settings";
 export type { AppModelSettingsFailure, AppModelDocument, AppModelCredentialChange, AppModelSettingsUpdate, AppModelConfigurationValidator } from "./serve/model-settings";
 export { normalizeSourceModelEndpoint, normalizeSourceModelName } from "./ledger/source-grants";
+
+export { replayEmptyExtractSegment, parseEmptySegmentReplayPlan, ExtractReplayError, type EmptySegmentReplayPlan, type EmptySegmentReplayReceipt } from "./serve/extract-replay";
+export { modelProducerFingerprint } from "./producer/fingerprint";

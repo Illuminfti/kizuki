@@ -2,6 +2,9 @@ import { isGroundedIdentity, type WorldAdmission, type WorldGrounding } from "..
 import { CLAIM_V2_SCHEMA, rawSubjectRefKey, validateClaimV2Semantic, type ClaimV2Assertion, type ClaimV2Object, type RawSubjectRef } from "../contracts/claim-v2";
 import type { AuthorityTier, FrontmatterValue } from "../contracts/proposal";
 import {
+  MAX_V2_ANCHORS,
+  MAX_V2_ANCHORS_PER_ITEM,
+  isUtf16TextBoundary,
   type DroppedDraftV2,
   type ExtractResponseV2,
   type ProduceInputV2,
@@ -10,7 +13,8 @@ import {
 } from "../contracts/producer-v2";
 import { mintOccurrenceId, type OccurrenceEventIdentity } from "../claims/occurrences";
 import type { InsertClaimInput } from "../claims/store";
-import { guardClaim, normalizedInstructionSpans } from "./world-guards";
+import { scrubText } from "./scrub";
+import { guardClaim, literalGrounded, normalizedInstructionSpans } from "./world-guards";
 
 /** The portion of the shared writer input produced by the model adapter. */
 export interface WorldDraftInsert extends InsertClaimInput {
@@ -47,6 +51,8 @@ export interface WorldDraftContext {
   /** Request-local catalog issued by Core, never copied from model output. */
   readonly grounding?: ReadonlyMap<string, WorldGrounding>;
   readonly witness_event_ids?: ReadonlySet<string>;
+  /** Exact pre-scrub event windows selected and sent by the host for this response. */
+  readonly sent_evidence_windows?: readonly SentEvidenceWindow[];
   readonly model_ref: string | null;
   /**
    * The host's last word on a resolved assertion, asked once per claim in
@@ -54,6 +60,10 @@ export interface WorldDraftContext {
    * a draft the writer would refuse cannot wedge the decision it belongs to.
    */
   readonly admits?: (semantic: ClaimV2Assertion) => boolean;
+}
+
+export interface SentEvidenceWindow extends TextAnchor {
+  readonly text: string;
 }
 
 function anchorKey(anchor: TextAnchor): string {
@@ -67,6 +77,61 @@ function fail(detail: string): never {
 function completeAnchors(claim: RichClaimDraft): readonly TextAnchor[] {
   const anchors = [...claim.anchors, ...claim.perspective.anchors];
   return [...new Map(anchors.map(anchor => [anchorKey(anchor), anchor])).values()];
+}
+
+function sentEvidenceWindows(
+  context: WorldDraftContext,
+  eventById: ReadonlyMap<string, WorldDraftEvent>,
+): readonly SentEvidenceWindow[] {
+  const raw = context.sent_evidence_windows;
+  if (raw === undefined || raw.length === 0) return [];
+  const seen = new Set<string>(), windows: SentEvidenceWindow[] = [];
+  for (const window of raw) {
+    const event = eventById.get(window.event_id);
+    if (event === undefined || seen.has(window.event_id) || !Number.isSafeInteger(window.start_utf16) ||
+        !Number.isSafeInteger(window.end_utf16) || window.start_utf16 < 0 || window.end_utf16 <= window.start_utf16 ||
+        window.end_utf16 > event.text.length || !isUtf16TextBoundary(event.text, window.start_utf16) ||
+        !isUtf16TextBoundary(event.text, window.end_utf16) || event.text.slice(window.start_utf16, window.end_utf16) !== window.text ||
+        scrubText(window.text).redactions.length > 0) return [];
+    seen.add(window.event_id);
+    windows.push(window);
+  }
+  return windows;
+}
+
+function within(anchor: TextAnchor, window: SentEvidenceWindow): boolean {
+  return anchor.event_id === window.event_id && anchor.start_utf16 >= window.start_utf16 && anchor.end_utf16 <= window.end_utf16;
+}
+
+/**
+ * Adds only the host's exact sent context to an already-grounded attributed
+ * literal. This runs after guardClaim, so context can explain a role witness
+ * but can never rescue a bad fact or restore a downgraded interpretation.
+ */
+function addSentAttributionContext(
+  guarded: ClaimV2Assertion,
+  original: ClaimV2Assertion,
+  windows: () => readonly SentEvidenceWindow[],
+  eventById: ReadonlyMap<string, WorldDraftEvent>,
+): ClaimV2Assertion | null {
+  if (guarded.object.kind !== "literal" || !["reported", "quoted"].includes(guarded.perspective.mode) ||
+      [original.perspective.holder, original.perspective.speaker, original.perspective.addressee].every(role => role === null) ||
+      original.perspective.anchors.length === 0) return guarded;
+  const literal = guarded.object.value;
+  const eligible = windows().filter(window => {
+    const facts = original.anchors.filter(anchor => within(anchor, window));
+    const roles = original.perspective.anchors;
+    const event = eventById.get(window.event_id);
+    return event !== undefined && roles.length > 0 && roles.every(anchor => within(anchor, window)) && literalGrounded(literal,
+      facts.map(anchor => event.text.slice(anchor.start_utf16, anchor.end_utf16)));
+  });
+  if (eligible.length !== 1) return guarded;
+  const window = eligible[0]!, anchor = { event_id: window.event_id, start_utf16: window.start_utf16, end_utf16: window.end_utf16 };
+  const anchors = [...new Map([...guarded.perspective.anchors, anchor].map(item => [anchorKey(item), item])).values()];
+  if (anchors.length > MAX_V2_ANCHORS_PER_ITEM) return null;
+  return anchors.length === guarded.perspective.anchors.length
+    ? guarded
+    : { ...guarded, perspective: { ...guarded.perspective, anchors } };
 }
 
 /**
@@ -90,6 +155,8 @@ export function prepareWorldDrafts(
     if (trusted === undefined || trusted.text !== event.text) fail("event is not an immutable quoted input");
   }
   if (eventById.size !== input.events.length) fail("untrusted event is outside quoted input");
+  let normalizedWindows: readonly SentEvidenceWindow[] | undefined;
+  const windows = () => normalizedWindows ??= sentEvidenceWindows(context, eventById);
 
   const supplied = new Map(input.supplied_refs.map(ref => [ref.id, ref.anchors]));
   if (supplied.size !== input.supplied_refs.length || context.supplied_refs.size !== supplied.size) fail("supplied handle set differs from quoted input");
@@ -147,6 +214,7 @@ export function prepareWorldDrafts(
     return spans;
   };
   const dropped: DroppedDraftV2[] = [];
+  let preparedAnchors = 0;
   const drafts = response.claims.flatMap(claim => {
     identity = ["concept.same_as", "concept.distinguished_from"].includes(claim.predicate);
     usedGrounding = new Map();
@@ -183,16 +251,17 @@ export function prepareWorldDrafts(
       temporal_basis: claim.temporal_basis,
       anchors: claim.anchors,
     };
-    if (!validateClaimV2Semantic(resolved).ok || context.admits?.(resolved) === false) {
+    if (!validateClaimV2Semantic(resolved).ok) {
       dropped.push({ reason: "invalid_claim", id: claim.id });
       return [];
     }
     // The model's literal is checked against the exact text it cited, so what
     // it wrote about the record cannot outrank what the record says.
-    const semantic = guardClaim(resolved, claim.body, {
+    const guarded = guardClaim(resolved, claim.body, {
       spans: anchors.map(anchor => eventById.get(anchor.event_id)!.text.slice(anchor.start_utf16, anchor.end_utf16)),
       instructionSpans: [...new Set(anchors.map(anchor => anchor.event_id))].flatMap(instructionSpansOf),
     });
+    const semantic = guarded === null ? null : addSentAttributionContext(guarded, resolved, windows, eventById);
     if (semantic === null || !validateClaimV2Semantic(semantic).ok) {
       dropped.push({ reason: "invalid_claim", id: claim.id });
       return [];
@@ -200,6 +269,16 @@ export function prepareWorldDrafts(
     if ((usedGrounding.size > 0 || (identity && (context.grounding?.size ?? 0) > 0)) && (usedGrounding.size !== 2 || !isGroundedIdentity(semantic))) {
       dropped.push({ reason: "invalid_claim", id: claim.id }); return [];
     }
+    const semanticAnchors = semantic.anchors.length + semantic.perspective.anchors.length;
+    if (preparedAnchors + semanticAnchors > MAX_V2_ANCHORS) {
+      dropped.push({ reason: "invalid_claim", id: claim.id });
+      return [];
+    }
+    if (context.admits?.(resolved) === false) {
+      dropped.push({ reason: "invalid_claim", id: claim.id });
+      return [];
+    }
+    preparedAnchors += semanticAnchors;
     const provenance = [...new Set(anchors.map(anchor => anchor.event_id))].sort();
     const admission: WorldAdmission = {
       ...(usedGrounding.size === 0 ? { schema: "kizuki.world-admission/v1" as const }

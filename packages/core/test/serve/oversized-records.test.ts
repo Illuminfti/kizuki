@@ -13,7 +13,7 @@ import { planModelExtractionV2 } from "../../src/producer/model-v2";
 import { worldProduceInput } from "../../src/serve/extract-v2";
 import { escapeFenceText } from "../../src/producer/fence";
 import { inspectServeDoctor } from "../../src/serve/doctor";
-import { journalExtractBatch, mineLiveDrafts, readExtractCursor, retrySkippedRecords } from "../../src/serve/extract";
+import { journalExtractBatch, mineLiveDrafts, readDurableExtractBatch, readExtractCursor, retrySkippedRecords } from "../../src/serve/extract";
 import { listSkippedRecords, segmentEnd } from "../../src/serve/extract-oversized";
 import { runRail } from "../../src/serve/rails";
 import { readLease } from "../../src/serve/leases";
@@ -139,7 +139,14 @@ test("a 60k-character record is extracted in three segments whose anchors valida
 });
 
 test("a segment shrinks to what max_input_tokens can carry", async () => {
-  const f = vaultWith([SIXTY_K], "[extraction]\nmax_calls_per_pass = 32\nmax_input_tokens = 4000\n");
+  // Keep this a reduced record-text budget as the fixed protocol instructions evolve.
+  const minimum = planModelExtractionV2(worldProduceInput([
+    { event_id: "00000000000000000000000001", text: "x" } as never,
+  ], [], DEFAULT_EXTRACTION_CONFIG));
+  if (minimum.status !== "ready") throw new Error("minimal extraction request must fit");
+  const maxInputTokens = minimum.input_tokens + 1_500;
+  expect(maxInputTokens).toBeLessThan(DEFAULT_EXTRACTION_CONFIG.max_input_tokens);
+  const f = vaultWith([SIXTY_K], `[extraction]\nmax_calls_per_pass = 32\nmax_input_tokens = ${maxInputTokens}\n`);
   const [e0] = f.eventIds as [string];
   const model = segmentModelProducer(f.vault);
   const receipt = await sync(f, model.producer);
@@ -287,6 +294,61 @@ test("a journaled segment decision replays after a restart without asking again"
   expect(endsAt(readExtractCursor(db), e1)).toBe(true);
 });
 
+test("journaling attribution context keeps the exact sent segment and excludes the unseen suffix", async () => {
+  const prefix = "Priya said Cobalt pause is the adopted name.\n\n";
+  const text = `${prefix}${paragraphRecord(60_000)}`;
+  const f = vaultWith([text]);
+  const [eventId] = f.eventIds as [string];
+  const model = segmentModelProducer(f.vault);
+  const mined = await mineLiveDrafts(f.db, model.producer);
+  if (mined.world === undefined || mined.segment === undefined) throw new Error("oversized typed fixture was not segmented");
+  expect(mined.segment).toMatchObject({ event_id: eventId, start: 0 });
+  expect(mined.segment.end).toBeLessThan(text.length);
+  expect(mined.world.input.events[0]!.text).toBe(text.slice(mined.segment.start, mined.segment.end));
+
+  const name = { event_id: eventId, start_utf16: 0, end_utf16: 5 };
+  const role = { event_id: eventId, start_utf16: 0, end_utf16: 10 };
+  const factStart = text.indexOf("Cobalt pause");
+  const fact = { event_id: eventId, start_utf16: factStart, end_utf16: factStart + "Cobalt pause is the adopted name".length };
+  const response = {
+    ...mined.world.response,
+    mentions: [{ id: "m0", label: "Priya", anchor: name, candidate_refs: [] }],
+    claims: [{
+      id: "c0",
+      subject: { kind: "mention" as const, id: "m0" },
+      predicate: "concept.definition",
+      object: { kind: "literal" as const, value: "Cobalt pause is the adopted name" },
+      perspective: {
+        holder: null,
+        speaker: { kind: "mention" as const, id: "m0" },
+        addressee: null,
+        mode: "reported" as const,
+        interpretation: "explicit" as const,
+        anchors: [name, role],
+      },
+      context: [],
+      polarity: "positive" as const,
+      body: "Cobalt pause is the adopted name",
+      valid_from: null,
+      valid_to: null,
+      temporal_basis: "unknown" as const,
+      confidence: 0.8,
+      sensitivity: "public" as const,
+      anchors: [name, fact],
+    }],
+  };
+  expect(journalExtractBatch(f.db, { ...mined, world: { ...mined.world, response } }, MODEL, model.producer).journaled).toBe(true);
+  const draft = readDurableExtractBatch(f.db, model.producer)!.filing_drafts[0]!;
+  if (!("semantic" in draft) || draft.semantic === undefined) throw new Error("typed segmented fixture draft is missing");
+  expect(draft.semantic.perspective.anchors).toEqual([
+    name,
+    role,
+    { event_id: eventId, start_utf16: mined.segment.start, end_utf16: mined.segment.end },
+  ]);
+  expect(draft.semantic.anchors).toEqual([name, fact]);
+  expect(draft.semantic.perspective.anchors.some(anchor => anchor.end_utf16 === text.length)).toBe(false);
+});
+
 test("an unsplittable 30k single-token line is skipped with a receipt and the cursor moves on", async () => {
   const token = "k".repeat(30_000);
   const f = vaultWith([recordText(0), token, recordText(2)]);
@@ -302,7 +364,7 @@ test("an unsplittable 30k single-token line is skipped with a receipt and the cu
   // The receipt carries identity and size, never content.
   const stored = JSON.stringify(oversizedRows(f.db));
   expect(stored).not.toContain("kkkk");
-  expect(Object.keys(oversizedRows(f.db)[0] as object).sort()).toEqual(["chars", "done_utf16", "event_id", "pending_end_utf16", "status", "updated_at"]);
+  expect(Object.keys(oversizedRows(f.db)[0] as object).sort()).toEqual(["chars", "done_utf16", "event_id", "pending_end_utf16", "replay_operation_id", "status", "updated_at"]);
 
   // Doctor shows the count and the command; retry re-queues the record and it is decided again.
   expect(inspectServeDoctor(f.db, f.vault).oversized).toEqual({ segmenting: 0, skipped: 1, retry: "kizuki serve retry-skipped",
@@ -424,7 +486,7 @@ test("restore refuses segment offsets inside a surrogate pair", () => {
   const f = vaultWith([text]);
   const [e0] = f.eventIds as [string];
   const row = (fields: Record<string, unknown>) => ({ event_id: e0, status: "segmenting", chars: text.length, done_utf16: 0,
-    pending_end_utf16: null, updated_at: "2026-09-24T12:00:00.000Z", ...fields });
+    pending_end_utf16: null, replay_operation_id: null, updated_at: "2026-09-24T12:00:00.000Z", ...fields });
   const attempt = (name: string, fields: Record<string, unknown>) => {
     const backup = `${f.vault}-${name}-backup`, target = `${f.vault}-${name}-restored`;
     disposers.push(() => spawnSync("rm", ["-rf", backup, target]));

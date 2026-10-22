@@ -1,3 +1,4 @@
+import { modelWireJson } from "../world-model-completion";
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -29,7 +30,7 @@ async function cli(env: Record<string, string | undefined>, ...args: string[]) {
 }
 
 /** One claim anchored on the first three characters of whatever text the request quoted. */
-function typedCompletion(eventId: string): Response {
+function typedCompletion(eventId: string, prompt: string): Response {
   const anchor = { event_id: eventId, start_utf16: 0, end_utf16: 3 };
   const content = {
     schema: "kizuki.producer-response/v2",
@@ -54,7 +55,7 @@ function typedCompletion(eventId: string): Response {
   return Response.json({
     id: "synthetic",
     model: MODEL,
-    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(content) } }],
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: modelWireJson(content, prompt) } }],
     usage: { prompt_tokens: 12, completion_tokens: 8 },
   });
 }
@@ -78,7 +79,7 @@ test("an oversized note is extracted in segments, an unsplittable one is skipped
     const prompt = (request.body as { messages: { content: string }[] }).messages.map((message) => message.content).join("\n");
     const eventId = /event:([0-9A-HJKMNP-TV-Z]{26})/.exec(prompt)?.[1];
     if (eventId === undefined) throw new Error("synthetic prompt fixture mismatch");
-    return typedCompletion(eventId);
+    return typedCompletion(eventId, prompt);
   });
   const database = join(setup.vault, ".kizuki/kizuki.db");
   const receipt = (stdout: string) => {

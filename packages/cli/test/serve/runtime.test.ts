@@ -1,3 +1,4 @@
+import { modelWireJson } from "../world-model-completion";
 import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -91,7 +92,7 @@ async function exerciseModelJourney(mode: "legacy" | "local_only" | "model") {
         const anchor = { event_id: eventId, start_utf16: 0, end_utf16: 3 };
         return Response.json({
           id: "synthetic", object: "chat.completion", created: 1, model: "loopback",
-          choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({
+          choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: modelWireJson({
             schema: "kizuki.producer-response/v2", mentions: [{ id: "m0", label: "Ada", anchor, candidate_refs: [] }], claims: [{
               id: "c0", subject: { kind: "mention", id: "m0" }, predicate: "employment.role",
               object: { kind: "literal", value: "orchard library collaborator" },
@@ -99,7 +100,7 @@ async function exerciseModelJourney(mode: "legacy" | "local_only" | "model") {
               context: [], polarity: "positive", body: "Ada is an orchard library collaborator.", valid_from: null, valid_to: null,
               temporal_basis: "unknown", confidence: 0.7, sensitivity: "personal", anchors: [anchor],
             }],
-          }) } }],
+          }, prompt) } }],
           usage: { prompt_tokens: 10, completion_tokens: 10 },
         });
       }

@@ -64,6 +64,14 @@ regular and not a symlink. It is read privately and used only in request
 headers. The runner records neither its value nor its path. Remote endpoints
 require the explicit `--allow-remote` option and existing authorization.
 
+The prospective Concept/Situation prepared-admission gate uses
+`--protocol core-semantic-v3` and its fixed twelve-case split. This method binds
+the raw transport, private quote-anchor resolution receipt, exact adapter
+source, decoder-derived assistant-text hash, matching receipt model-text hash,
+translated public v2 response, sent windows, and prepared admissions.
+`core-semantic-v2` is historical and the active verifier rejects it; an old
+receipt cannot be relabeled or rescored under v3.
+
 Calls are sequential with at least 61 seconds after the previous HTTP response
 completes and at most 100 selected cases. This exceeds the bridge admission gap
 even when HTTP admission was delayed. The configured bridge must also enforce cross-process daily

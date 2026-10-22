@@ -1,0 +1,18 @@
+{
+  "schema": "kizuki.fresh-core-author-validation/v1",
+  "date": "2026-10-22",
+  "cases": 12,
+  "concept_cases": 6,
+  "situation_cases": 6,
+  "positive_cases": 6,
+  "abstention_cases": 6,
+  "existing_validateCorpus": "passed",
+  "source_span_round_trips": 21,
+  "all_declared_literal_alternatives_satisfy_atoms": true,
+  "parser_valid_synthetic_oracle_exemplars": 36,
+  "parser_exemplar_drops": 0,
+  "model_calls": 0,
+  "qualification_status": "not_run",
+  "note": "Parser exemplars are author-constructed static schema checks, never model observations or evidence of producer quality.",
+  "author_preflight_note": "Initial author-built exemplar omitted exact supplied-subject grounding anchors and failed parser validation. The exemplar builder was corrected to include exact subject and attribution identity anchors. Corpus and oracle expectations were not weakened."
+}

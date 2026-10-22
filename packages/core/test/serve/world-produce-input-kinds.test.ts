@@ -1,3 +1,4 @@
+import { modelQuoteWire } from "../producer/quote-wire-helper";
 import { expect, test } from "bun:test";
 import { createWorldRegistry, worldPredicate } from "../../src/contracts/world-kinds";
 import { WORLD_VOCABULARY_MODULES, withWorldRegistry } from "../../src/contracts/world-vocabulary";
@@ -61,12 +62,12 @@ test("an identical offered predicate shares the legacy row and the actual typed 
   const request = withWorldRegistry(registry, () => worldProduceInput([{ event_id, text } as never], [{ id: "c1", anchors: [anchor] }]));
   expect(request.predicates.filter(row => row.id === "commitment.due")).toEqual([{ id: "commitment.due", object_kinds: ["literal"] }]);
   const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR);
-  const llm = scriptedLlm(() => JSON.stringify({ schema: "kizuki.producer-response/v2", mentions: [], claims: [{
+  const llm = scriptedLlm(() => JSON.stringify(modelQuoteWire({ schema: "kizuki.producer-response/v2", mentions: [], claims: [{
     id: "due", subject: { kind: "supplied", id: "c1" }, predicate: "commitment.due", object: { kind: "literal", value: "2026-02-06" },
     perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] }, context: [],
     polarity: "positive", body: text, valid_from: null, valid_to: null, temporal_basis: "unknown", confidence: 0.8, sensitivity: "personal",
     anchors: [anchor, { event_id, start_utf16: 0, end_utf16: text.length }],
-  }] }));
+  }] }, request.events)));
   const producer = createModelProducerV2Port(temp.ctx, { llm });
   try {
     const result = await producer.produce(request);

@@ -1,3 +1,4 @@
+import { modelWireJson } from "../world-model-completion";
 import { afterEach, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -73,7 +74,7 @@ test("serve binds distinct chat and judge destinations and sends only events con
     const body = request.body as { messages: { content: string }[] };
     const eventId = /event:([0-9A-HJKMNP-TV-Z]{26})/.exec(body.messages[1]!.content)![1]!;
     const anchor = { event_id: eventId, start_utf16: 0, end_utf16: 3 };
-    return defaultChatCompletion(JSON.stringify({
+    return defaultChatCompletion(modelWireJson({
       schema: "kizuki.producer-response/v2",
       mentions: [{ id: "m0", label: "Ada", anchor, candidate_refs: [] }],
       claims: [{ id: "c0", subject: { kind: "mention", id: "m0" }, predicate: "employment.role",
@@ -81,7 +82,7 @@ test("serve binds distinct chat and judge destinations and sends only events con
         perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
         context: [], polarity: "positive", body: "Ada is an orchard library collaborator.",
         valid_from: null, valid_to: null, temporal_basis: "unknown", confidence: 0.8, sensitivity: "private", anchors: [anchor] }],
-    }));
+    }, body.messages[1]!.content));
   });
   let runtime: Awaited<ReturnType<typeof createServeRuntime>> | undefined;
   try {

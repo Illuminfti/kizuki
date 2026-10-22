@@ -837,7 +837,7 @@ describe("help", () => {
         data: { name: string; options: string[]; flags: string[]; irreversible: boolean };
       };
       expect(body.data.name).toBe("serve");
-      expect(body.data.options).toEqual(["--port", "--crash-after"]);
+      expect(body.data.options).toEqual(["--port", "--crash-after", "--plan", "--plan-sha256"]);
       expect(body.data.flags).toEqual(["--once", "--no-http", "--json", "--install", "--uninstall", "--canon-only"]);
       expect(body.data.irreversible).toBe(false);
     }

@@ -851,6 +851,7 @@ usage: kizuki serve [--once] [--no-http] [--port N] [--json] [--install] [--unin
        kizuki serve run <rail> [--json]
        kizuki serve run sync --canon-only [--json]
        kizuki serve retry-skipped [--json]
+       kizuki serve replay-empty --plan FILE --plan-sha256 SHA256 [--json]
 ```
 
 Always-on loop. HTTP is loopback unless `--no-http`. `init` installs the

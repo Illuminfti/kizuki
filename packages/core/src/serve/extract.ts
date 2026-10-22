@@ -1,3 +1,5 @@
+import { activeExtractReplay, activeExtractReplayEvent, ExtractReplayError, recordSegmentSettlement, type ActiveExtractReplay, type SegmentSettlement } from "./extract-replay";
+import { modelProducerFingerprint } from "../producer/fingerprint";
 import { validateWorldGrounding } from "../claims/world-grounding";
 import { groundedWorldInput } from "./world-grounding";
 import { sourcePolicyEpoch, sourceEventsAllowed, isEpochZeroProducerPort, sourcePortBindingDigest } from "../ledger/source-grants";
@@ -20,7 +22,7 @@ import type { InsertClaimInput, InsertClaimResult, PreparedClaimInsert } from ".
 import { compareRfc3339 } from "../agents/time";
 import { readRailCursor } from "../ledger/checkpoints";
 import { advanceExtractCheckpoint } from "./extract-checkpoint";
-import { readEvent, readSince } from "../ledger/ledger";
+import { readEvent, readLiveEvent, readSince } from "../ledger/ledger";
 import type { LedgerCursor } from "../ledger/ledger";
 import { validateEventOrigin, requireExternalEvents, SelfOriginError } from "../ledger/event-origin";
 import { CHARS_PER_TOKEN, EXTRACT_BATCH, MODEL_PRODUCER_ID, planModelExtraction, planModelExtractionV2 } from "../producer";
@@ -113,6 +115,8 @@ export interface MineResult {
   readonly cursor: LedgerCursor | null;
   /** The segment this request carried of a record too large for one request. */
   readonly segment?: RecordSegment;
+  readonly replay?: ActiveExtractReplay;
+  readonly empty_segment_settlement?: SegmentSettlement;
   /** The record passed over because no safe split fits one request. */
   readonly skipped?: SkippedRecord;
   /** Records the cursor passes without a request because they carry no extractable content, by reason. */
@@ -519,6 +523,14 @@ function journalWorldDrafts(
   if (canonicalJson(input) !== canonicalJson(mined.world.input)) {
     throw new Error("extraction inputs changed during model call");
   }
+  // Retain the exact pre-scrub window selected for this call before a segment
+  // decision expands its input back to the immutable full record.
+  const sentEvidenceWindows = mined.world.input.events.map(event => ({
+    event_id: event.event_id,
+    start_utf16: segment?.start ?? 0,
+    end_utf16: segment?.end ?? event.text.length,
+    text: event.text,
+  }));
   // A segment's anchors become record offsets before any draft is prepared.
   const decision = segment === undefined
     ? { input, response: mined.world.response }
@@ -545,6 +557,7 @@ function journalWorldDrafts(
     supplied_refs: planned.refs,
     grounding: planned.grounding,
     witness_event_ids: new Set(events.map(e => e.event_id)),
+    sent_evidence_windows: sentEvidenceWindows,
     model_ref: modelRef,
     admits: semantic => {
       if (worldAssertionViolation(db, semantic, { pending }) !== null) return false;
@@ -790,20 +803,31 @@ export function validateDurableExtractStorage(db: Database): void {
   readStoredExtractBatch(db, false);
 }
 
-function matchingDurableBatch(db: Database, batch: DurableExtractBatch, producer?: ExtractionProducerPort): DurableExtractBatch | null {
+function matchingDurableBatch(db: Database, batch: DurableExtractBatch, producer?: ExtractionProducerPort, checkReplayClaims = true): DurableExtractBatch | null {
   requireAtomicExtractReplay(db);
   if (batch.filing_version === null) throw new LegacyExtractReconciliationError();
   if (batch.authorization_epoch === null || batch.authorization_epoch !== sourcePolicyEpoch(db)) {
     throw new DurableExtractAuthorizationError();
+  }
+  for (const input of batch.model_inputs) {
+    if (producer !== undefined) activeExtractReplay(db, input.event_id, producer, checkReplayClaims);
   }
   const current = readDurableExtractBatch(db, producer);
   return current !== null && integrity(current) === integrity(batch) &&
     JSON.stringify(current.filing_drafts) === JSON.stringify(batch.filing_drafts) ? current : null;
 }
 
-function finishDurableBatch(db: Database, batch: DurableExtractBatch): void {
-  // A segment with text after it files its claims and keeps the cursor before its record.
+function finishDurableBatch(db: Database, batch: DurableExtractBatch, producer?: ExtractionProducerPort, runId?: string): void {
   const segment = journaledSegment(db, batch.model_inputs.map(input => input.event_id));
+  if (segment !== null && tableExists(db, "extract_replay_receipts") && db.query("SELECT 1 FROM extract_oversized_records WHERE event_id=? AND replay_operation_id IS NOT NULL").get(segment.event_id) !== null) {
+    if (producer === undefined || runId === undefined) throw new ExtractReplayError("unsettled_work");
+    const replay = activeExtractReplay(db, segment.event_id, producer, false), event = readLiveEvent(db, segment.event_id);
+    const fingerprint = modelProducerFingerprint(producer);
+    if (replay === null || event === null || fingerprint === null) throw new ExtractReplayError("replay_conflict");
+    recordSegmentSettlement(db, { ...segment, content_hash: event.content_hash, producer_fingerprint: fingerprint,
+      model_binding_digest: sourcePortBindingDigest(producer), replay_operation_id: replay.operation_id }, runId, "nonempty");
+  }
+  // A segment with text after it files its claims and keeps the cursor before its record.
   if (segment === null || !completeSegment(db, segment)) {
     insertDeferred(db, batch.deferred_inputs);
     if (batch.mode === "frontier") advanceExtractCheckpoint(db, EXTRACT_SOURCE_KEY, encodeCursor(batch.cursor));
@@ -822,11 +846,11 @@ function passedOver(mode: DurableExtractBatch["mode"], inputIds: readonly string
 }
 
 /** Complete an already handled decision; extraction filing uses the atomic operation below. */
-export function completeDurableExtractBatch(db: Database, batch: DurableExtractBatch, producer?: ExtractionProducerPort): boolean {
+export function completeDurableExtractBatch(db: Database, batch: DurableExtractBatch, producer?: ExtractionProducerPort, runId?: string): boolean {
   return db.transaction(() => {
     const current = matchingDurableBatch(db, batch, producer);
     if (current === null) return false;
-    finishDurableBatch(db, current);
+    finishDurableBatch(db, current, producer, runId);
     return true;
   }).immediate();
 }
@@ -837,6 +861,7 @@ export function fileAndCompleteDurableExtractBatch(
   batch: DurableExtractBatch,
   producer: ExtractionProducerPort,
   prepared: readonly PreparedClaimInsert[],
+  runId?: string,
 ): InsertClaimResult[] | null {
   if (db.inTransaction) throw new Error("extraction filing requires a top-level transaction");
   return db.transaction(() => {
@@ -849,8 +874,8 @@ export function fileAndCompleteDurableExtractBatch(
     }
     const results = prepared.map(operation => operation.apply());
     // A changed final fence must throw so every prior effect rolls back too.
-    if (matchingDurableBatch(db, current, producer) === null) throw new Error("extract decision changed during filing");
-    finishDurableBatch(db, current);
+    if (matchingDurableBatch(db, current, producer, false) === null) throw new Error("extract decision changed during filing");
+    finishDurableBatch(db, current, producer, runId);
     return results;
   }).immediate();
 }
@@ -942,7 +967,7 @@ export function readExtractCursor(db: Database): string | null {
  * drafts; in that case this pass leaves it alone and its idempotent drafts can
  * be retried safely.
  */
-export function commitExtractCursor(db: Database, mined: MineResult): boolean {
+export function commitExtractCursor(db: Database, mined: MineResult, runId?: string, producer?: ExtractionProducerPort): boolean {
   if (!shouldAdvanceExtractCursor(mined.mined) || mined.cursor === null) return false;
   const boundary = mined.cursor;
   return db.transaction(() => {
@@ -972,9 +997,25 @@ export function commitExtractCursor(db: Database, mined: MineResult): boolean {
     const inputs = mined.model_inputs ?? [];
     if (mode === "deferred" && inputs.some(input => db.query("SELECT 1 FROM extract_deferred_inputs WHERE event_id=?").get(input.event_id) === null)) return false;
     const segment = mined.segment;
+    const activeLink = segment === undefined || !tableExists(db, "extract_replay_receipts") ? null : db.query<{ replay_operation_id: string | null }, [string]>(
+      "SELECT replay_operation_id FROM extract_oversized_records WHERE event_id=?").get(segment.event_id)?.replay_operation_id;
+    if (mined.replay !== undefined || activeLink != null) {
+      const settlement = mined.empty_segment_settlement;
+      if (producer === undefined || runId === undefined || segment === undefined || settlement === undefined || mined.mined.status !== "empty") {
+        throw new ExtractReplayError("segment_changed");
+      }
+      const replay = activeExtractReplay(db, segment.event_id, producer);
+      const event = readLiveEvent(db, segment.event_id);
+      if (replay === null || replay.operation_id !== mined.replay?.operation_id || segment.end > replay.end_utf16 ||
+          settlement.replay_operation_id !== replay.operation_id || settlement.event_id !== segment.event_id ||
+          settlement.start !== segment.start || settlement.end !== segment.end || settlement.chars !== segment.chars ||
+          settlement.content_hash !== event?.content_hash || settlement.producer_fingerprint !== modelProducerFingerprint(producer) ||
+          settlement.model_binding_digest !== sourcePortBindingDigest(producer)) throw new ExtractReplayError("segment_changed");
+    }
     if (segment !== undefined) {
       if (segmentStart(db, segment.event_id) !== segment.start) return false;
       // A segment with text after it keeps the cursor before its record.
+      if (runId !== undefined && mined.empty_segment_settlement !== undefined) recordSegmentSettlement(db, mined.empty_segment_settlement, runId, "empty");
       if (completeSegment(db, segment)) return true;
     }
     if (mode === "deferred") completeDeferredInputs(db, inputs);
@@ -1104,6 +1145,7 @@ async function mineBatch(
   prefiltered: Map<string, PrefilterReason>,
 ): Promise<MineResult> {
   requireAtomicExtractReplay(db);
+  const replayEvent = activeExtractReplayEvent(db, producer);
   const previous_cursor = readExtractCursor(db);
   const source_epoch = sourcePolicyEpoch(db);
   const denied = (): MineResult => ({ mined: { status: "unavailable", reason: "source authorization unavailable" }, drafts: [], previous_cursor, cursor: null });
@@ -1133,6 +1175,7 @@ async function mineBatch(
   }).immediate();
   if (queued.length > 0) {
     usable = queued.filter(event => sourceEventsAllowed(db, [event.event_id], scope));
+    if (replayEvent !== null && usable[0]?.event_id !== replayEvent) throw new ExtractReplayError("segment_changed");
     const held = queued.filter(event => !usable.some(candidate => candidate.event_id === event.event_id));
     db.transaction(() => {
       if (sourcePolicyEpoch(db) !== source_epoch) throw new Error("source authorization changed during extraction");
@@ -1163,6 +1206,7 @@ async function mineBatch(
       if (row === null) throw new Error("deferred extraction input is missing");
       cursor = { event_id: last.event_id, accepted_at: row.accepted_at };
       if (skipping) {
+        if (replayEvent !== null) throw new ExtractReplayError("segment_changed");
         for (const event of usable) prefiltered.set(event.event_id, prefilterReason(event)!);
         return { source_epoch, mined: { status: "empty" }, drafts: [], previous_cursor, cursor,
           input_ids: inputIds, mode, model_inputs: modelInputs, deferred_inputs: [] };
@@ -1171,13 +1215,14 @@ async function mineBatch(
   }
 
   if (usable.length === 0) {
-    const deniedPage = source_epoch === 0 ? null : deniedFrontier(db,parseCursor(previous_cursor),producer,grantOf);
+    const deniedPage = source_epoch === 0 || replayEvent !== null ? null : deniedFrontier(db,parseCursor(previous_cursor),producer,grantOf);
     if (deniedPage !== null && deniedPage.inputs.length >= EXTRACT_BATCH) return { source_epoch, previous_cursor, cursor: deniedPage.cursor,
       mined: {status:"deferred",count:deniedPage.inputs.length}, drafts: [], mode:"frontier",
       input_ids:deniedPage.inputs.map(input=>input.event_id),model_inputs:[],deferred_inputs:deniedPage.inputs,
       denied_frontier:{producer,binding_digest:sourcePortBindingDigest(producer)} };
     const batch = readSince(db, parseCursor(previous_cursor), EXTRACT_BATCH);
     if (batch.events.length === 0 || batch.cursor === null) {
+      if (replayEvent !== null) throw new ExtractReplayError("segment_changed");
       return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: null };
     }
     cursor = batch.cursor;
@@ -1201,6 +1246,7 @@ async function mineBatch(
       .filter(event => !authorizedIds.has(event.event_id))
       .map(event => sourceInput(db, event, producer));
     if (usable.length === 0 && source_epoch > 0) {
+      if (replayEvent !== null) throw new ExtractReplayError("segment_changed");
       return { source_epoch, mined: { status: "deferred", count: deferredInputs.length }, drafts: [],
         previous_cursor, cursor, input_ids: inputIds, mode, model_inputs: [], deferred_inputs: deferredInputs };
     }
@@ -1209,6 +1255,8 @@ async function mineBatch(
         input_ids: inputIds, mode, model_inputs: [], deferred_inputs: [] };
     }
   }
+
+  if (replayEvent !== null && usable[0]?.event_id !== replayEvent) throw new ExtractReplayError("segment_changed");
 
   const knownBySubject = new Map<string, ReturnType<typeof listClaims>>();
   const inputFor = (events: readonly CaptureEvent[]): ProduceInput => {
@@ -1240,7 +1288,7 @@ async function mineBatch(
   let oversized = false;
   if (v2) {
     // A record part-way through its segments never joins a request whole.
-    const resuming = usable.findIndex(event => segmentStart(db, event.event_id) > 0);
+    const resuming = usable.findIndex(event => event.event_id === replayEvent || segmentStart(db, event.event_id) > 0);
     const whole = Math.min(resuming < 0 ? usable.length : resuming, limits.records_per_request);
     for (let count = 1; count <= whole; count++) {
       const candidate = worldInput(db, usable.slice(0, count), limits, producer);
@@ -1368,11 +1416,15 @@ async function mineRecordSegment(
   const start = segmentStart(db, record.event_id), chars = record.text.length;
   // A record without text has nothing to extract, like an empty response.
   if (chars === 0) return { ...base, mined: { status: "empty" }, drafts: [] };
-  const planned = planRecordSegment(db, record, start, limits);
+  const replay = activeExtractReplay(db, record.event_id, producer);
+  const fingerprint = modelProducerFingerprint(producer);
+  const planned = planRecordSegment(db, record, start, limits, replay?.end_utf16);
+  if (replay !== null) base = { ...base, replay };
   // No safe split, or no request that can carry even a small segment: the record
   // is passed over without a request and keeps a retry receipt, so it cannot hold
   // the cursor and `serve retry-skipped` or larger limits can decide it again.
   if (planned === "unsplittable" || planned === "unfit") {
+    if (replay !== null) return { ...base, mined: { status: "unavailable", reason: "approved replay segment does not fit the request budget" }, drafts: [] };
     return { ...base, mined: { status: "skipped", reason: planned === "unsplittable" ? "no safe split fits one request" : "no request fits a segment" },
       drafts: [], skipped: { event_id: record.event_id, chars, done: start } };
   }
@@ -1383,7 +1435,12 @@ async function mineRecordSegment(
   if (!db.transaction(() => extractEligible(db, record)).immediate()) return { ...base, mined: { status: "empty" }, drafts: [] };
   if (produced.status === "unavailable") return { ...base, mined: { status: "unavailable", reason: produced.reason }, drafts: [], segment };
   if (produced.status === "rejected") return { ...base, mined: { status: "rejected", reason: produced.reason }, drafts: [], segment };
-  if (produced.response.claims.length === 0) return { ...base, mined: { status: "empty" }, drafts: [], segment };
+  if (replay !== null) activeExtractReplay(db, record.event_id, producer);
+  if (produced.response.claims.length === 0) return { ...base, mined: { status: "empty" }, drafts: [], segment,
+    ...(fingerprint === null || (produced.dropped?.length ?? 0) !== 0 ? {} : { empty_segment_settlement: {
+      ...segment, content_hash: record.content_hash, producer_fingerprint: fingerprint,
+      model_binding_digest: sourcePortBindingDigest(producer), replay_operation_id: replay?.operation_id ?? null,
+    } }) };
   return { ...base, mined: { status: "ok", count: produced.response.claims.length }, drafts: [], segment,
     world: { input: planned.input, response: produced.response } };
 }
@@ -1398,10 +1455,12 @@ function planRecordSegment(
   record: CaptureEvent,
   start: number,
   limits: WorldRequestLimits,
+  replayEnd?: number,
 ): { readonly input: ProduceInputV2; readonly end: number } | "unsplittable" | "unfit" {
   let limit = MAX_V2_QUOTED_UTF16;
   for (let attempt = 0; attempt < 8 && limit > 0; attempt++) {
-    const end = segmentEnd(record.text, start, limit);
+    const naturalEnd = segmentEnd(record.text, start, limit);
+    const end = naturalEnd === null ? null : Math.min(naturalEnd, replayEnd ?? naturalEnd);
     if (end === null) return "unsplittable";
     let plan: ReturnType<typeof planModelExtractionV2>;
     try { plan = planModelExtractionV2(worldInput(db, [segmentEvent(record, start, end)], limits)); }

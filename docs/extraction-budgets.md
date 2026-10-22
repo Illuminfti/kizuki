@@ -439,6 +439,12 @@ lets the loop decide it again.
 
 ## Restart and authorization
 
+For an independently reviewed repair of an already consumed, successfully empty
+first segment, see [Guarded empty-segment replay](empty-segment-replay.md). This
+narrow operation preserves the global cursor and old evidence and bounds the
+ordinary replay to that prefix. It does not resample a completed qualification or
+turn an empty response into automatic retry.
+
 When only a prefix fits, the durable journal records that exact raw ledger
 boundary, its authorized model inputs and any denied eligible inputs inside
 the boundary. Every remaining raw event stays beyond the extraction cursor.

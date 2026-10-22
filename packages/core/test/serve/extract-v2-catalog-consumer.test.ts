@@ -1,3 +1,4 @@
+import { modelQuoteWire } from "../producer/quote-wire-helper";
 import { expect, test } from "bun:test";
 import { OWNER } from "../../src/agents";
 import { createBudgetTracker } from "../../src/canon/budget";
@@ -49,7 +50,7 @@ async function journey(kind: "person" | "question", occurrence: boolean, supplie
       perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
       context: [], polarity: "positive", body: `${label}: ${String(predicate)}.`, valid_from: null, valid_to: null,
       temporal_basis: "unknown", confidence: 0.8, sensitivity: "public", anchors: [anchor] })) };
-    return JSON.stringify(response);
+    return JSON.stringify(modelQuoteWire(response, input.events));
   });
   const actual = createModelProducerV2Port(context.ctx, { llm });
   const producer = bindSourceModelPort({ ...actual, async produce(value: ProduceInputV2) { input = value; return actual.produce(value); } }, binding);

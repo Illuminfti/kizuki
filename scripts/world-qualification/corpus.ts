@@ -1,2 +1,2 @@
-/** Current fresh split. Earlier reports retain their original immutable corpus bytes. */
-export { qualificationCorpus } from "./corpus-v3";
+/** Current unpublished fresh core split. Historical corpora and reports remain immutable. */
+export { qualificationCorpus } from "./corpus-v5-core";

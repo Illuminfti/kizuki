@@ -9,6 +9,7 @@ import {
 } from "../packages/core/src/index";
 import type { CaptureEvent, Claim, Envelope, RunReceipt, SearchHit } from "../packages/core/src/index";
 import { EXTRACTION_V2_SYSTEM_PROMPT } from "../packages/core/src/producer/prompt-v2";
+import { modelQuoteWire } from "../packages/core/test/producer/quote-wire-helper";
 import type { ExtractResponseV2, RichClaimDraft } from "../packages/core/src/contracts/producer-v2";
 import type { ClaimDraft } from "../packages/core/src/contracts/producer";
 import { eligibleWorldClaim } from "../packages/core/src/world/projection";
@@ -166,7 +167,7 @@ export function inspectRequest(replay: Replay, raw: string): { eventIds: string[
     const actual = subjects.map((subject) => `${subject.subject}:${subject.role}`).sort();
     if (canonicalJson(actual) !== canonicalJson(expected)) replay.event_roles_present = false;
   }
-  return { eventIds: sentIds, response: JSON.stringify(scriptedV2Response(replay.item, replay.response, replay.ids)) };
+  return { eventIds: sentIds, response: JSON.stringify(modelQuoteWire(scriptedV2Response(replay.item, replay.response, replay.ids), replay.item.records.map(record => ({ event_id: replay.ids[record.id]!, text: record.text })))) };
 }
 
 /** Wire adaptation of frozen candidates, never generated from expected answers. */

@@ -10,7 +10,8 @@ import type { LlmPort, ServeContext } from "../../../packages/core/src/index";
 import { openLedger } from "../../../packages/core/src/testing";
 import { LegacyEventsConnector } from "../../../packages/connectors/src/index";
 import { initCommand } from "../../../packages/cli/src/commands/init";
-import type { RichClaimDraft, ProducerV2SuppliedRef } from "../../../packages/core/src/contracts/producer-v2";
+import type { RichClaimDraft } from "../../../packages/core/src/contracts/producer-v2";
+import { modelQuoteWire } from "../../../packages/core/test/producer/quote-wire-helper";
 import { AS_OF, persona } from "./persona";
 import { assertLogicalClock } from "./clock";
 import type { PersonaSize, RecordSpec } from "./persona";
@@ -35,16 +36,20 @@ function scriptedModel(records: RecordSpec[]): LlmPort {
       const user = request.messages.find(message => message.role === "user")!.content;
       const suppliedBlock = /supplied-handles>>>\n(.*?)\n<<<KZ-END/s.exec(user)?.[1];
       if (suppliedBlock === undefined) throw new Error("fixture supplied handles missing");
-      const supplied = JSON.parse(suppliedBlock) as ProducerV2SuppliedRef[];
+      const supplied = JSON.parse(suppliedBlock) as { id: string; anchors: { event_id: string; quote: string; select?: string }[] }[];
+      const events = [...user.matchAll(/<<<KZ-QUOTE ([0-9a-f]{32}) event:([0-9A-HJKMNP-TV-Z]{26})>>>\n([\s\S]*?)\n<<<KZ-END \1>>>/g)]
+        .map(match => ({ event_id: match[2]!, text: match[3]! }));
       const claims: RichClaimDraft[] = [];
-      for (const event of user.matchAll(/event:([0-9A-HJKMNP-TV-Z]{26})>>>\n(.*?)\n<<<KZ-END/gs)) {
-        const eventId = event[1]!, text = event[2]!;
+      for (const event of events) {
+        const eventId = event.event_id, text = event.text;
         const record = records.find(candidate => recordText(candidate) === text);
         // Native corrections/proposals are excluded from extraction by Core.
         if (record === undefined) throw new Error("unexpected fixture model input");
         const ref = supplied.find(candidate => candidate.anchors.some(anchor => anchor.event_id === eventId));
         if (ref === undefined) throw new Error("fixture subject handle missing");
-        const anchor = ref.anchors.find(candidate => candidate.event_id === eventId)!;
+        // The public fixture starts with whole-event evidence. The private wire below
+        // also carries the exact supplied identity descriptor from Core's input.
+        const anchor = { event_id: eventId, start_utf16: 0, end_utf16: text.length };
         const drafts = [...record.claims];
         if (record.kind !== undefined) drafts.unshift({ predicate: `${record.kind}.label`, value: record.label });
         for (const [index, draft] of drafts.entries()) {
@@ -53,7 +58,7 @@ function scriptedModel(records: RecordSpec[]): LlmPort {
             perspective: { holder: null, speaker: null, addressee: null, mode: draft.mode ?? "asserted", interpretation: "explicit", anchors: [] },
             context: [], polarity: "positive", body: `${record.label}: ${draft.value}.`,
             valid_from: record.at, valid_to: draft.until ?? null, temporal_basis: "explicit",
-            confidence: 0.8, sensitivity: record.sensitivity ?? "personal", anchors: [anchor, { event_id: eventId, start_utf16: 0, end_utf16: text.length }],
+            confidence: 0.8, sensitivity: record.sensitivity ?? "personal", anchors: [anchor],
           });
         }
         if (record.kind !== undefined) claims.push({
@@ -64,7 +69,15 @@ function scriptedModel(records: RecordSpec[]): LlmPort {
           valid_to: null,
         });
       }
-      const text = JSON.stringify({ schema: "kizuki.producer-response/v2", mentions: [], claims });
+      const publicResponse = { schema: "kizuki.producer-response/v2", mentions: [], claims };
+      const wire = modelQuoteWire(publicResponse, events) as { claims: { subject: { kind: string; id: string }; anchors: unknown[] }[] };
+      for (const claim of wire.claims) if (claim.subject.kind === "supplied") {
+        const suppliedRef = supplied.find(ref => ref.id === claim.subject.id);
+        const sourceAnchor = suppliedRef?.anchors.find(anchor => events.some(event => event.event_id === anchor.event_id));
+        if (sourceAnchor === undefined) throw new Error("fixture supplied identity anchor missing");
+        claim.anchors.unshift(sourceAnchor);
+      }
+      const text = JSON.stringify(wire);
       return { text, model: MODEL, usage: { input_tokens: Math.ceil(user.length / 4), output_tokens: Math.ceil(text.length / 4) } };
     },
   };

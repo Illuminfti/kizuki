@@ -8,6 +8,7 @@ import {
 } from "../../packages/core/src/index";
 import { initSearch, openLedger, sealLedger } from "../../packages/core/src/internal";
 import { createLegacyEventsConnector, LEGACY_EVENTS_CONNECTOR_ID, type LegacyEventsMapping } from "../../packages/connectors/src/index";
+import { modelQuoteWire } from "../../packages/core/test/producer/quote-wire-helper";
 
 export const EVENTS_PER_TOPIC = 256;
 const SOURCE_KEY = "01J00000000000000000000SRC";
@@ -81,9 +82,10 @@ export function scriptedProducer(vault: string) {
     model_ref: MODEL,
     health: async () => ({ status: "ready", detail: {} }), close: async () => undefined,
     async complete(request) {
-      const mentions = [], claims = [];
+      const mentions = [], claims = [], responseEvidence = new Map<string, string>();
       for (const match of request.messages.map(message => message.content).join("\n").matchAll(/<<<KZ-QUOTE ([0-9a-f]{32}) event:([0-9A-HJKMNP-TV-Z]{26})>>>\n(Topic\d{6})([^\n]*)\n<<<KZ-END \1>>>/g)) {
         observedEvents.add(match[2]!);
+        responseEvidence.set(match[2]!, `${match[3]!}${match[4]!}`);
         const label = match[3]!;
         if (seen.has(label)) continue;
         seen.add(label);
@@ -101,7 +103,9 @@ export function scriptedProducer(vault: string) {
             temporal_basis: "unknown", confidence: .8, sensitivity: "private", anchors: [anchor] });
         }
       }
-      return { text: JSON.stringify({ schema: "kizuki.producer-response/v2", mentions, claims }), model: MODEL, usage: { input_tokens: 10, output_tokens: 20 } };
+      const wire = modelQuoteWire({ schema: "kizuki.producer-response/v2", mentions, claims },
+        [...responseEvidence].map(([event_id, text]) => ({ event_id, text })));
+      return { text: JSON.stringify(wire), model: MODEL, usage: { input_tokens: 10, output_tokens: 20 } };
     },
   };
   const producer = createModelProducerV2Port({

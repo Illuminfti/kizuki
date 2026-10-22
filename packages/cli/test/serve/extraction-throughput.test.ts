@@ -1,3 +1,4 @@
+import { modelWireJson } from "../world-model-completion";
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -28,7 +29,7 @@ async function cli(env: Record<string, string | undefined>, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-function typedCompletion(eventId: string): Response {
+function typedCompletion(eventId: string, prompt: string): Response {
   const anchor = { event_id: eventId, start_utf16: 0, end_utf16: 3 };
   const claim = {
     id: "c0",
@@ -65,7 +66,7 @@ function typedCompletion(eventId: string): Response {
       {
         index: 0,
         finish_reason: "stop",
-        message: { role: "assistant", content: JSON.stringify(content) },
+        message: { role: "assistant", content: modelWireJson(content, prompt) },
       },
     ],
     usage: { prompt_tokens: 12, completion_tokens: 8 },
@@ -103,7 +104,7 @@ test("owner throughput settings drive a multi-request pass through rate limits, 
     const eventId = /event:([0-9A-HJKMNP-TV-Z]{26})/.exec(prompt)?.[1];
     if (eventId === undefined)
       throw new Error("synthetic prompt fixture mismatch");
-    return typedCompletion(eventId);
+    return typedCompletion(eventId, prompt);
   });
   const database = join(setup.vault, ".kizuki/kizuki.db");
   const cursor = () => {

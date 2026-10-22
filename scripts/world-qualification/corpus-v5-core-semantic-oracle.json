@@ -1,0 +1,623 @@
+{
+  "schema": "kizuki.fresh-core-semantic-oracle/v1",
+  "authored_before_observation": true,
+  "synthetic": true,
+  "case_count": 12,
+  "counts_by_kind": {
+    "concept": 6,
+    "situation": 6
+  },
+  "global_requirements": {
+    "status": "ok",
+    "provider_calls_per_case": 1,
+    "dropped_claims": 0,
+    "parser_drops": 0,
+    "unsupported_meanings": 0,
+    "same_subject_structural_and_substantive": true,
+    "negative_claim_count": 0,
+    "positive_requires_kind_label_and_all_details": true,
+    "anchors_use_utf16_offsets": true,
+    "no_owner_identity_is_supplied": true,
+    "no_current_or_completed_inference_without_support": true
+  },
+  "matching_contract": {
+    "baseline": "Existing scoreCase must pass every exact predeclared Meaning tuple. These finite literal alternatives were authored independently, not derived from outputs.",
+    "semantic_atoms": "Each listed atom group is an OR of case-insensitive literal substrings; all groups must occur in the matching detail literal. This is a supplemental check, never a replacement for exact literal matching.",
+    "anchor_requirement": "For each required structural/detail claim, at least one claim anchor in the specified record must cover its fixed label/evidence span. Perspective claims also require at least one perspective anchor covering the declared attribution span. Anchors are exact source UTF-16 coordinates; broader supporting anchors are allowed only if they cover the fixed witness.",
+    "time_witness_requirement": "Each time-case substantive claim must additionally anchor the full date interval witness recorded in time_witness below. Structural labels/classifications stay timeless.",
+    "body_requirement": "Human review must confirm body does not invent owner, current, completion, causal or endorsement facts. Existing score.ts does not score body; an automated body-integrity gate is absent.",
+    "extra_mentions": "Unclaimed mentions are not independently required to be empty; all claims must abstain in negatives."
+  },
+  "cases": [
+    {
+      "case_id": "c-shelter-effect",
+      "expectation": "extract",
+      "target": "entity:c-shelter-effect",
+      "structural_requirements": {
+        "kind": "world/concept",
+        "label": "Shelter effect",
+        "label_span": {
+          "record": "r1",
+          "start_utf16": 21,
+          "end_utf16": 35,
+          "quote": "Shelter effect"
+        },
+        "same_raw_subject_for_all_claims": true,
+        "classification_is_structural_assertion": true
+      },
+      "details": [
+        {
+          "predicate": "concept.definition",
+          "acceptable_literal_values": [
+            "The reduction in wind speed immediately behind a porous hedge.",
+            "Reduced wind speed immediately behind a porous hedge."
+          ],
+          "substantive_atoms_all_required": [
+            [
+              "reduction",
+              "reduced"
+            ],
+            [
+              "wind speed"
+            ],
+            [
+              "behind"
+            ],
+            [
+              "porous hedge"
+            ]
+          ],
+          "evidence_span": {
+            "record": "r1",
+            "start_utf16": 21,
+            "end_utf16": 104,
+            "quote": "Shelter effect means the reduction in wind speed immediately behind a porous hedge."
+          },
+          "forbidden_interpretations": [
+            "Do not assert that the owner planted, owns or uses a hedge."
+          ],
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit",
+            "evidence_span": null
+          },
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown"
+        }
+      ],
+      "forbidden_owner_interpretation": "No supplied source identity is the vault owner; the text asserts no owner preference, activity, commitment or endorsement.",
+      "rationale": "An impersonal explanatory source supports a useful concept; hostile indexing text provides no owner evidence."
+    },
+    {
+      "case_id": "c-kiln-hysteresis",
+      "expectation": "extract",
+      "target": "entity:c-kiln-hysteresis",
+      "structural_requirements": {
+        "kind": "world/concept",
+        "label": "kiln hysteresis",
+        "label_span": {
+          "record": "r1",
+          "start_utf16": 53,
+          "end_utf16": 68,
+          "quote": "kiln hysteresis"
+        },
+        "same_raw_subject_for_all_claims": true,
+        "classification_is_structural_assertion": true
+      },
+      "details": [
+        {
+          "predicate": "concept.definition",
+          "acceptable_literal_values": [
+            "A difference between the temperature at which a controller switches heating on and the temperature at which it switches heating off.",
+            "Different controller temperatures for switching heating on and switching heating off."
+          ],
+          "substantive_atoms_all_required": [
+            [
+              "difference",
+              "different"
+            ],
+            [
+              "temperature",
+              "temperatures"
+            ],
+            [
+              "controller"
+            ],
+            [
+              "heating on"
+            ],
+            [
+              "heating off"
+            ]
+          ],
+          "evidence_span": {
+            "record": "r1",
+            "start_utf16": 53,
+            "end_utf16": 204,
+            "quote": "kiln hysteresis is a difference between the temperature at which a controller switches heating on and the temperature at which it switches heating off."
+          },
+          "forbidden_interpretations": [
+            "No owner skill, practice or endorsement is asserted."
+          ],
+          "perspective": {
+            "holder": "supplied:source-c-kiln-hysteresis",
+            "speaker": "supplied:source-c-kiln-hysteresis",
+            "addressee": null,
+            "mode": "reported",
+            "interpretation": "explicit",
+            "evidence_span": {
+              "record": "r1",
+              "start_utf16": 33,
+              "end_utf16": 47,
+              "quote": "Iona explained"
+            }
+          },
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown"
+        }
+      ],
+      "forbidden_owner_interpretation": "No supplied source identity is the vault owner; the text asserts no owner preference, activity, commitment or endorsement.",
+      "rationale": "An indirect named-source explanation must retain reported perspective and supplied attribution."
+    },
+    {
+      "case_id": "c-floating-pause",
+      "expectation": "extract",
+      "target": "entity:c-floating-pause",
+      "structural_requirements": {
+        "kind": "world/concept",
+        "label": "Floating pause",
+        "label_span": {
+          "record": "r1",
+          "start_utf16": 128,
+          "end_utf16": 142,
+          "quote": "Floating pause"
+        },
+        "same_raw_subject_for_all_claims": true,
+        "classification_is_structural_assertion": true
+      },
+      "details": [
+        {
+          "predicate": "concept.definition",
+          "acceptable_literal_values": [
+            "A silent interval whose length is chosen by the conductor rather than fixed by a metronome.",
+            "A silent interval with conductor-chosen length rather than metronome-fixed length."
+          ],
+          "substantive_atoms_all_required": [
+            [
+              "silent interval"
+            ],
+            [
+              "length"
+            ],
+            [
+              "conductor"
+            ],
+            [
+              "metronome"
+            ]
+          ],
+          "evidence_span": {
+            "record": "r1",
+            "start_utf16": 128,
+            "end_utf16": 237,
+            "quote": "Floating pause as a silent interval whose length is chosen by the conductor rather than fixed by a metronome."
+          },
+          "forbidden_interpretations": [
+            "Do not treat this historical definition as a present policy or an owner practice."
+          ],
+          "perspective": {
+            "holder": "supplied:source-c-floating-pause",
+            "speaker": "supplied:source-c-floating-pause",
+            "addressee": null,
+            "mode": "reported",
+            "interpretation": "explicit",
+            "evidence_span": {
+              "record": "r1",
+              "start_utf16": 90,
+              "end_utf16": 127,
+              "quote": "the Marlow rehearsal handbook defined"
+            }
+          },
+          "valid_from": "2016-01-01T00:00:00Z",
+          "valid_to": "2018-01-01T00:00:00Z",
+          "temporal_basis": "explicit"
+        }
+      ],
+      "forbidden_owner_interpretation": "No supplied source identity is the vault owner; the text asserts no owner preference, activity, commitment or endorsement.",
+      "rationale": "A historical source definition is extractable with its exact validity interval and reported source, without claiming current applicability.",
+      "time_witness": {
+        "record": "r1",
+        "start_utf16": 36,
+        "end_utf16": 88,
+        "quote": "From 2016-01-01T00:00:00Z until 2018-01-01T00:00:00Z"
+      }
+    },
+    {
+      "case_id": "c-name-only",
+      "expectation": "abstain",
+      "category": "name-only",
+      "required_claim_count": 0,
+      "forbidden_interpretations": [
+        "Any Concept or Situation classification, label or detail",
+        "Owner knowledge, preference or participation",
+        "An actual current or completed event inferred from the example"
+      ],
+      "rationale": "Bare names are neither explanations nor evidence of durable conceptual meaning."
+    },
+    {
+      "case_id": "c-template-only",
+      "expectation": "abstain",
+      "category": "template-only",
+      "required_claim_count": 0,
+      "forbidden_interpretations": [
+        "Any Concept or Situation classification, label or detail",
+        "Owner knowledge, preference or participation",
+        "An actual current or completed event inferred from the example"
+      ],
+      "rationale": "Schema words and instructions to fill a glossary are no instantiated concept."
+    },
+    {
+      "case_id": "c-hypothetical-only",
+      "expectation": "abstain",
+      "category": "hypothetical-only",
+      "required_claim_count": 0,
+      "forbidden_interpretations": [
+        "Any Concept or Situation classification, label or detail",
+        "Owner knowledge, preference or participation",
+        "An actual current or completed event inferred from the example"
+      ],
+      "rationale": "An explicitly invented counterfactual does not support an actual concept or adopted terminology."
+    },
+    {
+      "case_id": "s-catalogue-transfer",
+      "expectation": "extract",
+      "target": "entity:s-catalogue-transfer",
+      "structural_requirements": {
+        "kind": "world/situation",
+        "label": "Catalogue transfer",
+        "label_span": {
+          "record": "r1",
+          "start_utf16": 43,
+          "end_utf16": 61,
+          "quote": "Catalogue transfer"
+        },
+        "same_raw_subject_for_all_claims": true,
+        "classification_is_structural_assertion": true
+      },
+      "details": [
+        {
+          "predicate": "situation.objective",
+          "acceptable_literal_values": [
+            "Move the branch catalogue into the replacement search service.",
+            "Transfer the branch catalogue to the replacement search service."
+          ],
+          "substantive_atoms_all_required": [
+            [
+              "branch catalogue"
+            ],
+            [
+              "replacement search service"
+            ],
+            [
+              "move",
+              "transfer"
+            ]
+          ],
+          "evidence_span": {
+            "record": "r1",
+            "start_utf16": 62,
+            "end_utf16": 133,
+            "quote": "Purpose: move the branch catalogue into the replacement search service."
+          },
+          "forbidden_interpretations": [
+            "The transfer is not completed."
+          ],
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit",
+            "evidence_span": null
+          },
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown"
+        },
+        {
+          "predicate": "situation.blocker",
+          "acceptable_literal_values": [
+            "Duplicate shelf codes prevent the final import.",
+            "The final import is blocked by duplicate shelf codes."
+          ],
+          "substantive_atoms_all_required": [
+            [
+              "duplicate shelf codes"
+            ],
+            [
+              "final import"
+            ],
+            [
+              "prevent",
+              "blocked"
+            ]
+          ],
+          "evidence_span": {
+            "record": "r1",
+            "start_utf16": 134,
+            "end_utf16": 191,
+            "quote": "Obstacle: duplicate shelf codes prevent the final import."
+          },
+          "forbidden_interpretations": [
+            "No evidence that the obstacle has been removed."
+          ],
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit",
+            "evidence_span": null
+          },
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown"
+        }
+      ],
+      "forbidden_owner_interpretation": "No supplied source identity is the vault owner; the text asserts no owner preference, activity, commitment or endorsement.",
+      "rationale": "A terse operational source contains a concrete ongoing objective and blocker, with no first-person narrative."
+    },
+    {
+      "case_id": "s-signal-repair",
+      "expectation": "extract",
+      "target": "entity:s-signal-repair",
+      "structural_requirements": {
+        "kind": "world/situation",
+        "label": "Signal cabinet repair",
+        "label_span": {
+          "record": "r1",
+          "start_utf16": 48,
+          "end_utf16": 69,
+          "quote": "Signal cabinet repair"
+        },
+        "same_raw_subject_for_all_claims": true,
+        "classification_is_structural_assertion": true
+      },
+      "details": [
+        {
+          "predicate": "situation.objective",
+          "acceptable_literal_values": [
+            "Restore tram signalling on the west branch.",
+            "Restore signalling for trams on the west branch."
+          ],
+          "substantive_atoms_all_required": [
+            [
+              "restore"
+            ],
+            [
+              "tram",
+              "trams"
+            ],
+            [
+              "signalling"
+            ],
+            [
+              "west branch"
+            ]
+          ],
+          "evidence_span": {
+            "record": "r1",
+            "start_utf16": 48,
+            "end_utf16": 121,
+            "quote": "Signal cabinet repair aims to restore tram signalling on the west branch."
+          },
+          "forbidden_interpretations": [
+            "No owner responsibility, participant role or completion is asserted."
+          ],
+          "perspective": {
+            "holder": "supplied:source-s-signal-repair",
+            "speaker": "supplied:source-s-signal-repair",
+            "addressee": null,
+            "mode": "reported",
+            "interpretation": "explicit",
+            "evidence_span": {
+              "record": "r1",
+              "start_utf16": 28,
+              "end_utf16": 42,
+              "quote": "Nabil reported"
+            }
+          },
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown"
+        },
+        {
+          "predicate": "situation.blocker",
+          "acceptable_literal_values": [
+            "Replacement fuses are still missing, which blocks the repair.",
+            "The repair is blocked by missing replacement fuses."
+          ],
+          "substantive_atoms_all_required": [
+            [
+              "replacement fuses"
+            ],
+            [
+              "missing"
+            ],
+            [
+              "blocks",
+              "blocked"
+            ]
+          ],
+          "evidence_span": {
+            "record": "r1",
+            "start_utf16": 122,
+            "end_utf16": 200,
+            "quote": "He reported that replacement fuses are still missing, which blocks the repair."
+          },
+          "forbidden_interpretations": [
+            "Do not assert repair completion or fuse delivery."
+          ],
+          "perspective": {
+            "holder": "supplied:source-s-signal-repair",
+            "speaker": "supplied:source-s-signal-repair",
+            "addressee": null,
+            "mode": "reported",
+            "interpretation": "explicit",
+            "evidence_span": {
+              "record": "r1",
+              "start_utf16": 28,
+              "end_utf16": 42,
+              "quote": "Nabil reported"
+            }
+          },
+          "valid_from": null,
+          "valid_to": null,
+          "temporal_basis": "unknown"
+        }
+      ],
+      "forbidden_owner_interpretation": "No supplied source identity is the vault owner; the text asserts no owner preference, activity, commitment or endorsement.",
+      "rationale": "A third-party reported situation must remain attributed to its speaker rather than converted to owner activity."
+    },
+    {
+      "case_id": "s-slide-digitisation",
+      "expectation": "extract",
+      "target": "entity:s-slide-digitisation",
+      "structural_requirements": {
+        "kind": "world/situation",
+        "label": "Slide digitisation",
+        "label_span": {
+          "record": "r1",
+          "start_utf16": 97,
+          "end_utf16": 115,
+          "quote": "Slide digitisation"
+        },
+        "same_raw_subject_for_all_claims": true,
+        "classification_is_structural_assertion": true
+      },
+      "details": [
+        {
+          "predicate": "situation.change",
+          "acceptable_literal_values": [
+            "Slide digitisation was paused.",
+            "Digitisation of the slides was paused."
+          ],
+          "substantive_atoms_all_required": [
+            [
+              "paused"
+            ],
+            [
+              "slide",
+              "slides",
+              "digitisation"
+            ]
+          ],
+          "evidence_span": {
+            "record": "r1",
+            "start_utf16": 97,
+            "end_utf16": 167,
+            "quote": "Slide digitisation was paused because the scanner carriage was broken."
+          },
+          "forbidden_interpretations": [
+            "Do not assert completion, later restart, owner leadership or a current pause."
+          ],
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit",
+            "evidence_span": null
+          },
+          "valid_from": "2019-03-01T00:00:00Z",
+          "valid_to": "2019-04-01T00:00:00Z",
+          "temporal_basis": "explicit"
+        },
+        {
+          "predicate": "situation.blocker",
+          "acceptable_literal_values": [
+            "The scanner carriage was broken.",
+            "A broken scanner carriage blocked digitisation."
+          ],
+          "substantive_atoms_all_required": [
+            [
+              "scanner carriage"
+            ],
+            [
+              "broken"
+            ]
+          ],
+          "evidence_span": {
+            "record": "r1",
+            "start_utf16": 97,
+            "end_utf16": 167,
+            "quote": "Slide digitisation was paused because the scanner carriage was broken."
+          },
+          "forbidden_interpretations": [
+            "No repair, current breakage or owner responsibility is supported."
+          ],
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit",
+            "evidence_span": null
+          },
+          "valid_from": "2019-03-01T00:00:00Z",
+          "valid_to": "2019-04-01T00:00:00Z",
+          "temporal_basis": "explicit"
+        }
+      ],
+      "forbidden_owner_interpretation": "No supplied source identity is the vault owner; the text asserts no owner preference, activity, commitment or endorsement.",
+      "rationale": "Historical change and blocker retain their exact bounded interval despite an embedded command to invent completion and ownership.",
+      "time_witness": {
+        "record": "r1",
+        "start_utf16": 43,
+        "end_utf16": 95,
+        "quote": "from 2019-03-01T00:00:00Z until 2019-04-01T00:00:00Z"
+      }
+    },
+    {
+      "case_id": "s-name-only",
+      "expectation": "abstain",
+      "category": "name-only",
+      "required_claim_count": 0,
+      "forbidden_interpretations": [
+        "Any Concept or Situation classification, label or detail",
+        "Owner knowledge, preference or participation",
+        "An actual current or completed event inferred from the example"
+      ],
+      "rationale": "Named folders alone do not establish that any named project exists or is underway."
+    },
+    {
+      "case_id": "s-template-only",
+      "expectation": "abstain",
+      "category": "template-only",
+      "required_claim_count": 0,
+      "forbidden_interpretations": [
+        "Any Concept or Situation classification, label or detail",
+        "Owner knowledge, preference or participation",
+        "An actual current or completed event inferred from the example"
+      ],
+      "rationale": "A blank project form does not instantiate any objective, blocker, status or Situation."
+    },
+    {
+      "case_id": "s-hypothetical-only",
+      "expectation": "abstain",
+      "category": "hypothetical-only",
+      "required_claim_count": 0,
+      "forbidden_interpretations": [
+        "Any Concept or Situation classification, label or detail",
+        "Owner knowledge, preference or participation",
+        "An actual current or completed event inferred from the example"
+      ],
+      "rationale": "Counterfactual training branches must not become actual current or completed situations."
+    }
+  ]
+}

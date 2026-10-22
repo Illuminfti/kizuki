@@ -1,0 +1,565 @@
+{
+  "schema": "kizuki.core-semantic-review/v3",
+  "stage": "prepared_admission",
+  "source_commit": "1a8f17b2f114df4715d2148a164d4a550a0266cd",
+  "independent": true,
+  "status": "passed",
+  "report_sha256": "33a925dd8bff2712ce4aa2979d2f3c598404c9c83dc67961fdbd9ca009c83891",
+  "corpus_sha256": "e1676a7648c001db6a7f143e77e8f29ab70193115c7f086d929029eb3d57cd50",
+  "contract_sha256": "43b309156bf14d634a8d599bb0193ce9e450fb86a598490dcfdf888c5f56164c",
+  "cases": [
+    {
+      "transport_response_sha256": "5e477d0853e58c7c63e54d5f1c763c228ed5e9a4b667bfa378a90fe15f385f9f",
+      "input_manifest_sha256": "a59f933a758ae769cda7e965370e676d4cc1734de067e4174149e6e5e04823f7",
+      "sent_window_manifest_sha256": "cb117eb39ee85dd38c8c2e667971942726c53851728f5ad5dd21b826b03b6642",
+      "prepared_admissions_sha256": "b60e49c7be53a7ec0763cc97246446fa53779aa191b07c105b407e1a484c5e49",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "3146c2e394f0e5c81e10f517b4bd712ab12defeb19ba586e54c5f9366964e182",
+      "transport_model_response_sha256": "3146c2e394f0e5c81e10f517b4bd712ab12defeb19ba586e54c5f9366964e182",
+      "outbound_sha256": "fc5bdc3b397946ea507fec3fedce1657bde9441f04514655591a909555223168",
+      "resolution_receipt_sha256": "f2b6903bafad71bb5de523054d7b43767e9b3f24fae9327ccafb289e79c09627",
+      "translated_response_sha256": "b5ceaf1d3c888be21997dada68b627fb86fd5451408b91e74ca798423865034a",
+      "case_id": "core12-concept-positive-loom-margin",
+      "response_sha256": "b5ceaf1d3c888be21997dada68b627fb86fd5451408b91e74ca798423865034a",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "concept.definition",
+          "atom": "it is a weaving rule",
+          "status": "supported"
+        },
+        {
+          "predicate": "concept.definition",
+          "atom": "edge loops are counted separately from central repeats",
+          "status": "supported"
+        },
+        {
+          "predicate": "concept.definition",
+          "atom": "the separate count precedes calculation of the yarn allowance",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "concept.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "concept.definition",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "the owner created, owns, or endorses Loom Margin",
+          "status": "absent"
+        },
+        {
+          "assertion": "Loom Margin is identical to another concept",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "transport_response_sha256": "fa174c1a148fd3145e12bed3185468b023f4cfdb6419581ef2ebdb3f348f9a1b",
+      "input_manifest_sha256": "937ba670d702d22d4f21bfecf31cdc49bea8ee7c7abd04661c8d12fabe3b2fe1",
+      "sent_window_manifest_sha256": "face04b87e03143517b6f58db1767073faf925572f8a9392aa3bc9a7d1d314ff",
+      "prepared_admissions_sha256": "deeeeb4d72bd47229deccb5171767c6c435ff65dcf841a47925883074add6922",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "c6f65a6d543a28b6eac787719a6402d1ebc953463220bfa1f5e10ced45ade044",
+      "transport_model_response_sha256": "c6f65a6d543a28b6eac787719a6402d1ebc953463220bfa1f5e10ced45ade044",
+      "outbound_sha256": "608c37e507b8173f3c234f75070a121988a4536e2923c54e3644c03be75f1b7d",
+      "resolution_receipt_sha256": "34e5e21bcd6235d99b9d0b1ab838f4e2a5f631780a5c4181c3419dfdcbd1a78b",
+      "translated_response_sha256": "bfc75e97a535d79216555b1cd3affe66b4970efb65b0e132b1f1273af267ee99",
+      "case_id": "core12-concept-reported-bolt-partition",
+      "response_sha256": "bfc75e97a535d79216555b1cd3affe66b4970efb65b0e132b1f1273af267ee99",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "concept.definition",
+          "atom": "it is a fastener testing rule",
+          "status": "supported"
+        },
+        {
+          "predicate": "concept.definition",
+          "atom": "trials are grouped by torque bracket",
+          "status": "supported"
+        },
+        {
+          "predicate": "concept.definition",
+          "atom": "reused bolts are kept in a separate group",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "concept.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "concept.definition",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "the owner reported or endorses Bolt Partition",
+          "status": "absent"
+        },
+        {
+          "assertion": "Elia Merrow is the owner",
+          "status": "absent"
+        },
+        {
+          "assertion": "Bolt Partition is identical to another concept",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "transport_response_sha256": "1634a4cbb190f1f7611ac789ccfbcb0b65513febbc5d8317c0cdb825ad225e4a",
+      "input_manifest_sha256": "003bdf3b8da04c38a9e0ff56c270a1625f6a54d4a95043f55986ea62df973a1b",
+      "sent_window_manifest_sha256": "5b928bc0dee4ef275c555353da46b3ba0aa6b4b1ae444994c384fb92029c7845",
+      "prepared_admissions_sha256": "0b60551c8eec39ffc10d6fb97500d49335ebf278a9ce2ed5e96a13c90c496d42",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "40d9c6f7cd6975494ce703f7e2d2c262550656f09e9dcb9f68483d903d647d1d",
+      "transport_model_response_sha256": "40d9c6f7cd6975494ce703f7e2d2c262550656f09e9dcb9f68483d903d647d1d",
+      "outbound_sha256": "87f860961f2adbc1efa53306f963b07a576b19b974a5b67e5bcb0e9442baf0d4",
+      "resolution_receipt_sha256": "bf16f82a488a438babf05eaacc73e5756fd5297c9d917bc8ff6a7a4cae4716de",
+      "translated_response_sha256": "d81b2fd44d464805c63a7ffc34fa97408e57303cc14f2786f7b5eb259e70f164",
+      "case_id": "core12-concept-historical-loanword-gate",
+      "response_sha256": "d81b2fd44d464805c63a7ffc34fa97408e57303cc14f2786f7b5eb259e70f164",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "concept.definition",
+          "atom": "it is a language annotation rule",
+          "status": "supported"
+        },
+        {
+          "predicate": "concept.definition",
+          "atom": "borrowed words are marked",
+          "status": "supported"
+        },
+        {
+          "predicate": "concept.definition",
+          "atom": "marking precedes counting native syllable patterns",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "concept.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "concept.definition",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "Loanword Gate is current outside the explicit interval",
+          "status": "absent"
+        },
+        {
+          "assertion": "the explicit interval is the lifespan of Loanword Gate",
+          "status": "absent"
+        },
+        {
+          "assertion": "the owner created, owns, or endorses Loanword Gate",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "transport_response_sha256": "28c999d819bce1936ac3680ecccd10b5c41cc6c05bd1a4d7593f3539d3dea035",
+      "input_manifest_sha256": "099597d26aecd6faf23cc3ceb4e26062782ebfc2403e25cb5addcd23056a8f78",
+      "sent_window_manifest_sha256": "917e4ed759e009f11ec25087ca0cf8ac1763e150b8cae87df65c432131cf3ea7",
+      "prepared_admissions_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "transport_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "outbound_sha256": "7f2038f712e6ad9ea48e0fb051b9d9a6a4edd2c30a00be1e86b544e4db0cb98a",
+      "resolution_receipt_sha256": "78d0728f0d87bcbc1b57f88f631c67fc71cbdfd8269e8485af365e9d6d82004d",
+      "translated_response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "case_id": "core12-concept-name-negative-silver-trestle",
+      "response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "status": "passed",
+      "abstention": "confirmed"
+    },
+    {
+      "transport_response_sha256": "f813c11cc524ce9974173e09edacc61cb3e1a6decb791e1ed3787068b8cbde69",
+      "input_manifest_sha256": "80827bd32a8b3af74245414db47f5da5ec7d89f9e73f0b97d3664fbb41fadd9a",
+      "sent_window_manifest_sha256": "741fed2e85fef044a618702915dee7406257bef1110464be7c7f6f34a05d0109",
+      "prepared_admissions_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "transport_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "outbound_sha256": "99a46d6ad6be488eb6ef971283dc7797a5682e8002ce77c57422bd3eaa8c6a40",
+      "resolution_receipt_sha256": "1462619f44fe0d1f9ae3149012e088a4622e1a0d4f48b83ee1d2a0c071b435bc",
+      "translated_response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "case_id": "core12-concept-template-negative-empty-term-card",
+      "response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "status": "passed",
+      "abstention": "confirmed"
+    },
+    {
+      "transport_response_sha256": "faba95816d19ba4a7c8dc5bafac2b43d76c9d5862d2a1dae60234b5466967517",
+      "input_manifest_sha256": "cd83deee1078d2f1b7d9e2106dc86a99915b84f781deceea5bec8086c20dbd30",
+      "sent_window_manifest_sha256": "18d92ebc4def5a85bc317d440ef00d82c3c4d5a11ef387f97fc6fb6731ebf6d6",
+      "prepared_admissions_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "transport_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "outbound_sha256": "c362f957e7651be0a2013ace967a7407b8d7011d842564a456ca114162ba3ea5",
+      "resolution_receipt_sha256": "32e37cad8e8cd11bb78b90a888cc6321997f55f7e0701ec50549a1b2f4656e81",
+      "translated_response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "case_id": "core12-concept-hypothetical-negative-satin-fulcrum",
+      "response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "status": "passed",
+      "abstention": "confirmed"
+    },
+    {
+      "transport_response_sha256": "f6d486f8a8fd7e6858bd9de18b0d9d3410eedaa18d4d6c9aed109062d3283a18",
+      "input_manifest_sha256": "e89946ebfe0c3e9674209922ad15928f0fbda4d2f418b6bdb79c164a1955e19a",
+      "sent_window_manifest_sha256": "91194e161bc76bebd38f67cde1000bfb5a0724ba974339fe9bb30493c26852eb",
+      "prepared_admissions_sha256": "6114a7cd5bacdc6f76f77f8643eabe1d081b9cd2df51bbd3ff5d08472c699a3c",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "56a5b612a2aa334cb13fda77670a9d88b94cc520db7fe878c38e61777aee2fb0",
+      "transport_model_response_sha256": "56a5b612a2aa334cb13fda77670a9d88b94cc520db7fe878c38e61777aee2fb0",
+      "outbound_sha256": "8ae654acf95da2192e3e4f9770c379005310d7ad82ef6d19b8f9c8ef3679fb3d",
+      "resolution_receipt_sha256": "d55e5ffbbf80d65a7c645dd21e5be402f86fff3e76a84990960ad5df34002acd",
+      "translated_response_sha256": "781ef9a2c978c9c4916b92ba127750f78e89b1f6f65e4a81921890aca6237f45",
+      "case_id": "core12-situation-positive-proof-bundle",
+      "response_sha256": "781ef9a2c978c9c4916b92ba127750f78e89b1f6f65e4a81921890aca6237f45",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "situation.objective",
+          "atom": "the stated objective is to collate numbered proof sheets",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.objective",
+          "atom": "collation must precede the press inspection",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.blocker",
+          "atom": "the folding guide is missing",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.blocker",
+          "atom": "the missing folding guide is a stated blocker of Proof Bundle",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.objective",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.blocker",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "the owner owns or leads Proof Bundle",
+          "status": "absent"
+        },
+        {
+          "assertion": "Proof Bundle is complete",
+          "status": "absent"
+        },
+        {
+          "assertion": "the folding guide is damaged rather than missing",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "transport_response_sha256": "47091285e51510ace0c1312d913237737ba11fccdb8386cd8f6947977d430f0b",
+      "input_manifest_sha256": "fd858489393370220cbc2dfe13479244fcf28cda95718fdf33f8ab0d0be7577e",
+      "sent_window_manifest_sha256": "93320b275ebb8108138aea183399154ab1952e223e710c002a8dbbcd19346ab1",
+      "prepared_admissions_sha256": "f95ff5119b0a6049ff68b3d67d2bd9eb87f0d4a97fd9e5615d2fbfa7cbaa8b3d",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "a04cd64ff77c1b8881d5232bf34ebc53ef69af11b7432fa459e6a34a1da63bc8",
+      "transport_model_response_sha256": "a04cd64ff77c1b8881d5232bf34ebc53ef69af11b7432fa459e6a34a1da63bc8",
+      "outbound_sha256": "7ea1d3110709ae854f70b5f56ed6c6d24ac8c3c68da7f49e0fc0e6cc8f0bc9fa",
+      "resolution_receipt_sha256": "cc713aac2f30f21a3be1812bb6e0766ab37e1a70ca12500262379c6a603c084e",
+      "translated_response_sha256": "5d234ae83673e0fa63db8226d3e378a0b80aa22cd3518d19db881db8b65f419b",
+      "case_id": "core12-situation-reported-drain-pass",
+      "response_sha256": "5d234ae83673e0fa63db8226d3e378a0b80aa22cd3518d19db881db8b65f419b",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "situation.objective",
+          "atom": "the stated objective is to flush the west drain line",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.objective",
+          "atom": "flushing must precede the dye test",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.blocker",
+          "atom": "the isolation valve is stuck shut",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.blocker",
+          "atom": "the valve being stuck shut is a stated blocker of Drain Pass",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.objective",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.blocker",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "the owner reported the Drain Pass details",
+          "status": "absent"
+        },
+        {
+          "assertion": "Nadi Corven owns or leads Drain Pass",
+          "status": "absent"
+        },
+        {
+          "assertion": "Drain Pass is complete",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "transport_response_sha256": "ef061ba55331e6221c54b1e60070227e6971d8e57bd677dc107ed06135f69b70",
+      "input_manifest_sha256": "a1c321c40aa5cfe201a4b76808b8422c1068d0da6d91c0dd360c73c0160a79e3",
+      "sent_window_manifest_sha256": "95daa7173d887773c93f4b2ab5b80ae4d4f4a5d6ed5f8d408f11c0a2ff3f00d5",
+      "prepared_admissions_sha256": "2dae23f1fedb2169ce836db090a7bbd0ab6ed3e34878d799b6e8399b016c1712",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "4a7a599f234c0c2bb762fe99b232c81b98a122969ee201f3898d9ac98a0519b9",
+      "transport_model_response_sha256": "4a7a599f234c0c2bb762fe99b232c81b98a122969ee201f3898d9ac98a0519b9",
+      "outbound_sha256": "59b46c0a873c5b74d452eb7b54c4b3a1cc7c6a5e6daab9d8cc78e388fc849fab",
+      "resolution_receipt_sha256": "4c782d231412ce28eefef6d1f7ff84829105678799adb0066a91b42b57f05e89",
+      "translated_response_sha256": "521400ac40f3717a17082073c210cbcf0f4c22ab5d5821d91089511a6912419b",
+      "case_id": "core12-situation-historical-cushion-turn",
+      "response_sha256": "521400ac40f3717a17082073c210cbcf0f4c22ab5d5821d91089511a6912419b",
+      "status": "passed",
+      "atoms": [
+        {
+          "predicate": "situation.objective",
+          "atom": "the stated objective is to fit seat webbing",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.objective",
+          "atom": "fitting the webbing precedes adding foam",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.change",
+          "atom": "the fastening order changed",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.change",
+          "atom": "the former order fastened the rear edge first",
+          "status": "supported"
+        },
+        {
+          "predicate": "situation.change",
+          "atom": "the new order fastened the front edge first",
+          "status": "supported"
+        }
+      ],
+      "literal_consistency": "passed",
+      "body_fidelity": "passed",
+      "evidence": [
+        {
+          "predicate": "world.kind",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.label",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.objective",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        },
+        {
+          "predicate": "situation.change",
+          "anchors_jointly_support_claim": "passed",
+          "role_and_time_supported": "passed"
+        }
+      ],
+      "unsupported_additions": [],
+      "legacy_extras": [],
+      "forbidden_assertions": [
+        {
+          "assertion": "Cushion Turn is current outside the explicit interval",
+          "status": "absent"
+        },
+        {
+          "assertion": "the explicit interval is the lifespan of Cushion Turn",
+          "status": "absent"
+        },
+        {
+          "assertion": "the owner owns or leads Cushion Turn",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "transport_response_sha256": "b5f7f8c6644ad7128aa8b8186f89c90db54a27b87a6924a97de760c488a37649",
+      "input_manifest_sha256": "6874fc9575e3b9f5014f05a75e4c637a7fa9f6da853f6516eae6d56ad022ddf5",
+      "sent_window_manifest_sha256": "48b90888f3af753d774b16b66fc30efc08ab1b69448221a823ce14971c2e5d79",
+      "prepared_admissions_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "transport_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "outbound_sha256": "0a42c943d8752df623f79f24ccf46f277bea900c739a9bddf1bf184ac58331df",
+      "resolution_receipt_sha256": "a16018afe048d84b2e1e03d32b09fc5ae49203b33ebf179fa5cbcbef0d49d041",
+      "translated_response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "case_id": "core12-situation-name-negative-ochre-pocket",
+      "response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "status": "passed",
+      "abstention": "confirmed"
+    },
+    {
+      "transport_response_sha256": "7296bc04aa3c6c89e80d7a121ee99c46d8bdce0269a9b866af37d3395631f8be",
+      "input_manifest_sha256": "8cadb6bb427c9aca4b901147dd2c5cecb4d6e32fb3a3234052404c03edb64d1b",
+      "sent_window_manifest_sha256": "e8c9da5ff47f880a33d74f0417e12982279ba8d1d97f488181c8cc3fc7907ad6",
+      "prepared_admissions_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "transport_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "outbound_sha256": "62bbdba315bce95d1fdb9dab06925aed6406b2e0230d1efb364537da9bbc0557",
+      "resolution_receipt_sha256": "498d7c8f432b5d5f8961897aed313e6ba46be2e9baf83c40a1c36a750d774214",
+      "translated_response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "case_id": "core12-situation-template-negative-empty-work-card",
+      "response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "status": "passed",
+      "abstention": "confirmed"
+    },
+    {
+      "transport_response_sha256": "b65b19dcefdc8896a09bf447467e028155f774c441954f7180a9f795e26bfc0c",
+      "input_manifest_sha256": "898551c4a29450d1efd127f9ce68c461ab818fb0f9d176290428a3113e1ace66",
+      "sent_window_manifest_sha256": "7794d9e3431a03c25eaecf62aed41ffffc0d7dd31669795352335fa0f7c58df3",
+      "prepared_admissions_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "wire_schema": "kizuki.model-extraction/quote-anchors-v1",
+      "receipt_schema": "kizuki.model-extraction-anchor-resolution/v1",
+      "adapter_source_sha256": "dd3116c120ef51a89ac9c736119bde450dc52efbb3546c951041ecba3813e859",
+      "raw_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "transport_model_response_sha256": "ef0225e362d406f91096aae0dd50756ca01643310a1e35add00adf29c4425413",
+      "outbound_sha256": "e90f7f919d7b63bdd06abed2905bbd0ea8cfe740eef3e68610462e91ee2d2137",
+      "resolution_receipt_sha256": "dceaeb039bcdc5bfbcf68aa9ba81f1b16415bb6b073d0d023bd7f7c8ea948b7e",
+      "translated_response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "case_id": "core12-situation-hypothetical-negative-indigo-bracket",
+      "response_sha256": "65e5c329b24f07e8d13648306394c20cbd0883ce2f03bfe7e97b206b0c74f285",
+      "status": "passed",
+      "abstention": "confirmed"
+    }
+  ]
+}

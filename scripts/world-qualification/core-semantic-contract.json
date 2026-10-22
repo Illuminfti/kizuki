@@ -1,0 +1,494 @@
+{
+  "schema": "kizuki.core-semantic-contract/v1",
+  "corpus_version": "core12-prospective-unseen-20261022",
+  "automated_gate": {
+    "required": [
+      "all twelve ordered cases observed exactly once",
+      "status ok and a response for every case",
+      "public producer-v2 parser accepts the response with zero parser drops",
+      "observation reports zero downstream drops",
+      "exactly one measured call with finite nonnegative token counts inside request budget",
+      "response hash is bound into the review",
+      "negative cases contain zero claims",
+      "positive cases contain every contracted typed predicate exactly once on one canonical target",
+      "classification, label, attribution, evidence, and explicit time satisfy the case contract",
+      "any additional claim uses a production-offered legacy predicate and is not a forbidden identity merge or ownership predicate",
+      "each attributed typed claim covers its authored reporting-role witness with its actual prepared admission anchors; raw per-claim role citation gaps remain separately reported",
+      "actual public prepareWorldDrafts runs both original-guard and host-sent-window paths against independent fresh synthetic ledgers with the journal registry callback",
+      "both preparations return zero drops and one admission per raw claim without changed semantic fields beyond ordinary reference resolution and exact post-original-guard perspective-window addition",
+      "exact sent windows, original anchors, per-item and aggregate admission anchor caps are preserved"
+    ],
+    "success_without_review": "pending_manual_review"
+  },
+  "attribution_profiles": {
+    "direct": {
+      "holder": null,
+      "speaker": null,
+      "addressee": null,
+      "modes": [
+        "asserted"
+      ],
+      "interpretation": "explicit",
+      "perspective_anchors": "may be empty or contain valid source anchors; independent review decides whether any supplied anchors support rather than contradict the proposition"
+    },
+    "person_statement": {
+      "holder": "null or the same exact grounded source ref as speaker; neither rendering is required over the other",
+      "speaker": "the authored supplied ref, or the one exact unique mention explicitly declared as its permissible occurrence alternative; the alternative does not assert durable identity",
+      "addressee": null,
+      "modes": [
+        "reported",
+        "quoted"
+      ],
+      "interpretation": "explicit",
+      "perspective_anchors": "must ground the contracted speaker ref and jointly support the speaker role; mention-mode cases declare a separate attribution_witness"
+    },
+    "document_report": {
+      "holder": "the exact supplied source ref named by the case",
+      "speaker": "null unless separately grounded; these cases provide none",
+      "addressee": "null unless separately grounded; these cases provide none",
+      "modes": [
+        "reported"
+      ],
+      "interpretation": "explicit",
+      "perspective_anchors": "must ground the supplied holder"
+    }
+  },
+  "temporal_profiles": {
+    "unknown": {
+      "valid_from": null,
+      "valid_to": null,
+      "temporal_basis": "unknown"
+    },
+    "explicit_interval": "exact RFC3339 equality; valid_to is exclusive"
+  },
+  "legacy_extra_policy": {
+    "eligible": "only predicates in the production PREDICATE_REGISTRY; world.kind and offered typed predicates are never extras",
+    "forbidden_predicates": [
+      "identity.same_as",
+      "project.owns"
+    ],
+    "automated": "the public parser must accept every extra with no drop; contracted typed claims keep their exact predicate, target, structure, attribution, and time checks",
+    "manual": "the independent reviewer must separately approve every extra claim's literal, body, references, anchors, role, time, and source entailment, and must reject unsupported ownership, authority, identity merge, or other additions"
+  },
+  "manual_gate": {
+    "independent": true,
+    "bound_to": [
+      "report_sha256",
+      "contract_sha256",
+      "corpus_sha256",
+      "ordered case_id and response_sha256",
+      "source_commit",
+      "evaluation stage prepared_admission",
+      "ordered case transport_response_sha256",
+      "ordered case input_manifest_sha256 and sent_window_manifest_sha256",
+      "ordered case prepared_admissions_sha256"
+    ],
+    "per_positive_case": [
+      "For each required detail atom, the claim's closed typed subject/predicate/object proposition R_P(S, O) entails the atom using only the bound identity of S, the exact relation and direction of P in semantic_method, and facts entailed by O.value. P supplies only that relation; S supplies only bound identity. O.value supplies every entity, property, state, quantity, comparison, modality, negation, scope, ordering, and other domain qualifier absent from the relation. Body, anchors, source window, neighboring claims, and structured polarity, perspective/role, context, or valid-time fields cannot repair missing domain meaning. Unmapped predicates borrow no meaning; classification and legacy extras retain their separate existing checks.",
+      "the claim literal does not contradict the automated structured polarity, attribution, or time fields; it need not duplicate those fields in prose",
+      "the body faithfully renders the claim's closed typed subject/predicate/object proposition under semantic_method without changing its meaning or adding unsupported content; it cannot complete a missing domain fact or qualifier in O.value",
+      "for every claim, the actual prepared admission anchors jointly support the proposition and every required atom, plus the exact actor, role and explicit time; unrelated reporting words elsewhere in a sent window are insufficient",
+      "neither literal nor body contains an unsupported addition",
+      "neither literal nor body contains a forbidden assertion",
+      "every legacy extra receives its own exact claim-hash-bound literal/body/reference/anchor/role/time/source-entailment review",
+      "each typed claim separately preserves its own source role and valid time; a source-reported name stays visibly qualified in consumer relations and is never promoted to a bare display label",
+      "raw per-claim citation gaps remain separately visible and are never described as model-authored context",
+      "the original literal guard has not been bypassed or upgraded and no semantic fact, role or time was added by normalization"
+    ],
+    "per_negative_case": [
+      "the exact response contains no claim"
+    ],
+    "success": "passed only when every automated and manual check passes"
+  },
+  "cases": [
+    {
+      "case_id": "core12-concept-positive-loom-margin",
+      "expectation": "extract",
+      "target": {
+        "mode": "mention",
+        "record": "r1",
+        "quote": "Loom Margin"
+      },
+      "classification": {
+        "kind": "world/concept",
+        "label": "Loom Margin",
+        "witness": "Loom Margin — Concept",
+        "perspective": "direct",
+        "time": "unknown"
+      },
+      "details": [
+        {
+          "predicate": "concept.definition",
+          "object_kind": "literal",
+          "witness": "a weaving rule that counts edge loops separately from central repeats before calculating the yarn allowance",
+          "required_atoms": [
+            "it is a weaving rule",
+            "edge loops are counted separately from central repeats",
+            "the separate count precedes calculation of the yarn allowance"
+          ],
+          "perspective": "direct",
+          "time": "unknown"
+        }
+      ],
+      "forbidden_assertions": [
+        "the owner created, owns, or endorses Loom Margin",
+        "Loom Margin is identical to another concept"
+      ]
+    },
+    {
+      "case_id": "core12-concept-reported-bolt-partition",
+      "expectation": "extract",
+      "target": {
+        "mode": "mention",
+        "record": "r1",
+        "quote": "Bolt Partition"
+      },
+      "classification": {
+        "kind": "world/concept",
+        "label": "Bolt Partition",
+        "witness": "Bolt Partition — Concept",
+        "perspective": "direct",
+        "time": "unknown"
+      },
+      "details": [
+        {
+          "predicate": "concept.definition",
+          "object_kind": "literal",
+          "witness": "a fastener testing rule that groups trials by torque bracket while keeping reused bolts in a separate group",
+          "required_atoms": [
+            "it is a fastener testing rule",
+            "trials are grouped by torque bracket",
+            "reused bolts are kept in a separate group"
+          ],
+          "perspective": "person_statement",
+          "time": "unknown",
+          "source": "source-core12-concept-reported",
+          "attribution_witness": "Elia Merrow reported",
+          "equivalent_mention": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Elia Merrow",
+            "label": "Elia Merrow",
+            "attribution_witness": "Elia Merrow reported"
+          }
+        }
+      ],
+      "forbidden_assertions": [
+        "the owner reported or endorses Bolt Partition",
+        "Elia Merrow is the owner",
+        "Bolt Partition is identical to another concept"
+      ]
+    },
+    {
+      "case_id": "core12-concept-historical-loanword-gate",
+      "expectation": "extract",
+      "target": {
+        "mode": "mention",
+        "record": "r1",
+        "quote": "Loanword Gate"
+      },
+      "classification": {
+        "kind": "world/concept",
+        "label": "Loanword Gate",
+        "witness": "Loanword Gate — Concept",
+        "perspective": "direct",
+        "time": {
+          "valid_from": "2013-05-17T08:35:00.000Z",
+          "valid_to": "2013-07-29T16:50:00.000Z",
+          "temporal_basis": "explicit",
+          "witness": "interval beginning 2013-05-17T08:35:00.000Z and ending exclusively at 2013-07-29T16:50:00.000Z"
+        }
+      },
+      "details": [
+        {
+          "predicate": "concept.definition",
+          "object_kind": "literal",
+          "witness": "a language annotation rule that marks borrowed words before counting native syllable patterns",
+          "required_atoms": [
+            "it is a language annotation rule",
+            "borrowed words are marked",
+            "marking precedes counting native syllable patterns"
+          ],
+          "perspective": "document_report",
+          "time": {
+            "valid_from": "2013-05-17T08:35:00.000Z",
+            "valid_to": "2013-07-29T16:50:00.000Z",
+            "temporal_basis": "explicit",
+            "witness": "interval beginning 2013-05-17T08:35:00.000Z and ending exclusively at 2013-07-29T16:50:00.000Z"
+          },
+          "source": "source-core12-concept-historical",
+          "attribution_witness": "Annotation ledger AL-46 states"
+        }
+      ],
+      "forbidden_assertions": [
+        "Loanword Gate is current outside the explicit interval",
+        "the explicit interval is the lifespan of Loanword Gate",
+        "the owner created, owns, or endorses Loanword Gate"
+      ]
+    },
+    {
+      "case_id": "core12-concept-name-negative-silver-trestle",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Silver Trestle is a concept",
+        "Silver Trestle has an asserted definition"
+      ]
+    },
+    {
+      "case_id": "core12-concept-template-negative-empty-term-card",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "the empty card establishes a concept",
+        "INSERT TERM or INSERT MEANING is an asserted concept label or definition"
+      ]
+    },
+    {
+      "case_id": "core12-concept-hypothetical-negative-satin-fulcrum",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Satin Fulcrum is an actual or adopted concept",
+        "Satin Fulcrum has an asserted definition"
+      ]
+    },
+    {
+      "case_id": "core12-situation-positive-proof-bundle",
+      "expectation": "extract",
+      "target": {
+        "mode": "mention",
+        "record": "r1",
+        "quote": "Proof Bundle"
+      },
+      "classification": {
+        "kind": "world/situation",
+        "label": "Proof Bundle",
+        "witness": "Proof Bundle — Situation",
+        "perspective": "direct",
+        "time": "unknown"
+      },
+      "details": [
+        {
+          "predicate": "situation.objective",
+          "object_kind": "literal",
+          "witness": "collate the numbered proof sheets before the press inspection",
+          "required_atoms": [
+            "the stated objective is to collate numbered proof sheets",
+            "collation must precede the press inspection"
+          ],
+          "perspective": "direct",
+          "time": "unknown"
+        },
+        {
+          "predicate": "situation.blocker",
+          "object_kind": "literal",
+          "witness": "the folding guide is missing",
+          "required_atoms": [
+            "the folding guide is missing",
+            "the missing folding guide is a stated blocker of Proof Bundle"
+          ],
+          "perspective": "direct",
+          "time": "unknown"
+        }
+      ],
+      "forbidden_assertions": [
+        "the owner owns or leads Proof Bundle",
+        "Proof Bundle is complete",
+        "the folding guide is damaged rather than missing"
+      ]
+    },
+    {
+      "case_id": "core12-situation-reported-drain-pass",
+      "expectation": "extract",
+      "target": {
+        "mode": "mention",
+        "record": "r1",
+        "quote": "Drain Pass"
+      },
+      "classification": {
+        "kind": "world/situation",
+        "label": "Drain Pass",
+        "witness": "Drain Pass — Situation",
+        "perspective": "direct",
+        "time": "unknown"
+      },
+      "details": [
+        {
+          "predicate": "situation.objective",
+          "object_kind": "literal",
+          "witness": "flush the west drain line before the dye test",
+          "required_atoms": [
+            "the stated objective is to flush the west drain line",
+            "flushing must precede the dye test"
+          ],
+          "perspective": "person_statement",
+          "time": "unknown",
+          "source": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Nadi Corven",
+            "label": "Nadi Corven",
+            "attribution_witness": "Nadi Corven reported"
+          },
+          "attribution_witness": "Nadi Corven reported"
+        },
+        {
+          "predicate": "situation.blocker",
+          "object_kind": "literal",
+          "witness": "the isolation valve is stuck shut",
+          "required_atoms": [
+            "the isolation valve is stuck shut",
+            "the valve being stuck shut is a stated blocker of Drain Pass"
+          ],
+          "perspective": "person_statement",
+          "time": "unknown",
+          "source": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Nadi Corven",
+            "label": "Nadi Corven",
+            "attribution_witness": "Nadi Corven reported"
+          },
+          "attribution_witness": "Nadi Corven reported"
+        }
+      ],
+      "forbidden_assertions": [
+        "the owner reported the Drain Pass details",
+        "Nadi Corven owns or leads Drain Pass",
+        "Drain Pass is complete"
+      ]
+    },
+    {
+      "case_id": "core12-situation-historical-cushion-turn",
+      "expectation": "extract",
+      "target": {
+        "mode": "mention",
+        "record": "r1",
+        "quote": "Cushion Turn"
+      },
+      "classification": {
+        "kind": "world/situation",
+        "label": "Cushion Turn",
+        "witness": "Cushion Turn — Situation",
+        "perspective": "direct",
+        "time": {
+          "valid_from": "2015-09-08T07:15:00.000Z",
+          "valid_to": "2015-10-21T18:40:00.000Z",
+          "temporal_basis": "explicit",
+          "witness": "interval beginning 2015-09-08T07:15:00.000Z and ending exclusively at 2015-10-21T18:40:00.000Z"
+        }
+      },
+      "details": [
+        {
+          "predicate": "situation.objective",
+          "object_kind": "literal",
+          "witness": "fit seat webbing before adding foam",
+          "required_atoms": [
+            "the stated objective is to fit seat webbing",
+            "fitting the webbing precedes adding foam"
+          ],
+          "perspective": "document_report",
+          "time": {
+            "valid_from": "2015-09-08T07:15:00.000Z",
+            "valid_to": "2015-10-21T18:40:00.000Z",
+            "temporal_basis": "explicit",
+            "witness": "interval beginning 2015-09-08T07:15:00.000Z and ending exclusively at 2015-10-21T18:40:00.000Z"
+          },
+          "source": "source-core12-situation-historical",
+          "attribution_witness": "Upholstery log UL-58 states"
+        },
+        {
+          "predicate": "situation.change",
+          "object_kind": "literal",
+          "witness": "the fastening order changed from the rear edge first to the front edge first",
+          "required_atoms": [
+            "the fastening order changed",
+            "the former order fastened the rear edge first",
+            "the new order fastened the front edge first"
+          ],
+          "perspective": "document_report",
+          "time": {
+            "valid_from": "2015-09-08T07:15:00.000Z",
+            "valid_to": "2015-10-21T18:40:00.000Z",
+            "temporal_basis": "explicit",
+            "witness": "interval beginning 2015-09-08T07:15:00.000Z and ending exclusively at 2015-10-21T18:40:00.000Z"
+          },
+          "source": "source-core12-situation-historical",
+          "attribution_witness": "Upholstery log UL-58 states"
+        }
+      ],
+      "forbidden_assertions": [
+        "Cushion Turn is current outside the explicit interval",
+        "the explicit interval is the lifespan of Cushion Turn",
+        "the owner owns or leads Cushion Turn"
+      ]
+    },
+    {
+      "case_id": "core12-situation-name-negative-ochre-pocket",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Ochre Pocket is a situation",
+        "Ochre Pocket has an asserted objective, blocker, state, or change"
+      ]
+    },
+    {
+      "case_id": "core12-situation-template-negative-empty-work-card",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "the empty card establishes an actual situation",
+        "INSERT TITLE, INSERT AIM, INSERT OBSTACLE, or INSERT REVISION is an asserted situation fact"
+      ]
+    },
+    {
+      "case_id": "core12-situation-hypothetical-negative-indigo-bracket",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Indigo Bracket is an actual situation",
+        "Indigo Bracket has an asserted objective, blocker, state, or change"
+      ]
+    }
+  ],
+  "protocol": "core-semantic-v3",
+  "evaluation_stage": "prepared_admission",
+  "raw_citation_precision": {
+    "stage": "raw_model",
+    "required_reporting_role_coverage": "assess the raw claim and raw perspective anchors independently, before host context addition",
+    "reported_separately": true,
+    "normalization_does_not_relabel_raw_pass": true
+  },
+  "semantic_method": {
+    "method": "typed-subject-predicate-object/v1",
+    "interpretation": "Each relation contributes only its declared direction; subject contributes only bound identity; literal supplies every domain fact and qualifier. Body, anchors, source window, neighboring claims and structured role/time fields cannot repair missing domain meaning. Existing independent gates remain mandatory.",
+    "relations": {
+      "concept.label": {
+        "subject": "concept",
+        "object": "literal",
+        "relation": "S is named O"
+      },
+      "concept.definition": {
+        "subject": "concept",
+        "object": "literal",
+        "relation": "O is a stated definition of S"
+      },
+      "situation.label": {
+        "subject": "situation",
+        "object": "literal",
+        "relation": "S is named O"
+      },
+      "situation.objective": {
+        "subject": "situation",
+        "object": "literal",
+        "relation": "O is a stated objective of S"
+      },
+      "situation.blocker": {
+        "subject": "situation",
+        "object": "literal",
+        "relation": "O is a stated blocker of S"
+      },
+      "situation.change": {
+        "subject": "situation",
+        "object": "literal",
+        "relation": "O is a stated change in S"
+      }
+    },
+    "unmapped_predicates": "No relation meaning may be borrowed. Classification stays separately checked; legacy extras retain their separate exact full-claim independent review."
+  }
+}

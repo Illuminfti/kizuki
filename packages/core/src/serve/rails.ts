@@ -40,9 +40,10 @@ import {
 } from "./types";
 import { STOP_REQUESTED, runWritePass, runCanonWritePass } from "./write-pass";
 import { LegacyExtractReconciliationError } from "./extract";
+import { activeExtractReplayEvent, ExtractReplayError } from "./extract-replay";
 
 export type { AnyRailHooks, RailHooks, RailHooksV2, RailRefreshReport, RailRuntime, RailRuntimeV2, RailSyncDrain, RailSyncResult } from "./rail-hooks";
-import type { AnyRailHooks, RailHooks, RailHooksV2, RailRefreshReport, RailRuntime, RailRuntimeV2 } from "./rail-hooks";
+import type { AnyRailHooks, RailHooks, RailHooksV2, RailRefreshReport, RailRuntime, RailRuntimeV2, RailSyncResult } from "./rail-hooks";
 
 type AnyRailRuntime = RailRuntime | RailRuntimeV2;
 
@@ -127,15 +128,27 @@ export async function runSyncRail(context: RailRunContext): Promise<Partial<RunR
   const { db, vault_path: vaultPath, budget, config, hooks, run_id: runId, now, stop_requested: stopRequested } = context;
   const { extraction } = config;
   const canonOnly = context.sync_mode === "canon-only";
+  const noSync: RailSyncResult = {
+    events_synced: 0,
+    events_stored: 0,
+    events_duplicate: 0,
+    events_self_skipped: 0,
+    errors: [] as string[],
+  };
+  let replayActive = false;
+  if (!canonOnly) {
+    try { replayActive = activeExtractReplayEvent(db, hooks?.producer) !== null; }
+    catch (error) {
+      if (error instanceof ExtractReplayError) {
+        return { ...noSync, status: "stopped", stopped: `extract:${error.code}`,
+          model: { ...emptyRunTotals().model, model_ref: hooks?.model_ref ?? null } };
+      }
+      throw error;
+    }
+  }
   const synced =
-    canonOnly || hooks?.sync === undefined
-      ? {
-          events_synced: 0,
-          events_stored: 0,
-          events_duplicate: 0,
-          events_self_skipped: 0,
-          errors: [] as string[],
-        }
+    canonOnly || replayActive || hooks?.sync === undefined
+      ? noSync
       : await hooks.sync({
           deadline_ms: config.connector_drain_seconds * 1_000,
           max_batches: config.connector_drain_batches,

@@ -73,7 +73,12 @@ the reader's asserted-classification and asserted-label rules.
 `packages/core/test/serve/extract-v2-perspective.test.ts` exercises the actual
 producer adapter, writer and public reader with scripted responses: historical
 mixed-perspective Situations, reported kind/label distinctions, revocation,
-purge, consolidation non-promotion and incomplete-template abstention. These
+purge, consolidation non-promotion and incomplete-template abstention. Long
+quoted conversations also retain an evidenced project's reported `project.status`
+and a reported Concept definition despite surrounding instructions. A static
+condition is not relabeled as a blocker or change; a count or queue name alone
+does not establish a project. Instruction-only, bare-label, count-only and hypothetical-only
+scripted abstentions remain empty. These
 regressions prove pipeline behavior; they do not establish that a real model
 chooses the correct perspective or abstains on those inputs.
 

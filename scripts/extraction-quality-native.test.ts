@@ -14,6 +14,7 @@ import {
 import { buildExtractionV2Messages } from "../packages/core/src/producer/prompt-v2";
 import { parseExtractResponseV2 } from "../packages/core/src/contracts/producer-v2";
 import { worldProduceInput } from "../packages/core/src/serve/extract-v2";
+import { modelQuoteWire } from "../packages/core/test/producer/quote-wire-helper";
 
 const corpus = loadCorpus(join(import.meta.dir, "fixtures/extraction-quality-v1.json"));
 const directories: string[] = [];
@@ -76,7 +77,7 @@ test("v2 wire adaptation preserves candidates, exact witnesses and unknown time 
       object: claim.object, valid_from: claim.valid_from, valid_to: claim.valid_to })));
     const replay: Replay = { item, response, ids, behavior: "normal", requests: [], event_roles_present: true, errors: [] };
     const request = { model: "quality-scripted", messages: buildExtractionV2Messages(input, "a".repeat(32)) };
-    expect(JSON.parse(inspectRequest(replay, JSON.stringify(request)).response)).toEqual(wire);
+    expect(JSON.parse(inspectRequest(replay, JSON.stringify(request)).response)).toEqual(modelQuoteWire(wire, item.records.map(record => ({ event_id: ids[record.id]!, text: record.text }))));
     expect(replay.event_roles_present).toBe(false);
     expect(() => inspectRequest(replay, JSON.stringify({ ...request, messages: [{ role: "system", content: "v1 or wrong prompt" }, request.messages[1]] }))).toThrow("prompt contract changed");
     expect(() => inspectRequest(replay, JSON.stringify(request).replace(item.records[0]!.text, "fabricated text"))).toThrow("altered fixture evidence");

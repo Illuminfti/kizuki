@@ -1,3 +1,4 @@
+import { EXTRACT_REPLAY_BACKUPS, extractReplayBackupRows, restoreExtractReplayRow, validateRestoredReplayLink } from "./serve/extract-replay";
 import { beginForecastRestore } from "./world/tables/forecasts";
 import { validateForecastJournal } from "./world/forecast/validate";
 import { beginClaimHistoryRestore, prepareClaimHistoryImport, finishClaimHistoryRestore } from "./world/tables/known";
@@ -5,7 +6,7 @@ import { applyCanonClaimRetries } from "./ledger/canon-claim-retry-schema";
 import { createWorldTables, exportedWorldTables, resetWorldTables } from "./world/tables/registry";
 import { assertWorldState } from "./world/integrity";
 import { removeObservationsWithoutHistory } from "./world/tables/observations";
-import { OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION } from "./world/tables/versions";
+import { EXTRACT_REPLAY_SCHEMA_VERSION, OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION } from "./world/tables/versions";
 import { capturePortableAdapter, capturePortableLocal, hashPortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
 export type { PortableLocalAdapter } from "./portable-local";
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
@@ -339,6 +340,7 @@ interface DeferredInputRow {
 }
 
 interface OversizedRecordRow {
+  replay_operation_id?: string | null;
   event_id: string;
   status: string;
   chars: number;
@@ -1527,7 +1529,7 @@ function* pageOversizedRecords(db: Database): Generator<OversizedRecordRow> {
   let after = "";
   while (true) {
     const rows = db.query<OversizedRecordRow, [string, number]>(
-      `SELECT event_id,status,chars,done_utf16,pending_end_utf16,updated_at
+      `SELECT event_id,status,chars,done_utf16,pending_end_utf16,updated_at${readSchemaVersion(db) >= 48 ? ",replay_operation_id" : ""}
          FROM extract_oversized_records WHERE event_id>? ORDER BY event_id LIMIT ?`,
     ).all(after, PAGE);
     if (rows.length === 0) return;
@@ -1937,6 +1939,7 @@ function exportVaultOwned(
       writeStream(staging, RAIL_CURSORS_BACKUP, pageRailCursors(db), files, options.signal);
       writeStream(staging, "serve/extract-deferred-inputs.jsonl", pageDeferredInputs(db), files, options.signal);
       writeStream(staging, EXTRACT_BATCH_BACKUP, pendingExtractBatch(db), files, options.signal);
+      for (const spec of EXTRACT_REPLAY_BACKUPS) writeStream(staging, spec.path, extractReplayBackupRows(db, spec), files, options.signal);
       writeStream(staging, OVERSIZED_RECORDS_BACKUP, pageOversizedRecords(db), files, options.signal);
 
       if ((files["ledger/events.jsonl"]?.count ?? 0) !== snapshot.event_count) {
@@ -2054,6 +2057,9 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
         !Number.isSafeInteger(batches.size) || batches.size < 0 || batches.size > MAX_EXTRACT_BATCH_BACKUP_BYTES) {
       throw new Error("backup durable extraction stream exceeds its bound");
     }
+  }
+  if (manifest.schema_versions.ledger >= EXTRACT_REPLAY_SCHEMA_VERSION && EXTRACT_REPLAY_BACKUPS.some(spec => manifest.files[spec.path] === undefined)) {
+    throw new Error("backup extraction replay streams are missing");
   }
   if (manifest.schema_versions.serve >= 9 && manifest.files[OVERSIZED_RECORDS_BACKUP] === undefined) {
     throw new Error("backup oversized extraction stream is missing");
@@ -2730,8 +2736,9 @@ function extractBatchValues(raw: Record<string, unknown>): readonly [
 }
 
 /** Segment progress and skip receipts carry offsets and sizes only, checked against the restored event. */
-function insertOversizedRecord(db: Database, raw: Record<string, unknown>): void {
-  if (Object.keys(raw).sort().join(",") !== "chars,done_utf16,event_id,pending_end_utf16,status,updated_at") {
+function insertOversizedRecord(db: Database, raw: Record<string, unknown>, replayRequired: boolean): void {
+  const expected = replayRequired ? "chars,done_utf16,event_id,pending_end_utf16,replay_operation_id,status,updated_at" : "chars,done_utf16,event_id,pending_end_utf16,status,updated_at";
+  if (Object.keys(raw).sort().join(",") !== expected) {
     throw new Error("invalid oversized extraction backup row");
   }
   const eventId = asString(raw.event_id, "event_id");
@@ -2748,8 +2755,13 @@ function insertOversizedRecord(db: Database, raw: Record<string, unknown>): void
       !isUtf16TextBoundary(text, done) || (pending !== null && !isUtf16TextBoundary(text, pending))) {
     throw new Error("invalid oversized extraction backup value");
   }
-  db.query(`INSERT INTO extract_oversized_records (event_id,status,chars,done_utf16,pending_end_utf16,updated_at)
-    VALUES (?,?,?,?,?,?)`).run(eventId, status, chars, done, pending, updatedAt);
+  const replayId = replayRequired ? raw.replay_operation_id : null;
+  if (replayId !== null) {
+    if (typeof replayId !== "string" || status !== "segmenting") throw new Error("invalid oversized replay linkage");
+    validateRestoredReplayLink(db, eventId, replayId, done, chars, pending);
+  }
+  db.query(`INSERT INTO extract_oversized_records (event_id,status,chars,done_utf16,pending_end_utf16,updated_at,replay_operation_id)
+    VALUES (?,?,?,?,?,?,?)`).run(eventId, status, chars, done, pending, updatedAt, replayId);
 }
 
 function insertExtractBatch(db: Database, raw: Record<string, unknown>): void {
@@ -2777,6 +2789,7 @@ function* streamRows(
   const maxRowBytes = relativePath === "ledger/events.jsonl" ? MAX_EVENT_BACKUP_ROW_BYTES
     : relativePath === MACHINE_BYTE_INTENTS_BACKUP ? MAX_MACHINE_BYTE_INTENT_ROW_BYTES
     : relativePath === IDENTITY_BACKUP ? MAX_IDENTITY_BACKUP_ROW_BYTES
+    : EXTRACT_REPLAY_BACKUPS.some(spec => spec.path === relativePath) ? 131_072
     : relativePath === SOURCE_INVENTORY_BACKUP ? MAX_SOURCE_INVENTORY_ROW_BYTES
     : relativePath === "ledger/purge_ops.jsonl" ? MAX_PURGE_OP_ROW_BYTES
     : relativePath === "ledger/purge_batches.jsonl" || relativePath === "ledger/purge_batch_receipts.jsonl" ? 16_384
@@ -3041,10 +3054,17 @@ export function restoreVault(
         if (deferredRequired && batchCount !== manifest.files[EXTRACT_BATCH_BACKUP]!.count) {
           throw new Error("backup durable extraction count mismatch");
         }
+        for (const spec of EXTRACT_REPLAY_BACKUPS) {
+          let count = 0;
+          for (const row of streamRows(source, manifest, spec.path, manifest.schema_versions.ledger >= EXTRACT_REPLAY_SCHEMA_VERSION)) {
+            restoreExtractReplayRow(db, spec, row); count++;
+          }
+          if (manifest.files[spec.path] !== undefined && count !== manifest.files[spec.path]!.count) throw new Error("backup extraction replay count mismatch");
+        }
         const oversizedRequired = manifest.schema_versions.serve >= 9;
         let oversizedCount = 0;
         for (const row of streamRows(source, manifest, OVERSIZED_RECORDS_BACKUP, oversizedRequired)) {
-          insertOversizedRecord(db, row);
+          insertOversizedRecord(db, row, manifest.schema_versions.ledger >= EXTRACT_REPLAY_SCHEMA_VERSION);
           oversizedCount += 1;
         }
         if (oversizedRequired && oversizedCount !== manifest.files[OVERSIZED_RECORDS_BACKUP]!.count) {

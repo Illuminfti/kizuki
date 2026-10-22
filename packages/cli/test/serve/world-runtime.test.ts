@@ -26,9 +26,9 @@ test("production composition explicitly binds typed extraction and retains model
   const db = openLedger(join(setup.vault, ".kizuki/kizuki.db"));
   const endpoint = startFakeEndpoint(request => {
     const body = request.body as { messages: { content: string }[] };
-    expect(body.messages[0]!.content).toContain("kizuki.producer-response/v2");
+    expect(body.messages[0]!.content).toContain("kizuki.model-extraction/quote-anchors-v1");
     return Response.json({ id: "synthetic", object: "chat.completion", created: 1, model: "fixture",
-      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }) } }],
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ schema: "kizuki.model-extraction/quote-anchors-v1", mentions: [], claims: [] }) } }],
       usage: { prompt_tokens: 1, completion_tokens: 1 } });
   });
   const config = join(setup.vault, ".kizuki/serve.toml");
@@ -70,7 +70,7 @@ test("typed extraction waits for the configured model timeout instead of the pro
     // A slow endpoint: the answer arrives 90 seconds after the request.
     setSystemTime(new Date(Date.now() + 90_000));
     return Response.json({ id: "synthetic", object: "chat.completion", created: 1, model: "fixture",
-      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }) } }],
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ schema: "kizuki.model-extraction/quote-anchors-v1", mentions: [], claims: [] }) } }],
       usage: { prompt_tokens: 1, completion_tokens: 1 } });
   };
   const endpoint = startFakeEndpoint(slowReply);

@@ -1,6 +1,7 @@
 /** A separate synthetic endpoint keeps serving while the observer runs synchronous native CLI commands. */
 import { lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { modelQuoteWire } from "../packages/core/test/producer/quote-wire-helper";
 
 export function syntheticModelReply(raw: unknown): unknown {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw Error("request_shape");
@@ -10,16 +11,18 @@ export function syntheticModelReply(raw: unknown): unknown {
   const prompt = body.messages[1].content;
   const event = /event:([0-9A-HJKMNP-TV-Z]{26})/.exec(prompt)?.[1];
   if (event === undefined) throw Error("request_binding");
+  const evidence = /<<<KZ-QUOTE ([0-9a-f]{32}) event:[0-9A-HJKMNP-TV-Z]{26}>>>\n([\s\S]*?)\n<<<KZ-END \1>>>/.exec(prompt)?.[2];
+  if (evidence === undefined) throw Error("request_binding");
   const anchor = { event_id: event, start_utf16: 0, end_utf16: 3 };
   return { id: "native-synthetic", object: "chat.completion", created: 1, model: body.model,
-    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(modelQuoteWire({
       schema: "kizuki.producer-response/v2", mentions: [{ id: "m0", label: "Ada", anchor, candidate_refs: [] }], claims: [{
         id: "c0", subject: { kind: "mention", id: "m0" }, predicate: "employment.role", object: { kind: "literal", value: "Orchard library coordinator" },
         perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] }, context: [],
         polarity: "positive", body: "Ada coordinates Orchard library operations.", valid_from: null, valid_to: null, temporal_basis: "unknown",
         confidence: 0.7, sensitivity: "public", anchors: [anchor],
       }],
-    }) } }],
+    }, [{ event_id: event, text: evidence }])) } }],
     usage: { prompt_tokens: 10, completion_tokens: 10 } };
 }
 
