@@ -106,7 +106,7 @@ async function runQualificationImpl(options: RunOptions) {
         "This fixed authored split must not be used to tune prompts or select responses; changes require a fresh unseen split.",
         coreSemantic ? "Open-text meaning and body fidelity remain pending until a separately pinned independent semantic review passes." : "Supplemental deterministic checks do not review free-text bodies. Independent forbidden-interpretation/body review remains pending."] };
     const successful = observations.filter(row => traces.some(trace => trace.case_id === row.case_id && trace.transport === "ok"));
-    if (coreSemantic) return { ...common, protocol: CORE_SEMANTIC_PROTOCOL, core_semantic: scoreCoreSemanticRun(successful, registry) };
+    if (coreSemantic) return { ...common, protocol: CORE_SEMANTIC_PROTOCOL, core_semantic: scoreCoreSemanticRun(successful, registry, { source_commit: common.source_commit, traces }) };
     return { ...common, supplemental: scoreSupplementalRun(successful), score: scoreRun(qualificationCorpus, successful) };
   };
   let fd: number | undefined, rawFd: number | undefined, rawBytes = 0;

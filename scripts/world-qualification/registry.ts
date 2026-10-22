@@ -49,7 +49,7 @@ function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: Qualifi
       canonicalJson(report.observations.map(row => row.case_id)) !== canonicalJson(report.selected_cases) || canonicalJson(report.traces.map(row => row.case_id)) !== canonicalJson(report.selected_cases) ||
       report.case_states.some(row => row.status !== "observed") || canonicalJson(report.case_states.map(row => row.case_id)) !== canonicalJson(report.selected_cases))
     throw new Error("core semantic report mismatch");
-  const result = scoreCoreSemanticRun(report.observations, registry);
+  const result = scoreCoreSemanticRun(report.observations, registry, { source_commit: report.source_commit, traces: report.traces });
   if (!result.automated_passed || canonicalJson(result) !== canonicalJson(report.core_semantic)) throw new Error("core semantic automated checks failed");
   let previousCompletion: number | null = null;
   for (const item of coreSemanticCorpus.cases) {

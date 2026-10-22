@@ -10,11 +10,14 @@ export const RUNNER_FILES = [
   "scripts/world-qualification/corpus-v5-core-semantic-oracle.json", "scripts/world-qualification/corpus-v5-core-freeze.json",
   "scripts/world-qualification/corpus-v5-core-author.md", "scripts/world-qualification/corpus-v5-core-author-validation.json",
   "scripts/world-qualification/supplemental.ts", "scripts/world-qualification/core-semantic.ts",
-  "scripts/world-qualification/verify-core-semantic.ts",
+  "scripts/world-qualification/verify-core-semantic.ts", "scripts/world-qualification/core-semantic-v2.md",
   "scripts/world-qualification/core-semantic-corpus.json", "scripts/world-qualification/core-semantic-contract.json",
   "scripts/world-qualification/core-semantic-freeze.json", "scripts/world-qualification/core-semantic.md",
   "scripts/evaluate-extraction.ts", "packages/core/src/producer/model-v2.ts", "packages/core/src/producer/prompt-v2.ts", "packages/core/src/producer/fingerprint.ts",
-  "packages/core/src/serve/extract-v2.ts", "packages/core/src/contracts/producer-v2.ts", "packages/llm/src/openai-compatible.ts",
+  "packages/core/src/producer/world-drafts.ts", "packages/core/src/producer/world-guards.ts", "packages/core/src/producer/scrub.ts",
+  "packages/core/src/ledger/db.ts", "packages/core/src/world/registry-check.ts", "packages/core/src/world/framework-cycles.ts",
+  "packages/core/src/claims/occurrences.ts", "packages/core/src/contracts/claim-v2.ts", "packages/core/src/contracts/world-admission.ts",
+  "packages/core/src/serve/extract.ts", "packages/core/src/serve/extract-oversized.ts", "packages/core/src/serve/extract-v2.ts", "packages/core/src/contracts/producer-v2.ts", "packages/llm/src/openai-compatible.ts",
   "packages/llm/src/transport.ts", "packages/llm/src/response.ts", "packages/llm/src/config.ts",
 ] as const;
 export const runnerDigest = (root = resolve(import.meta.dir, "../..")) => sha256(canonicalJson(RUNNER_FILES.map(path => ({ path, sha256: sha256(readFileSync(join(root, path))) }))));
