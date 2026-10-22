@@ -6,7 +6,7 @@ import { applyCanonClaimRetries } from "./ledger/canon-claim-retry-schema";
 import { createWorldTables, exportedWorldTables, resetWorldTables } from "./world/tables/registry";
 import { assertWorldState } from "./world/integrity";
 import { removeObservationsWithoutHistory } from "./world/tables/observations";
-import { OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION } from "./world/tables/versions";
+import { EXTRACT_REPLAY_SCHEMA_VERSION, OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION } from "./world/tables/versions";
 import { capturePortableAdapter, capturePortableLocal, hashPortableLocal, readPortableBackup, restorePortableLocal, PORTABLE_LOCAL_STREAM, type PortableLocalAdapter } from "./portable-local";
 export type { PortableLocalAdapter } from "./portable-local";
 import { assertVaultMutationScope, withVaultMutationSync, type VaultMutationScope, type VaultMutationTarget } from "./vault/mutation-scope";
@@ -2058,7 +2058,7 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
       throw new Error("backup durable extraction stream exceeds its bound");
     }
   }
-  if (manifest.schema_versions.ledger >= 48 && EXTRACT_REPLAY_BACKUPS.some(spec => manifest.files[spec.path] === undefined)) {
+  if (manifest.schema_versions.ledger >= EXTRACT_REPLAY_SCHEMA_VERSION && EXTRACT_REPLAY_BACKUPS.some(spec => manifest.files[spec.path] === undefined)) {
     throw new Error("backup extraction replay streams are missing");
   }
   if (manifest.schema_versions.serve >= 9 && manifest.files[OVERSIZED_RECORDS_BACKUP] === undefined) {
@@ -3056,7 +3056,7 @@ export function restoreVault(
         }
         for (const spec of EXTRACT_REPLAY_BACKUPS) {
           let count = 0;
-          for (const row of streamRows(source, manifest, spec.path, manifest.schema_versions.ledger >= 48)) {
+          for (const row of streamRows(source, manifest, spec.path, manifest.schema_versions.ledger >= EXTRACT_REPLAY_SCHEMA_VERSION)) {
             restoreExtractReplayRow(db, spec, row); count++;
           }
           if (manifest.files[spec.path] !== undefined && count !== manifest.files[spec.path]!.count) throw new Error("backup extraction replay count mismatch");
@@ -3064,7 +3064,7 @@ export function restoreVault(
         const oversizedRequired = manifest.schema_versions.serve >= 9;
         let oversizedCount = 0;
         for (const row of streamRows(source, manifest, OVERSIZED_RECORDS_BACKUP, oversizedRequired)) {
-          insertOversizedRecord(db, row, manifest.schema_versions.ledger >= 48);
+          insertOversizedRecord(db, row, manifest.schema_versions.ledger >= EXTRACT_REPLAY_SCHEMA_VERSION);
           oversizedCount += 1;
         }
         if (oversizedRequired && oversizedCount !== manifest.files[OVERSIZED_RECORDS_BACKUP]!.count) {

@@ -15,6 +15,7 @@ export const RUNNER_FILES = [
   "scripts/world-qualification/core-semantic-freeze.json", "scripts/world-qualification/core-semantic.md",
   "scripts/evaluate-extraction.ts", "packages/core/src/producer/model-v2.ts", "packages/core/src/producer/prompt-v2.ts", "packages/core/src/producer/fingerprint.ts",
   "packages/core/src/producer/world-drafts.ts", "packages/core/src/producer/world-guards.ts", "packages/core/src/producer/scrub.ts",
+  "packages/core/src/world/tables/versions.ts", "packages/core/src/serve/extract-replay-schema.ts",
   "packages/core/src/ledger/db.ts", "packages/core/src/world/registry-check.ts", "packages/core/src/world/framework-cycles.ts",
   "packages/core/src/claims/occurrences.ts", "packages/core/src/contracts/claim-v2.ts", "packages/core/src/contracts/world-admission.ts",
   "packages/core/src/serve/extract.ts", "packages/core/src/serve/extract-oversized.ts", "packages/core/src/serve/extract-v2.ts", "packages/core/src/contracts/producer-v2.ts", "packages/llm/src/openai-compatible.ts",

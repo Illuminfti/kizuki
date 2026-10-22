@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { initServe } from "./schema";
 
-export const EXTRACT_REPLAY_SCHEMA_VERSION = 48;
+export { EXTRACT_REPLAY_SCHEMA_VERSION } from "../world/tables/versions";
 
 /** Receipts are immutable except supported event/source erasure. Progress is
  * ordinary mutable extraction state, not a second claim or canon writer. */

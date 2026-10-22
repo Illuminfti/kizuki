@@ -15,6 +15,7 @@ export const SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION = 39;
 export const CLAIM_HISTORY_MIGRATION_VERSION = 40;
 export const CANON_CLAIM_RETRY_MIGRATION_VERSION = 46;
 export const OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION = 47;
+export const EXTRACT_REPLAY_SCHEMA_VERSION = 48;
 
 /** Non-world ledger migrations keep their numbers as later packets land. */
 export const LEDGER_MIGRATION_VERSIONS = {
@@ -23,6 +24,7 @@ export const LEDGER_MIGRATION_VERSIONS = {
   scopedClaims: SCOPED_CLAIM_IDEMPOTENCY_MIGRATION_VERSION,
   canonClaimRetries: CANON_CLAIM_RETRY_MIGRATION_VERSION,
   observationHistoryErasure: OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION,
+  extractReplay: EXTRACT_REPLAY_SCHEMA_VERSION,
 } as const;
 
 /** The fixed ledger version before the first world table slot. */
