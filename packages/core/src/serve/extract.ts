@@ -1165,6 +1165,16 @@ async function mineBatch(
   let frontierEvents: readonly CaptureEvent[] = [];
 
   const queued = db.transaction(() => {
+    // Replay owns one record, not the scheduler: even denied queue hints and
+    // scan rotation are unrelated durable effects during this bounded pass.
+    if (replayEvent !== null) {
+      const input = db.query<DeferredInput, [string]>("SELECT * FROM extract_deferred_inputs WHERE event_id=?").get(replayEvent);
+      if (input === null) return [];
+      const event = readLiveEvent(db, replayEvent);
+      if (!validInput(input) || input.source_key !== sourceKey(db, replayEvent) || event === null ||
+          !extractEligible(db, event) || !sourceEventsAllowed(db, [replayEvent], scope)) throw new ExtractReplayError("segment_changed");
+      return [event];
+    }
     const candidates = queuedEvents(db,producer,grantOf);
     const eligible: CaptureEvent[] = [];
     for (const event of candidates) {
@@ -1177,7 +1187,7 @@ async function mineBatch(
     usable = queued.filter(event => sourceEventsAllowed(db, [event.event_id], scope));
     if (replayEvent !== null && usable[0]?.event_id !== replayEvent) throw new ExtractReplayError("segment_changed");
     const held = queued.filter(event => !usable.some(candidate => candidate.event_id === event.event_id));
-    db.transaction(() => {
+    if (replayEvent === null) db.transaction(() => {
       if (sourcePolicyEpoch(db) !== source_epoch) throw new Error("source authorization changed during extraction");
       const update = db.query(`UPDATE extract_deferred_inputs SET source_key=?,checked_revision=?,checked_binding_digest=? WHERE event_id=?`);
       for (const event of held) {
@@ -1220,7 +1230,22 @@ async function mineBatch(
       mined: {status:"deferred",count:deniedPage.inputs.length}, drafts: [], mode:"frontier",
       input_ids:deniedPage.inputs.map(input=>input.event_id),model_inputs:[],deferred_inputs:deniedPage.inputs,
       denied_frontier:{producer,binding_digest:sourcePortBindingDigest(producer)} };
-    const batch = readSince(db, parseCursor(previous_cursor), EXTRACT_BATCH);
+    const batch = replayEvent === null ? readSince(db, parseCursor(previous_cursor), EXTRACT_BATCH) : (() => {
+      const event = readLiveEvent(db, replayEvent);
+      const row = db.query<{ accepted_at: string }, [string]>("SELECT accepted_at FROM events WHERE event_id=?").get(replayEvent);
+      if (event === null || row === null || !extractEligible(db, event) || !sourceEventsAllowed(db, [replayEvent], scope)) throw new ExtractReplayError("segment_changed");
+      const previous = parseCursor(previous_cursor);
+      // A frontier journal must still describe the exact next record. Check
+      // ordering metadata only; do not load, authorize or maintain other input.
+      const earlier = db.query(`SELECT 1 FROM events
+        WHERE (accepted_at < ? OR (accepted_at = ? AND event_id < ?))
+          AND (? IS NULL OR accepted_at > ? OR (accepted_at = ? AND event_id > ?)) LIMIT 1`).get(
+        row.accepted_at, row.accepted_at, replayEvent, previous?.accepted_at ?? null,
+        previous?.accepted_at ?? null, previous?.accepted_at ?? null, previous?.event_id ?? null);
+      if (earlier !== null || previous !== null && (row.accepted_at < previous.accepted_at ||
+          row.accepted_at === previous.accepted_at && replayEvent <= previous.event_id)) throw new ExtractReplayError("segment_changed");
+      return { events: [event], cursor: { event_id: replayEvent, accepted_at: row.accepted_at } };
+    })();
     if (batch.events.length === 0 || batch.cursor === null) {
       if (replayEvent !== null) throw new ExtractReplayError("segment_changed");
       return { mined: { status: "empty" }, drafts: [], previous_cursor, cursor: null };

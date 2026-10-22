@@ -1,6 +1,6 @@
 {
   "schema": "kizuki.core-semantic-contract/v1",
-  "corpus_version": "core12-prospective-unseen-20261022",
+  "corpus_version": "core13-fresh-synthetic-r3-20261022",
   "automated_gate": {
     "required": [
       "all twelve ordered cases observed exactly once",
@@ -102,17 +102,17 @@
   },
   "cases": [
     {
-      "case_id": "core12-concept-positive-loom-margin",
+      "case_id": "core13-concept-positive-juniper-index",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Loom Margin"
+        "quote": "Juniper Index"
       },
       "classification": {
         "kind": "world/concept",
-        "label": "Loom Margin",
-        "witness": "Loom Margin — Concept",
+        "label": "Juniper Index",
+        "witness": "Juniper Index — Concept",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -120,33 +120,33 @@
         {
           "predicate": "concept.definition",
           "object_kind": "literal",
-          "witness": "a weaving rule that counts edge loops separately from central repeats before calculating the yarn allowance",
+          "witness": "a greenhouse inventory rule that records seed trays by shelf before totaling the germination tags",
           "required_atoms": [
-            "it is a weaving rule",
-            "edge loops are counted separately from central repeats",
-            "the separate count precedes calculation of the yarn allowance"
+            "it is a greenhouse inventory rule",
+            "seed trays are recorded by shelf",
+            "recording precedes totaling germination tags"
           ],
           "perspective": "direct",
           "time": "unknown"
         }
       ],
       "forbidden_assertions": [
-        "the owner created, owns, or endorses Loom Margin",
-        "Loom Margin is identical to another concept"
+        "Juniper Index has an owner, creator, or endorsement",
+        "Juniper Index is identical to another concept"
       ]
     },
     {
-      "case_id": "core12-concept-reported-bolt-partition",
+      "case_id": "core13-concept-reported-copper-signal",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Bolt Partition"
+        "quote": "Copper Signal"
       },
       "classification": {
         "kind": "world/concept",
-        "label": "Bolt Partition",
-        "witness": "Bolt Partition — Concept",
+        "label": "Copper Signal",
+        "witness": "Copper Signal — Concept",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -154,114 +154,114 @@
         {
           "predicate": "concept.definition",
           "object_kind": "literal",
-          "witness": "a fastener testing rule that groups trials by torque bracket while keeping reused bolts in a separate group",
+          "witness": "a kiln logging rule that groups firing notes by chamber while keeping test tiles in a separate register",
           "required_atoms": [
-            "it is a fastener testing rule",
-            "trials are grouped by torque bracket",
-            "reused bolts are kept in a separate group"
+            "it is a kiln logging rule",
+            "firing notes are grouped by chamber",
+            "test tiles are kept in a separate register"
           ],
           "perspective": "person_statement",
           "time": "unknown",
-          "source": "source-core12-concept-reported",
-          "attribution_witness": "Elia Merrow reported",
+          "source": "source-core13-concept-reported",
+          "attribution_witness": "Mara Dovell reported",
           "equivalent_mention": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Elia Merrow",
-            "label": "Elia Merrow",
-            "attribution_witness": "Elia Merrow reported"
+            "quote": "Mara Dovell",
+            "label": "Mara Dovell",
+            "attribution_witness": "Mara Dovell reported"
           }
         }
       ],
       "forbidden_assertions": [
-        "the owner reported or endorses Bolt Partition",
-        "Elia Merrow is the owner",
-        "Bolt Partition is identical to another concept"
+        "the owner reported or endorses Copper Signal",
+        "Mara Dovell is the owner",
+        "Copper Signal is identical to another concept"
       ]
     },
     {
-      "case_id": "core12-concept-historical-loanword-gate",
+      "case_id": "core13-concept-historical-amber-lexicon",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Loanword Gate"
+        "quote": "Amber Lexicon"
       },
       "classification": {
         "kind": "world/concept",
-        "label": "Loanword Gate",
-        "witness": "Loanword Gate — Concept",
+        "label": "Amber Lexicon",
+        "witness": "Amber Lexicon — Concept",
         "perspective": "direct",
         "time": {
-          "valid_from": "2013-05-17T08:35:00.000Z",
-          "valid_to": "2013-07-29T16:50:00.000Z",
+          "valid_from": "2016-03-04T09:10:00.000Z",
+          "valid_to": "2016-04-18T17:25:00.000Z",
           "temporal_basis": "explicit",
-          "witness": "interval beginning 2013-05-17T08:35:00.000Z and ending exclusively at 2013-07-29T16:50:00.000Z"
+          "witness": "interval beginning 2016-03-04T09:10:00.000Z and ending exclusively at 2016-04-18T17:25:00.000Z"
         }
       },
       "details": [
         {
           "predicate": "concept.definition",
           "object_kind": "literal",
-          "witness": "a language annotation rule that marks borrowed words before counting native syllable patterns",
+          "witness": "a cataloguing rule that marks inherited labels before sorting local names",
           "required_atoms": [
-            "it is a language annotation rule",
-            "borrowed words are marked",
-            "marking precedes counting native syllable patterns"
+            "it is a cataloguing rule",
+            "inherited labels are marked",
+            "marking precedes sorting local names"
           ],
           "perspective": "document_report",
           "time": {
-            "valid_from": "2013-05-17T08:35:00.000Z",
-            "valid_to": "2013-07-29T16:50:00.000Z",
+            "valid_from": "2016-03-04T09:10:00.000Z",
+            "valid_to": "2016-04-18T17:25:00.000Z",
             "temporal_basis": "explicit",
-            "witness": "interval beginning 2013-05-17T08:35:00.000Z and ending exclusively at 2013-07-29T16:50:00.000Z"
+            "witness": "interval beginning 2016-03-04T09:10:00.000Z and ending exclusively at 2016-04-18T17:25:00.000Z"
           },
-          "source": "source-core12-concept-historical",
-          "attribution_witness": "Annotation ledger AL-46 states"
+          "source": "source-core13-concept-historical",
+          "attribution_witness": "Terminology ledger TL-19 states"
         }
       ],
       "forbidden_assertions": [
-        "Loanword Gate is current outside the explicit interval",
-        "the explicit interval is the lifespan of Loanword Gate",
-        "the owner created, owns, or endorses Loanword Gate"
+        "Amber Lexicon is current outside the explicit interval",
+        "the interval is its lifespan",
+        "Amber Lexicon has an owner or endorsement"
       ]
     },
     {
-      "case_id": "core12-concept-name-negative-silver-trestle",
+      "case_id": "core13-concept-name-negative-morrow-pennant",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Silver Trestle is a concept",
-        "Silver Trestle has an asserted definition"
+        "Morrow Pennant is a concept",
+        "Morrow Pennant has an asserted definition"
       ]
     },
     {
-      "case_id": "core12-concept-template-negative-empty-term-card",
+      "case_id": "core13-concept-template-negative-blank-term-slip",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "the empty card establishes a concept",
-        "INSERT TERM or INSERT MEANING is an asserted concept label or definition"
+        "the blank slip establishes a concept",
+        "ENTER TERM or ENTER MEANING is an asserted concept"
       ]
     },
     {
-      "case_id": "core12-concept-hypothetical-negative-satin-fulcrum",
+      "case_id": "core13-concept-hypothetical-negative-cedar-keystone",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Satin Fulcrum is an actual or adopted concept",
-        "Satin Fulcrum has an asserted definition"
+        "Cedar Keystone is actual or adopted",
+        "Cedar Keystone has an asserted definition"
       ]
     },
     {
-      "case_id": "core12-situation-positive-proof-bundle",
+      "case_id": "core13-situation-positive-harbor-thread",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Proof Bundle"
+        "quote": "Harbor Thread"
       },
       "classification": {
         "kind": "world/situation",
-        "label": "Proof Bundle",
-        "witness": "Proof Bundle — Situation",
+        "label": "Harbor Thread",
+        "witness": "Harbor Thread — Situation",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -269,10 +269,10 @@
         {
           "predicate": "situation.objective",
           "object_kind": "literal",
-          "witness": "collate the numbered proof sheets before the press inspection",
+          "witness": "label the mooring samples before the saltwater comparison",
           "required_atoms": [
-            "the stated objective is to collate numbered proof sheets",
-            "collation must precede the press inspection"
+            "the stated objective is to label mooring samples",
+            "labelling must precede the saltwater comparison"
           ],
           "perspective": "direct",
           "time": "unknown"
@@ -280,33 +280,33 @@
         {
           "predicate": "situation.blocker",
           "object_kind": "literal",
-          "witness": "the folding guide is missing",
+          "witness": "the waterproof ink is unavailable",
           "required_atoms": [
-            "the folding guide is missing",
-            "the missing folding guide is a stated blocker of Proof Bundle"
+            "the waterproof ink is unavailable",
+            "the unavailable ink is a stated blocker of Harbor Thread"
           ],
           "perspective": "direct",
           "time": "unknown"
         }
       ],
       "forbidden_assertions": [
-        "the owner owns or leads Proof Bundle",
-        "Proof Bundle is complete",
-        "the folding guide is damaged rather than missing"
+        "Harbor Thread is complete",
+        "the owner owns or leads Harbor Thread",
+        "the ink is damaged rather than unavailable"
       ]
     },
     {
-      "case_id": "core12-situation-reported-drain-pass",
+      "case_id": "core13-situation-reported-orchid-drift",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Drain Pass"
+        "quote": "Orchid Drift"
       },
       "classification": {
         "kind": "world/situation",
-        "label": "Drain Pass",
-        "witness": "Drain Pass — Situation",
+        "label": "Orchid Drift",
+        "witness": "Orchid Drift — Situation",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -314,135 +314,133 @@
         {
           "predicate": "situation.objective",
           "object_kind": "literal",
-          "witness": "flush the west drain line before the dye test",
+          "witness": "calibrate the shade meter before the orchid survey",
           "required_atoms": [
-            "the stated objective is to flush the west drain line",
-            "flushing must precede the dye test"
+            "the stated objective is to calibrate the shade meter",
+            "calibration must precede the orchid survey"
           ],
           "perspective": "person_statement",
           "time": "unknown",
           "source": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Nadi Corven",
-            "label": "Nadi Corven",
-            "attribution_witness": "Nadi Corven reported"
+            "quote": "Iven Sato",
+            "label": "Iven Sato",
+            "attribution_witness": "Iven Sato reported"
           },
-          "attribution_witness": "Nadi Corven reported"
+          "attribution_witness": "Iven Sato reported"
         },
         {
           "predicate": "situation.blocker",
           "object_kind": "literal",
-          "witness": "the isolation valve is stuck shut",
+          "witness": "the reference tile is cracked",
           "required_atoms": [
-            "the isolation valve is stuck shut",
-            "the valve being stuck shut is a stated blocker of Drain Pass"
+            "the reference tile is cracked",
+            "the cracked tile is a stated blocker of Orchid Drift"
           ],
           "perspective": "person_statement",
           "time": "unknown",
           "source": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Nadi Corven",
-            "label": "Nadi Corven",
-            "attribution_witness": "Nadi Corven reported"
+            "quote": "Iven Sato",
+            "label": "Iven Sato",
+            "attribution_witness": "Iven Sato reported"
           },
-          "attribution_witness": "Nadi Corven reported"
+          "attribution_witness": "Iven Sato reported"
         }
       ],
       "forbidden_assertions": [
-        "the owner reported the Drain Pass details",
-        "Nadi Corven owns or leads Drain Pass",
-        "Drain Pass is complete"
+        "the owner reported Orchid Drift details",
+        "Iven Sato owns or leads Orchid Drift",
+        "Orchid Drift is complete"
       ]
     },
     {
-      "case_id": "core12-situation-historical-cushion-turn",
+      "case_id": "core13-situation-historical-rill-valve-review",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Cushion Turn"
+        "quote": "Rill Valve Review"
       },
       "classification": {
         "kind": "world/situation",
-        "label": "Cushion Turn",
-        "witness": "Cushion Turn — Situation",
+        "label": "Rill Valve Review",
+        "witness": "MA-73 maintenance action list — Rill Valve Review",
         "perspective": "direct",
         "time": {
-          "valid_from": "2015-09-08T07:15:00.000Z",
-          "valid_to": "2015-10-21T18:40:00.000Z",
+          "valid_from": "2017-08-12T06:20:00.000Z",
+          "valid_to": "2017-09-30T19:05:00.000Z",
           "temporal_basis": "explicit",
-          "witness": "interval beginning 2015-09-08T07:15:00.000Z and ending exclusively at 2015-10-21T18:40:00.000Z"
+          "witness": "observation interval beginning 2017-08-12T06:20:00.000Z and ending exclusively at 2017-09-30T19:05:00.000Z"
         }
       },
       "details": [
         {
-          "predicate": "situation.objective",
+          "predicate": "situation.blocker",
           "object_kind": "literal",
-          "witness": "fit seat webbing before adding foam",
+          "witness": "Replace the unreadable gauge window so unresolved pressure verification can proceed.",
           "required_atoms": [
-            "the stated objective is to fit seat webbing",
-            "fitting the webbing precedes adding foam"
+            "the gauge window is unreadable",
+            "pressure verification is unresolved",
+            "the requested replacement of the unreadable gauge window is presented as enabling the unresolved pressure verification to proceed"
           ],
           "perspective": "document_report",
           "time": {
-            "valid_from": "2015-09-08T07:15:00.000Z",
-            "valid_to": "2015-10-21T18:40:00.000Z",
+            "valid_from": "2017-08-12T06:20:00.000Z",
+            "valid_to": "2017-09-30T19:05:00.000Z",
             "temporal_basis": "explicit",
-            "witness": "interval beginning 2015-09-08T07:15:00.000Z and ending exclusively at 2015-10-21T18:40:00.000Z"
+            "witness": "observation interval beginning 2017-08-12T06:20:00.000Z and ending exclusively at 2017-09-30T19:05:00.000Z"
           },
-          "source": "source-core12-situation-historical",
-          "attribution_witness": "Upholstery log UL-58 states"
-        },
-        {
-          "predicate": "situation.change",
-          "object_kind": "literal",
-          "witness": "the fastening order changed from the rear edge first to the front edge first",
-          "required_atoms": [
-            "the fastening order changed",
-            "the former order fastened the rear edge first",
-            "the new order fastened the front edge first"
-          ],
-          "perspective": "document_report",
-          "time": {
-            "valid_from": "2015-09-08T07:15:00.000Z",
-            "valid_to": "2015-10-21T18:40:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "interval beginning 2015-09-08T07:15:00.000Z and ending exclusively at 2015-10-21T18:40:00.000Z"
-          },
-          "source": "source-core12-situation-historical",
-          "attribution_witness": "Upholstery log UL-58 states"
+          "source": "source-core13-situation-historical",
+          "attribution_witness": "Maintenance ledger ML-73 states"
         }
       ],
       "forbidden_assertions": [
-        "Cushion Turn is current outside the explicit interval",
-        "the explicit interval is the lifespan of Cushion Turn",
-        "the owner owns or leads Cushion Turn"
+        "Rill Valve Review is complete",
+        "pressure verification completed",
+        "the requested replacement resolved the unreadable gauge or verification",
+        "Rill Valve Review is current outside the explicit interval",
+        "the record establishes a project, owner, or current count"
+      ],
+      "label_alternatives": [
+        {
+          "witness": "MA-73 maintenance action list — Rill Valve Review",
+          "perspective": "document_report",
+          "source": "source-core13-situation-historical",
+          "attribution_witness": "Maintenance ledger ML-73 states",
+          "time": {
+            "valid_from": "2017-08-12T06:20:00.000Z",
+            "valid_to": "2017-09-30T19:05:00.000Z",
+            "temporal_basis": "explicit",
+            "witness": "observation interval beginning 2017-08-12T06:20:00.000Z and ending exclusively at 2017-09-30T19:05:00.000Z"
+          }
+        }
       ]
     },
     {
-      "case_id": "core12-situation-name-negative-ochre-pocket",
+      "case_id": "core13-situation-name-negative-quiet-basin",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Ochre Pocket is a situation",
-        "Ochre Pocket has an asserted objective, blocker, state, or change"
+        "Quiet Basin is a situation",
+        "Quiet Basin has an asserted objective, blocker, state, or change"
       ]
     },
     {
-      "case_id": "core12-situation-template-negative-empty-work-card",
+      "case_id": "core13-situation-template-negative-blank-action-slip",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "the empty card establishes an actual situation",
-        "INSERT TITLE, INSERT AIM, INSERT OBSTACLE, or INSERT REVISION is an asserted situation fact"
+        "the blank slip establishes an actual situation",
+        "ENTER TITLE, ENTER AIM, ENTER CONDITION, or ENTER REVISION is an asserted situation fact"
       ]
     },
     {
-      "case_id": "core12-situation-hypothetical-negative-indigo-bracket",
+      "case_id": "core13-situation-hypothetical-negative-slate-circuit",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Indigo Bracket is an actual situation",
-        "Indigo Bracket has an asserted objective, blocker, state, or change"
+        "Slate Circuit is an actual situation",
+        "Slate Circuit has an asserted objective, blocker, state, change, completion, or current status"
       ]
     }
   ],
