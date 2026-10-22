@@ -1,9 +1,9 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { ExtractReplayError, parseEmptySegmentReplayPlan, sha256Hex, type EmptySegmentReplayPlan } from "@kizuki/core";
+import { ExtractReplayError, parseEmptySegmentReplayPlan, parseEmptySegmentReplaySupersessionPlan, sha256Hex, type ExtractReplayPlan } from "@kizuki/core";
 
 /** One private, bounded descriptor; hash and parse the identical bytes. */
-export function readEmptyReplayPlan(path: string, expectedSha256: string): EmptySegmentReplayPlan {
+export function readEmptyReplayPlan(path: string, expectedSha256: string): ExtractReplayPlan {
   let fd: number | undefined;
   try {
     if (!isAbsolute(path) || !/^[a-f0-9]{64}$/.test(expectedSha256)) throw new Error();
@@ -20,7 +20,8 @@ export function readEmptyReplayPlan(path: string, expectedSha256: string): Empty
     const after = fstatSync(fd, { bigint: true });
     if (["dev", "ino", "size", "mode", "nlink", "uid", "mtimeNs", "ctimeNs"].some(key =>
       before[key as keyof typeof before] !== after[key as keyof typeof after]) || sha256Hex(bytes) !== expectedSha256) throw new Error();
-    return parseEmptySegmentReplayPlan(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    return value?.schema === "kizuki.extract-empty-replay/v2" ? parseEmptySegmentReplaySupersessionPlan(value) : parseEmptySegmentReplayPlan(value);
   } catch { throw new ExtractReplayError("invalid_plan"); }
   finally { if (fd !== undefined) closeSync(fd); }
 }

@@ -10,7 +10,7 @@ import { writeRailCursor } from "../../src/ledger/checkpoints";
 import { EXTRACT_BATCH, MODEL_PRODUCER_ID } from "../../src/producer";
 import { validEvent } from "../fixtures";
 import { modelProducerFingerprint } from "../../src/producer/fingerprint";
-import { activeExtractReplay, parseEmptySegmentReplayPlan, replayEmptyExtractSegment } from "../../src/serve/extract-replay";
+import { activeExtractReplay, parseEmptySegmentReplayPlan, parseEmptySegmentReplaySupersessionPlan, replayEmptyExtractSegment } from "../../src/serve/extract-replay";
 import { applyExtractReplay } from "../../src/serve/extract-replay-schema";
 import { commitExtractCursor, journalExtractBatch, mineLiveDrafts, readExtractCursor } from "../../src/serve/extract";
 import { DEFAULT_EXTRACTION_CONFIG } from "../../src/serve/types";
@@ -56,6 +56,20 @@ test("closed plan refuses unknown fields, invalid bounds, equal fingerprints and
   let reads = 0;
   expect(() => parseEmptySegmentReplayPlan({ ...f.plan, get source_epoch() { reads++; return 1; } })).toThrow("invalid_plan");
   expect(reads).toBe(0);
+});
+
+test("v2 supersession plan is closed, strictly advances parent progress, and retains v1 parsing", () => {
+  const f = fixture();
+  const parent = { operation_id: f.plan.operation_id, plan_sha256: sha256Hex(canonicalJson(f.plan)), current_done_utf16: 7,
+    current_updated_at: "2026-10-22T08:01:00.000Z", settlements_sha256: sha256Hex("settlements"), run_receipts_sha256: sha256Hex("runs") };
+  const plan = { ...f.plan, schema: "kizuki.extract-empty-replay/v2", operation_id: "synthetic-replay-2",
+    new_producer_fingerprint: "a".repeat(64), parent };
+  expect(parseEmptySegmentReplayPlan(f.plan)).toEqual(f.plan);
+  expect(parseEmptySegmentReplaySupersessionPlan(plan)).toEqual(plan);
+  for (const patch of [{ extra: true }, { parent: { ...parent, current_done_utf16: f.plan.segment.done_utf16 } },
+    { parent: { ...parent, operation_id: plan.operation_id } }, { parent: { ...parent, settlements_sha256: "bad" } }]) {
+    expect(() => parseEmptySegmentReplaySupersessionPlan({ ...plan, ...patch })).toThrow("invalid_plan");
+  }
 });
 
 test("exact live identities, consent, cursor and settled bounds are compared before any reset", () => {

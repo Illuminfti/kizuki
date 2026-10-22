@@ -1219,5 +1219,5 @@ export { AppModelSettingsError, readAppModelConfiguration, saveAppModelConfigura
 export type { AppModelSettingsFailure, AppModelDocument, AppModelCredentialChange, AppModelSettingsUpdate, AppModelConfigurationValidator } from "./serve/model-settings";
 export { normalizeSourceModelEndpoint, normalizeSourceModelName } from "./ledger/source-grants";
 
-export { replayEmptyExtractSegment, parseEmptySegmentReplayPlan, ExtractReplayError, type EmptySegmentReplayPlan, type EmptySegmentReplayReceipt } from "./serve/extract-replay";
+export { replayEmptyExtractSegment, parseEmptySegmentReplayPlan, parseEmptySegmentReplaySupersessionPlan, ExtractReplayError, type EmptySegmentReplayPlan, type EmptySegmentReplaySupersessionPlan, type ExtractReplayPlan, type EmptySegmentReplayReceipt } from "./serve/extract-replay";
 export { modelProducerFingerprint } from "./producer/fingerprint";
