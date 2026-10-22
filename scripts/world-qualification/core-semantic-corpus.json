@@ -2,7 +2,7 @@
   "schema": "kizuki.core-semantic-corpus/v1",
   "synthetic": true,
   "split": "held_out",
-  "version": "core17-one-new-eleven-unobserved-20261022",
+  "version": "core18-unobserved-naming-clarifications-20261022",
   "cases": [
     {
       "id": "core17-situation-positive-carmine-map-cabinet",
@@ -38,7 +38,7 @@
       "records": [
         {
           "id": "r1",
-          "text": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52 throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.\nFor that entire interval, that record requests this action list for the named condition:\n- Free the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement so that the measurement can proceed.\n\nArchive inventory\n- A copper tuning fork rests in the padded drawer.\n- A black glass bead sits on a paper coaster.\n- A rubber foot lies beside the oak stand.\n- A silver wire spool is enclosed in the lidded box.\n- A folded suede mat remains beneath the tripod.\n- An amber bottle stands near the dial housing.\n- A teal felt wedge is placed on the cart.\n- A tin weight rests on the map case.\n- An ivory button lies on the canvas tray.\n- A gray stone slab sits below the cabinet.\n- A spare cotton wick is stored in a narrow tube.\n- A red enamel cup occupies the stone plinth.\n- A smooth pumice chip is kept in a porcelain pocket.\n- A burgundy cord loop hangs from the peg.\n- A small acetate tile lies beside the cork block.\n- A bronze paperweight remains inside the open pouch.",
+          "text": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.\nFor that entire interval, that record requests this action list for the named condition:\n- Free the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement so that the measurement can proceed.\n\nArchive inventory\n- A copper tuning fork rests in the padded drawer.\n- A black glass bead sits on a paper coaster.\n- A rubber foot lies beside the oak stand.\n- A silver wire spool is enclosed in the lidded box.\n- A folded suede mat remains beneath the tripod.\n- An amber bottle stands near the dial housing.\n- A teal felt wedge is placed on the cart.\n- A tin weight rests on the map case.\n- An ivory button lies on the canvas tray.\n- A gray stone slab sits below the cabinet.\n- A spare cotton wick is stored in a narrow tube.\n- A red enamel cup occupies the stone plinth.\n- A smooth pumice chip is kept in a porcelain pocket.\n- A burgundy cord loop hangs from the peg.\n- A small acetate tile lies beside the cork block.\n- A bronze paperweight remains inside the open pouch.",
           "subjects": [
             {
               "id": "source-core16-situation-historical",
@@ -126,7 +126,7 @@
       "records": [
         {
           "id": "r1",
-          "text": "For the observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z, the term Velvet Register — Concept is recorded under that exact name. Archive entry AE-53 states that its definition during that interval was a rehearsal-index rule that marks silent cues before ordering spoken passages.",
+          "text": "For the observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z, the exact name of this concept is Velvet Register. Archive entry AE-53 states that its definition during that interval was a rehearsal-index rule that marks silent cues before ordering spoken passages.",
           "subjects": [
             {
               "id": "source-core15-concept-historical",

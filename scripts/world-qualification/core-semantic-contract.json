@@ -1,6 +1,6 @@
 {
   "schema": "kizuki.core-semantic-contract/v2",
-  "corpus_version": "core17-one-new-eleven-unobserved-20261022",
+  "corpus_version": "core18-unobserved-naming-clarifications-20261022",
   "automated_gate": {
     "required": [
       "all twelve ordered cases observed exactly once",
@@ -249,7 +249,7 @@
           "classification": {
             "kind": "world/situation",
             "label": "Mica Harmonic Hold",
-            "witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52 throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.",
+            "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.",
             "perspective": "direct",
             "time": {
               "valid_from": "2009-05-11T06:40:00.000Z",
@@ -270,11 +270,11 @@
           "label_rule": {
             "value": "Mica Harmonic Hold",
             "naming": "explicit",
-            "naming_witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52",
-            "witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52",
+            "naming_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
             "perspective": "document_report",
             "source": "source-core16-situation-historical",
-            "attribution_witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52",
+            "attribution_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
             "time": {
               "valid_from": "2009-05-11T06:40:00.000Z",
               "valid_to": "2009-08-23T17:10:00.000Z",
@@ -315,7 +315,7 @@
           "classification": {
             "kind": "world/situation",
             "label": "Mica Harmonic Hold",
-            "witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52 throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.",
+            "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.",
             "perspective": "direct",
             "time": {
               "valid_from": "2009-05-11T06:40:00.000Z",
@@ -336,11 +336,11 @@
           "label_rule": {
             "value": "Mica Harmonic Hold",
             "naming": "explicit",
-            "naming_witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52",
-            "witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52",
+            "naming_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
             "perspective": "document_report",
             "source": "source-core16-situation-historical",
-            "attribution_witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52",
+            "attribution_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
             "time": {
               "valid_from": "2009-05-11T06:40:00.000Z",
               "valid_to": "2009-08-23T17:10:00.000Z",
@@ -533,7 +533,7 @@
           "classification": {
             "kind": "world/concept",
             "label": "Velvet Register",
-            "witness": "the term Velvet Register — Concept is recorded under that exact name",
+            "witness": "the exact name of this concept is Velvet Register",
             "perspective": "direct",
             "time": {
               "valid_from": "2012-09-17T07:20:00.000Z",
@@ -571,8 +571,8 @@
           "label_rule": {
             "value": "Velvet Register",
             "naming": "explicit",
-            "naming_witness": "the term Velvet Register — Concept is recorded under that exact name",
-            "witness": "the term Velvet Register — Concept is recorded under that exact name",
+            "naming_witness": "the exact name of this concept is Velvet Register",
+            "witness": "the exact name of this concept is Velvet Register",
             "perspective": "direct",
             "time": {
               "valid_from": "2012-09-17T07:20:00.000Z",
