@@ -261,7 +261,7 @@ function requireHistoricalEmpty(db: Database, plan: EmptySegmentReplayPlan): voi
 
 function parentSettlementDigest(db: Database, parent: EmptySegmentReplayPlan, done: number): { readonly settlements: readonly Record<string, unknown>[]; readonly runIds: readonly string[] } {
   const settlements = db.query<Record<string, unknown>, [string, string]>(`SELECT decision_id,run_id,content_hash,start_utf16,end_utf16,chars,producer_fingerprint,model_binding_digest,outcome,replay_operation_id
-    FROM extract_segment_settlements WHERE event_id=? ORDER BY start_utf16,decision_id`).all(parent.event_id);
+    FROM extract_segment_settlements WHERE event_id=? AND replay_operation_id=? ORDER BY start_utf16,decision_id LIMIT 1025`).all(parent.event_id, parent.operation_id);
   if (settlements.length === 0 || settlements.some(row => row.replay_operation_id !== parent.operation_id || row.outcome !== "empty" ||
       row.content_hash !== parent.content_hash || row.chars !== parent.segment.chars || row.producer_fingerprint !== parent.new_producer_fingerprint ||
       row.model_binding_digest !== parent.model_binding_digest)) refuse("replay_conflict");
@@ -280,8 +280,10 @@ function parentRunDigest(db: Database, runIds: readonly string[]): string {
     let run: unknown; try { run = JSON.parse(row.report); } catch { refuse("historical_evidence_invalid"); }
     if (!isPlainObject(run) || run.run_id !== run_id || run.rail !== "sync" || row.rail !== run.rail || row.status !== run.status || row.stopped !== run.stopped ||
         (run.status !== "ok" && run.status !== "degraded") || run.stopped !== null || !Array.isArray(run.errors) || run.errors.length !== 0 ||
-        run.claims_written_extracted !== 0 || run.claims_extracted !== 0 || run.claims_deduped !== 0 || run.claims_superseded !== 0 ||
-        run.records_skipped !== 0 || !isPlainObject(run.claims_rejected) || Object.keys(run.claims_rejected).length !== 0 ||
+        run.sync_mode !== undefined || run.has_more !== true || run.canon_reverts !== 0 || run.claims_written_extracted !== 0 ||
+        run.claims_extracted !== 0 || run.claims_deduped !== 0 || run.claims_superseded !== 0 || run.records_skipped !== 0 ||
+        !Number.isSafeInteger(run.model.input_tokens) || Number(run.model.input_tokens) < 0 || !Number.isSafeInteger(run.model.output_tokens) || Number(run.model.output_tokens) < 0 ||
+        !isPlainObject(run.oversized) || run.oversized.segments !== 1 || run.oversized.skipped !== 0 || !isPlainObject(run.claims_rejected) || Object.keys(run.claims_rejected).length !== 0 ||
         !isPlainObject(run.model) || run.model.calls !== 1 || run.model.answered !== 1 || run.model.unavailable !== 0 ||
         run.model.last_request !== "answered" || run.model.usage_unknown === true) refuse("historical_evidence_invalid");
     return { run_id, report_sha256: sha256Hex(row.report) };
@@ -300,6 +302,8 @@ function replaySupersession(target: { readonly db: Database; readonly vault_path
       if (duplicate !== null) {
         const existing = storedPlan(duplicate);
         if (duplicate.plan_sha256 !== digest || existing.schema !== SUPERSESSION_SCHEMA) refuse("replay_conflict");
+        const linked = db.query<{ replay_operation_id: string | null; done_utf16: number; pending_end_utf16: number | null }, [string]>("SELECT replay_operation_id,done_utf16,pending_end_utf16 FROM extract_oversized_records WHERE event_id=?").get(existing.event_id);
+        if (linked?.replay_operation_id !== existing.operation_id || linked.done_utf16 !== 0 || linked.pending_end_utf16 !== null) refuse("replay_conflict");
         return receipt(duplicate, existing, "already_applied");
       }
       if (db.query("SELECT 1 FROM extract_batches LIMIT 1").get() !== null || db.query("SELECT 1 FROM extract_usage LIMIT 1").get() !== null ||
@@ -308,7 +312,12 @@ function replaySupersession(target: { readonly db: Database; readonly vault_path
       if (parentRow === null || parentRow.plan_sha256 !== plan.parent.plan_sha256) refuse("replay_conflict");
       const parent = storedPlan(parentRow);
       if (parent.event_id !== plan.event_id || parent.operation_id === plan.operation_id || parent.segment.done_utf16 !== plan.segment.done_utf16 ||
-          parent.new_producer_fingerprint === plan.new_producer_fingerprint || parent.model_binding_digest === plan.model_binding_digest) refuse("replay_conflict");
+          parent.vault_id !== plan.vault_id || parent.connector_id !== plan.connector_id || parent.source_key !== plan.source_key ||
+          parent.content_hash !== plan.content_hash || parent.text_hash !== plan.text_hash || parent.source_revision !== plan.source_revision ||
+          parent.source_policy_digest !== plan.source_policy_digest || parent.source_epoch !== plan.source_epoch ||
+          parent.model_binding_digest !== plan.model_binding_digest || parent.expected_cursor !== plan.expected_cursor ||
+          parent.segment.chars !== plan.segment.chars || parent.new_producer_fingerprint === plan.new_producer_fingerprint ||
+          plan.old_producer_fingerprint !== parent.new_producer_fingerprint) refuse("replay_conflict");
       const all = db.query<ReplayRow, [string]>("SELECT * FROM extract_replay_receipts WHERE event_id=? ORDER BY created_at,operation_id").all(plan.event_id);
       // One immutable child per parent; walk the stored parent links so a corrupt
       // cycle or a second child cannot become an alternate replay authority.
@@ -331,7 +340,8 @@ function replaySupersession(target: { readonly db: Database; readonly vault_path
           current.updated_at !== plan.parent.current_updated_at || current.pending_end_utf16 !== null || current.replay_operation_id !== parent.operation_id ||
           current.done_utf16 <= 0 || current.done_utf16 >= parent.segment.done_utf16) refuse("segment_changed");
       const settled = parentSettlementDigest(db, parent, current.done_utf16);
-      if (sha256Hex(canonicalJson(settled.settlements)) !== plan.parent.settlements_sha256 || parentRunDigest(db, settled.runIds) !== plan.parent.run_receipts_sha256) refuse("historical_evidence_invalid");
+      if (sha256Hex(canonicalJson(settled.settlements)) !== plan.parent.settlements_sha256 || parentRunDigest(db, settled.runIds) !== plan.parent.run_receipts_sha256 ||
+          settled.runIds.length !== 1 || plan.old_run_id !== settled.runIds[0] || plan.old_run_receipt_sha256 !== sha256Hex(db.query<{ report: string }, [string]>("SELECT report FROM run_receipts WHERE run_id=?").get(plan.old_run_id)?.report ?? "")) refuse("historical_evidence_invalid");
       liveInput(db, producer, plan);
       requireNoModelClaims(db, plan.event_id, 0, plan.segment.done_utf16, (readLiveEvent(db, plan.event_id)!).text);
       if (readRailCursor(db, "kizuki.producer.model", "extract") !== plan.expected_cursor) refuse("segment_changed");
