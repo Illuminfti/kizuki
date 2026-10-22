@@ -1,3 +1,4 @@
+import { modelWireJson } from "../world-model-completion";
 import { afterEach, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -151,7 +152,7 @@ describe("[ports.llm] reasoning_effort", () => {
           {
             index: 0,
             finish_reason: "stop",
-            message: { role: "assistant", content: JSON.stringify(content) },
+            message: { role: "assistant", content: modelWireJson(content, prompt) },
           },
         ],
         usage: { prompt_tokens: 12, completion_tokens: 8 },

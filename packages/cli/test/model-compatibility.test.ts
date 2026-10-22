@@ -1,3 +1,4 @@
+import { modelWireJson } from "./world-model-completion";
 import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -39,7 +40,7 @@ test("native source consent, model canon, rejected responses and doctor compose"
       claims: [mode === "claims" ? { ...claim, predicate: { [CANARY]: CANARY } } : claim] };
     return Response.json({ id: "synthetic", model: MODEL, provider: CANARY,
       choices: [{ index: 0, finish_reason: "stop", native_finish_reason: "stop", logprobs: null,
-        message: { role: "assistant", content: JSON.stringify(content), refusal: null,
+        message: { role: "assistant", content: modelWireJson(content, prompt), refusal: null,
           reasoning: CANARY, name: CANARY, [CANARY]: { data: CANARY }, ...(mode === "metadata" ? { annotations: [{ text: CANARY }] } : {}) } }],
       usage: { prompt_tokens: 12, completion_tokens: 8 } });
   });

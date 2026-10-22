@@ -1,3 +1,4 @@
+import { modelWireJson } from "../world-model-completion";
 import { afterEach, expect, test, setDefaultTimeout } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -29,14 +30,14 @@ function completion(request: SeenRequest): Response {
     context: [], polarity: "positive", valid_from: null, valid_to: null, temporal_basis: "unknown",
     confidence: 0.7, sensitivity: "personal", anchors: [anchor] };
   return Response.json({ id: "synthetic", object: "chat.completion", created: 1, model: body.model,
-    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: modelWireJson({
       schema: "kizuki.producer-response/v2",
       mentions: [{ id: "project", label, anchor, candidate_refs: [] }],
       claims: [
         { ...common, id: "kind", predicate: "world.kind", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/situation" } }, body: "The orchard library project is a situation." },
         { ...common, id: "label", predicate: "situation.label", object: { kind: "literal", value: label }, body: "The project is called orchard library project." },
       ],
-    }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } });
+    }, prompt) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } });
 }
 
 test("scheduled attempts adopt settings without restart, pin credentials in flight, and recover after off and invalid settings", async () => {
