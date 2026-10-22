@@ -21,13 +21,13 @@ import { DEFAULT_QUALIFICATION_INPUT_POLICY, validateQualificationInputPolicy, t
 
 export const CORE_SEMANTIC_PROTOCOL = "core-semantic-v3" as const;
 export const LEGACY_CORE_SEMANTIC_PROTOCOL = "core-semantic-v2" as const;
-type Category = "positive" | "reported" | "historical" | "name_negative" | "template_negative" | "hypothetical_negative";
+type Category = "positive" | "reported" | "historical" | "maintenance_outline" | "name_negative" | "template_negative" | "hypothetical_negative";
 type SourceType = "direct_record" | "person_statement" | "document_report";
 export interface CoreSemanticRecord { id: string; text: string; subjects: { id: string; quote: string }[] }
 export interface CoreSemanticCase { id: string; kind: "concept" | "situation"; category: Category; source_type: SourceType; records: CoreSemanticRecord[] }
-export interface CoreSemanticCorpus { schema: string; synthetic: true; split: "held_out"; version: string; cases: CoreSemanticCase[] }
+export interface CoreSemanticCorpus { schema: string; synthetic: true; split: "held_out" | "regression"; version: string; cases: CoreSemanticCase[] }
 type TimeRule = "unknown" | { valid_from: string; valid_to: string; temporal_basis: "explicit"; witness: string };
-type PerspectiveRule = "direct" | "person_statement" | "document_report";
+type PerspectiveRule = "direct" | "person_statement" | "document_report" | "document_suggestion";
 interface MentionRule { mode: "mention"; record: string; quote: string; label: string; attribution_witness: string }
 type SourceRule = string | MentionRule;
 export interface PropositionRule { witness: string; perspective: PerspectiveRule; source?: SourceRule; equivalent_mention?: MentionRule; attribution_witness?: string; time: TimeRule }
@@ -80,7 +80,7 @@ function validateAuthoredBranch(item: CoreSemanticCase, branch: CoreSemanticExtr
   const text = (value: unknown, max = 1_000): value is string => typeof value === "string" && value.length > 0 && value.length <= max && value.trim() === value;
   const proposition = (value: PropositionRule, extra: readonly string[], optional: readonly string[] = []) => {
     if (!exact(value, ["witness", "perspective", "time", ...extra], ["source", "equivalent_mention", "attribution_witness", ...optional]) ||
-        !text(value.witness, 8_000) || !["direct", "person_statement", "document_report"].includes(value.perspective) ||
+        !text(value.witness, 8_000) || !["direct", "person_statement", "document_report", "document_suggestion"].includes(value.perspective) ||
         (value.time !== "unknown" && !exact(value.time, ["valid_from", "valid_to", "temporal_basis", "witness"]))) throw new Error("invalid authored proposition");
     for (const source of [value.source, value.equivalent_mention]) if (source !== undefined && typeof source !== "string" &&
         !exact(source, ["mode", "record", "quote", "label", "attribution_witness"])) throw new Error("invalid authored source");
@@ -93,7 +93,7 @@ function validateAuthoredBranch(item: CoreSemanticCase, branch: CoreSemanticExtr
     throw new Error("invalid authored representation branch");
   proposition(branch.classification, ["kind", "label"]);
   const label = branch.label_rule;
-  if (!label || !text(label.value) || label.value !== branch.classification.label || label.value !== branch.target.quote ||
+  if (!label || label.perspective === "document_suggestion" || !text(label.value) || label.value !== branch.classification.label || label.value !== branch.target.quote ||
       !["explicit", "source_description"].includes(label.naming)) throw new Error("invalid authored label");
   proposition(label, ["value", "naming"], ["naming_witness"]);
   const record = item.records.find(row => row.id === branch.target.record);
@@ -126,13 +126,16 @@ export function validateCoreSemanticAssets(): void {
 /** Static author checks run before any observation; branches never come from responses. */
 export function validateCoreSemanticContract(corpus: CoreSemanticCorpus, contract: CoreSemanticContract): void {
   const categories: Category[] = ["positive", "reported", "historical", "name_negative", "template_negative", "hypothetical_negative"];
-  if (corpus.schema !== "kizuki.core-semantic-corpus/v1" || corpus.synthetic !== true || corpus.split !== "held_out" ||
+  const extended = corpus.schema === "kizuki.core-semantic-corpus/v2", count = extended ? 13 : 12;
+  if ((!extended && corpus.schema !== "kizuki.core-semantic-corpus/v1") || corpus.synthetic !== true || corpus.split !== (extended ? "regression" : "held_out") ||
       !["kizuki.core-semantic-contract/v1", "kizuki.core-semantic-contract/v2"].includes(contract.schema) || contract.protocol !== CORE_SEMANTIC_PROTOCOL || contract.corpus_version !== corpus.version ||
       canonicalJson(contract.legacy_extra_policy.forbidden_predicates) !== canonicalJson(forbiddenLegacyPredicates) ||
-      corpus.cases.length !== 12 || contract.cases.length !== 12 || new Set(corpus.cases.map(row => row.id)).size !== 12 ||
-      new Set(contract.cases.map(row => row.case_id)).size !== 12 ||
+      corpus.cases.length !== count || contract.cases.length !== count || new Set(corpus.cases.map(row => row.id)).size !== count ||
+      new Set(contract.cases.map(row => row.case_id)).size !== count ||
       canonicalJson(corpus.cases.map(row => row.id)) !== canonicalJson(contract.cases.map(row => row.case_id))) throw new Error("invalid core semantic assets");
-  for (const kind of ["concept", "situation"] as const) if (canonicalJson(corpus.cases.filter(row => row.kind === kind).map(row => row.category)) !== canonicalJson(categories)) throw new Error("invalid core semantic coverage");
+  for (const kind of ["concept", "situation"] as const) if (canonicalJson(corpus.cases.slice(0, 12).filter(row => row.kind === kind).map(row => row.category)) !== canonicalJson(categories)) throw new Error("invalid core semantic coverage");
+  if (extended && (corpus.cases[12]!.kind !== "situation" || corpus.cases[12]!.category !== "maintenance_outline" ||
+      corpus.cases[12]!.source_type !== "document_report")) throw new Error("invalid maintenance outline coverage");
   for (const item of corpus.cases) {
     if (!/^[a-z0-9-]{1,80}$/.test(item.id) || item.records.length !== 1 || item.records[0]!.text.length > 8_000 || new Set(item.records[0]!.subjects.map(row => row.id)).size !== item.records[0]!.subjects.length) throw new Error("invalid core semantic case");
     for (const subject of item.records[0]!.subjects) span(item.records[0]!, subject.quote);
@@ -179,8 +182,10 @@ export function validateCoreSemanticContract(corpus: CoreSemanticCorpus, contrac
               new Date(proposition.time.valid_from).toISOString() !== proposition.time.valid_from || new Date(proposition.time.valid_to).toISOString() !== proposition.time.valid_to ||
               span(item.records[0]!, proposition.time.witness).end_utf16 <= 0)) throw new Error("invalid core semantic time rule");
         }
-        const expectedPerspective = item.category === "reported" ? "person_statement" : item.category === "historical" ? "document_report" : "direct";
-        if (rule.classification.perspective !== "direct" || rule.details.some(row => row.perspective !== expectedPerspective)) throw new Error("core semantic source role mismatch");
+        const expectedPerspective = item.category === "reported" ? "person_statement" : (item.category === "historical" || item.category === "maintenance_outline") ? "document_report" : "direct";
+        const detailPerspectives = (predicate: string) => item.category === "maintenance_outline" && predicate === "situation.objective"
+          ? ["document_report", "document_suggestion"] : [expectedPerspective];
+        if (rule.classification.perspective !== "direct" || rule.details.some(row => !detailPerspectives(row.predicate).includes(row.perspective))) throw new Error("core semantic source role mismatch");
         if (rule.label_alternatives !== undefined && (item.category !== "historical" || ![1, 2].includes(rule.label_alternatives.length) ||
             (rule.label_alternatives.length === 2 && rule.label_alternatives[0]!.perspective !== "direct") ||
             rule.label_alternatives.at(-1)!.perspective !== "document_report" ||
@@ -316,9 +321,11 @@ function exactPerspective(claim: RichClaimDraft, rule: PropositionRule, sourceKe
   const perspective = claim.perspective;
   if (perspective.interpretation !== "explicit" || perspective.addressee !== null) return false;
   if (rule.perspective === "direct") return perspective.mode === "asserted" && perspective.holder === null && perspective.speaker === null;
-  if (sourceKey === null || (rule.perspective === "document_report" ? perspective.mode !== "reported" : !["reported", "quoted"].includes(perspective.mode))) return false;
+  const document = rule.perspective === "document_report" || rule.perspective === "document_suggestion";
+  const modes = rule.perspective === "document_suggestion" ? ["suggested"] : document ? ["reported"] : ["reported", "quoted"];
+  if (sourceKey === null || !modes.includes(perspective.mode)) return false;
   const matches = (key: string) => key === sourceKey || (equivalentKey !== null && key === equivalentKey);
-  if (rule.perspective === "document_report") return perspective.holder !== null && matches(rawRefKey(perspective.holder)) && perspective.speaker === null;
+  if (document) return perspective.holder !== null && matches(rawRefKey(perspective.holder)) && perspective.speaker === null;
   return perspective.speaker !== null && matches(rawRefKey(perspective.speaker)) &&
     (perspective.holder === null || rawRefKey(perspective.holder) === rawRefKey(perspective.speaker));
 }

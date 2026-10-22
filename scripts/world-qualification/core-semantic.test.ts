@@ -6,7 +6,7 @@ import { parseExtractResponseV2, type DraftRef, type ExtractResponseV2, type Ric
 import { WORLD_VOCABULARY_MODULES } from "./candidate-modules";
 import { candidateRegistry, checkOfferedQualification, registryDigest, verifyQualificationReceipt } from "./registry";
 import { canonicalJson, sha256 } from "../evaluate-extraction";
-import { coreSemanticBranchRule, coreSemanticBranches, coreSemanticCaseInput, coreSemanticContract, coreSemanticCorpus, expectedCoreSemanticReview, scoreCoreSemanticRun as actualScoreCoreSemanticRun, prepareCoreSemanticObservation, validateCoreSemanticAssets, verifyCoreSemanticReview, type CoreSemanticCase } from "./core-semantic";
+import { coreSemanticBranchRule, coreSemanticBranches, coreSemanticCaseInput, coreSemanticContract, coreSemanticCorpus, expectedCoreSemanticReview, scoreCoreSemanticRepresentations, scoreCoreSemanticRun as actualScoreCoreSemanticRun, prepareCoreSemanticObservation, validateCoreSemanticAssets, validateCoreSemanticContract, verifyCoreSemanticReview, type CoreSemanticCase } from "./core-semantic";
 import type { Observation } from "./score";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -64,7 +64,7 @@ function scripted(item: CoreSemanticCase, policy: QualificationInputPolicy = DEF
       : contract.perspective === "person_statement"
         ? { holder: null, speaker: source, addressee: null, mode: "reported" as const, interpretation: "explicit" as const, anchors: typeof contract.source === "string" ? input.supplied_refs.find(row => row.id === contract.source)!.anchors
           : [mentionSources.get(canonicalJson(contract.source!))!.anchor, mentionSources.get(canonicalJson(contract.source!))!.attributionAnchor] }
-        : { holder: source, speaker: null, addressee: null, mode: "reported" as const, interpretation: "explicit" as const, anchors: typeof contract.source === "string" ? input.supplied_refs.find(row => row.id === contract.source)!.anchors
+        : { holder: source, speaker: null, addressee: null, mode: contract.perspective === "document_suggestion" ? "suggested" as const : "reported" as const, interpretation: "explicit" as const, anchors: typeof contract.source === "string" ? input.supplied_refs.find(row => row.id === contract.source)!.anchors
           : [mentionSources.get(canonicalJson(contract.source!))!.anchor, mentionSources.get(canonicalJson(contract.source!))!.attributionAnchor] };
     const time = contract.time === "unknown" ? { valid_from: null, valid_to: null, temporal_basis: "unknown" as const }
       : { valid_from: contract.time.valid_from, valid_to: contract.time.valid_to, temporal_basis: contract.time.temporal_basis };
@@ -218,9 +218,78 @@ describe("predeclared core semantic protocol", () => {
     } finally { await producer.close(); await llm.close(); }
   });
 
-  test("the sealed split and scripted structural controls pass only to pending manual review", () => {
+  test("v2 requires all thirteen ordered cases and preserves the twelve-case regression baseline", () => {
+    expect(coreSemanticCorpus.schema).toBe("kizuki.core-semantic-corpus/v2");
+    expect(coreSemanticCorpus.split).toBe("regression");
+    expect(sha256(canonicalJson(coreSemanticCorpus.cases.slice(0, 12)))).toBe("37f01372b4209a69e5e9b2e77da1dd5013ce414363f518bc29d09b0f635cca34");
+    expect(sha256(canonicalJson(coreSemanticContract.cases.slice(0, 12)))).toBe("dc6aebf4ed060a2232d2a05a1705a955900d7c9a52af3e129710b2f243163009");
+    for (const count of [12, 14]) {
+      const corpus = structuredClone(coreSemanticCorpus), contract = structuredClone(coreSemanticContract);
+      if (count === 12) { corpus.cases.pop(); contract.cases.pop(); }
+      else { corpus.cases.push(corpus.cases[12]!); contract.cases.push(contract.cases[12]!); }
+      expect(() => validateCoreSemanticContract(corpus, contract)).toThrow("invalid core semantic assets");
+    }
+    expect(() => validateCoreSemanticContract({ ...coreSemanticCorpus, split: "held_out" }, coreSemanticContract)).toThrow();
+    const legacy = { ...coreSemanticCorpus, schema: "kizuki.core-semantic-corpus/v1", split: "held_out" as const,
+      cases: coreSemanticCorpus.cases.slice(0, 12) };
+    expect(() => validateCoreSemanticContract(legacy, { ...coreSemanticContract, cases: coreSemanticContract.cases.slice(0, 12) })).not.toThrow();
+    const broadened = structuredClone(coreSemanticContract), maintenance = broadened.cases[12]!;
+    if (maintenance.expectation !== "extract" || !("branches" in maintenance)) throw new Error("maintenance branches missing");
+    maintenance.branches[0]!.details[1]!.perspective = "document_suggestion";
+    expect(() => validateCoreSemanticContract(coreSemanticCorpus, broadened)).toThrow("core semantic source role mismatch");
+    maintenance.branches[0]!.details[1]!.perspective = "document_report";
+    maintenance.branches[0]!.label_rule!.perspective = "document_suggestion";
+    expect(() => validateCoreSemanticContract(coreSemanticCorpus, broadened)).toThrow("invalid authored label");
+    const wrong = structuredClone(coreSemanticCorpus); wrong.cases[12]!.category = "positive";
+    expect(() => validateCoreSemanticContract(wrong, coreSemanticContract)).toThrow("invalid maintenance outline coverage");
+  });
+
+  test("each whole maintenance branch independently binds recommendation holder, mode, role and unknown time", () => {
+    const item = coreSemanticCorpus.cases[12]!, authored = coreSemanticContract.cases[12]!;
+    if (authored.expectation !== "extract") throw new Error("maintenance contract missing");
+    const observed = scripted(item);
+    for (const mode of ["suggested", "reported"] as const) {
+      const row = { ...observed, response: { ...observed.response!, claims: observed.response!.claims.map((claim, index) =>
+        index === 2 ? { ...claim, perspective: { ...claim.perspective, mode } } : claim) } };
+      const result = scoreCoreSemanticRepresentations(item, authored, row, registry, DEFAULT_QUALIFICATION_INPUT_POLICY);
+      expect(result.automated_passed).toBe(true);
+      expect(result.selected_branch_id).toBe(`maintenance-whole-action-${mode}`);
+      for (const change of [
+        (claim: RichClaimDraft): RichClaimDraft => ({ ...claim, perspective: { ...claim.perspective, holder: null } }),
+        (claim: RichClaimDraft): RichClaimDraft => ({ ...claim, perspective: { ...claim.perspective, speaker: claim.perspective.holder } }),
+        (claim: RichClaimDraft): RichClaimDraft => ({ ...claim, perspective: { ...claim.perspective, interpretation: "inferred" } }),
+        (claim: RichClaimDraft): RichClaimDraft => ({ ...claim, valid_from: "2013-06-12T00:00:00.000Z", temporal_basis: "explicit" }),
+        (claim: RichClaimDraft): RichClaimDraft => ({ ...claim, anchors: claim.anchors.filter(anchor => canonicalJson(anchor) !== canonicalJson(uniqueSpan(item, extractionRule(item).details[0]!.attribution_witness!))) }),
+      ]) {
+        const invalid = { ...row, response: { ...row.response, claims: row.response.claims.map((claim, index) => index === 2 ? change(claim) : claim) } };
+        const rejected = scoreCoreSemanticRepresentations(item, authored, invalid, registry, DEFAULT_QUALIFICATION_INPUT_POLICY);
+        expect(rejected.automated_passed).toBe(false);
+        expect(rejected.selected_branch_id).toBeNull();
+        expect(rejected.branch_results.every(branch => !branch.automated_passed)).toBe(true);
+      }
+    }
+  });
+
+  test("a grounded maintenance heading remains pending semantic review and unsupported atoms refuse acceptance", () => {
+    const item = coreSemanticCorpus.cases[12]!, rows = observations();
+    const altered = mutate(rows, item.id, response => ({ ...response, claims: response.claims.map(claim =>
+      claim.predicate === "situation.objective" ? { ...claim, object: { kind: "literal", value: "Reconcile relay labels" },
+        body: "Reconcile relay labels", anchors: [...claim.anchors, uniqueSpan(item, "Reconcile relay labels")] } : claim) }));
+    const result = scoreCoreSemanticRun(altered, registry);
+    expect(result.automated_passed).toBe(true); // Grounding alone is not atom completeness.
+    expect(result.status).toBe("pending_manual_review");
+    const report = "d".repeat(64), control = expectedCoreSemanticReview(report, result);
+    const caseReview = control.cases[12]!;
+    if (!("atoms" in caseReview)) throw new Error("missing independent atom gate");
+    expect(caseReview.atoms).toHaveLength(6);
+    const denied = structuredClone(control) as unknown as { cases: { atoms?: { status: string }[] }[] };
+    denied.cases[12]!.atoms![0]!.status = "unsupported";
+    expect(() => verifyCoreSemanticReview(report, result, denied)).toThrow("review mismatch");
+  });
+
+  test("the pinned split and scripted structural controls pass only to pending manual review", () => {
     validateCoreSemanticAssets();
-    expect(coreSemanticCorpus.cases).toHaveLength(12);
+    expect(coreSemanticCorpus.cases).toHaveLength(13);
     const rows = observations();
     for (const row of rows) { const { budget: _budget, ...input } = row.input, parsed = parseExtractResponseV2(JSON.stringify(row.response), input); if (!parsed.ok) throw new Error(`${row.case_id}: ${parsed.detail}`); }
     const result = scoreCoreSemanticRun(rows, registry);

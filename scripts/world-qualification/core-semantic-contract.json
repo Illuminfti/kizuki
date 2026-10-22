@@ -1,9 +1,9 @@
 {
   "schema": "kizuki.core-semantic-contract/v2",
-  "corpus_version": "core18-unobserved-naming-clarifications-20261022",
+  "corpus_version": "core19-maintenance-outline-regression-20261023",
   "automated_gate": {
     "required": [
-      "all twelve ordered cases observed exactly once",
+      "all thirteen ordered cases observed exactly once",
       "status ok and a response for every case",
       "public producer-v2 parser accepts the response with zero parser drops",
       "observation reports zero downstream drops",
@@ -51,6 +51,16 @@
       ],
       "interpretation": "explicit",
       "perspective_anchors": "must ground the supplied holder"
+    },
+    "document_suggestion": {
+      "holder": "the exact authored grounded document source ref",
+      "speaker": null,
+      "addressee": null,
+      "modes": [
+        "suggested"
+      ],
+      "interpretation": "explicit",
+      "perspective_anchors": "must ground the holder and cover the authored recommendation-role witness on this claim; exact sent-window enrichment may expose already-sent framing but never repairs missing literal meaning"
     }
   },
   "temporal_profiles": {
@@ -606,6 +616,138 @@
       "forbidden_assertions": [
         "Frost Loom is actual or adopted",
         "Frost Loom has an asserted definition"
+      ]
+    },
+    {
+      "case_id": "core19-situation-maintenance-outline-amber-relay-hold",
+      "expectation": "extract",
+      "branches": [
+        {
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Amber Relay Hold"
+          },
+          "classification": {
+            "kind": "world/situation",
+            "label": "Amber Relay Hold",
+            "witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report.",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "label_rule": {
+            "value": "Amber Relay Hold",
+            "naming": "explicit",
+            "naming_witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+            "witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+            "perspective": "document_report",
+            "source": "source-core19-maintenance-report",
+            "attribution_witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Reconcile all 34 unmatched relay labels with their acceptance records so that the continuity audit can proceed.",
+              "required_atoms": [
+                "the requested remedy is to reconcile all 34 unmatched relay labels with their acceptance records",
+                "all 34 unmatched relay labels are within the requested work, rather than a generic unquantified heading",
+                "the reconciliation is requested rather than asserted to have been performed",
+                "the requested reconciliation is presented as enabling the continuity audit to proceed"
+              ],
+              "perspective": "document_suggestion",
+              "source": "source-core19-maintenance-report",
+              "attribution_witness": "IR-63 recommends this requested action for the condition:",
+              "time": "unknown"
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "34 relay labels lack matching acceptance records, preventing the continuity audit",
+              "required_atoms": [
+                "34 relay labels lack matching acceptance records",
+                "that absence of matching acceptance records prevents the continuity audit"
+              ],
+              "perspective": "document_report",
+              "source": "source-core19-maintenance-report",
+              "attribution_witness": "IR-63 records the condition's blocker:",
+              "time": "unknown"
+            }
+          ],
+          "forbidden_assertions": [
+            "the relay labels have been reconciled",
+            "the continuity audit proceeded or completed",
+            "the condition has been resolved",
+            "the report establishes a current backlog of 34 relay labels",
+            "the report publication date is an action-validity interval",
+            "the requested work is adopted, attempted, performed, completed, or owned by an invented person or project"
+          ],
+          "id": "maintenance-whole-action-suggested"
+        },
+        {
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Amber Relay Hold"
+          },
+          "classification": {
+            "kind": "world/situation",
+            "label": "Amber Relay Hold",
+            "witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report.",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "label_rule": {
+            "value": "Amber Relay Hold",
+            "naming": "explicit",
+            "naming_witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+            "witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+            "perspective": "document_report",
+            "source": "source-core19-maintenance-report",
+            "attribution_witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Reconcile all 34 unmatched relay labels with their acceptance records so that the continuity audit can proceed.",
+              "required_atoms": [
+                "the requested remedy is to reconcile all 34 unmatched relay labels with their acceptance records",
+                "all 34 unmatched relay labels are within the requested work, rather than a generic unquantified heading",
+                "the reconciliation is requested rather than asserted to have been performed",
+                "the requested reconciliation is presented as enabling the continuity audit to proceed"
+              ],
+              "perspective": "document_report",
+              "source": "source-core19-maintenance-report",
+              "attribution_witness": "IR-63 recommends this requested action for the condition:",
+              "time": "unknown"
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "34 relay labels lack matching acceptance records, preventing the continuity audit",
+              "required_atoms": [
+                "34 relay labels lack matching acceptance records",
+                "that absence of matching acceptance records prevents the continuity audit"
+              ],
+              "perspective": "document_report",
+              "source": "source-core19-maintenance-report",
+              "attribution_witness": "IR-63 records the condition's blocker:",
+              "time": "unknown"
+            }
+          ],
+          "forbidden_assertions": [
+            "the relay labels have been reconciled",
+            "the continuity audit proceeded or completed",
+            "the condition has been resolved",
+            "the report establishes a current backlog of 34 relay labels",
+            "the report publication date is an action-validity interval",
+            "the requested work is adopted, attempted, performed, completed, or owned by an invented person or project"
+          ],
+          "id": "maintenance-whole-action-reported"
+        }
       ]
     }
   ],

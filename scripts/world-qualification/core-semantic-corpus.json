@@ -1,8 +1,8 @@
 {
-  "schema": "kizuki.core-semantic-corpus/v1",
+  "schema": "kizuki.core-semantic-corpus/v2",
   "synthetic": true,
-  "split": "held_out",
-  "version": "core18-unobserved-naming-clarifications-20261022",
+  "split": "regression",
+  "version": "core19-maintenance-outline-regression-20261023",
   "cases": [
     {
       "id": "core17-situation-positive-carmine-map-cabinet",
@@ -172,6 +172,24 @@
           "id": "r1",
           "text": "Could an imagined concept be called Frost Loom?",
           "subjects": []
+        }
+      ]
+    },
+    {
+      "id": "core19-situation-maintenance-outline-amber-relay-hold",
+      "kind": "situation",
+      "category": "maintenance_outline",
+      "source_type": "document_report",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report.\nPublication date: 2013-06-12.\nIR-63 records the condition's blocker: 34 relay labels lack matching acceptance records, preventing the continuity audit.\n\nTask outline\n- Reconcile relay labels.\n\nExpanded action\nIR-63 recommends this requested action for the condition: Reconcile all 34 unmatched relay labels with their acceptance records so that the continuity audit can proceed.\n\nArchive inventory\n- A porcelain spacer rests in the tray.\n- A linen sleeve lies beside the terminal box.",
+          "subjects": [
+            {
+              "id": "source-core19-maintenance-report",
+              "quote": "Inspection report IR-63"
+            }
+          ]
         }
       ]
     }
