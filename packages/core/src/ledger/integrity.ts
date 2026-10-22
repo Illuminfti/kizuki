@@ -354,6 +354,11 @@ export function inspectLedgerHealth(
  */
 export function assertServableLedger(db: Database, expectedVersion: number): void {
   assertLedgerSchema(db, expectedVersion);
+  if (expectedVersion >= 48) {
+    db.query("SELECT operation_id,event_id,plan_sha256,plan,created_at FROM extract_replay_receipts LIMIT 0").all();
+    db.query("SELECT decision_id,event_id,producer_fingerprint FROM extract_segment_settlements LIMIT 0").all();
+    db.query("SELECT replay_operation_id FROM extract_oversized_records LIMIT 0").all();
+  }
   // These authoritative surfaces used to be silently repaired by initAgents,
   // initServe and initCanon. Reads require them, without creating any object.
   for (const query of [

@@ -1,3 +1,4 @@
+import { applyExtractReplay, EXTRACT_REPLAY_SCHEMA_VERSION } from "../serve/extract-replay-schema";
 import { applyTypedRefs } from "../world/tables/refs";
 import { applyObservationHistoryErasure } from "../world/tables/observations";
 import { OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION } from "../world/tables/versions";
@@ -256,6 +257,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: WORLD_MIGRATION_VERSIONS.typed_refs, apply: applyTypedRefs },
   { version: CANON_CLAIM_RETRY_MIGRATION_VERSION, apply: applyCanonClaimRetries },
   { version: OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION, apply: applyObservationHistoryErasure },
+  { version: EXTRACT_REPLAY_SCHEMA_VERSION, apply: applyExtractReplay },
 ];
 
 export const LEDGER_SCHEMA_VERSION = MIGRATIONS.at(-1)?.version ?? 0;

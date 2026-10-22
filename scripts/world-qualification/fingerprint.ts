@@ -10,7 +10,7 @@ export const RUNNER_FILES = [
   "scripts/world-qualification/corpus-v5-core-semantic-oracle.json", "scripts/world-qualification/corpus-v5-core-freeze.json",
   "scripts/world-qualification/corpus-v5-core-author.md", "scripts/world-qualification/corpus-v5-core-author-validation.json",
   "scripts/world-qualification/supplemental.ts",
-  "scripts/evaluate-extraction.ts", "packages/core/src/producer/model-v2.ts", "packages/core/src/producer/prompt-v2.ts",
+  "scripts/evaluate-extraction.ts", "packages/core/src/producer/model-v2.ts", "packages/core/src/producer/prompt-v2.ts", "packages/core/src/producer/fingerprint.ts",
   "packages/core/src/serve/extract-v2.ts", "packages/core/src/contracts/producer-v2.ts", "packages/llm/src/openai-compatible.ts",
   "packages/llm/src/transport.ts", "packages/llm/src/response.ts", "packages/llm/src/config.ts",
 ] as const;

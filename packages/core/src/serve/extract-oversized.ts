@@ -1,3 +1,4 @@
+import { completeExtractReplay } from "./extract-replay";
 import type { Database } from "bun:sqlite";
 import { isUtf16TextBoundary, type ExtractResponseV2, type ProduceInputV2, type TextAnchor } from "../contracts/producer-v2";
 import { tableExists } from "../ledger/schema";
@@ -170,6 +171,7 @@ export function journalSegment(db: Database, segment: RecordSegment): void {
  */
 export function completeSegment(db: Database, segment: RecordSegment): boolean {
   requireStart(db, segment);
+  completeExtractReplay(db, segment.event_id, segment.end);
   if (segment.end < segment.chars) {
     writeRow(db, segment.event_id, { status: "segmenting", chars: segment.chars, done_utf16: segment.end, pending_end_utf16: null });
     return true;

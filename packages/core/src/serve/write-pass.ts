@@ -1,3 +1,6 @@
+import { journaledSegment } from "./extract-oversized";
+import { inheritModelProducerIdentity } from "../producer/fingerprint";
+import { activeExtractReplay, activeExtractReplayEvent, ExtractReplayError } from "./extract-replay";
 import type { LlmPort } from "../contracts/llm";
 import type { ConsolidationConfig, ConsolidationRunReport } from "../contracts/consolidation";
 import { pendingWorldCanonClaims, worldCanonPath, worldCanonTarget } from "../canon/world-materialization";
@@ -218,7 +221,7 @@ function observedProducer(
         return validated.result;
       },
     };
-    return inheritSourcePortBindings(producer, observed);
+    return inheritSourcePortBindings(producer, inheritModelProducerIdentity(producer, observed));
   }
   const observed: ProducerPort = {
     descriptor: producer.descriptor,
@@ -401,6 +404,8 @@ async function runWritePassPhase(
     throw new Error("canon-only requires a bound model producer and claims ledger");
   }
   requireAtomicExtractReplay(db);
+  const replayPass = tableExists(db, "extract_replay_receipts") &&
+    db.query("SELECT 1 FROM extract_oversized_records WHERE replay_operation_id IS NOT NULL LIMIT 1").get() !== null;
   const io = snapshotCanonIo({
     db, vault_path: vaultPath,
     ...(options.now === undefined ? {} : { now: options.now }),
@@ -419,15 +424,19 @@ async function runWritePassPhase(
       // The next pass writes canon; a stop, a held write or a busy writer ends this one now.
       if (tally.stopped === STOP_REQUESTED || tally.stopped === "recovery:held" || tally.stopped === "lock:busy") return result();
     }
-    const jobs = await runWorldJobs({
-      db, vaultPath, now: options.now ?? (() => new Date().toISOString()),
-      stopRequested: options.stopRequested ?? (() => false), modelConfigured: modelConfigured(options),
-      ...(options.llm === undefined ? {} : { llm: options.llm }),
-      ...(options.consolidation === undefined ? {} : { consolidation: options.consolidation }),
-    });
-    if (jobs.consolidation !== undefined) tally.consolidation = jobs.consolidation;
-    tally.errors.push(...jobs.errors);
-    if (jobs.stopped) { tally.stopped = jobs.reason ?? STOP_REQUESTED; return result(); }
+    // A guarded replay has one approved input prefix. Other model jobs wait
+    // for a later ordinary pass, after the external consumer proof gate.
+    if (!replayPass) {
+      const jobs = await runWorldJobs({
+        db, vaultPath, now: options.now ?? (() => new Date().toISOString()),
+        stopRequested: options.stopRequested ?? (() => false), modelConfigured: modelConfigured(options),
+        ...(options.llm === undefined ? {} : { llm: options.llm }),
+        ...(options.consolidation === undefined ? {} : { consolidation: options.consolidation }),
+      });
+      if (jobs.consolidation !== undefined) tally.consolidation = jobs.consolidation;
+      tally.errors.push(...jobs.errors);
+      if (jobs.stopped) { tally.stopped = jobs.reason ?? STOP_REQUESTED; return result(); }
+    }
   }
   // No model configured: claims stay live and unwritten; doctor says so.
   if (!modelConfigured(options)) return result();
@@ -657,6 +666,7 @@ function newOccupyingWrites(before: Set<string>, after: Set<string>): number {
 }
 
 interface ExtractionPass {
+  readonly run_id: string;
   readonly io: CanonIo;
   readonly db: Database;
   readonly claims: ClaimsIo;
@@ -720,7 +730,7 @@ async function runExtraction(
       : metricResult(metrics));
   }, spent, () => options.stopRequested?.() === true);
   const pass: ExtractionPass = {
-    io, db, claims, producer, observed, metrics,
+    run_id: runId, io, db, claims, producer, observed, metrics,
     stopRequested: () => options.stopRequested?.() === true,
     model_ref: options.model_ref ?? null, limits, clock,
     decline(dropped) {
@@ -754,6 +764,7 @@ async function runExtraction(
     try {
       outcome = await extractionStep(pass);
     } catch (error) {
+      if (error instanceof ExtractReplayError) { tally.stopped = `extract:${error.code}`; return; }
       if (!(error instanceof DurableExtractAuthorizationError)) throw error;
       tally.stopped = `source:${error.code}`;
       return;
@@ -829,11 +840,17 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
   const replay = await holdWriter(io, async () => {
     const pending = readDurableExtractBatch(db, producer);
     if (pending === null) return null;
+    const replayEvent = activeExtractReplayEvent(db, producer);
+    if (replayEvent !== null && (pending.model_inputs.length !== 1 || pending.model_inputs[0]?.event_id !== replayEvent)) {
+      throw new ExtractReplayError("unsettled_work");
+    }
     // Replay files an existing decision; it is not another extraction.
-    const filed = await fileProducedDrafts(claims, pending, producer);
+    const approvedReplay = pending.model_inputs.length === 1 ? activeExtractReplay(db, pending.model_inputs[0]!.event_id, producer) : null;
+    const replayEnd = approvedReplay !== null && journaledSegment(db, pending.model_inputs.map(input => input.event_id))?.end === approvedReplay.end_utf16;
+    const filed = await fileProducedDrafts(claims, pending, producer, pass.run_id);
     if (filed === null) return settled("stop", { errors: ["extract cursor changed before durable batch commit"] });
     const prefiltered = replayedPrefilterCounts(db, pending, producer);
-    return settled("continue", { deduped: filed.deduped, superseded: filed.superseded,
+    return settled(replayEnd ? "stop" : "continue", { ...(replayEnd ? { stopped: "extract:replay_complete" } : {}), deduped: filed.deduped, superseded: filed.superseded,
       ...(prefiltered === undefined ? {} : { prefiltered }) });
   });
   if (!replay.held) return settled("stop", { stopped: replay.stopped });
@@ -864,6 +881,12 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
       const rule = fresh !== undefined && "rule" in fresh ? String(fresh.rule) : mined.mined.reason;
       const refused = recordRejection(history, { head, rule, single: mined.model_inputs?.length === 1 }, clock());
       metrics.rejection = { consecutive: refused.state.consecutive, rule };
+      if (mined.replay !== undefined) {
+        // Keep the ordinary refusal/backoff evidence, but this approval never
+        // permits skipping the prefix or retrying a rejected answer in-pass.
+        writeRejections(db, { ...refused.state, passed_over: history?.passed_over ?? [] });
+        return settled("stop", { stopped: "extract:replay_rejected", errors });
+      }
       switch (refused.action.kind) {
         // A nondeterministic model often answers the same record well on a second, smaller request.
         case "narrow":
@@ -924,7 +947,7 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
         if (!journal.journaled) return advanceHeld(pass, { ...mined, mined: { status: "empty" } });
         const durable = readDurableExtractBatch(db, producer);
         if (durable === null) throw new Error("durable extraction decision is missing");
-        const filed = await fileProducedDrafts(claims, durable, producer);
+        const filed = await fileProducedDrafts(claims, durable, producer, pass.run_id);
         return filed === null
           ? settled("stop", { errors: ["extract cursor changed before commit"] })
           : settled("continue", { extracted, deduped: filed.deduped, superseded: filed.superseded,
@@ -950,7 +973,7 @@ function advance(pass: ExtractionPass, mined: MineResult, errors: readonly strin
 
 /** The cursor commit of `advance`, for a caller that already holds the writer. */
 function advanceHeld(pass: ExtractionPass, mined: MineResult, errors: readonly string[] = []): StepOutcome {
-  if (!commitExtractCursor(pass.db, mined)) return settled("stop", { errors: [...errors, "extract cursor changed before commit"] });
+  if (!commitExtractCursor(pass.db, mined, pass.run_id, pass.producer)) return settled("stop", { errors: [...errors, "extract cursor changed before commit"] });
   const prefiltered = mined.prefiltered === undefined ? {} : { prefiltered: mined.prefiltered };
   if (mined.skipped !== undefined) return settled("continue", { oversized_skipped: 1, errors, ...prefiltered });
   if (mined.mined.status === "skipped") return settled("continue", { skipped: 1, errors: [...errors, `record skipped: ${mined.mined.reason}`], ...prefiltered });
@@ -975,13 +998,18 @@ async function settle(pass: ExtractionPass, mined: MineResult, file: () => StepO
   const held = await holdWriter(pass.io, () => extractDecisionCurrent(pass.db, mined)
     ? file()
     : settled("stop", { errors: ["extraction inputs changed during the request"] }), SETTLE_WAIT_MS);
-  return held.held ? held.value : settled("stop", { stopped: held.stopped });
+  if (!held.held) return settled("stop", { stopped: held.stopped });
+  if (mined.replay !== undefined && mined.segment?.end === mined.replay.end_utf16 && held.value.next === "continue") {
+    return { ...held.value, next: "stop", stopped: "extract:replay_complete" };
+  }
+  return held.value;
 }
 
 async function fileProducedDrafts(
   io: ClaimsIo,
   batch: DurableExtractBatch,
   producer: ExtractionProducerPort,
+  runId: string,
 ): Promise<{ deduped: number; superseded: number } | null> {
   const prepared = [];
   if (batch.filing_version === 2) {
@@ -993,7 +1021,7 @@ async function fileProducedDrafts(
       prepared.push(await prepareClaimInsert(io, producedClaimInput(io.db, draft, "model", batch.model_ref)));
     }
   }
-  const results = fileAndCompleteDurableExtractBatch(io.db, batch, producer, prepared);
+  const results = fileAndCompleteDurableExtractBatch(io.db, batch, producer, prepared, runId);
   if (results === null) return null;
   let deduped = 0;
   let superseded = 0;
