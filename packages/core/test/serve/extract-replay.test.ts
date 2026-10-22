@@ -62,7 +62,7 @@ test("v2 supersession plan is closed, strictly advances parent progress, and ret
   const f = fixture();
   const parent = { operation_id: f.plan.operation_id, plan_sha256: sha256Hex(canonicalJson(f.plan)), current_done_utf16: 7,
     current_updated_at: "2026-10-22T08:01:00.000Z", settlements_sha256: sha256Hex("settlements"), run_receipts_sha256: sha256Hex("runs") };
-  const plan = { ...f.plan, schema: "kizuki.extract-empty-replay/v2", operation_id: "synthetic-replay-2",
+  const plan = { ...f.plan, schema: "kizuki.extract-empty-replay/v2" as const, operation_id: "synthetic-replay-2",
     new_producer_fingerprint: "a".repeat(64), parent };
   expect(parseEmptySegmentReplayPlan(f.plan)).toEqual(f.plan);
   expect(parseEmptySegmentReplaySupersessionPlan(plan)).toEqual(plan);

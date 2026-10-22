@@ -80,3 +80,17 @@ for (const args of [
   expect(result.stdout).toBe("");
   expect(existsSync(missing)).toBe(false);
 });
+
+
+test("private CLI plan reader preserves the closed V2 parent snapshot", () => {
+  const f = fixture(), plan = planFile(f);
+  const child = { ...f.plan, schema: "kizuki.extract-empty-replay/v2" as const, operation_id: "synthetic-cli-child",
+    parent: { operation_id: f.plan.operation_id, plan_sha256: sha256Hex("synthetic parent plan"), current_done_utf16: 1,
+      current_updated_at: f.plan.segment.updated_at, settlements_sha256: sha256Hex("synthetic settlements"), run_receipts_sha256: sha256Hex("synthetic runs") } };
+  const bytes = JSON.stringify(child);
+  writeFileSync(plan.path, bytes);
+  expect(readEmptyReplayPlan(plan.path, sha256Hex(bytes))).toEqual(child);
+  const invalid = JSON.stringify({ ...child, parent: { ...child.parent, widen_cap: true } });
+  writeFileSync(plan.path, invalid);
+  expect(() => readEmptyReplayPlan(plan.path, sha256Hex(invalid))).toThrow("invalid_plan");
+});
