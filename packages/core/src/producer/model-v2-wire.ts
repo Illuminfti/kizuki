@@ -22,6 +22,28 @@ function uniqueOffset(text: string, quote: string): number | null {
   return at >= 0 && text.indexOf(quote, at + 1) < 0 ? at : null;
 }
 
+/** Canonical model-only descriptor for one already-sent numeric source range.
+ * The largest context that excludes adjacent copies is unique iff any such
+ * context can identify this range. No offset arithmetic is delegated to a model.
+ */
+export function modelQuoteAnchorForSpan(anchor: TextAnchor, events: readonly { readonly event_id: string; readonly text: string }[]): ModelQuoteAnchor | null {
+  const text = events.find(event => event.event_id === anchor.event_id)?.text;
+  const start = anchor.start_utf16, end = anchor.end_utf16;
+  if (text === undefined || text.length > MAX_V2_QUOTED_UTF16 || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start || end > text.length || !boundary(text, start) || !boundary(text, end)) return null;
+  const selected = text.slice(start, end);
+  if (uniqueOffset(text, selected) === start) return { event_id: anchor.event_id, quote: selected };
+  const previous = start === 0 ? -1 : text.lastIndexOf(selected, start - 1);
+  const next = text.indexOf(selected, start + 1);
+  let left = previous < 0 ? 0 : previous + 1;
+  let right = next < 0 ? text.length : next + selected.length - 1;
+  while (!boundary(text, left)) left++;
+  while (!boundary(text, right)) right--;
+  if (left > start || right < end) return null;
+  const quote = text.slice(left, right);
+  if (uniqueOffset(text, quote) !== left || uniqueOffset(quote, selected) !== start - left) return null;
+  return { event_id: anchor.event_id, quote, select: selected };
+}
+
 /** Resolve all anchors or reject all. No interpretation, normalization, mutation or partial salvage. */
 export function resolveModelExtractionWire(text: string, input: ProducerV2ParseInput): { readonly ok: true; readonly text: string; readonly receipt: ModelExtractionWireReceipt } | { readonly ok: false } {
   if (typeof text !== "string" || text.length > MAX_V2_RESPONSE_BYTES || utf8ByteLength(text) > MAX_V2_RESPONSE_BYTES) return { ok: false };

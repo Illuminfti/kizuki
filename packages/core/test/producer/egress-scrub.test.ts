@@ -82,7 +82,7 @@ test("a supplied handle anchored partway into a secret is cited back as the anch
   const response = JSON.stringify({ schema: EXTRACT_RESPONSE_V2_SCHEMA, mentions: [], claims: [{ id: "c0", subject: { kind: "supplied", id: "s0" }, predicate: "classification.instance_of", object: { kind: "vocabulary", ref: { kind: "vocabulary", id: "v-person" } }, perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] }, context: [], polarity: "positive", body: "Someone is a person.", valid_from: null, valid_to: null, temporal_basis: "unknown", confidence: 0.8, sensitivity: "personal", anchors: [sentAnchor] }] });
   const { llm, port } = v2Port(() => response);
   const result = await port.produce({ ...v2Input(), supplied_refs: [{ id: "s0", anchors: [supplied] }] });
-  expect(sent(llm)).toContain(`"start_utf16":0,"end_utf16":${marker.out_end}`);
+  expect(sent(llm)).toContain(JSON.stringify({ event_id: EVENT, quote: SCRUBBED.text.slice(0, marker.out_end) }));
   if (result.status !== "ok") throw new Error(`expected ok, got ${result.status}`);
   expect(result.response.claims[0]!.anchors).toEqual([supplied]);
 });
@@ -92,7 +92,8 @@ test("supplied handles follow their text into the scrubbed prompt", async () => 
   await port.produce(v2Input());
   const shifted = at(SCRUBBED.text, "Mira");
   expect(shifted).not.toBe(at(TEXT, "Mira"));
-  expect(sent(llm)).toContain(`"start_utf16":${shifted},"end_utf16":${shifted + 4}`);
+  expect(sent(llm)).toContain(JSON.stringify({ event_id: EVENT, quote: "Mira" }));
+  expect(sent(llm)).not.toContain("start_utf16");
 });
 
 test("text without secrets is sent unchanged and reports no redaction", async () => {

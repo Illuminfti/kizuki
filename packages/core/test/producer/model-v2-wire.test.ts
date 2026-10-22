@@ -51,3 +51,40 @@ test("all descriptor and item caps are checked before any text search", () => {
     expect(searches).toBe(0);
   } finally { String.prototype.indexOf = original; }
 });
+
+test("host-supplied descriptors select exact Unicode ranges and disambiguate repeated text", async () => {
+  const { modelQuoteAnchorForSpan } = await import("../../src/producer/model-v2-wire");
+  for (const [source, selected, occurrence] of [["x🙂 e\u0301 y", "🙂 e\u0301", 0], ["first Coil then second Coil!", "Coil", 1], ["a ab", "a", 0], ["a ab", "a", 1]] as const) {
+    let start = source.indexOf(selected);
+    for (let index = 0; index < occurrence; index++) start = source.indexOf(selected, start + 1);
+    const anchor = { event_id: id, start_utf16: start, end_utf16: start + selected.length };
+    const descriptor = modelQuoteAnchorForSpan(anchor, input(source).events);
+    expect(descriptor).not.toBeNull();
+    const result = resolveModelExtractionWire(wire(descriptor), input(source));
+    expect(result.ok && JSON.parse(result.text).mentions[0].anchor).toEqual(anchor);
+  }
+  expect(modelQuoteAnchorForSpan({ event_id: id, start_utf16: 1, end_utf16: 2 }, input("aaa").events)).toBeNull();
+  expect(modelQuoteAnchorForSpan({ event_id: id, start_utf16: 1, end_utf16: 2 }, input("🙂").events)).toBeNull();
+});
+
+test("unavailable supplied ranges have no unique exact context representation", async () => {
+  const { modelQuoteAnchorForSpan } = await import("../../src/producer/model-v2-wire");
+  for (let size = 1; size <= 5; size++) for (let bits = 0; bits < 2 ** size; bits++) {
+    const text = Array.from({ length: size }, (_, index) => bits & 2 ** index ? "a" : "b").join("");
+    for (let start = 0; start < size; start++) for (let end = start + 1; end <= size; end++) {
+      const anchor = { event_id: id, start_utf16: start, end_utf16: end };
+      const actual = modelQuoteAnchorForSpan(anchor, input(text).events);
+      if (actual !== null) {
+        const result = resolveModelExtractionWire(wire(actual), input(text));
+        expect(result.ok && JSON.parse(result.text).mentions[0].anchor).toEqual(anchor);
+      } else {
+        let representable = false;
+        for (let left = 0; left <= start; left++) for (let right = end; right <= size; right++) {
+          const quote = text.slice(left, right), selected = text.slice(start, end);
+          if (text.indexOf(quote) === left && text.indexOf(quote, left + 1) < 0 && quote.indexOf(selected) === start - left && quote.indexOf(selected, start - left + 1) < 0) representable = true;
+        }
+        expect(representable).toBe(false);
+      }
+    }
+  }
+});

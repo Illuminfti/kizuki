@@ -255,3 +255,44 @@ test("quote spans preserve exact supplied grounding and fail once without receip
   expect(receiptCount).toBe(1);
   expect(bad.requests).toHaveLength(1);
 });
+
+test("supplied holder descriptors are ready to copy after scrubbing and retain exact grounding", async () => {
+  const { planModelExtractionV2 } = await import("../../src/producer/model-v2");
+  const { modelQuoteAnchorForSpan } = await import("../../src/producer/model-v2-wire");
+  const prefix = `Bearer ${"x".repeat(40)} `;
+  const text = `${prefix}Workshop record WN5 reports: Mira joined Northwind.`;
+  const eventId = input.events[0]!.event_id, holderStart = text.indexOf("Workshop record WN5");
+  const sourceAnchor = { event_id: eventId, start_utf16: holderStart, end_utf16: holderStart + "Workshop record WN5".length };
+  const changedInput = { ...input, events: [{ event_id: eventId, text }], supplied_refs: [{ id: "s0", anchors: [sourceAnchor] }] };
+  const plan = planModelExtractionV2(changedInput);
+  if (plan.status !== "ready") throw new Error("planning failed");
+  const descriptor = modelQuoteAnchorForSpan(plan.outbound.supplied_refs[0]!.anchors[0]!, plan.outbound.events);
+  expect(descriptor).toEqual({ event_id: eventId, quote: "Workshop record WN5" });
+  expect(plan.messages[1]!.content).toContain(JSON.stringify({ id: "s0", anchors: [descriptor] }));
+  expect(plan.messages[1]!.content).not.toContain("start_utf16");
+  expect(plan.messages[0]!.content).toContain("no offset calculation is needed");
+  expect(plan.messages[0]!.content).toContain("record's narrative statements use reported mode");
+  const mention = { event_id: eventId, quote: "Mira" };
+  const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR); cleanups.push(temp.cleanup);
+  const llm = scriptedLlm(request => {
+    expect(request.messages[1]!.content).toContain(JSON.stringify(descriptor));
+    return JSON.stringify({ schema: "kizuki.model-extraction/quote-anchors-v1", mentions: [{ ...response.mentions[0]!, anchor: mention, candidate_refs: [] }], claims: [{ ...response.claims[0]!, anchors: [mention], perspective: { ...response.claims[0]!.perspective, holder: { kind: "supplied", id: "s0" }, mode: "reported", anchors: [descriptor] } }] });
+  });
+  const result = await createModelProducerV2Port(temp.ctx, { llm }).produce(changedInput);
+  expect(result).toMatchObject({ status: "ok", response: { claims: [{ perspective: { mode: "reported", holder: { kind: "supplied", id: "s0" }, anchors: [sourceAnchor] } }] } });
+  expect(result.status === "ok" && result.dropped).toBeUndefined();
+  expect(llm.requests).toHaveLength(1);
+});
+
+test("unrepresentable supplied ranges are explicit unavailable and their actual prompt is budgeted", async () => {
+  const { planModelExtractionV2 } = await import("../../src/producer/model-v2");
+  const changed = { ...input, events: [{ event_id: input.events[0]!.event_id, text: "aaa" }], supplied_refs: [{ id: "s0", anchors: [{ event_id: input.events[0]!.event_id, start_utf16: 1, end_utf16: 2 }] }] };
+  const plan = planModelExtractionV2(changed);
+  if (plan.status !== "ready") throw new Error("planning failed");
+  expect(plan.messages[1]!.content).toContain('"unavailable":"ambiguous_exact_span"');
+  expect(plan.messages[1]!.content).not.toContain("start_utf16");
+  expect(plan.input.supplied_refs).toEqual(changed.supplied_refs);
+  expect(plan.outbound.supplied_refs).toEqual(changed.supplied_refs);
+  expect(plan.input_tokens).toBe(Math.ceil(plan.messages.reduce((sum, message) => sum + message.content.length, 0) / 4));
+  expect(planModelExtractionV2({ ...changed, budget: { ...changed.budget, max_input_tokens: plan.input_tokens - 1 } })).toMatchObject({ status: "rejected", diagnostic: { rule: "max_input_tokens", requested: plan.input_tokens } });
+});
