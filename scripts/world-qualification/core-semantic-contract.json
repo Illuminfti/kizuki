@@ -1,6 +1,6 @@
 {
   "schema": "kizuki.core-semantic-contract/v2",
-  "corpus_version": "core15-fresh-synthetic-20261022",
+  "corpus_version": "core16-three-new-nine-unobserved-20261022",
   "automated_gate": {
     "required": [
       "all twelve ordered cases observed exactly once",
@@ -105,20 +105,20 @@
   },
   "cases": [
     {
-      "case_id": "core15-situation-positive-pebble-chamber",
+      "case_id": "core16-situation-positive-umber-filter-rack",
       "expectation": "extract",
       "branches": [
         {
-          "id": "situation-positive-pebble-chamber",
+          "id": "situation-positive-umber-filter-rack",
           "target": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Pebble Chamber"
+            "quote": "Umber Filter Rack"
           },
           "classification": {
             "kind": "world/situation",
-            "label": "Pebble Chamber",
-            "witness": "Pebble Chamber — Situation",
+            "label": "Umber Filter Rack",
+            "witness": "Umber Filter Rack — Situation",
             "perspective": "direct",
             "time": "unknown"
           },
@@ -126,10 +126,9 @@
             {
               "predicate": "situation.objective",
               "object_kind": "literal",
-              "witness": "sequence the ceramic test coupons before the cooling comparison",
+              "witness": "Polish the amber filter plates.",
               "required_atoms": [
-                "the stated objective is to sequence ceramic test coupons",
-                "sequencing precedes the cooling comparison"
+                "polishing the amber filter plates is requested rather than asserted to have been performed"
               ],
               "perspective": "direct",
               "time": "unknown"
@@ -137,24 +136,26 @@
             {
               "predicate": "situation.blocker",
               "object_kind": "literal",
-              "witness": "the tray dividers are missing",
+              "witness": "the carrier slots are miscut",
               "required_atoms": [
-                "the tray dividers are missing",
-                "the missing tray dividers are a stated blocker of Pebble Chamber"
+                "the carrier slots are miscut",
+                "the miscut carrier slots are a stated blocker of Umber Filter Rack"
               ],
               "perspective": "direct",
               "time": "unknown"
             }
           ],
           "forbidden_assertions": [
-            "Pebble Chamber is complete",
-            "the owner owns or leads Pebble Chamber"
+            "Umber Filter Rack is complete",
+            "the owner owns or leads Umber Filter Rack",
+            "the polishing has been completed",
+            "the source establishes a purpose, enabling relation or commitment for the requested polishing"
           ],
           "label_rule": {
-            "value": "Pebble Chamber",
+            "value": "Umber Filter Rack",
             "naming": "explicit",
-            "naming_witness": "Pebble Chamber — Situation",
-            "witness": "Pebble Chamber — Situation",
+            "naming_witness": "Umber Filter Rack — Situation",
+            "witness": "Umber Filter Rack — Situation",
             "perspective": "direct",
             "time": "unknown"
           }
@@ -162,20 +163,20 @@
       ]
     },
     {
-      "case_id": "core15-situation-reported-saffron-beacon",
+      "case_id": "core16-situation-reported-vermilion-inlet",
       "expectation": "extract",
       "branches": [
         {
-          "id": "situation-reported-saffron-beacon",
+          "id": "situation-reported-vermilion-inlet",
           "target": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Saffron Beacon"
+            "quote": "Vermilion Inlet"
           },
           "classification": {
             "kind": "world/situation",
-            "label": "Saffron Beacon",
-            "witness": "Saffron Beacon — Situation",
+            "label": "Vermilion Inlet",
+            "witness": "Vermilion Inlet — Situation",
             "perspective": "direct",
             "time": "unknown"
           },
@@ -183,51 +184,51 @@
             {
               "predicate": "situation.objective",
               "object_kind": "literal",
-              "witness": "secure the canvas markers before the ridge survey",
+              "witness": "route the dye pulses through the inlet manifold before the transit test",
               "required_atoms": [
-                "the stated objective is to secure canvas markers",
-                "securing the markers precedes the ridge survey"
+                "the stated objective is to route dye pulses through the inlet manifold",
+                "routing the dye pulses precedes the transit test"
               ],
               "perspective": "person_statement",
               "time": "unknown",
               "source": {
                 "mode": "mention",
                 "record": "r1",
-                "quote": "Neri Voss",
-                "label": "Neri Voss",
-                "attribution_witness": "Neri Voss reported"
+                "quote": "Sova Kelm",
+                "label": "Sova Kelm",
+                "attribution_witness": "Sova Kelm stated"
               },
-              "attribution_witness": "Neri Voss reported"
+              "attribution_witness": "Sova Kelm stated"
             },
             {
               "predicate": "situation.blocker",
               "object_kind": "literal",
-              "witness": "the upper clamp is loose",
+              "witness": "the outlet baffle is warped",
               "required_atoms": [
-                "the upper clamp is loose",
-                "the loose upper clamp is a stated blocker of Saffron Beacon"
+                "the outlet baffle is warped",
+                "the warped outlet baffle is a stated blocker of Vermilion Inlet"
               ],
               "perspective": "person_statement",
               "time": "unknown",
               "source": {
                 "mode": "mention",
                 "record": "r1",
-                "quote": "Neri Voss",
-                "label": "Neri Voss",
-                "attribution_witness": "Neri Voss reported"
+                "quote": "Sova Kelm",
+                "label": "Sova Kelm",
+                "attribution_witness": "Sova Kelm stated"
               },
-              "attribution_witness": "Neri Voss reported"
+              "attribution_witness": "Sova Kelm stated"
             }
           ],
           "forbidden_assertions": [
-            "Saffron Beacon is complete",
-            "Neri Voss owns or leads Saffron Beacon"
+            "Vermilion Inlet is complete",
+            "Sova Kelm owns or leads Vermilion Inlet"
           ],
           "label_rule": {
-            "value": "Saffron Beacon",
+            "value": "Vermilion Inlet",
             "naming": "explicit",
-            "naming_witness": "Saffron Beacon — Situation",
-            "witness": "Saffron Beacon — Situation",
+            "naming_witness": "Vermilion Inlet — Situation",
+            "witness": "Vermilion Inlet — Situation",
             "perspective": "direct",
             "time": "unknown"
           }
@@ -235,74 +236,158 @@
       ]
     },
     {
-      "case_id": "core15-situation-historical-lantern-spindle-hold",
+      "case_id": "core16-situation-historical-mica-harmonic-hold",
       "expectation": "extract",
       "branches": [
         {
-          "id": "situation-historical-lantern-spindle-hold",
+          "id": "historical-mica-harmonic-objective",
           "target": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Lantern Spindle Hold"
+            "quote": "Mica Harmonic Hold"
           },
           "classification": {
             "kind": "world/situation",
-            "label": "Lantern Spindle Hold",
-            "witness": "An actual operational condition was observed throughout the observation interval beginning 2017-01-16T04:35:00.000Z and ending exclusively at 2017-04-02T13:25:00.000Z.",
+            "label": "Mica Harmonic Hold",
+            "witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52 throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.",
             "perspective": "direct",
             "time": {
-              "valid_from": "2017-01-16T04:35:00.000Z",
-              "valid_to": "2017-04-02T13:25:00.000Z",
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
               "temporal_basis": "explicit",
-              "witness": "observation interval beginning 2017-01-16T04:35:00.000Z and ending exclusively at 2017-04-02T13:25:00.000Z"
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
             }
           },
-          "details": [
-            {
-              "predicate": "situation.objective",
-              "object_kind": "literal",
-              "witness": "Replace the cracked indexing pawl so the unresolved spindle-position check can proceed.",
-              "required_atoms": [
-                "the indexing pawl is already cracked when replacement is requested",
-                "the spindle-position check is unresolved",
-                "replacement of the cracked indexing pawl is requested rather than asserted to have been performed",
-                "the requested replacement is presented as enabling the unresolved spindle-position check to proceed"
-              ],
-              "perspective": "document_report",
-              "time": {
-                "valid_from": "2017-01-16T04:35:00.000Z",
-                "valid_to": "2017-04-02T13:25:00.000Z",
-                "temporal_basis": "explicit",
-                "witness": "observation interval beginning 2017-01-16T04:35:00.000Z and ending exclusively at 2017-04-02T13:25:00.000Z"
-              },
-              "source": "source-core15-situation-historical",
-              "attribution_witness": "Workshop log WL-64 names this condition Lantern Spindle Hold and requests this action list for it"
-            }
-          ],
           "forbidden_assertions": [
-            "the indexing pawl has been replaced",
-            "the spindle-position check proceeded or completed",
+            "the pitch carriage has been freed",
+            "the harmonic-ratio measurement proceeded or completed",
             "the requested remedy resolved the condition",
-            "Lantern Spindle Hold is complete",
-            "Lantern Spindle Hold is current outside the explicit interval",
-            "the report title is Lantern Spindle Hold",
+            "Mica Harmonic Hold is complete",
+            "Mica Harmonic Hold is current outside the explicit interval",
+            "the report title is Mica Harmonic Hold",
             "the record establishes a project, owner, leadership, execution, or current count"
           ],
           "label_rule": {
-            "value": "Lantern Spindle Hold",
+            "value": "Mica Harmonic Hold",
             "naming": "explicit",
-            "naming_witness": "Workshop log WL-64 names this condition Lantern Spindle Hold and requests this action list for it",
-            "witness": "Workshop log WL-64 names this condition Lantern Spindle Hold and requests this action list for it",
+            "naming_witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52",
+            "witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52",
             "perspective": "document_report",
-            "source": "source-core15-situation-historical",
-            "attribution_witness": "Workshop log WL-64 names this condition Lantern Spindle Hold and requests this action list for it",
+            "source": "source-core16-situation-historical",
+            "attribution_witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52",
             "time": {
-              "valid_from": "2017-01-16T04:35:00.000Z",
-              "valid_to": "2017-04-02T13:25:00.000Z",
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
               "temporal_basis": "explicit",
-              "witness": "observation interval beginning 2017-01-16T04:35:00.000Z and ending exclusively at 2017-04-02T13:25:00.000Z"
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
             }
-          }
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Free the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement so that the measurement can proceed.",
+              "required_atoms": [
+                "freeing the pitch carriage is requested rather than asserted to have been performed",
+                "the pitch carriage is already seized and still blocks an unresolved harmonic-ratio measurement",
+                "the requested remedy is to free the pitch carriage",
+                "freeing the pitch carriage is presented as enabling that unresolved harmonic-ratio measurement to proceed"
+              ],
+              "perspective": "document_report",
+              "source": "source-core16-situation-historical",
+              "attribution_witness": "For that entire interval, that record requests this action list for the named condition",
+              "time": {
+                "valid_from": "2009-05-11T06:40:00.000Z",
+                "valid_to": "2009-08-23T17:10:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+              }
+            }
+          ]
+        },
+        {
+          "id": "historical-mica-harmonic-objective-and-blocker",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Mica Harmonic Hold"
+          },
+          "classification": {
+            "kind": "world/situation",
+            "label": "Mica Harmonic Hold",
+            "witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52 throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.",
+            "perspective": "direct",
+            "time": {
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+            }
+          },
+          "forbidden_assertions": [
+            "the pitch carriage has been freed",
+            "the harmonic-ratio measurement proceeded or completed",
+            "the requested remedy resolved the condition",
+            "Mica Harmonic Hold is complete",
+            "Mica Harmonic Hold is current outside the explicit interval",
+            "the report title is Mica Harmonic Hold",
+            "the record establishes a project, owner, leadership, execution, or current count"
+          ],
+          "label_rule": {
+            "value": "Mica Harmonic Hold",
+            "naming": "explicit",
+            "naming_witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52",
+            "witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52",
+            "perspective": "document_report",
+            "source": "source-core16-situation-historical",
+            "attribution_witness": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52",
+            "time": {
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+            }
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Free the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement so that the measurement can proceed.",
+              "required_atoms": [
+                "freeing the pitch carriage is requested rather than asserted to have been performed",
+                "the pitch carriage is already seized and still blocks an unresolved harmonic-ratio measurement",
+                "the requested remedy is to free the pitch carriage",
+                "freeing the pitch carriage is presented as enabling that unresolved harmonic-ratio measurement to proceed"
+              ],
+              "perspective": "document_report",
+              "source": "source-core16-situation-historical",
+              "attribution_witness": "For that entire interval, that record requests this action list for the named condition",
+              "time": {
+                "valid_from": "2009-05-11T06:40:00.000Z",
+                "valid_to": "2009-08-23T17:10:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+              }
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement",
+              "required_atoms": [
+                "the pitch carriage is seized",
+                "the seized pitch carriage still blocks the unresolved harmonic-ratio measurement"
+              ],
+              "perspective": "document_report",
+              "source": "source-core16-situation-historical",
+              "attribution_witness": "For that entire interval, that record requests this action list for the named condition",
+              "time": {
+                "valid_from": "2009-05-11T06:40:00.000Z",
+                "valid_to": "2009-08-23T17:10:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+              }
+            }
+          ]
         }
       ]
     },

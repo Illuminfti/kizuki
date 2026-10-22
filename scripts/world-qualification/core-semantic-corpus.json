@@ -2,47 +2,47 @@
   "schema": "kizuki.core-semantic-corpus/v1",
   "synthetic": true,
   "split": "held_out",
-  "version": "core15-fresh-synthetic-20261022",
+  "version": "core16-three-new-nine-unobserved-20261022",
   "cases": [
     {
-      "id": "core15-situation-positive-pebble-chamber",
+      "id": "core16-situation-positive-umber-filter-rack",
       "kind": "situation",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Pebble Chamber — Situation. Its objective is to sequence the ceramic test coupons before the cooling comparison. Its blocker is that the tray dividers are missing.",
+          "text": "Umber Filter Rack — Situation. Requested action for this condition: Polish the amber filter plates. Its blocker is that the carrier slots are miscut.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core15-situation-reported-saffron-beacon",
+      "id": "core16-situation-reported-vermilion-inlet",
       "kind": "situation",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Saffron Beacon — Situation. Neri Voss reported: \"Its objective is to secure the canvas markers before the ridge survey. Its blocker is that the upper clamp is loose.\"",
+          "text": "Vermilion Inlet — Situation. Sova Kelm stated: \"Its objective is to route the dye pulses through the inlet manifold before the transit test. Its blocker is that the outlet baffle is warped.\"",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core15-situation-historical-lantern-spindle-hold",
+      "id": "core16-situation-historical-mica-harmonic-hold",
       "kind": "situation",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "An actual operational condition was observed throughout the observation interval beginning 2017-01-16T04:35:00.000Z and ending exclusively at 2017-04-02T13:25:00.000Z.\nFor that entire interval, Workshop log WL-64 names this condition Lantern Spindle Hold and requests this action list for it:\n- Replace the cracked indexing pawl so the unresolved spindle-position check can proceed.\n\nArchive inventory\n- The violet chalk is kept in the narrow rack.\n- A woolen pouch rests beside the balance scale.\n- The steel square hangs above the workbench.\n- A brass thimble lies in the shallow dish.\n- The linen measuring strip is folded on the stool.\n- A blue wax crayon is stored in the side compartment.\n- The cork pad sits beneath the small vise.\n- A clean oilcan stands near the wall bracket.\n- The canvas tool roll is fastened with a ribbon.\n- A reed basket occupies the bottom cubby.\n- The leather apron is hung beside the cabinet.\n- A white ceramic saucer rests on the corner shelf.\n- The short wooden mallet is laid across the felt pad.\n- A green binder clip holds the blank tally leaves.\n- The nickel ruler lies alongside the cork sheet.\n- A coiled cotton tie remains in the open tin.",
+          "text": "The named actual operational condition Mica Harmonic Hold was recorded by Acoustic bench record AB-52 throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.\nFor that entire interval, that record requests this action list for the named condition:\n- Free the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement so that the measurement can proceed.\n\nArchive inventory\n- A copper tuning fork rests in the padded drawer.\n- A black glass bead sits on a paper coaster.\n- A rubber foot lies beside the oak stand.\n- A silver wire spool is enclosed in the lidded box.\n- A folded suede mat remains beneath the tripod.\n- An amber bottle stands near the dial housing.\n- A teal felt wedge is placed on the cart.\n- A tin weight rests on the map case.\n- An ivory button lies on the canvas tray.\n- A gray stone slab sits below the cabinet.\n- A spare cotton wick is stored in a narrow tube.\n- A red enamel cup occupies the stone plinth.\n- A smooth pumice chip is kept in a porcelain pocket.\n- A burgundy cord loop hangs from the peg.\n- A small acetate tile lies beside the cork block.\n- A bronze paperweight remains inside the open pouch.",
           "subjects": [
             {
-              "id": "source-core15-situation-historical",
-              "quote": "Workshop log WL-64 names this condition"
+              "id": "source-core16-situation-historical",
+              "quote": "Acoustic bench record AB-52"
             }
           ]
         }
