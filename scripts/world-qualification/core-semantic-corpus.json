@@ -2,145 +2,178 @@
   "schema": "kizuki.core-semantic-corpus/v1",
   "synthetic": true,
   "split": "held_out",
-  "version": "core-semantic-20261022",
+  "version": "core-semantic-20261022b",
   "cases": [
     {
-      "id": "core6-concept-positive-ridge-veil",
+      "id": "core7-concept-positive-shelf-current",
       "kind": "concept",
       "category": "positive",
       "source_type": "direct_record",
-      "records": [{
-        "id": "r1",
-        "text": "Field observation: Ridge veil is a concept meaning the band of cooler air that remains below a sunlit slope after dawn. It is not a weather alert or a claim about who owns the hillside.",
-        "subjects": []
-      }]
+      "records": [
+        {
+          "id": "r1",
+          "text": "Field observation: Shelf current is a concept meaning the ribbon of warmer water that persists beneath an overhanging ledge after sunset. It is not a navigation warning or a claim about who owns the shoreline.",
+          "subjects": []
+        }
+      ]
     },
     {
-      "id": "core6-concept-reported-seam-echo",
+      "id": "core7-concept-reported-prism-trace",
       "kind": "concept",
       "category": "reported",
       "source_type": "person_statement",
-      "records": [{
-        "id": "r1",
-        "text": "Record header: Seam echo — Concept. At the acoustics workshop, Mara said: \"It means the delayed reflection heard where two wall panels meet.\" Mara is the grounded speaker; the record does not state that she owns the room or installed the panels.",
-        "subjects": [
-          { "id": "source-core6-concept-reported", "quote": "Mara said" }
-        ]
-      }]
+      "records": [
+        {
+          "id": "r1",
+          "text": "Record header: Prism trace — Concept. At the optics workshop, Liora said: \"It means the faint second image visible through two misaligned panes.\" She is the grounded speaker; the record does not state that she owns the studio or fitted the panes.",
+          "subjects": [
+            {
+              "id": "source-core7-concept-reported",
+              "quote": "Liora said"
+            }
+          ]
+        }
+      ]
     },
     {
-      "id": "core6-concept-historical-amber-interval",
+      "id": "core7-concept-historical-cobalt-pause",
       "kind": "concept",
       "category": "historical",
       "source_type": "document_report",
-      "records": [{
-        "id": "r1",
-        "text": "Archive note: From 2013-02-01T00:00:00Z until 2015-06-01T00:00:00Z, with the end excluded, the Fenwick Handbook used Amber interval as the name of a concept meaning the waiting period between sealing a specimen jar and reading its first stable temperature. The note does not state that the term remained current after that interval.",
-        "subjects": [
-          { "id": "source-core6-concept-historical", "quote": "Fenwick Handbook" }
-        ]
-      }]
+      "records": [
+        {
+          "id": "r1",
+          "text": "Archive note: From 2011-03-04T00:00:00Z until 2014-09-10T00:00:00Z, with the end excluded, the Harbor Manual used Cobalt pause as the name of a concept meaning the waiting period between sterilising a sample tube and its pressure reaching a stable reading. The note does not state that the term remained current after that interval.",
+          "subjects": [
+            {
+              "id": "source-core7-concept-historical",
+              "quote": "Harbor Manual"
+            }
+          ]
+        }
+      ]
     },
     {
-      "id": "core6-concept-negative-name",
+      "id": "core7-concept-negative-name",
       "kind": "concept",
       "category": "name_negative",
       "source_type": "direct_record",
-      "records": [{
-        "id": "r1",
-        "text": "Index entry: River Glass. No definition, explanation, example, or distinction is supplied here.",
-        "subjects": []
-      }]
+      "records": [
+        {
+          "id": "r1",
+          "text": "Index entry: Stone Ribbon. No definition, explanation, example, or distinction is supplied here.",
+          "subjects": []
+        }
+      ]
     },
     {
-      "id": "core6-concept-negative-template",
+      "id": "core7-concept-negative-template",
       "kind": "concept",
       "category": "template_negative",
       "source_type": "direct_record",
-      "records": [{
-        "id": "r1",
-        "text": "Blank glossary template. Concept name: ______. Definition: ______. Example: ______. No completed entry is present.",
-        "subjects": []
-      }]
+      "records": [
+        {
+          "id": "r1",
+          "text": "Unused terminology worksheet: Heading [not filled]; Meaning [not filled]; Worked example [not filled]. No authored entry exists.",
+          "subjects": []
+        }
+      ]
     },
     {
-      "id": "core6-concept-negative-hypothetical",
+      "id": "core7-concept-negative-hypothetical",
       "kind": "concept",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
-      "records": [{
-        "id": "r1",
-        "text": "Planning note: If the team later coins Quiet hinge for a way of describing gradual handoffs, that hypothetical term could become a concept. No term has been adopted or defined.",
-        "subjects": []
-      }]
+      "records": [
+        {
+          "id": "r1",
+          "text": "Planning note: If the team later coins Silent lattice for a way of describing delayed feedback, that hypothetical term could become a concept. No term has been adopted or defined.",
+          "subjects": []
+        }
+      ]
     },
     {
-      "id": "core6-situation-positive-lamp-audit",
+      "id": "core7-situation-positive-gate-survey",
       "kind": "situation",
       "category": "positive",
       "source_type": "direct_record",
-      "records": [{
-        "id": "r1",
-        "text": "Operational record: Lamp audit is an active situation. Its objective is to verify every emergency lamp before the quay reopens. Its blocker is that the lift battery has not arrived. The record does not assign ownership.",
-        "subjects": []
-      }]
+      "records": [
+        {
+          "id": "r1",
+          "text": "Operational record: Gate survey is an active situation. Its objective is to check every pedestrian gate before the depot reopens. Its blocker is that the survey tablet has not arrived. The record does not assign ownership.",
+          "subjects": []
+        }
+      ]
     },
     {
-      "id": "core6-situation-reported-west-stack",
+      "id": "core7-situation-reported-east-duct",
       "kind": "situation",
       "category": "reported",
       "source_type": "person_statement",
-      "records": [{
-        "id": "r1",
-        "text": "Operations register: West stack inspection — Situation. During stand-up, Dalen reported: \"Its objective is to inspect all four exhaust stacks before Friday. It is blocked because the calibrated gas meter is still with the laboratory.\" He is the grounded speaker; the record does not state that he owns the work.",
-        "subjects": []
-      }]
+      "records": [
+        {
+          "id": "r1",
+          "text": "Operations register: East duct review — Situation. During stand-up, Soren reported: \"Its objective is to inspect all three ventilation ducts before Wednesday. It is blocked because the calibrated thermal probe is still with the service centre.\" He is the grounded speaker; the record does not state that he owns the work.",
+          "subjects": []
+        }
+      ]
     },
     {
-      "id": "core6-situation-historical-reed-transfer",
+      "id": "core7-situation-historical-vial-relocation",
       "kind": "situation",
       "category": "historical",
       "source_type": "document_report",
-      "records": [{
-        "id": "r1",
-        "text": "The 2018 field log records that from 2018-04-03T00:00:00Z until 2018-04-18T00:00:00Z, with the end excluded, Reed-bed transfer was an operational situation whose objective was to move twelve trays to the north greenhouse; throughout that interval, a flooded footpath was the blocker. The log makes no claim about its current status.",
-        "subjects": [
-          { "id": "source-core6-situation-historical", "quote": "2018 field log" }
-        ]
-      }]
+      "records": [
+        {
+          "id": "r1",
+          "text": "The 2020 station journal records that from 2020-08-05T00:00:00Z until 2020-08-21T00:00:00Z, with the end excluded, Vial relocation was an operational situation whose objective was to move nine sealed vials to the south cold room; throughout that interval, a flooded access stairway was the blocker. The log makes no claim about its current status.",
+          "subjects": [
+            {
+              "id": "source-core7-situation-historical",
+              "quote": "2020 station journal"
+            }
+          ]
+        }
+      ]
     },
     {
-      "id": "core6-situation-negative-name",
+      "id": "core7-situation-negative-name",
       "kind": "situation",
       "category": "name_negative",
       "source_type": "direct_record",
-      "records": [{
-        "id": "r1",
-        "text": "Portfolio list: North Alcove Renewal. The list gives no objective, commitment, blocker, change, or operational condition.",
-        "subjects": []
-      }]
+      "records": [
+        {
+          "id": "r1",
+          "text": "Portfolio list: South Gallery Refit. The list gives no objective, commitment, blocker, change, or operational condition.",
+          "subjects": []
+        }
+      ]
     },
     {
-      "id": "core6-situation-negative-template",
+      "id": "core7-situation-negative-template",
       "kind": "situation",
       "category": "template_negative",
       "source_type": "direct_record",
-      "records": [{
-        "id": "r1",
-        "text": "Blank status template. Work item: ______. Objective: ______. Blocker: ______. Change: ______. No completed status is present.",
-        "subjects": []
-      }]
+      "records": [
+        {
+          "id": "r1",
+          "text": "Empty shift-report worksheet: Episode [unset]; Aim [unset]; Obstacle [unset]; Update [unset]. These are unfilled form labels.",
+          "subjects": []
+        }
+      ]
     },
     {
-      "id": "core6-situation-negative-hypothetical",
+      "id": "core7-situation-negative-hypothetical",
       "kind": "situation",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
-      "records": [{
-        "id": "r1",
-        "text": "Discussion note: If funding arrives, Cedar room refit might become a project to replace the ceiling panels. Nothing has been approved, started, committed, blocked, or changed.",
-        "subjects": []
-      }]
+      "records": [
+        {
+          "id": "r1",
+          "text": "Discussion note: If funding arrives, Willow hall upgrade might become a project to replace the floor tiles. Nothing has been approved, started, committed, blocked, or changed.",
+          "subjects": []
+        }
+      ]
     }
   ]
 }

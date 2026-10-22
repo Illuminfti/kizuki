@@ -20,12 +20,13 @@ type TimeRule = "unknown" | { valid_from: string; valid_to: string; temporal_bas
 type PerspectiveRule = "direct" | "person_statement" | "document_report";
 interface MentionRule { mode: "mention"; record: string; quote: string; label: string; attribution_witness: string }
 type SourceRule = string | MentionRule;
-interface PropositionRule { witness: string; perspective: PerspectiveRule; source?: SourceRule; time: TimeRule }
+interface PropositionRule { witness: string; perspective: PerspectiveRule; source?: SourceRule; equivalent_mention?: MentionRule; attribution_witness?: string; time: TimeRule }
 interface DetailRule extends PropositionRule { predicate: string; object_kind: "literal"; required_atoms: string[] }
 interface TargetRule { mode: "mention"; record: string; quote: string }
 interface ExtractRule {
   case_id: string; expectation: "extract"; target: TargetRule;
   classification: PropositionRule & { kind: "world/concept" | "world/situation"; label: string };
+  label_alternatives?: PropositionRule[];
   details: DetailRule[]; forbidden_assertions: string[];
 }
 interface AbstainRule { case_id: string; expectation: "abstain"; forbidden_assertions: string[] }
@@ -70,7 +71,7 @@ export function validateCoreSemanticAssets(): void {
       if (rule.target.mode !== "mention" || targetRecord === undefined || targetRecord.subjects.some(subject => subject.quote === rule.target.quote) || span(targetRecord, rule.target.quote).end_utf16 <= 0 ||
           rule.details.length < 1 || rule.details.length > 4 || new Set(rule.details.map(row => row.predicate)).size !== rule.details.length ||
           rule.classification.kind !== `world/${item.kind}` || rule.details.some(row => row.object_kind !== "literal" || row.required_atoms.length < 1)) throw new Error("invalid core semantic extraction rule");
-      for (const proposition of [rule.classification, ...rule.details]) {
+      for (const proposition of [rule.classification, ...(rule.label_alternatives ?? []), ...rule.details]) {
         span(item.records[0]!, proposition.witness);
         if (proposition.perspective === "direct") { if (proposition.source !== undefined) throw new Error("invalid core semantic attribution rule"); }
         else if (proposition.source === undefined) throw new Error("invalid core semantic attribution rule");
@@ -81,12 +82,28 @@ export function validateCoreSemanticAssets(): void {
               span(sourceRecord, source.quote).end_utf16 <= 0 || span(sourceRecord, source.attribution_witness).end_utf16 <= 0 ||
               normalized(source.label).length === 0) throw new Error("invalid core semantic attribution rule");
         }
+        if (proposition.equivalent_mention !== undefined) {
+          const source = proposition.equivalent_mention, record = item.records.find(row => row.id === source.record);
+          if (typeof proposition.source !== "string" || source.mode !== "mention" || record === undefined ||
+              span(record, source.quote).end_utf16 <= 0 || span(record, source.attribution_witness).end_utf16 <= 0 ||
+              normalized(source.label).length === 0) throw new Error("invalid equivalent attribution ref");
+          const supplied = record.subjects.find(row => row.id === proposition.source);
+          const occurrence = span(record, source.quote), suppliedSpan = supplied === undefined ? null : span(record, supplied.quote);
+          if (suppliedSpan === null || occurrence.start_utf16 < suppliedSpan.start_utf16 || occurrence.end_utf16 > suppliedSpan.end_utf16) throw new Error("unrelated equivalent attribution ref");
+        }
+        const roleWitness = proposition.attribution_witness ?? (typeof proposition.source === "object" ? proposition.source.attribution_witness : undefined);
+        if (proposition.perspective !== "direct" && roleWitness === undefined) throw new Error("missing attribution role witness");
+        if (roleWitness !== undefined) span(item.records[0]!, roleWitness);
         if (proposition.time !== "unknown" && (!(Date.parse(proposition.time.valid_from) < Date.parse(proposition.time.valid_to)) || proposition.time.temporal_basis !== "explicit" ||
             new Date(proposition.time.valid_from).toISOString() !== proposition.time.valid_from || new Date(proposition.time.valid_to).toISOString() !== proposition.time.valid_to ||
             span(item.records[0]!, proposition.time.witness).end_utf16 <= 0)) throw new Error("invalid core semantic time rule");
       }
       const expectedPerspective = item.category === "reported" ? "person_statement" : item.category === "historical" ? "document_report" : "direct";
       if (rule.classification.perspective !== "direct" || rule.details.some(row => row.perspective !== expectedPerspective)) throw new Error("core semantic source role mismatch");
+      if (rule.label_alternatives !== undefined && (item.category !== "historical" || ![1, 2].includes(rule.label_alternatives.length) ||
+          (rule.label_alternatives.length === 2 && rule.label_alternatives[0]!.perspective !== "direct") ||
+          rule.label_alternatives.at(-1)!.perspective !== "document_report" ||
+          rule.label_alternatives.some(row => canonicalJson(row.time) !== canonicalJson(rule.classification.time)))) throw new Error("invalid label alternatives");
     }
   }
 }
@@ -107,14 +124,35 @@ function exactTime(claim: RichClaimDraft, rule: TimeRule): boolean {
     new Date(claim.valid_from).toISOString() === rule.valid_from && new Date(claim.valid_to).toISOString() === rule.valid_to && claim.temporal_basis === rule.temporal_basis;
 }
 
-function exactPerspective(claim: RichClaimDraft, rule: PropositionRule, sourceKey: string | null): boolean {
+function exactPerspective(claim: RichClaimDraft, rule: PropositionRule, sourceKey: string | null, equivalentKey: string | null = null): boolean {
   const perspective = claim.perspective;
   if (perspective.interpretation !== "explicit" || perspective.addressee !== null) return false;
   if (rule.perspective === "direct") return perspective.mode === "asserted" && perspective.holder === null && perspective.speaker === null;
   if (sourceKey === null || (rule.perspective === "document_report" ? perspective.mode !== "reported" : !["reported", "quoted"].includes(perspective.mode))) return false;
-  if (rule.perspective === "document_report") return perspective.holder !== null && rawRefKey(perspective.holder) === sourceKey && perspective.speaker === null;
-  return perspective.speaker !== null && rawRefKey(perspective.speaker) === sourceKey &&
-    (perspective.holder === null || rawRefKey(perspective.holder) === sourceKey);
+  const matches = (key: string) => key === sourceKey || (equivalentKey !== null && key === equivalentKey);
+  if (rule.perspective === "document_report") return perspective.holder !== null && matches(rawRefKey(perspective.holder)) && perspective.speaker === null;
+  return perspective.speaker !== null && matches(rawRefKey(perspective.speaker)) &&
+    (perspective.holder === null || rawRefKey(perspective.holder) === rawRefKey(perspective.speaker));
+}
+
+/** Attribution needs its reporting words on every claim, not merely a named actor. */
+function roleEvidence(claim: RichClaimDraft, rule: PropositionRule, item: CoreSemanticCase, input: ProduceInputV2): boolean {
+  if (rule.perspective === "direct") return true;
+  const witness = rule.attribution_witness ?? (typeof rule.source === "object" ? rule.source.attribution_witness : undefined);
+  if (witness === undefined) return false;
+  const index = item.records.findIndex(record => record.text.includes(witness));
+  if (index < 0) return false;
+  const expected = span(item.records[index]!, witness);
+  const anchors = [...claim.anchors, ...claim.perspective.anchors].filter(anchor => anchor.event_id === input.events[index]!.event_id)
+    .sort((a, b) => a.start_utf16 - b.start_utf16);
+  let end = expected.start_utf16;
+  for (const anchor of anchors) { if (anchor.start_utf16 > end) break; end = Math.max(end, anchor.end_utf16); }
+  return end >= expected.end_utf16;
+}
+
+function propositionMatches(claim: RichClaimDraft, rule: PropositionRule, item: CoreSemanticCase, response: NonNullable<Observation["response"]>, input: ProduceInputV2): boolean {
+  const equivalent = rule.equivalent_mention === undefined ? null : sourceKey({ ...rule, source: rule.equivalent_mention }, item, response, input);
+  return exactPerspective(claim, rule, sourceKey(rule, item, response, input), equivalent) && roleEvidence(claim, rule, item, input);
 }
 
 function sourceKey(rule: PropositionRule, item: CoreSemanticCase, response: NonNullable<Observation["response"]>, input: ProduceInputV2): string | null {
@@ -160,13 +198,14 @@ function scoreCoreSemanticCase(item: CoreSemanticCase, rule: ExtractRule | Absta
         if (!label || label.object.kind !== "literal" || normalized(label.object.value) !== rule.classification.label || label.polarity !== "positive" ||
             !label.anchors.some(anchor => canonicalJson(anchor) === canonicalJson(targetAnchor))) gates.structure.push("label_mismatch");
         for (const claim of [classification, label]) if (claim) {
-          if (!exactPerspective(claim, rule.classification, sourceKey(rule.classification, item, observed.response, observed.input))) gates.attribution.push(`${claim.predicate}:perspective`);
-          if (!exactTime(claim, rule.classification.time)) gates.time.push(`${claim.predicate}:time`);
+          const alternatives = claim === label ? rule.label_alternatives ?? [rule.classification] : [rule.classification];
+          if (!alternatives.some(proposition => propositionMatches(claim, proposition, item, observed.response!, observed.input))) gates.attribution.push(`${claim.predicate}:perspective`);
+          if (!alternatives.some(proposition => exactTime(claim, proposition.time))) gates.time.push(`${claim.predicate}:time`);
         }
         for (const detail of rule.details) {
           const claim = typedClaims.find(row => row.predicate === detail.predicate);
           if (!claim || claim.object.kind !== "literal" || claim.polarity !== "positive") { gates.structure.push(`${detail.predicate}:missing`); continue; }
-          if (!exactPerspective(claim, detail, sourceKey(detail, item, observed.response, observed.input))) gates.attribution.push(`${detail.predicate}:perspective`);
+          if (!propositionMatches(claim, detail, item, observed.response, observed.input)) gates.attribution.push(`${detail.predicate}:perspective`);
           if (!exactTime(claim, detail.time)) gates.time.push(`${detail.predicate}:time`);
         }
       }
@@ -201,7 +240,7 @@ export function expectedCoreSemanticReview(reportSha256: string, result: ReturnT
           atoms: rule.details.flatMap(detail => detail.required_atoms.map(atom => ({ predicate: detail.predicate, atom, status: "supported" as const }))), literal_consistency: "passed" as const,
           body_fidelity: "passed" as const,
           evidence: ["world.kind", `${coreSemanticCorpus.cases.find(item => item.id === row.case_id)!.kind}.label`, ...rule.details.map(detail => detail.predicate)]
-            .map(predicate => ({ predicate, anchors_jointly_support_claim: "passed" as const })), unsupported_additions: [],
+            .map(predicate => ({ predicate, anchors_jointly_support_claim: "passed" as const, role_and_time_supported: "passed" as const })), unsupported_additions: [],
           legacy_extras: (row.manual_review.legacy_extras ?? []).map(extra => ({ ...extra, literal_supported: "passed" as const, body_fidelity: "passed" as const,
             references_grounded: "passed" as const, anchors_jointly_support_claim: "passed" as const, role_and_time_supported: "passed" as const,
             source_entailment: "passed" as const, unsupported_additions: "absent" as const })),

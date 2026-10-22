@@ -35,7 +35,7 @@ function scripted(item: CoreSemanticCase): Observation {
     if (!mentionSources.has(key)) mentionSources.set(key, { ref: { kind: "mention", id: `m-source-${mentionSources.size + 1}` }, anchor,
       attributionAnchor: uniqueSpan(item, contract.source.attribution_witness), label: contract.source.label });
   }
-  const proposition = (id: string, predicate: string, object: RichClaimDraft["object"], contract: ExtractRule["classification"] | ExtractRule["details"][number], body: string): RichClaimDraft => {
+  const proposition = (id: string, predicate: string, object: RichClaimDraft["object"], contract: NonNullable<ExtractRule["label_alternatives"]>[number], body: string): RichClaimDraft => {
     const source = contract.source === undefined ? null : typeof contract.source === "string" ? ({ kind: "supplied", id: contract.source } as const) : mentionSources.get(canonicalJson(contract.source))!.ref;
     const perspective = contract.perspective === "direct"
       ? { holder: null, speaker: null, addressee: null, mode: "asserted" as const, interpretation: "explicit" as const, anchors: [] }
@@ -47,13 +47,14 @@ function scripted(item: CoreSemanticCase): Observation {
     const time = contract.time === "unknown" ? { valid_from: null, valid_to: null, temporal_basis: "unknown" as const }
       : { valid_from: contract.time.valid_from, valid_to: contract.time.valid_to, temporal_basis: contract.time.temporal_basis };
     const witness = uniqueSpan(item, contract.witness), timeWitness = contract.time === "unknown" ? null : uniqueSpan(item, contract.time.witness);
-    const anchors = [targetAnchor, witness, ...(timeWitness === null ? [] : [timeWitness])];
+    const roleWitness = contract.attribution_witness ?? (typeof contract.source === "object" ? contract.source.attribution_witness : undefined);
+    const anchors = [targetAnchor, witness, ...(timeWitness === null ? [] : [timeWitness]), ...(roleWitness === undefined ? [] : [uniqueSpan(item, roleWitness)])];
     return { id, subject: target, predicate, object, perspective, context: [], polarity: "positive", body, ...time, confidence: 0.8, sensitivity: "personal",
       anchors: [...new Map(anchors.map(anchor => [canonicalJson(anchor), anchor])).values()] };
   };
   const claims: RichClaimDraft[] = [
     proposition("c1", "world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: rule.classification.kind } }, rule.classification, `${rule.classification.label} is classified as ${rule.classification.kind}.`),
-    proposition("c2", `${item.kind}.label`, { kind: "literal", value: rule.classification.label }, rule.classification, `The source names it ${rule.classification.label}.`),
+    proposition("c2", `${item.kind}.label`, { kind: "literal", value: rule.classification.label }, rule.label_alternatives?.[0] ?? rule.classification, `The source names it ${rule.classification.label}.`),
     ...rule.details.map((detail, index) => { const literal = detail.required_atoms.join("; "); return proposition(`c${index + 3}`, detail.predicate, { kind: "literal", value: literal }, detail, literal); }),
   ];
   const mentions = [{ id: "m-target", label: rule.target.quote, anchor: targetAnchor, candidate_refs: [] },
@@ -88,13 +89,13 @@ describe("predeclared core semantic protocol", () => {
   });
 
   test("negative claims, extra predicates, split targets and drops fail closed", () => {
-    const negative = "core6-concept-negative-name", positive = "core6-concept-positive-ridge-veil";
+    const negative = "core7-concept-negative-name", positive = "core7-concept-positive-shelf-current";
     const source = observations(), positiveClaim = source.find(row => row.case_id === positive)!.response!.claims[0]!;
     expect(scoreCoreSemanticRun(mutate(source, negative, response => ({ ...response, claims: [positiveClaim] })), registry).automated_passed).toBe(false);
     expect(scoreCoreSemanticRun(mutate(source, positive, response => ({ ...response, claims: [...response.claims, { ...response.claims[0]!, id: "extra" }] })), registry).automated_passed).toBe(false);
-    const item = coreSemanticCorpus.cases.find(row => row.id === positive)!, secondAnchor = uniqueSpan(item, "band of cooler air");
+    const item = coreSemanticCorpus.cases.find(row => row.id === positive)!, secondAnchor = uniqueSpan(item, "ribbon of warmer water");
     const split = mutate(source, positive, response => ({ ...response,
-      mentions: [...response.mentions, { id: "m-target-2", label: "band of cooler air", anchor: secondAnchor, candidate_refs: [] }],
+      mentions: [...response.mentions, { id: "m-target-2", label: "ribbon of warmer water", anchor: secondAnchor, candidate_refs: [] }],
       claims: response.claims.map((claim, index) => index === 1 ? { ...claim, subject: { kind: "mention", id: "m-target-2" } } : claim) }));
     expect(parsedObservation(split, positive).ok).toBe(true);
     expect(scoreCoreSemanticRun(split, registry).automated_passed).toBe(false);
@@ -102,15 +103,15 @@ describe("predeclared core semantic protocol", () => {
   });
 
   test("unsupplied target nomination is exact and cannot be replaced, moved, split or omitted from the label evidence", () => {
-    const id = "core6-concept-reported-seam-echo", direct = "core6-concept-positive-ridge-veil", source = observations();
-    const item = coreSemanticCorpus.cases.find(row => row.id === id)!, suppliedAnchor = uniqueSpan(item, "Mara said");
+    const id = "core7-concept-reported-prism-trace", direct = "core7-concept-positive-shelf-current", source = observations();
+    const item = coreSemanticCorpus.cases.find(row => row.id === id)!, suppliedAnchor = uniqueSpan(item, "Liora said");
     const suppliedTarget = mutate(source, id, response => ({ ...response, claims: response.claims.map(claim => ({ ...claim,
-      subject: { kind: "supplied", id: "source-core6-concept-reported" },
+      subject: { kind: "supplied", id: "source-core7-concept-reported" },
       anchors: [...new Map([...claim.anchors, suppliedAnchor].map(anchor => [canonicalJson(anchor), anchor])).values()] })) }));
     expect(parsedObservation(suppliedTarget, id).ok).toBe(true);
     expect(scoreCoreSemanticRun(suppliedTarget, registry).automated_passed).toBe(false);
 
-    const directItem = coreSemanticCorpus.cases.find(row => row.id === direct)!, wrongSpan = uniqueSpan(directItem, "band of cooler air");
+    const directItem = coreSemanticCorpus.cases.find(row => row.id === direct)!, wrongSpan = uniqueSpan(directItem, "ribbon of warmer water");
     const moved = mutate(source, direct, response => ({ ...response, mentions: response.mentions.map(mention => mention.id === "m-target" ? { ...mention, anchor: wrongSpan } : mention) }));
     expect(parsedObservation(moved, direct).ok).toBe(true);
     expect(scoreCoreSemanticRun(moved, registry).automated_passed).toBe(false);
@@ -134,7 +135,7 @@ describe("predeclared core semantic protocol", () => {
   });
 
   test("zero-ref reported Situation nominates a distinct exact speaker mention", () => {
-    const id = "core6-situation-reported-west-stack", source = observations(), row = source.find(candidate => candidate.case_id === id)!;
+    const id = "core7-situation-reported-east-duct", source = observations(), row = source.find(candidate => candidate.case_id === id)!;
     expect(row.input.supplied_refs).toEqual([]);
     expect(scoreCoreSemanticRun(source, registry).cases.find(candidate => candidate.case_id === id)!.automated_passed).toBe(true);
     const targetAnchor = row.response!.mentions.find(mention => mention.id === "m-target")!.anchor;
@@ -143,7 +144,7 @@ describe("predeclared core semantic protocol", () => {
     expect(parsedObservation(conflated, id).ok).toBe(true);
     expect(scoreCoreSemanticRun(conflated, registry).automated_passed).toBe(false);
 
-    const item = coreSemanticCorpus.cases.find(candidate => candidate.id === id)!, wrongSpan = uniqueSpan(item, "West stack inspection");
+    const item = coreSemanticCorpus.cases.find(candidate => candidate.id === id)!, wrongSpan = uniqueSpan(item, "East duct review");
     const wrongSpeaker = mutate(source, id, response => ({ ...response,
       mentions: response.mentions.map(mention => mention.id === "m-source-1" ? { ...mention, anchor: wrongSpan } : mention),
       claims: response.claims.map(claim => claim.predicate.startsWith("situation.") && claim.predicate !== "situation.label"
@@ -152,13 +153,54 @@ describe("predeclared core semantic protocol", () => {
     expect(scoreCoreSemanticRun(wrongSpeaker, registry).automated_passed).toBe(false);
   });
 
+  test("an authored equivalent person occurrence preserves attribution without asserting durable identity", () => {
+    const id = "core7-concept-reported-prism-trace", source = observations();
+    const item = coreSemanticCorpus.cases.find(row => row.id === id)!, name = uniqueSpan(item, "Liora"), role = uniqueSpan(item, "Liora said");
+    const changed = mutate(source, id, response => ({ ...response,
+      mentions: [...response.mentions, { id: "m-speaker", label: "Liora", anchor: name, candidate_refs: [] }],
+      claims: response.claims.map(claim => claim.predicate === "concept.definition" ? { ...claim,
+        perspective: { ...claim.perspective, speaker: { kind: "mention", id: "m-speaker" }, anchors: [name, role] } } : claim) }));
+    expect(parsedObservation(changed, id).ok).toBe(true);
+    expect(scoreCoreSemanticRun(changed, registry).automated_passed).toBe(true);
+    const wrong = mutate(changed, id, response => ({ ...response,
+      mentions: response.mentions.map(mention => mention.id === "m-speaker" ? { ...mention, label: "Unrelated" } : mention) }));
+    expect(scoreCoreSemanticRun(wrong, registry).automated_passed).toBe(false);
+  });
+
+  test("reported historical labels keep document roles and the exact interval", () => {
+    const source = observations(), id = "core7-concept-historical-cobalt-pause";
+    const changed = mutate(source, id, response => {
+      const definition = response.claims.find(claim => claim.predicate === "concept.definition")!;
+      return { ...response, claims: response.claims.map(claim => claim.predicate === "concept.label" ? { ...claim,
+        perspective: definition.perspective, anchors: definition.anchors } : claim) };
+    });
+    expect(parsedObservation(changed, id).ok).toBe(true);
+    expect(scoreCoreSemanticRun(changed, registry).automated_passed).toBe(true);
+    const speaker = mutate(changed, id, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === "concept.label"
+      ? { ...claim, perspective: { ...claim.perspective, speaker: claim.perspective.holder, holder: null } } : claim) }));
+    expect(scoreCoreSemanticRun(speaker, registry).automated_passed).toBe(false);
+    const flattened = mutate(changed, id, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === "concept.label"
+      ? { ...claim, perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] } } : claim) }));
+    expect(parsedObservation(flattened, id).ok).toBe(true);
+    expect(scoreCoreSemanticRun(flattened, registry).automated_passed).toBe(false);
+  });
+
+  test("one attributed detail cannot borrow another claim's reporting evidence", () => {
+    const source = observations(), id = "core7-situation-reported-east-duct", item = coreSemanticCorpus.cases.find(row => row.id === id)!;
+    const name = uniqueSpan(item, "Soren"), target = uniqueSpan(item, "East duct review"), fact = uniqueSpan(item, "the calibrated thermal probe is still with the service centre");
+    const changed = mutate(source, id, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === "situation.blocker"
+      ? { ...claim, anchors: [target, fact], perspective: { ...claim.perspective, anchors: [name] } } : claim) }));
+    expect(parsedObservation(changed, id).ok).toBe(true);
+    expect(scoreCoreSemanticRun(changed, registry).automated_passed).toBe(false);
+  });
+
   test("grounded legacy extras remain pending per-claim review while forbidden and typed extras fail", () => {
-    const lamp = "core6-situation-positive-lamp-audit", west = "core6-situation-reported-west-stack", source = observations();
+    const lamp = "core7-situation-positive-gate-survey", west = "core7-situation-reported-east-duct", source = observations();
     const lampRow = source.find(row => row.case_id === lamp)!, lampItem = coreSemanticCorpus.cases.find(row => row.id === lamp)!;
     const target = lampRow.response!.mentions.find(mention => mention.id === "m-target")!, active = uniqueSpan(lampItem, "active situation");
     const status: RichClaimDraft = { id: "legacy-status", subject: { kind: "mention", id: target.id }, predicate: "project.status",
       object: { kind: "literal", value: "active" }, perspective: { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit", anchors: [] },
-      context: [], polarity: "positive", body: "Lamp audit is active.", valid_from: null, valid_to: null, temporal_basis: "unknown", confidence: 0.8,
+      context: [], polarity: "positive", body: "Gate survey is active.", valid_from: null, valid_to: null, temporal_basis: "unknown", confidence: 0.8,
       sensitivity: "personal", anchors: [target.anchor, active] };
     const withStatus = mutate(source, lamp, response => ({ ...response, claims: [...response.claims, status] }));
     expect(parsedObservation(withStatus, lamp).ok).toBe(true);
@@ -170,7 +212,7 @@ describe("predeclared core semantic protocol", () => {
 
     const westRow = source.find(row => row.case_id === west)!, speaker = westRow.response!.mentions.find(mention => mention.id === "m-source-1")!;
     const displayName: RichClaimDraft = { ...status, id: "legacy-speaker-name", subject: { kind: "mention", id: speaker.id }, predicate: "identity.display_name",
-      object: { kind: "literal", value: "Dalen" }, body: "The grounded speaker is named Dalen.", anchors: [speaker.anchor] };
+      object: { kind: "literal", value: "Soren" }, body: "The grounded speaker is named Soren.", anchors: [speaker.anchor] };
     const withDisplayName = mutate(source, west, response => ({ ...response, claims: [...response.claims, displayName] }));
     expect(parsedObservation(withDisplayName, west).ok).toBe(true);
     expect(scoreCoreSemanticRun(withDisplayName, registry).automated_passed).toBe(true);
@@ -186,7 +228,7 @@ describe("predeclared core semantic protocol", () => {
   });
 
   test("classification, witness, attribution, time and usage mutations are rejected", () => {
-    const direct = "core6-concept-positive-ridge-veil", person = "core6-concept-reported-seam-echo", document = "core6-concept-historical-amber-interval";
+    const direct = "core7-concept-positive-shelf-current", person = "core7-concept-reported-prism-trace", document = "core7-concept-historical-cobalt-pause";
     const source = observations();
     const changed = [
       mutate(source, direct, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === "world.kind" ? { ...claim, perspective: { ...claim.perspective, mode: "reported" } } : claim) })),
@@ -200,13 +242,13 @@ describe("predeclared core semantic protocol", () => {
 
   test("a changed exact response cannot reuse an independent review", () => {
     const report = "b".repeat(64), first = scoreCoreSemanticRun(observations(), registry), review = expectedCoreSemanticReview(report, first);
-    const changed = scoreCoreSemanticRun(mutate(observations(), "core6-concept-positive-ridge-veil", response => ({ ...response, claims: response.claims.map(claim => claim.predicate === "concept.definition" && claim.object.kind === "literal" ? { ...claim, object: { ...claim.object, value: `${claim.object.value}.` } } : claim) })), registry);
+    const changed = scoreCoreSemanticRun(mutate(observations(), "core7-concept-positive-shelf-current", response => ({ ...response, claims: response.claims.map(claim => claim.predicate === "concept.definition" && claim.object.kind === "literal" ? { ...claim, object: { ...claim.object, value: `${claim.object.value}.` } } : claim) })), registry);
     expect(changed.automated_passed).toBe(true);
     expect(() => verifyCoreSemanticReview(report, changed, review)).toThrow("review mismatch");
   });
 
   test("parser-valid adjacent anchors remain eligible for independent semantic review", () => {
-    const id = "core6-concept-positive-ridge-veil", source = observations(), item = coreSemanticCorpus.cases.find(row => row.id === id)!, rule = coreSemanticContract.cases.find(row => row.case_id === id)!;
+    const id = "core7-concept-positive-shelf-current", source = observations(), item = coreSemanticCorpus.cases.find(row => row.id === id)!, rule = coreSemanticContract.cases.find(row => row.case_id === id)!;
     if (rule.expectation !== "extract") throw new Error("invalid test rule");
     const witness = uniqueSpan(item, rule.details[0]!.witness), midpoint = witness.start_utf16 + Math.floor((witness.end_utf16 - witness.start_utf16) / 2);
     const changed = mutate(source, id, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === rule.details[0]!.predicate
@@ -215,7 +257,7 @@ describe("predeclared core semantic protocol", () => {
   });
 
   test("a semantically insufficient but parser-valid anchor change requires a new independent review", () => {
-    const id = "core6-concept-positive-ridge-veil", report = "c".repeat(64), source = observations(), first = scoreCoreSemanticRun(source, registry), review = expectedCoreSemanticReview(report, first);
+    const id = "core7-concept-positive-shelf-current", report = "c".repeat(64), source = observations(), first = scoreCoreSemanticRun(source, registry), review = expectedCoreSemanticReview(report, first);
     const changed = scoreCoreSemanticRun(mutate(source, id, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === "concept.definition" ? { ...claim, anchors: claim.anchors.slice(0, 1) } : claim) })), registry);
     expect(changed.automated_passed).toBe(true);
     expect(() => verifyCoreSemanticReview(report, changed, review)).toThrow("review mismatch");
