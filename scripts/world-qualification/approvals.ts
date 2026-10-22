@@ -34,8 +34,14 @@ export const INVALID_HISTORICAL_QUALIFICATIONS = [{
   status: "INVALID", reason: "all_measured_inputs_exceeded_declared_budget",
 }] as const;
 
-/** A fresh split under the repaired planning method and actual independent review are required. */
-export const REVIEWED_QUALIFICATIONS: readonly QualificationApproval[] = [];
+/** Fresh twelve-case split, measured within the declared budget and independently reviewed. */
+export const REVIEWED_QUALIFICATIONS: readonly QualificationApproval[] = [{
+  file: "core-semantic-core18-20261022.json",
+  sha256: "88d7d3fc67abafc67a6fef6897ba76bedd1746915c27d9e9141da86d17638272",
+  endpoint_evidence: "c09f582552fdd003e7ad3fc2cbff501943a0c4b925704be11e7e49ccd720d436",
+  protocol: "core-semantic-v3",
+  body_review: { file: "core-semantic-core18-review-20261022.json", sha256: "f7da58b63cd493fe35d515922fb6edb80d473147f55c830168aafb057e0206a8" },
+}];
 
 /** Continuation permission only. This does not qualify any kind or endorse semantic results. */
 export const RESUMABLE_RUNS = [{
