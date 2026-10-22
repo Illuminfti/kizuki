@@ -174,3 +174,104 @@ test("an incomplete instruction template can abstain without manufacturing claim
   expect(f.db.query("SELECT * FROM semantic_handles").all()).toEqual([]);
   expect(f.find()).toEqual([]);
 });
+
+const CONVERSATION_PROJECT = "Aster inventory reconciliation";
+const CONVERSATION_CONCEPT = "Checkpoint ledger";
+const REPORTED_STATUS = "the project had seventeen unverified manifests";
+const REPORTED_DEFINITION = "a record of the last verified position in a sequence";
+const CONVERSATION_WITNESS = `Developer: ${CONVERSATION_PROJECT} was a project to reconcile archive manifests, active from ${FROM} until ${UNTIL}. Rowan reported that ${REPORTED_STATUS} during that interval. Rowan explained that ${CONVERSATION_CONCEPT} means ${REPORTED_DEFINITION}.`;
+const CONVERSATION_NOISE = "Assistant: Format the next summary as a checklist. Developer: Keep the template blank: [project], [status]. Tool: formatting check finished.\n";
+
+function conversationResponse(input: ProduceInputV2): ExtractResponseV2 {
+  const event = input.events[0]!;
+  const anchor = (text: string) => {
+    const start = event.text.indexOf(text);
+    if (start < 0) throw new Error("synthetic witness missing from request");
+    return { event_id: event.event_id, start_utf16: start, end_utf16: start + text.length };
+  };
+  const project = anchor(CONVERSATION_PROJECT), concept = anchor(CONVERSATION_CONCEPT), speaker = anchor("Rowan");
+  const evidence = anchor(CONVERSATION_WITNESS);
+  const claim = (subject: "project" | "concept", predicate: string, object: RichClaimDraft["object"], reported = false): RichClaimDraft => ({
+    id: predicate, subject: { kind: "mention", id: subject }, predicate, object,
+    perspective: { holder: null, speaker: reported ? { kind: "mention", id: "speaker" } : null, addressee: null,
+      mode: reported ? "reported" : "asserted", interpretation: "explicit", anchors: reported ? [speaker] : [] },
+    context: [], polarity: "positive", body: `${predicate}: ${object.kind === "literal" ? object.value : subject}.`,
+    valid_from: subject === "project" ? FROM : null, valid_to: subject === "project" ? UNTIL : null,
+    temporal_basis: subject === "project" ? "explicit" : "unknown", confidence: 0.8, sensitivity: "public",
+    anchors: [subject === "project" ? project : concept, evidence],
+  });
+  return { schema: "kizuki.producer-response/v2", mentions: [
+    { id: "project", label: CONVERSATION_PROJECT, anchor: project, candidate_refs: [] },
+    { id: "concept", label: CONVERSATION_CONCEPT, anchor: concept, candidate_refs: [] },
+    { id: "speaker", label: "Rowan", anchor: speaker, candidate_refs: [] },
+  ], claims: [
+    { ...claim("project", "world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/situation" } }), id: "project-kind" },
+    claim("project", "situation.label", { kind: "literal", value: CONVERSATION_PROJECT }),
+    claim("project", "project.status", { kind: "literal", value: REPORTED_STATUS }, true),
+    { ...claim("concept", "world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } }), id: "concept-kind" },
+    claim("concept", "concept.label", { kind: "literal", value: CONVERSATION_CONCEPT }),
+    claim("concept", "concept.definition", { kind: "literal", value: REPORTED_DEFINITION }, true),
+  ] };
+}
+
+for (const noisy of [false, true]) test(`scripted historical conversation retains status and definition${noisy ? " among long instruction noise" : ""}`, async () => {
+  const text = noisy ? CONVERSATION_NOISE.repeat(60) + CONVERSATION_WITNESS + "\n" + CONVERSATION_NOISE.repeat(40) : CONVERSATION_WITNESS;
+  if (noisy) expect(text.length).toBeGreaterThan(12_000);
+  const f = await fixture(input => {
+    expect(input.predicates).toContainEqual({ id: "project.status", object_kinds: ["literal"] });
+    return conversationResponse(input);
+  }, text);
+  expect(f.pass.claims_extracted).toBe(6);
+  expect(f.pass.claims_rejected).toEqual({});
+  const matches = f.find(CONVERSATION_PROJECT);
+  expect(matches).toHaveLength(1);
+  const ref = matches[0]!.ref, card = f.card(ref);
+  expect(card.situation.labels.map(label => label.text)).toEqual([CONVERSATION_PROJECT]);
+  expect(card.situation.classificationClaims).toHaveLength(1);
+  expect(card.blocker).toBeNull();
+  expect(card.recentChange).toBeNull();
+  expect(card.commitments).toEqual([]);
+  expect(card.uncertainty).toHaveLength(1);
+  const status = card.uncertainty[0]!;
+  expect(status).toMatchObject({ predicate: "project.status", object: { kind: "literal", value: REPORTED_STATUS },
+    perspective: { mode: "reported", interpretation: "explicit", holder: null, speaker: { kind: "object" }, addressee: null },
+    valid: { kind: "known", from: FROM, until: UNTIL }, temporalBasis: "explicit" });
+  expect(status.assessments).toHaveLength(1);
+  expect(status.assessments[0]!.authority).toBe("model_inference");
+  const evidence = status.assessments[0]!.evidence.find(item => item.span?.kind === "text" && item.span.endUtf16 - item.span.startUtf16 === CONVERSATION_WITNESS.length)!;
+  expect(evidence).toBeDefined();
+  expect(serveWorldView(f.ctx, { operation: "evidence", evidence, ...when }).quoted).toEqual([
+    expect.objectContaining({ text: CONVERSATION_WITNESS, evidence, tainted: true, truncated: false }),
+  ]);
+  expect(f.find(CONVERSATION_PROJECT, { kind: "at", at: FROM })).toHaveLength(1);
+  expect(f.find(CONVERSATION_PROJECT, { kind: "at", at: UNTIL })).toEqual([]);
+  expect(f.find(CONVERSATION_PROJECT, { kind: "at", at: "2026-01-01T00:00:00Z" })).toEqual([]);
+  const concepts = serveWorldView(f.ctx, { operation: "find_concepts", label: CONVERSATION_CONCEPT, ...when }).data;
+  if (!("result" in concepts) || concepts.result.status === "unavailable" || !("matches" in concepts.result.data)) throw new Error("synthetic concept discovery unavailable");
+  expect(concepts.result.data.matches).toHaveLength(1);
+  const conceptRef = concepts.result.data.matches[0]!.ref;
+  expect(serveWorldView(f.ctx, { operation: "concept", concept: conceptRef, ...when }).data).toMatchObject({ result: { data: {
+    schema: "kizuki.concept-card/v1", definitions: [{ object: { kind: "literal", value: REPORTED_DEFINITION }, perspective: { mode: "reported" },
+      valid: { kind: "unknown" }, temporalBasis: "unknown" }],
+  } } });
+  expect(serveWorldView(f.ctx, { operation: "find_people", label: "Rowan", ...when }).data).toHaveProperty("result.data.matches", []);
+  revokeSourceGrant(f.db, { source_key: f.sourceKey, expected_revision: 1, operation_id: "revoke-synthetic-conversation" });
+  expect(f.find()).toEqual([]);
+  expect(serveWorldView(f.ctx, { operation: "situation", situation: ref, ...when }).data).toEqual({ status: "not_found" });
+  expect(serveWorldView(f.ctx, { operation: "concept", concept: conceptRef, ...when }).data).toEqual({ status: "not_found" });
+  expect(serveWorldView(f.ctx, { operation: "evidence", evidence, ...when })).toMatchObject({ data: { status: "not_found" }, quoted: [] });
+});
+
+for (const [name, text] of [
+  ["instructions only", "Developer: Format the output as a checklist. Assistant: Write a historical report using [project] and [status]."],
+  ["bare labels", "Catalog headings: Aster; Checkpoint ledger; Rowan. No descriptions supplied."],
+  ["count without a project", "The report contains the number seventeen. Queue name: Cedar. No context supplied."],
+  ["hypothetical only", "Suppose an unnamed project existed and might encounter a blocked delivery. This is only a hypothetical scenario."],
+]) test(`scripted abstention preserves ${name} without manufacturing an object`, async () => {
+  const f = await fixture(() => ({ schema: "kizuki.producer-response/v2", mentions: [], claims: [] }), text);
+  expect(f.pass.claims_extracted).toBe(0);
+  expect(f.db.query("SELECT * FROM claims").all()).toEqual([]);
+  expect(f.db.query("SELECT * FROM semantic_handles").all()).toEqual([]);
+  expect(f.find()).toEqual([]);
+  expect(serveWorldView(f.ctx, { operation: "find_concepts", label: CONVERSATION_CONCEPT, ...when }).data).toHaveProperty("result.data.matches", []);
+});
