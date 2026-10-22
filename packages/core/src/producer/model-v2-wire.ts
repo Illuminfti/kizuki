@@ -30,6 +30,8 @@ export function resolveModelExtractionWire(text: string, input: ProducerV2ParseI
     const errors: string[] = [];
     decoded = cloneExactJson(JSON.parse(unwrapJsonCodeFence(text)), "model wire", { maxDepth: 16, maxKeysPerObject: 32, maxArrayLength: 1024, maxStringBytes: MAX_V2_QUOTED_UTF16 * 4, maxKeyBytes: 64, maxTotalBytes: MAX_V2_RESPONSE_BYTES }, errors);
     if (errors.length > 0) return { ok: false };
+    // The validator freezes its bounded snapshot; translation owns a mutable copy.
+    decoded = structuredClone(decoded);
   } catch { return { ok: false }; }
   if (!isPlainObject(decoded) || !exact(decoded, ["schema", "mentions", "claims"]) || decoded.schema !== MODEL_EXTRACTION_WIRE_SCHEMA || !Array.isArray(decoded.mentions) || decoded.mentions.length > MAX_V2_MENTIONS || !Array.isArray(decoded.claims) || decoded.claims.length > MAX_V2_CLAIMS) return { ok: false };
   const pending: { path: string; descriptor: ModelQuoteAnchor; put: (anchor: TextAnchor) => void }[] = [];
