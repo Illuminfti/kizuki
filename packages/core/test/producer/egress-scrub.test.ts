@@ -1,3 +1,4 @@
+import { modelQuoteWire } from "./quote-wire-helper";
 import { afterEach, expect, test } from "bun:test";
 import { EXTRACT_RESPONSE_V2_SCHEMA, type ProduceInputV2 } from "../../src/contracts/producer-v2";
 import type { SystemOnePort, SystemOneRequest, SystemOneResponse } from "../../src/contracts/systemone";
@@ -29,7 +30,14 @@ function v2Response(anchor: { start_utf16: number; end_utf16: number }, label: s
 }
 function v2Port(script: Parameters<typeof scriptedLlm>[0], systemone?: SystemOnePort) {
   const temp = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR); cleanups.push(temp.cleanup);
-  const llm = scriptedLlm(script);
+  const llm = scriptedLlm((request, call) => {
+    const text = script(request, call);
+    if (text instanceof Error) return text;
+    const prompt = request.messages.map(message => message.content).join("\n");
+    const events = [...prompt.matchAll(/<<<KZ-QUOTE ([0-9a-f]{32}) event:([0-9A-HJKMNP-TV-Z]{26})>>>\n([\s\S]*?)\n<<<KZ-END \1>>>/g)]
+      .map(match => ({ event_id: match[2]!, text: match[3]! }));
+    return JSON.stringify(modelQuoteWire(JSON.parse(text), events));
+  });
   return { llm, port: createModelProducerV2Port(temp.ctx, { llm, ...(systemone === undefined ? {} : { systemone }) }) };
 }
 const sent = (llm: { requests: readonly { messages: readonly { content: string }[] }[] }) => llm.requests.flatMap(request => request.messages.map(message => message.content)).join("\n");

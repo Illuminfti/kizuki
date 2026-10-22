@@ -1,3 +1,4 @@
+import { modelQuoteWire } from "../producer/quote-wire-helper";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -252,9 +253,9 @@ export function scriptedModelProducer(
       );
       return {
         text: JSON.stringify(
-          typedResponse(
+          modelQuoteWire(typedResponse(
             ids.map((event_id) => ({ event_id, text: texts.get(event_id)! })),
-          ),
+          ), ids.map((event_id) => ({ event_id, text: texts.get(event_id)! }))),
         ),
         model: MODEL,
         usage: { input_tokens: 10, output_tokens: 20 },
@@ -363,7 +364,7 @@ export function segmentModelProducer(
           : { event_id, start: label.index, end: label.index + label[0].length, label: label[0] };
       });
       return {
-        text: JSON.stringify(anchoredResponse(anchored)),
+        text: JSON.stringify(modelQuoteWire(anchoredResponse(anchored), quoted)),
         model: MODEL,
         usage: { input_tokens: 10, output_tokens: 20 },
       };

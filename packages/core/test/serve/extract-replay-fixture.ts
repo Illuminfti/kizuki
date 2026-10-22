@@ -1,3 +1,4 @@
+import { modelQuoteWire } from "../producer/quote-wire-helper";
 import { join } from "node:path";
 import type { LlmPort } from "../../src/contracts/llm";
 import { openLedger } from "../../src/ledger/db";
@@ -28,7 +29,7 @@ export function replayFixture(reply: "empty" | "nonempty" | "rejected" = "empty"
       calls.push(match[3]!); onCall();
       const response = reply === "nonempty" ? anchoredResponse([{ event_id: match[2]!, start: 0, end: 7, label: match[3]!.slice(0, 7) }])
         : { schema: "kizuki.producer-response/v2", mentions: [], claims: [] };
-      return { text: reply === "rejected" ? "malformed" : JSON.stringify(response), model: MODEL, usage: { input_tokens: 10, output_tokens: 20 } };
+      return { text: reply === "rejected" ? "malformed" : JSON.stringify(modelQuoteWire(response, [{ event_id: match[2]!, text: match[3]! }])), model: MODEL, usage: { input_tokens: 10, output_tokens: 20 } };
     },
   };
   const producer = bindSourceModelPort(createModelProducerV2Port({ vault_path: f.vault, data_dir: join(f.vault, ".kizuki"), config: {},

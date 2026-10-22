@@ -1,3 +1,4 @@
+import { modelQuoteWire } from "../producer/quote-wire-helper";
 import { afterEach, expect, test } from "bun:test";
 import { OWNER } from "../../src/agents";
 import { createBudgetTracker } from "../../src/canon/budget";
@@ -59,7 +60,7 @@ async function fixture(response: (input: ProduceInputV2) => ExtractResponseV2 = 
   let input: ProduceInputV2;
   const llm = scriptedLlm(request => {
     expect(request.messages[1]!.content).toContain(text);
-    return JSON.stringify(response(input));
+    return JSON.stringify(modelQuoteWire(response(input), input.events));
   });
   const actual = createModelProducerV2Port(context.ctx, { llm });
   cleanups.push(async () => { await actual.close(); db.close(); vault.dispose(); context.cleanup(); });
