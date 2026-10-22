@@ -2,175 +2,175 @@
   "schema": "kizuki.core-semantic-corpus/v1",
   "synthetic": true,
   "split": "held_out",
-  "version": "core12-prospective-unseen-20261022",
+  "version": "core18-unobserved-naming-clarifications-20261022",
   "cases": [
     {
-      "id": "core12-concept-positive-loom-margin",
-      "kind": "concept",
-      "category": "positive",
-      "source_type": "direct_record",
-      "records": [
-        {
-          "id": "r1",
-          "text": "Loom Margin — Concept. Its definition is a weaving rule that counts edge loops separately from central repeats before calculating the yarn allowance.",
-          "subjects": []
-        }
-      ]
-    },
-    {
-      "id": "core12-concept-reported-bolt-partition",
-      "kind": "concept",
-      "category": "reported",
-      "source_type": "person_statement",
-      "records": [
-        {
-          "id": "r1",
-          "text": "Bolt Partition — Concept. Elia Merrow reported: \"Its definition is a fastener testing rule that groups trials by torque bracket while keeping reused bolts in a separate group.\"",
-          "subjects": [
-            {
-              "id": "source-core12-concept-reported",
-              "quote": "Elia Merrow reported"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "core12-concept-historical-loanword-gate",
-      "kind": "concept",
-      "category": "historical",
-      "source_type": "document_report",
-      "records": [
-        {
-          "id": "r1",
-          "text": "During the interval beginning 2013-05-17T08:35:00.000Z and ending exclusively at 2013-07-29T16:50:00.000Z, Loanword Gate — Concept. For that interval only, Annotation ledger AL-46 states that its definition was a language annotation rule that marks borrowed words before counting native syllable patterns.",
-          "subjects": [
-            {
-              "id": "source-core12-concept-historical",
-              "quote": "Annotation ledger AL-46 states"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "core12-concept-name-negative-silver-trestle",
-      "kind": "concept",
-      "category": "name_negative",
-      "source_type": "direct_record",
-      "records": [
-        {
-          "id": "r1",
-          "text": "Silver Trestle.",
-          "subjects": []
-        }
-      ]
-    },
-    {
-      "id": "core12-concept-template-negative-empty-term-card",
-      "kind": "concept",
-      "category": "template_negative",
-      "source_type": "direct_record",
-      "records": [
-        {
-          "id": "r1",
-          "text": "Empty term card\nConcept: {INSERT TERM}\nDefinition: {INSERT MEANING}\nEvidence: {INSERT QUOTE}",
-          "subjects": []
-        }
-      ]
-    },
-    {
-      "id": "core12-concept-hypothetical-negative-satin-fulcrum",
-      "kind": "concept",
-      "category": "hypothetical_negative",
-      "source_type": "direct_record",
-      "records": [
-        {
-          "id": "r1",
-          "text": "Unanswered naming question: might an imaginary concept be called Satin Fulcrum? No referent or definition is asserted.",
-          "subjects": []
-        }
-      ]
-    },
-    {
-      "id": "core12-situation-positive-proof-bundle",
+      "id": "core17-situation-positive-carmine-map-cabinet",
       "kind": "situation",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Proof Bundle — Situation. Its objective is to collate the numbered proof sheets before the press inspection. Its blocker is that the folding guide is missing.",
+          "text": "Carmine Map Cabinet — Situation. Its objective is to sort the vellum survey sheets. Its blocker is that the lower drawer is swollen.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core12-situation-reported-drain-pass",
+      "id": "core16-situation-reported-vermilion-inlet",
       "kind": "situation",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Drain Pass — Situation. Nadi Corven reported: \"Its objective is to flush the west drain line before the dye test. Its blocker is that the isolation valve is stuck shut.\"",
+          "text": "Vermilion Inlet — Situation. Sova Kelm stated: \"Its objective is to route the dye pulses through the inlet manifold before the transit test. Its blocker is that the outlet baffle is warped.\"",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core12-situation-historical-cushion-turn",
+      "id": "core16-situation-historical-mica-harmonic-hold",
       "kind": "situation",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "During the interval beginning 2015-09-08T07:15:00.000Z and ending exclusively at 2015-10-21T18:40:00.000Z, Cushion Turn — Situation. For that interval only, Upholstery log UL-58 states that its objective was to fit seat webbing before adding foam; the fastening order changed from the rear edge first to the front edge first.",
+          "text": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.\nFor that entire interval, that record requests this action list for the named condition:\n- Free the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement so that the measurement can proceed.\n\nArchive inventory\n- A copper tuning fork rests in the padded drawer.\n- A black glass bead sits on a paper coaster.\n- A rubber foot lies beside the oak stand.\n- A silver wire spool is enclosed in the lidded box.\n- A folded suede mat remains beneath the tripod.\n- An amber bottle stands near the dial housing.\n- A teal felt wedge is placed on the cart.\n- A tin weight rests on the map case.\n- An ivory button lies on the canvas tray.\n- A gray stone slab sits below the cabinet.\n- A spare cotton wick is stored in a narrow tube.\n- A red enamel cup occupies the stone plinth.\n- A smooth pumice chip is kept in a porcelain pocket.\n- A burgundy cord loop hangs from the peg.\n- A small acetate tile lies beside the cork block.\n- A bronze paperweight remains inside the open pouch.",
           "subjects": [
             {
-              "id": "source-core12-situation-historical",
-              "quote": "Upholstery log UL-58 states"
+              "id": "source-core16-situation-historical",
+              "quote": "Acoustic bench record AB-52"
             }
           ]
         }
       ]
     },
     {
-      "id": "core12-situation-name-negative-ochre-pocket",
+      "id": "core15-situation-name-negative-juniper-rill",
       "kind": "situation",
       "category": "name_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Ochre Pocket.",
+          "text": "Juniper Rill.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core12-situation-template-negative-empty-work-card",
+      "id": "core15-situation-template-negative-unfilled-equipment-card",
       "kind": "situation",
       "category": "template_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Empty work card\nSituation: {INSERT TITLE}\nObjective: {INSERT AIM}\nBlocker: {INSERT OBSTACLE}\nChange: {INSERT REVISION}",
+          "text": "Unfilled equipment card\nSituation: {CONDITION NAME}\nObjective: {REQUESTED RESULT}\nBlocker: {OBSTACLE}\nChange: {OBSERVED SHIFT}",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core12-situation-hypothetical-negative-indigo-bracket",
+      "id": "core15-situation-hypothetical-negative-silver-sluice",
       "kind": "situation",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Counterfactual naming question only: if a situation called Indigo Bracket existed, could that be its title? No existence, objective, blocker, state, or change is asserted.",
+          "text": "If there were a situation named Silver Sluice, would that name fit?",
+          "subjects": []
+        }
+      ]
+    },
+    {
+      "id": "core15-concept-positive-linen-compass",
+      "kind": "concept",
+      "category": "positive",
+      "source_type": "direct_record",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Linen Compass — Concept. Its definition is a textile sampling rule that groups thread offcuts by weave before comparing dye lots.",
+          "subjects": []
+        }
+      ]
+    },
+    {
+      "id": "core15-concept-reported-opal-balance",
+      "kind": "concept",
+      "category": "reported",
+      "source_type": "person_statement",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Opal Balance — Concept. Daro Kest reported: \"Its definition is a mineral-log rule that sorts specimens by fracture pattern while keeping polished fragments in a separate row.\"",
+          "subjects": [
+            {
+              "id": "source-core15-concept-reported",
+              "quote": "Daro Kest reported"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "core15-concept-historical-velvet-register",
+      "kind": "concept",
+      "category": "historical",
+      "source_type": "document_report",
+      "records": [
+        {
+          "id": "r1",
+          "text": "For the observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z, the exact name of this concept is Velvet Register. Archive entry AE-53 states that its definition during that interval was a rehearsal-index rule that marks silent cues before ordering spoken passages.",
+          "subjects": [
+            {
+              "id": "source-core15-concept-historical",
+              "quote": "Archive entry AE-53 states"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "core15-concept-name-negative-umber-dial",
+      "kind": "concept",
+      "category": "name_negative",
+      "source_type": "direct_record",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Umber Dial.",
+          "subjects": []
+        }
+      ]
+    },
+    {
+      "id": "core15-concept-template-negative-unfilled-glossary-leaf",
+      "kind": "concept",
+      "category": "template_negative",
+      "source_type": "direct_record",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Unfilled glossary leaf\nConcept: {UNASSIGNED TERM}\nDefinition: {UNWRITTEN MEANING}\nEvidence: {UNCOPIED PASSAGE}",
+          "subjects": []
+        }
+      ]
+    },
+    {
+      "id": "core15-concept-hypothetical-negative-frost-loom",
+      "kind": "concept",
+      "category": "hypothetical_negative",
+      "source_type": "direct_record",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Could an imagined concept be called Frost Loom?",
           "subjects": []
         }
       ]

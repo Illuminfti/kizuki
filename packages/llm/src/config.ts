@@ -1,5 +1,6 @@
 import {
   DECLARED_RETENTION_CLASSES,
+  validateInputTokenOverhead,
   PortError,
   isNonEmptyString,
   isPlainObject,
@@ -43,6 +44,8 @@ const MAX_PROVIDER_LIST = 32;
 export type LlmRetentionClass = DeclaredRetention;
 
 export interface OpenAiCompatibleLlmConfig {
+  /** Local planning allowance, never forwarded to the endpoint. */
+  readonly input_token_overhead: number;
   readonly base_url: string;
   readonly model: string;
   readonly secret_ref: string | null;
@@ -61,6 +64,7 @@ export interface OpenAiCompatibleLlmConfig {
 }
 
 const ALLOWED_KEYS = new Set([
+  "input_token_overhead",
   "base_url",
   "model",
   "secret_ref",
@@ -255,6 +259,7 @@ export function parseOpenAiCompatibleConfig(
 
   const provider = parseProvider(value["provider"]);
   return {
+    input_token_overhead: validateInputTokenOverhead(value["input_token_overhead"]),
     base_url: url.href.replace(/\/+$/, ""),
     model: value["model"],
     secret_ref: typeof secret === "string" ? secret : null,

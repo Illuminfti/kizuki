@@ -1,4 +1,4 @@
-import { EXTRACT_REPLAY_BACKUPS, extractReplayBackupRows, restoreExtractReplayRow, validateRestoredReplayLink } from "./serve/extract-replay";
+import { EXTRACT_REPLAY_BACKUPS, extractReplayBackupRows, restoreExtractReplayRow, validateRestoredReplayLink, validateExtractReplayLineage } from "./serve/extract-replay";
 import { beginForecastRestore } from "./world/tables/forecasts";
 import { validateForecastJournal } from "./world/forecast/validate";
 import { beginClaimHistoryRestore, prepareClaimHistoryImport, finishClaimHistoryRestore } from "./world/tables/known";
@@ -1939,6 +1939,7 @@ function exportVaultOwned(
       writeStream(staging, RAIL_CURSORS_BACKUP, pageRailCursors(db), files, options.signal);
       writeStream(staging, "serve/extract-deferred-inputs.jsonl", pageDeferredInputs(db), files, options.signal);
       writeStream(staging, EXTRACT_BATCH_BACKUP, pendingExtractBatch(db), files, options.signal);
+      validateExtractReplayLineage(db);
       for (const spec of EXTRACT_REPLAY_BACKUPS) writeStream(staging, spec.path, extractReplayBackupRows(db, spec), files, options.signal);
       writeStream(staging, OVERSIZED_RECORDS_BACKUP, pageOversizedRecords(db), files, options.signal);
 
@@ -2058,7 +2059,7 @@ function verifyFiles(root: string, manifest: ExportManifest): void {
       throw new Error("backup durable extraction stream exceeds its bound");
     }
   }
-  if (manifest.schema_versions.ledger >= EXTRACT_REPLAY_SCHEMA_VERSION && EXTRACT_REPLAY_BACKUPS.some(spec => manifest.files[spec.path] === undefined)) {
+  if (manifest.schema_versions.ledger >= EXTRACT_REPLAY_SCHEMA_VERSION && EXTRACT_REPLAY_BACKUPS.some(spec => spec.table !== "run_receipts" && manifest.files[spec.path] === undefined)) {
     throw new Error("backup extraction replay streams are missing");
   }
   if (manifest.schema_versions.serve >= 9 && manifest.files[OVERSIZED_RECORDS_BACKUP] === undefined) {
@@ -2789,6 +2790,7 @@ function* streamRows(
   const maxRowBytes = relativePath === "ledger/events.jsonl" ? MAX_EVENT_BACKUP_ROW_BYTES
     : relativePath === MACHINE_BYTE_INTENTS_BACKUP ? MAX_MACHINE_BYTE_INTENT_ROW_BYTES
     : relativePath === IDENTITY_BACKUP ? MAX_IDENTITY_BACKUP_ROW_BYTES
+    : relativePath === "serve/extract-replay-runs.jsonl" ? 6_400_000
     : EXTRACT_REPLAY_BACKUPS.some(spec => spec.path === relativePath) ? 131_072
     : relativePath === SOURCE_INVENTORY_BACKUP ? MAX_SOURCE_INVENTORY_ROW_BYTES
     : relativePath === "ledger/purge_ops.jsonl" ? MAX_PURGE_OP_ROW_BYTES
@@ -3056,7 +3058,7 @@ export function restoreVault(
         }
         for (const spec of EXTRACT_REPLAY_BACKUPS) {
           let count = 0;
-          for (const row of streamRows(source, manifest, spec.path, manifest.schema_versions.ledger >= EXTRACT_REPLAY_SCHEMA_VERSION)) {
+          for (const row of streamRows(source, manifest, spec.path, spec.table !== "run_receipts" && manifest.schema_versions.ledger >= EXTRACT_REPLAY_SCHEMA_VERSION)) {
             restoreExtractReplayRow(db, spec, row); count++;
           }
           if (manifest.files[spec.path] !== undefined && count !== manifest.files[spec.path]!.count) throw new Error("backup extraction replay count mismatch");
@@ -3089,6 +3091,7 @@ export function restoreVault(
         }
         assertTypedCanonReceipts(db, staging);
         validateDurableExtractStorage(db);
+        validateExtractReplayLineage(db);
         finishClaimHistoryRestore(db, manifest.schema_versions.ledger);
         validateForecastJournal(db);
       }).immediate();

@@ -35,8 +35,9 @@ export function replayFixture(reply: "empty" | "nonempty" | "rejected" = "empty"
   const producer = bindSourceModelPort(createModelProducerV2Port({ vault_path: f.vault, data_dir: join(f.vault, ".kizuki"), config: {},
     clock: () => new Date().toISOString(), secrets: async () => { throw new Error("no secrets in replay fixture"); }, logger: () => {} }, { llm }), { model_endpoint: ENDPOINT, model: MODEL });
   const at = "2026-10-22T08:00:00.000Z", runId = "synthetic-old-empty-run";
-  const end = event.text.indexOf("\n\n", 18_000) + 2;
-  if (end < 18_000) throw new Error("fixture boundary missing");
+  // Leave headroom for prompt growth while replaying multiple calls within the fixed pass budget.
+  const end = event.text.indexOf("\n\n", 14_000) + 2;
+  if (end < 14_000) throw new Error("fixture boundary missing");
   db.query("INSERT INTO extract_oversized_records(event_id,status,chars,done_utf16,pending_end_utf16,updated_at) VALUES(?,?,?,?,NULL,?)").run(eventId, "segmenting", event.text.length, end, at);
   const totals = emptyRunTotals();
   const report = JSON.stringify({ ...totals, run_id: runId, rail: "sync", started_at: at, finished_at: at, status: "ok", stopped: null,

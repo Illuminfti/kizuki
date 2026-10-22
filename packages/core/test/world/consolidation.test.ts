@@ -26,11 +26,12 @@ function card(seed: WorldSeed): ConceptCard {
   return read.result.data;
 }
 
-function model(db: ReturnType<typeof openLedger>, options: { reply?: string; outputTokens?: number; onCall?: () => void | Promise<void> } = {}) {
+function model(db: ReturnType<typeof openLedger>, options: { reply?: string; inputTokens?: number; overhead?: number; outputTokens?: number; onCall?: () => void | Promise<void> } = {}) {
   const requests: LlmRequest[] = [];
   const llm: LlmPort = {
-    descriptor: { id: "synthetic.llm", kind: "llm", contract: "kizuki.llm/v1", contract_minor: 0,
+    descriptor: { id: "synthetic.llm", kind: "llm", contract: "kizuki.llm/v1", contract_minor: 1,
       supports: ["chat"], requires_lease: false, optional_package: null },
+    input_token_overhead: options.overhead ?? 0,
     model_ref: `synthetic.llm:${MODEL}@fixture.invalid`,
     health: async () => ({ status: "ready", detail: {} }), close: async () => {},
     async complete(request) {
@@ -38,7 +39,7 @@ function model(db: ReturnType<typeof openLedger>, options: { reply?: string; out
       requests.push(request);
       await options.onCall?.();
       return { text: options.reply ?? JSON.stringify({ schema: "kizuki.consolidation-response/v1", status: "complete", summary: SUMMARY }),
-        model: MODEL, usage: { input_tokens: 40, output_tokens: options.outputTokens ?? 16 } };
+        model: MODEL, usage: { input_tokens: options.inputTokens ?? 40, output_tokens: options.outputTokens ?? 16 } };
     },
   };
   bindSourceModelPort(llm, { model_endpoint: ENDPOINT, model: MODEL });
@@ -496,3 +497,34 @@ test("observed overage is charged to the reserved day across midnight, erasure, 
     expect(rows(db, "world_consolidation")).toBe(0);
   } finally { db.close(); vault.dispose(); }
 });
+
+test("consolidation reserves host overhead before calling or reserving daily consumption", async () => {
+  const db = openLedger(":memory:");
+  try {
+    const seed = await worldSeed(db), bound = model(db, { overhead: 24_000 });
+    authorizeModel(seed);
+    const result = await runWorldJobs(job(seed, bound.llm));
+    expect(result.errors).toEqual([]);
+    expect(bound.requests).toHaveLength(0);
+    expect(card(seed).summary).toBeNull();
+    expect(rows(db, "world_consolidation")).toBe(0);
+    expect(readDailyBudget(db, budgetDay(new Date().toISOString()), CONSOLIDATION_CALLS)).toBe(0);
+  } finally { db.close(); }
+});
+
+for (const dimension of ["inputTokens", "outputTokens"] as const) {
+  test(`consolidation refuses measured ${dimension} excess before summary publication with honest consumption`, async () => {
+    const db = openLedger(":memory:");
+    try {
+      const seed = await worldSeed(db), amount = 32_001;
+      const bound = model(db, { [dimension]: amount });
+      authorizeModel(seed);
+      const result = await runWorldJobs(job(seed, bound.llm));
+      expect(result.errors).toEqual([]);
+      expect(bound.requests).toHaveLength(1);
+      expect(card(seed).summary).toBeNull();
+      expect(db.query("SELECT * FROM world_consolidation WHERE status='complete'").all()).toEqual([]);
+      expect(result.consolidation).toMatchObject({ calls: 1, [dimension === "inputTokens" ? "input_tokens" : "output_tokens"]: amount, completed: 0 });
+    } finally { db.close(); }
+  });
+}

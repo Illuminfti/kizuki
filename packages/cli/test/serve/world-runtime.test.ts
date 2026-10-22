@@ -1,7 +1,7 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ConnectionStateStore, PRODUCER_CONTRACT, PRODUCER_V2_CONTRACT, registerConnection, setSourceGrant, ulid, type ProducerV2Port } from "@kizuki/core";
+import { modelProducerInputTokenOverhead, ConnectionStateStore, PRODUCER_CONTRACT, PRODUCER_V2_CONTRACT, registerConnection, setSourceGrant, ulid, type ProducerV2Port } from "@kizuki/core";
 import type { Database } from "bun:sqlite";
 import { openLedger } from "@kizuki/core/testing";
 import { createServeRuntime } from "../../src/serve-runtime";
@@ -35,7 +35,7 @@ test("production composition explicitly binds typed extraction and retains model
   const writeConfig = (text: string) => { writeFileSync(config, text, { mode: 0o600 }); chmodSync(config, 0o600); };
   const options = { db, vaultPath: setup.vault, store: new ConnectionStateStore(join(setup.vault, ".kizuki")), env: setup.env, err: () => {} };
   try {
-    writeConfig(`[ports.llm]\nid="kizuki.llm.openai-compatible"\nbase_url=${JSON.stringify(endpoint.base_url)}\nmodel="fixture"\ntimeout_ms=1000\nmax_retries=0\n`);
+    writeConfig(`[ports.llm]\nid="kizuki.llm.openai-compatible"\nbase_url=${JSON.stringify(endpoint.base_url)}\nmodel="fixture"\ninput_token_overhead=1000\ntimeout_ms=1000\nmax_retries=0\n`);
     // An epoch-zero journal keeps the v1 codec; typed extraction starts with source policy.
     const legacy = await createServeRuntime(options);
     try { expect(legacy.hooks.producer?.descriptor.contract).toBe(PRODUCER_CONTRACT); }
@@ -45,11 +45,12 @@ test("production composition explicitly binds typed extraction and retains model
     setSourceGrant(db, { source_key, expected_revision: 0, operation_id: "world-runtime-grant", policy: {
       purposes: ["capture", "derive", "extract"], allowed_fields: ["text"], retention: "persistent_owned_until_revoked",
       sensitivity_floor: "private", egress: "local_only" } });
-    const runtime = await createServeRuntime(options);
+    const runtime = await createServeRuntime({ ...options, signal: new AbortController().signal });
     try {
       expect(runtime.hooks.producer?.descriptor.contract).toBe(PRODUCER_V2_CONTRACT);
       expect(runtime.hooks.model_ref).toBe("kizuki.llm.openai-compatible:fixture@127.0.0.1");
       const producer = runtime.hooks.producer as ProducerV2Port;
+      expect(modelProducerInputTokenOverhead(producer)).toBe(1000);
       expect(await producer.produce({ events: [{ event_id: "00000000000000000000000001", text: "Synthetic source." }], supplied_refs: [], predicates: [], vocabulary_refs: [], budget: { max_calls: 1, max_input_tokens: 8000, max_output_tokens: 1000 } })).toMatchObject({ status: "ok", response: { claims: [] } });
       expect(endpoint.requests).toHaveLength(1);
     } finally { await runtime.close(); }

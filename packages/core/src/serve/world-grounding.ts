@@ -7,6 +7,7 @@ import type { ProduceInputV2, ProducerV2Port } from "../contracts/producer-v2";
 import { parseWorldAdmission, type WorldGrounding, type WorldGroundingPin } from "../contracts/world-admission";
 import { readEvent } from "../ledger/ledger";
 import { sourceExtractionSql, sourceEventsAllowed, sourcePortBindingDigest } from "../ledger/source-grants";
+import { modelProducerInputTokenOverhead } from "../producer/fingerprint";
 import { planModelExtractionV2 } from "../producer";
 import { canonicalJson, sha256Hex } from "../util/hash";
 import { heldClaimSql } from "../world/corroboration";
@@ -103,7 +104,7 @@ export function groundedWorldInput(
     supplied.push({ id, anchors: label.semantic.anchors });
   }
   const input = worldProduceInput(events, supplied, budget);
-  try { if (planModelExtractionV2(input).status !== "ready") return fallback; } catch { return fallback; }
+  try { if (planModelExtractionV2(input, modelProducerInputTokenOverhead(producer)).status !== "ready") return fallback; } catch { return fallback; }
   if (!sourceEventsAllowed(db, events.map(e => e.event_id), { owner: false, purpose: "extract", model: true, port: producer })) return fallback;
   return { input, events, refs, grounding };
 }

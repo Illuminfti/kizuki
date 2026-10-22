@@ -3,9 +3,14 @@ import { join } from "node:path";
 import { exportVault, restoreVault } from "../../src/export";
 import { openLedger } from "../../src/ledger/db";
 import { purgeEvents } from "../../src/ledger/purge";
-import { bindSourceModelPort, revokeSourceGrant } from "../../src/ledger/source-grants";
+import { bindSourceModelPort, revokeSourceGrant, setSourceGrant, sourcePolicyEpoch } from "../../src/ledger/source-grants";
+import { accept } from "../../src/ledger/ledger";
+import { registerConnection } from "../../src/ledger/connections";
+import { writeRailCursor } from "../../src/ledger/checkpoints";
+import { EXTRACT_BATCH, MODEL_PRODUCER_ID } from "../../src/producer";
+import { validEvent } from "../fixtures";
 import { modelProducerFingerprint } from "../../src/producer/fingerprint";
-import { activeExtractReplay, parseEmptySegmentReplayPlan, replayEmptyExtractSegment } from "../../src/serve/extract-replay";
+import { activeExtractReplay, parseEmptySegmentReplayPlan, parseEmptySegmentReplaySupersessionPlan, replayEmptyExtractSegment } from "../../src/serve/extract-replay";
 import { applyExtractReplay } from "../../src/serve/extract-replay-schema";
 import { commitExtractCursor, journalExtractBatch, mineLiveDrafts, readExtractCursor } from "../../src/serve/extract";
 import { DEFAULT_EXTRACTION_CONFIG } from "../../src/serve/types";
@@ -16,7 +21,7 @@ import { withVaultMutationSync } from "../../src/vault/mutation-scope";
 import { canonicalJson, sha256Hex } from "../../src/util/hash";
 import { storeClaim } from "../canon/helpers";
 import { replayFixture } from "./extract-replay-fixture";
-import { ENDPOINT, MODEL, writeServeToml } from "./throughput-fixture";
+import { ENDPOINT, MODEL, recordText, writeServeToml } from "./throughput-fixture";
 
 const fixtures: ReturnType<typeof replayFixture>[] = [];
 afterEach(() => { for (const f of fixtures.splice(0)) f.dispose(); });
@@ -51,6 +56,20 @@ test("closed plan refuses unknown fields, invalid bounds, equal fingerprints and
   let reads = 0;
   expect(() => parseEmptySegmentReplayPlan({ ...f.plan, get source_epoch() { reads++; return 1; } })).toThrow("invalid_plan");
   expect(reads).toBe(0);
+});
+
+test("v2 supersession plan is closed, strictly advances parent progress, and retains v1 parsing", () => {
+  const f = fixture();
+  const parent = { operation_id: f.plan.operation_id, plan_sha256: sha256Hex(canonicalJson(f.plan)), current_done_utf16: 7,
+    current_updated_at: "2026-10-22T08:01:00.000Z", settlements_sha256: sha256Hex("settlements"), run_receipts_sha256: sha256Hex("runs") };
+  const plan = { ...f.plan, schema: "kizuki.extract-empty-replay/v2" as const, operation_id: "synthetic-replay-2",
+    new_producer_fingerprint: "a".repeat(64), parent };
+  expect(parseEmptySegmentReplayPlan(f.plan)).toEqual(f.plan);
+  expect(parseEmptySegmentReplaySupersessionPlan(plan)).toEqual(plan);
+  for (const patch of [{ extra: true }, { parent: { ...parent, current_done_utf16: f.plan.segment.done_utf16 } },
+    { parent: { ...parent, operation_id: plan.operation_id } }, { parent: { ...parent, settlements_sha256: "bad" } }]) {
+    expect(() => parseEmptySegmentReplaySupersessionPlan({ ...plan, ...patch })).toThrow("invalid_plan");
+  }
 });
 
 test("exact live identities, consent, cursor and settled bounds are compared before any reset", () => {
@@ -279,7 +298,7 @@ test("a journaled final replay segment survives reopening and files once without
   } finally { reopened.close(); }
 });
 
-test("a deferred event ahead of the target refuses without spending its request, and replay passes skip other world jobs", async () => {
+test("replay ignores unrelated deferred work and skips other world jobs", async () => {
   const f = fixture("empty", () => {}, 2); apply(f);
   f.db.query("INSERT INTO extract_deferred_inputs VALUES(?,?,0,?)").run(f.eventIds[1]!, f.plan.source_key, "0".repeat(64));
   const queued = f.db.query("SELECT * FROM extract_deferred_inputs").all();
@@ -287,11 +306,12 @@ test("a deferred event ahead of the target refuses without spending its request,
   const unregister = registerWorldJobs([{ id: "synthetic-replay-isolation", run: () => { jobs++; } }]);
   try {
     const result = await runRail(f.db, f.vault, "sync", { hooks: { producer: f.producer, claims: { db: f.db }, model_ref: MODEL } });
-    expect(result.stopped).toBe("extract:segment_changed");
-    expect(f.calls).toEqual([]);
+    expect(result.stopped).toBe("extract:replay_complete");
+    expect(f.calls.join("")).toBe(f.event.text.slice(0, f.plan.segment.done_utf16));
+    expect(f.calls.length).toBeGreaterThan(0);
     expect(jobs).toBe(0);
     expect(f.db.query("SELECT * FROM extract_deferred_inputs").all()).toEqual(queued);
-    expect(progress(f)).toMatchObject([{ done_utf16: 0 }]);
+    expect(progress(f)).toMatchObject([{ done_utf16: f.plan.segment.done_utf16, replay_operation_id: null }]);
     const ready = fixture(); apply(ready);
     const finished = await runRail(ready.db, ready.vault, "sync", { hooks: { producer: ready.producer, claims: { db: ready.db }, model_ref: MODEL } });
     expect(finished.stopped).toBe("extract:replay_complete");
@@ -299,6 +319,68 @@ test("a deferred event ahead of the target refuses without spending its request,
     await runRail(ready.db, ready.vault, "sync");
     expect(jobs).toBe(1);
   } finally { unregister(); }
+});
+
+for (const changed of ["missing", "denied", "frontier-order", "deferred-binding"] as const) test(`isolated replay refuses a changed ${changed} target without maintaining other queue rows`, async () => {
+  const f = fixture("empty", () => {}, 2);
+  if (changed === "frontier-order") {
+    // A valid later replay target cannot skip the original unprocessed frontier.
+    // Capture it normally: event origin and accepted-at bindings stay immutable.
+    const later = accept(f.db, { ...validEvent(), connector_id: f.event.connector_id, source_record_id: "later-replay-target", text: f.event.text, subjects: [] },
+      { source: { source_key: f.plan.source_key, expected_revision: 1 } });
+    if (later.status !== "stored") throw new Error("synthetic later replay capture failed");
+    f.db.query("UPDATE extract_oversized_records SET event_id=? WHERE event_id=?").run(later.event.event_id, f.event.event_id);
+    apply(f, { ...f.plan, event_id: later.event.event_id, content_hash: later.event.content_hash, text_hash: later.event.text_hash });
+  } else apply(f);
+  f.db.query("INSERT INTO extract_deferred_inputs VALUES(?,?,0,?)").run(f.eventIds[1]!, f.plan.source_key, "0".repeat(64));
+  if (changed === "missing") f.db.query("UPDATE events SET deleted=1 WHERE event_id=?").run(f.event.event_id);
+  else if (changed === "denied") revokeSourceGrant(f.db, { source_key: f.plan.source_key, expected_revision: 1, operation_id: "isolated-replay-denied" });
+  else if (changed === "deferred-binding") f.db.query("INSERT INTO extract_deferred_inputs VALUES(?,NULL,0,?)").run(f.event.event_id, "0".repeat(64));
+  const rows = f.db.query("SELECT rowid,* FROM extract_deferred_inputs ORDER BY event_id").all();
+  const cursors = f.db.query("SELECT rowid,* FROM rail_cursors ORDER BY rail,source_key").all();
+  const result = await runRail(f.db, f.vault, "sync", { hooks: { producer: f.producer, claims: { db: f.db }, model_ref: MODEL } });
+  expect(result.stopped).toBe(changed === "missing" || changed === "denied" ? "extract:source_changed" : "extract:segment_changed");
+  expect(f.calls).toEqual([]);
+  expect(f.db.query("SELECT rowid,* FROM extract_deferred_inputs ORDER BY event_id").all()).toEqual(rows);
+  expect(f.db.query("SELECT rowid,* FROM rail_cursors ORDER BY rail,source_key").all()).toEqual(cursors);
+  expect(f.db.query("SELECT * FROM extract_segment_settlements").all()).toEqual([]);
+});
+
+for (const queuedTarget of [false, true]) for (const reply of ["empty", "nonempty"] as const) test(`active ${reply} ${queuedTarget ? "deferred" : "frontier"} replay leaves stale unrelated deferred pages and both cursors byte-identical`, async () => {
+  const f = fixture(reply, () => {}, EXTRACT_BATCH + 3), held = "01J00000000000000000000HVD";
+  registerConnection(f.db, "kizuki.fixture", held);
+  setSourceGrant(f.db, { source_key: held, expected_revision: 0, operation_id: "replay-isolation-denied", policy: {
+    purposes: ["capture", "recall", "derive", "extract"], allowed_fields: ["text", "subjects", "attachments", "metadata"],
+    retention: "persistent_owned_until_revoked", egress: "local_only", sensitivity_floor: "public",
+  } });
+  const insert = f.db.query("INSERT INTO extract_deferred_inputs VALUES(?,?,0,?)");
+  for (const id of f.eventIds.slice(queuedTarget ? 0 : 1)) insert.run(id, f.plan.source_key, "0".repeat(64));
+  for (let index = 0; index < EXTRACT_BATCH + 3; index++) {
+    const captured = accept(f.db, { ...validEvent(), connector_id: "kizuki.fixture", source_record_id: `isolation-denied-${index}`, text: recordText(index), subjects: [] },
+      { source: { source_key: held, expected_revision: 1 } });
+    if (captured.status !== "stored") throw new Error("synthetic isolation capture failed");
+    insert.run(captured.event.event_id, held, "0".repeat(64));
+  }
+  // Start after the allowed page so ordinary maintenance first refreshes denied hints and rotates its scan.
+  writeRailCursor(f.db, MODEL_PRODUCER_ID, "extract-deferred-scan", f.eventIds.at(-1)!);
+  apply(f, { ...f.plan, source_epoch: sourcePolicyEpoch(f.db) });
+  const rows = () => f.db.query("SELECT rowid,* FROM extract_deferred_inputs ORDER BY event_id").all();
+  const cursors = () => f.db.query("SELECT rowid,* FROM rail_cursors ORDER BY rail,source_key").all();
+  const beforeRows = rows(), beforeCursors = cursors();
+  expect(beforeRows.length).toBeGreaterThan(EXTRACT_BATCH * 2);
+  const result = await runRail(f.db, f.vault, "sync", { hooks: { producer: f.producer, claims: { db: f.db }, model_ref: MODEL } });
+  expect(rows()).toEqual(beforeRows);
+  expect(cursors()).toEqual(beforeCursors);
+  expect(result.stopped).toBe("extract:replay_complete");
+  expect(f.calls.join("")).toBe(f.event.text.slice(0, f.plan.segment.done_utf16));
+  expect(f.calls.length).toBeGreaterThan(0);
+  expect(result.claims_extracted > 0).toBe(reply === "nonempty");
+  expect(f.db.query("SELECT * FROM extract_segment_settlements").all()).toHaveLength(f.calls.length);
+  // Once the replay is over, ordinary extraction still refreshes denied hints and selects allowed deferred work.
+  const ordinary = await mineLiveDrafts(f.db, f.producer);
+  expect(ordinary.mode).toBe("deferred");
+  expect(rows()).not.toEqual(beforeRows);
+  expect(f.db.query<{n:number},[string]>("SELECT count(*) n FROM extract_deferred_inputs WHERE source_key=? AND checked_revision=1").get(held)!.n).toBeGreaterThan(0);
 });
 
 test("schema47 upgrade preserves source/checkpoints and source purge cascades replay metadata", () => {

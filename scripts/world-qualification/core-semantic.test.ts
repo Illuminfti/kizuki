@@ -1,10 +1,12 @@
+import { DEFAULT_QUALIFICATION_INPUT_POLICY, qualificationInputPlanning, qualificationProducerInputOverhead, validateQualificationInputPolicy, type QualificationInputPolicy } from "./input-planning";
+import { INVALID_HISTORICAL_QUALIFICATIONS, REVIEWED_QUALIFICATIONS } from "./approvals";
 import { verifyCoreSemanticReport } from "./verify-core-semantic";
 import { describe, expect, test } from "bun:test";
 import { parseExtractResponseV2, type DraftRef, type ExtractResponseV2, type RichClaimDraft, type TextAnchor } from "../../packages/core/src/contracts/producer-v2";
 import { WORLD_VOCABULARY_MODULES } from "./candidate-modules";
 import { candidateRegistry, checkOfferedQualification, registryDigest, verifyQualificationReceipt } from "./registry";
 import { canonicalJson, sha256 } from "../evaluate-extraction";
-import { coreSemanticCaseInput, coreSemanticContract, coreSemanticCorpus, expectedCoreSemanticReview, scoreCoreSemanticRun as actualScoreCoreSemanticRun, prepareCoreSemanticObservation, validateCoreSemanticAssets, verifyCoreSemanticReview, type CoreSemanticCase } from "./core-semantic";
+import { coreSemanticBranchRule, coreSemanticBranches, coreSemanticCaseInput, coreSemanticContract, coreSemanticCorpus, expectedCoreSemanticReview, scoreCoreSemanticRun as actualScoreCoreSemanticRun, prepareCoreSemanticObservation, validateCoreSemanticAssets, verifyCoreSemanticReview, type CoreSemanticCase } from "./core-semantic";
 import type { Observation } from "./score";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,7 +14,10 @@ import { dirname, join } from "node:path";
 import { runQualification } from "./run";
 import { RUNNER_FILES, runnerDigest } from "./fingerprint";
 import { extractionV2SystemContent } from "../../packages/core/src/producer/prompt-v2";
-import { planModelExtractionV2 } from "../../packages/core/src/producer/model-v2";
+import { createModelProducerV2Port, planModelExtractionV2 } from "../../packages/core/src/producer/model-v2";
+import { inheritModelProducerIdentity } from "../../packages/core/src/producer/fingerprint";
+import { createOpenAiCompatibleLlmPort } from "../../packages/llm/src/openai-compatible";
+import type { PortContext } from "../../packages/core/src/contracts/ports";
 import { RESPONSE_GAP_MS } from "./pacing";
 import { modelWireAdapterIdentity, type CoreSemanticWireEvidence } from "./wire-custody";
 import { MODEL_EXTRACTION_WIRE_SCHEMA, type ModelExtractionWireReceipt } from "../../packages/core/src/producer/model-v2-wire";
@@ -21,7 +26,7 @@ import { startFakeEndpoint } from "../../packages/llm/test/fake-endpoint";
 // Scripted development controls only; no historical observed campaign is rescored.
 const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation"]);
 type Rule = (typeof coreSemanticContract.cases)[number];
-type ExtractRule = Extract<Rule, { expectation: "extract" }>;
+type ExtractRule = ReturnType<typeof coreSemanticBranchRule>;
 
 function selectedCase(kind: CoreSemanticCase["kind"], category: CoreSemanticCase["category"]): CoreSemanticCase {
   const item = coreSemanticCorpus.cases.find(row => row.kind === kind && row.category === category);
@@ -31,7 +36,7 @@ function selectedCase(kind: CoreSemanticCase["kind"], category: CoreSemanticCase
 function extractionRule(item: CoreSemanticCase): ExtractRule {
   const rule = coreSemanticContract.cases.find(row => row.case_id === item.id);
   if (rule?.expectation !== "extract") throw new Error("missing authored extraction contract");
-  return rule;
+  return coreSemanticBranchRule(item.id, coreSemanticBranches(rule)[0]!);
 }
 
 function uniqueSpan(item: CoreSemanticCase, quote: string): TextAnchor {
@@ -41,13 +46,13 @@ function uniqueSpan(item: CoreSemanticCase, quote: string): TextAnchor {
   return { event_id: String(index + 1).padStart(26, "0"), start_utf16: start, end_utf16: start + quote.length };
 }
 
-function scripted(item: CoreSemanticCase): Observation {
-  const input = coreSemanticCaseInput(item, registry), rule = coreSemanticContract.cases.find(row => row.case_id === item.id)!;
+function scripted(item: CoreSemanticCase, policy: QualificationInputPolicy = DEFAULT_QUALIFICATION_INPUT_POLICY): Observation {
+  const input = coreSemanticCaseInput(item, registry, policy), authored = coreSemanticContract.cases.find(row => row.case_id === item.id)!, rule = authored.expectation === "abstain" ? authored : extractionRule(item);
   if (rule.expectation === "abstain") return { case_id: item.id, input, status: "ok", response: { schema: "kizuki.producer-response/v2", mentions: [], claims: [] }, dropped: 0,
     usage: { calls: 1, input_tokens: 100, output_tokens: 10 } };
   const targetAnchor = uniqueSpan(item, rule.target.quote), target: DraftRef = { kind: "mention", id: "m-target" };
   const mentionSources = new Map<string, { ref: DraftRef; anchor: TextAnchor; attributionAnchor: TextAnchor; label: string }>();
-  for (const contract of [rule.classification, ...rule.details]) if (contract.source !== undefined && typeof contract.source !== "string") {
+  for (const contract of [rule.classification, ...(rule.label_rule ? [rule.label_rule] : []), ...rule.details]) if (contract.source !== undefined && typeof contract.source !== "string") {
     const key = canonicalJson(contract.source), anchor = uniqueSpan(item, contract.source.quote);
     if (!mentionSources.has(key)) mentionSources.set(key, { ref: { kind: "mention", id: `m-source-${mentionSources.size + 1}` }, anchor,
       attributionAnchor: uniqueSpan(item, contract.source.attribution_witness), label: contract.source.label });
@@ -71,7 +76,7 @@ function scripted(item: CoreSemanticCase): Observation {
   };
   const claims: RichClaimDraft[] = [
     proposition("c1", "world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: rule.classification.kind } }, rule.classification, `${rule.classification.label} is classified as ${rule.classification.kind}.`),
-    proposition("c2", `${item.kind}.label`, { kind: "literal", value: rule.classification.label }, rule.label_alternatives?.[0] ?? rule.classification, `The source names it ${rule.classification.label}.`),
+    proposition("c2", `${item.kind}.label`, { kind: "literal", value: rule.classification.label }, rule.label_rule ?? rule.label_alternatives?.[0] ?? rule.classification, `The source names it ${rule.classification.label}.`),
     ...rule.details.map((detail, index) => { const literal = detail.witness; return proposition(`c${index + 3}`, detail.predicate, { kind: "literal", value: literal }, detail, literal); }),
   ];
   const mentions = [{ id: "m-target", label: rule.target.quote, anchor: targetAnchor, candidate_refs: [] },
@@ -80,10 +85,10 @@ function scripted(item: CoreSemanticCase): Observation {
     usage: { calls: 1, input_tokens: 100, output_tokens: 100 } };
 }
 
-const observations = () => coreSemanticCorpus.cases.map(scripted);
-function wireControl(row: Observation, transport = "b".repeat(64)): { evidence: CoreSemanticWireEvidence; rawText: string } {
+const observations = () => coreSemanticCorpus.cases.map(item => scripted(item));
+function wireControl(row: Observation, transport = "b".repeat(64), policy = DEFAULT_QUALIFICATION_INPUT_POLICY): { evidence: CoreSemanticWireEvidence; rawText: string } {
   const adapter = modelWireAdapterIdentity();
-  const plan = planModelExtractionV2(row.input);
+  const plan = planModelExtractionV2(row.input, policy.input_token_overhead);
   if (plan.status !== "ready" || row.response === null) throw new Error("wire evidence control requires a ready response");
   const anchors = [
     ...row.response.mentions.map((mention, index) => ({ path: `mentions[${index}].anchor`, anchor: mention.anchor })),
@@ -110,14 +115,14 @@ function wireControl(row: Observation, transport = "b".repeat(64)): { evidence: 
     raw_response_sha256: sha256(rawText), outbound_sha256: sha256(canonicalJson(plan.outbound)),
     events: plan.outbound.events.map(event => ({ event_id: event.event_id, text_sha256: sha256(event.text), utf16_length: event.text.length })),
     resolutions, translated_response_sha256: sha256(canonicalJson(row.response)) };
-  return { rawText, evidence: { case_id: row.case_id, transport_response_sha256: transport, adapter_source_sha256: adapter.source_sha256,
+  return { rawText, evidence: { case_id: row.case_id, producer_input_token_overhead: policy.input_token_overhead, input_planning: qualificationInputPlanning(row.input, policy), transport_response_sha256: transport, adapter_source_sha256: adapter.source_sha256,
     resolution_receipt_sha256: sha256(canonicalJson(receipt)), receipt } };
 }
-const wireEvidence = (rows: readonly Observation[], transport = "b".repeat(64)) => rows.map(row => wireControl(row, transport).evidence);
-const coreEvidence = (rows: readonly Observation[], traces?: { case_id: string; response_sha256: string | null; model_response_sha256: string | null }[]) => {
-  const wireReceipts = wireEvidence(rows);
-  return { source_commit: "a".repeat(40), traces: traces ?? rows.map((row, index) => ({ case_id: row.case_id, response_sha256: "b".repeat(64),
-    model_response_sha256: wireReceipts[index]!.receipt.raw_response_sha256 })), wire_adapter: modelWireAdapterIdentity(), wire_receipts: wireReceipts };
+const wireEvidence = (rows: readonly Observation[], transport = "b".repeat(64), policy = DEFAULT_QUALIFICATION_INPUT_POLICY) => rows.map(row => wireControl(row, transport, policy).evidence);
+const coreEvidence = (rows: readonly Observation[], traces?: { case_id: string; response_sha256: string | null; model_response_sha256: string | null; input_planning_sha256?: string }[], policy = DEFAULT_QUALIFICATION_INPUT_POLICY) => {
+  const wireReceipts = wireEvidence(rows, "b".repeat(64), policy);
+  return { source_commit: "a".repeat(40), input_policy: policy, traces: traces ?? rows.map((row, index) => ({ case_id: row.case_id, response_sha256: "b".repeat(64),
+    model_response_sha256: wireReceipts[index]!.receipt.raw_response_sha256, input_planning_sha256: wireReceipts[index]!.input_planning.planning_sha256 })), wire_adapter: modelWireAdapterIdentity(), wire_receipts: wireReceipts };
 };
 const scoreCoreSemanticRun = (rows: readonly Observation[], selected: ReturnType<typeof candidateRegistry>) => actualScoreCoreSemanticRun(rows, selected, coreEvidence(rows));
 const mutate = (rows: Observation[], id: string, change: (response: ExtractResponseV2) => ExtractResponseV2) => rows.map(row => row.case_id === id ? { ...row, response: change(structuredClone(row.response!)) } : row);
@@ -128,6 +133,91 @@ const parsedObservation = (rows: Observation[], id: string) => {
 };
 
 describe("predeclared core semantic protocol", () => {
+  test("measured input and output bounds are inclusive and preserve honest overflow counts", () => {
+    for (const [input, output, errors] of [
+      [8_192, 8_192, []], [8_193, 100, ["input_budget_exceeded"]],
+      [100, 8_193, ["output_budget_exceeded"]], [19_746, 8_193, ["input_budget_exceeded", "output_budget_exceeded"]],
+    ] as const) {
+      const rows = observations(), first = rows[0]!;
+      rows[0] = { ...first, usage: { calls: 1, input_tokens: input, output_tokens: output } };
+      const result = scoreCoreSemanticRun(rows, registry);
+      expect(result.cases[0]!.gates.usage).toEqual([...errors]);
+      expect(result.automated_passed).toBe(errors.length === 0);
+      expect(rows[0]!.usage).toEqual({ calls: 1, input_tokens: input, output_tokens: output });
+    }
+    const rows = observations(), evidence = coreEvidence(rows), first = rows[0]!;
+    rows[0] = { ...first, status: "rejected", response: null, usage: { calls: 1, input_tokens: 19_746, output_tokens: 100 } };
+    const rejected = actualScoreCoreSemanticRun(rows, registry, evidence);
+    expect(rejected.cases[0]!.gates.usage).toEqual(["input_budget_exceeded"]);
+    expect(rejected.automated_passed).toBe(false);
+  });
+
+  test("historical Core12 is INVALID and cannot acquire a new active receipt", () => {
+    const pin = INVALID_HISTORICAL_QUALIFICATIONS[0]!;
+    const bytes = readFileSync(join(import.meta.dir, "../fixtures/world-qualification", pin.file), "utf8");
+    const historical = JSON.parse(bytes);
+    expect(sha256(bytes)).toBe(pin.sha256);
+    expect(historical.observations).toHaveLength(12);
+    expect(historical.observations.every((row: Observation) => row.usage.input_tokens! > row.input.budget.max_input_tokens)).toBe(true);
+    expect(REVIEWED_QUALIFICATIONS.some(row => row.file === pin.file || row.sha256 === pin.sha256)).toBe(false);
+    expect(() => verifyCoreSemanticReport(bytes, pin)).toThrow();
+  });
+
+  test("planning is deterministic and validates every reserve, total, and cap", () => {
+    const policy = validateQualificationInputPolicy({ ...DEFAULT_QUALIFICATION_INPUT_POLICY, max_input_tokens: 32_000, input_token_overhead: 24_000 });
+    const input = coreSemanticCaseInput(coreSemanticCorpus.cases[0]!, registry, policy);
+    const planning = qualificationInputPlanning(input, policy), again = qualificationInputPlanning(input, policy);
+    expect(planning).toEqual(again);
+    expect(planning.input_token_overhead).toBe(24_000);
+    expect(planning.reserved_input_tokens).toBe(planning.estimated_input_tokens + 24_000);
+    expect(planning.reserved_input_tokens).toBeLessThanOrEqual(32_000);
+    for (const value of [-1, 32_001, NaN, Infinity, 1.5, "24000", null])
+      expect(() => validateQualificationInputPolicy({ ...policy, input_token_overhead: value })).toThrow("invalid qualification input policy");
+    for (const value of [0, -1, 32_001, 1_000_001, NaN, Infinity, 1.5, "32000"])
+      expect(() => validateQualificationInputPolicy({ ...policy, max_input_tokens: value })).toThrow("invalid qualification input policy");
+    expect(() => validateQualificationInputPolicy({ ...policy, max_output_tokens: 8_193 })).toThrow();
+    expect(() => validateQualificationInputPolicy({ ...policy, extra: true })).toThrow();
+    expect(() => qualificationInputPlanning(input, { ...policy, max_input_tokens: 31_999 })).toThrow("budget mismatch");
+    const under = { ...policy, max_input_tokens: planning.reserved_input_tokens - 1 };
+    expect(() => qualificationInputPlanning(coreSemanticCaseInput(coreSemanticCorpus.cases[0]!, registry, under), under)).toThrow("planning rejected");
+    const exact = { ...policy, max_input_tokens: planning.reserved_input_tokens };
+    expect(qualificationInputPlanning(coreSemanticCaseInput(coreSemanticCorpus.cases[0]!, registry, exact), exact).reserved_input_tokens).toBe(exact.max_input_tokens);
+  });
+
+  test("reserve, estimated count, total, cap, outbound and planning hash mutations fail custody", () => {
+    const policy = validateQualificationInputPolicy({ ...DEFAULT_QUALIFICATION_INPUT_POLICY, max_input_tokens: 32_000, input_token_overhead: 24_000 });
+    const rows = coreSemanticCorpus.cases.map(item => scripted(item, policy)), evidence = coreEvidence(rows, undefined, policy);
+    expect(actualScoreCoreSemanticRun(rows, registry, evidence).automated_passed).toBe(true);
+    for (const change of [
+      { estimated_input_tokens: 1 }, { input_token_overhead: 0 }, { reserved_input_tokens: 1 },
+      { max_input_tokens: 32_001 }, { max_output_tokens: 1 }, { outbound_sha256: "0".repeat(64) }, { planning_sha256: "0".repeat(64) },
+    ]) {
+      const altered = { ...evidence, wire_receipts: evidence.wire_receipts.map((row, index) => index === 0 ? { ...row, input_planning: { ...row.input_planning, ...change } } : row) };
+      const result = actualScoreCoreSemanticRun(rows, registry, altered);
+      expect(result.automated_passed).toBe(false);
+      expect(result.cases[0]!.gates.pipeline).toContain("custody:wire_input_planning_mismatch");
+    }
+    expect(actualScoreCoreSemanticRun(rows, registry, { ...evidence, input_policy: { ...policy, input_token_overhead: 23_999 } }).automated_passed).toBe(false);
+    expect(actualScoreCoreSemanticRun(rows, registry, { ...evidence, traces: evidence.traces.map((row, index) => index === 0 ? { ...row, input_planning_sha256: "0".repeat(64) } : row) }).automated_passed).toBe(false);
+  });
+
+  test("qualification checks live factory reserve through wrappers and rejects fabricated or different metadata", async () => {
+    const policy = validateQualificationInputPolicy({ ...DEFAULT_QUALIFICATION_INPUT_POLICY, max_input_tokens: 32_000, input_token_overhead: 24_000 });
+    const context = (config: Record<string, unknown>): PortContext => ({ config, vault_path: "/nonexistent", data_dir: "/nonexistent",
+      secrets: async () => { throw new Error("synthetic control has no secrets"); }, clock: () => "2000-01-01T00:00:00.000Z", logger: () => {} });
+    const llm = createOpenAiCompatibleLlmPort(context({ base_url: "http://127.0.0.1:1/v1", model: "synthetic", input_token_overhead: 24_000 }));
+    const producer = createModelProducerV2Port(context({}), { llm });
+    try {
+      expect(qualificationProducerInputOverhead(producer, policy)).toBe(24_000);
+      const wrapper = inheritModelProducerIdentity(producer, { ...producer, produce: input => producer.produce(input) });
+      expect(qualificationProducerInputOverhead(wrapper, policy)).toBe(24_000);
+      expect(() => qualificationProducerInputOverhead(wrapper, { ...policy, input_token_overhead: 23_999 })).toThrow("reservation mismatch");
+      expect(() => qualificationProducerInputOverhead({ ...producer, input_token_overhead: 24_000 }, policy)).toThrow("reservation mismatch");
+      await producer.close();
+      expect(() => qualificationProducerInputOverhead(wrapper, policy)).toThrow("reservation mismatch");
+    } finally { await producer.close(); await llm.close(); }
+  });
+
   test("the sealed split and scripted structural controls pass only to pending manual review", () => {
     validateCoreSemanticAssets();
     expect(coreSemanticCorpus.cases).toHaveLength(12);
@@ -330,7 +420,7 @@ describe("predeclared core semantic protocol", () => {
   });
 
   test("parser-valid adjacent anchors cannot bypass the original single-span literal guard", () => {
-    const id = selectedCase("concept", "positive").id, source = observations(), item = coreSemanticCorpus.cases.find(row => row.id === id)!, rule = coreSemanticContract.cases.find(row => row.case_id === id)!;
+    const id = selectedCase("concept", "positive").id, source = observations(), item = coreSemanticCorpus.cases.find(row => row.id === id)!, rule = extractionRule(item);
     if (rule.expectation !== "extract") throw new Error("invalid test rule");
     const witness = uniqueSpan(item, rule.details[0]!.witness), midpoint = witness.start_utf16 + Math.floor((witness.end_utf16 - witness.start_utf16) / 2);
     const changed = mutate(source, id, response => ({ ...response, claims: response.claims.map(claim => claim.predicate === rule.details[0]!.predicate
@@ -348,8 +438,7 @@ describe("predeclared core semantic protocol", () => {
 
   test("prepared evidence may pass while missing raw role words remains failed and immutable", () => {
     const source = observations(), item = selectedCase("concept", "reported");
-    const rule = coreSemanticContract.cases.find(row => row.case_id === item.id)!;
-    if (rule.expectation !== "extract") throw new Error("test rule");
+    const rule = extractionRule(item);
     const detail = rule.details[0]!, witness = uniqueSpan(item, detail.witness);
     const named = detail.equivalent_mention ?? (typeof detail.source === "object" ? detail.source : undefined);
     if (!named) throw new Error("test requires an already authored equivalent occurrence");
@@ -442,6 +531,7 @@ describe("predeclared core semantic protocol", () => {
   test("v3 custody rejects every broken transport-to-public-response link", () => {
     const rows = observations(), baseline = coreEvidence(rows), first = baseline.wire_receipts[0]!;
     const changed: ReturnType<typeof coreEvidence>[] = [];
+    changed.push({ ...baseline, wire_receipts: baseline.wire_receipts.map((row, index) => index === 0 ? { ...row, producer_input_token_overhead: 1 } : row) });
     changed.push({ ...baseline, wire_receipts: baseline.wire_receipts.slice(1) });
     changed.push({ ...baseline, wire_receipts: [...baseline.wire_receipts, first] });
     changed.push({ ...baseline, wire_receipts: baseline.wire_receipts.map((row, index) => index === 0 ? { ...row, transport_response_sha256: "0".repeat(64) } : row) });
@@ -469,6 +559,9 @@ describe("predeclared core semantic protocol", () => {
     try {
       await expect(runQualification({ protocol: "unknown" as never, kinds: ["concept", "situation"] })).rejects.toThrow("unknown qualification protocol");
       await expect(runQualification({ protocol: "core-semantic-v3", kinds: ["concept", "situation"], case_ids: [coreSemanticCorpus.cases[0]!.id] })).rejects.toThrow("fixed core split");
+      await expect(runQualification({ protocol: "core-semantic-v3", kinds: ["concept", "situation"],
+        input_policy: { ...DEFAULT_QUALIFICATION_INPUT_POLICY, max_input_tokens: 32_001 } })).rejects.toThrow("invalid qualification input policy");
+      await expect(runQualification({ kinds: ["concept", "situation"], input_policy: DEFAULT_QUALIFICATION_INPUT_POLICY })).rejects.toThrow("input policy requires core semantic protocol");
       const output = join(directory, "pending.json"), result = await runQualification({ protocol: "core-semantic-v3", kinds: ["concept", "situation"], output });
       expect(result.core_semantic.status).toBe("pending_manual_review");
       expect(result.core_semantic.automated_passed).toBe(false);
@@ -502,11 +595,58 @@ describe("predeclared core semantic protocol", () => {
       expect(result.core_semantic.cases.find(row => row.case_id === observed.case_id)!.automated_passed).toBe(true);
 
       const receipt = { ...receiptRow.receipt, raw_response_sha256: "0".repeat(64) };
-      const tampered = actualScoreCoreSemanticRun(result.observations, registry, { source_commit: result.source_commit, traces: result.traces,
+      const tampered = actualScoreCoreSemanticRun(result.observations, registry, { source_commit: result.source_commit, input_policy: result.input_policy, traces: result.traces,
         wire_adapter: result.wire_adapter, wire_receipts: [{ ...receiptRow, receipt, resolution_receipt_sha256: sha256(canonicalJson(receipt)) }] });
       const changed = tampered.cases.find(row => row.case_id === observed.case_id)!;
       expect(changed.automated_passed).toBe(false);
       expect(changed.gates.pipeline).toContain("custody:wire_raw_response_mismatch");
+    } finally { server.stop(); }
+  });
+
+  test("actual runner binds the reserve and preserves measured usage inside and outside either cap", async () => {
+    const policy = validateQualificationInputPolicy({ ...DEFAULT_QUALIFICATION_INPUT_POLICY, max_input_tokens: 32_000, input_token_overhead: 24_000 });
+    const item = coreSemanticCorpus.cases[0]!, observed = scripted(item, policy), control = wireControl(observed, "b".repeat(64), policy);
+    for (const [input, output, expectedStatus, usageErrors] of [
+      [19_746, 100, "ok", []], [32_001, 100, "rejected", ["input_budget_exceeded"]],
+      [19_746, 8_193, "rejected", ["output_budget_exceeded"]],
+    ] as const) {
+      let stop = false;
+      const server = startFakeEndpoint(() => {
+        stop = expectedStatus === "ok";
+        return Response.json({ id: "synthetic-budget-control", object: "chat.completion", created: 1, model: "synthetic",
+          choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: control.rawText } }],
+          usage: { prompt_tokens: input, completion_tokens: output, total_tokens: input + output } });
+      });
+      try {
+        const result = await runQualification({ protocol: "core-semantic-v3", kinds: ["concept", "situation"], input_policy: policy,
+          base_url: server.base_url, model: "synthetic", stopped: () => stop });
+        expect(server.requests).toHaveLength(1);
+        expect(result.input_policy).toEqual(policy);
+        expect(result.observations[0]!.status).toBe(expectedStatus);
+        expect(result.halt_reason).toBe(expectedStatus === "ok" ? "requested_stop" : "automated_failure");
+        expect(result.observations[0]!.usage).toEqual({ calls: 1, input_tokens: input, output_tokens: output });
+        expect(result.core_semantic.cases[0]!.gates.usage).toEqual([...usageErrors]);
+        expect(result.wire_receipts).toHaveLength(expectedStatus === "ok" ? 1 : 0);
+        expect(result.traces[0]!.input_planning_sha256).toBe(qualificationInputPlanning(observed.input, policy).planning_sha256);
+        if (expectedStatus === "ok") expect(result.wire_receipts[0]!.input_planning).toEqual(qualificationInputPlanning(observed.input, policy));
+      } finally { server.stop(); }
+    }
+  });
+
+  test("the prior 19,746-input over 8,192-budget failure stops before a wire receipt", async () => {
+    const control = wireControl(scripted(coreSemanticCorpus.cases[0]!));
+    const server = startFakeEndpoint(() => Response.json({ id: "synthetic-prior-budget-control", object: "chat.completion", created: 1, model: "synthetic",
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: control.rawText } }],
+      usage: { prompt_tokens: 19_746, completion_tokens: 100, total_tokens: 19_846 } }));
+    try {
+      const result = await runQualification({ protocol: "core-semantic-v3", kinds: ["concept", "situation"], base_url: server.base_url, model: "synthetic" });
+      expect(server.requests).toHaveLength(1);
+      expect(result.observations[0]!.input.budget.max_input_tokens).toBe(8_192);
+      expect(result.observations[0]!.usage.input_tokens).toBe(19_746);
+      expect(result.observations[0]!.status).toBe("rejected");
+      expect(result.core_semantic.cases[0]!.gates.usage).toEqual(["input_budget_exceeded"]);
+      expect(result.halt_reason).toBe("automated_failure");
+      expect(result.wire_receipts).toEqual([]);
     } finally { server.stop(); }
   });
 
@@ -532,11 +672,11 @@ describe("predeclared core semantic protocol", () => {
       for (const path of RUNNER_FILES) { mkdirSync(dirname(join(directory, path)), { recursive: true }); writeFileSync(join(directory, path), readFileSync(join(import.meta.dir, "../..", path))); }
       const rows = observations(), evidence = coreEvidence(rows), result = actualScoreCoreSemanticRun(rows, registry, evidence), started = Date.UTC(2026, 9, 22);
       const traces = rows.map((row, index) => ({ case_id: row.case_id, prompt_sha256: sha256(extractionV2SystemContent(row.input)), transport: "ok" as const,
-        request_sha256: "a".repeat(64), response_sha256: "b".repeat(64), model_response_sha256: evidence.wire_receipts[index]!.receipt.raw_response_sha256,
+        input_planning_sha256: evidence.wire_receipts[index]!.input_planning.planning_sha256, request_sha256: "a".repeat(64), response_sha256: "b".repeat(64), model_response_sha256: evidence.wire_receipts[index]!.receipt.raw_response_sha256,
         origin: "observed_v3" as const, http_status: 200,
         started_at: new Date(started + index * (RESPONSE_GAP_MS + 1_000)).toISOString(), completed_at: new Date(started + index * (RESPONSE_GAP_MS + 1_000) + 1_000).toISOString() }));
       const report = { schema: "kizuki.world-qualification-run/v3" as const, protocol: "core-semantic-v3" as const, evidence: "runner_observed_transport" as const,
-        synthetic: true, source_clean: true, source_commit: "a".repeat(40), runner_sha256: runnerDigest(directory), registry_sha256: registryDigest(registry),
+        input_policy: DEFAULT_QUALIFICATION_INPUT_POLICY, synthetic: true, source_clean: true, source_commit: "a".repeat(40), runner_sha256: runnerDigest(directory), registry_sha256: registryDigest(registry),
         model: "synthetic-verifier-control", endpoint_host: "127.0.0.1:1", selected_kinds: ["concept", "situation"], selected_extensions: [],
         corpus: coreSemanticCorpus, observations: rows, traces, missing: [], selected_cases: rows.map(row => row.case_id), resumed_from: null, halt_reason: null,
         response_gap_ms: RESPONSE_GAP_MS, attempts: rows.length, case_states: rows.map(row => ({ case_id: row.case_id, status: "observed" as const })),
@@ -557,6 +697,12 @@ describe("predeclared core semantic protocol", () => {
       }
       expect(() => checkOfferedQualification(registry, [checked])).not.toThrow();
       for (const changed of [
+        { ...report, input_policy: undefined },
+        { ...report, input_policy: { ...report.input_policy, input_token_overhead: 1 } },
+        { ...report, input_policy: { ...report.input_policy, max_input_tokens: 32_000 } },
+        { ...report, input_policy: { ...report.input_policy, input_token_overhead: Infinity } },
+        { ...report, traces: report.traces.map((row, index) => index === 0 ? { ...row, input_planning_sha256: undefined } : row) },
+        { ...report, wire_receipts: report.wire_receipts.map((row, index) => index === 0 ? { ...row, input_planning: undefined } : row) },
         { ...report, wire_adapter: { ...report.wire_adapter, source_sha256: "0".repeat(64) } },
         { ...report, wire_receipts: report.wire_receipts.slice(1) },
         { ...report, wire_receipts: report.wire_receipts.map((row, index) => index === 0 ? { ...row, resolution_receipt_sha256: "0".repeat(64) } : row) },

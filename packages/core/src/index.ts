@@ -275,6 +275,8 @@ export {
   LLM_CAPABILITIES,
   LLM_CONTRACT,
   LLM_CONTRACT_MINOR,
+  llmInputTokenOverhead,
+  validateInputTokenOverhead,
 } from "./contracts/llm";
 export type {
   LlmCapability,
@@ -1219,5 +1221,5 @@ export { AppModelSettingsError, readAppModelConfiguration, saveAppModelConfigura
 export type { AppModelSettingsFailure, AppModelDocument, AppModelCredentialChange, AppModelSettingsUpdate, AppModelConfigurationValidator } from "./serve/model-settings";
 export { normalizeSourceModelEndpoint, normalizeSourceModelName } from "./ledger/source-grants";
 
-export { replayEmptyExtractSegment, parseEmptySegmentReplayPlan, ExtractReplayError, type EmptySegmentReplayPlan, type EmptySegmentReplayReceipt } from "./serve/extract-replay";
-export { modelProducerFingerprint } from "./producer/fingerprint";
+export { replayEmptyExtractSegment, parseEmptySegmentReplayPlan, parseEmptySegmentReplaySupersessionPlan, ExtractReplayError, type EmptySegmentReplayPlan, type EmptySegmentReplaySupersessionPlan, type ExtractReplayPlan, type EmptySegmentReplayReceipt } from "./serve/extract-replay";
+export { modelProducerInputTokenOverhead, modelProducerFingerprint } from "./producer/fingerprint";

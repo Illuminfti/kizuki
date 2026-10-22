@@ -1,5 +1,5 @@
 import { journaledSegment } from "./extract-oversized";
-import { inheritModelProducerIdentity } from "../producer/fingerprint";
+import { inheritModelProducerIdentity, inheritModelProducerPlanning } from "../producer/fingerprint";
 import { activeExtractReplay, activeExtractReplayEvent, ExtractReplayError } from "./extract-replay";
 import type { LlmPort } from "../contracts/llm";
 import type { ConsolidationConfig, ConsolidationRunReport } from "../contracts/consolidation";
@@ -240,7 +240,7 @@ function observedProducer(
       return validated.result;
     },
   };
-  return inheritSourcePortBindings(producer, observed);
+  return inheritSourcePortBindings(producer, inheritModelProducerPlanning(producer, observed));
 }
 
 function metricResult(metrics: ProduceMetrics): Pick<WritePassResult, "claims_rejected" | "model"> {
@@ -874,6 +874,8 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
       return settled("stop", { stopped: modelStop(mined.mined.reason, fresh), errors: diagnostic });
     case "rejected": {
       const errors = [mined.mined.reason, ...diagnostic];
+      // Observed over-budget usage is terminal for this pass, never poison-record retry or skip.
+      if (mined.mined.reason === "budget_exhausted") return settled("stop", { errors });
       // A refusal before sending, such as a legacy request over its budget, repeats identically.
       if (metrics.calls === sent) return settled("stop", { errors });
       const head = mined.model_inputs?.[0]?.event_id;

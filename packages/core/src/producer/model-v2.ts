@@ -1,5 +1,6 @@
 import { resolveModelExtractionWire, type ModelExtractionWireReceipt } from "./model-v2-wire";
-import { registerModelProducerIdentity } from "./fingerprint";
+import { registerModelProducerIdentity, registerModelProducerPlanning } from "./fingerprint";
+import { llmInputTokenOverhead, validateInputTokenOverhead } from "../contracts/llm";
 import type { LlmPort } from "../contracts/llm";
 import { PortError, validatePortDescriptor } from "../contracts/ports";
 import type { PortContext, PortDescriptor, PortHealth } from "../contracts/ports";
@@ -23,7 +24,7 @@ import {
 } from "../contracts/producer-v2";
 import { validateProduceResult } from "./result";
 import type { ModelUsage, ProducerDiagnostic } from "../contracts/producer";
-import { callModel, DEFAULT_PRODUCER_DEADLINE_MS, CHARS_PER_TOKEN, parseModelProducerConfig } from "./model";
+import { measuredBudgetDiagnostic, callModel, DEFAULT_PRODUCER_DEADLINE_MS, CHARS_PER_TOKEN, parseModelProducerConfig } from "./model";
 import { hasFenceLeak, hasParsedFenceLeak, newFenceNonce } from "./fence";
 import { buildExtractionV2Messages } from "./prompt-v2";
 import { fromScrubbedOffset, scrubText, tallyRedactions, toScrubbedOffset, type Redaction, type RedactionCounts } from "./scrub";
@@ -145,6 +146,8 @@ export type ModelExtractionV2Plan = {
   readonly nonce: string;
   readonly messages: ReturnType<typeof buildExtractionV2Messages>;
   readonly input_tokens: number;
+  readonly input_token_overhead: number;
+  readonly reserved_input_tokens: number;
   readonly max_output_tokens: number;
 } | { readonly status: "rejected"; readonly diagnostic: Extract<ProducerDiagnostic, { stage: "budget" }> };
 
@@ -164,19 +167,21 @@ function scrubInput(input: ProduceInputV2): { outbound: ProducerV2ParseInput; re
 }
 
 /** Plans exactly one call and retains the nonce/messages whose size was budgeted. */
-export function planModelExtractionV2(raw: unknown): ModelExtractionV2Plan {
+export function planModelExtractionV2(raw: unknown, inputTokenOverhead = 0): ModelExtractionV2Plan {
+  const overhead = validateInputTokenOverhead(inputTokenOverhead);
   const input = validateProduceInputV2(raw);
   if (input.budget.max_calls < 1) return { status: "rejected", diagnostic: { stage: "budget", rule: "max_calls", used: 0, requested: 1, limit: input.budget.max_calls } };
   if (input.budget.max_output_tokens < 1) return { status: "rejected", diagnostic: { stage: "budget", rule: "max_output_tokens", used: 0, requested: 1, limit: input.budget.max_output_tokens } };
   const { outbound, redactions, redacted } = scrubInput(input);
   const nonce = newFenceNonce(), messages = buildExtractionV2Messages({ ...outbound, budget: input.budget }, nonce), inputTokens = estimate(messages);
-  if (inputTokens > input.budget.max_input_tokens) return { status: "rejected", diagnostic: { stage: "budget", rule: "max_input_tokens", used: 0, requested: inputTokens, limit: input.budget.max_input_tokens } };
-  return { status: "ready", input, outbound, redactions, redacted, nonce, messages, input_tokens: inputTokens, max_output_tokens: Math.min(MAX_V2_OUTPUT_TOKENS, input.budget.max_output_tokens) };
+  if (inputTokens + overhead > input.budget.max_input_tokens) return { status: "rejected", diagnostic: { stage: "budget", rule: "max_input_tokens", used: 0, requested: inputTokens + overhead, limit: input.budget.max_input_tokens } };
+  return { status: "ready", input, outbound, redactions, redacted, nonce, messages, input_tokens: inputTokens, input_token_overhead: overhead, reserved_input_tokens: inputTokens + overhead, max_output_tokens: Math.min(MAX_V2_OUTPUT_TOKENS, input.budget.max_output_tokens) };
 }
 
 export function createModelProducerV2Port(ctx: PortContext, options: ModelProducerV2Options & { readonly onWireReceipt?: (receipt: ModelExtractionWireReceipt) => void }): ProducerV2Port {
   const config = parseModelProducerConfig(ctx.config), llm = options?.llm, systemone = options?.systemone;
   if (llm === undefined || typeof llm.complete !== "function") throw new PortError("config_invalid", "model producer requires a bound llm port", false);
+  const inputTokenOverhead = llmInputTokenOverhead(llm);
   let closed = false;
   const port: ProducerV2Port = {
     descriptor: Object.freeze({ ...MODEL_PRODUCER_V2_DESCRIPTOR, supports: Object.freeze([...MODEL_PRODUCER_V2_DESCRIPTOR.supports]) }),
@@ -195,7 +200,7 @@ export function createModelProducerV2Port(ctx: PortContext, options: ModelProduc
     async produce(raw: ProduceInputV2): Promise<ProduceResultV2> {
       if (closed) throw new PortError("unavailable", "producer port is closed", false);
       const usage: { -readonly [K in keyof ModelUsage]: ModelUsage[K] } = { calls: 0, input_tokens: 0, output_tokens: 0 };
-      const plan = planModelExtractionV2(raw);
+      const plan = planModelExtractionV2(raw, inputTokenOverhead);
       if (plan.status === "rejected") return { status: "rejected", reason: "budget_exhausted", usage, diagnostic: plan.diagnostic };
       if (systemone !== undefined && systemone.model_ref === null) return { status: "unavailable", reason: "unavailable", usage };
       const outcome = await callModel(llm as LlmPort, plan.messages, plan.max_output_tokens, config.deadline_ms ?? DEFAULT_PRODUCER_DEADLINE_MS);
@@ -204,9 +209,12 @@ export function createModelProducerV2Port(ctx: PortContext, options: ModelProduc
       if (outcome.kind === "unavailable") return { status: "unavailable", reason: outcome.diagnostic.rule === "timeout" ? "timeout" : outcome.diagnostic.rule === "network" ? "network" : outcome.diagnostic.rule === "credentials" ? "credentials" : outcome.diagnostic.rule === "http" ? "http" : "unavailable", usage, diagnostic: outcome.diagnostic };
       if (outcome.kind === "rejected") {
         usage.input_tokens = outcome.usage?.input_tokens ?? 0; usage.output_tokens = outcome.usage?.output_tokens ?? 0;
-        return { status: "rejected", reason: outcome.reason, usage, diagnostic: outcome.diagnostic };
+        const diagnostic = measuredBudgetDiagnostic(usage, plan.input.budget);
+        return { status: "rejected", reason: diagnostic === undefined ? outcome.reason : "budget_exhausted", usage, diagnostic: diagnostic ?? outcome.diagnostic };
       }
       usage.input_tokens = outcome.response.usage.input_tokens; usage.output_tokens = outcome.response.usage.output_tokens;
+      const diagnostic = measuredBudgetDiagnostic(usage, plan.input.budget);
+      if (diagnostic !== undefined) return { status: "rejected", reason: "budget_exhausted", usage, diagnostic };
       if (hasFenceLeak(outcome.response.text, plan.nonce)) return { status: "rejected", reason: "fence_leak", usage };
       let decoded: unknown; try { decoded = JSON.parse(unwrapJsonCodeFence(outcome.response.text)); } catch { decoded = null; }
       if (decoded !== null && hasParsedFenceLeak(decoded, plan.nonce)) return { status: "rejected", reason: "fence_leak", usage };
@@ -226,6 +234,7 @@ export function createModelProducerV2Port(ctx: PortContext, options: ModelProduc
     },
     async close() { closed = true; },
   };
+  registerModelProducerPlanning(port, inputTokenOverhead);
   registerModelProducerIdentity(port, () => closed);
   return port;
 }

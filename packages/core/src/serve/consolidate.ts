@@ -1,3 +1,4 @@
+import { llmInputTokenOverhead } from "../contracts/llm";
 import { KIND_ASSEMBLERS } from "../world/kinds";
 import { setImmediate as yieldToHost } from "node:timers/promises";
 import { OWNER } from "../agents";
@@ -95,6 +96,7 @@ async function request(ctx: WorldJobContext, prompt: ReturnType<typeof consolida
     if (!response || typeof response.text !== "string" || typeof response.model !== "string" ||
         !Number.isSafeInteger(response.usage?.input_tokens) || response.usage.input_tokens < 0 ||
         !Number.isSafeInteger(response.usage?.output_tokens) || response.usage.output_tokens < 0) return { outcome: { status: "rejected" } };
+    if (response.usage.input_tokens > config.max_input_tokens) return { outcome: { status: "rejected" }, response };
     if (response.usage.output_tokens > config.max_output_tokens) return { outcome: { status: "truncated" }, response };
     return { outcome: parseConsolidationResponse(response.text, prompt.nonce), response };
   } catch (error) {
@@ -164,7 +166,7 @@ export const consolidationJob: WorldJob = { id: "consolidation", async run(ctx) 
         // Consent is checked before building a prompt or reading lineage text.
         if (basis !== null && allowed(ctx, basis) && ready(ctx, basis)) {
           const prompt = consolidationPrompt(work, basis);
-          if (prompt.inputTokens <= config.max_input_tokens) {
+          if (prompt.inputTokens + llmInputTokenOverhead(ctx.llm!) <= config.max_input_tokens) {
             const reservation = reserve(ctx, basis, prompt.nonce);
             if (reservation.status === "budget") { saveCursor(ctx, cursor, CONSOLIDATION_BUDGET_DAY); return { stop: CONSOLIDATION_BUDGET_DAY }; }
             if (reservation.status === "ready") {

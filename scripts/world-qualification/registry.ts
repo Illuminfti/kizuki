@@ -13,6 +13,7 @@ import { extractionV2SystemContent } from "../../packages/core/src/producer/prom
 import type { runQualification } from "./run";
 import { REVIEWED_QUALIFICATIONS, type QualificationApproval } from "./approvals";
 import { CORE_SEMANTIC_PROTOCOL, LEGACY_CORE_SEMANTIC_PROTOCOL, coreSemanticCaseInput, coreSemanticContract, coreSemanticCorpus, scoreCoreSemanticRun, validateCoreSemanticAssets, verifyCoreSemanticReview } from "./core-semantic";
+import { validateQualificationInputPolicy } from "./input-planning";
 import { modelWireAdapterIdentity } from "./wire-custody";
 export { REVIEWED_QUALIFICATIONS, type QualificationApproval } from "./approvals";
 
@@ -39,6 +40,7 @@ type BaselineReport = Exclude<QualificationReport, CoreSemanticReport>;
 
 function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: QualificationApproval, registry: WorldRegistry, root?: string): CheckedQualification {
   validateCoreSemanticAssets();
+  const policy = validateQualificationInputPolicy(report.input_policy);
   const projectRoot = root ?? resolve(import.meta.dir, "../..");
   if (approval.protocol !== CORE_SEMANTIC_PROTOCOL || report.schema !== "kizuki.world-qualification-run/v3" || report.evidence !== "runner_observed_transport" || report.synthetic !== true ||
       report.source_clean !== true || !/^[a-f0-9]{40}$/.test(report.source_commit) || report.runner_sha256 !== runnerDigest(projectRoot) ||
@@ -51,14 +53,14 @@ function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: Qualifi
       report.case_states.some(row => row.status !== "observed") || canonicalJson(report.case_states.map(row => row.case_id)) !== canonicalJson(report.selected_cases))
     throw new Error("core semantic report mismatch");
   const expectedAdapter = modelWireAdapterIdentity(projectRoot);
-  const result = scoreCoreSemanticRun(report.observations, registry, { source_commit: report.source_commit, traces: report.traces,
+  const result = scoreCoreSemanticRun(report.observations, registry, { source_commit: report.source_commit, input_policy: policy, traces: report.traces,
     wire_adapter: report.wire_adapter, wire_receipts: report.wire_receipts });
   if (!result.automated_passed || canonicalJson(result) !== canonicalJson(report.core_semantic)) throw new Error("core semantic automated checks failed");
   if (canonicalJson(report.wire_adapter) !== canonicalJson(expectedAdapter)) throw new Error("core semantic wire adapter mismatch");
   let previousCompletion: number | null = null;
   for (const item of coreSemanticCorpus.cases) {
     const observed = report.observations.find(row => row.case_id === item.id), matches = report.traces.filter(row => row.case_id === item.id), trace = matches[0];
-    const expectedInput = coreSemanticCaseInput(item, registry), prompt = sha256(extractionV2SystemContent(expectedInput));
+    const expectedInput = coreSemanticCaseInput(item, registry, policy), prompt = sha256(extractionV2SystemContent(expectedInput));
     if (!observed || canonicalJson(observed.input) !== canonicalJson(expectedInput) || matches.length !== 1 || !trace || trace.origin !== "observed_v3" || trace.transport !== "ok" ||
         trace.http_status === null || trace.http_status < 200 || trace.http_status >= 300 || trace.prompt_sha256 !== prompt || report.prompt_sha256_by_case[item.id] !== prompt ||
         !/^[a-f0-9]{64}$/.test(trace.request_sha256) || !/^[a-f0-9]{64}$/.test(trace.response_sha256 ?? "") || !/^[a-f0-9]{64}$/.test(trace.model_response_sha256 ?? "") || trace.completed_at === null ||
@@ -77,7 +79,7 @@ function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: Qualifi
     if (sha256(reviewBytes) !== reviewPin.sha256) throw new Error("core semantic review pin mismatch");
     verifyCoreSemanticReview(approval.sha256, result, JSON.parse(reviewBytes));
   } finally { closeSync(reviewFd); }
-  const predicates = [...new Set(coreSemanticContract.cases.flatMap(rule => rule.expectation === "abstain" ? [] : ["world.kind", `${rule.classification.kind.slice(6)}.label`, ...rule.details.map(row => row.predicate)]))];
+  const predicates = [...new Set(result.cases.flatMap(row => row.selected_branch === null ? [] : ["world.kind", `${row.selected_branch.classification.kind.slice(6)}.label`, ...row.selected_branch.details.map(detail => detail.predicate)]))];
   const checked = { registry_sha256: report.registry_sha256, report_sha256: approval.sha256, kinds: report.selected_kinds, predicates };
   CHECKED.add(checked);
   return checked;

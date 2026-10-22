@@ -1,6 +1,6 @@
 {
-  "schema": "kizuki.core-semantic-contract/v1",
-  "corpus_version": "core12-prospective-unseen-20261022",
+  "schema": "kizuki.core-semantic-contract/v2",
+  "corpus_version": "core18-unobserved-naming-clarifications-20261022",
   "automated_gate": {
     "required": [
       "all twelve ordered cases observed exactly once",
@@ -81,7 +81,10 @@
       "evaluation stage prepared_admission",
       "ordered case transport_response_sha256",
       "ordered case input_manifest_sha256 and sent_window_manifest_sha256",
-      "ordered case prepared_admissions_sha256"
+      "ordered case prepared_admissions_sha256",
+      "selected_branch_id",
+      "selected_branch_sha256",
+      "selected_branch"
     ],
     "per_positive_case": [
       "For each required detail atom, the claim's closed typed subject/predicate/object proposition R_P(S, O) entails the atom using only the bound identity of S, the exact relation and direction of P in semantic_method, and facts entailed by O.value. P supplies only that relation; S supplies only bound identity. O.value supplies every entity, property, state, quantity, comparison, modality, negation, scope, ordering, and other domain qualifier absent from the relation. Body, anchors, source window, neighboring claims, and structured polarity, perspective/role, context, or valid-time fields cannot repair missing domain meaning. Unmapped predicates borrow no meaning; classification and legacy extras retain their separate existing checks.",
@@ -102,347 +105,507 @@
   },
   "cases": [
     {
-      "case_id": "core12-concept-positive-loom-margin",
+      "case_id": "core17-situation-positive-carmine-map-cabinet",
       "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Loom Margin"
-      },
-      "classification": {
-        "kind": "world/concept",
-        "label": "Loom Margin",
-        "witness": "Loom Margin — Concept",
-        "perspective": "direct",
-        "time": "unknown"
-      },
-      "details": [
+      "branches": [
         {
-          "predicate": "concept.definition",
-          "object_kind": "literal",
-          "witness": "a weaving rule that counts edge loops separately from central repeats before calculating the yarn allowance",
-          "required_atoms": [
-            "it is a weaving rule",
-            "edge loops are counted separately from central repeats",
-            "the separate count precedes calculation of the yarn allowance"
-          ],
-          "perspective": "direct",
-          "time": "unknown"
-        }
-      ],
-      "forbidden_assertions": [
-        "the owner created, owns, or endorses Loom Margin",
-        "Loom Margin is identical to another concept"
-      ]
-    },
-    {
-      "case_id": "core12-concept-reported-bolt-partition",
-      "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Bolt Partition"
-      },
-      "classification": {
-        "kind": "world/concept",
-        "label": "Bolt Partition",
-        "witness": "Bolt Partition — Concept",
-        "perspective": "direct",
-        "time": "unknown"
-      },
-      "details": [
-        {
-          "predicate": "concept.definition",
-          "object_kind": "literal",
-          "witness": "a fastener testing rule that groups trials by torque bracket while keeping reused bolts in a separate group",
-          "required_atoms": [
-            "it is a fastener testing rule",
-            "trials are grouped by torque bracket",
-            "reused bolts are kept in a separate group"
-          ],
-          "perspective": "person_statement",
-          "time": "unknown",
-          "source": "source-core12-concept-reported",
-          "attribution_witness": "Elia Merrow reported",
-          "equivalent_mention": {
+          "id": "situation-positive-carmine-map-cabinet",
+          "target": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Elia Merrow",
-            "label": "Elia Merrow",
-            "attribution_witness": "Elia Merrow reported"
+            "quote": "Carmine Map Cabinet"
+          },
+          "classification": {
+            "kind": "world/situation",
+            "label": "Carmine Map Cabinet",
+            "witness": "Carmine Map Cabinet — Situation",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Its objective is to sort the vellum survey sheets.",
+              "required_atoms": [
+                "sorting the vellum survey sheets"
+              ],
+              "perspective": "direct",
+              "time": "unknown"
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "the lower drawer is swollen",
+              "required_atoms": [
+                "the lower drawer is swollen",
+                "the swollen lower drawer is a stated blocker of Carmine Map Cabinet"
+              ],
+              "perspective": "direct",
+              "time": "unknown"
+            }
+          ],
+          "forbidden_assertions": [
+            "Carmine Map Cabinet is complete",
+            "the owner owns or leads Carmine Map Cabinet",
+            "the sorting has been completed",
+            "the source establishes a purpose, enabling relation or commitment for the sorting"
+          ],
+          "label_rule": {
+            "value": "Carmine Map Cabinet",
+            "naming": "explicit",
+            "naming_witness": "Carmine Map Cabinet — Situation",
+            "witness": "Carmine Map Cabinet — Situation",
+            "perspective": "direct",
+            "time": "unknown"
           }
         }
-      ],
-      "forbidden_assertions": [
-        "the owner reported or endorses Bolt Partition",
-        "Elia Merrow is the owner",
-        "Bolt Partition is identical to another concept"
       ]
     },
     {
-      "case_id": "core12-concept-historical-loanword-gate",
+      "case_id": "core16-situation-reported-vermilion-inlet",
       "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Loanword Gate"
-      },
-      "classification": {
-        "kind": "world/concept",
-        "label": "Loanword Gate",
-        "witness": "Loanword Gate — Concept",
-        "perspective": "direct",
-        "time": {
-          "valid_from": "2013-05-17T08:35:00.000Z",
-          "valid_to": "2013-07-29T16:50:00.000Z",
-          "temporal_basis": "explicit",
-          "witness": "interval beginning 2013-05-17T08:35:00.000Z and ending exclusively at 2013-07-29T16:50:00.000Z"
-        }
-      },
-      "details": [
+      "branches": [
         {
-          "predicate": "concept.definition",
-          "object_kind": "literal",
-          "witness": "a language annotation rule that marks borrowed words before counting native syllable patterns",
-          "required_atoms": [
-            "it is a language annotation rule",
-            "borrowed words are marked",
-            "marking precedes counting native syllable patterns"
-          ],
-          "perspective": "document_report",
-          "time": {
-            "valid_from": "2013-05-17T08:35:00.000Z",
-            "valid_to": "2013-07-29T16:50:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "interval beginning 2013-05-17T08:35:00.000Z and ending exclusively at 2013-07-29T16:50:00.000Z"
-          },
-          "source": "source-core12-concept-historical",
-          "attribution_witness": "Annotation ledger AL-46 states"
-        }
-      ],
-      "forbidden_assertions": [
-        "Loanword Gate is current outside the explicit interval",
-        "the explicit interval is the lifespan of Loanword Gate",
-        "the owner created, owns, or endorses Loanword Gate"
-      ]
-    },
-    {
-      "case_id": "core12-concept-name-negative-silver-trestle",
-      "expectation": "abstain",
-      "forbidden_assertions": [
-        "Silver Trestle is a concept",
-        "Silver Trestle has an asserted definition"
-      ]
-    },
-    {
-      "case_id": "core12-concept-template-negative-empty-term-card",
-      "expectation": "abstain",
-      "forbidden_assertions": [
-        "the empty card establishes a concept",
-        "INSERT TERM or INSERT MEANING is an asserted concept label or definition"
-      ]
-    },
-    {
-      "case_id": "core12-concept-hypothetical-negative-satin-fulcrum",
-      "expectation": "abstain",
-      "forbidden_assertions": [
-        "Satin Fulcrum is an actual or adopted concept",
-        "Satin Fulcrum has an asserted definition"
-      ]
-    },
-    {
-      "case_id": "core12-situation-positive-proof-bundle",
-      "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Proof Bundle"
-      },
-      "classification": {
-        "kind": "world/situation",
-        "label": "Proof Bundle",
-        "witness": "Proof Bundle — Situation",
-        "perspective": "direct",
-        "time": "unknown"
-      },
-      "details": [
-        {
-          "predicate": "situation.objective",
-          "object_kind": "literal",
-          "witness": "collate the numbered proof sheets before the press inspection",
-          "required_atoms": [
-            "the stated objective is to collate numbered proof sheets",
-            "collation must precede the press inspection"
-          ],
-          "perspective": "direct",
-          "time": "unknown"
-        },
-        {
-          "predicate": "situation.blocker",
-          "object_kind": "literal",
-          "witness": "the folding guide is missing",
-          "required_atoms": [
-            "the folding guide is missing",
-            "the missing folding guide is a stated blocker of Proof Bundle"
-          ],
-          "perspective": "direct",
-          "time": "unknown"
-        }
-      ],
-      "forbidden_assertions": [
-        "the owner owns or leads Proof Bundle",
-        "Proof Bundle is complete",
-        "the folding guide is damaged rather than missing"
-      ]
-    },
-    {
-      "case_id": "core12-situation-reported-drain-pass",
-      "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Drain Pass"
-      },
-      "classification": {
-        "kind": "world/situation",
-        "label": "Drain Pass",
-        "witness": "Drain Pass — Situation",
-        "perspective": "direct",
-        "time": "unknown"
-      },
-      "details": [
-        {
-          "predicate": "situation.objective",
-          "object_kind": "literal",
-          "witness": "flush the west drain line before the dye test",
-          "required_atoms": [
-            "the stated objective is to flush the west drain line",
-            "flushing must precede the dye test"
-          ],
-          "perspective": "person_statement",
-          "time": "unknown",
-          "source": {
+          "id": "situation-reported-vermilion-inlet",
+          "target": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Nadi Corven",
-            "label": "Nadi Corven",
-            "attribution_witness": "Nadi Corven reported"
+            "quote": "Vermilion Inlet"
           },
-          "attribution_witness": "Nadi Corven reported"
-        },
-        {
-          "predicate": "situation.blocker",
-          "object_kind": "literal",
-          "witness": "the isolation valve is stuck shut",
-          "required_atoms": [
-            "the isolation valve is stuck shut",
-            "the valve being stuck shut is a stated blocker of Drain Pass"
+          "classification": {
+            "kind": "world/situation",
+            "label": "Vermilion Inlet",
+            "witness": "Vermilion Inlet — Situation",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "route the dye pulses through the inlet manifold before the transit test",
+              "required_atoms": [
+                "the stated objective is to route dye pulses through the inlet manifold",
+                "routing the dye pulses precedes the transit test"
+              ],
+              "perspective": "person_statement",
+              "time": "unknown",
+              "source": {
+                "mode": "mention",
+                "record": "r1",
+                "quote": "Sova Kelm",
+                "label": "Sova Kelm",
+                "attribution_witness": "Sova Kelm stated"
+              },
+              "attribution_witness": "Sova Kelm stated"
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "the outlet baffle is warped",
+              "required_atoms": [
+                "the outlet baffle is warped",
+                "the warped outlet baffle is a stated blocker of Vermilion Inlet"
+              ],
+              "perspective": "person_statement",
+              "time": "unknown",
+              "source": {
+                "mode": "mention",
+                "record": "r1",
+                "quote": "Sova Kelm",
+                "label": "Sova Kelm",
+                "attribution_witness": "Sova Kelm stated"
+              },
+              "attribution_witness": "Sova Kelm stated"
+            }
           ],
-          "perspective": "person_statement",
-          "time": "unknown",
-          "source": {
+          "forbidden_assertions": [
+            "Vermilion Inlet is complete",
+            "Sova Kelm owns or leads Vermilion Inlet"
+          ],
+          "label_rule": {
+            "value": "Vermilion Inlet",
+            "naming": "explicit",
+            "naming_witness": "Vermilion Inlet — Situation",
+            "witness": "Vermilion Inlet — Situation",
+            "perspective": "direct",
+            "time": "unknown"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core16-situation-historical-mica-harmonic-hold",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "historical-mica-harmonic-objective",
+          "target": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Nadi Corven",
-            "label": "Nadi Corven",
-            "attribution_witness": "Nadi Corven reported"
+            "quote": "Mica Harmonic Hold"
           },
-          "attribution_witness": "Nadi Corven reported"
-        }
-      ],
-      "forbidden_assertions": [
-        "the owner reported the Drain Pass details",
-        "Nadi Corven owns or leads Drain Pass",
-        "Drain Pass is complete"
-      ]
-    },
-    {
-      "case_id": "core12-situation-historical-cushion-turn",
-      "expectation": "extract",
-      "target": {
-        "mode": "mention",
-        "record": "r1",
-        "quote": "Cushion Turn"
-      },
-      "classification": {
-        "kind": "world/situation",
-        "label": "Cushion Turn",
-        "witness": "Cushion Turn — Situation",
-        "perspective": "direct",
-        "time": {
-          "valid_from": "2015-09-08T07:15:00.000Z",
-          "valid_to": "2015-10-21T18:40:00.000Z",
-          "temporal_basis": "explicit",
-          "witness": "interval beginning 2015-09-08T07:15:00.000Z and ending exclusively at 2015-10-21T18:40:00.000Z"
-        }
-      },
-      "details": [
-        {
-          "predicate": "situation.objective",
-          "object_kind": "literal",
-          "witness": "fit seat webbing before adding foam",
-          "required_atoms": [
-            "the stated objective is to fit seat webbing",
-            "fitting the webbing precedes adding foam"
+          "classification": {
+            "kind": "world/situation",
+            "label": "Mica Harmonic Hold",
+            "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.",
+            "perspective": "direct",
+            "time": {
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+            }
+          },
+          "forbidden_assertions": [
+            "the pitch carriage has been freed",
+            "the harmonic-ratio measurement proceeded or completed",
+            "the requested remedy resolved the condition",
+            "Mica Harmonic Hold is complete",
+            "Mica Harmonic Hold is current outside the explicit interval",
+            "the report title is Mica Harmonic Hold",
+            "the record establishes a project, owner, leadership, execution, or current count"
           ],
-          "perspective": "document_report",
-          "time": {
-            "valid_from": "2015-09-08T07:15:00.000Z",
-            "valid_to": "2015-10-21T18:40:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "interval beginning 2015-09-08T07:15:00.000Z and ending exclusively at 2015-10-21T18:40:00.000Z"
+          "label_rule": {
+            "value": "Mica Harmonic Hold",
+            "naming": "explicit",
+            "naming_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "perspective": "document_report",
+            "source": "source-core16-situation-historical",
+            "attribution_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "time": {
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+            }
           },
-          "source": "source-core12-situation-historical",
-          "attribution_witness": "Upholstery log UL-58 states"
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Free the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement so that the measurement can proceed.",
+              "required_atoms": [
+                "freeing the pitch carriage is requested rather than asserted to have been performed",
+                "the pitch carriage is already seized and still blocks an unresolved harmonic-ratio measurement",
+                "the requested remedy is to free the pitch carriage",
+                "freeing the pitch carriage is presented as enabling that unresolved harmonic-ratio measurement to proceed"
+              ],
+              "perspective": "document_report",
+              "source": "source-core16-situation-historical",
+              "attribution_witness": "For that entire interval, that record requests this action list for the named condition",
+              "time": {
+                "valid_from": "2009-05-11T06:40:00.000Z",
+                "valid_to": "2009-08-23T17:10:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+              }
+            }
+          ]
         },
         {
-          "predicate": "situation.change",
-          "object_kind": "literal",
-          "witness": "the fastening order changed from the rear edge first to the front edge first",
-          "required_atoms": [
-            "the fastening order changed",
-            "the former order fastened the rear edge first",
-            "the new order fastened the front edge first"
-          ],
-          "perspective": "document_report",
-          "time": {
-            "valid_from": "2015-09-08T07:15:00.000Z",
-            "valid_to": "2015-10-21T18:40:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "interval beginning 2015-09-08T07:15:00.000Z and ending exclusively at 2015-10-21T18:40:00.000Z"
+          "id": "historical-mica-harmonic-objective-and-blocker",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Mica Harmonic Hold"
           },
-          "source": "source-core12-situation-historical",
-          "attribution_witness": "Upholstery log UL-58 states"
+          "classification": {
+            "kind": "world/situation",
+            "label": "Mica Harmonic Hold",
+            "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.",
+            "perspective": "direct",
+            "time": {
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+            }
+          },
+          "forbidden_assertions": [
+            "the pitch carriage has been freed",
+            "the harmonic-ratio measurement proceeded or completed",
+            "the requested remedy resolved the condition",
+            "Mica Harmonic Hold is complete",
+            "Mica Harmonic Hold is current outside the explicit interval",
+            "the report title is Mica Harmonic Hold",
+            "the record establishes a project, owner, leadership, execution, or current count"
+          ],
+          "label_rule": {
+            "value": "Mica Harmonic Hold",
+            "naming": "explicit",
+            "naming_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "perspective": "document_report",
+            "source": "source-core16-situation-historical",
+            "attribution_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "time": {
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+            }
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Free the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement so that the measurement can proceed.",
+              "required_atoms": [
+                "freeing the pitch carriage is requested rather than asserted to have been performed",
+                "the pitch carriage is already seized and still blocks an unresolved harmonic-ratio measurement",
+                "the requested remedy is to free the pitch carriage",
+                "freeing the pitch carriage is presented as enabling that unresolved harmonic-ratio measurement to proceed"
+              ],
+              "perspective": "document_report",
+              "source": "source-core16-situation-historical",
+              "attribution_witness": "For that entire interval, that record requests this action list for the named condition",
+              "time": {
+                "valid_from": "2009-05-11T06:40:00.000Z",
+                "valid_to": "2009-08-23T17:10:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+              }
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement",
+              "required_atoms": [
+                "the pitch carriage is seized",
+                "the seized pitch carriage still blocks the unresolved harmonic-ratio measurement"
+              ],
+              "perspective": "document_report",
+              "source": "source-core16-situation-historical",
+              "attribution_witness": "For that entire interval, that record requests this action list for the named condition",
+              "time": {
+                "valid_from": "2009-05-11T06:40:00.000Z",
+                "valid_to": "2009-08-23T17:10:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+              }
+            }
+          ]
         }
-      ],
-      "forbidden_assertions": [
-        "Cushion Turn is current outside the explicit interval",
-        "the explicit interval is the lifespan of Cushion Turn",
-        "the owner owns or leads Cushion Turn"
       ]
     },
     {
-      "case_id": "core12-situation-name-negative-ochre-pocket",
+      "case_id": "core15-situation-name-negative-juniper-rill",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Ochre Pocket is a situation",
-        "Ochre Pocket has an asserted objective, blocker, state, or change"
+        "Juniper Rill is a situation",
+        "Juniper Rill has an asserted objective, blocker, state, or change"
       ]
     },
     {
-      "case_id": "core12-situation-template-negative-empty-work-card",
+      "case_id": "core15-situation-template-negative-unfilled-equipment-card",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "the empty card establishes an actual situation",
-        "INSERT TITLE, INSERT AIM, INSERT OBSTACLE, or INSERT REVISION is an asserted situation fact"
+        "the unfilled card establishes an actual situation",
+        "CONDITION NAME, REQUESTED RESULT, OBSTACLE, or OBSERVED SHIFT is an asserted fact"
       ]
     },
     {
-      "case_id": "core12-situation-hypothetical-negative-indigo-bracket",
+      "case_id": "core15-situation-hypothetical-negative-silver-sluice",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Indigo Bracket is an actual situation",
-        "Indigo Bracket has an asserted objective, blocker, state, or change"
+        "Silver Sluice is an actual situation",
+        "Silver Sluice has an asserted objective, blocker, state, change, completion, or current status"
+      ]
+    },
+    {
+      "case_id": "core15-concept-positive-linen-compass",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "concept-positive-linen-compass",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Linen Compass"
+          },
+          "classification": {
+            "kind": "world/concept",
+            "label": "Linen Compass",
+            "witness": "Linen Compass — Concept",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "concept.definition",
+              "object_kind": "literal",
+              "witness": "a textile sampling rule that groups thread offcuts by weave before comparing dye lots",
+              "required_atoms": [
+                "it is a textile sampling rule",
+                "thread offcuts are grouped by weave",
+                "grouping precedes comparing dye lots"
+              ],
+              "perspective": "direct",
+              "time": "unknown"
+            }
+          ],
+          "forbidden_assertions": [
+            "Linen Compass has an owner, creator, or endorsement",
+            "Linen Compass is identical to another concept"
+          ],
+          "label_rule": {
+            "value": "Linen Compass",
+            "naming": "explicit",
+            "naming_witness": "Linen Compass — Concept",
+            "witness": "Linen Compass — Concept",
+            "perspective": "direct",
+            "time": "unknown"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core15-concept-reported-opal-balance",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "concept-reported-opal-balance",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Opal Balance"
+          },
+          "classification": {
+            "kind": "world/concept",
+            "label": "Opal Balance",
+            "witness": "Opal Balance — Concept",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "concept.definition",
+              "object_kind": "literal",
+              "witness": "a mineral-log rule that sorts specimens by fracture pattern while keeping polished fragments in a separate row",
+              "required_atoms": [
+                "it is a mineral-log rule",
+                "specimens are sorted by fracture pattern",
+                "polished fragments are kept in a separate row"
+              ],
+              "perspective": "person_statement",
+              "time": "unknown",
+              "source": "source-core15-concept-reported",
+              "attribution_witness": "Daro Kest reported",
+              "equivalent_mention": {
+                "mode": "mention",
+                "record": "r1",
+                "quote": "Daro Kest",
+                "label": "Daro Kest",
+                "attribution_witness": "Daro Kest reported"
+              }
+            }
+          ],
+          "forbidden_assertions": [
+            "the owner reported or endorses Opal Balance",
+            "Daro Kest is the owner",
+            "Opal Balance is identical to another concept"
+          ],
+          "label_rule": {
+            "value": "Opal Balance",
+            "naming": "explicit",
+            "naming_witness": "Opal Balance — Concept",
+            "witness": "Opal Balance — Concept",
+            "perspective": "direct",
+            "time": "unknown"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core15-concept-historical-velvet-register",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "concept-historical-velvet-register",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Velvet Register"
+          },
+          "classification": {
+            "kind": "world/concept",
+            "label": "Velvet Register",
+            "witness": "the exact name of this concept is Velvet Register",
+            "perspective": "direct",
+            "time": {
+              "valid_from": "2012-09-17T07:20:00.000Z",
+              "valid_to": "2012-11-06T19:40:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z"
+            }
+          },
+          "details": [
+            {
+              "predicate": "concept.definition",
+              "object_kind": "literal",
+              "witness": "a rehearsal-index rule that marks silent cues before ordering spoken passages",
+              "required_atoms": [
+                "it is a rehearsal-index rule",
+                "silent cues are marked",
+                "marking precedes ordering spoken passages"
+              ],
+              "perspective": "document_report",
+              "time": {
+                "valid_from": "2012-09-17T07:20:00.000Z",
+                "valid_to": "2012-11-06T19:40:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z"
+              },
+              "source": "source-core15-concept-historical",
+              "attribution_witness": "Archive entry AE-53 states"
+            }
+          ],
+          "forbidden_assertions": [
+            "Velvet Register is current outside the explicit interval",
+            "the interval is its lifespan",
+            "Velvet Register has an owner or endorsement"
+          ],
+          "label_rule": {
+            "value": "Velvet Register",
+            "naming": "explicit",
+            "naming_witness": "the exact name of this concept is Velvet Register",
+            "witness": "the exact name of this concept is Velvet Register",
+            "perspective": "direct",
+            "time": {
+              "valid_from": "2012-09-17T07:20:00.000Z",
+              "valid_to": "2012-11-06T19:40:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core15-concept-name-negative-umber-dial",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Umber Dial is a concept",
+        "Umber Dial has an asserted definition"
+      ]
+    },
+    {
+      "case_id": "core15-concept-template-negative-unfilled-glossary-leaf",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "the unfilled leaf establishes a concept",
+        "UNASSIGNED TERM or UNWRITTEN MEANING is an asserted concept"
+      ]
+    },
+    {
+      "case_id": "core15-concept-hypothetical-negative-frost-loom",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Frost Loom is actual or adopted",
+        "Frost Loom has an asserted definition"
       ]
     }
   ],

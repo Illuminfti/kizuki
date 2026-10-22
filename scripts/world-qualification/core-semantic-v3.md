@@ -8,6 +8,93 @@ they cannot be rescored or approved as v3 evidence. A fresh sealed split and a
 separate review of its actual responses are required. The corpus, contract,
 method, prompt, adapter, parser, and runner files are frozen before any call.
 
+## Complete authored representations (prospective, 2026-10-22)
+
+Fresh `kizuki.core-semantic-contract/v2` positive cases contain one to three
+complete `branches`, each with a unique bounded `id`, exact target,
+classification, `label_rule`, required typed details and semantic atoms, source
+witnesses, perspective, time and forbidden assertions. Each branch must preserve
+the whole source-supported meaning being tested. Alternatives cannot offer
+different convenient subsets of required domain facts. A combined objective and
+blocker response needs its own complete authored branch; uncontracted typed
+extras still fail. The unchanged legacy-extra policy and negative controls apply.
+
+The existing closed scorer evaluates every branch independently. The first
+wholly passing prepared branch in authored order is selected; no facts or gates
+are joined across branches. If none passes, the case fails with no selection.
+The raw diagnostic evaluates that same selected prepared branch, even when
+another branch would make its raw citations look better. Branch diagnostics
+retain the independent role, time, polarity and structure failures.
+
+An explicit label has an exact source naming witness, including an unambiguous
+heading where applicable. A descriptive Situation label uses the exact source
+condition phrase and an explicit dated document-report label rule, matching the
+details' report source and interval. It describes what the source reports; it
+does not assert that the source formally named the condition. Every branch's
+target, predicate and label still need independent source justification.
+An objective expresses a stated requested action and enabling condition; a
+blocker expresses a stated obstruction and its work relation. One predicate
+cannot stand in for the other merely because its wording is convenient.
+
+Case results, pending manual-review records and independent review cases bind
+`selected_branch_id`, `selected_branch_sha256` and the entire `selected_branch`.
+The hash covers canonical JSON of the complete authored branch, including its
+id. The result and review identify `complete-authored-branches/v1`. The verifier
+recomputes selection, branch contracts, all existing pipeline and custody gates,
+and measured budgets. A failed or unselected positive case cannot generate a
+passing review template.
+
+Semantic atoms remain an independent review of each actual literal object,
+including supported paraphrases. There is no exact-string whitelist, automatic
+entailment grader, or repair from a body or neighboring claim. Missing literal
+facts, unsupported naming, wrong source roles or time, and unsupported additions
+fail that review. Prior v1-shaped rules remain historical scripted controls;
+the failed Core14 report and frozen source remain unchanged and cannot be
+rescored or accepted by this prospective method. A separately authored fresh
+12-case split and new independent review are required before any real run.
+
+## Input budget repair (2026-10-22)
+
+The prospective runner now binds an explicit `input_policy` with total input and
+output caps and a trusted `input_token_overhead` reservation. For an endpoint
+that needs 24,000 tokens of framing, the prospective profile is total input
+32,000, overhead 24,000 and output 8,192. This leaves at most 8,000 estimated
+message tokens. It changes no global default and cannot repair an earlier run.
+
+```bash
+bun --no-env-file --config=/dev/null scripts/world-qualification/run.ts \
+  --protocol core-semantic-v3 --kinds concept,situation \
+  --max-input-tokens 32000 --input-token-overhead 24000 \
+  --max-output-tokens 8192 --out /absolute/new-report.json
+```
+
+The runner configures the actual LLM port with that reserve, checks the factory's
+trusted producer metadata, and checks each actual outgoing message estimate and
+output cap before transport. Each case binds the actual production planner's
+scrubbed outbound hash, estimated message tokens, overhead, reserved total and
+caps into a canonical planning hash. The random fence nonce is excluded; its
+fixed-length messages still contribute to the measured planning estimate. The
+trace, wire evidence, prepared result and independent review all bind that same
+commitment. Wire evidence also records the overhead read from the actual live
+factory identity, including inherited wrappers; fabricated port properties and
+different wrapper metadata cannot attest the run policy. The verifier
+reconstructs the case budget and invokes the actual
+planner with the report-bound reserve. Missing policy, stale runner hashes,
+changed reserves or caps, altered commitments and planning overflow fail closed.
+
+Measured input and output usage must each be within the declared cap, including
+when the product rejects a response. Counts are retained exactly as reported;
+the reservation is never subtracted from observed usage. Core12's earlier report
+and review are preserved as **INVALID historical evidence**: all 12 measured
+inputs exceeded their declared 8,192-token budget. Its active approval is
+withdrawn. Core13 stopped after three over-budget calls and has no accepted
+receipt. Neither campaign may be rescored, waived or assigned a larger cap.
+A fresh sealed split, frozen runner, all 12 calls once and a new independent
+review are required. Scripted controls remain pending manual review.
+The runner stops after the first observed automated case failure, preserves the
+attempt and reports `automated_failure`. An incomplete failed run never qualifies
+and cannot be resumed or resampled as a successful campaign.
+
 ## Two distinct results
 
 The translated model result keeps the existing typed, identity, role, time,
