@@ -2,175 +2,175 @@
   "schema": "kizuki.core-semantic-corpus/v1",
   "synthetic": true,
   "split": "held_out",
-  "version": "core10-prospective-unseen-r2-20261022",
+  "version": "core11-prospective-unseen-20261022",
   "cases": [
     {
-      "id": "core10-concept-positive-ember-index",
+      "id": "core11-concept-positive-retry-sieve",
       "kind": "concept",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Reference entry: Ember Index — Concept. Definition: It is the cataloguing method that groups kiln tests by the first glaze variable changed, so a failed firing can be compared only with trials that preserved the same clay body.",
+          "text": "Retry Sieve — Concept. Definition: a retry design rule that retries only requests without a terminal receipt and reuses the original idempotency key for every retry.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core10-concept-reported-orbit-weave",
+      "id": "core11-concept-reported-hush-reference",
       "kind": "concept",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Reference header: Orbit Weave — Concept. Seminar transcript. Amara Sol reported: \\\"It is the rehearsal method that alternates a difficult transition with its surrounding measures, so tempo increases do not erase the entry cue.\\\"",
+          "text": "Hush Reference — Concept. Workshop transcript. Selin Varo reported: \"Its definition is an acoustic baseline method that measures the empty chamber noise before testing a specimen and subtracts that baseline from the specimen trace.\"",
           "subjects": [
             {
-              "id": "source-core10-concept-reported",
-              "quote": "Amara Sol reported"
+              "id": "source-core11-concept-reported",
+              "quote": "Selin Varo reported"
             }
           ]
         }
       ]
     },
     {
-      "id": "core10-concept-historical-bramble-prism",
+      "id": "core11-concept-historical-crate-gradient",
       "kind": "concept",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "Archive glossary CL-14 states: \"For the interval beginning 2019-04-12T09:00:00.000Z and ending exclusively at 2019-09-30T17:45:00.000Z, the concept named Bramble Prism denoted arranging field notes by the observer's distance from the specimen before comparing their certainty.\"",
+          "text": "During the interval beginning 2016-08-03T06:20:00.000Z and ending exclusively at 2016-11-22T14:10:00.000Z, Crate Gradient — Concept. For that same interval only, Dispatch lexicon DL-83 states: \"Its definition was a greenhouse freight rule that sorts seedling crates by remaining chilled transit allowance before assigning them to loading bays.\"",
           "subjects": [
             {
-              "id": "source-core10-concept-historical",
-              "quote": "Archive glossary CL-14 states"
+              "id": "source-core11-concept-historical",
+              "quote": "Dispatch lexicon DL-83 states"
             }
           ]
         }
       ]
     },
     {
-      "id": "core10-concept-negative-name",
+      "id": "core11-concept-name-negative-quartz-ladle",
       "kind": "concept",
       "category": "name_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Shelf label: Copper Thread.",
+          "text": "Quartz Ladle.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core10-concept-negative-template",
+      "id": "core11-concept-template-negative-blank-glossary",
       "kind": "concept",
       "category": "template_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Concept worksheet blank\nName: [add term]\nDefinition: [add supported meaning]\nCitation: [add source]",
+          "text": "Unfilled glossary form\nConcept term: <TERM SLOT>\nMeaning: <MEANING SLOT>\nSupporting passage: <PASSAGE SLOT>",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core10-concept-negative-hypothetical",
+      "id": "core11-concept-hypothetical-negative-parcel-echo",
       "kind": "concept",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Writing exercise: invent a fictional concept called Lantern Aperture that might sort maps by imagined moonlight. This exercise explicitly says the concept is not established, adopted, or used.",
+          "text": "Naming question only: could an imaginary concept be called Parcel Echo? No existence, adoption, use, or meaning is asserted.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core10-situation-positive-porcelain-audit",
+      "id": "core11-situation-positive-vial-census",
       "kind": "situation",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Operations worksheet: Porcelain Audit — Situation. Its objective is to reconcile the unsigned shelf cards before the spring collection opens. It is blocked because the accession ledger is still being repaired.",
+          "text": "Vial Census — Situation. Its objective is to reconcile freezer tray labels with sealed vial counts before the sample transfer. It is blocked because the rack barcode is unreadable.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core10-situation-reported-harbor-timing",
+      "id": "core11-situation-reported-baffle-reset",
       "kind": "situation",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Reference header: Harbor Timing — Situation. Meeting minute. Dorian Pike reported: \\\"It is underway. Its objective is to align the tram departure board before the festival route starts, and it is blocked because the signal schedule has not received the revised platform times.\\\"",
+          "text": "Baffle Reset — Situation. Calibration transcript. Tomas Iven reported: \"Its objective is to measure the reference speaker response at all four corners of the test room. It is blocked because the reference microphone is awaiting a replacement cable.\"",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core10-situation-historical-marrow-library",
+      "id": "core11-situation-historical-trolley-merge",
       "kind": "situation",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "Museum log ML-27 states: \"For the interval beginning 2020-01-06T07:30:00.000Z and ending exclusively at 2020-03-18T16:15:00.000Z, the situation named Marrow Library had the objective of digitising the annotated atlas leaves for the east reading room. During that interval, its scanning order changed from accession number to conservation priority.\"",
+          "text": "During the interval beginning 2018-02-14T05:40:00.000Z and ending exclusively at 2018-04-09T19:25:00.000Z, Trolley Merge — Situation. For that same interval only, Dispatch circular DC-62 states: \"Its objective was to stage insulated crates at the loading gate before the refrigerated truck arrives; its dispatch order changed from oldest packing time to shortest remaining cold-storage allowance.\"",
           "subjects": [
             {
-              "id": "source-core10-situation-historical",
-              "quote": "Museum log ML-27 states"
+              "id": "source-core11-situation-historical",
+              "quote": "Dispatch circular DC-62 states"
             }
           ]
         }
       ]
     },
     {
-      "id": "core10-situation-negative-name",
+      "id": "core11-situation-name-negative-cobalt-apron",
       "kind": "situation",
       "category": "name_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Route-board label: Glass Orchard.",
+          "text": "Cobalt Apron.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core10-situation-negative-template",
+      "id": "core11-situation-template-negative-blank-transfer",
       "kind": "situation",
       "category": "template_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Situation worksheet blank\nTitle: [add situation]\nObjective: [add objective]\nBlocker: [add blocker]\nState: [add state]",
+          "text": "Unfilled transfer form\nSituation title: <TITLE SLOT>\nObjective: <GOAL SLOT>\nBlocker: <OBSTACLE SLOT>\nChange: <DELTA SLOT>",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core10-situation-negative-hypothetical",
+      "id": "core11-situation-hypothetical-negative-amber-queue",
       "kind": "situation",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Scenario exercise: suppose an imaginary situation called Willow Transit were delayed by invented violet tickets. The exercise reports no real situation, objective, blocker, commitment, or change.",
+          "text": "Counterfactual naming question: if a situation called Amber Queue existed, what might its title mean? This question asserts no situation, objective, blocker, status, or change.",
           "subjects": []
         }
       ]

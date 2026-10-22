@@ -1,6 +1,6 @@
 {
   "schema": "kizuki.core-semantic-contract/v1",
-  "corpus_version": "core10-prospective-unseen-r2-20261022",
+  "corpus_version": "core11-prospective-unseen-20261022",
   "automated_gate": {
     "required": [
       "all twelve ordered cases observed exactly once",
@@ -102,17 +102,17 @@
   },
   "cases": [
     {
-      "case_id": "core10-concept-positive-ember-index",
+      "case_id": "core11-concept-positive-retry-sieve",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Ember Index"
+        "quote": "Retry Sieve"
       },
       "classification": {
         "kind": "world/concept",
-        "label": "Ember Index",
-        "witness": "Ember Index — Concept",
+        "label": "Retry Sieve",
+        "witness": "Retry Sieve — Concept",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -120,33 +120,33 @@
         {
           "predicate": "concept.definition",
           "object_kind": "literal",
-          "witness": "the cataloguing method that groups kiln tests by the first glaze variable changed, so a failed firing can be compared only with trials that preserved the same clay body",
+          "witness": "a retry design rule that retries only requests without a terminal receipt and reuses the original idempotency key for every retry",
           "required_atoms": [
-            "it is a cataloguing method",
-            "it groups kiln tests by first changed glaze variable",
-            "comparison retains the same clay body"
+            "it is a retry design rule",
+            "only requests lacking a terminal receipt are retried",
+            "each retry reuses the original idempotency key"
           ],
           "perspective": "direct",
           "time": "unknown"
         }
       ],
       "forbidden_assertions": [
-        "the owner created or endorses Ember Index",
-        "Ember Index is identical to another concept"
+        "the owner owns, created, or endorses Retry Sieve",
+        "Retry Sieve is identical to another concept"
       ]
     },
     {
-      "case_id": "core10-concept-reported-orbit-weave",
+      "case_id": "core11-concept-reported-hush-reference",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Orbit Weave"
+        "quote": "Hush Reference"
       },
       "classification": {
         "kind": "world/concept",
-        "label": "Orbit Weave",
-        "witness": "Orbit Weave — Concept",
+        "label": "Hush Reference",
+        "witness": "Hush Reference — Concept",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -154,128 +154,114 @@
         {
           "predicate": "concept.definition",
           "object_kind": "literal",
-          "witness": "the rehearsal method that alternates a difficult transition with its surrounding measures, so tempo increases do not erase the entry cue",
+          "witness": "an acoustic baseline method that measures the empty chamber noise before testing a specimen and subtracts that baseline from the specimen trace",
           "required_atoms": [
-            "it is a rehearsal method",
-            "it alternates a difficult transition with surrounding measures",
-            "tempo increases preserve the entry cue"
+            "it is an acoustic baseline method",
+            "empty chamber noise is measured before specimen testing",
+            "the baseline is subtracted from the specimen trace"
           ],
           "perspective": "person_statement",
-          "source": "source-core10-concept-reported",
+          "time": "unknown",
+          "source": "source-core11-concept-reported",
+          "attribution_witness": "Selin Varo reported",
           "equivalent_mention": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Amara Sol",
-            "label": "Amara Sol",
-            "attribution_witness": "Amara Sol reported"
-          },
-          "attribution_witness": "Amara Sol reported",
-          "time": "unknown"
+            "quote": "Selin Varo",
+            "label": "Selin Varo",
+            "attribution_witness": "Selin Varo reported"
+          }
         }
       ],
       "forbidden_assertions": [
-        "the owner reported or endorses Orbit Weave",
-        "Amara Sol is the owner",
-        "Orbit Weave is identical to another concept"
+        "the owner reported or endorses Hush Reference",
+        "Selin Varo is the owner",
+        "Hush Reference is identical to another concept"
       ]
     },
     {
-      "case_id": "core10-concept-historical-bramble-prism",
+      "case_id": "core11-concept-historical-crate-gradient",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Bramble Prism"
+        "quote": "Crate Gradient"
       },
       "classification": {
         "kind": "world/concept",
-        "label": "Bramble Prism",
-        "witness": "the concept named Bramble Prism",
+        "label": "Crate Gradient",
+        "witness": "Crate Gradient — Concept",
         "perspective": "direct",
         "time": {
-          "valid_from": "2019-04-12T09:00:00.000Z",
-          "valid_to": "2019-09-30T17:45:00.000Z",
+          "valid_from": "2016-08-03T06:20:00.000Z",
+          "valid_to": "2016-11-22T14:10:00.000Z",
           "temporal_basis": "explicit",
-          "witness": "interval beginning 2019-04-12T09:00:00.000Z and ending exclusively at 2019-09-30T17:45:00.000Z"
+          "witness": "interval beginning 2016-08-03T06:20:00.000Z and ending exclusively at 2016-11-22T14:10:00.000Z"
         }
       },
       "details": [
         {
           "predicate": "concept.definition",
           "object_kind": "literal",
-          "witness": "arranging field notes by the observer's distance from the specimen before comparing their certainty",
+          "witness": "a greenhouse freight rule that sorts seedling crates by remaining chilled transit allowance before assigning them to loading bays",
           "required_atoms": [
-            "field notes are arranged",
-            "arrangement uses observer distance from specimen",
-            "certainty is compared after arrangement"
+            "it is a greenhouse freight rule",
+            "seedling crates are sorted by remaining chilled transit allowance",
+            "sorting precedes assignment to loading bays"
           ],
           "perspective": "document_report",
-          "source": "source-core10-concept-historical",
-          "attribution_witness": "Archive glossary CL-14 states",
           "time": {
-            "valid_from": "2019-04-12T09:00:00.000Z",
-            "valid_to": "2019-09-30T17:45:00.000Z",
+            "valid_from": "2016-08-03T06:20:00.000Z",
+            "valid_to": "2016-11-22T14:10:00.000Z",
             "temporal_basis": "explicit",
-            "witness": "interval beginning 2019-04-12T09:00:00.000Z and ending exclusively at 2019-09-30T17:45:00.000Z"
-          }
-        }
-      ],
-      "label_alternatives": [
-        {
-          "witness": "the concept named Bramble Prism",
-          "perspective": "document_report",
-          "source": "source-core10-concept-historical",
-          "attribution_witness": "Archive glossary CL-14 states",
-          "time": {
-            "valid_from": "2019-04-12T09:00:00.000Z",
-            "valid_to": "2019-09-30T17:45:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "interval beginning 2019-04-12T09:00:00.000Z and ending exclusively at 2019-09-30T17:45:00.000Z"
-          }
+            "witness": "interval beginning 2016-08-03T06:20:00.000Z and ending exclusively at 2016-11-22T14:10:00.000Z"
+          },
+          "source": "source-core11-concept-historical",
+          "attribution_witness": "Dispatch lexicon DL-83 states"
         }
       ],
       "forbidden_assertions": [
-        "Bramble Prism is current outside interval",
-        "owner created owns or endorses Bramble Prism",
-        "Bramble Prism is identical to another concept"
+        "Crate Gradient is current outside the explicit interval",
+        "the explicit interval is the lifespan of Crate Gradient",
+        "the owner created, owns, or endorses Crate Gradient"
       ]
     },
     {
-      "case_id": "core10-concept-negative-name",
+      "case_id": "core11-concept-name-negative-quartz-ladle",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Copper Thread is a concept",
-        "Copper Thread has a definition"
+        "Quartz Ladle is a concept",
+        "Quartz Ladle has an asserted definition"
       ]
     },
     {
-      "case_id": "core10-concept-negative-template",
+      "case_id": "core11-concept-template-negative-blank-glossary",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "the blank defines a concept",
-        "a placeholder is a concept label or meaning"
+        "the blank form establishes a concept",
+        "TERM SLOT or MEANING SLOT is an actual concept label or definition"
       ]
     },
     {
-      "case_id": "core10-concept-negative-hypothetical",
+      "case_id": "core11-concept-hypothetical-negative-parcel-echo",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Lantern Aperture is established or adopted",
-        "Lantern Aperture has a definition"
+        "Parcel Echo is an established or adopted concept",
+        "Parcel Echo has an asserted definition"
       ]
     },
     {
-      "case_id": "core10-situation-positive-porcelain-audit",
+      "case_id": "core11-situation-positive-vial-census",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Porcelain Audit"
+        "quote": "Vial Census"
       },
       "classification": {
         "kind": "world/situation",
-        "label": "Porcelain Audit",
-        "witness": "Porcelain Audit — Situation",
+        "label": "Vial Census",
+        "witness": "Vial Census — Situation",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -283,10 +269,10 @@
         {
           "predicate": "situation.objective",
           "object_kind": "literal",
-          "witness": "reconcile the unsigned shelf cards before the spring collection opens",
+          "witness": "reconcile freezer tray labels with sealed vial counts before the sample transfer",
           "required_atoms": [
-            "reconcile unsigned shelf cards",
-            "reconciliation occurs before spring collection opens"
+            "freezer tray labels are reconciled with sealed vial counts",
+            "reconciliation is required before sample transfer"
           ],
           "perspective": "direct",
           "time": "unknown"
@@ -294,32 +280,32 @@
         {
           "predicate": "situation.blocker",
           "object_kind": "literal",
-          "witness": "blocked because the accession ledger is still being repaired",
+          "witness": "blocked because the rack barcode is unreadable",
           "required_atoms": [
-            "accession ledger is being repaired",
-            "repair blocks audit"
+            "the rack barcode is unreadable",
+            "the unreadable rack barcode blocks the situation"
           ],
           "perspective": "direct",
           "time": "unknown"
         }
       ],
       "forbidden_assertions": [
-        "owner owns or leads Porcelain Audit",
-        "Porcelain Audit is complete"
+        "the owner owns or leads Vial Census",
+        "Vial Census is complete"
       ]
     },
     {
-      "case_id": "core10-situation-reported-harbor-timing",
+      "case_id": "core11-situation-reported-baffle-reset",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Harbor Timing"
+        "quote": "Baffle Reset"
       },
       "classification": {
         "kind": "world/situation",
-        "label": "Harbor Timing",
-        "witness": "Harbor Timing — Situation",
+        "label": "Baffle Reset",
+        "witness": "Baffle Reset — Situation",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -327,149 +313,135 @@
         {
           "predicate": "situation.objective",
           "object_kind": "literal",
-          "witness": "align the tram departure board before the festival route starts",
+          "witness": "measure the reference speaker response at all four corners of the test room",
           "required_atoms": [
-            "align tram departure board",
-            "alignment occurs before festival route starts"
+            "measure the response of the reference speaker",
+            "measurement covers all four corners of the test room"
           ],
           "perspective": "person_statement",
+          "time": "unknown",
           "source": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Dorian Pike",
-            "label": "Dorian Pike",
-            "attribution_witness": "Dorian Pike reported"
+            "quote": "Tomas Iven",
+            "label": "Tomas Iven",
+            "attribution_witness": "Tomas Iven reported"
           },
-          "attribution_witness": "Dorian Pike reported",
-          "time": "unknown"
+          "attribution_witness": "Tomas Iven reported"
         },
         {
           "predicate": "situation.blocker",
           "object_kind": "literal",
-          "witness": "blocked because the signal schedule has not received the revised platform times",
+          "witness": "blocked because the reference microphone is awaiting a replacement cable",
           "required_atoms": [
-            "signal schedule lacks revised platform times",
-            "absence blocks timing"
+            "the reference microphone awaits a replacement cable",
+            "waiting for the replacement cable blocks the situation"
           ],
           "perspective": "person_statement",
+          "time": "unknown",
           "source": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Dorian Pike",
-            "label": "Dorian Pike",
-            "attribution_witness": "Dorian Pike reported"
+            "quote": "Tomas Iven",
+            "label": "Tomas Iven",
+            "attribution_witness": "Tomas Iven reported"
           },
-          "attribution_witness": "Dorian Pike reported",
-          "time": "unknown"
+          "attribution_witness": "Tomas Iven reported"
         }
       ],
       "forbidden_assertions": [
-        "owner reported details",
-        "Dorian Pike owns or leads Harbor Timing",
-        "Harbor Timing is complete"
+        "the owner reported the Baffle Reset details",
+        "Tomas Iven owns or leads Baffle Reset",
+        "Baffle Reset is complete"
       ]
     },
     {
-      "case_id": "core10-situation-historical-marrow-library",
+      "case_id": "core11-situation-historical-trolley-merge",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Marrow Library"
+        "quote": "Trolley Merge"
       },
       "classification": {
         "kind": "world/situation",
-        "label": "Marrow Library",
-        "witness": "the situation named Marrow Library",
+        "label": "Trolley Merge",
+        "witness": "Trolley Merge — Situation",
         "perspective": "direct",
         "time": {
-          "valid_from": "2020-01-06T07:30:00.000Z",
-          "valid_to": "2020-03-18T16:15:00.000Z",
+          "valid_from": "2018-02-14T05:40:00.000Z",
+          "valid_to": "2018-04-09T19:25:00.000Z",
           "temporal_basis": "explicit",
-          "witness": "interval beginning 2020-01-06T07:30:00.000Z and ending exclusively at 2020-03-18T16:15:00.000Z"
+          "witness": "interval beginning 2018-02-14T05:40:00.000Z and ending exclusively at 2018-04-09T19:25:00.000Z"
         }
       },
       "details": [
         {
           "predicate": "situation.objective",
           "object_kind": "literal",
-          "witness": "digitising the annotated atlas leaves for the east reading room",
+          "witness": "stage insulated crates at the loading gate before the refrigerated truck arrives",
           "required_atoms": [
-            "digitise annotated atlas leaves",
-            "destination is east reading room"
+            "stage insulated crates at the loading gate",
+            "staging precedes arrival of the refrigerated truck"
           ],
           "perspective": "document_report",
-          "source": "source-core10-situation-historical",
-          "attribution_witness": "Museum log ML-27 states",
           "time": {
-            "valid_from": "2020-01-06T07:30:00.000Z",
-            "valid_to": "2020-03-18T16:15:00.000Z",
+            "valid_from": "2018-02-14T05:40:00.000Z",
+            "valid_to": "2018-04-09T19:25:00.000Z",
             "temporal_basis": "explicit",
-            "witness": "interval beginning 2020-01-06T07:30:00.000Z and ending exclusively at 2020-03-18T16:15:00.000Z"
-          }
+            "witness": "interval beginning 2018-02-14T05:40:00.000Z and ending exclusively at 2018-04-09T19:25:00.000Z"
+          },
+          "source": "source-core11-situation-historical",
+          "attribution_witness": "Dispatch circular DC-62 states"
         },
         {
           "predicate": "situation.change",
           "object_kind": "literal",
-          "witness": "its scanning order changed from accession number to conservation priority",
+          "witness": "its dispatch order changed from oldest packing time to shortest remaining cold-storage allowance",
           "required_atoms": [
-            "scanning order changed",
-            "prior order accession number",
-            "new order conservation priority"
+            "dispatch order changed",
+            "previous dispatch order used oldest packing time",
+            "new dispatch order uses shortest remaining cold-storage allowance"
           ],
           "perspective": "document_report",
-          "source": "source-core10-situation-historical",
-          "attribution_witness": "Museum log ML-27 states",
           "time": {
-            "valid_from": "2020-01-06T07:30:00.000Z",
-            "valid_to": "2020-03-18T16:15:00.000Z",
+            "valid_from": "2018-02-14T05:40:00.000Z",
+            "valid_to": "2018-04-09T19:25:00.000Z",
             "temporal_basis": "explicit",
-            "witness": "interval beginning 2020-01-06T07:30:00.000Z and ending exclusively at 2020-03-18T16:15:00.000Z"
-          }
-        }
-      ],
-      "label_alternatives": [
-        {
-          "witness": "the situation named Marrow Library",
-          "perspective": "document_report",
-          "source": "source-core10-situation-historical",
-          "attribution_witness": "Museum log ML-27 states",
-          "time": {
-            "valid_from": "2020-01-06T07:30:00.000Z",
-            "valid_to": "2020-03-18T16:15:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "interval beginning 2020-01-06T07:30:00.000Z and ending exclusively at 2020-03-18T16:15:00.000Z"
-          }
+            "witness": "interval beginning 2018-02-14T05:40:00.000Z and ending exclusively at 2018-04-09T19:25:00.000Z"
+          },
+          "source": "source-core11-situation-historical",
+          "attribution_witness": "Dispatch circular DC-62 states"
         }
       ],
       "forbidden_assertions": [
-        "Marrow Library is current outside interval",
-        "owner owns or leads Marrow Library",
-        "Marrow Library is identical to another situation"
+        "Trolley Merge is current outside the explicit interval",
+        "the explicit interval is the lifespan of Trolley Merge",
+        "the owner owns or leads Trolley Merge"
       ]
     },
     {
-      "case_id": "core10-situation-negative-name",
+      "case_id": "core11-situation-name-negative-cobalt-apron",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Glass Orchard is a situation",
-        "Glass Orchard has an objective blocker or status"
+        "Cobalt Apron is a situation",
+        "Cobalt Apron has an asserted objective, blocker, status, or change"
       ]
     },
     {
-      "case_id": "core10-situation-negative-template",
+      "case_id": "core11-situation-template-negative-blank-transfer",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "blank worksheet reports active situation",
-        "placeholder is situation fact"
+        "the blank form establishes an actual situation",
+        "TITLE SLOT, GOAL SLOT, OBSTACLE SLOT, or DELTA SLOT is an asserted situation fact"
       ]
     },
     {
-      "case_id": "core10-situation-negative-hypothetical",
+      "case_id": "core11-situation-hypothetical-negative-amber-queue",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "Willow Transit is actual situation",
-        "Willow Transit has real blocker or objective"
+        "Amber Queue is an actual situation",
+        "Amber Queue has an asserted objective, blocker, status, or change"
       ]
     }
   ],
