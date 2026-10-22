@@ -23,6 +23,8 @@ if (import.meta.main) {
     if ([report, reportSha256, reviewFile, reviewSha256, endpointEvidence].some(item => item === undefined)) throw new Error("required arguments missing");
     const checked = verifyQualificationReceipt(readReport(report!), { file: report!.split("/").at(-1)!, sha256: reportSha256!, endpoint_evidence: endpointEvidence!,
       body_review: { file: reviewFile!, sha256: reviewSha256! } }, candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation"]));
-    console.log(JSON.stringify({ status: "passed", report_sha256: checked.report_sha256, registry_sha256: checked.registry_sha256, kinds: checked.kinds, predicates: checked.predicates }));
+    console.log(JSON.stringify({ status: "passed", report_sha256: checked.report_sha256,
+      body_review_sha256: reviewSha256, endpoint_evidence_sha256: endpointEvidence,
+      registry_sha256: checked.registry_sha256, kinds: checked.kinds, predicates: checked.predicates }));
   } catch { console.error("core semantic verification failed"); process.exitCode = 1; }
 }
