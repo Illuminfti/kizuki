@@ -1,6 +1,6 @@
 {
   "schema": "kizuki.core-semantic-contract/v2",
-  "corpus_version": "core16-three-new-nine-unobserved-20261022",
+  "corpus_version": "core17-one-new-eleven-unobserved-20261022",
   "automated_gate": {
     "required": [
       "all twelve ordered cases observed exactly once",
@@ -105,20 +105,20 @@
   },
   "cases": [
     {
-      "case_id": "core16-situation-positive-umber-filter-rack",
+      "case_id": "core17-situation-positive-carmine-map-cabinet",
       "expectation": "extract",
       "branches": [
         {
-          "id": "situation-positive-umber-filter-rack",
+          "id": "situation-positive-carmine-map-cabinet",
           "target": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Umber Filter Rack"
+            "quote": "Carmine Map Cabinet"
           },
           "classification": {
             "kind": "world/situation",
-            "label": "Umber Filter Rack",
-            "witness": "Umber Filter Rack — Situation",
+            "label": "Carmine Map Cabinet",
+            "witness": "Carmine Map Cabinet — Situation",
             "perspective": "direct",
             "time": "unknown"
           },
@@ -126,9 +126,9 @@
             {
               "predicate": "situation.objective",
               "object_kind": "literal",
-              "witness": "Polish the amber filter plates.",
+              "witness": "Its objective is to sort the vellum survey sheets.",
               "required_atoms": [
-                "polishing the amber filter plates is requested rather than asserted to have been performed"
+                "sorting the vellum survey sheets"
               ],
               "perspective": "direct",
               "time": "unknown"
@@ -136,26 +136,26 @@
             {
               "predicate": "situation.blocker",
               "object_kind": "literal",
-              "witness": "the carrier slots are miscut",
+              "witness": "the lower drawer is swollen",
               "required_atoms": [
-                "the carrier slots are miscut",
-                "the miscut carrier slots are a stated blocker of Umber Filter Rack"
+                "the lower drawer is swollen",
+                "the swollen lower drawer is a stated blocker of Carmine Map Cabinet"
               ],
               "perspective": "direct",
               "time": "unknown"
             }
           ],
           "forbidden_assertions": [
-            "Umber Filter Rack is complete",
-            "the owner owns or leads Umber Filter Rack",
-            "the polishing has been completed",
-            "the source establishes a purpose, enabling relation or commitment for the requested polishing"
+            "Carmine Map Cabinet is complete",
+            "the owner owns or leads Carmine Map Cabinet",
+            "the sorting has been completed",
+            "the source establishes a purpose, enabling relation or commitment for the sorting"
           ],
           "label_rule": {
-            "value": "Umber Filter Rack",
+            "value": "Carmine Map Cabinet",
             "naming": "explicit",
-            "naming_witness": "Umber Filter Rack — Situation",
-            "witness": "Umber Filter Rack — Situation",
+            "naming_witness": "Carmine Map Cabinet — Situation",
+            "witness": "Carmine Map Cabinet — Situation",
             "perspective": "direct",
             "time": "unknown"
           }

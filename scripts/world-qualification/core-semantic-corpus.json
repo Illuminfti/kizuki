@@ -2,17 +2,17 @@
   "schema": "kizuki.core-semantic-corpus/v1",
   "synthetic": true,
   "split": "held_out",
-  "version": "core16-three-new-nine-unobserved-20261022",
+  "version": "core17-one-new-eleven-unobserved-20261022",
   "cases": [
     {
-      "id": "core16-situation-positive-umber-filter-rack",
+      "id": "core17-situation-positive-carmine-map-cabinet",
       "kind": "situation",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Umber Filter Rack — Situation. Requested action for this condition: Polish the amber filter plates. Its blocker is that the carrier slots are miscut.",
+          "text": "Carmine Map Cabinet — Situation. Its objective is to sort the vellum survey sheets. Its blocker is that the lower drawer is swollen.",
           "subjects": []
         }
       ]
