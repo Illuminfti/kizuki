@@ -118,7 +118,7 @@ export type {
 } from "./rails";
 export type { ExtractionProducerPort } from "./extract-v2";
 export { retrySkippedRecords } from "./extract";
-export { runWritePass } from "./write-pass";
+export { runWritePass, runCanonWritePass } from "./write-pass";
 export type { WritePassOptions, WritePassResult } from "./write-pass";
 export {
   describeSupervisorNone,

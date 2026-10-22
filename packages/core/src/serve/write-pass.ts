@@ -356,6 +356,24 @@ export async function runWritePass(
   vaultPath: string,
   options: WritePassOptions,
 ): Promise<WritePassResult> {
+  return runWritePassPhase(db, vaultPath, options, "sync");
+}
+
+/** Finish already accepted claims with the ordinary writer, without fresh model work. */
+export async function runCanonWritePass(
+  db: Database,
+  vaultPath: string,
+  options: WritePassOptions,
+): Promise<WritePassResult> {
+  return runWritePassPhase(db, vaultPath, options, "canon-only");
+}
+
+async function runWritePassPhase(
+  db: Database,
+  vaultPath: string,
+  options: WritePassOptions,
+  phase: "sync" | "canon-only",
+): Promise<WritePassResult> {
   const { budget, extraction, consolidation, llm, stopRequested, run_id, model_ref, producer, claims, now } = options;
   let capturedClaims: ClaimsIo | undefined;
   if (claims !== undefined) {
@@ -379,6 +397,9 @@ export async function runWritePass(
     ...(now === undefined ? {} : { now }),
   });
   if (options.claims !== undefined && options.claims.db !== db) throw new Error("claims ledger does not match write pass");
+  if (phase === "canon-only" && !modelConfigured(options)) {
+    throw new Error("canon-only requires a bound model producer and claims ledger");
+  }
   requireAtomicExtractReplay(db);
   const io = snapshotCanonIo({
     db, vault_path: vaultPath,
@@ -392,20 +413,22 @@ export async function runWritePass(
 
   const opened = await holdWriter(io, (_scope, owned) => { tally.revived = reviveUncontestedSkipped(owned.db); });
   if (!opened.held) { tally.stopped = opened.stopped; return result(); }
-  if (options.producer !== undefined && options.claims !== undefined) {
-    await runExtraction(io, options, options.producer, options.claims, metrics, tally);
-    // The next pass writes canon; a stop, a held write or a busy writer ends this one now.
-    if (tally.stopped === STOP_REQUESTED || tally.stopped === "recovery:held" || tally.stopped === "lock:busy") return result();
+  if (phase === "sync") {
+    if (options.producer !== undefined && options.claims !== undefined) {
+      await runExtraction(io, options, options.producer, options.claims, metrics, tally);
+      // The next pass writes canon; a stop, a held write or a busy writer ends this one now.
+      if (tally.stopped === STOP_REQUESTED || tally.stopped === "recovery:held" || tally.stopped === "lock:busy") return result();
+    }
+    const jobs = await runWorldJobs({
+      db, vaultPath, now: options.now ?? (() => new Date().toISOString()),
+      stopRequested: options.stopRequested ?? (() => false), modelConfigured: modelConfigured(options),
+      ...(options.llm === undefined ? {} : { llm: options.llm }),
+      ...(options.consolidation === undefined ? {} : { consolidation: options.consolidation }),
+    });
+    if (jobs.consolidation !== undefined) tally.consolidation = jobs.consolidation;
+    tally.errors.push(...jobs.errors);
+    if (jobs.stopped) { tally.stopped = jobs.reason ?? STOP_REQUESTED; return result(); }
   }
-  const jobs = await runWorldJobs({
-    db, vaultPath, now: options.now ?? (() => new Date().toISOString()),
-    stopRequested: options.stopRequested ?? (() => false), modelConfigured: modelConfigured(options),
-    ...(options.llm === undefined ? {} : { llm: options.llm }),
-    ...(options.consolidation === undefined ? {} : { consolidation: options.consolidation }),
-  });
-  if (jobs.consolidation !== undefined) tally.consolidation = jobs.consolidation;
-  tally.errors.push(...jobs.errors);
-  if (jobs.stopped) { tally.stopped = jobs.reason ?? STOP_REQUESTED; return result(); }
   // No model configured: claims stay live and unwritten; doctor says so.
   if (!modelConfigured(options)) return result();
   const errorsBeforeRestore = tally.errors.length;

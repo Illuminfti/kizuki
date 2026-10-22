@@ -278,6 +278,8 @@ export function railDoctor(
   /** The schedule's last run: a coalesced idle run advances it without a receipt. */
   lastRunAt: string | null = null,
 ): RailDoctor {
+  // Manual writer recovery says nothing about capture or extraction liveness.
+  receipts = receipts.filter(receipt => receipt.sync_mode === undefined);
   const last = receipts.at(-1) ?? null;
   const lastActiveAt = [last?.finished_at ?? null, lastRunAt].reduce<string | null>(
     (a, b) => (a === null || (b !== null && b > a) ? b : a),

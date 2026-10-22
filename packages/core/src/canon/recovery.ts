@@ -25,6 +25,8 @@ import {
 import { enqueueCanonProjection, refreshCanonProjectionFloor } from "./projection-obligations";
 import { clearCanonRecoveryHold, eraseCanonStageTraces, reconcileCanonStages, recordCanonRecoveryHold, type CanonStageRecoveryRecord } from "./stage-recovery";
 import { asCanonRecoveryError } from "./recovery-failure";
+import { MAX_CANON_IMAGE_BYTES } from "../ledger/canon-recovery-schema";
+import { CanonWriteError } from "./errors";
 
 export interface CanonRecoveryReport {
   completed: string[];
@@ -221,6 +223,11 @@ function finish(scope: VaultMutationScope, io: CanonIo, intent: CanonWriteIntent
 export function commitCanonWrite(scope: VaultMutationScope, io: CanonIo, prepared: PreparedCanonCommit, admission: () => void, charge?: () => void): CanonReceipt {
   ensureTopLevel(io); requireCanonFiles(scope, io);
   if (readCanonWriteIntent(io.db) !== null) recoveryFailure("recovery_pending");
+  for (const side of ["before", "after"] as const) {
+    if ((prepared[side]?.byteLength ?? 0) > MAX_CANON_IMAGE_BYTES) {
+      throw new CanonWriteError("page_too_large", `canon ${side} image exceeds the recovery byte limit`);
+    }
+  }
   const stream = openOrdinaryRecoveryReceiptStream(scope, io);
   try {
     const checkpoint = stream.checkpoint();

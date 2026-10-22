@@ -1109,6 +1109,7 @@ export {
   runServeDaemon,
   runServeOnce,
   runWritePass,
+  runCanonWritePass,
   seedSchedules,
   serveExecHint,
   servePidPath,

@@ -124,11 +124,17 @@ export function parseRunReceipt(value: unknown): RunReceipt | null {
   const retrieval = isPlainObject(value["retrieval"]) ? value["retrieval"] : {};
   const oversized = isPlainObject(value["oversized"]) ? value["oversized"] : null;
   const execution = parseRunExecution(value["execution"]);
+  const syncMode = value["sync_mode"];
+  if (syncMode !== undefined && (syncMode !== "canon-only" || value["rail"] !== "sync" ||
+      execution?.trigger !== "manual" || value["schedule_transition"] !== undefined)) {
+    throw new Error("invalid receipt sync mode");
+  }
   const prefiltered = parsePrefiltered(value["records_prefiltered"]);
   const transition = parseTransition(value["schedule_transition"]);
   if (value["schedule_transition"] !== undefined && transition === undefined) throw new Error("invalid receipt schedule transition");
   return {
     ...(execution === undefined ? {} : { execution }),
+    ...(syncMode === undefined ? {} : { sync_mode: syncMode }),
     ...(consolidation === undefined ? {} : { consolidation }),
     ...(transition === undefined ? {} : { schedule_transition: transition }),
     run_id: value["run_id"],
@@ -528,7 +534,7 @@ function slotHour(vaultPath: string, rail: string): number | null {
 /** Attach the compare-and-advance intent for the rail's next due slot. */
 function withScheduleTransition(db: Database, vaultPath: string, receipt: RunReceipt): RunReceipt {
   // A skipped pass leaves its rail due: the daemon retries it with backoff.
-  if (!isRailId(receipt.rail) || receipt.stopped === LEDGER_LEASE_HELD_STOP) return receipt;
+  if (!isRailId(receipt.rail) || receipt.stopped === LEDGER_LEASE_HELD_STOP || receipt.sync_mode !== undefined) return receipt;
   const row = db.query<{ next_run_at: string | null; period_s: number }, [string]>("SELECT next_run_at,period_s FROM schedules WHERE rail=?").get(receipt.rail);
   if (row === null) return receipt;
   const scheduled = receipt.execution?.trigger === "scheduled";
@@ -547,7 +553,7 @@ export function isNoopReceipt(receipt: RunReceipt): boolean {
     receipt.model.calls, receipt.model.unavailable, receipt.model.input_tokens, receipt.model.output_tokens,
     receipt.retrieval.upserts, receipt.retrieval.removals, receipt.retrieval.pending_ops,
   ];
-  return receipt.status === "ok" && receipt.stopped === null && receipt.errors.length === 0 &&
+  return receipt.sync_mode === undefined && receipt.status === "ok" && receipt.stopped === null && receipt.errors.length === 0 &&
     receipt.oversized === undefined && receipt.retrieval.degraded.length === 0 &&
     receipt.has_more === undefined && receipt.records_prefiltered === undefined &&
     Object.keys(receipt.claims_rejected).length === 0 && Object.keys(receipt.claims_skipped ?? {}).length === 0 && counters.every((count) => count === 0);

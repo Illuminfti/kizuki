@@ -17,6 +17,7 @@ export interface RailRunContext {
   readonly run_id: string;
   /** Identity shared by the final receipt and durable repair progress. */
   readonly execution: RunExecution;
+  readonly sync_mode?: "canon-only";
   readonly started_at: string;
   readonly now: () => string;
   readonly config: ServeConfig;

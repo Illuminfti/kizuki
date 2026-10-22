@@ -38,7 +38,7 @@ import {
   type RunExecution,
   type ServeConfig,
 } from "./types";
-import { STOP_REQUESTED, runWritePass } from "./write-pass";
+import { STOP_REQUESTED, runWritePass, runCanonWritePass } from "./write-pass";
 import { LegacyExtractReconciliationError } from "./extract";
 
 export type { AnyRailHooks, RailHooks, RailHooksV2, RailRefreshReport, RailRuntime, RailRuntimeV2, RailSyncDrain, RailSyncResult } from "./rail-hooks";
@@ -55,6 +55,8 @@ export interface RailRuntimeContext {
 const processInstance = crypto.randomUUID();
 
 export interface RunRailOptions {
+  /** Manual sync recovery only; never used by scheduled or once execution. */
+  readonly syncMode?: "canon-only";
   readonly execution?: RunExecution;
   readonly now?: () => string;
   /** The daemon's stop request or signal; a sync pass reads it before every extraction step. */
@@ -69,6 +71,8 @@ export interface RunRailOptions {
 }
 
 export interface RunRailOptionsV2 {
+  /** Manual sync recovery only; never used by scheduled or once execution. */
+  readonly syncMode?: "canon-only";
   readonly execution?: RunExecution;
   readonly now?: () => string;
   /** The daemon's stop request or signal; a sync pass reads it before every extraction step. */
@@ -122,8 +126,9 @@ export function dueRails(db: Database, now: string): RailId[] {
 export async function runSyncRail(context: RailRunContext): Promise<Partial<RunReceipt>> {
   const { db, vault_path: vaultPath, budget, config, hooks, run_id: runId, now, stop_requested: stopRequested } = context;
   const { extraction } = config;
+  const canonOnly = context.sync_mode === "canon-only";
   const synced =
-    hooks?.sync === undefined
+    canonOnly || hooks?.sync === undefined
       ? {
           events_synced: 0,
           events_stored: 0,
@@ -139,7 +144,7 @@ export async function runSyncRail(context: RailRunContext): Promise<Partial<RunR
   if (stopRequested?.()) {
     return { ...synced, status: "stopped", stopped: STOP_REQUESTED };
   }
-  const written = await runWritePass(db, vaultPath, {
+  const written = await (canonOnly ? runCanonWritePass : runWritePass)(db, vaultPath, {
     budget,
     extraction,
     ...(config.consolidation === undefined ? {} : { consolidation: config.consolidation }),
@@ -156,7 +161,7 @@ export async function runSyncRail(context: RailRunContext): Promise<Partial<RunR
   // with a zeroed failed rail would hide a real write and understate budget.
   let refreshed: readonly string[];
   try {
-    refreshed = written.stopped === "serve:stop_requested" || stopRequested?.() || hooks?.refresh === undefined
+    refreshed = canonOnly || written.stopped === "serve:stop_requested" || stopRequested?.() || hooks?.refresh === undefined
       ? [] : (await hooks.refresh()).degraded;
   } catch (error) {
     refreshed = stopRequested?.() ? [] : [redactReceiptError(error)];
@@ -437,6 +442,11 @@ async function runRailImpl(
   rail: RailId,
   options: AnyRunRailOptions,
 ): Promise<RunReceipt> {
+  const syncMode = options.syncMode;
+  if (syncMode !== undefined && (syncMode !== "canon-only" || rail !== "sync" ||
+      (options.execution !== undefined && options.execution.trigger !== "manual"))) {
+    throw new ServeDaemonError("invalid_mode", "canon-only is available only for manual sync runs");
+  }
   const stopRequested = (): boolean => options.signal?.aborted === true || options.stopRequested?.() === true;
   const definition = railDefinition(rail);
   if (definition === undefined) throw new ServeDaemonError("unknown_rail", `no rail is registered as ${JSON.stringify(rail)}`);
@@ -448,9 +458,9 @@ async function runRailImpl(
   try {
     const now = options.now ?? (() => new Date().toISOString());
     const started = now();
-    const execution = options.execution ?? {
+    const execution = options.execution === undefined ? {
       instance_id: processInstance, pid: process.pid, boot_id: readBootId(), trigger: "manual" as const, due_at: null,
-    };
+    } : syncMode === undefined ? options.execution : { ...options.execution };
     const totals = emptyRunTotals();
     let partial: Partial<RunReceipt> = {};
     let hooks: AnyRailHooks | undefined;
@@ -501,7 +511,8 @@ async function runRailImpl(
             // after the decision may have hit any later stage, not extraction.
             persistRunReceipt(db, vaultPath, { ...emptyRunTotals(), ...usage, run_id: orphan.run_id, rail: "sync",
               started_at: orphan.created_at, finished_at: orphan.created_at, status: "failed", stopped: null,
-              model: { ...usage.model, model_ref: orphan.model_ref }, errors: [usage.model.usage_unknown === true ? "model attempt interrupted; token usage unknown" : "sync interrupted after model decision"] });
+              model: { ...usage.model, model_ref: orphan.model_ref }, errors: [usage.model.usage_unknown === true ? "model attempt interrupted; token usage unknown" : "sync interrupted after model decision"] },
+              { advanceSchedule: syncMode === undefined });
           }
         });
       } catch (error) {
@@ -523,6 +534,7 @@ async function runRailImpl(
       partial = await definition.run({
         db, vault_path: vaultPath, run_id: runId, execution, started_at: started, now, config, budget, hooks,
         stop_requested: stopRequested,
+        ...(syncMode === undefined ? {} : { sync_mode: syncMode }),
       });
     } catch (error) {
       if (error instanceof InjectedCrash) { interrupted = true; throw error; }
@@ -572,6 +584,7 @@ async function runRailImpl(
       run_id: runId,
       execution,
       rail,
+      ...(syncMode === undefined ? {} : { sync_mode: syncMode }),
       started_at: started,
       finished_at: finished,
       status: partial.status ?? "ok",
@@ -593,7 +606,7 @@ async function runRailImpl(
     // A scheduled run that did nothing advances its schedule without a receipt.
     if (options.crashAfter === undefined && coalesceNoopReceipt(db, vaultPath, receipt)) return receipt;
     const publish = (): void => persistRunReceipt(db, vaultPath, receipt, {
-      advanceSchedule: lease !== undefined,
+      advanceSchedule: lease !== undefined && syncMode === undefined,
       ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
       ...(lease === undefined || definition.artifact === undefined ? {} : { artifactPath: definition.artifact(vaultPath, dayOf(started)) }),
     });
@@ -625,6 +638,7 @@ export async function runServeOnce(
   vaultPath: string,
   options: AnyRunRailOptions & { rails?: RailId[] } = {},
 ): Promise<RunReceipt[]> {
+  if (options.syncMode !== undefined) throw new ServeDaemonError("invalid_mode", "canon-only is available only for manual sync runs");
   if (options.rails === undefined) {
     // A rail registered after the vault opened has no schedule row until it is seeded.
     initServe(db);

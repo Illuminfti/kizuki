@@ -38,13 +38,13 @@ const PRIVATE_LAUNCH_MODES = [
 
 export const SERVE_SCHEMA = {
   options: ["--port", "--crash-after"],
-  flags: ["--once", "--no-http", "--json", "--install", "--uninstall"],
+  flags: ["--once", "--no-http", "--json", "--install", "--uninstall", "--canon-only"],
 } as const satisfies CommandHelpSchema;
 
 export const serveCommand: Command = {
   name: "serve",
   usage:
-    "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve stop | serve run <rail> [--json] | serve retry-skipped [--json]",
+    "serve [--once] [--no-http] [--port N] [--json] [--install] [--uninstall] | serve status [--json] | serve stop | serve run <rail> [--json] | serve run sync --canon-only [--json] | serve retry-skipped [--json]",
   summary: "run the always-on loop, or install it as a user service",
   schema: SERVE_SCHEMA,
   async run(io: CliIo, args: string[]): Promise<number> {
@@ -53,6 +53,12 @@ export const serveCommand: Command = {
       flags: [...SERVE_SCHEMA.flags],
     });
     const [verb, rail] = parsed.positionals;
+    const canonOnly = parsed.flags.has("--canon-only");
+    if (canonOnly && (verb !== "run" || rail !== "sync" || parsed.positionals.length !== 2 ||
+        [...parsed.flags].some(flag => flag !== "--canon-only" && flag !== "--json") ||
+        [...parsed.options.keys()].some(option => option !== "--crash-after"))) {
+      throw new UsageError(this.usage);
+    }
     const portRaw = parsed.options.get("--port");
     const port = portRaw === undefined ? undefined : Number(portRaw);
     if (portRaw !== undefined && (
@@ -185,6 +191,7 @@ export const serveCommand: Command = {
         if (rail === undefined || !isRailId(rail)) throw new UsageError(this.usage);
         const crashAfter = parsed.options.get("--crash-after");
         const receipt = await runRail(ctx.db, ctx.vaultPath, rail, {
+          ...(canonOnly ? { syncMode: "canon-only" as const } : {}),
           acquireRuntime: () => createServeRuntime({ ...ctx, env: io.env, err: io.err }),
           ...(crashAfter !== undefined && isCrashPoint(crashAfter)
             ? { crashAfter }
@@ -199,7 +206,7 @@ export const serveCommand: Command = {
             ),
           );
         }
-        else io.out(`rail=${receipt.rail} status=${receipt.status} run_id=${receipt.run_id}`);
+        else io.out(`rail=${receipt.rail}${receipt.sync_mode === undefined ? "" : ` mode=${receipt.sync_mode}`} status=${receipt.status} run_id=${receipt.run_id}`);
         return receipt.status === "failed" ? 1 : 0;
       }
 
@@ -239,7 +246,7 @@ export const serveCommand: Command = {
       }
       if (result.http !== null) await result.http.stop();
       return 0;
-    }, { retrieval: verb === "status" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required",
+    }, { retrieval: canonOnly || verb === "status" || verb === "retry-skipped" || parsed.flags.has("--install") || parsed.flags.has("--uninstall") ? "none" : "required",
       ...(daemon ? { nonblockingSeal: true } : {}),
     });
     // The long-running loop outwaits a held ledger; every other verb reports it.
