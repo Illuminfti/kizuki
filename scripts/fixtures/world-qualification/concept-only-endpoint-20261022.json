@@ -1,0 +1,45 @@
+{
+  "schema": "kizuki.synthetic-subscription-endpoint-evidence/v1",
+  "prepared_at": "2026-10-22T00:01:47.475223+00:00",
+  "status": "identity_verified_before_confirmation_result",
+  "provider": "openai-codex-subscription",
+  "client_model": "openai-codex-subscription/gpt-6.1-sol-medium",
+  "codex_model": "gpt-6.1-sol",
+  "reasoning_effort": "medium",
+  "codex_cli_version": "0.159.2",
+  "auth_mode": "existing ChatGPT subscription",
+  "api_key_or_paid_fallback": false,
+  "endpoint_host": "127.0.0.1:8787",
+  "base_path": "/v1",
+  "bridge_source_commit": "da414b48c5dbdbd54e1258f81a1596ce61c9a9cc",
+  "bridge_merge_commit": "d2f122dccfc085f16ea42f440e9a70987cb94a10",
+  "bridge_sha256": "92ea6b4297eba094a8a2877caa3f4623afe12040383337d1bba8b96b57477fe6",
+  "deployment_receipt_sha256": "a8929e708a6ef08fe713241269c04351c98a09d6d9a210a11f5d50f492327507",
+  "deployment_preserved_private_state_and_exact_argv": true,
+  "historical_raw_meter_before": {
+    "day": "2026-10-21",
+    "attempts": 123
+  },
+  "qualification_pass_day": "2026-10-22",
+  "effective_attempts_before_confirmation": 0,
+  "read_only_quota": {
+    "at": "2026-10-21T23:59:57.408152+00:00",
+    "status": "read_ok",
+    "ordinaryUsageAllowed": true,
+    "protocol": "codex-cli 0.159.2 account/rateLimits/read",
+    "model_turns": 0
+  },
+  "local_controls": {
+    "daily_attempts": 240,
+    "min_start_gap_seconds": 60,
+    "max_inflight": 1,
+    "child_timeout_seconds": 100,
+    "automatic_retries": 0
+  },
+  "limitations": [
+    "Identity and readiness metadata alone do not prove a successful generation or semantic qualification.",
+    "Final observed report and raw response digests remain separate evidence.",
+    "This is known-case Concept confirmation, not qualification of the wider roadmap.",
+    "No credentials, account identifiers, runtime paths, private records or environment values are included."
+  ]
+}

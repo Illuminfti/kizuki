@@ -1,5 +1,4 @@
-import { getCanonReceipt, worldReceiptChain, isErasedReceipt } from "./receipts";
-import { isWorldCanonReceipt } from "./world-receipt";
+import { getWorldCanonReceipt, worldReceiptChain, isErasedReceipt } from "./receipts";
 import type { Database } from "bun:sqlite";
 import { isAuthorityTier } from "../contracts/proposal";
 import type { AuthorityTier } from "../contracts/proposal";
@@ -105,8 +104,8 @@ export class CanonAuthorityResolver {
   }
   /** The materialized state immediately before a receipt, including undo-of-undo. */
   before(receiptId: string): AuthorityTier {
-    const typed = getCanonReceipt(this.db, receiptId);
-    if (typed !== null && isWorldCanonReceipt(typed)) {
+    const typed = getWorldCanonReceipt(this.db, receiptId);
+    if (typed !== null) {
       try {
         const chain = worldReceiptChain(this.db, typed.page_path);
         const index = chain.findIndex(record => record.receipt_id === receiptId);
@@ -214,8 +213,8 @@ export class CanonAuthorityResolver {
     if (!viaBinding && receipt.page_path !== path) return UNAVAILABLE;
     if (receipt.page_path !== "" && receipt.page_path !== path) return UNAVAILABLE;
     seen.add(receipt.receipt_id);
-    const typed=getCanonReceipt(this.db,receipt.receipt_id);
-    if(typed!==null&&isWorldCanonReceipt(typed)) {
+    const typed=getWorldCanonReceipt(this.db,receipt.receipt_id);
+    if(typed!==null) {
       return typed.basis.after===null ? UNAVAILABLE : {authority:typed.authority,basis:{receipt_id:typed.receipt_id,after_hash:typed.after_hash,at:typed.at,authority:typed.authority}};
     }
     const checkpoint = this.checkpoint(receipt.receipt_id);

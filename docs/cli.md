@@ -849,6 +849,7 @@ usage: kizuki serve [--once] [--no-http] [--port N] [--json] [--install] [--unin
        kizuki serve status [--json]
        kizuki serve stop
        kizuki serve run <rail> [--json]
+       kizuki serve run sync --canon-only [--json]
        kizuki serve retry-skipped [--json]
 ```
 
@@ -887,6 +888,17 @@ embedding server does not answer, the run is `degraded` with
 `embedding-unavailable` and the backlog is left for the next run. Doctor counts an idle rail's empty streak in elapsed periods, so coalescing does not slow that alarm. The rail rechecks its on/off selection and schedule each run; restart the service to bind a changed embedding port or model. The `journal-prune` rail drops receipts older than
 `[serve] journal_retention_days` (default 7) and then the oldest until
 `run-receipts.jsonl` fits 8 MiB. Doctor reads at most the newest 5,000 receipts and scans at most the newest 1 MiB of the journal for orphans.
+
+For recovery of already accepted claims, `serve run sync --canon-only` runs
+only the ordinary receipted canon writer. It still binds the configured model
+and producer, requires their model identity, and respects source authority,
+write budgets, recovery holds and the normal retry/quarantine rules. It makes
+no new model request, captures no source records, and skips extraction, world
+model jobs and external retrieval refresh. Existing evidence and extraction
+checkpoints remain intact. Its receipt has `sync_mode: "canon-only"`; it does
+not advance the sync schedule or report capture/extraction health. This mode
+is manual only and is refused with `--once` or for another rail. Derived stores
+remain rebuildable through the ordinary retrieval maintenance commands.
 
 The sync rail runs every 15 minutes and makes one extraction request per pass
 unless `serve.toml` says otherwise: `[serve] sync_period_s` sets the period,

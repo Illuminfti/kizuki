@@ -1,6 +1,5 @@
 import { OWNER } from "../agents";
-import { getCanonReceipt } from "../canon/receipts";
-import { isWorldCanonReceipt } from "../canon/world-receipt";
+import { getWorldCanonReceipt } from "../canon/receipts";
 import { worldBasisAllowed } from "../canon/world-materialization";
 import type { ServeContext } from "../serving/types";
 import type { Database } from "bun:sqlite";
@@ -25,6 +24,9 @@ export type LivePageEvidence =
   | { admitted: true; sourceIds: string[]; revision: CanonRevisionBasis }
   | { admitted: false; reason: "inactive" | "sources_unavailable" | "revision_unrecorded" | "recovery_pending" };
 
+/** Internal read-phase seam; publication and writer checks use the live reader. */
+export type PageEvidenceReader = (page: CanonPage, context: ServeContext, historical: boolean) => LivePageEvidence;
+
 /** Existing evidence only. The caller owns the bounded page and database snapshot. */
 export function assessLivePageEvidence(
   db: Database,
@@ -32,6 +34,7 @@ export function assessLivePageEvidence(
   resolver?: CanonAuthorityResolver,
   context?: ServeContext,
   historicalSnapshot = false,
+  liveExternalEvent?: (id: string) => boolean,
 ): LivePageEvidence {
   if (!isLiveCanonPage(page) && !(historicalSnapshot && page.data["status"] === "archived")) return { admitted: false, reason: "inactive" };
   if (canonPageRecoveryPending(db, page.relPath)) return { admitted: false, reason: "recovery_pending" };
@@ -45,8 +48,8 @@ export function assessLivePageEvidence(
     const revision = (resolver ?? new CanonAuthorityResolver(db, [page.relPath])).basis(page.relPath, page.contentHash);
     // An unrecorded revision still reports unavailable sources first, as it did
     // before typed receipts; only a recorded typed revision skips that check.
-    const receipt = revision === null ? null : getCanonReceipt(db,revision.receipt_id);
-    if (revision !== null && receipt !== null && isWorldCanonReceipt(receipt)) {
+    const receipt = revision === null ? null : getWorldCanonReceipt(db,revision.receipt_id);
+    if (revision !== null && receipt !== null) {
       // A correction diff can include an archived after image, whose retained
       // body belongs to the before basis. Normal serving admits only live after bases.
       const basis = receipt.basis.after ?? (historicalSnapshot ? receipt.basis.before : null);
@@ -54,8 +57,9 @@ export function assessLivePageEvidence(
       return {admitted:true,sourceIds,revision};
     }
     for (const id of sourceIds) {
-      const event = readLiveEvent(db, id);
-      if (event === null || event.origin !== "external") {
+      const valid = liveExternalEvent === undefined
+        ? readLiveEvent(db, id)?.origin === "external" : liveExternalEvent(id);
+      if (!valid) {
         return { admitted: false, reason: "sources_unavailable" };
       }
     }

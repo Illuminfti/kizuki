@@ -193,6 +193,8 @@ export interface CanonQuarantineNotice {
 }
 
 export interface RunReceipt {
+  /** Manual writer recovery, not a complete sync or evidence of a new model response. */
+  readonly sync_mode?: "canon-only";
   readonly consolidation?: ConsolidationRunReport;
   /** Durable scheduler compare-and-advance intent, replayed with the receipt row. */
   readonly schedule_transition?: RunScheduleTransition;

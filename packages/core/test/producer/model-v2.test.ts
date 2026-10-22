@@ -185,3 +185,18 @@ test("the extraction prompt teaches how admitted claims become discoverable Conc
   }
   expect(EXTRACTION_V2_SYSTEM_PROMPT).not.toContain('"id":"handle"');
 });
+
+test("the extraction prompt separates evidenced classification from attributed details without promoting reports", () => {
+  const prompt = extractionV2SystemContent(worldProduceInput(input.events as never));
+  for (const rule of [
+    "Choose perspective separately for each claim's proposition",
+    "Quoted input packaging alone does not make every proposition quoted or reported",
+    "positive/asserted world.kind",
+    "null holder, speaker and addressee",
+    "If the classification itself is uncertain or only attributed, preserve that mode",
+    "Assert a label only when adopting an exact source-grounded name",
+    "never assert a kind or label merely for discoverability",
+    "Return empty arrays when no grounded claim exists",
+    "Quoted or reported evidence does not become an asserted owner fact",
+  ]) expect(prompt).toContain(rule);
+});

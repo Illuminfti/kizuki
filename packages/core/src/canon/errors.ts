@@ -10,6 +10,7 @@ export type CanonWriteErrorCode =
   | "page_exists"
   | "page_required"
   | "page_missing"
+  | "page_too_large"
   | "provenance_unresolved"
   | "frontmatter_reserved"
   | "frontmatter_conflict"

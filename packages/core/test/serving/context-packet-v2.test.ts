@@ -278,13 +278,32 @@ test("a query without indexed canon reports its incomplete retrieval coverage", 
 test("optional capture truncation retains the incomplete warning and exact served-unit witness", async () => {
   const scene = await hiddenScene();
   try {
-    for (let index = 0; index < 6; index++) visibleCapture(scene, `Observation ${index}: ${"the bounded context is recorded ".repeat(8).trim()}`);
+    const observations = Array.from({ length: 6 }, (_, index) => `Observation ${index}: `);
+    for (const prefix of observations) visibleCapture(scene, `${prefix}${"the bounded context is recorded ".repeat(8).trim()}`);
+    // The scene also contains two short visible seed captures. Discover the
+    // six observations before packing so those seeds cannot inflate their witness.
+    const offered = await dispatchServeTool(scene.reader, "timeline", {
+      since: WIDE.since, until: WIDE.until, limit: 100,
+    }, { response_contract: V2 });
+    if (offered.schema !== V2 || offered.tool !== "timeline") throw new Error("wrong contract");
+    expect(offered.quoted).toHaveLength(8);
+    expect(new Set(offered.quoted.map(chunk => chunk.eventVersion.token)).size).toBe(8);
+    const observationRefs = new Set(observations.map(prefix => {
+      const matches = offered.quoted.filter(chunk => chunk.text.startsWith(prefix));
+      expect(matches).toHaveLength(1);
+      return matches[0]!.eventVersion.token;
+    }));
+    expect(observationRefs.size).toBe(6);
     const { packet, envelope } = await read(scene, { ...WIDE, budget_tokens: 450 });
+    if (envelope.schema !== V2 || envelope.tool !== "context_packet") throw new Error("wrong contract");
     if (!("data" in packet.result)) throw new Error("packet missing");
     const data = packet.result.data;
+    const packedObservations = envelope.quoted.filter(chunk => observationRefs.has(chunk.eventVersion.token));
     expect(data.coverage).toMatchObject({ status: "partial", gaps: expect.arrayContaining(["required_context_overflow"]) });
     expect(data.servedUnits).toBeGreaterThan(0);
-    expect(data.servedUnits).toBeLessThan(6);
+    expect(packedObservations.length).toBeGreaterThan(0);
+    expect(packedObservations.length).toBeLessThan(6);
+    expect(data.servedUnits).toBeLessThan(offered.quoted.length);
     expect(data.servedUnits).toBe(envelope.quoted.length);
     expect(data.packetMd).toContain("coverage=incomplete; missing context must not be treated as absent\n");
     expect(data.packetMd).not.toContain("coverage=complete_for_query");
