@@ -5,7 +5,6 @@ import { qualificationCorpus as activeCorpus } from "./corpus";
 import { qualificationCorpus as historicalCorpus } from "./corpus-v3";
 import { scoreSupplementalCase, scoreSupplementalRun, validateFreshCore } from "./supplemental";
 import freshOracle from "./corpus-v5-core-semantic-oracle.json";
-import { loadReviewedQualifications } from "./registry";
 import { createModelProducerV2Port } from "../../packages/core/src/producer/model-v2";
 import { createOpenAiCompatibleLlmPort } from "../../packages/llm/src/openai-compatible";
 import type { PortContext } from "../../packages/core/src/contracts/ports";
@@ -412,7 +411,8 @@ test("sealed fresh core cases and every finite alternative satisfy both checkers
   const complete = scoreSupplementalRun(activeCorpus.cases.map(item => scripted(item, WORLD_REGISTRY)));
   expect(complete.deterministic_passed).toBe(true);
   expect(complete.body_review).toBe("pending");
-  expect(loadReviewedQualifications(import.meta.dir + "/../..", WORLD_REGISTRY)).toEqual([]);
+  // Scripted oracle satisfiability cannot qualify the registry, even when an
+  // unrelated observed campaign has a separately approved receipt.
   expect(() => checkOfferedQualification(WORLD_REGISTRY, [])).toThrow("fresh core qualification pending");
 });
 
