@@ -4,7 +4,7 @@
 It is a prospective method. The retained prior split and scripted answers are
 unaccepted development controls; they do not qualify a prior observed campaign.
 A fresh sealed split and a separate review of its actual responses are required.
-The frozen corpus, contract and v1 method remain unchanged by this method change.
+Every actual call requires the current corpus, contract and method files to be frozen together before execution.
 
 ## Two distinct results
 

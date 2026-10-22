@@ -1,6 +1,6 @@
 {
   "schema": "kizuki.core-semantic-contract/v1",
-  "corpus_version": "core-semantic-20261022b",
+  "corpus_version": "core8-unseen-20261022",
   "automated_gate": {
     "required": [
       "all twelve ordered cases observed exactly once",
@@ -13,7 +13,10 @@
       "positive cases contain every contracted typed predicate exactly once on one canonical target",
       "classification, label, attribution, evidence, and explicit time satisfy the case contract",
       "any additional claim uses a production-offered legacy predicate and is not a forbidden identity merge or ownership predicate",
-      "each attributed typed claim independently covers its authored reporting-role witness with its claim and perspective anchors"
+      "each attributed typed claim covers its authored reporting-role witness with its actual prepared admission anchors; raw per-claim role citation gaps remain separately reported",
+      "actual public prepareWorldDrafts runs both original-guard and host-sent-window paths against independent fresh synthetic ledgers with the journal registry callback",
+      "both preparations return zero drops and one admission per raw claim without changed semantic fields beyond ordinary reference resolution and exact post-original-guard perspective-window addition",
+      "exact sent windows, original anchors, per-item and aggregate admission anchor caps are preserved"
     ],
     "success_without_review": "pending_manual_review"
   },
@@ -73,17 +76,24 @@
       "report_sha256",
       "contract_sha256",
       "corpus_sha256",
-      "ordered case_id and response_sha256"
+      "ordered case_id and response_sha256",
+      "source_commit",
+      "evaluation stage prepared_admission",
+      "ordered case transport_response_sha256",
+      "ordered case input_manifest_sha256 and sent_window_manifest_sha256",
+      "ordered case prepared_admissions_sha256"
     ],
     "per_positive_case": [
       "the claim literal alone entails every required meaning atom",
       "the claim literal does not contradict the automated structured polarity, attribution, or time fields; it need not duplicate those fields in prose",
       "the body faithfully renders the literal without changing its meaning",
-      "for every claim, the actual response anchors jointly support the proposition and every required atom, plus any structured attribution and explicit time",
+      "for every claim, the actual prepared admission anchors jointly support the proposition and every required atom, plus the exact actor, role and explicit time; unrelated reporting words elsewhere in a sent window are insufficient",
       "neither literal nor body contains an unsupported addition",
       "neither literal nor body contains a forbidden assertion",
       "every legacy extra receives its own exact claim-hash-bound literal/body/reference/anchor/role/time/source-entailment review",
-      "each typed claim separately preserves its own source role and valid time; a source-reported name stays visibly qualified in consumer relations and is never promoted to a bare display label"
+      "each typed claim separately preserves its own source role and valid time; a source-reported name stays visibly qualified in consumer relations and is never promoted to a bare display label",
+      "raw per-claim citation gaps remain separately visible and are never described as model-authored context",
+      "the original literal guard has not been bypassed or upgraded and no semantic fact, role or time was added by normalization"
     ],
     "per_negative_case": [
       "the exact response contains no claim"
@@ -92,17 +102,17 @@
   },
   "cases": [
     {
-      "case_id": "core7-concept-positive-shelf-current",
+      "case_id": "core8-concept-positive-drift-ledger",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Shelf current"
+        "quote": "Drift Ledger"
       },
       "classification": {
         "kind": "world/concept",
-        "label": "Shelf current",
-        "witness": "Shelf current is a concept",
+        "label": "Drift Ledger",
+        "witness": "Drift Ledger — Concept",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -110,35 +120,35 @@
         {
           "predicate": "concept.definition",
           "object_kind": "literal",
-          "witness": "the ribbon of warmer water that persists beneath an overhanging ledge after sunset",
+          "witness": "a method for recording small route deviations together with their causes and corrections, so later plans can distinguish recurring drift from one-off detours",
           "required_atoms": [
-            "a ribbon of water",
-            "the water is warmer",
-            "the water persists beneath an overhanging ledge",
-            "the condition is after sunset"
+            "records small route deviations",
+            "records the causes of those deviations",
+            "records the corrections for those deviations",
+            "lets later plans distinguish recurring drift from one-off detours"
           ],
           "perspective": "direct",
           "time": "unknown"
         }
       ],
       "forbidden_assertions": [
-        "Shelf current is a navigation warning",
-        "the source establishes who owns the shoreline",
-        "the source establishes a person role or activity"
+        "the owner created or endorses Drift Ledger",
+        "Drift Ledger is identical to another concept",
+        "the source assigns ownership of any route"
       ]
     },
     {
-      "case_id": "core7-concept-reported-prism-trace",
+      "case_id": "core8-concept-reported-lantern-threshold",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Prism trace"
+        "quote": "Lantern Threshold"
       },
       "classification": {
         "kind": "world/concept",
-        "label": "Prism trace",
-        "witness": "Prism trace — Concept",
+        "label": "Lantern Threshold",
+        "witness": "Lantern Threshold — Concept",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -146,126 +156,132 @@
         {
           "predicate": "concept.definition",
           "object_kind": "literal",
-          "witness": "the faint second image visible through two misaligned panes",
+          "witness": "a rule for starting a field check only after three independent visibility readings agree",
           "required_atoms": [
-            "a second image",
-            "the second image is faint",
-            "it is visible through two misaligned panes"
+            "it is a rule for starting a field check",
+            "three visibility readings are required",
+            "the readings are independent",
+            "the readings must agree before the check starts"
           ],
           "perspective": "person_statement",
-          "source": "source-core7-concept-reported",
-          "time": "unknown",
+          "source": "source-core8-concept-reported",
           "equivalent_mention": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Liora",
-            "label": "Liora",
-            "attribution_witness": "Liora said"
+            "quote": "Inez Calder",
+            "label": "Inez Calder",
+            "attribution_witness": "Inez Calder reported"
           },
-          "attribution_witness": "Liora said"
+          "attribution_witness": "Inez Calder reported",
+          "time": "unknown"
         }
       ],
       "forbidden_assertions": [
-        "Liora owns the studio",
-        "Liora fitted the panes",
-        "the attributed definition is an unqualified owner fact"
+        "the owner reported or endorsed Lantern Threshold",
+        "Inez Calder is the owner",
+        "Lantern Threshold is identical to another concept"
       ]
     },
     {
-      "case_id": "core7-concept-historical-cobalt-pause",
+      "case_id": "core8-concept-historical-harbor-ratio",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Cobalt pause"
+        "quote": "Harbor Ratio"
       },
       "classification": {
         "kind": "world/concept",
-        "label": "Cobalt pause",
-        "witness": "used Cobalt pause as the name of a concept",
+        "label": "Harbor Ratio",
+        "witness": "Harbor Ratio meant the share of inspection hours reserved for tide-dependent work",
         "perspective": "direct",
         "time": {
-          "valid_from": "2011-03-04T00:00:00.000Z",
-          "valid_to": "2014-09-10T00:00:00.000Z",
+          "valid_from": "2024-04-01T00:00:00.000Z",
+          "valid_to": "2024-07-01T00:00:00.000Z",
           "temporal_basis": "explicit",
-          "witness": "From 2011-03-04T00:00:00Z until 2014-09-10T00:00:00Z, with the end excluded"
+          "witness": "interval beginning 2024-04-01T00:00:00.000Z and ending exclusively at 2024-07-01T00:00:00.000Z"
         }
       },
       "details": [
         {
           "predicate": "concept.definition",
           "object_kind": "literal",
-          "witness": "the waiting period between sterilising a sample tube and its pressure reaching a stable reading",
+          "witness": "the share of inspection hours reserved for tide-dependent work",
           "required_atoms": [
-            "a waiting period",
-            "the period starts when a sample tube is sterilised",
-            "the period ends when the tube pressure reaches a stable reading"
+            "it is a share of inspection hours",
+            "those inspection hours are reserved",
+            "the reserved work is tide-dependent"
           ],
           "perspective": "document_report",
-          "source": "source-core7-concept-historical",
+          "source": "source-core8-concept-historical",
+          "attribution_witness": "Archive memorandum HR-17 states",
           "time": {
-            "valid_from": "2011-03-04T00:00:00.000Z",
-            "valid_to": "2014-09-10T00:00:00.000Z",
+            "valid_from": "2024-04-01T00:00:00.000Z",
+            "valid_to": "2024-07-01T00:00:00.000Z",
             "temporal_basis": "explicit",
-            "witness": "From 2011-03-04T00:00:00Z until 2014-09-10T00:00:00Z, with the end excluded"
-          },
-          "attribution_witness": "Harbor Manual used"
+            "witness": "interval beginning 2024-04-01T00:00:00.000Z and ending exclusively at 2024-07-01T00:00:00.000Z"
+          }
         }
       ],
       "forbidden_assertions": [
-        "Cobalt pause remains current after 2014-09-10",
-        "the Harbor Manual is a speaker",
-        "a person owns or endorses the concept"
+        "Harbor Ratio is current outside the stated interval",
+        "Archive memorandum HR-17 is a person speaker",
+        "the owner endorses Harbor Ratio"
       ],
       "label_alternatives": [
         {
-          "witness": "used Cobalt pause as the name of a concept",
+          "witness": "Harbor Ratio meant the share of inspection hours reserved for tide-dependent work",
           "perspective": "document_report",
+          "source": "source-core8-concept-historical",
+          "attribution_witness": "Archive memorandum HR-17 states",
           "time": {
-            "valid_from": "2011-03-04T00:00:00.000Z",
-            "valid_to": "2014-09-10T00:00:00.000Z",
+            "valid_from": "2024-04-01T00:00:00.000Z",
+            "valid_to": "2024-07-01T00:00:00.000Z",
             "temporal_basis": "explicit",
-            "witness": "From 2011-03-04T00:00:00Z until 2014-09-10T00:00:00Z, with the end excluded"
-          },
-          "source": "source-core7-concept-historical",
-          "attribution_witness": "Harbor Manual used"
+            "witness": "interval beginning 2024-04-01T00:00:00.000Z and ending exclusively at 2024-07-01T00:00:00.000Z"
+          }
         }
       ]
     },
     {
-      "case_id": "core7-concept-negative-name",
+      "case_id": "core8-concept-negative-name",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "a bare name establishes a concept"
+        "Quiet Meridian is a concept",
+        "Quiet Meridian has a definition",
+        "the source assigns ownership or identity to Quiet Meridian"
       ]
     },
     {
-      "case_id": "core7-concept-negative-template",
+      "case_id": "core8-concept-negative-template",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "blank placeholders establish a concept"
+        "the blank concept worksheet defines a concept",
+        "a bracketed placeholder is a concept name",
+        "the template establishes ownership or identity"
       ]
     },
     {
-      "case_id": "core7-concept-negative-hypothetical",
+      "case_id": "core8-concept-negative-hypothetical",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "a possible future term is adopted or defined",
-        "a hypothetical establishes a concept"
+        "Ash Compass is an adopted concept",
+        "Ash Compass currently has a definition",
+        "the hypothetical assigns ownership or identity"
       ]
     },
     {
-      "case_id": "core7-situation-positive-gate-survey",
+      "case_id": "core8-situation-positive-orchid-relay-check",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Gate survey"
+        "quote": "Orchid Relay Check"
       },
       "classification": {
         "kind": "world/situation",
-        "label": "Gate survey",
-        "witness": "Gate survey is an active situation",
+        "label": "Orchid Relay Check",
+        "witness": "Orchid Relay Check is active",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -273,10 +289,10 @@
         {
           "predicate": "situation.objective",
           "object_kind": "literal",
-          "witness": "check every pedestrian gate before the depot reopens",
+          "witness": "verify the backup radio link before the evening drill",
           "required_atoms": [
-            "check every pedestrian gate",
-            "checking occurs before the depot reopens"
+            "verify the backup radio link",
+            "verification must occur before the evening drill"
           ],
           "perspective": "direct",
           "time": "unknown"
@@ -284,33 +300,33 @@
         {
           "predicate": "situation.blocker",
           "object_kind": "literal",
-          "witness": "the survey tablet has not arrived",
+          "witness": "blocked because the replacement antenna has not arrived",
           "required_atoms": [
-            "the survey tablet has not arrived",
-            "the missing tablet is the blocker"
+            "the replacement antenna has not arrived",
+            "that missing arrival blocks the check"
           ],
           "perspective": "direct",
           "time": "unknown"
         }
       ],
       "forbidden_assertions": [
-        "the record assigns an owner",
-        "the depot has reopened",
-        "the audit is complete"
+        "the owner owns or leads Orchid Relay Check",
+        "Orchid Relay Check is complete",
+        "a named person participates in the check"
       ]
     },
     {
-      "case_id": "core7-situation-reported-east-duct",
+      "case_id": "core8-situation-reported-maple-intake-review",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "East duct review"
+        "quote": "Maple Intake Review"
       },
       "classification": {
         "kind": "world/situation",
-        "label": "East duct review",
-        "witness": "East duct review — Situation",
+        "label": "Maple Intake Review",
+        "witness": "Maple Intake Review — Situation",
         "perspective": "direct",
         "time": "unknown"
       },
@@ -318,159 +334,161 @@
         {
           "predicate": "situation.objective",
           "object_kind": "literal",
-          "witness": "inspect all three ventilation ducts before Wednesday",
+          "witness": "reconcile the two intake counts before publishing the weekly total",
           "required_atoms": [
-            "inspect all three ventilation ducts",
-            "inspection is due before Wednesday"
+            "reconcile two intake counts",
+            "reconciliation precedes publication of the weekly total"
           ],
           "perspective": "person_statement",
           "source": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Soren",
-            "label": "Soren",
-            "attribution_witness": "Soren reported"
+            "quote": "Dario Venn",
+            "label": "Dario Venn",
+            "attribution_witness": "Dario Venn reported"
           },
-          "time": "unknown",
-          "attribution_witness": "Soren reported"
+          "attribution_witness": "Dario Venn reported",
+          "time": "unknown"
         },
         {
           "predicate": "situation.blocker",
           "object_kind": "literal",
-          "witness": "the calibrated thermal probe is still with the service centre",
+          "witness": "blocked because the northern ledger is still missing page nine",
           "required_atoms": [
-            "the calibrated thermal probe remains with the service centre",
-            "the unavailable probe is the blocker"
+            "the northern ledger is missing page nine",
+            "that missing page blocks the review"
           ],
           "perspective": "person_statement",
           "source": {
             "mode": "mention",
             "record": "r1",
-            "quote": "Soren",
-            "label": "Soren",
-            "attribution_witness": "Soren reported"
+            "quote": "Dario Venn",
+            "label": "Dario Venn",
+            "attribution_witness": "Dario Venn reported"
           },
-          "time": "unknown",
-          "attribution_witness": "Soren reported"
+          "attribution_witness": "Dario Venn reported",
+          "time": "unknown"
         }
       ],
       "forbidden_assertions": [
-        "Soren owns the inspection",
-        "the inspection is complete",
-        "Wednesday is a validity interval"
+        "the owner reported the review details",
+        "Dario Venn owns or leads Maple Intake Review",
+        "Maple Intake Review is complete"
       ]
     },
     {
-      "case_id": "core7-situation-historical-vial-relocation",
+      "case_id": "core8-situation-historical-cedar-bay-transfer",
       "expectation": "extract",
       "target": {
         "mode": "mention",
         "record": "r1",
-        "quote": "Vial relocation"
+        "quote": "Cedar Bay Transfer"
       },
       "classification": {
         "kind": "world/situation",
-        "label": "Vial relocation",
-        "witness": "Vial relocation was an operational situation",
+        "label": "Cedar Bay Transfer",
+        "witness": "Cedar Bay Transfer had the objective of moving the calibration crates to Annex Two",
         "perspective": "direct",
         "time": {
-          "valid_from": "2020-08-05T00:00:00.000Z",
-          "valid_to": "2020-08-21T00:00:00.000Z",
+          "valid_from": "2023-10-01T00:00:00.000Z",
+          "valid_to": "2023-12-16T00:00:00.000Z",
           "temporal_basis": "explicit",
-          "witness": "from 2020-08-05T00:00:00Z until 2020-08-21T00:00:00Z, with the end excluded"
+          "witness": "interval beginning 2023-10-01T00:00:00.000Z and ending exclusively at 2023-12-16T00:00:00.000Z"
         }
       },
       "details": [
         {
           "predicate": "situation.objective",
           "object_kind": "literal",
-          "witness": "move nine sealed vials to the south cold room",
+          "witness": "moving the calibration crates to Annex Two",
           "required_atoms": [
-            "move nine sealed vials",
-            "the destination is the south cold room"
+            "move the calibration crates",
+            "the destination is Annex Two"
           ],
           "perspective": "document_report",
-          "source": "source-core7-situation-historical",
+          "source": "source-core8-situation-historical",
+          "attribution_witness": "Operations bulletin CB-42 states",
           "time": {
-            "valid_from": "2020-08-05T00:00:00.000Z",
-            "valid_to": "2020-08-21T00:00:00.000Z",
+            "valid_from": "2023-10-01T00:00:00.000Z",
+            "valid_to": "2023-12-16T00:00:00.000Z",
             "temporal_basis": "explicit",
-            "witness": "from 2020-08-05T00:00:00Z until 2020-08-21T00:00:00Z, with the end excluded"
-          },
-          "attribution_witness": "2020 station journal records that"
-        },
-        {
-          "predicate": "situation.blocker",
-          "object_kind": "literal",
-          "witness": "a flooded access stairway was the blocker",
-          "required_atoms": [
-            "an access stairway was flooded",
-            "the flooded access stairway was the blocker"
-          ],
-          "perspective": "document_report",
-          "source": "source-core7-situation-historical",
-          "time": {
-            "valid_from": "2020-08-05T00:00:00.000Z",
-            "valid_to": "2020-08-21T00:00:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "from 2020-08-05T00:00:00Z until 2020-08-21T00:00:00Z, with the end excluded"
-          },
-          "attribution_witness": "2020 station journal records that"
-        }
-      ],
-      "forbidden_assertions": [
-        "Vial relocation is current after 2020-08-21",
-        "the transfer was completed",
-        "the field log is a speaker",
-        "the source identifies an owner"
-      ],
-      "label_alternatives": [
-        {
-          "witness": "Vial relocation was an operational situation",
-          "perspective": "direct",
-          "time": {
-            "valid_from": "2020-08-05T00:00:00.000Z",
-            "valid_to": "2020-08-21T00:00:00.000Z",
-            "temporal_basis": "explicit",
-            "witness": "from 2020-08-05T00:00:00Z until 2020-08-21T00:00:00Z, with the end excluded"
+            "witness": "interval beginning 2023-10-01T00:00:00.000Z and ending exclusively at 2023-12-16T00:00:00.000Z"
           }
         },
         {
-          "witness": "Vial relocation was an operational situation",
+          "predicate": "situation.change",
+          "object_kind": "literal",
+          "witness": "its loading site changed from Pier Four to Pier Six",
+          "required_atoms": [
+            "the loading site changed",
+            "the prior loading site was Pier Four",
+            "the new loading site was Pier Six"
+          ],
           "perspective": "document_report",
+          "source": "source-core8-situation-historical",
+          "attribution_witness": "Operations bulletin CB-42 states",
           "time": {
-            "valid_from": "2020-08-05T00:00:00.000Z",
-            "valid_to": "2020-08-21T00:00:00.000Z",
+            "valid_from": "2023-10-01T00:00:00.000Z",
+            "valid_to": "2023-12-16T00:00:00.000Z",
             "temporal_basis": "explicit",
-            "witness": "from 2020-08-05T00:00:00Z until 2020-08-21T00:00:00Z, with the end excluded"
-          },
-          "source": "source-core7-situation-historical",
-          "attribution_witness": "2020 station journal records that"
+            "witness": "interval beginning 2023-10-01T00:00:00.000Z and ending exclusively at 2023-12-16T00:00:00.000Z"
+          }
+        }
+      ],
+      "forbidden_assertions": [
+        "Cedar Bay Transfer is current outside the stated interval",
+        "Operations bulletin CB-42 is a person speaker",
+        "the owner owns or leads Cedar Bay Transfer"
+      ],
+      "label_alternatives": [
+        {
+          "witness": "Cedar Bay Transfer had the objective of moving the calibration crates to Annex Two",
+          "perspective": "document_report",
+          "source": "source-core8-situation-historical",
+          "attribution_witness": "Operations bulletin CB-42 states",
+          "time": {
+            "valid_from": "2023-10-01T00:00:00.000Z",
+            "valid_to": "2023-12-16T00:00:00.000Z",
+            "temporal_basis": "explicit",
+            "witness": "interval beginning 2023-10-01T00:00:00.000Z and ending exclusively at 2023-12-16T00:00:00.000Z"
+          }
         }
       ]
     },
     {
-      "case_id": "core7-situation-negative-name",
+      "case_id": "core8-situation-negative-name",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "a portfolio name establishes a situation",
-        "the name establishes an objective or blocker"
+        "Juniper Window is a situation",
+        "Juniper Window has an objective or blocker",
+        "the source assigns ownership or identity to Juniper Window"
       ]
     },
     {
-      "case_id": "core7-situation-negative-template",
+      "case_id": "core8-situation-negative-template",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "blank placeholders establish a situation"
+        "the blank situation template reports an active situation",
+        "a bracketed placeholder is a situation fact",
+        "the template establishes ownership or identity"
       ]
     },
     {
-      "case_id": "core7-situation-negative-hypothetical",
+      "case_id": "core8-situation-negative-hypothetical",
       "expectation": "abstain",
       "forbidden_assertions": [
-        "conditional future work is approved, started, committed, blocked, or changed",
-        "a hypothetical project establishes a situation"
+        "Copper Kite is an actual situation",
+        "Copper Kite has a real blocker",
+        "the hypothetical assigns ownership or identity"
       ]
     }
-  ]
+  ],
+  "protocol": "core-semantic-v2",
+  "evaluation_stage": "prepared_admission",
+  "raw_citation_precision": {
+    "stage": "raw_model",
+    "required_reporting_role_coverage": "assess the raw claim and raw perspective anchors independently, before host context addition",
+    "reported_separately": true,
+    "normalization_does_not_relabel_raw_pass": true
+  }
 }

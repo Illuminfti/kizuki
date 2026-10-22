@@ -2,175 +2,175 @@
   "schema": "kizuki.core-semantic-corpus/v1",
   "synthetic": true,
   "split": "held_out",
-  "version": "core-semantic-20261022b",
+  "version": "core8-unseen-20261022",
   "cases": [
     {
-      "id": "core7-concept-positive-shelf-current",
+      "id": "core8-concept-positive-drift-ledger",
       "kind": "concept",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Field observation: Shelf current is a concept meaning the ribbon of warmer water that persists beneath an overhanging ledge after sunset. It is not a navigation warning or a claim about who owns the shoreline.",
+          "text": "Record header: Drift Ledger — Concept. Field guide definition: It is a method for recording small route deviations together with their causes and corrections, so later plans can distinguish recurring drift from one-off detours.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core7-concept-reported-prism-trace",
+      "id": "core8-concept-reported-lantern-threshold",
       "kind": "concept",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Record header: Prism trace — Concept. At the optics workshop, Liora said: \"It means the faint second image visible through two misaligned panes.\" She is the grounded speaker; the record does not state that she owns the studio or fitted the panes.",
+          "text": "Record header: Lantern Threshold — Concept. Workshop transcript. Inez Calder reported: \"It is a rule for starting a field check only after three independent visibility readings agree.\"",
           "subjects": [
             {
-              "id": "source-core7-concept-reported",
-              "quote": "Liora said"
+              "id": "source-core8-concept-reported",
+              "quote": "Inez Calder reported"
             }
           ]
         }
       ]
     },
     {
-      "id": "core7-concept-historical-cobalt-pause",
+      "id": "core8-concept-historical-harbor-ratio",
       "kind": "concept",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "Archive note: From 2011-03-04T00:00:00Z until 2014-09-10T00:00:00Z, with the end excluded, the Harbor Manual used Cobalt pause as the name of a concept meaning the waiting period between sterilising a sample tube and its pressure reaching a stable reading. The note does not state that the term remained current after that interval.",
+          "text": "Archive memorandum HR-17 states: \"For the interval beginning 2024-04-01T00:00:00.000Z and ending exclusively at 2024-07-01T00:00:00.000Z, Harbor Ratio meant the share of inspection hours reserved for tide-dependent work.\"",
           "subjects": [
             {
-              "id": "source-core7-concept-historical",
-              "quote": "Harbor Manual"
+              "id": "source-core8-concept-historical",
+              "quote": "Archive memorandum HR-17 states"
             }
           ]
         }
       ]
     },
     {
-      "id": "core7-concept-negative-name",
+      "id": "core8-concept-negative-name",
       "kind": "concept",
       "category": "name_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Index entry: Stone Ribbon. No definition, explanation, example, or distinction is supplied here.",
+          "text": "Reference index: Quiet Meridian.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core7-concept-negative-template",
+      "id": "core8-concept-negative-template",
       "kind": "concept",
       "category": "template_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Unused terminology worksheet: Heading [not filled]; Meaning [not filled]; Worked example [not filled]. No authored entry exists.",
+          "text": "Concept worksheet\nName: [concept name]\nDefinition: [write a definition]\nExample: [add an example]",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core7-concept-negative-hypothetical",
+      "id": "core8-concept-negative-hypothetical",
       "kind": "concept",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Planning note: If the team later coins Silent lattice for a way of describing delayed feedback, that hypothetical term could become a concept. No term has been adopted or defined.",
+          "text": "During a creativity exercise, suppose a fictional term called Ash Compass might someday describe choosing the least windy route. The facilitator confirmed that no such concept is currently defined or used.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core7-situation-positive-gate-survey",
+      "id": "core8-situation-positive-orchid-relay-check",
       "kind": "situation",
       "category": "positive",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Operational record: Gate survey is an active situation. Its objective is to check every pedestrian gate before the depot reopens. Its blocker is that the survey tablet has not arrived. The record does not assign ownership.",
+          "text": "Operations note. Orchid Relay Check is active. Its objective is to verify the backup radio link before the evening drill. The check is blocked because the replacement antenna has not arrived.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core7-situation-reported-east-duct",
+      "id": "core8-situation-reported-maple-intake-review",
       "kind": "situation",
       "category": "reported",
       "source_type": "person_statement",
       "records": [
         {
           "id": "r1",
-          "text": "Operations register: East duct review — Situation. During stand-up, Soren reported: \"Its objective is to inspect all three ventilation ducts before Wednesday. It is blocked because the calibrated thermal probe is still with the service centre.\" He is the grounded speaker; the record does not state that he owns the work.",
+          "text": "Record header: Maple Intake Review — Situation. Dispatch transcript. Dario Venn reported: \"It is underway. Its objective is to reconcile the two intake counts before publishing the weekly total, and it is blocked because the northern ledger is still missing page nine.\"",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core7-situation-historical-vial-relocation",
+      "id": "core8-situation-historical-cedar-bay-transfer",
       "kind": "situation",
       "category": "historical",
       "source_type": "document_report",
       "records": [
         {
           "id": "r1",
-          "text": "The 2020 station journal records that from 2020-08-05T00:00:00Z until 2020-08-21T00:00:00Z, with the end excluded, Vial relocation was an operational situation whose objective was to move nine sealed vials to the south cold room; throughout that interval, a flooded access stairway was the blocker. The log makes no claim about its current status.",
+          "text": "Operations bulletin CB-42 states: \"For the interval beginning 2023-10-01T00:00:00.000Z and ending exclusively at 2023-12-16T00:00:00.000Z, Cedar Bay Transfer had the objective of moving the calibration crates to Annex Two. During that interval, its loading site changed from Pier Four to Pier Six.\"",
           "subjects": [
             {
-              "id": "source-core7-situation-historical",
-              "quote": "2020 station journal"
+              "id": "source-core8-situation-historical",
+              "quote": "Operations bulletin CB-42 states"
             }
           ]
         }
       ]
     },
     {
-      "id": "core7-situation-negative-name",
+      "id": "core8-situation-negative-name",
       "kind": "situation",
       "category": "name_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Portfolio list: South Gallery Refit. The list gives no objective, commitment, blocker, change, or operational condition.",
+          "text": "Calendar label: Juniper Window.",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core7-situation-negative-template",
+      "id": "core8-situation-negative-template",
       "kind": "situation",
       "category": "template_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Empty shift-report worksheet: Episode [unset]; Aim [unset]; Obstacle [unset]; Update [unset]. These are unfilled form labels.",
+          "text": "Situation template\nTitle: [name]\nObjective: [objective]\nBlocker: [blocker]\nStatus: [status]",
           "subjects": []
         }
       ]
     },
     {
-      "id": "core7-situation-negative-hypothetical",
+      "id": "core8-situation-negative-hypothetical",
       "kind": "situation",
       "category": "hypothetical_negative",
       "source_type": "direct_record",
       "records": [
         {
           "id": "r1",
-          "text": "Discussion note: If funding arrives, Willow hall upgrade might become a project to replace the floor tiles. Nothing has been approved, started, committed, blocked, or changed.",
+          "text": "Planning exercise only: suppose a fictional operation called Copper Kite might be delayed by imaginary fog. No actual operation, objective, commitment, blocker, or change is being reported.",
           "subjects": []
         }
       ]
