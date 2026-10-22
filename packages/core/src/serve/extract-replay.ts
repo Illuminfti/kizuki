@@ -295,12 +295,13 @@ export function activeExtractReplay(db: Database, eventId: string, producer: obj
 
 /** Fence before ordinary selection can defer or pass over a revoked replay.
  * One active replay is allowed, and unrelated input is never sent in its pass. */
-export function activeExtractReplayEvent(db: Database, producer: object): string | null {
+export function activeExtractReplayEvent(db: Database, producer: object | undefined): string | null {
   if (!tableExists(db, "extract_replay_receipts")) return null;
   const rows = db.query<{ event_id: string }, []>("SELECT event_id FROM extract_oversized_records WHERE replay_operation_id IS NOT NULL LIMIT 2").all();
   if (rows.length > 1) refuse("replay_conflict");
   const eventId = rows[0]?.event_id;
   if (eventId === undefined) return null;
+  if (producer === undefined) refuse("producer_changed");
   if (activeExtractReplay(db, eventId, producer) === null) refuse("replay_conflict");
   return eventId;
 }

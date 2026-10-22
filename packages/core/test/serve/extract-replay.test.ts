@@ -114,8 +114,12 @@ test("actual built-in producer identity cannot be supplied by a port property, m
 test("ordinary empty replay uses smaller legal segments, audits them, and stops at the old end without touching the remainder", async () => {
   const f = fixture(); apply(f);
   const old = f.plan.segment.done_utf16;
-  const result = await runRail(f.db, f.vault, "sync", { hooks: { producer: f.producer, claims: { db: f.db }, model_ref: MODEL } });
+  let syncs = 0;
+  const sync = async () => { syncs++; return { events_synced: 0, events_stored: 0, events_duplicate: 0, events_self_skipped: 0, errors: [] }; };
+  const result = await runRail(f.db, f.vault, "sync", { hooks: { producer: f.producer, claims: { db: f.db }, model_ref: MODEL, sync } });
   expect(result.stopped).toBe("extract:replay_complete");
+  expect(syncs).toBe(0);
+  expect(result).toMatchObject({ events_synced: 0, events_stored: 0, events_duplicate: 0, events_self_skipped: 0 });
   expect(f.calls.length).toBeGreaterThan(1);
   expect(f.calls.join("")).toBe(f.event.text.slice(0, old));
   expect(progress(f)).toMatchObject([{ done_utf16: old, replay_operation_id: null }]);
@@ -131,6 +135,60 @@ test("ordinary empty replay uses smaller legal segments, audits them, and stops 
   const copy = openLedger(join(restored, ".kizuki/kizuki.db"));
   try { expect(copy.query("SELECT * FROM extract_segment_settlements ORDER BY start_utf16").all()).toEqual(settled); }
   finally { copy.close(); }
+  await runRail(f.db, f.vault, "sync", { hooks: { sync } });
+  expect(syncs).toBe(1);
+});
+
+test("active replay refuses missing, wrong or stale producer state before capture", async () => {
+  for (const label of ["missing", "wrong", "stale"] as const) {
+    const f = fixture(); apply(f);
+    const producer = label === "missing" ? undefined : label === "wrong" ? { ...f.producer } : f.producer;
+    if (label === "stale") {
+      revokeSourceGrant(f.db, { source_key: f.plan.source_key, expected_revision: 1, operation_id: "stale-before-capture" });
+    }
+    let syncs = 0;
+    const result = await runRail(f.db, f.vault, "sync", { hooks: {
+      ...(producer === undefined ? {} : { producer }),
+      model_ref: MODEL,
+      sync: async () => { syncs++; throw new Error(`capture ran for ${label}`); },
+    } });
+    expect(syncs).toBe(0);
+    expect(f.calls).toEqual([]);
+    expect(result.status).toBe("stopped");
+    expect(result.stopped).toBe(label === "stale" ? "extract:source_changed" : "extract:producer_changed");
+    expect(result).toMatchObject({ events_synced: 0, events_stored: 0, events_duplicate: 0, events_self_skipped: 0 });
+    expect(result.model.model_ref).not.toBeNull();
+  }
+});
+
+test("partial, rejected and stopped replay passes keep capture suppressed", async () => {
+  const partial = fixture(); apply(partial);
+  writeServeToml(partial.vault, '[extraction]\nmax_calls_per_pass=1\nmax_input_tokens=5000\n');
+  let partialSyncs = 0;
+  const partialHooks = { producer: partial.producer, claims: { db: partial.db }, model_ref: MODEL,
+    sync: async () => { partialSyncs++; throw new Error("capture ran during partial replay"); } };
+  await runRail(partial.db, partial.vault, "sync", { hooks: partialHooks });
+  expect(activeExtractReplay(partial.db, partial.event.event_id, partial.producer)).not.toBeNull();
+  await runRail(partial.db, partial.vault, "sync", { hooks: partialHooks });
+  expect(partialSyncs).toBe(0);
+
+  const rejected = fixture("rejected"); apply(rejected);
+  let rejectedSyncs = 0;
+  const rejectedResult = await runRail(rejected.db, rejected.vault, "sync", { hooks: { producer: rejected.producer,
+    claims: { db: rejected.db }, model_ref: MODEL,
+    sync: async () => { rejectedSyncs++; throw new Error("capture ran during rejected replay"); } } });
+  expect(rejectedResult.stopped).toBe("extract:replay_rejected");
+  expect(rejectedSyncs).toBe(0);
+  expect(activeExtractReplay(rejected.db, rejected.event.event_id, rejected.producer)).not.toBeNull();
+
+  const stopped = fixture(); apply(stopped);
+  let stoppedSyncs = 0;
+  const stoppedResult = await runRail(stopped.db, stopped.vault, "sync", { stopRequested: () => true, hooks: {
+    producer: stopped.producer, claims: { db: stopped.db }, model_ref: MODEL,
+    sync: async () => { stoppedSyncs++; throw new Error("capture ran during stopped replay"); } } });
+  expect(stoppedResult.stopped).toBe("serve:stop_requested");
+  expect(stoppedSyncs).toBe(0);
+  expect(stopped.calls).toEqual([]);
 });
 
 test("nonempty replay goes through ordinary claims and canon writer and stops at the same old end", async () => {
