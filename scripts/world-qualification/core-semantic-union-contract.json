@@ -1086,6 +1086,7 @@
       "branches": [
         {
           "id": "complete-source-meaning",
+          "scope": "world-union/v1",
           "local_alias_nomination": {
             "alias": {
               "mode": "source_occurrence",

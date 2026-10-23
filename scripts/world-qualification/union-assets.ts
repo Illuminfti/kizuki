@@ -44,8 +44,9 @@ export function validateUnionContract(corpus: CoreSemanticAssetSet["corpus"], co
       canonicalJson(contract.cases.map(c => c.case_id)) !== canonicalJson(corpus.cases.map(c => c.id)) ||
       canonicalJson(contract.legacy_extra_policy) !== canonicalJson(originalContract.legacy_extra_policy) || new Set(corpus.cases.map(c => c.id)).size !== 22) throw Error("invalid fixed union assets");
   const covered = new Set<string>();
-  for (const item of corpus.cases.slice(17)) {
-    if (item.kind !== "mixed" || item.records.length < 1 || item.records.length > 8 || new Set(item.records.map(r => r.id)).size !== item.records.length) throw Error("invalid union case");
+  for (const item of [...corpus.cases.slice(17), corpus.cases.find(c => c.id === "offered-concept-cutting-relations")!]) {
+    const inheritedAlias = item.id === "offered-concept-cutting-relations";
+    if ((!inheritedAlias && item.kind !== "mixed") || item.records.length < 1 || item.records.length > 8 || new Set(item.records.map(r => r.id)).size !== item.records.length) throw Error("invalid union case");
     for (const record of item.records) {
       if (!record.id || !record.text || record.text.length > 8_000 || record.subjects.length !== 0 || !Array.isArray(record.structured_subjects) || record.structured_subjects.length > 8 ||
           new Set(record.structured_subjects.map(s => s.subject_id)).size !== record.structured_subjects.length) throw Error("invalid union record");

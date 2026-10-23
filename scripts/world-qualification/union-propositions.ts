@@ -112,12 +112,15 @@ export function validateScopedBranch(item: CoreSemanticCase, branch: ScopedExtra
   if (nomination !== undefined) {
     if (!exact(nomination, ["alias", "canonical"])) throw Error("invalid local alias nomination");
     selector(nomination.alias); selector(nomination.canonical);
-    const sameAs = branch.propositions.some(p => p.predicate === "concept.same_as" && p.object.kind === "subject" &&
+    const isConcept = (subject: EntitySelector) => branch.propositions.some(p => selectorKey(p.subject) === selectorKey(subject) && p.predicate === "world.kind" &&
+      p.object.kind === "vocabulary" && p.object.value === "world/concept");
+    const sameAs = branch.propositions.some(p => p.predicate === "concept.same_as" && p.object.kind === "subject" && p.polarity === "positive" &&
+      p.perspective.mode === "asserted" && p.perspective.interpretation === "explicit" &&
       ((selectorKey(p.subject) === selectorKey(nomination.alias) && selectorKey(p.object.entity) === selectorKey(nomination.canonical)) ||
        (selectorKey(p.subject) === selectorKey(nomination.canonical) && selectorKey(p.object.entity) === selectorKey(nomination.alias))));
     if (nomination.alias.mode !== "source_occurrence" || nomination.canonical.mode !== "source_occurrence" ||
         nomination.alias.record !== nomination.canonical.record || selectorKey(nomination.alias) === selectorKey(nomination.canonical) ||
-        !sameAs) throw Error("invalid local alias nomination");
+        !isConcept(nomination.alias) || !isConcept(nomination.canonical) || !sameAs) throw Error("invalid local alias nomination");
   }
   for (const subject of subjects.values()) {
     const props = branch.propositions.filter(p => selectorKey(p.subject) === selectorKey(subject));
