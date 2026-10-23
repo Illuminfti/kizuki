@@ -58,6 +58,7 @@ export interface GeneralPropositionRule {
   rule_id: string; subject: EntitySelector; predicate: string;
   object: { kind: "literal"; required_atoms: string[] } | { kind: "subject"; entity: EntitySelector } | { kind: "vocabulary"; value: string };
   witness: string; perspective: { holder: null; speaker: null; addressee: null; mode: "asserted"; interpretation: "explicit" };
+  witness_mode?: "selected_entity_label/v1";
   polarity: "positive"; time: { valid_from: null; valid_to: null; temporal_basis: "unknown" };
   context: EntitySelector[]; required_relation_atoms?: string[]; symmetric?: true;
 }
@@ -334,7 +335,7 @@ function validateGeneralBranch(item: CoreSemanticCase, branch: GeneralExtractBra
   const direct = { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit" };
   const unknown = { valid_from: null, valid_to: null, temporal_basis: "unknown" };
   for (const prop of branch.propositions) {
-    if (!exact(prop, ["rule_id", "subject", "predicate", "object", "witness", "perspective", "polarity", "time", "context"], ["required_relation_atoms", "symmetric"]) ||
+    if (!exact(prop, ["rule_id", "subject", "predicate", "object", "witness", "perspective", "polarity", "time", "context"], ["required_relation_atoms", "symmetric", "witness_mode"]) ||
         !/^[a-z][a-z0-9-]{0,63}$/.test(prop.rule_id) || !text(prop.predicate) || !text(prop.witness) ||
         canonicalJson(prop.perspective) !== canonicalJson(direct) || prop.polarity !== "positive" || canonicalJson(prop.time) !== canonicalJson(unknown) ||
         !Array.isArray(prop.context) || prop.context.length > 4 || new Set(prop.context.map(canonicalJson)).size !== prop.context.length ||
@@ -342,6 +343,13 @@ function validateGeneralBranch(item: CoreSemanticCase, branch: GeneralExtractBra
     selector(prop.subject); prop.context.forEach(selector);
     const record = item.records.find(record => record.id === prop.subject.record)!;
     span(record, prop.witness);
+    if (prop.witness_mode !== undefined) {
+      const classification = branch.propositions.find(candidate => candidate.predicate === "world.kind" && canonicalJson(candidate.subject) === canonicalJson(prop.subject));
+      const kind = classification?.object.kind === "vocabulary" ? classification.object.value : "";
+      if (prop.witness_mode !== "selected_entity_label/v1" || prop.subject.mode !== "source_occurrence" ||
+          !["world/concept", "world/situation"].includes(kind) || prop.predicate !== `${kind.slice(6)}.label` ||
+          prop.object.kind !== "literal" || !prop.witness.includes(prop.subject.label)) throw new Error("invalid selected entity label witness");
+    }
     if (prop.object.kind === "subject") { if (!exact(prop.object, ["kind", "entity"]) || !atoms(prop.required_relation_atoms)) throw new Error("invalid relation atoms"); selector(prop.object.entity); }
     else if (prop.object.kind === "literal") { if (!exact(prop.object, ["kind", "required_atoms"]) || !atoms(prop.object.required_atoms)) throw new Error("invalid literal atoms"); }
     else if (prop.object.kind !== "vocabulary" || !exact(prop.object, ["kind", "value"]) || !text(prop.object.value)) throw new Error("invalid vocabulary object");
@@ -401,12 +409,19 @@ function matchGeneralPropositions(item: CoreSemanticCase, branch: Omit<GeneralEx
     if (prop.object.kind === "literal") {
       if (claim.object.kind !== "literal" || (prop.predicate.endsWith(".label") && prop.subject.mode === "source_occurrence" && claim.object.value !== prop.subject.label)) errors.push(`${prop.rule_id}:literal`);
     } else if (prop.object.kind === "vocabulary" && (claim.object.kind !== "vocabulary" || claim.object.ref.id !== prop.object.value)) errors.push(`${prop.rule_id}:vocabulary`);
-    const index = item.records.findIndex(record => record.id === prop.subject.record), expected = span(item.records[index]!, prop.witness);
-    let end = expected.start_utf16;
-    for (const anchor of claim.anchors.filter(anchor => anchor.event_id === input.events[index]!.event_id).sort((a,b) => a.start_utf16 - b.start_utf16)) {
-      if (anchor.start_utf16 > end) break; end = Math.max(end, anchor.end_utf16);
+    if (prop.witness_mode === "selected_entity_label/v1") {
+      // The binding above already selects one exact allowed occurrence. Another
+      // occurrence of the same spelling cannot witness this bound label claim.
+      const mention = response.mentions.find(mention => `mention:${mention.id}` === key(prop.subject));
+      if (!mention || !claim.anchors.some(anchor => canonicalJson(anchor) === canonicalJson(mention.anchor))) errors.push(`${prop.rule_id}:witness`);
+    } else {
+      const index = item.records.findIndex(record => record.id === prop.subject.record), expected = span(item.records[index]!, prop.witness);
+      let end = expected.start_utf16;
+      for (const anchor of claim.anchors.filter(anchor => anchor.event_id === input.events[index]!.event_id).sort((a,b) => a.start_utf16 - b.start_utf16)) {
+        if (anchor.start_utf16 > end) break; end = Math.max(end, anchor.end_utf16);
+      }
+      if (end < expected.end_utf16) errors.push(`${prop.rule_id}:witness`);
     }
-    if (end < expected.end_utf16) errors.push(`${prop.rule_id}:witness`);
     matches.push({ rule_id: prop.rule_id, predicate: prop.predicate, claim_id: claim.id, claim_sha256: sha256(canonicalJson(claim)) });
   }
   if (typed.some(claim => !predicates.has(claim.predicate) || !used.has(claim.id)) || used.size !== typed.length) errors.push("uncontracted_typed_claim");

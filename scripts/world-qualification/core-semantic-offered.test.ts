@@ -67,6 +67,44 @@ test("closed proposition rules deny wrong endpoints, direction, contexts, vocabu
   expect(score(0, r => { r.claims.push({ ...structuredClone(r.claims.find(c => c.predicate === "concept.requires")!), id: "extra", predicate: "concept.same_as" }); }).automated_passed).toBe(false);
   expect(score(0, r => { r.mentions.push({ ...structuredClone(r.mentions[0]!), id: "other-occurrence", anchor: { ...r.mentions[0]!.anchor, start_utf16: 176, end_utf16: 188 } }); }).automated_passed).toBe(false);
 });
+function labelOccurrences(response: Mutable<ExtractResponseV2>) {
+  for (const claim of response.claims.filter(claim => claim.predicate.endsWith(".label"))) {
+    if (claim.subject.kind !== "mention") throw Error("local label expected");
+    claim.anchors = [structuredClone(response.mentions.find(mention => mention.id === claim.subject.id)!.anchor)];
+  }
+}
+test("authored label witnesses accept only the same selected entity occurrence, including repeated names", () => {
+  for (let index = 0; index < 4; index++) expect(score(index, labelOccurrences).automated_passed).toBe(true);
+  const f = fixture(0), response = f.observed.response! as Mutable<ExtractResponseV2>;
+  const mention = response.mentions[0]!, previous = structuredClone(mention.anchor);
+  mention.anchor = { ...mention.anchor, ...f.branch.entities[0]!.allowed_occurrence_spans[1]! };
+  for (const claim of response.claims) claim.anchors = claim.anchors.map(anchor => canonicalJson(anchor) === canonicalJson(previous) ? structuredClone(mention.anchor) : anchor);
+  labelOccurrences(response);
+  expect(scoreCoreSemanticRepresentations(f.item, f.rule, f.observed, registry, policy).automated_passed).toBe(true);
+  response.claims.find(claim => claim.predicate === "concept.label")!.anchors = [previous];
+  expect(scoreCoreSemanticRepresentations(f.item, f.rule, f.observed, registry, policy).gates.structure).toContain("p2:witness");
+});
+test("label witnesses deny another entity anchor or name and retain full nonlabel evidence", () => {
+  expect(score(0, response => { labelOccurrences(response); response.claims.find(claim => claim.predicate === "concept.label")!.anchors = [response.mentions[1]!.anchor]; }).automated_passed).toBe(false);
+  expect(score(0, response => { labelOccurrences(response); response.claims.find(claim => claim.predicate === "concept.label")!.object = { kind: "literal", value: response.mentions[1]!.label }; }).automated_passed).toBe(false);
+  expect(score(0, response => { labelOccurrences(response); response.claims.find(claim => claim.predicate === "concept.definition")!.anchors = [response.mentions[0]!.anchor]; }).gates.structure).toContain("p3:witness");
+  expect(score(0, response => { labelOccurrences(response); response.claims.find(claim => claim.predicate === "concept.requires")!.anchors = response.mentions.map(mention => mention.anchor); }).gates.structure).toContain("p7:witness");
+  expect(score(0, response => { labelOccurrences(response); const claim = response.claims.find(claim => claim.predicate === "concept.definition")!;
+    claim.anchors = claim.anchors.map(anchor => anchor.end_utf16 === 95 ? { ...anchor, end_utf16: 94 } : anchor); }).gates.structure).toContain("p3:witness");
+});
+test("label witness mode is explicit and cannot be assigned to other propositions", () => {
+  const f = fixture(0), rule = structuredClone(f.rule);
+  const branch = coreSemanticBranches(rule)[0] as GeneralExtractBranch;
+  for (const prop of branch.propositions) delete prop.witness_mode;
+  labelOccurrences(f.observed.response! as Mutable<ExtractResponseV2>);
+  expect(scoreCoreSemanticRepresentations(f.item, rule, f.observed, registry, policy).gates.structure).toEqual(["p2:witness", "p5:witness"]);
+  for (const predicate of ["world.kind", "concept.definition", "concept.requires"]) {
+    const assets = structuredClone(coreSemanticAssets("offered17")), changed = assets.contract.cases[13]!;
+    if (changed.expectation !== "extract") throw Error("positive expected");
+    (coreSemanticBranches(changed)[0] as GeneralExtractBranch).propositions.find(prop => prop.predicate === predicate)!.witness_mode = "selected_entity_label/v1";
+    expect(() => validateCoreSemanticContract(assets.corpus, assets.contract)).toThrow("invalid selected entity label witness");
+  }
+});
 test("only the two authored symmetric relations allow reversed endpoint orientation", () => {
   expect(score(1, r => { for (const c of r.claims.filter(c => ["concept.same_as", "concept.distinguished_from"].includes(c.predicate))) if (c.object.kind === "subject") [c.subject, c.object.ref] = [c.object.ref, c.subject]; }).automated_passed).toBe(true);
 });

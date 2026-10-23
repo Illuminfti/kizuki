@@ -8,12 +8,13 @@
       "bytes": 10789
     },
     "core-semantic-offered-contract.json": {
-      "sha256": "59ed8a9b2097ab730384e15429f7e7aac782f7f88002c5c4a4af092112465bcc",
-      "bytes": 80803
+      "sha256": "f504286d8e3fa2a55a3d22737b1d452ad09cf075d0b2198196dd91a3f74d73f8",
+      "bytes": 81209
     },
     "core-semantic-offered.md": {
-      "sha256": "054dd46f3a73d59c8503f4351dc540967c8d67ec9d367368793576d12a2a05fd",
-      "bytes": 3792
+      "sha256": "8e066e63d03f778de013b0b1cfacaaaa41e3367c649fe8f2bfdaf1e17da58aac",
+      "bytes": 4753
     }
-  }
+  },
+  "revision": "selected-entity-label-witness/v1"
 }

@@ -853,7 +853,8 @@
                 "temporal_basis": "unknown"
               },
               "context": [],
-              "rule_id": "p2"
+              "rule_id": "p2",
+              "witness_mode": "selected_entity_label/v1"
             },
             {
               "subject": {
@@ -941,7 +942,8 @@
                 "temporal_basis": "unknown"
               },
               "context": [],
-              "rule_id": "p5"
+              "rule_id": "p5",
+              "witness_mode": "selected_entity_label/v1"
             },
             {
               "subject": {
@@ -1192,7 +1194,8 @@
                 "temporal_basis": "unknown"
               },
               "context": [],
-              "rule_id": "p2"
+              "rule_id": "p2",
+              "witness_mode": "selected_entity_label/v1"
             },
             {
               "subject": {
@@ -1280,7 +1283,8 @@
                 "temporal_basis": "unknown"
               },
               "context": [],
-              "rule_id": "p5"
+              "rule_id": "p5",
+              "witness_mode": "selected_entity_label/v1"
             },
             {
               "subject": {
@@ -1368,7 +1372,8 @@
                 "temporal_basis": "unknown"
               },
               "context": [],
-              "rule_id": "p8"
+              "rule_id": "p8",
+              "witness_mode": "selected_entity_label/v1"
             },
             {
               "subject": {
@@ -1557,7 +1562,8 @@
                 "temporal_basis": "unknown"
               },
               "context": [],
-              "rule_id": "p2"
+              "rule_id": "p2",
+              "witness_mode": "selected_entity_label/v1"
             },
             {
               "subject": {
@@ -1769,7 +1775,8 @@
                 "temporal_basis": "unknown"
               },
               "context": [],
-              "rule_id": "p2"
+              "rule_id": "p2",
+              "witness_mode": "selected_entity_label/v1"
             },
             {
               "subject": {

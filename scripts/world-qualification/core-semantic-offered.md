@@ -35,8 +35,21 @@ Rules preserve subject, predicate, object kind, exact referenced endpoint or
 vocabulary, context, positive polarity, asserted/explicit perspective and unknown
 valid time. The prerequisite relation is directional. Only the two authored
 symmetric Concept relations permit their two endpoint orientations. Each claim's
-anchors jointly cover its authored source witness. Literal values remain source
-text and are not compared with a paraphrase whitelist.
+anchors jointly cover its authored source witness unless its rule explicitly
+uses `witness_mode: selected_entity_label/v1`. That mode is valid only for the
+designated literal label of a source-local Concept or Situation. Its exact name
+and reference must match the same uniquely selected entity occurrence, and its
+anchors must contain that exact selected occurrence anchor. A different entity,
+record or occurrence of the same spelling cannot substitute. The full authored
+witness remains the independently reviewed source justification for naming; no
+unique-text search for a repeated label is used. Classification, definition,
+relation and all other witnesses keep complete source coverage. Literal values
+remain source text and are not compared with a paraphrase whitelist.
+
+This prospective witness revision follows the preserved failed 14-call campaign
+on b733. That campaign is not rescored or approved. Corpus/model inputs, all first
+13 case objects and default assets remain unchanged; a newly frozen method and
+contract require independent review and a fresh complete 17-case campaign.
 
 ## Independent review
 
