@@ -48,6 +48,9 @@ if (mode === "close-watch-worker") {
   try {
     await until("LISTEN\n"); socket = api.connect(control, "broker.sock"); api.stat(socket, control, bytes);
     await until("READY\n");
+    // READY is published before the C loop commits its established state.
+    // A second answered RPC proves that transition before TERM can be relayed.
+    api.stat(socket, control, bytes);
     console.log(JSON.stringify({ main_pid: process.pid, broker_pid: broker.pid }));
     await stopRequested;
     const started = performance.now(); await Bun.sleep(700); // A held synthetic rail outlives the broker poll interval.

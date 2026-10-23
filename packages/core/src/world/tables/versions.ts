@@ -16,6 +16,7 @@ export const CLAIM_HISTORY_MIGRATION_VERSION = 40;
 export const CANON_CLAIM_RETRY_MIGRATION_VERSION = 46;
 export const OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION = 47;
 export const EXTRACT_REPLAY_SCHEMA_VERSION = 48;
+export const SOURCE_BACKFILL_SCHEMA_VERSION = 49;
 
 /** Non-world ledger migrations keep their numbers as later packets land. */
 export const LEDGER_MIGRATION_VERSIONS = {
@@ -25,6 +26,7 @@ export const LEDGER_MIGRATION_VERSIONS = {
   canonClaimRetries: CANON_CLAIM_RETRY_MIGRATION_VERSION,
   observationHistoryErasure: OBSERVATION_HISTORY_ERASURE_MIGRATION_VERSION,
   extractReplay: EXTRACT_REPLAY_SCHEMA_VERSION,
+  sourceBackfill: SOURCE_BACKFILL_SCHEMA_VERSION,
 } as const;
 
 /** The fixed ledger version before the first world table slot. */

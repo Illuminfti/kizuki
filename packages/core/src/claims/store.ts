@@ -58,7 +58,7 @@ import {
   type DedupMode,
 } from "./dedup";
 import { ClaimError } from "./errors";
-import { readClaimV2Semantic, commitClaimV2 } from "./claim-v2-commit";
+import { readClaimV2Semantic, commitClaimV2, validateClaimV2Commit } from "./claim-v2-commit";
 import { semanticKey } from "./claim-v2-keys";
 import { claimKey, hashBody, normalizeObject, objectsMatch } from "./hash";
 import { isRegisteredPredicate } from "./predicates";
@@ -1499,6 +1499,8 @@ export function markClaimsAfterPurge(
 export interface PreparedClaimInsert {
   readonly db: Database;
   readonly signature: string;
+  /** Revalidate without attaching support or renewing an existing semantic identity. */
+  validate(): void;
   apply(): InsertClaimResult;
 }
 
@@ -1563,6 +1565,18 @@ export async function prepareClaimInsert(
   return {
     db: io.db,
     signature: historicalClaimReplaySignature(input),
+    validate() {
+      if (!io.db.inTransaction) throw new Error("prepared claim requires a transaction");
+      assertPositiveAuthorityMutationAllowed(io.db);
+      if (!historical) requireSourceEvents(io.db, input.provenance, scope);
+      resolveProvenance(io.db, input.provenance);
+      requireIncomingClaimOrigin(io, input);
+      const world = preparedWorldCommit(io.db, input, scope, nowOf(io));
+      if (world !== null) {
+        const accepted = acceptedWorldValues(input, loadEventFacts(io.db, input.provenance));
+        validateClaimV2Commit(io.db, "validation-only", accepted, { ...world, accepted_world: accepted });
+      }
+    },
     apply() {
       if (!io.db.inTransaction) throw new Error("prepared claim requires a transaction");
       io.beforeCommit?.();

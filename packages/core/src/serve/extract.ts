@@ -508,7 +508,7 @@ function saveBatch(db: Database, batch: DurableExtractBatch, legacyManifest = fa
   );
 }
 
-function journalWorldDrafts(
+export function journalWorldDrafts(
   db: Database,
   mined: MineResult,
   events: readonly CaptureEvent[],

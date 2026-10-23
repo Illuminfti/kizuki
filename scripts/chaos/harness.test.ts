@@ -102,12 +102,19 @@ for (const damage of ["doctrine", "control", "quarantine", "stage", "bounded-sta
 }
 
 for (const operation of OPERATIONS) {
+  if (operation === "backup") continue;
   test(`seeded SIGKILL recovers ${operation}`, async () => {
     const report = await runCampaign({ seed: 17 + OPERATIONS.indexOf(operation), trials: 1, maxDelayMs: 4, operations: [operation] });
     expect(report.trials[0]).toMatchObject({ killed: true, failure: null });
     expect(report.ok).toBe(true);
   }, 120_000);
 }
+
+test("SIGKILL after the real snapshot ledger copy recovers backup", async () => {
+  const report = await runCampaign({ seed: 28, trials: 1, operations: ["backup"], cut: "snapshot-ledger" });
+  expect(report.trials[0]).toMatchObject({ killed: true, completed_before_kill: false, failure: null, partial_artifacts: 1, acknowledgments: 0 });
+  expect(report.ok).toBe(true);
+}, 120_000);
 
 test("a seed reproduces kill delays; invalid budgets refuse before creating vaults", async () => {
   const first = random(0), second = random(0);
@@ -116,6 +123,7 @@ test("a seed reproduces kill delays; invalid budgets refuse before creating vaul
   await expect(runCampaign({ seed: 1, trials: 0 })).rejects.toThrow("trials_must_be_1_to_10000");
   await expect(runCampaign({ seed: 1, trials: 1, maxDelayMs: 1001 })).rejects.toThrow("delay_must_be_0_to_1000");
   await expect(runCampaign({ seed: 1, trials: 1, operations: ["purge"], cut: "acknowledged" })).rejects.toThrow("acknowledged_cut_requires_repeated_writes");
+  await expect(runCampaign({ seed: 1, trials: 1, operations: ["export"], cut: "snapshot-ledger" })).rejects.toThrow("snapshot_cut_requires_backup");
 });
 
 test("the oracle refuses unrelated file changes and projection loss before rebuilding", async () => {

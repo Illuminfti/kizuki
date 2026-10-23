@@ -110,7 +110,24 @@ async function operate(): Promise<void> {
         await runPurge(db, vault, { connector_id: "chaos.target" }, "retire synthetic evidence", port === undefined ? {} : { retrieval: port });
         break;
       case "export": exportVault(db, vault, join(root, "output")); await acknowledge({ kind: "artifact", target: "output" }); break;
-      case "backup": await backupVault(db, vault, join(root, "output")); await acknowledge({ kind: "artifact", target: "output" }); break;
+      case "backup": {
+        if (cut === "snapshot-ledger") {
+          const exec = db.exec.bind(db);
+          db.exec = sql => {
+            const result = exec(sql);
+            if (sql.startsWith("VACUUM INTO '")) {
+              const path = sql.slice("VACUUM INTO '".length, -1).replaceAll("''", "'");
+              if (!sql.endsWith("'") || !path.startsWith(join(root, "output.kizuki-snapshot-")) || !path.endsWith(".partial/ledger.db"))
+                throw new Error("unexpected_snapshot_statement");
+              // The real copy exists inside backup's held writer, before publication.
+              writeFileSync(join(root, "checkpoint"), "snapshot-ledger\n", { mode: 0o600 });
+              process.kill(process.pid, "SIGSTOP");
+            }
+            return result;
+          };
+        }
+        await backupVault(db, vault, join(root, "output")); await acknowledge({ kind: "artifact", target: "output" }); break;
+      }
       case "restore": restoreVault(join(root, "artifact"), join(root, "restored")); await acknowledge({ kind: "artifact", target: "restored" }); break;
       case "restore-snapshot": restoreSnapshot(join(root, "artifact"), join(root, "restored")); await acknowledge({ kind: "artifact", target: "restored" }); break;
       case "rebuild": await rebuildRetrieval(db, vault); break;

@@ -54,6 +54,109 @@ function semantic(f: ReturnType<typeof fixture>, claim = f.claim(), context = f.
   return prepared.drafts[0]!.semantic;
 }
 
+// Public synthetic report: the issue date is metadata, not an action-validity interval.
+function maintenanceOutline() {
+  const holder = "Maintenance circular MC-87", situation = "Cedar Basin Hold";
+  const heading = "Reconcile sensor tags";
+  const action = "Reconcile all 26 unlinked sensor tags with their intake rows so the missing calibration checks can proceed.";
+  const role = "MC-87 suggests this action:";
+  const sent = `${holder}\nIssued: 2033-04-18 (publication date only).\n${situation} — Situation\nTask outline: ${heading}.\n${role} ${action}`;
+  const text = `${sent}\nUnsent later note: The action was cancelled on 2034-07-09.`;
+  const holderAnchor = span(text, holder), situationAnchor = span(text, situation);
+  const roleAnchor = span(text, role), fact = span(text, action);
+  const window: SentEvidenceWindow = { event_id: eventId, start_utf16: 0, end_utf16: sent.length, text: sent };
+  const input: ProduceInputV2 = { events: [{ event_id: eventId, text }], supplied_refs: [], vocabulary_refs: [],
+    predicates: [{ id: "situation.objective", object_kinds: ["literal"] }],
+    budget: { max_calls: 1, max_input_tokens: 1000, max_output_tokens: 1000 } };
+  const context: WorldDraftContext = { events: [{ ...identity, source_key: sourceKey, text, subjects: [] }],
+    supplied_refs: new Map(), sent_evidence_windows: [window], model_ref: "fixture-model" };
+  const claim: RichClaimDraft = { id: "maintenance-action", subject: { kind: "mention", id: "situation" },
+    predicate: "situation.objective", object: { kind: "literal", value: action },
+    perspective: { holder: { kind: "mention", id: "document" }, speaker: null, addressee: null,
+      mode: "suggested", interpretation: "explicit", anchors: [holderAnchor, roleAnchor] },
+    context: [], polarity: "positive", body: `MC-87 suggests: ${action}`, valid_from: null, valid_to: null,
+    temporal_basis: "unknown", confidence: 0.8, sensitivity: "public", anchors: [situationAnchor, fact] };
+  const response = (value = claim): ExtractResponseV2 => ({ schema: EXTRACT_RESPONSE_V2_SCHEMA,
+    mentions: [{ id: "document", label: holder, anchor: holderAnchor, candidate_refs: [] },
+      { id: "situation", label: situation, anchor: situationAnchor, candidate_refs: [] }], claims: [value] });
+  const prepare = (value = claim, ctx = context) => prepareWorldDrafts(response(value), input, ctx);
+  return { action, heading, text, sent, fact, window, input, context, claim, response, prepare };
+}
+
+describe("suggested maintenance outline evidence", () => {
+  test("the complete count and purpose remain in the literal while exact sent context exposes only the publication date", () => {
+    const f = maintenanceOutline(), { budget: _budget, ...parseInput } = f.input;
+    const parsed = parseExtractResponseV2(JSON.stringify(f.response()), { ...parseInput, events: [{ event_id: eventId, text: f.sent }] });
+    if (!parsed.ok) throw new Error(parsed.detail);
+    expect(parsed.dropped).toEqual([]);
+    const prepared = prepareWorldDrafts(parsed.response, f.input, f.context);
+    expect(prepared.dropped).toEqual([]);
+    const draft = prepared.drafts[0]!;
+    expect(draft.semantic).toMatchObject({ object: { kind: "literal", value: f.action },
+      perspective: { mode: "suggested", interpretation: "explicit", speaker: null, addressee: null },
+      valid_from: null, valid_to: null, temporal_basis: "unknown" });
+    expect(draft.semantic.perspective.holder).not.toBeNull();
+    expect(draft.semantic.perspective.anchors).toEqual([...f.claim.perspective.anchors,
+      { event_id: eventId, start_utf16: 0, end_utf16: f.sent.length }]);
+    expect(draft.semantic.anchors).toEqual(f.claim.anchors);
+    expect(draft.body).toBe(f.claim.body);
+    const withoutContext = f.prepare(f.claim, { ...f.context, sent_evidence_windows: [] }).drafts[0]!.semantic;
+    expect(semanticKey(draft.semantic)).toBe(semanticKey(withoutContext));
+    const retained = draft.semantic.perspective.anchors.map(a => f.text.slice(a.start_utf16, a.end_utf16)).join("\n");
+    expect(retained).toContain("Issued: 2033-04-18");
+    expect(retained).not.toContain("2034-07-09");
+  });
+
+  test("context does not complete a heading-only object or rescue a non-grounded detail", () => {
+    const f = maintenanceOutline();
+    // Heading-only can satisfy literal grounding; this is a limitation, not a semantic pass.
+    const heading = { ...f.claim, object: { kind: "literal" as const, value: f.heading },
+      anchors: [f.claim.anchors[0]!, span(f.text, f.heading)], body: f.heading };
+    const prepared = f.prepare(heading).drafts[0]!;
+    expect(prepared.semantic.object).toEqual(heading.object);
+    expect(prepared.semantic.perspective.anchors).toContainEqual({ event_id: eventId, start_utf16: 0, end_utf16: f.sent.length });
+    const invented = { ...f.claim, object: { kind: "literal" as const, value: "Reconcile all 99 sensor tags" } };
+    const downgraded = f.prepare(invented).drafts[0]!.semantic;
+    expect(downgraded.object).toEqual(invented.object);
+    expect(downgraded.perspective).toMatchObject({ mode: "uncertain", interpretation: "inferred" });
+    expect(downgraded.perspective.anchors).toEqual(f.claim.perspective.anchors);
+  });
+
+  test("forged, duplicate, out-of-bounds and role-excluding windows cannot enlarge suggested evidence", () => {
+    const f = maintenanceOutline();
+    for (const windows of [
+      [{ ...f.window, text: f.sent + " forged date" }], [f.window, f.window],
+      [{ ...f.window, end_utf16: f.text.length + 1 }],
+      [{ event_id: eventId, start_utf16: f.fact.start_utf16, end_utf16: f.fact.end_utf16, text: f.action }],
+    ]) {
+      const prepared = f.prepare(f.claim, { ...f.context, sent_evidence_windows: windows });
+      expect(prepared.dropped).toEqual([]);
+      expect(prepared.drafts[0]!.semantic.perspective.anchors).toEqual(f.claim.perspective.anchors);
+    }
+  });
+
+  test("suggested speaker-only, unattributed and role-anchor-free claims do not gain context", () => {
+    const f = maintenanceOutline();
+    for (const perspective of [
+      { ...f.claim.perspective, holder: null, speaker: f.claim.perspective.holder },
+      { ...f.claim.perspective, holder: null, anchors: [] },
+    ]) {
+      expect(f.prepare({ ...f.claim, perspective }).drafts[0]!.semantic.perspective.anchors).toEqual(perspective.anchors);
+    }
+    expect(() => f.prepare({ ...f.claim, perspective: { ...f.claim.perspective, anchors: [] } }))
+      .toThrow("mention is unsupported by claim evidence");
+  });
+
+  test("suggested context exceeding the existing per-item anchor cap drops the claim", () => {
+    const f = maintenanceOutline();
+    const anchors = [...f.claim.perspective.anchors, ...Array.from({ length: 6 }, (_, i): TextAnchor =>
+      ({ event_id: eventId, start_utf16: 1 + i, end_utf16: 2 + i }))];
+    expect(f.prepare({ ...f.claim, perspective: { ...f.claim.perspective, anchors } })).toEqual({
+      drafts: [], dropped: [{ reason: "invalid_claim", id: f.claim.id }],
+    });
+  });
+});
+
 describe("host sent evidence context", () => {
   test("reported and quoted literals retain exact role evidence and gain only their actual sent window", () => {
     for (const mode of ["reported", "quoted"] as const) {

@@ -20,7 +20,7 @@ export const RUNNER_FILES = [
   "packages/core/src/util/hash.ts", "packages/core/src/util/validate.ts",
   "packages/core/src/world/tables/versions.ts", "packages/core/src/serve/extract-replay-schema.ts",
   "packages/core/src/ledger/db.ts", "packages/core/src/world/registry-check.ts", "packages/core/src/world/framework-cycles.ts",
-  "packages/core/src/claims/occurrences.ts", "packages/core/src/contracts/claim-v2.ts", "packages/core/src/contracts/world-admission.ts",
+  "packages/core/src/claims/occurrences.ts", "packages/core/src/claims/store.ts", "packages/core/src/claims/claim-v2-commit.ts", "packages/core/src/contracts/claim-v2.ts", "packages/core/src/contracts/world-admission.ts",
   "packages/core/src/serve/extract-replay.ts", "packages/core/src/export.ts", "packages/core/src/serve/receipts.ts",
   "packages/core/src/serve/types.ts", "packages/core/src/serve/config.ts", "packages/core/src/serve/budget-ledger.ts",
   "packages/core/src/serve/write-pass.ts", "packages/core/src/serve/world-grounding.ts", "packages/core/src/serve/consolidate.ts",

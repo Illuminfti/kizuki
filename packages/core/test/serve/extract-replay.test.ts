@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { join } from "node:path";
 import { exportVault, restoreVault } from "../../src/export";
-import { openLedger } from "../../src/ledger/db";
+import { LEDGER_SCHEMA_VERSION, openLedger } from "../../src/ledger/db";
 import { purgeEvents } from "../../src/ledger/purge";
 import { bindSourceModelPort, revokeSourceGrant, setSourceGrant, sourcePolicyEpoch } from "../../src/ledger/source-grants";
 import { accept } from "../../src/ledger/ledger";
@@ -210,6 +210,27 @@ test("partial, rejected and stopped replay passes keep capture suppressed", asyn
   expect(stopped.calls).toEqual([]);
 });
 
+test("a replay that spends all eight calls remains partial until its exact historical cap settles", async () => {
+  const f = fixture(); apply(f);
+  // A deliberately smaller request budget still needs more than this pass's
+  // eight calls. Completion must describe settled progress, never the call cap.
+  writeServeToml(f.vault, '[extraction]\nmax_calls_per_pass=8\nmax_input_tokens=5000\n');
+  const hooks = { producer: f.producer, claims: { db: f.db }, model_ref: MODEL };
+  const partial = await runRail(f.db, f.vault, "sync", { hooks });
+  const done = Number(progress(f)[0]!.done_utf16);
+  expect(partial.stopped).toBeNull();
+  expect(partial.model.calls).toBe(8);
+  expect(done).toBeGreaterThan(0);
+  expect(done).toBeLessThan(f.plan.segment.done_utf16);
+  expect(f.calls.join("")).toBe(f.event.text.slice(0, done));
+  expect(activeExtractReplay(f.db, f.event.event_id, f.producer)).not.toBeNull();
+  expect(readExtractCursor(f.db)).toBe(f.plan.expected_cursor);
+  const completed = await runRail(f.db, f.vault, "sync", { hooks });
+  expect(completed.stopped).toBe("extract:replay_complete");
+  expect(f.calls.join("")).toBe(f.event.text.slice(0, f.plan.segment.done_utf16));
+  expect(progress(f)).toMatchObject([{ done_utf16: f.plan.segment.done_utf16, replay_operation_id: null }]);
+});
+
 test("nonempty replay goes through ordinary claims and canon writer and stops at the same old end", async () => {
   const f = fixture("nonempty"); apply(f);
   const result = await runRail(f.db, f.vault, "sync", { hooks: { producer: f.producer, claims: { db: f.db }, model_ref: MODEL } });
@@ -388,7 +409,7 @@ test("schema47 upgrade preserves source/checkpoints and source purge cascades re
   f.db.exec("DROP TRIGGER extract_replay_source_erased; ALTER TABLE extract_oversized_records DROP COLUMN replay_operation_id; DROP TABLE extract_segment_settlements; DROP TABLE extract_replay_receipts; UPDATE schema_version SET version=47");
   const upgraded = openLedger(f.ledger);
   try {
-    expect(upgraded.query("SELECT version FROM schema_version").get()).toEqual({ version: 48 });
+    expect(upgraded.query("SELECT version FROM schema_version").get()).toEqual({ version: LEDGER_SCHEMA_VERSION });
     expect(stable(f)).toEqual(before);
     expect(progress(f)).toEqual(oldProgress.map(row => ({ ...row, replay_operation_id: null })));
     apply(f);

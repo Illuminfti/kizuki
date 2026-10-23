@@ -32,7 +32,7 @@ import {
   toClaimV2SemanticRow,
 } from "./claim-v2-rows";
 import { ClaimError } from "./errors";
-import { ensureClaimOccurrences } from "./occurrences";
+import { ensureClaimOccurrences, validateWorldEndpointProofs } from "./occurrences";
 import { getClaim } from "./store";
 import { parseWorldAdmission, completeWorldAnchors, type WorldAdmission } from "../contracts/world-admission";
 import { allocateWorldEndpoints } from "../world/allocation";
@@ -299,26 +299,13 @@ function derivedWorldAdmission(
   };
 }
 
-export function commitClaimV2(
+/** Read-only admission checks shared by ordinary commit and additive carry-forward. */
+export function validateClaimV2Commit(
   db: Database,
   claimId: string,
+  parent: { authority: string; confidence: number },
   input: ClaimV2CommitInput,
-): ClaimV2CommitResult {
-  if (!db.inTransaction) {
-    throw new Error("prepared claim requires a transaction");
-  }
-  const parent = db
-    .query<{ claim_id: string; sensitivity: Sensitivity; authority: string; confidence: number }, [string]>(
-      "SELECT claim_id, sensitivity, authority, confidence FROM claims WHERE claim_id = ?",
-    )
-    .get(claimId);
-  if (parent === null) {
-    throw new ClaimError(
-      "schema_invalid",
-      "claim/v2 commit needs an existing claims row",
-    );
-  }
-
+) {
   const suppliedWorld = input.world_admission === undefined ? null : parseWorldAdmission(input.world_admission);
   if (input.world_admission !== undefined && suppliedWorld === null) {
     throw new ClaimError("schema_invalid", "world admission is invalid");
@@ -380,6 +367,33 @@ export function commitClaimV2(
         throw new ClaimError("provenance_unresolved","world support anchor is outside its immutable event text");
     }
   }
+
+  if (suppliedWorld?.schema === "kizuki.world-admission/v1")
+    validateWorldEndpointProofs(db, suppliedWorld.semantic, supportOrigin === "native_owner" ? null : input.support.source_key);
+  return { suppliedWorld, admission, row, supportOrigin };
+}
+
+export function commitClaimV2(
+  db: Database,
+  claimId: string,
+  input: ClaimV2CommitInput,
+): ClaimV2CommitResult {
+  if (!db.inTransaction) {
+    throw new Error("prepared claim requires a transaction");
+  }
+  const parent = db
+    .query<{ claim_id: string; sensitivity: Sensitivity; authority: string; confidence: number }, [string]>(
+      "SELECT claim_id, sensitivity, authority, confidence FROM claims WHERE claim_id = ?",
+    )
+    .get(claimId);
+  if (parent === null) {
+    throw new ClaimError(
+      "schema_invalid",
+      "claim/v2 commit needs an existing claims row",
+    );
+  }
+
+  const { suppliedWorld, admission, row, supportOrigin } = validateClaimV2Commit(db, claimId, parent, input);
 
   const existing = db
     .query<{ semantic_key: string }, [string]>(

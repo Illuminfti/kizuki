@@ -11,6 +11,7 @@ import { bindSourceModelPort, revokeSourceGrant } from "../../src/ledger/source-
 import { createModelProducerV2Port, MODEL_PRODUCER_V2_DESCRIPTOR } from "../../src/producer/model-v2";
 import { runWorldJobs } from "../../src/serve/world-jobs";
 import { runWritePass } from "../../src/serve/write-pass";
+import { DEFAULT_EXTRACTION_CONFIG } from "../../src/serve/types";
 import { serveWorldView, type WorldObjectRef, type WorldValidQuery } from "../../src/serving/world-view";
 import { validEvent } from "../fixtures";
 import { tempVault } from "../helpers/vault";
@@ -50,7 +51,7 @@ function historicalResponse(input: ProduceInputV2, kindMode: "asserted" | "repor
 }
 
 /** Scripted output proves the pipeline contract, not a model's interpretation of the prompt. */
-async function fixture(response: (input: ProduceInputV2) => ExtractResponseV2 = historicalResponse, text = TEXT) {
+async function fixture(response: (input: ProduceInputV2) => ExtractResponseV2 = historicalResponse, text = TEXT, maxInputTokens?: number) {
   const vault = tempVault("extraction-perspective-"), db = openLedger(`${vault.path}/.kizuki/kizuki.db`);
   const context = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR);
   const sourceKey = enrollSource(db, "perspective.fixture", "public", undefined, binding);
@@ -65,7 +66,8 @@ async function fixture(response: (input: ProduceInputV2) => ExtractResponseV2 = 
   const actual = createModelProducerV2Port(context.ctx, { llm });
   cleanups.push(async () => { await actual.close(); db.close(); vault.dispose(); context.cleanup(); });
   const producer = bindSourceModelPort({ ...actual, async produce(value: ProduceInputV2) { input = value; return actual.produce(value); } }, binding);
-  const pass = await runWritePass(db, vault.path, { producer, model_ref: FAKE_MODEL_REF, claims: { db }, budget: createBudgetTracker({ canon_writes_per_run: 8 }) });
+  const pass = await runWritePass(db, vault.path, { producer, model_ref: FAKE_MODEL_REF, claims: { db }, budget: createBudgetTracker({ canon_writes_per_run: 8 }),
+    ...(maxInputTokens === undefined ? {} : { extraction: { ...DEFAULT_EXTRACTION_CONFIG, max_input_tokens: maxInputTokens } }) });
   expect(pass.errors).toEqual([]);
   expect(llm.requests).toHaveLength(1);
   const ctx = { db, vaultPath: vault.path, principal: OWNER };
@@ -218,10 +220,11 @@ function conversationResponse(input: ProduceInputV2): ExtractResponseV2 {
 for (const noisy of [false, true]) test(`scripted historical conversation retains status and definition${noisy ? " among long instruction noise" : ""}`, async () => {
   const text = noisy ? CONVERSATION_NOISE.repeat(60) + CONVERSATION_WITNESS + "\n" + CONVERSATION_NOISE.repeat(40) : CONVERSATION_WITNESS;
   if (noisy) expect(text.length).toBeGreaterThan(12_000);
+  // Keep the complete long record inside one bounded scripted request.
   const f = await fixture(input => {
     expect(input.predicates).toContainEqual({ id: "project.status", object_kinds: ["literal"] });
     return conversationResponse(input);
-  }, text);
+  }, text, noisy ? 10_000 : undefined);
   expect(f.pass.claims_extracted).toBe(6);
   expect(f.pass.claims_rejected).toEqual({});
   const matches = f.find(CONVERSATION_PROJECT);
