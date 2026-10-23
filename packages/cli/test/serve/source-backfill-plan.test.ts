@@ -36,6 +36,21 @@ test("backfill CLI requires one exact plan and disallows run, daemon and canon f
     await expect(serveCommand.run(io, args)).rejects.toThrow("serve");
 });
 
+test("backfill CLI identifies a missing V2 producer as a source-backfill refusal", async () => {
+  const { sourceBackfillFixture } = await import("../../../core/test/serve/source-backfill-fixture");
+  const f = await sourceBackfillFixture();
+  const parent = mkdtempSync(join(homedir(), "kizuki-backfill-cli-missing-producer-")); chmodSync(parent, 0o700);
+  const planPath = join(parent, "plan.json"), bytes = JSON.stringify(f.plan);
+  writeFileSync(planPath, bytes, { mode: 0o600 });
+  const io: CliIo = { env: { HOME: parent }, vaultOverride: f.vault, stdinIsTTY: false, stdoutIsTTY: false, stderrIsTTY: false,
+    out: () => {}, err: () => {}, prompt: async () => "" };
+  try {
+    await expect(serveCommand.run(io, ["backfill-source", "--plan", planPath, "--plan-sha256", sha256Hex(bytes)])).rejects.toThrow("source backfill refused: producer_changed");
+  } finally {
+    f.db.close(); f.dispose(); rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 test("configured CLI makes one synthetic call, settles only additive meaning, and finishes canon separately", async () => {
   const { execFileSync } = await import("node:child_process");
   const { spyOn } = await import("bun:test");

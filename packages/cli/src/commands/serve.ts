@@ -14,6 +14,7 @@ import {
   replayEmptyExtractSegment,
   backfillSourceWindow,
   ExtractReplayError,
+  SourceBackfillError,
   PRODUCER_V2_CONTRACT,
   ServeStopError,
   runRail,
@@ -197,7 +198,7 @@ export const serveCommand: Command = {
         try {
           const producer = runtime.hooks.producer;
           if (producer === undefined || producer.descriptor.contract !== PRODUCER_V2_CONTRACT || !("model_ref" in producer) || producer.model_ref === null) {
-            throw new ExtractReplayError("producer_changed");
+            throw backfillPlan === null ? new ExtractReplayError("producer_changed") : new SourceBackfillError("producer_changed");
           }
           if (backfillPlan !== null) {
             const result = await backfillSourceWindow({ db: ctx.db, vault_path: ctx.vaultPath, producer }, backfillPlan);

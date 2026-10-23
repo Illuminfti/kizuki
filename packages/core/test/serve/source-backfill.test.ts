@@ -57,6 +57,35 @@ test("additive backfill inserts only new meaning, preserves every old row and pr
   } finally { copy.close(); }
 });
 
+test("a terminal receipt survives later ordinary progress, correction state, and pending canon work without another model call", async () => {
+  const f = await fixture();
+  const accepted = await apply(f);
+  f.db.query("INSERT INTO rail_cursors(rail,source_key,cursor,updated_at) VALUES(?,?,?,?)").run("synthetic", "later", "{}", AT);
+  f.db.query("UPDATE claims SET confidence=0.2 WHERE claim_id=(SELECT claim_id FROM claims LIMIT 1)").run();
+  const intent = canonicalJson({ synthetic: "later canon projection" });
+  f.db.query("INSERT INTO canon_write_intents VALUES(?,?,?,?,?)").run(1, f.event.event_id, "later.md", intent, sha256Hex(intent));
+  expect(await apply(f)).toEqual(accepted);
+  expect(f.calls).toHaveLength(1);
+  expect(f.db.query("SELECT * FROM source_backfill_attempts").all()).toHaveLength(1);
+  expect(f.db.query("SELECT * FROM source_backfill_results").all()).toHaveLength(1);
+});
+
+test("terminal receipt stays fail-closed after source revocation", async () => {
+  const f = await fixture();
+  await apply(f);
+  revokeSourceGrant(f.db, { source_key: SOURCE, expected_revision: 1, operation_id: "synthetic-terminal-revoke" });
+  await expect(apply(f)).rejects.toThrow("source_changed");
+  expect(f.calls).toHaveLength(1);
+});
+
+test("terminal receipt stays fail-closed after its source event is purged", async () => {
+  const f = await fixture();
+  await apply(f);
+  f.db.query("DELETE FROM events WHERE event_id=?").run(f.event.event_id);
+  await expect(apply(f)).rejects.toThrow("source_changed");
+  expect(f.calls).toHaveLength(1);
+});
+
 test("changed source policy in flight returns honest terminal rejection without partial claims", async () => {
   const f = await fixture(), before = stable(f);
   f.onCall(() => { revokeSourceGrant(f.db, { source_key: SOURCE, expected_revision: 1, operation_id: "synthetic-revoke" }); });
