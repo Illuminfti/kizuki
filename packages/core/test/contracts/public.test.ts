@@ -1,5 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import * as core from "../../src/index";
+import type { WorldReadInput, WorldValidQuery, WorldKnownAt, ViewToken } from "@kizuki/core/world";
+
+// Compile-time public API regression: each literal remains independently extractable.
+type Assert<T extends true> = T;
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+type LabelDiscovery<Operation extends string> = {
+  readonly operation: Operation; readonly label?: string; readonly cursor?: string;
+  readonly valid: WorldValidQuery;
+  readonly knownAt: WorldKnownAt;
+  readonly priorView?: ViewToken;
+};
+type DiscoveryInputCompatibility = [
+  Assert<Equal<Extract<WorldReadInput, { operation: "find_people" }>, LabelDiscovery<"find_people">>>,
+  Assert<Equal<Extract<WorldReadInput, { operation: "find_skills" }>, LabelDiscovery<"find_skills">>>,
+  Assert<Equal<Extract<WorldReadInput, { operation: "find_frameworks" }>, LabelDiscovery<"find_frameworks">>>,
+];
 
 describe("public port surface", () => {
   test("exports the registry, contracts, conformance, and remote adapter", () => {
