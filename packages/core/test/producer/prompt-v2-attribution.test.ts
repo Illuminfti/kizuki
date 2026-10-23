@@ -36,6 +36,9 @@ test("trusted prompt requires complete raw attribution evidence in addition to e
   expect(system.includes("Preserve every required exact role-ref anchor as well")).toBe(true);
   expect(system.includes("A name, perspective mode, body text or host-added window alone is insufficient")).toBe(true);
   expect(system.includes("quote/select spans")).toBe(true);
+  expect(system.includes("Select the narrowest exact source span that covers the complete linking phrase")).toBe(true);
+  expect(system.includes("use surrounding quote only as uniqueness context with select set to that phrase")).toBe(true);
+  expect(system.includes("Do not cite an entire record or paragraph when that narrower selection is available")).toBe(true);
   expect(system).not.toContain(witness);
 });
 
