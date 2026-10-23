@@ -17,7 +17,7 @@ import { scoreSupplementalRun, validateFreshCore } from "./supplemental";
 import { runnerDigest, sourceProvenance } from "./fingerprint";
 import { responsePacer, RESPONSE_GAP_MS } from "./pacing";
 import { validateResume, type ResumeEvidence, type Trace } from "./resume";
-import { CORE_SEMANTIC_PROTOCOL, coreSemanticCaseInput, coreSemanticContract, coreSemanticRulePredicates, coreSemanticCorpus, scoreCoreSemanticRun, validateCoreSemanticAssets, type CoreSemanticCase } from "./core-semantic";
+import { CORE_SEMANTIC_PROTOCOL, coreSemanticAssets, coreSemanticCaseInput, coreSemanticRulePredicates, scoreCoreSemanticRun, validateCoreSemanticAssets, type CoreSemanticCase } from "./core-semantic";
 import { modelWireAdapterIdentity, type CoreSemanticWireEvidence } from "./wire-custody";
 
 export interface RunOptions {
@@ -29,6 +29,7 @@ export interface RunOptions {
   resume_from?: string; resume_sha256?: string; stopped?: () => boolean;
   protocol?: typeof CORE_SEMANTIC_PROTOCOL;
   input_policy?: QualificationInputPolicy;
+  core_split?: "regression13" | "offered17";
 }
 export type CoreSemanticRunOptions = RunOptions & { protocol: typeof CORE_SEMANTIC_PROTOCOL };
 export type BaselineRunOptions = RunOptions & { protocol?: undefined };
@@ -60,14 +61,18 @@ function readResume(path: string, sha256: string): ResumeEvidence {
 async function runQualificationImpl(options: RunOptions) {
   if (options.protocol !== undefined && options.protocol !== CORE_SEMANTIC_PROTOCOL) throw new Error("unknown qualification protocol");
   const coreSemantic = options.protocol === CORE_SEMANTIC_PROTOCOL;
+  const coreSplit = options.core_split ?? "regression13";
+  if (!["regression13", "offered17"].includes(coreSplit)) throw new Error("invalid core split");
   if (!coreSemantic && options.input_policy !== undefined) throw new Error("input policy requires core semantic protocol");
+  if (!coreSemantic && options.core_split !== undefined) throw new Error("core split requires core semantic protocol");
   const inputPolicy = validateQualificationInputPolicy(options.input_policy ?? DEFAULT_QUALIFICATION_INPUT_POLICY);
-  if (coreSemantic) validateCoreSemanticAssets(); else validateFreshCore();
+  const assets = coreSemantic ? coreSemanticAssets(coreSplit) : null;
+  if (coreSemantic) validateCoreSemanticAssets(coreSplit); else validateFreshCore();
   if (options.kinds.length < 1 || options.kinds.length > 16 || new Set(options.kinds).size !== options.kinds.length) throw new Error("invalid kind selection");
   if (coreSemantic && (canonicalJson([...options.kinds].sort()) !== canonicalJson(["concept", "situation"]) || (options.extensions?.length ?? 0) !== 0 || options.case_ids !== undefined || options.resume_from !== undefined || options.resume_sha256 !== undefined)) throw new Error("core semantic protocol requires the fixed core split");
   const existing = options.kinds.filter(kind => WORLD_VOCABULARY_MODULES.some(module => module.kind?.id === kind));
   const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, existing, options.extensions);
-  const corpus = coreSemantic ? coreSemanticCorpus : qualificationCorpus;
+  const corpus = coreSemantic ? assets!.corpus : qualificationCorpus;
   const selected = corpus.cases.filter(item => existing.includes(item.kind) && (options.case_ids === undefined || options.case_ids.includes(item.id)));
   const inputFor = (item: (typeof selected)[number]) => coreSemantic ? coreSemanticCaseInput(item as CoreSemanticCase, registry, inputPolicy) : caseInput(item as (typeof qualificationCorpus.cases)[number], registry);
   if (options.case_ids !== undefined && (new Set(options.case_ids).size !== options.case_ids.length || options.case_ids.some(id => !selected.some(item => item.id === id)))) throw new Error("unknown or unavailable case selection");
@@ -76,7 +81,7 @@ async function runQualificationImpl(options: RunOptions) {
   // score not_run; they are not missing from the authored corpus.
   const missing = options.kinds.flatMap(kind => !existing.includes(kind) ? [`${kind}:module_missing`] : !corpus.cases.some(item => item.kind === kind) ? [`${kind}:corpus_missing`] : []);
   if (coreSemantic) for (const item of selected) {
-    const rule = coreSemanticContract.cases.find(row => row.case_id === item.id)!;
+    const rule = assets!.contract.cases.find(row => row.case_id === item.id)!;
     const predicates = coreSemanticRulePredicates(rule);
     if (predicates.some(id => !registry.offered.vocabulary.some(predicate => predicate.predicate === id))) { const reason = `${item.id}:vocabulary_missing`; if (!missing.includes(reason)) missing.push(reason); }
   } else for (const item of selected as typeof qualificationCorpus.cases) for (const alternatives of item.required) {
@@ -115,8 +120,8 @@ async function runQualificationImpl(options: RunOptions) {
         "This fixed authored split must not be used to tune prompts or select responses; changes require a fresh unseen split.",
         coreSemantic ? "Open-text meaning and body fidelity remain pending until a separately pinned independent semantic review passes." : "Supplemental deterministic checks do not review free-text bodies. Independent forbidden-interpretation/body review remains pending."] };
     const successful = observations.filter(row => traces.some(trace => trace.case_id === row.case_id && trace.transport === "ok"));
-    if (coreSemantic) return { ...common, protocol: CORE_SEMANTIC_PROTOCOL, input_policy: inputPolicy, wire_adapter: wireAdapter, wire_receipts: wireReceipts,
-      core_semantic: scoreCoreSemanticRun(successful, registry, { source_commit: common.source_commit, input_policy: inputPolicy, traces, wire_adapter: wireAdapter, wire_receipts: wireReceipts }) };
+    if (coreSemantic) return { ...common, protocol: CORE_SEMANTIC_PROTOCOL, ...(coreSplit === "offered17" ? { core_split: coreSplit } : {}), input_policy: inputPolicy, wire_adapter: wireAdapter, wire_receipts: wireReceipts,
+      core_semantic: scoreCoreSemanticRun(successful, registry, { source_commit: common.source_commit, input_policy: inputPolicy, traces, wire_adapter: wireAdapter, wire_receipts: wireReceipts }, assets!) };
     return { ...common, supplemental: scoreSupplementalRun(successful), score: scoreRun(qualificationCorpus, successful) };
   };
   let fd: number | undefined, rawFd: number | undefined, rawBytes = 0;
@@ -236,13 +241,15 @@ if (import.meta.main) {
   process.on("SIGINT", stop); process.on("SIGTERM", stop);
   try {
     const args = process.argv.slice(2), value = (flag: string) => { const at = args.indexOf(flag); return at < 0 ? undefined : args[at + 1]; };
-    const kinds = value("--kinds"), output = value("--out"), protocol = value("--protocol");
-    const allowed = ["--kinds", "--out", "--raw-responses", "--base-url", "--model", "--token-file", "--allow-remote", "--cases", "--extensions", "--resume-from", "--resume-sha256", "--protocol", "--max-input-tokens", "--max-output-tokens", "--input-token-overhead"];
+    const kinds = value("--kinds"), output = value("--out"), protocol = value("--protocol"), coreSplit = value("--core-split");
+    const allowed = ["--kinds", "--out", "--raw-responses", "--base-url", "--model", "--token-file", "--allow-remote", "--cases", "--extensions", "--resume-from", "--resume-sha256", "--protocol", "--core-split", "--max-input-tokens", "--max-output-tokens", "--input-token-overhead"];
     for (let index = 0; index < args.length; index++) { const flag = args[index]!; if (!allowed.includes(flag) || args.indexOf(flag) !== index) throw new Error("invalid arguments"); if (flag !== "--allow-remote" && (args[++index] === undefined || args[index]!.startsWith("--"))) throw new Error("missing argument"); }
     if (kinds === undefined || output === undefined) throw new Error("required arguments missing");
     if (protocol !== undefined && protocol !== CORE_SEMANTIC_PROTOCOL) throw new Error("unknown qualification protocol");
+    if (coreSplit !== undefined && (protocol !== CORE_SEMANTIC_PROTOCOL || !["regression13", "offered17"].includes(coreSplit))) throw new Error("invalid core split");
     const result = await runQualification({ kinds: kinds.split(","), output, stopped: () => stopped,
       ...(protocol === undefined ? {} : { protocol: CORE_SEMANTIC_PROTOCOL }),
+      ...(coreSplit === undefined ? {} : { core_split: coreSplit as "regression13" | "offered17" }),
       ...(["--max-input-tokens", "--max-output-tokens", "--input-token-overhead"].some(flag => value(flag) !== undefined) ? {
         input_policy: validateQualificationInputPolicy({ ...DEFAULT_QUALIFICATION_INPUT_POLICY,
           max_input_tokens: value("--max-input-tokens") === undefined ? DEFAULT_QUALIFICATION_INPUT_POLICY.max_input_tokens : Number(value("--max-input-tokens")),

@@ -1,0 +1,2054 @@
+{
+  "schema": "kizuki.core-semantic-contract/v3",
+  "corpus_version": "offered17-20261023",
+  "automated_gate": {
+    "required": [
+      "all thirteen ordered cases observed exactly once",
+      "status ok and a response for every case",
+      "public producer-v2 parser accepts the response with zero parser drops",
+      "observation reports zero downstream drops",
+      "exactly one measured call with finite nonnegative token counts inside request budget",
+      "response hash is bound into the review",
+      "negative cases contain zero claims",
+      "positive cases contain every contracted typed predicate exactly once on one canonical target",
+      "classification, label, attribution, evidence, and explicit time satisfy the case contract",
+      "any additional claim uses a production-offered legacy predicate and is not a forbidden identity merge or ownership predicate",
+      "each attributed typed claim covers its authored reporting-role witness with its actual prepared admission anchors; raw per-claim role citation gaps remain separately reported",
+      "actual public prepareWorldDrafts runs both original-guard and host-sent-window paths against independent fresh synthetic ledgers with the journal registry callback",
+      "both preparations return zero drops and one admission per raw claim without changed semantic fields beyond ordinary reference resolution and exact post-original-guard perspective-window addition",
+      "exact sent windows, original anchors, per-item and aggregate admission anchor caps are preserved"
+    ],
+    "success_without_review": "pending_manual_review"
+  },
+  "attribution_profiles": {
+    "direct": {
+      "holder": null,
+      "speaker": null,
+      "addressee": null,
+      "modes": [
+        "asserted"
+      ],
+      "interpretation": "explicit",
+      "perspective_anchors": "may be empty or contain valid source anchors; independent review decides whether any supplied anchors support rather than contradict the proposition"
+    },
+    "person_statement": {
+      "holder": "null or the same exact grounded source ref as speaker; neither rendering is required over the other",
+      "speaker": "the authored supplied ref, or the one exact unique mention explicitly declared as its permissible occurrence alternative; the alternative does not assert durable identity",
+      "addressee": null,
+      "modes": [
+        "reported",
+        "quoted"
+      ],
+      "interpretation": "explicit",
+      "perspective_anchors": "must ground the contracted speaker ref and jointly support the speaker role; mention-mode cases declare a separate attribution_witness"
+    },
+    "document_report": {
+      "holder": "the exact supplied source ref named by the case",
+      "speaker": "null unless separately grounded; these cases provide none",
+      "addressee": "null unless separately grounded; these cases provide none",
+      "modes": [
+        "reported"
+      ],
+      "interpretation": "explicit",
+      "perspective_anchors": "must ground the supplied holder"
+    },
+    "document_suggestion": {
+      "holder": "the exact authored grounded document source ref",
+      "speaker": null,
+      "addressee": null,
+      "modes": [
+        "suggested"
+      ],
+      "interpretation": "explicit",
+      "perspective_anchors": "must ground the holder and cover the authored recommendation-role witness on this claim; exact sent-window enrichment may expose already-sent framing but never repairs missing literal meaning"
+    }
+  },
+  "temporal_profiles": {
+    "unknown": {
+      "valid_from": null,
+      "valid_to": null,
+      "temporal_basis": "unknown"
+    },
+    "explicit_interval": "exact RFC3339 equality; valid_to is exclusive"
+  },
+  "legacy_extra_policy": {
+    "eligible": "only predicates in the production PREDICATE_REGISTRY; world.kind and offered typed predicates are never extras",
+    "forbidden_predicates": [
+      "identity.same_as",
+      "project.owns"
+    ],
+    "automated": "the public parser must accept every extra with no drop; contracted typed claims keep their exact predicate, target, structure, attribution, and time checks",
+    "manual": "the independent reviewer must separately approve every extra claim's literal, body, references, anchors, role, time, and source entailment, and must reject unsupported ownership, authority, identity merge, or other additions"
+  },
+  "manual_gate": {
+    "independent": true,
+    "bound_to": [
+      "report_sha256",
+      "contract_sha256",
+      "corpus_sha256",
+      "ordered case_id and response_sha256",
+      "source_commit",
+      "evaluation stage prepared_admission",
+      "ordered case transport_response_sha256",
+      "ordered case input_manifest_sha256 and sent_window_manifest_sha256",
+      "ordered case prepared_admissions_sha256",
+      "selected_branch_id",
+      "selected_branch_sha256",
+      "selected_branch"
+    ],
+    "per_positive_case": [
+      "For each required detail atom, the claim's closed typed subject/predicate/object proposition R_P(S, O) entails the atom using only the bound identity of S, the exact relation and direction of P in semantic_method, and facts entailed by O.value. P supplies only that relation; S supplies only bound identity. O.value supplies every entity, property, state, quantity, comparison, modality, negation, scope, ordering, and other domain qualifier absent from the relation. Body, anchors, source window, neighboring claims, and structured polarity, perspective/role, context, or valid-time fields cannot repair missing domain meaning. Unmapped predicates borrow no meaning; classification and legacy extras retain their separate existing checks.",
+      "the claim literal does not contradict the automated structured polarity, attribution, or time fields; it need not duplicate those fields in prose",
+      "the body faithfully renders the claim's closed typed subject/predicate/object proposition under semantic_method without changing its meaning or adding unsupported content; it cannot complete a missing domain fact or qualifier in O.value",
+      "for every claim, the actual prepared admission anchors jointly support the proposition and every required atom, plus the exact actor, role and explicit time; unrelated reporting words elsewhere in a sent window are insufficient",
+      "neither literal nor body contains an unsupported addition",
+      "neither literal nor body contains a forbidden assertion",
+      "every legacy extra receives its own exact claim-hash-bound literal/body/reference/anchor/role/time/source-entailment review",
+      "each typed claim separately preserves its own source role and valid time; a source-reported name stays visibly qualified in consumer relations and is never promoted to a bare display label",
+      "raw per-claim citation gaps remain separately visible and are never described as model-authored context",
+      "the original literal guard has not been bypassed or upgraded and no semantic fact, role or time was added by normalization"
+    ],
+    "per_negative_case": [
+      "the exact response contains no claim"
+    ],
+    "success": "passed only when every automated and manual check passes"
+  },
+  "cases": [
+    {
+      "case_id": "core17-situation-positive-carmine-map-cabinet",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "situation-positive-carmine-map-cabinet",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Carmine Map Cabinet"
+          },
+          "classification": {
+            "kind": "world/situation",
+            "label": "Carmine Map Cabinet",
+            "witness": "Carmine Map Cabinet \u2014 Situation",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Its objective is to sort the vellum survey sheets.",
+              "required_atoms": [
+                "sorting the vellum survey sheets"
+              ],
+              "perspective": "direct",
+              "time": "unknown"
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "the lower drawer is swollen",
+              "required_atoms": [
+                "the lower drawer is swollen",
+                "the swollen lower drawer is a stated blocker of Carmine Map Cabinet"
+              ],
+              "perspective": "direct",
+              "time": "unknown"
+            }
+          ],
+          "forbidden_assertions": [
+            "Carmine Map Cabinet is complete",
+            "the owner owns or leads Carmine Map Cabinet",
+            "the sorting has been completed",
+            "the source establishes a purpose, enabling relation or commitment for the sorting"
+          ],
+          "label_rule": {
+            "value": "Carmine Map Cabinet",
+            "naming": "explicit",
+            "naming_witness": "Carmine Map Cabinet \u2014 Situation",
+            "witness": "Carmine Map Cabinet \u2014 Situation",
+            "perspective": "direct",
+            "time": "unknown"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core16-situation-reported-vermilion-inlet",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "situation-reported-vermilion-inlet",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Vermilion Inlet"
+          },
+          "classification": {
+            "kind": "world/situation",
+            "label": "Vermilion Inlet",
+            "witness": "Vermilion Inlet \u2014 Situation",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "route the dye pulses through the inlet manifold before the transit test",
+              "required_atoms": [
+                "the stated objective is to route dye pulses through the inlet manifold",
+                "routing the dye pulses precedes the transit test"
+              ],
+              "perspective": "person_statement",
+              "time": "unknown",
+              "source": {
+                "mode": "mention",
+                "record": "r1",
+                "quote": "Sova Kelm",
+                "label": "Sova Kelm",
+                "attribution_witness": "Sova Kelm stated"
+              },
+              "attribution_witness": "Sova Kelm stated"
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "the outlet baffle is warped",
+              "required_atoms": [
+                "the outlet baffle is warped",
+                "the warped outlet baffle is a stated blocker of Vermilion Inlet"
+              ],
+              "perspective": "person_statement",
+              "time": "unknown",
+              "source": {
+                "mode": "mention",
+                "record": "r1",
+                "quote": "Sova Kelm",
+                "label": "Sova Kelm",
+                "attribution_witness": "Sova Kelm stated"
+              },
+              "attribution_witness": "Sova Kelm stated"
+            }
+          ],
+          "forbidden_assertions": [
+            "Vermilion Inlet is complete",
+            "Sova Kelm owns or leads Vermilion Inlet"
+          ],
+          "label_rule": {
+            "value": "Vermilion Inlet",
+            "naming": "explicit",
+            "naming_witness": "Vermilion Inlet \u2014 Situation",
+            "witness": "Vermilion Inlet \u2014 Situation",
+            "perspective": "direct",
+            "time": "unknown"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core16-situation-historical-mica-harmonic-hold",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "historical-mica-harmonic-objective",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Mica Harmonic Hold"
+          },
+          "classification": {
+            "kind": "world/situation",
+            "label": "Mica Harmonic Hold",
+            "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.",
+            "perspective": "direct",
+            "time": {
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+            }
+          },
+          "forbidden_assertions": [
+            "the pitch carriage has been freed",
+            "the harmonic-ratio measurement proceeded or completed",
+            "the requested remedy resolved the condition",
+            "Mica Harmonic Hold is complete",
+            "Mica Harmonic Hold is current outside the explicit interval",
+            "the report title is Mica Harmonic Hold",
+            "the record establishes a project, owner, leadership, execution, or current count"
+          ],
+          "label_rule": {
+            "value": "Mica Harmonic Hold",
+            "naming": "explicit",
+            "naming_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "perspective": "document_report",
+            "source": "source-core16-situation-historical",
+            "attribution_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "time": {
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+            }
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Free the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement so that the measurement can proceed.",
+              "required_atoms": [
+                "freeing the pitch carriage is requested rather than asserted to have been performed",
+                "the pitch carriage is already seized and still blocks an unresolved harmonic-ratio measurement",
+                "the requested remedy is to free the pitch carriage",
+                "freeing the pitch carriage is presented as enabling that unresolved harmonic-ratio measurement to proceed"
+              ],
+              "perspective": "document_report",
+              "source": "source-core16-situation-historical",
+              "attribution_witness": "For that entire interval, that record requests this action list for the named condition",
+              "time": {
+                "valid_from": "2009-05-11T06:40:00.000Z",
+                "valid_to": "2009-08-23T17:10:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+              }
+            }
+          ]
+        },
+        {
+          "id": "historical-mica-harmonic-objective-and-blocker",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Mica Harmonic Hold"
+          },
+          "classification": {
+            "kind": "world/situation",
+            "label": "Mica Harmonic Hold",
+            "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition throughout the observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z.",
+            "perspective": "direct",
+            "time": {
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+            }
+          },
+          "forbidden_assertions": [
+            "the pitch carriage has been freed",
+            "the harmonic-ratio measurement proceeded or completed",
+            "the requested remedy resolved the condition",
+            "Mica Harmonic Hold is complete",
+            "Mica Harmonic Hold is current outside the explicit interval",
+            "the report title is Mica Harmonic Hold",
+            "the record establishes a project, owner, leadership, execution, or current count"
+          ],
+          "label_rule": {
+            "value": "Mica Harmonic Hold",
+            "naming": "explicit",
+            "naming_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "perspective": "document_report",
+            "source": "source-core16-situation-historical",
+            "attribution_witness": "Acoustic bench record AB-52 uses the name Mica Harmonic Hold for the actual operational condition",
+            "time": {
+              "valid_from": "2009-05-11T06:40:00.000Z",
+              "valid_to": "2009-08-23T17:10:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+            }
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Free the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement so that the measurement can proceed.",
+              "required_atoms": [
+                "freeing the pitch carriage is requested rather than asserted to have been performed",
+                "the pitch carriage is already seized and still blocks an unresolved harmonic-ratio measurement",
+                "the requested remedy is to free the pitch carriage",
+                "freeing the pitch carriage is presented as enabling that unresolved harmonic-ratio measurement to proceed"
+              ],
+              "perspective": "document_report",
+              "source": "source-core16-situation-historical",
+              "attribution_witness": "For that entire interval, that record requests this action list for the named condition",
+              "time": {
+                "valid_from": "2009-05-11T06:40:00.000Z",
+                "valid_to": "2009-08-23T17:10:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+              }
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "the seized pitch carriage that still blocks the unresolved harmonic-ratio measurement",
+              "required_atoms": [
+                "the pitch carriage is seized",
+                "the seized pitch carriage still blocks the unresolved harmonic-ratio measurement"
+              ],
+              "perspective": "document_report",
+              "source": "source-core16-situation-historical",
+              "attribution_witness": "For that entire interval, that record requests this action list for the named condition",
+              "time": {
+                "valid_from": "2009-05-11T06:40:00.000Z",
+                "valid_to": "2009-08-23T17:10:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2009-05-11T06:40:00.000Z and ending exclusively at 2009-08-23T17:10:00.000Z"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "core15-situation-name-negative-juniper-rill",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Juniper Rill is a situation",
+        "Juniper Rill has an asserted objective, blocker, state, or change"
+      ]
+    },
+    {
+      "case_id": "core15-situation-template-negative-unfilled-equipment-card",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "the unfilled card establishes an actual situation",
+        "CONDITION NAME, REQUESTED RESULT, OBSTACLE, or OBSERVED SHIFT is an asserted fact"
+      ]
+    },
+    {
+      "case_id": "core15-situation-hypothetical-negative-silver-sluice",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Silver Sluice is an actual situation",
+        "Silver Sluice has an asserted objective, blocker, state, change, completion, or current status"
+      ]
+    },
+    {
+      "case_id": "core15-concept-positive-linen-compass",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "concept-positive-linen-compass",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Linen Compass"
+          },
+          "classification": {
+            "kind": "world/concept",
+            "label": "Linen Compass",
+            "witness": "Linen Compass \u2014 Concept",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "concept.definition",
+              "object_kind": "literal",
+              "witness": "a textile sampling rule that groups thread offcuts by weave before comparing dye lots",
+              "required_atoms": [
+                "it is a textile sampling rule",
+                "thread offcuts are grouped by weave",
+                "grouping precedes comparing dye lots"
+              ],
+              "perspective": "direct",
+              "time": "unknown"
+            }
+          ],
+          "forbidden_assertions": [
+            "Linen Compass has an owner, creator, or endorsement",
+            "Linen Compass is identical to another concept"
+          ],
+          "label_rule": {
+            "value": "Linen Compass",
+            "naming": "explicit",
+            "naming_witness": "Linen Compass \u2014 Concept",
+            "witness": "Linen Compass \u2014 Concept",
+            "perspective": "direct",
+            "time": "unknown"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core15-concept-reported-opal-balance",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "concept-reported-opal-balance",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Opal Balance"
+          },
+          "classification": {
+            "kind": "world/concept",
+            "label": "Opal Balance",
+            "witness": "Opal Balance \u2014 Concept",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "concept.definition",
+              "object_kind": "literal",
+              "witness": "a mineral-log rule that sorts specimens by fracture pattern while keeping polished fragments in a separate row",
+              "required_atoms": [
+                "it is a mineral-log rule",
+                "specimens are sorted by fracture pattern",
+                "polished fragments are kept in a separate row"
+              ],
+              "perspective": "person_statement",
+              "time": "unknown",
+              "source": "source-core15-concept-reported",
+              "attribution_witness": "Daro Kest reported",
+              "equivalent_mention": {
+                "mode": "mention",
+                "record": "r1",
+                "quote": "Daro Kest",
+                "label": "Daro Kest",
+                "attribution_witness": "Daro Kest reported"
+              }
+            }
+          ],
+          "forbidden_assertions": [
+            "the owner reported or endorses Opal Balance",
+            "Daro Kest is the owner",
+            "Opal Balance is identical to another concept"
+          ],
+          "label_rule": {
+            "value": "Opal Balance",
+            "naming": "explicit",
+            "naming_witness": "Opal Balance \u2014 Concept",
+            "witness": "Opal Balance \u2014 Concept",
+            "perspective": "direct",
+            "time": "unknown"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core15-concept-historical-velvet-register",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "concept-historical-velvet-register",
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Velvet Register"
+          },
+          "classification": {
+            "kind": "world/concept",
+            "label": "Velvet Register",
+            "witness": "the exact name of this concept is Velvet Register",
+            "perspective": "direct",
+            "time": {
+              "valid_from": "2012-09-17T07:20:00.000Z",
+              "valid_to": "2012-11-06T19:40:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z"
+            }
+          },
+          "details": [
+            {
+              "predicate": "concept.definition",
+              "object_kind": "literal",
+              "witness": "a rehearsal-index rule that marks silent cues before ordering spoken passages",
+              "required_atoms": [
+                "it is a rehearsal-index rule",
+                "silent cues are marked",
+                "marking precedes ordering spoken passages"
+              ],
+              "perspective": "document_report",
+              "time": {
+                "valid_from": "2012-09-17T07:20:00.000Z",
+                "valid_to": "2012-11-06T19:40:00.000Z",
+                "temporal_basis": "explicit",
+                "witness": "observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z"
+              },
+              "source": "source-core15-concept-historical",
+              "attribution_witness": "Archive entry AE-53 states"
+            }
+          ],
+          "forbidden_assertions": [
+            "Velvet Register is current outside the explicit interval",
+            "the interval is its lifespan",
+            "Velvet Register has an owner or endorsement"
+          ],
+          "label_rule": {
+            "value": "Velvet Register",
+            "naming": "explicit",
+            "naming_witness": "the exact name of this concept is Velvet Register",
+            "witness": "the exact name of this concept is Velvet Register",
+            "perspective": "direct",
+            "time": {
+              "valid_from": "2012-09-17T07:20:00.000Z",
+              "valid_to": "2012-11-06T19:40:00.000Z",
+              "temporal_basis": "explicit",
+              "witness": "observation interval beginning 2012-09-17T07:20:00.000Z and ending exclusively at 2012-11-06T19:40:00.000Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "core15-concept-name-negative-umber-dial",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Umber Dial is a concept",
+        "Umber Dial has an asserted definition"
+      ]
+    },
+    {
+      "case_id": "core15-concept-template-negative-unfilled-glossary-leaf",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "the unfilled leaf establishes a concept",
+        "UNASSIGNED TERM or UNWRITTEN MEANING is an asserted concept"
+      ]
+    },
+    {
+      "case_id": "core15-concept-hypothetical-negative-frost-loom",
+      "expectation": "abstain",
+      "forbidden_assertions": [
+        "Frost Loom is actual or adopted",
+        "Frost Loom has an asserted definition"
+      ]
+    },
+    {
+      "case_id": "core19-situation-maintenance-outline-amber-relay-hold",
+      "expectation": "extract",
+      "branches": [
+        {
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Amber Relay Hold"
+          },
+          "classification": {
+            "kind": "world/situation",
+            "label": "Amber Relay Hold",
+            "witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report.",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "label_rule": {
+            "value": "Amber Relay Hold",
+            "naming": "explicit",
+            "naming_witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+            "witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+            "perspective": "document_report",
+            "source": "source-core19-maintenance-report",
+            "attribution_witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Reconcile all 34 unmatched relay labels with their acceptance records so that the continuity audit can proceed.",
+              "required_atoms": [
+                "the requested remedy is to reconcile all 34 unmatched relay labels with their acceptance records",
+                "all 34 unmatched relay labels are within the requested work, rather than a generic unquantified heading",
+                "the reconciliation is requested rather than asserted to have been performed",
+                "the requested reconciliation is presented as enabling the continuity audit to proceed"
+              ],
+              "perspective": "document_suggestion",
+              "source": "source-core19-maintenance-report",
+              "attribution_witness": "IR-63 recommends this requested action for the condition:",
+              "time": "unknown"
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "34 relay labels lack matching acceptance records, preventing the continuity audit",
+              "required_atoms": [
+                "34 relay labels lack matching acceptance records",
+                "that absence of matching acceptance records prevents the continuity audit"
+              ],
+              "perspective": "document_report",
+              "source": "source-core19-maintenance-report",
+              "attribution_witness": "IR-63 records the condition's blocker:",
+              "time": "unknown"
+            }
+          ],
+          "forbidden_assertions": [
+            "the relay labels have been reconciled",
+            "the continuity audit proceeded or completed",
+            "the condition has been resolved",
+            "the report establishes a current backlog of 34 relay labels",
+            "the report publication date is an action-validity interval",
+            "the requested work is adopted, attempted, performed, completed, or owned by an invented person or project"
+          ],
+          "id": "maintenance-whole-action-suggested"
+        },
+        {
+          "target": {
+            "mode": "mention",
+            "record": "r1",
+            "quote": "Amber Relay Hold"
+          },
+          "classification": {
+            "kind": "world/situation",
+            "label": "Amber Relay Hold",
+            "witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report.",
+            "perspective": "direct",
+            "time": "unknown"
+          },
+          "label_rule": {
+            "value": "Amber Relay Hold",
+            "naming": "explicit",
+            "naming_witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+            "witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+            "perspective": "document_report",
+            "source": "source-core19-maintenance-report",
+            "attribution_witness": "Inspection report IR-63 uses the name Amber Relay Hold for the actual operational condition described in this report",
+            "time": "unknown"
+          },
+          "details": [
+            {
+              "predicate": "situation.objective",
+              "object_kind": "literal",
+              "witness": "Reconcile all 34 unmatched relay labels with their acceptance records so that the continuity audit can proceed.",
+              "required_atoms": [
+                "the requested remedy is to reconcile all 34 unmatched relay labels with their acceptance records",
+                "all 34 unmatched relay labels are within the requested work, rather than a generic unquantified heading",
+                "the reconciliation is requested rather than asserted to have been performed",
+                "the requested reconciliation is presented as enabling the continuity audit to proceed"
+              ],
+              "perspective": "document_report",
+              "source": "source-core19-maintenance-report",
+              "attribution_witness": "IR-63 recommends this requested action for the condition:",
+              "time": "unknown"
+            },
+            {
+              "predicate": "situation.blocker",
+              "object_kind": "literal",
+              "witness": "34 relay labels lack matching acceptance records, preventing the continuity audit",
+              "required_atoms": [
+                "34 relay labels lack matching acceptance records",
+                "that absence of matching acceptance records prevents the continuity audit"
+              ],
+              "perspective": "document_report",
+              "source": "source-core19-maintenance-report",
+              "attribution_witness": "IR-63 records the condition's blocker:",
+              "time": "unknown"
+            }
+          ],
+          "forbidden_assertions": [
+            "the relay labels have been reconciled",
+            "the continuity audit proceeded or completed",
+            "the condition has been resolved",
+            "the report establishes a current backlog of 34 relay labels",
+            "the report publication date is an action-validity interval",
+            "the requested work is adopted, attempted, performed, completed, or owned by an invented person or project"
+          ],
+          "id": "maintenance-whole-action-reported"
+        }
+      ]
+    },
+    {
+      "case_id": "offered-concept-filter-pattern",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "complete-source-meaning",
+          "entities": [
+            {
+              "label": "Dapple Weave",
+              "record": "r1",
+              "allowed_occurrence_spans": [
+                {
+                  "start_utf16": 0,
+                  "end_utf16": 12
+                },
+                {
+                  "start_utf16": 176,
+                  "end_utf16": 188
+                },
+                {
+                  "start_utf16": 302,
+                  "end_utf16": 314
+                },
+                {
+                  "start_utf16": 373,
+                  "end_utf16": 385
+                }
+              ],
+              "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+            },
+            {
+              "label": "Fine Lattice",
+              "record": "r1",
+              "allowed_occurrence_spans": [
+                {
+                  "start_utf16": 96,
+                  "end_utf16": 108
+                },
+                {
+                  "start_utf16": 198,
+                  "end_utf16": 210
+                }
+              ],
+              "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+            }
+          ],
+          "propositions": [
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Dapple Weave"
+              },
+              "predicate": "world.kind",
+              "object": {
+                "kind": "vocabulary",
+                "value": "world/concept"
+              },
+              "witness": "Dapple Weave is a concept meaning an alternating arrangement of coarse and fine filter threads.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p1"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Dapple Weave"
+              },
+              "predicate": "concept.label",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The source uses Dapple Weave as the name of this concept."
+                ]
+              },
+              "witness": "Dapple Weave is a concept meaning an alternating arrangement of coarse and fine filter threads.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p2"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Dapple Weave"
+              },
+              "predicate": "concept.definition",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The concept is an alternating arrangement of coarse and fine filter threads."
+                ]
+              },
+              "witness": "Dapple Weave is a concept meaning an alternating arrangement of coarse and fine filter threads.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p3"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Fine Lattice"
+              },
+              "predicate": "world.kind",
+              "object": {
+                "kind": "vocabulary",
+                "value": "world/concept"
+              },
+              "witness": "Fine Lattice is a concept meaning a supporting grid beneath the filter threads.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p4"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Fine Lattice"
+              },
+              "predicate": "concept.label",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The source uses Fine Lattice as the name of this concept."
+                ]
+              },
+              "witness": "Fine Lattice is a concept meaning a supporting grid beneath the filter threads.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p5"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Fine Lattice"
+              },
+              "predicate": "concept.definition",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The concept is a supporting grid beneath the filter threads."
+                ]
+              },
+              "witness": "Fine Lattice is a concept meaning a supporting grid beneath the filter threads.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p6"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Dapple Weave"
+              },
+              "predicate": "concept.requires",
+              "object": {
+                "kind": "subject",
+                "entity": {
+                  "mode": "source_occurrence",
+                  "record": "r1",
+                  "label": "Fine Lattice"
+                }
+              },
+              "witness": "Dapple Weave requires Fine Lattice.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "required_relation_atoms": [
+                "Fine Lattice is required by Dapple Weave."
+              ],
+              "rule_id": "p7"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Dapple Weave"
+              },
+              "predicate": "concept.example",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "A filter with alternating coarse and fine threads over a supporting grid exemplifies Dapple Weave."
+                ]
+              },
+              "witness": "A filter with alternating coarse and fine threads over a supporting grid is an example of Dapple Weave.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p8"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Dapple Weave"
+              },
+              "predicate": "concept.counterexample",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "A filter with only coarse threads is a counterexample of Dapple Weave."
+                ]
+              },
+              "witness": "A filter with only coarse threads is a counterexample of Dapple Weave.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p9"
+            }
+          ],
+          "forbidden_assertions": [
+            "Fine Lattice requires Dapple Weave.",
+            "The coarse-only filter is a positive example of Dapple Weave.",
+            "Dapple Weave is equivalent to Fine Lattice.",
+            "Any person has adopted or mastered either concept."
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "offered-concept-cutting-relations",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "complete-source-meaning",
+          "entities": [
+            {
+              "label": "Thistle Spareband",
+              "record": "r1",
+              "allowed_occurrence_spans": [
+                {
+                  "start_utf16": 0,
+                  "end_utf16": 17
+                },
+                {
+                  "start_utf16": 235,
+                  "end_utf16": 252
+                },
+                {
+                  "start_utf16": 294,
+                  "end_utf16": 311
+                }
+              ],
+              "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+            },
+            {
+              "label": "Ochre Cutreserve",
+              "record": "r1",
+              "allowed_occurrence_spans": [
+                {
+                  "start_utf16": 84,
+                  "end_utf16": 100
+                },
+                {
+                  "start_utf16": 276,
+                  "end_utf16": 292
+                }
+              ],
+              "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+            },
+            {
+              "label": "Quartz Sidecast",
+              "record": "r1",
+              "allowed_occurrence_spans": [
+                {
+                  "start_utf16": 140,
+                  "end_utf16": 155
+                },
+                {
+                  "start_utf16": 334,
+                  "end_utf16": 349
+                }
+              ],
+              "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+            }
+          ],
+          "propositions": [
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Thistle Spareband"
+              },
+              "predicate": "world.kind",
+              "object": {
+                "kind": "vocabulary",
+                "value": "world/concept"
+              },
+              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p1"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Thistle Spareband"
+              },
+              "predicate": "concept.label",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The source uses Thistle Spareband as the name of this concept."
+                ]
+              },
+              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p2"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Thistle Spareband"
+              },
+              "predicate": "concept.definition",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The concept is a spare strip reserved beyond a planned cut."
+                ]
+              },
+              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p3"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Ochre Cutreserve"
+              },
+              "predicate": "world.kind",
+              "object": {
+                "kind": "vocabulary",
+                "value": "world/concept"
+              },
+              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut. Ochre Cutreserve is another name for that same concept.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p4"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Ochre Cutreserve"
+              },
+              "predicate": "concept.label",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The source uses Ochre Cutreserve as the name of this concept."
+                ]
+              },
+              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut. Ochre Cutreserve is another name for that same concept.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p5"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Ochre Cutreserve"
+              },
+              "predicate": "concept.definition",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The concept is the same spare-strip concept introduced as Thistle Spareband."
+                ]
+              },
+              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut. Ochre Cutreserve is another name for that same concept.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p6"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Quartz Sidecast"
+              },
+              "predicate": "world.kind",
+              "object": {
+                "kind": "vocabulary",
+                "value": "world/concept"
+              },
+              "witness": "Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p7"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Quartz Sidecast"
+              },
+              "predicate": "concept.label",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The source uses Quartz Sidecast as the name of this concept."
+                ]
+              },
+              "witness": "Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p8"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Quartz Sidecast"
+              },
+              "predicate": "concept.definition",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The concept is a deliberate sideways shift of a cutting guide."
+                ]
+              },
+              "witness": "Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p9"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Thistle Spareband"
+              },
+              "predicate": "concept.same_as",
+              "object": {
+                "kind": "subject",
+                "entity": {
+                  "mode": "source_occurrence",
+                  "record": "r1",
+                  "label": "Ochre Cutreserve"
+                }
+              },
+              "witness": "Thistle Spareband is the same concept as Ochre Cutreserve.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "required_relation_atoms": [
+                "Thistle Spareband and Ochre Cutreserve denote the same concept."
+              ],
+              "rule_id": "p10",
+              "symmetric": true
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Thistle Spareband"
+              },
+              "predicate": "concept.distinguished_from",
+              "object": {
+                "kind": "subject",
+                "entity": {
+                  "mode": "source_occurrence",
+                  "record": "r1",
+                  "label": "Quartz Sidecast"
+                }
+              },
+              "witness": "Thistle Spareband is distinguished from Quartz Sidecast.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "required_relation_atoms": [
+                "Thistle Spareband and Quartz Sidecast are distinct concepts."
+              ],
+              "rule_id": "p11",
+              "symmetric": true
+            }
+          ],
+          "forbidden_assertions": [
+            "Thistle Spareband is equivalent to Quartz Sidecast.",
+            "The source establishes identity of any existing external catalog endpoints.",
+            "Any participant owns a project or has adopted either concept."
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "offered-situation-dye-bay",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "complete-source-meaning",
+          "entities": [
+            {
+              "label": "Hollow Prism Bay",
+              "record": "r1",
+              "allowed_occurrence_spans": [
+                {
+                  "start_utf16": 0,
+                  "end_utf16": 16
+                }
+              ],
+              "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+            }
+          ],
+          "propositions": [
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Hollow Prism Bay"
+              },
+              "predicate": "world.kind",
+              "object": {
+                "kind": "vocabulary",
+                "value": "world/situation"
+              },
+              "witness": "Hollow Prism Bay is an actual operational condition at a dye station.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p1"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Hollow Prism Bay"
+              },
+              "predicate": "situation.label",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The source uses Hollow Prism Bay as the name of this situation."
+                ]
+              },
+              "witness": "Hollow Prism Bay is an actual operational condition at a dye station.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p2"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Hollow Prism Bay"
+              },
+              "predicate": "situation.objective",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The objective is to keep the outlet inside the test band."
+                ]
+              },
+              "witness": "Its objective is to keep the outlet inside the test band.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p3"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Hollow Prism Bay"
+              },
+              "predicate": "situation.commitment",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The crew is committed to return the sealed dye trays before the next bell."
+                ]
+              },
+              "witness": "The crew is committed to return the sealed dye trays before the next bell.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p4"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Hollow Prism Bay"
+              },
+              "predicate": "situation.change",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The outlet pressure fell from fourteen units to nine units."
+                ]
+              },
+              "witness": "The outlet pressure fell from fourteen units to nine units.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p5"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Hollow Prism Bay"
+              },
+              "predicate": "situation.participant",
+              "object": {
+                "kind": "subject",
+                "entity": {
+                  "mode": "structured_source_subject",
+                  "record": "r1",
+                  "subject_id": "person:ilan-moru"
+                }
+              },
+              "witness": "Ilan Moru participates in this condition.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "required_relation_atoms": [
+                "Ilan Moru participates in Hollow Prism Bay."
+              ],
+              "rule_id": "p6"
+            }
+          ],
+          "forbidden_assertions": [
+            "The crew has already returned the trays.",
+            "The pressure increased from nine units to fourteen units.",
+            "Ilan Moru owns the station or made the tray-return commitment personally."
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "offered-learning-assisted-trial",
+      "expectation": "extract",
+      "branches": [
+        {
+          "id": "complete-source-meaning",
+          "entities": [
+            {
+              "label": "Harbor Stitch",
+              "record": "r1",
+              "allowed_occurrence_spans": [
+                {
+                  "start_utf16": 0,
+                  "end_utf16": 13
+                }
+              ],
+              "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+            }
+          ],
+          "propositions": [
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Harbor Stitch"
+              },
+              "predicate": "world.kind",
+              "object": {
+                "kind": "vocabulary",
+                "value": "world/concept"
+              },
+              "witness": "Harbor Stitch is a concept meaning arranging trial seals in alternating wide and narrow rows.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p1"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Harbor Stitch"
+              },
+              "predicate": "concept.label",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The source uses Harbor Stitch as the name of this concept."
+                ]
+              },
+              "witness": "Harbor Stitch is a concept meaning arranging trial seals in alternating wide and narrow rows.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p2"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Harbor Stitch"
+              },
+              "predicate": "concept.definition",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The concept is arranging trial seals in alternating wide and narrow rows."
+                ]
+              },
+              "witness": "Harbor Stitch is a concept meaning arranging trial seals in alternating wide and narrow rows.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p3"
+            },
+            {
+              "subject": {
+                "mode": "structured_source_subject",
+                "record": "r1",
+                "subject_id": "person:neri-solven"
+              },
+              "predicate": "learning.exposure",
+              "object": {
+                "kind": "subject",
+                "entity": {
+                  "mode": "source_occurrence",
+                  "record": "r1",
+                  "label": "Harbor Stitch"
+                }
+              },
+              "witness": "During task Opaline Seal Trial, technician Neri Solven read an introduction to that concept, explained that concept, applied that concept, and demonstrated that concept.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [
+                {
+                  "mode": "structured_source_subject",
+                  "record": "r1",
+                  "subject_id": "task:opaline-seal-trial"
+                }
+              ],
+              "required_relation_atoms": [
+                "Neri Solven was exposed to Harbor Stitch during Opaline Seal Trial."
+              ],
+              "rule_id": "p4"
+            },
+            {
+              "subject": {
+                "mode": "structured_source_subject",
+                "record": "r1",
+                "subject_id": "person:neri-solven"
+              },
+              "predicate": "learning.explanation",
+              "object": {
+                "kind": "subject",
+                "entity": {
+                  "mode": "source_occurrence",
+                  "record": "r1",
+                  "label": "Harbor Stitch"
+                }
+              },
+              "witness": "During task Opaline Seal Trial, technician Neri Solven read an introduction to that concept, explained that concept, applied that concept, and demonstrated that concept.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [
+                {
+                  "mode": "structured_source_subject",
+                  "record": "r1",
+                  "subject_id": "task:opaline-seal-trial"
+                }
+              ],
+              "required_relation_atoms": [
+                "Neri Solven explained Harbor Stitch during Opaline Seal Trial."
+              ],
+              "rule_id": "p5"
+            },
+            {
+              "subject": {
+                "mode": "structured_source_subject",
+                "record": "r1",
+                "subject_id": "person:neri-solven"
+              },
+              "predicate": "learning.application",
+              "object": {
+                "kind": "subject",
+                "entity": {
+                  "mode": "source_occurrence",
+                  "record": "r1",
+                  "label": "Harbor Stitch"
+                }
+              },
+              "witness": "During task Opaline Seal Trial, technician Neri Solven read an introduction to that concept, explained that concept, applied that concept, and demonstrated that concept.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [
+                {
+                  "mode": "structured_source_subject",
+                  "record": "r1",
+                  "subject_id": "task:opaline-seal-trial"
+                }
+              ],
+              "required_relation_atoms": [
+                "Neri Solven applied Harbor Stitch during Opaline Seal Trial."
+              ],
+              "rule_id": "p6"
+            },
+            {
+              "subject": {
+                "mode": "structured_source_subject",
+                "record": "r1",
+                "subject_id": "person:neri-solven"
+              },
+              "predicate": "learning.demonstration",
+              "object": {
+                "kind": "subject",
+                "entity": {
+                  "mode": "source_occurrence",
+                  "record": "r1",
+                  "label": "Harbor Stitch"
+                }
+              },
+              "witness": "During task Opaline Seal Trial, technician Neri Solven read an introduction to that concept, explained that concept, applied that concept, and demonstrated that concept.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [
+                {
+                  "mode": "structured_source_subject",
+                  "record": "r1",
+                  "subject_id": "task:opaline-seal-trial"
+                }
+              ],
+              "required_relation_atoms": [
+                "Neri Solven demonstrated Harbor Stitch during Opaline Seal Trial."
+              ],
+              "rule_id": "p7"
+            },
+            {
+              "subject": {
+                "mode": "structured_source_subject",
+                "record": "r1",
+                "subject_id": "task:opaline-seal-trial"
+              },
+              "predicate": "learning.assistance",
+              "object": {
+                "kind": "vocabulary",
+                "value": "learning/assisted"
+              },
+              "witness": "A printed step card assisted the task throughout this trial.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "required_relation_atoms": [
+                "Opaline Seal Trial was assisted."
+              ],
+              "rule_id": "p8"
+            }
+          ],
+          "forbidden_assertions": [
+            "Opaline Seal Trial was unassisted.",
+            "Neri Solven has independently mastered Harbor Stitch.",
+            "Neri Solven owns the concept or has acquired a stable skill merely from these observations."
+          ]
+        }
+      ]
+    }
+  ],
+  "protocol": "core-semantic-v3",
+  "evaluation_stage": "prepared_admission",
+  "raw_citation_precision": {
+    "stage": "raw_model",
+    "required_reporting_role_coverage": "assess the raw claim and raw perspective anchors independently, before host context addition",
+    "reported_separately": true,
+    "normalization_does_not_relabel_raw_pass": true
+  },
+  "semantic_method": {
+    "method": "typed-subject-predicate-object/v1",
+    "interpretation": "Each relation contributes only its declared direction; subject contributes only bound identity; literal supplies every domain fact and qualifier. Body, anchors, source window, neighboring claims and structured role/time fields cannot repair missing domain meaning. Existing independent gates remain mandatory.",
+    "relations": {
+      "concept.label": {
+        "subject": "concept",
+        "object": "literal",
+        "relation": "S is named O"
+      },
+      "concept.definition": {
+        "subject": "concept",
+        "object": "literal",
+        "relation": "O is a stated definition of S"
+      },
+      "situation.label": {
+        "subject": "situation",
+        "object": "literal",
+        "relation": "S is named O"
+      },
+      "situation.objective": {
+        "subject": "situation",
+        "object": "literal",
+        "relation": "O is a stated objective of S"
+      },
+      "situation.blocker": {
+        "subject": "situation",
+        "object": "literal",
+        "relation": "O is a stated blocker of S"
+      },
+      "situation.change": {
+        "subject": "situation",
+        "object": "literal",
+        "relation": "O is a stated change in S"
+      }
+    },
+    "unmapped_predicates": "No relation meaning may be borrowed. Classification stays separately checked; legacy extras retain their separate exact full-claim independent review."
+  }
+}

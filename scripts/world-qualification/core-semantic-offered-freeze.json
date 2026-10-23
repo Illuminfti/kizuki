@@ -1,0 +1,19 @@
+{
+  "schema": "kizuki.core-semantic-offered-freeze/v1",
+  "synthetic": true,
+  "status": "prospective_requires_fresh_full17_qualification",
+  "files": {
+    "core-semantic-offered-corpus.json": {
+      "sha256": "4d47577cdca4aaca89c8d136d79149d8fab71247218c86613a2b9dc975381fe1",
+      "bytes": 10789
+    },
+    "core-semantic-offered-contract.json": {
+      "sha256": "59ed8a9b2097ab730384e15429f7e7aac782f7f88002c5c4a4af092112465bcc",
+      "bytes": 80803
+    },
+    "core-semantic-offered.md": {
+      "sha256": "054dd46f3a73d59c8503f4351dc540967c8d67ec9d367368793576d12a2a05fd",
+      "bytes": 3792
+    }
+  }
+}
