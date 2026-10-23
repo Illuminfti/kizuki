@@ -44,7 +44,7 @@ function cliArgs(name: VerificationOperation, input: Record<string, any>): strin
     case "forecast_scores": return [];
     case "artifact_version": return ["--ref", input.artifact.token];
     case "history": return ["--ref", input.concept.token];
-    case "find_concepts": case "find_situations": case "find_questions": case "find_people": case "find_procedures": case "find_artifacts": return ["--label", input.label];
+    case "find_concepts": case "find_situations": case "find_questions": case "find_people": case "find_procedures": case "find_skills": case "find_frameworks": case "find_artifacts": return ["--label", input.label];
     case "share": return ["--of-operation", input.of.operation, "--ref", input.of.concept.token];
     case "diff": return ["--of-operation", input.of.operation, "--ref", input.of.concept.token, "--prior-view", input.priorView.token];
     case "resume": return ["--resume", input.handle];
@@ -64,7 +64,7 @@ const TEXT: Record<VerificationOperation, readonly string[]> = {
   question: ["When should I update a belief?", "Status: open; understanding: unknown", "Coverage:"],
   find_questions: ["When should I update a belief?"], frontier: ["Coverage:"],
   person: ["Ada", "Person:", "Reviewer", "holder=unattributed speaker=unattributed mode=asserted", "Coverage:"],
-  find_people: ["Ada"], find_procedures: ["procedure:verify"],
+  find_people: ["Ada"], find_procedures: ["procedure:verify"], find_skills: ["skill:inspection"], find_frameworks: ["framework:quality"],
   procedure: ["procedure:verify", "execution authority: none", "Quoted step", "Coverage:"],
   skill: ["skill:inspection", "Independent mastery: unknown", "Coverage:"],
   framework: ["framework:quality", "Nested component", "Coverage:"],

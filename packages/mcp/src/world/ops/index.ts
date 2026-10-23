@@ -4,7 +4,7 @@ import { attentionFragment } from "./attention";
 import { atlasFragment } from "./atlas";
 import { sliceFragment } from "./slice";
 import { personFragment, findPeopleFragment } from "./person";
-import { procedureFragment, findProceduresFragment, skillFragment, frameworkFragment, outcomeFragment } from "./skills";
+import { procedureFragment, findProceduresFragment, skillFragment, findSkillsFragment, frameworkFragment, findFrameworksFragment, outcomeFragment } from "./skills";
 import { historyFragment } from "./history";
 import { conceptFragment } from "./concept";
 import { describeFragment } from "./describe";
@@ -39,7 +39,7 @@ export const MCP_WORLD_OPS: readonly McpWorldOp[] = [
   // slot: PEOPLE
   personFragment, findPeopleFragment,
   // slot: SKILL
-  procedureFragment, findProceduresFragment, skillFragment, frameworkFragment,
+  procedureFragment, findProceduresFragment, skillFragment, findSkillsFragment, frameworkFragment, findFrameworksFragment,
   // slot: ART
   artifactFragment, findArtifactsFragment,
   // slot: OUTCOME

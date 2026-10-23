@@ -20,6 +20,8 @@ test("real CLI processes and App route preserve procedures, skills, frameworks a
       ["skill", { skill: f.skillRef }, ["--ref", f.skillRef.token]],
       ["framework", { framework: f.frameworkRef }, ["--ref", f.frameworkRef.token]],
       ["find_procedures", { about: f.find() }, ["--about", f.find().token]],
+      ["find_skills", { label: "skill:inspection" }, ["--label", "skill:inspection"]],
+      ["find_frameworks", { label: "framework:quality" }, ["--label", "framework:quality"]],
       ["outcome", { subject: PROCEDURE }, ["--subject", PROCEDURE]],
     ] as const) {
       const request = { operation, ...input, ...WHEN }, expected = payload(serveWorldView(ctx, request).data);
@@ -29,6 +31,14 @@ test("real CLI processes and App route preserve procedures, skills, frameworks a
       const response = await app.handle(new Request("http://127.0.0.1/app/v1/world_view", { method: "POST", body: JSON.stringify(request) }));
       const result = await response.json() as { ok: boolean; data: WorldReadResult };
       expect(result.ok).toBe(true); expect(payload(result.data)).toEqual(expected);
+    }
+    for (const operation of ["find_skills", "find_frameworks"]) {
+      const text = h.runCli(setup.env, "world", "--operation", operation, "--label", "absent");
+      expect(text.exitCode, text.stderr).toBe(0);
+      expect(text.stdout).toContain("No admitted matches");
+      expect(text.stderr).toBe("");
+      for (const args of [["--label", "x".repeat(201)], ["--cursor", "bad"], ["--about", f.find().token]])
+        expect(h.runCli(setup.env, "world", "--operation", operation, ...args).exitCode).toBe(2);
     }
     const plain = h.runCli(setup.env, "world", "--operation", "procedure", "--ref", f.procedureRef.token);
     expect(plain.exitCode, plain.stderr).toBe(0);

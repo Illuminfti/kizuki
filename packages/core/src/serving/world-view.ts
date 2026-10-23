@@ -80,7 +80,7 @@ export type WorldReadInput =
   | { readonly operation: "atlas"; readonly panel?: AtlasPanelName; readonly focus?: { readonly operation: AtlasObjectOperation; readonly ref: WorldObjectRef; readonly card?: "kizuki.situation-card/v2" }; readonly baselineView?: ViewToken; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt }
   | { readonly operation: "slice"; readonly task: string; readonly kinds?: readonly string[]; readonly budgetTokens: number; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "person"; readonly person: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
-  | { readonly operation: "find_people"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
+  | { readonly operation: "find_people" | "find_skills" | "find_frameworks"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "artifact_version"; readonly artifact: WorldObjectRef; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | { readonly operation: "find_artifacts"; readonly label?: string; readonly cursor?: string; readonly valid: WorldValidQuery; readonly knownAt: WorldKnownAt; readonly priorView?: ViewToken }
   | {
@@ -161,6 +161,8 @@ export type WorldData =
   | WorldMatches<"kizuki.procedure-matches/v1">
   | Frontier
   | WorldMatches<"kizuki.person-matches/v1">
+  | WorldMatches<"kizuki.skill-matches/v1">
+  | WorldMatches<"kizuki.framework-matches/v1">
   | WorldMatches<"kizuki.question-matches/v1">
   | HistoryPage
   | SituationCard
