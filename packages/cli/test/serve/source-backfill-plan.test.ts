@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { chmodSync, linkSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { sha256Hex } from "@kizuki/core";
 import { readSourceBackfillPlan } from "../../src/empty-replay-plan";
 import { serveCommand } from "../../src/commands/serve";
@@ -41,7 +42,7 @@ test("configured CLI makes one synthetic call, settles only additive meaning, an
   const { sourceBackfillFixture, response } = await import("../../../core/test/serve/source-backfill-fixture");
   const { modelQuoteWire } = await import("../../../core/test/producer/quote-wire-helper");
   const { inspectCanonRecovery } = await import("@kizuki/core");
-  const parent = mkdtempSync("/home/ubuntu/kizuki-backfill-cli-"); chmodSync(parent, 0o700);
+  const parent = mkdtempSync(join(homedir(), "kizuki-backfill-cli-")); chmodSync(parent, 0o700);
   execFileSync("git", ["init", "--quiet", parent]);
   const previous = process.env.TMPDIR; process.env.TMPDIR = parent;
   const f = await sourceBackfillFixture();
