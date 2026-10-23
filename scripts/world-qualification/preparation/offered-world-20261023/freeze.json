@@ -1,0 +1,51 @@
+{
+  "schema": "kizuki.offered-world-preparation-freeze/v1",
+  "date": "2026-10-23",
+  "status": "prospective_preparation_no_calls_independent_review_pending",
+  "source_base": "5bc902b6cafa2547aac948bfb37bd9e80e4b324d",
+  "new_case_count": 4,
+  "new_record_count": 4,
+  "files": {
+    "corpus.json": {
+      "bytes": 3093,
+      "sha256": "bca00312b99173b6108f3d5880f0543321fc6aa759b268cdaa0a3909231a5080"
+    },
+    "expected-meaning.json": {
+      "bytes": 41568,
+      "sha256": "a5fe3b9e7aab2a3e77f8231e163440830c5a1a23aff92ef42b67b059d4a5f7e3"
+    },
+    "README.md": {
+      "bytes": 6127,
+      "sha256": "c24299b0768ffb1d2a0435bdff4dfd6613b298463fcbedb0da1dc84a0a00b0ce"
+    },
+    "static-receipt.json": {
+      "bytes": 4176,
+      "sha256": "1d2174166643425739c8e7260bafcf5e53824dfeececeddf4e027b12b6f1fcab"
+    }
+  },
+  "active_assets_unchanged": [
+    {
+      "file": "scripts/world-qualification/core-semantic-corpus.json",
+      "sha256": "8621cc5b10bc204084c7a18c62c9983048c473d5c35914bd0dff62f5a0602d30"
+    },
+    {
+      "file": "scripts/world-qualification/core-semantic-contract.json",
+      "sha256": "87e9b22e746e6cadff4527beb1dd85ac7397901ee840746a481b058f0a646d4c"
+    },
+    {
+      "file": "scripts/world-qualification/core-semantic.md",
+      "sha256": "84238c8b90e88088679db22ea2d1f8db1453f52ab6a31c8da7cd97810e7120e9"
+    },
+    {
+      "file": "scripts/world-qualification/core-semantic-freeze.json",
+      "sha256": "394fa9f9d86fab91439755df6e61d3aa50fd808a45742c21672f24c592e6e49d"
+    },
+    {
+      "file": "scripts/world-qualification/approvals.ts",
+      "sha256": "2ef8ced61e0567402313ff541c603f54356e2c5a791ef255c85e63236fa7ad55"
+    }
+  ],
+  "producer_or_registry_changes": false,
+  "model_or_provider_calls": 0,
+  "activation": false
+}

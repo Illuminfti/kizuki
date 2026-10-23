@@ -13,6 +13,8 @@ test("MCP and real HTTP expose read-only knowledge with unchanged tool count", a
     for (const input of [
       { operation: "procedure", procedure: f.procedureRef, ...WHEN }, { operation: "skill", skill: f.skillRef, ...WHEN },
       { operation: "framework", framework: f.frameworkRef, ...WHEN }, { operation: "find_procedures", about: f.find(), ...WHEN },
+      { operation: "find_skills", label: "skill:inspection", ...WHEN },
+      { operation: "find_frameworks", label: "framework:quality", ...WHEN },
       { operation: "outcome", subject: PROCEDURE, ...WHEN },
     ]) {
       const mcp = await call(client, "world_view", input);
@@ -20,6 +22,10 @@ test("MCP and real HTTP expose read-only knowledge with unchanged tool count", a
       const response = await http.post("world_view", input);
       expect(response.status).toBe(200);
       expect((response.body as any).value.data.result.data).toEqual((envelopeOf(mcp).data as any).result.data);
+    }
+    for (const operation of ["find_skills", "find_frameworks"]) {
+      for (const own of [{ label: "x".repeat(201) }, { cursor: "bad" }, { about: f.find() }, { unknown: true }])
+        expect((await call(client, "world_view", { operation, ...own, ...WHEN })).isError).toBe(true);
     }
     const shared = envelopeOf(await call(client, "world_view", { operation: "share", of: { operation: "procedure", procedure: f.procedureRef }, ...WHEN })).data as any;
     const resumed = envelopeOf(await call(client, "world_view", { operation: "resume", handle: shared.result.data.handle, ...WHEN })).data as any;
