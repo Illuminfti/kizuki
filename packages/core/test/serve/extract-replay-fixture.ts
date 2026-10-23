@@ -35,7 +35,7 @@ export function replayFixture(reply: "empty" | "nonempty" | "rejected" = "empty"
   const producer = bindSourceModelPort(createModelProducerV2Port({ vault_path: f.vault, data_dir: join(f.vault, ".kizuki"), config: {},
     clock: () => new Date().toISOString(), secrets: async () => { throw new Error("no secrets in replay fixture"); }, logger: () => {} }, { llm }), { model_endpoint: ENDPOINT, model: MODEL });
   const at = "2026-10-22T08:00:00.000Z", runId = "synthetic-old-empty-run";
-  // Leave headroom for prompt growth while replaying multiple calls within the fixed pass budget.
+  // Preserve the historical prefix while leaving prompt headroom in each replay request.
   const end = event.text.indexOf("\n\n", 14_000) + 2;
   if (end < 14_000) throw new Error("fixture boundary missing");
   db.query("INSERT INTO extract_oversized_records(event_id,status,chars,done_utf16,pending_end_utf16,updated_at) VALUES(?,?,?,?,NULL,?)").run(eventId, "segmenting", event.text.length, end, at);
@@ -44,7 +44,7 @@ export function replayFixture(reply: "empty" | "nonempty" | "rejected" = "empty"
     claims_written_extracted: 0, records_skipped: 0, has_more: true,
     model: { ...totals.model, calls: 1, answered: 1, last_request: "answered" }, oversized: { segments: 1, skipped: 0 } });
   db.query("INSERT INTO run_receipts VALUES(?,?,?,?,?,?,?)").run(runId, "sync", at, at, "ok", null, report);
-  writeServeToml(f.vault, '[extraction]\nmax_calls_per_pass=8\nmax_input_tokens=5000\n');
+  writeServeToml(f.vault, '[extraction]\nmax_calls_per_pass=8\nmax_input_tokens=6000\n');
   const grant = inspectSourceGrant(db, sourceKey)!;
   const plan: EmptySegmentReplayPlan = {
     schema: "kizuki.extract-empty-replay/v1", operation_id: "synthetic-replay-1", vault_id: ensureVaultId(f.vault),

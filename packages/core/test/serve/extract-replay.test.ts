@@ -210,6 +210,27 @@ test("partial, rejected and stopped replay passes keep capture suppressed", asyn
   expect(stopped.calls).toEqual([]);
 });
 
+test("a replay that spends all eight calls remains partial until its exact historical cap settles", async () => {
+  const f = fixture(); apply(f);
+  // A deliberately smaller request budget still needs more than this pass's
+  // eight calls. Completion must describe settled progress, never the call cap.
+  writeServeToml(f.vault, '[extraction]\nmax_calls_per_pass=8\nmax_input_tokens=5000\n');
+  const hooks = { producer: f.producer, claims: { db: f.db }, model_ref: MODEL };
+  const partial = await runRail(f.db, f.vault, "sync", { hooks });
+  const done = Number(progress(f)[0]!.done_utf16);
+  expect(partial.stopped).toBeNull();
+  expect(partial.model.calls).toBe(8);
+  expect(done).toBeGreaterThan(0);
+  expect(done).toBeLessThan(f.plan.segment.done_utf16);
+  expect(f.calls.join("")).toBe(f.event.text.slice(0, done));
+  expect(activeExtractReplay(f.db, f.event.event_id, f.producer)).not.toBeNull();
+  expect(readExtractCursor(f.db)).toBe(f.plan.expected_cursor);
+  const completed = await runRail(f.db, f.vault, "sync", { hooks });
+  expect(completed.stopped).toBe("extract:replay_complete");
+  expect(f.calls.join("")).toBe(f.event.text.slice(0, f.plan.segment.done_utf16));
+  expect(progress(f)).toMatchObject([{ done_utf16: f.plan.segment.done_utf16, replay_operation_id: null }]);
+});
+
 test("nonempty replay goes through ordinary claims and canon writer and stops at the same old end", async () => {
   const f = fixture("nonempty"); apply(f);
   const result = await runRail(f.db, f.vault, "sync", { hooks: { producer: f.producer, claims: { db: f.db }, model_ref: MODEL } });
