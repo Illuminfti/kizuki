@@ -143,7 +143,8 @@ function locked<T>(target: Target, work: () => T): T {
     finally { releaseLease(target.db, process); }
   });
 }
-function current(target: Target, plan: SourceBackfillPlan, alreadySettled = false) {
+/** Checks that may still withdraw authority to reveal a stored receipt. */
+function currentAuthority(target: Target, plan: SourceBackfillPlan) {
   const { db, producer, vault_path } = target;
   assertPositiveAuthorityMutationAllowed(db);
   if (readVaultId(vault_path) !== plan.vault_id) refuse("source_changed");
@@ -156,6 +157,13 @@ function current(target: Target, plan: SourceBackfillPlan, alreadySettled = fals
       grant.revision !== plan.source_revision || grant.policy_digest !== plan.source_policy_digest || sourcePolicyEpoch(db) !== plan.source_epoch ||
       !sourceEventsAllowed(db, [plan.event_id], { owner: false, model: true, purpose: "extract", port: producer }) ||
       plan.window.cap_utf16 > event.text.length || !Object.values(plan.window).every(n => isUtf16TextBoundary(event.text, n))) refuse("source_changed");
+  return event;
+}
+
+/** Fresh execution also requires the reviewed inventory and work queue to be unchanged. */
+function current(target: Target, plan: SourceBackfillPlan) {
+  const { db, vault_path } = target;
+  const event = currentAuthority(target, plan);
   const progress = db.query<{ done_utf16: number; pending_end_utf16: number | null; replay_operation_id: string | null }, [string]>(
     "SELECT done_utf16,pending_end_utf16,replay_operation_id FROM extract_oversized_records WHERE event_id=?").get(plan.event_id);
   if (progress === null || progress.done_utf16 !== plan.window.cap_utf16 || progress.pending_end_utf16 !== null || progress.replay_operation_id !== null) refuse("state_changed");
@@ -181,7 +189,7 @@ function current(target: Target, plan: SourceBackfillPlan, alreadySettled = fals
     const admission = parseWorldAdmission(JSON.parse(String(support.admission)));
     if (admission === null || completeWorldAnchors(admission.semantic).some(a => a.event_id !== plan.event_id || a.start_utf16 < 0 || a.end_utf16 > plan.window.cap_utf16)) refuse("inventory_changed");
   }
-  if (!alreadySettled && sha256Hex(canonicalJson(old)) !== plan.inventory_sha256) refuse("inventory_changed");
+  if (sha256Hex(canonicalJson(old)) !== plan.inventory_sha256) refuse("inventory_changed");
   if (sha256Hex(canonicalJson(state(db, plan.event_id))) !== plan.state_sha256) refuse("state_changed");
   for (const receipt of plan.run_receipts) {
     const run = db.query<{ report: string }, [string]>("SELECT report FROM run_receipts WHERE run_id=?").get(receipt.run_id);
@@ -214,7 +222,7 @@ export async function backfillSourceWindow(target: Target, raw: unknown): Promis
       if (attempt.operation_id !== plan.operation_id || attempt.plan_sha256 !== planHash) refuse("backfill_conflict");
       const result = db.query<{ report: string }, [string]>("SELECT report FROM source_backfill_results WHERE operation_id=?").get(plan.operation_id);
       if (result === null) refuse("backfill_conflict");
-      current(target, plan, true);
+      currentAuthority(target, plan);
       prior = JSON.parse(result.report) as SourceBackfillResult;
       if (prior.schema !== "kizuki.source-prefix-backfill-result/v1" || prior.operation_id !== plan.operation_id ||
           prior.plan_sha256 !== planHash || !["settled", "rejected", "failed"].includes(prior.outcome)) refuse("backfill_conflict");
