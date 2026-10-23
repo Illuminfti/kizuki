@@ -40,7 +40,13 @@ Every candidate uses the production wire decoder, guards, admission mapper and
 shared prepare/commit writer. Existing live semantic identities are fully
 validated and carried forward without attaching new support or observations,
 changing confidence, or rewriting their old claim rows. Only new meanings are
-inserted. Event bytes, extraction progress, rail cursors, old settlements and
+inserted. Fully superseded non-world deterministic connector evidence may remain
+in that same frozen inventory when it retains retirement markers and a receipt
+and has no V2 semantics or support (and therefore no observation children).
+It supplies no world meaning; its entire old row remains unchanged. Live or
+incompletely retired connector evidence is refused.
+
+Event bytes, extraction progress, rail cursors, old settlements and
 prior receipts are unchanged. A consent/source/inventory/state change during
 the model request rejects admission; transaction failure rolls back all new
 claims. Failure to persist a terminal refusal returns `failed` with

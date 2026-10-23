@@ -185,3 +185,52 @@ test("an ignored reservation cannot call the model and an ignored result cannot 
   expect(stable(missingResult)).toEqual(original);
   expect(missingResult.db.query("SELECT * FROM source_backfill_results").all()).toEqual([]);
 });
+
+function retiredConnectorEvidence(f: Awaited<ReturnType<typeof fixture>>) {
+  const prior = f.db.query<Record<string, string | number | null>, []>("SELECT * FROM claims ORDER BY rowid LIMIT 1").get()!;
+  const row = { ...prior, claim_id: "synthetic-retired-connector", producer: "deterministic", authority: "connector_evidence",
+    is_world_typed: 0, status: "superseded", retracted_at: AT, superseded_by: String(prior.claim_id),
+    body: "Synthetic retired connector capture.", body_hash: sha256Hex("Synthetic retired connector capture."),
+    subject: null, predicate: null, object: null, claim_key: null, model_ref: null, frontmatter: "{}" };
+  const columns = Object.keys(row);
+  f.db.query(`INSERT INTO claims (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(...Object.values(row));
+  return row.claim_id;
+}
+
+test("fully retired non-world connector evidence remains byte-identical alongside live V2 backfill", async () => {
+  const f = await fixture(); retiredConnectorEvidence(f);
+  const before = stable(f), plan = { ...f.plan, ...sourceBackfillSnapshot(f.db, f.event.event_id) };
+  expect(plan.inventory_sha256).not.toBe(f.plan.inventory_sha256);
+  expect(await apply(f, plan)).toMatchObject({ outcome: "settled", claims_added: [expect.any(String)], supports_added: 1, carried_forward: 2 });
+  const after = stable(f);
+  for (const table of tables) expect(after[table]!.slice(0, before[table]!.length)).toEqual(before[table]!);
+  expect(f.calls).toHaveLength(1);
+});
+
+test("live, unfinished, world-typed or mixed-authority connector history refuses before model or reservation", async () => {
+  for (const patch of [{ status: "live" }, { retracted_at: null }, { superseded_by: null }, { receipt_id: null },
+    { is_world_typed: 1 }, { producer: "model" }, { authority: "model_inference" }]) {
+    const f = await fixture(), id = retiredConnectorEvidence(f);
+    for (const [key, value] of Object.entries(patch)) f.db.query(`UPDATE claims SET ${key}=? WHERE claim_id=?`).run(value, id);
+    const before = stable(f), plan = { ...f.plan, ...sourceBackfillSnapshot(f.db, f.event.event_id) };
+    await expect(apply(f, plan)).rejects.toThrow("inventory_changed");
+    expect(stable(f)).toEqual(before); expect(f.calls).toEqual([]);
+    expect(f.db.query("SELECT * FROM source_backfill_attempts").all()).toEqual([]);
+  }
+});
+
+
+test("retired connector evidence carrying V2 semantics or support is ineligible history", async () => {
+  for (const table of ["claim_v2_semantics", "claim_v2_support"]) {
+    const f = await fixture(), id = retiredConnectorEvidence(f);
+    const prior = f.db.query<Record<string, string | number | null>, []>(`SELECT * FROM ${table} ORDER BY rowid LIMIT 1`).get()!;
+    const row: Record<string, string | number | null> = { ...prior, claim_id: id };
+    row[table === "claim_v2_semantics" ? "semantic_key" : "support_key"] = sha256Hex("synthetic retired " + table);
+    const columns = Object.keys(row);
+    f.db.query(`INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(...Object.values(row));
+    const before = stable(f), plan = { ...f.plan, ...sourceBackfillSnapshot(f.db, f.event.event_id) };
+    await expect(apply(f, plan)).rejects.toThrow("inventory_changed");
+    expect(stable(f)).toEqual(before); expect(f.calls).toEqual([]);
+    expect(f.db.query("SELECT * FROM source_backfill_attempts").all()).toEqual([]);
+  }
+});

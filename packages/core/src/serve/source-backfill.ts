@@ -165,9 +165,17 @@ function current(target: Target, plan: SourceBackfillPlan, alreadySettled = fals
   if (canon.pending || canon.projection_pending !== 0 || db.query("SELECT 1 FROM extract_batches LIMIT 1").get() ||
       db.query("SELECT 1 FROM extract_usage LIMIT 1").get() || db.query("SELECT 1 FROM purge_ops WHERE state<>'done' LIMIT 1").get()) refuse("unsettled_work");
   const old = inventory(db, plan.event_id);
-  if (old.claims.length === 0 || old.claims.some(c => !["model", "llm"].includes(String(c.producer)) || c.authority !== "model_inference" ||
-      c.status !== "live" || c.retracted_at !== null || c.superseded_by !== null || canonicalJson(JSON.parse(String(c.provenance))) !== canonicalJson([plan.event_id])) ||
-      old.semantics.length !== old.claims.length || old.supports.length === 0 || old.supports.some(s => s.source_key !== plan.source_key || s.support_origin !== "source") ||
+  const active = old.claims.filter(c => ["model", "llm"].includes(String(c.producer)) && c.authority === "model_inference" &&
+    c.status === "live" && c.retracted_at === null && c.superseded_by === null);
+  // Retired connector captures remain in the snapshot and every preservation check.
+  // They cannot contribute world semantics, support, or its observation children.
+  const retired = old.claims.filter(c => c.producer === "deterministic" && c.authority === "connector_evidence" &&
+    c.is_world_typed === 0 && c.status === "superseded" && typeof c.retracted_at === "string" && c.retracted_at.length > 0 &&
+    typeof c.superseded_by === "string" && c.superseded_by.length > 0 && typeof c.receipt_id === "string" && c.receipt_id.length > 0);
+  if (active.length === 0 || active.length + retired.length !== old.claims.length ||
+      old.claims.some(c => canonicalJson(JSON.parse(String(c.provenance))) !== canonicalJson([plan.event_id])) ||
+      retired.some(c => old.semantics.some(s => s.claim_id === c.claim_id) || old.supports.some(s => s.claim_id === c.claim_id)) ||
+      old.semantics.length !== active.length || old.supports.length === 0 || old.supports.some(s => s.source_key !== plan.source_key || s.support_origin !== "source") ||
       old.support_events.some(s => s.event_id !== plan.event_id || s.event_content_hash !== plan.content_hash)) refuse("inventory_changed");
   for (const support of old.supports) {
     const admission = parseWorldAdmission(JSON.parse(String(support.admission)));
