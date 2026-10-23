@@ -29,12 +29,12 @@
       "bytes": 19571
     },
     "core-semantic-union-contract.json": {
-      "sha256": "05fe9d7e19c0e52b1d6bd745b12276d2b2659758ba95215f0524b5aa75ca0bde",
-      "bytes": 214612
+      "sha256": "babd6f93ba65403ad6235e6180acca1df61a01809629e483b7197b5f54df4f9e",
+      "bytes": 229074
     },
     "core-semantic-union.md": {
-      "sha256": "07e9281e7a48adeb46ba5d32168c22e1949c1b9d2a9a03ac95f5bbc1dde17b51",
-      "bytes": 9070
+      "sha256": "ac6c8308d90f22e8ba6c0141061cbbaa58b594f4e8968dae2ca9e45a7247033f",
+      "bytes": 9639
     }
   }
 }

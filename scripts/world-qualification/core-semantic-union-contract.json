@@ -1085,7 +1085,420 @@
       "expectation": "extract",
       "branches": [
         {
-          "id": "complete-source-meaning",
+          "id": "complete-local-alias",
+          "scope": "world-union/v1",
+          "local_alias_nomination": {
+            "alias": {
+              "mode": "source_occurrence",
+              "record": "r1",
+              "label": "Ochre Cutreserve"
+            },
+            "canonical": {
+              "mode": "source_occurrence",
+              "record": "r1",
+              "label": "Thistle Spareband"
+            }
+          },
+          "entities": [
+            {
+              "label": "Thistle Spareband",
+              "record": "r1",
+              "allowed_occurrence_spans": [
+                {
+                  "start_utf16": 0,
+                  "end_utf16": 17
+                },
+                {
+                  "start_utf16": 235,
+                  "end_utf16": 252
+                },
+                {
+                  "start_utf16": 294,
+                  "end_utf16": 311
+                }
+              ],
+              "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+            },
+            {
+              "label": "Ochre Cutreserve",
+              "record": "r1",
+              "allowed_occurrence_spans": [
+                {
+                  "start_utf16": 84,
+                  "end_utf16": 100
+                },
+                {
+                  "start_utf16": 276,
+                  "end_utf16": 292
+                }
+              ],
+              "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+            },
+            {
+              "label": "Quartz Sidecast",
+              "record": "r1",
+              "allowed_occurrence_spans": [
+                {
+                  "start_utf16": 140,
+                  "end_utf16": 155
+                },
+                {
+                  "start_utf16": 334,
+                  "end_utf16": 349
+                }
+              ],
+              "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+            }
+          ],
+          "propositions": [
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Thistle Spareband"
+              },
+              "predicate": "world.kind",
+              "object": {
+                "kind": "vocabulary",
+                "value": "world/concept"
+              },
+              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p1"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Thistle Spareband"
+              },
+              "predicate": "concept.label",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The source uses Thistle Spareband as the name of this concept."
+                ]
+              },
+              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p2",
+              "witness_mode": "selected_entity_label/v1"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Thistle Spareband"
+              },
+              "predicate": "concept.definition",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The concept is a spare strip reserved beyond a planned cut."
+                ]
+              },
+              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p3"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Ochre Cutreserve"
+              },
+              "predicate": "world.kind",
+              "object": {
+                "kind": "vocabulary",
+                "value": "world/concept"
+              },
+              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut. Ochre Cutreserve is another name for that same concept.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p4"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Ochre Cutreserve"
+              },
+              "predicate": "concept.label",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The source uses Ochre Cutreserve as the name of this concept."
+                ]
+              },
+              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut. Ochre Cutreserve is another name for that same concept.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p5",
+              "witness_mode": "selected_entity_label/v1"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Ochre Cutreserve"
+              },
+              "predicate": "concept.definition",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The concept is the same spare-strip concept introduced as Thistle Spareband."
+                ]
+              },
+              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut. Ochre Cutreserve is another name for that same concept.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p6"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Quartz Sidecast"
+              },
+              "predicate": "world.kind",
+              "object": {
+                "kind": "vocabulary",
+                "value": "world/concept"
+              },
+              "witness": "Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p7"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Quartz Sidecast"
+              },
+              "predicate": "concept.label",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The source uses Quartz Sidecast as the name of this concept."
+                ]
+              },
+              "witness": "Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p8",
+              "witness_mode": "selected_entity_label/v1"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Quartz Sidecast"
+              },
+              "predicate": "concept.definition",
+              "object": {
+                "kind": "literal",
+                "required_atoms": [
+                  "The concept is a deliberate sideways shift of a cutting guide."
+                ]
+              },
+              "witness": "Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "rule_id": "p9"
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Thistle Spareband"
+              },
+              "predicate": "concept.same_as",
+              "object": {
+                "kind": "subject",
+                "entity": {
+                  "mode": "source_occurrence",
+                  "record": "r1",
+                  "label": "Ochre Cutreserve"
+                }
+              },
+              "witness": "Thistle Spareband is the same concept as Ochre Cutreserve.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "required_relation_atoms": [
+                "Thistle Spareband and Ochre Cutreserve denote the same concept."
+              ],
+              "rule_id": "p10",
+              "symmetric": true
+            },
+            {
+              "subject": {
+                "mode": "source_occurrence",
+                "record": "r1",
+                "label": "Thistle Spareband"
+              },
+              "predicate": "concept.distinguished_from",
+              "object": {
+                "kind": "subject",
+                "entity": {
+                  "mode": "source_occurrence",
+                  "record": "r1",
+                  "label": "Quartz Sidecast"
+                }
+              },
+              "witness": "Thistle Spareband is distinguished from Quartz Sidecast.",
+              "perspective": {
+                "holder": null,
+                "speaker": null,
+                "addressee": null,
+                "mode": "asserted",
+                "interpretation": "explicit"
+              },
+              "polarity": "positive",
+              "time": {
+                "valid_from": null,
+                "valid_to": null,
+                "temporal_basis": "unknown"
+              },
+              "context": [],
+              "required_relation_atoms": [
+                "Thistle Spareband and Quartz Sidecast are distinct concepts."
+              ],
+              "rule_id": "p11",
+              "symmetric": true
+            }
+          ],
+          "forbidden_assertions": [
+            "Thistle Spareband is equivalent to Quartz Sidecast.",
+            "The source establishes identity of any existing external catalog endpoints.",
+            "Any participant owns a project or has adopted either concept."
+          ]
+        },
+        {
+          "id": "partial-local-alias",
           "scope": "world-union/v1",
           "local_alias_nomination": {
             "alias": {

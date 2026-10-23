@@ -1,9 +1,9 @@
 # Prospective world union qualification
 
-This fixed `core-semantic-v4` / `union22` method is prospective. It enables no
-product kind, changes no default registry, and supplies no model or native
+This fixed `core-semantic-v4` / `union22` method is prospective. The canonical
+nine-kind registry is active, but this source method supplies no model or native
 consumer evidence. A fresh complete22-case run and separately pinned independent
-semantic/body review are required before any later activation decision.
+semantic/body review are required before any qualification decision.
 
 ## Fixed source and meaning
 
@@ -34,6 +34,15 @@ fill two rules. Duplicate, omitted, unsupported and uncontracted typed claims
 refuse. A contracted typed predicate remains typed even if its ID also occurs
 in the legacy registry (`commitment.due`); no wrong-subject due claim may hide
 among legacy extras. The frozen v3 general matcher retains its existing path.
+
+The inherited cutting-relations case has exactly two scoped v4 alternatives.
+`complete-local-alias` retains p1 through p11. `partial-local-alias` omits only
+p6, the duplicate Ochre definition. Both bind an explicit positive, asserted,
+explicit Concept-to-Concept `same_as` relation and may nominate no candidate or
+exactly the earlier Thistle occurrence in the same source record. The nomination
+is local response metadata only: supplied, mixed, stale, multiple, later,
+cross-record, or chained candidates refuse and never create a durable merge or
+host grounding.
 
 Source occurrence selectors bind one exact allowed mention occurrence, never
 an arbitrary equal spelling. Structured selectors use actual

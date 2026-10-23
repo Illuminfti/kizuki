@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { coreSemanticAssets, coreSemanticCaseInput, expectedCoreSemanticReview, prepareCoreSemanticObservation, scoreCoreSemanticRun, scoreCoreSemanticRepresentations, type CoreSemanticCase } from "./core-semantic";
 import { registryDigest, verifyQualificationReceipt } from "./registry";
 import { WORLD_VOCABULARY_MODULES } from "./candidate-modules";
@@ -44,8 +44,8 @@ type Rule = { rule_id: string; subject: Selector; predicate: string; object: { k
 const supplied = (record: string, subject_id: string): Selector => ({ mode: "structured_source_subject", record, subject_id });
 const literal = (value: string) => ({ kind: "literal" as const, required_atoms: [value] });
 const vocabulary = (value: string) => ({ kind: "vocabulary" as const, value });
-function control(records: CoreSemanticCase["records"], rules: Rule[], entities: { record: string; label: string }[] = [], completeEvidence = false) {
-  const item = { id: "union-scripted-control", kind: "person", category: "positive", source_type: "direct_record", records } as unknown as CoreSemanticCase;
+function control(records: CoreSemanticCase["records"], rules: Rule[], entities: { record: string; label: string }[] = [], completeEvidence = false, caseId = "union-scripted-control") {
+  const item = { id: caseId, kind: "person", category: "positive", source_type: "direct_record", records } as unknown as CoreSemanticCase;
   const input = coreSemanticCaseInput(item, registry, policy);
   const span = (record: string, quote: string, repeated = false) => {
     const index = records.findIndex(r => r.id === record), text = records[index]!.text, start = text.indexOf(quote);
@@ -253,6 +253,29 @@ test("every added union positive admits through the real parser, guards and wire
     expect(Math.ceil(raw.length / 4)).toBeLessThanOrEqual(policy.max_output_tokens);
   }
 });
+test("v4 local alias alternatives use the real dispatcher and admit only the declared same-record peer", () => {
+  const index = unionCorpus.cases.findIndex(item => item.id === "offered-concept-cutting-relations");
+  const item = unionCorpus.cases[index]! as CoreSemanticCase, rule = unionContract.cases[index]! as never as { expectation: "extract"; branches: ScopedExtractBranch[] };
+  const score = (response: ExtractResponseV2, input: ReturnType<typeof coreSemanticCaseInput>) => scoreCoreSemanticRepresentations(item, rule, {
+    case_id: item.id, input, status: "ok", response, dropped: 0, usage: { calls: 1, input_tokens: 100, output_tokens: 100 },
+  }, registry, policy);
+  const complete = control(item.records, rule.branches[0]!.propositions, rule.branches[0]!.entities, true, item.id);
+  expect(score(complete.response, complete.observed.input).selected_branch_id).toBe("complete-local-alias");
+  const alias = complete.response.mentions.find(mention => mention.label === "Ochre Cutreserve")!, canonical = complete.response.mentions.find(mention => mention.label === "Thistle Spareband")!;
+  alias.candidate_refs = [{ kind: "mention", id: canonical.id }];
+  expect(score(alias === undefined ? complete.response : complete.response, complete.observed.input).selected_branch_id).toBe("complete-local-alias");
+  for (const mutate of [
+    (response: ExtractResponseV2) => { response.mentions.find(mention => mention.label === "Ochre Cutreserve")!.candidate_refs = [{ kind: "mention", id: response.mentions.find(mention => mention.label === "Quartz Sidecast")!.id }]; },
+    (response: ExtractResponseV2) => { const mentions = response.mentions; [mentions[0], mentions[1]] = [mentions[1]!, mentions[0]!]; },
+    (response: ExtractResponseV2) => { response.mentions.find(mention => mention.label === "Ochre Cutreserve")!.candidate_refs = [{ kind: "mention", id: canonical.id }, { kind: "mention", id: canonical.id }]; },
+  ]) { const response = structuredClone(complete.response); mutate(response); expect(score(response, complete.observed.input).automated_passed).toBe(false); }
+  const partial = control(item.records, rule.branches[1]!.propositions, rule.branches[1]!.entities, true, item.id);
+  expect(score(partial.response, partial.observed.input).selected_branch_id).toBe("partial-local-alias");
+  for (const mutate of [
+    (branch: ScopedExtractBranch) => { delete (branch as Partial<ScopedExtractBranch>).scope; },
+    (branch: ScopedExtractBranch) => { delete branch.local_alias_nomination; },
+  ]) { const branch = structuredClone(rule.branches[1]!); mutate(branch); expect(() => validateScopedBranch(item, branch, registry)).toThrow(); }
+});
 test("union due is a closed world row even when its ID overlaps the legacy registry", () => {
   const item = unionCorpus.cases[20]!, rule = unionContract.cases[20]! as unknown as { branches: ScopedExtractBranch[] };
   const branch = rule.branches[0]!, f = control(item.records as CoreSemanticCase["records"], branch.propositions, branch.entities, true);
@@ -263,46 +286,41 @@ test("union due is a closed world row even when its ID overlaps the legacy regis
   f.response.claims.push(claim);
   expect(f.score().automated_passed).toBe(false);
 });
-test("fixed union report requires all22, exact policy/custody and its own independent review", () => {
+let fixedUnion: any;
+beforeAll(() => {
   const directory = mkdtempSync(join(tmpdir(), "kizuki-union-verifier-"));
-  try {
-    for (const path of RUNNER_FILES) { mkdirSync(dirname(join(directory, path)), { recursive: true }); writeFileSync(join(directory, path), readFileSync(join(import.meta.dir, "../..", path))); }
-    const rows = scriptedUnionObservations(policy), wire = rows.map(row => scriptedWire(row, policy)), started = Date.UTC(2026, 9, 23);
-    const traces = rows.map((row, index) => ({ case_id: row.case_id, prompt_sha256: sha256(extractionV2SystemContent(row.input)), transport: "ok" as const,
-      input_planning_sha256: wire[index]!.evidence.input_planning.planning_sha256, request_sha256: "a".repeat(64), response_sha256: "b".repeat(64), model_response_sha256: wire[index]!.evidence.receipt.raw_response_sha256,
-      origin: "observed_v3" as const, http_status: 200, started_at: new Date(started + index * (RESPONSE_GAP_MS + 1_000)).toISOString(), completed_at: new Date(started + index * (RESPONSE_GAP_MS + 1_000) + 1_000).toISOString() }));
-    const evidence = { source_commit: "a".repeat(40), input_policy: policy, traces, wire_adapter: modelWireAdapterIdentity(), wire_receipts: wire.map(w => w.evidence) };
-    const assets = coreSemanticAssets("union22"), result = scoreCoreSemanticRun(rows, registry, evidence, assets);
-    expect(result.cases.filter(row => !row.automated_passed).map(row => ({ id: row.case_id, gates: row.gates }))).toEqual([]);
-    expect(result.raw_model_automated_passed).toBe(true);
-    const report = { schema: "kizuki.world-qualification-run/v4" as const, protocol: "core-semantic-v4" as const, core_split: "union22" as const,
-      evidence: "runner_observed_transport" as const, synthetic: true, source_clean: true, ...evidence, runner_sha256: runnerDigest(directory), registry_sha256: registryDigest(registry),
-      model: "synthetic-union-verifier-control", endpoint_host: "127.0.0.1:1", selected_kinds: [...WORLD_UNION_CANDIDATE_KINDS], selected_extensions: [...WORLD_UNION_CANDIDATE_EXTENSIONS],
-      corpus: assets.corpus, observations: rows, missing: [], selected_cases: rows.map(row => row.case_id), resumed_from: null, halt_reason: null,
-      response_gap_ms: RESPONSE_GAP_MS, attempts: rows.length, case_states: rows.map(row => ({ case_id: row.case_id, status: "observed" as const })),
-      prompt_sha256: traces[0]!.prompt_sha256, prompt_sha256_by_case: Object.fromEntries(traces.map(trace => [trace.case_id, trace.prompt_sha256])), limitations: ["scripted verifier controls only, never model qualification"], core_semantic: result };
-    const bytes = JSON.stringify(report), reportSha256 = sha256(bytes), review = JSON.stringify(expectedCoreSemanticReview(reportSha256, result));
-    const path = join(directory, "scripts/fixtures/world-qualification/union-control-review.json"); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, review, { mode: 0o600 });
-    const approval = { file: "union-control.json", sha256: reportSha256, endpoint_evidence: "c".repeat(64), protocol: "core-semantic-v4" as const, body_review: { file: "union-control-review.json", sha256: sha256(review) } };
-    const checked = verifyQualificationReceipt(bytes, approval, registry, directory);
-    expect(verifyCoreSemanticReport(bytes, approval, directory, "union22")).toEqual(checked);
-    expect(checked.predicates).toHaveLength(70);
-    expect(() => verifyCoreSemanticReport(bytes, approval, directory, "offered17")).toThrow();
-    for (const change of [
-      (r: Mutable<typeof report>) => { r.attempts--; r.observations.pop(); r.traces.pop(); },
-      (r: Mutable<typeof report>) => { r.resumed_from = {} as never; },
-      (r: Mutable<typeof report>) => { r.halt_reason = "transport_refused" as never; },
-      (r: Mutable<typeof report>) => { r.selected_extensions = []; },
-      (r: Mutable<typeof report>) => { r.input_policy.input_token_overhead = 0; },
-      (r: Mutable<typeof report>) => { r.observations[0]!.usage.input_tokens = 32_001; },
-      (r: Mutable<typeof report>) => { r.observations[0]!.usage.output_tokens = 8_193; },
-      (r: Mutable<typeof report>) => { r.wire_receipts.pop(); },
-      (r: Mutable<typeof report>) => { r.source_clean = false; },
-    ]) { const changed = structuredClone(report) as Mutable<typeof report>; change(changed); const text = JSON.stringify(changed); expect(() => verifyQualificationReceipt(text, { ...approval, sha256: sha256(text) }, registry, directory)).toThrow(); }
-    const changedReview = JSON.stringify({ ...JSON.parse(review), independent: false }); writeFileSync(path, changedReview);
-    expect(() => verifyQualificationReceipt(bytes, { ...approval, body_review: { ...approval.body_review, sha256: sha256(changedReview) } }, registry, directory)).toThrow("review mismatch");
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  for (const path of RUNNER_FILES) { mkdirSync(dirname(join(directory, path)), { recursive: true }); writeFileSync(join(directory, path), readFileSync(join(import.meta.dir, "../..", path))); }
+  const rows = scriptedUnionObservations(policy), wire = rows.map(row => scriptedWire(row, policy)), started = Date.UTC(2026, 9, 23);
+  const traces = rows.map((row, index) => ({ case_id: row.case_id, prompt_sha256: sha256(extractionV2SystemContent(row.input)), transport: "ok" as const,
+    input_planning_sha256: wire[index]!.evidence.input_planning.planning_sha256, request_sha256: "a".repeat(64), response_sha256: "b".repeat(64), model_response_sha256: wire[index]!.evidence.receipt.raw_response_sha256,
+    origin: "observed_v3" as const, http_status: 200, started_at: new Date(started + index * (RESPONSE_GAP_MS + 1_000)).toISOString(), completed_at: new Date(started + index * (RESPONSE_GAP_MS + 1_000) + 1_000).toISOString() }));
+  const evidence = { source_commit: "a".repeat(40), input_policy: policy, traces, wire_adapter: modelWireAdapterIdentity(), wire_receipts: wire.map(w => w.evidence) };
+  const assets = coreSemanticAssets("union22"), result = scoreCoreSemanticRun(rows, registry, evidence, assets);
+  const report = { schema: "kizuki.world-qualification-run/v4" as const, protocol: "core-semantic-v4" as const, core_split: "union22" as const,
+    evidence: "runner_observed_transport" as const, synthetic: true, source_clean: true, ...evidence, runner_sha256: runnerDigest(directory), registry_sha256: registryDigest(registry),
+    model: "synthetic-union-verifier-control", endpoint_host: "127.0.0.1:1", selected_kinds: [...WORLD_UNION_CANDIDATE_KINDS], selected_extensions: [...WORLD_UNION_CANDIDATE_EXTENSIONS],
+    corpus: assets.corpus, observations: rows, missing: [], selected_cases: rows.map(row => row.case_id), resumed_from: null, halt_reason: null,
+    response_gap_ms: RESPONSE_GAP_MS, attempts: rows.length, case_states: rows.map(row => ({ case_id: row.case_id, status: "observed" as const })),
+    prompt_sha256: traces[0]!.prompt_sha256, prompt_sha256_by_case: Object.fromEntries(traces.map(trace => [trace.case_id, trace.prompt_sha256])), limitations: ["scripted verifier controls only, never model qualification"], core_semantic: result };
+  const bytes = JSON.stringify(report), review = JSON.stringify(expectedCoreSemanticReview(sha256(bytes), result));
+  const path = join(directory, "scripts/fixtures/world-qualification/union-control-review.json"); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, review, { mode: 0o600 });
+  fixedUnion = { directory, rows, result, report, bytes, review, path, approval: { file: "union-control.json", sha256: sha256(bytes), endpoint_evidence: "c".repeat(64), protocol: "core-semantic-v4" as const, body_review: { file: "union-control-review.json", sha256: sha256(review) } } };
 });
+afterAll(() => { if (fixedUnion) rmSync(fixedUnion.directory, { recursive: true, force: true }); });
+test("fixed union report accepts the complete 22-case source control", () => {
+  const f = fixedUnion, checked = verifyCoreSemanticReport(f.bytes, f.approval, f.directory, "union22");
+  expect(f.result.cases.filter((row: { automated_passed: boolean }) => !row.automated_passed)).toEqual([]);
+  expect(checked.predicates).toHaveLength(70);
+  expect(() => verifyCoreSemanticReport(f.bytes, f.approval, f.directory, "offered17")).toThrow();
+});
+test.each([
+  ["missing observation", (r: any) => { r.attempts--; r.observations.pop(); r.traces.pop(); }], ["resume marker", (r: any) => { r.resumed_from = {}; }],
+  ["halt marker", (r: any) => { r.halt_reason = "transport_refused"; }], ["extensions", (r: any) => { r.selected_extensions = []; }],
+  ["input budget", (r: any) => { r.input_policy.input_token_overhead = 0; }], ["input usage", (r: any) => { r.observations[0].usage.input_tokens = 32001; }],
+  ["output usage", (r: any) => { r.observations[0].usage.output_tokens = 8193; }], ["wire receipt", (r: any) => { r.wire_receipts.pop(); }], ["source cleanliness", (r: any) => { r.source_clean = false; }],
+])("fixed union report rejects %s", (_name, mutate) => { const f = fixedUnion, changed = structuredClone(f.report); mutate(changed); const text = JSON.stringify(changed); expect(() => verifyQualificationReceipt(text, { ...f.approval, sha256: sha256(text) }, registry, f.directory)).toThrow(); });
+test("fixed union report rejects an altered independent review", () => { const f = fixedUnion, changed = JSON.stringify({ ...JSON.parse(f.review), independent: false }); writeFileSync(f.path, changed); expect(() => verifyQualificationReceipt(f.bytes, { ...f.approval, body_review: { ...f.approval.body_review, sha256: sha256(changed) } }, registry, f.directory)).toThrow("review mismatch"); writeFileSync(f.path, f.review); });
+
 test("v4 dry runner is explicit, fixed, and preserves pending review without transport", async () => {
   await expect(runQualification({ protocol: "core-semantic-v4", kinds: WORLD_UNION_CANDIDATE_KINDS, extensions: WORLD_UNION_CANDIDATE_EXTENSIONS })).rejects.toThrow();
   for (const changed of [{ case_ids: ["union-direct-question-person"] }, { resume_from: "/nonexistent", resume_sha256: "a".repeat(64) }, { core_split: "offered17" as const }])

@@ -58,6 +58,18 @@ export function validateUnionContract(corpus: CoreSemanticAssetSet["corpus"], co
       continue;
     }
     if (!("branches" in rule) || rule.branches.length < 1 || rule.branches.length > 3 || new Set(rule.branches.map(b => b.id)).size !== rule.branches.length) throw Error("invalid union branches");
+    if (inheritedAlias) {
+      const [complete, partial] = rule.branches;
+      const requiredNomination = canonicalJson({
+        alias: { mode: "source_occurrence", record: "r1", label: "Ochre Cutreserve" },
+        canonical: { mode: "source_occurrence", record: "r1", label: "Thistle Spareband" },
+      });
+      if (rule.branches.length !== 2 || complete?.id !== "complete-local-alias" || partial?.id !== "partial-local-alias" ||
+          complete.scope !== "world-union/v1" || partial.scope !== "world-union/v1" ||
+          canonicalJson(complete.local_alias_nomination) !== requiredNomination || canonicalJson(partial.local_alias_nomination) !== requiredNomination ||
+          canonicalJson(complete.propositions.map(p => p.rule_id)) !== canonicalJson(["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11"]) ||
+          canonicalJson(partial.propositions.map(p => p.rule_id)) !== canonicalJson(["p1", "p2", "p3", "p4", "p5", "p7", "p8", "p9", "p10", "p11"])) throw Error("invalid local alias alternatives");
+    }
     for (const branch of rule.branches) {
       if (!("scope" in branch)) throw Error("union branch scope missing");
       validateScopedBranch(item, branch, registry);
