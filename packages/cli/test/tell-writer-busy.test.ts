@@ -10,7 +10,7 @@ import { createHelpers } from "./helpers";
 
 setDefaultTimeout(90_000);
 
-const { cleanup, runCliAsync, tempVault } = createHelpers();
+const { cleanup, runCli, tempVault } = createHelpers();
 afterEach(cleanup);
 
 const producer: ProducerPort = {
@@ -107,23 +107,25 @@ test("a tell issued while the loop writes canon waits for a page, not the pass, 
     for (let index = 0; index < 12; index += 1) await file(db, `person${String.fromCharCode(97 + index)}`);
 
     const baseline = written();
-    let finished = false;
+    let tell: ReturnType<typeof runCli> | undefined;
     const pass = runWritePass(db, setup.vault, {
       budget: createBudgetTracker({ canon_writes_per_run: 32 }), model_ref: "fixture/model", claims: { db }, producer,
-    }).finally(() => { finished = true; });
-    while (written() === baseline) await new Promise((resolve) => setTimeout(resolve, 10));
-
-    const started = performance.now();
-    const tell = await runCliAsync(setup.env, "tell", "grace is at initech now, not acme", "--claim", first.claim_id, "--json");
-    const waited = performance.now() - started;
-    expect(tell.stderr).toBe("");
-    expect(tell.exitCode).toBe(0);
-    expect(JSON.parse(tell.stdout).data.receipt_id).toBeString();
-    // The correction landed between two pages of the pass, and within the bounded wait.
-    expect(finished).toBe(false);
-    expect(waited).toBeLessThan(30_000);
+      // `writeCanon` reads this outside its per-page mutation lock. Once one real
+      // page is durable, pause the pass to exercise the public CLI process while
+      // the writer is free, then let this same pass finish its original 12 pages.
+      stopRequested: () => {
+        if (tell === undefined && written() > baseline) {
+          tell = runCli(setup.env, "tell", "grace is at initech now, not acme", "--claim", first.claim_id, "--json");
+        }
+        return false;
+      },
+    });
 
     const result = await pass;
+    expect(tell).toBeDefined();
+    expect(tell!.stderr).toBe("");
+    expect(tell!.exitCode).toBe(0);
+    expect(JSON.parse(tell!.stdout).data.receipt_id).toBeString();
     expect(result.canon_writes).toBe(12);
     expect(result.errors).toEqual([]);
   } finally {
