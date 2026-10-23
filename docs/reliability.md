@@ -101,6 +101,15 @@ hook after phase one commits, then the parent sends SIGKILL. Restart must
 complete the legacy or typed purge and prove absence for every selected event.
 These cuts are test APIs in `runCampaign`, not additional product commands.
 
+The backup regression uses `snapshot-ledger`: the synthetic child runs the real
+`VACUUM INTO`, then stops while the copied ledger is still in the private partial
+snapshot and the writer is held. The parent observes that checkpoint and sends
+SIGKILL. The oracle requires the copied ledger and no published output before
+recovery, then checks the original vault through the same restart path. This
+replaces a timing-sensitive zero-delay sample; it is an in-progress backup cut,
+not a kill before work begins. Random campaigns still report fast completion
+honestly, and the separate acknowledged cut still checks published snapshots.
+
 The typed purge cut exposed a projection-order defect: erasure refreshed the
 graph while its completed write intent still held the deleted page, removing
 unrelated edges until rebuild. Completion now clears that intent inside the
