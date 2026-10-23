@@ -238,16 +238,18 @@ test("fully retired non-world connector evidence remains byte-identical alongsid
   expect(f.calls).toHaveLength(1);
 });
 
-test("live, unfinished, world-typed or mixed-authority connector history refuses before model or reservation", async () => {
-  for (const patch of [{ status: "live" }, { retracted_at: null }, { superseded_by: null }, { receipt_id: null },
-    { is_world_typed: 1 }, { producer: "model" }, { authority: "model_inference" }]) {
-    const f = await fixture(), id = retiredConnectorEvidence(f);
-    for (const [key, value] of Object.entries(patch)) f.db.query(`UPDATE claims SET ${key}=? WHERE claim_id=?`).run(value, id);
-    const before = stable(f), plan = { ...f.plan, ...sourceBackfillSnapshot(f.db, f.event.event_id) };
-    await expect(apply(f, plan)).rejects.toThrow("inventory_changed");
-    expect(stable(f)).toEqual(before); expect(f.calls).toEqual([]);
-    expect(f.db.query("SELECT * FROM source_backfill_attempts").all()).toEqual([]);
-  }
+test.each([
+  ["live status", { status: "live" }], ["missing retirement time", { retracted_at: null }],
+  ["missing supersession", { superseded_by: null }], ["missing receipt", { receipt_id: null }],
+  ["world-typed evidence", { is_world_typed: 1 }], ["model producer", { producer: "model" }],
+  ["model authority", { authority: "model_inference" }],
+] as const)("ineligible connector history (%s) refuses before model or reservation", async (_name, patch) => {
+  const f = await fixture(), id = retiredConnectorEvidence(f);
+  for (const [key, value] of Object.entries(patch)) f.db.query(`UPDATE claims SET ${key}=? WHERE claim_id=?`).run(value, id);
+  const before = stable(f), plan = { ...f.plan, ...sourceBackfillSnapshot(f.db, f.event.event_id) };
+  await expect(apply(f, plan)).rejects.toThrow("inventory_changed");
+  expect(stable(f)).toEqual(before); expect(f.calls).toEqual([]);
+  expect(f.db.query("SELECT * FROM source_backfill_attempts").all()).toEqual([]);
 });
 
 
