@@ -200,7 +200,10 @@ export function prepareWorldDrafts(
     if (mention === undefined || !claimAnchors.has(anchorKey(mention.anchor))) fail("mention is unsupported by claim evidence");
     const event = eventById.get(mention.anchor.event_id);
     if (event === undefined) fail("mention anchor is outside immutable event input");
-    if (identity && mention.candidate_refs.length > 0) {
+    // Response-local nominations carry no authority: never follow their chains
+    // or change the occurrence selected by this mention's own evidence.
+    // Other nominations still take the strict host-grounding path.
+    if (identity && mention.candidate_refs.some(candidate => candidate.kind !== "mention")) {
       const candidate = mention.candidate_refs.length === 1 && mention.candidate_refs[0]!.kind === "supplied"
         ? context.grounding?.get(mention.candidate_refs[0]!.id) : undefined;
       if (!candidate) fail("identity candidate is not a host-issued endpoint");

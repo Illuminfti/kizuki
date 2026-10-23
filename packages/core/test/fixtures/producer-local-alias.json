@@ -1,0 +1,323 @@
+{
+  "scope": "Sealed synthetic model response regression; failed campaign remains failed. No transport metadata or external identifiers.",
+  "input": {
+    "events": [
+      {
+        "event_id": "00000000000000000000000001",
+        "text": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut. Ochre Cutreserve is another name for that same concept. Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide. Thistle Spareband is the same concept as Ochre Cutreserve. Thistle Spareband is distinguished from Quartz Sidecast."
+      }
+    ],
+    "supplied_refs": [],
+    "vocabulary_refs": [
+      "learning/assisted",
+      "learning/unassisted",
+      "world/concept",
+      "world/situation"
+    ],
+    "predicates": [
+      {
+        "id": "identity.display_name",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "identity.handle_on",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "identity.same_as",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "contact.email",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "contact.phone",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "location.based_in",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "employment.works_at",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "employment.role",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "project.owns",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "project.works_on",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "project.status",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "commitment.owes",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "commitment.due",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "relation.knows",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "relation.reports_to",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "preference.prefers",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "preference.avoids",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "taste.likes_style",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "decision.decided",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "decision.rejected",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "tool.uses",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "tool.abandoned",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "skill.has",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "health.metric",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "outcome.reached",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "outcome.missed",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "outcome.self_report",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "outcome.provider_ack",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "outcome.observation",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "outcome.review",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "world.kind",
+        "object_kinds": [
+          "vocabulary"
+        ]
+      },
+      {
+        "id": "situation.label",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "situation.objective",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "situation.commitment",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "situation.blocker",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "situation.change",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "situation.participant",
+        "object_kinds": [
+          "subject"
+        ]
+      },
+      {
+        "id": "concept.label",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "concept.definition",
+        "object_kinds": [
+          "literal"
+        ]
+      },
+      {
+        "id": "concept.requires",
+        "object_kinds": [
+          "subject"
+        ]
+      },
+      {
+        "id": "concept.example",
+        "object_kinds": [
+          "literal",
+          "subject"
+        ]
+      },
+      {
+        "id": "concept.counterexample",
+        "object_kinds": [
+          "literal",
+          "subject"
+        ]
+      },
+      {
+        "id": "concept.same_as",
+        "object_kinds": [
+          "subject"
+        ]
+      },
+      {
+        "id": "concept.distinguished_from",
+        "object_kinds": [
+          "subject"
+        ]
+      },
+      {
+        "id": "learning.exposure",
+        "object_kinds": [
+          "subject"
+        ]
+      },
+      {
+        "id": "learning.explanation",
+        "object_kinds": [
+          "subject"
+        ]
+      },
+      {
+        "id": "learning.application",
+        "object_kinds": [
+          "subject"
+        ]
+      },
+      {
+        "id": "learning.demonstration",
+        "object_kinds": [
+          "subject"
+        ]
+      },
+      {
+        "id": "learning.assistance",
+        "object_kinds": [
+          "vocabulary"
+        ]
+      }
+    ],
+    "budget": {
+      "max_calls": 1,
+      "max_input_tokens": 32000,
+      "max_output_tokens": 8192
+    }
+  },
+  "model_response": "{\"schema\":\"kizuki.model-extraction/quote-anchors-v1\",\"mentions\":[{\"id\":\"m1\",\"label\":\"Thistle Spareband\",\"anchor\":{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.\",\"select\":\"Thistle Spareband\"},\"candidate_refs\":[]},{\"id\":\"m2\",\"label\":\"Ochre Cutreserve\",\"anchor\":{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Ochre Cutreserve is another name for that same concept.\",\"select\":\"Ochre Cutreserve\"},\"candidate_refs\":[{\"kind\":\"mention\",\"id\":\"m1\"}]},{\"id\":\"m3\",\"label\":\"Quartz Sidecast\",\"anchor\":{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.\",\"select\":\"Quartz Sidecast\"},\"candidate_refs\":[]}],\"claims\":[{\"id\":\"c1\",\"subject\":{\"kind\":\"mention\",\"id\":\"m1\"},\"predicate\":\"world.kind\",\"object\":{\"kind\":\"vocabulary\",\"ref\":{\"kind\":\"vocabulary\",\"id\":\"world/concept\"}},\"perspective\":{\"holder\":null,\"speaker\":null,\"addressee\":null,\"mode\":\"asserted\",\"interpretation\":\"explicit\",\"anchors\":[]},\"context\":[],\"polarity\":\"positive\",\"body\":\"Thistle Spareband is a concept.\",\"valid_from\":null,\"valid_to\":null,\"temporal_basis\":\"unknown\",\"confidence\":1,\"sensitivity\":\"public\",\"anchors\":[{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.\",\"select\":\"Thistle Spareband\"},{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.\"}]},{\"id\":\"c2\",\"subject\":{\"kind\":\"mention\",\"id\":\"m1\"},\"predicate\":\"concept.label\",\"object\":{\"kind\":\"literal\",\"value\":\"Thistle Spareband\"},\"perspective\":{\"holder\":null,\"speaker\":null,\"addressee\":null,\"mode\":\"asserted\",\"interpretation\":\"explicit\",\"anchors\":[]},\"context\":[],\"polarity\":\"positive\",\"body\":\"The concept is named Thistle Spareband.\",\"valid_from\":null,\"valid_to\":null,\"temporal_basis\":\"unknown\",\"confidence\":1,\"sensitivity\":\"public\",\"anchors\":[{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.\",\"select\":\"Thistle Spareband\"}]},{\"id\":\"c3\",\"subject\":{\"kind\":\"mention\",\"id\":\"m1\"},\"predicate\":\"concept.definition\",\"object\":{\"kind\":\"literal\",\"value\":\"a spare strip reserved beyond a planned cut\"},\"perspective\":{\"holder\":null,\"speaker\":null,\"addressee\":null,\"mode\":\"asserted\",\"interpretation\":\"explicit\",\"anchors\":[]},\"context\":[],\"polarity\":\"positive\",\"body\":\"Thistle Spareband means a spare strip reserved beyond a planned cut.\",\"valid_from\":null,\"valid_to\":null,\"temporal_basis\":\"unknown\",\"confidence\":1,\"sensitivity\":\"public\",\"anchors\":[{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.\",\"select\":\"Thistle Spareband\"},{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.\"}]},{\"id\":\"c4\",\"subject\":{\"kind\":\"mention\",\"id\":\"m2\"},\"predicate\":\"world.kind\",\"object\":{\"kind\":\"vocabulary\",\"ref\":{\"kind\":\"vocabulary\",\"id\":\"world/concept\"}},\"perspective\":{\"holder\":null,\"speaker\":null,\"addressee\":null,\"mode\":\"asserted\",\"interpretation\":\"explicit\",\"anchors\":[]},\"context\":[],\"polarity\":\"positive\",\"body\":\"Ochre Cutreserve is a concept.\",\"valid_from\":null,\"valid_to\":null,\"temporal_basis\":\"unknown\",\"confidence\":1,\"sensitivity\":\"public\",\"anchors\":[{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Ochre Cutreserve is another name for that same concept.\",\"select\":\"Ochre Cutreserve\"},{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Ochre Cutreserve is another name for that same concept.\"}]},{\"id\":\"c5\",\"subject\":{\"kind\":\"mention\",\"id\":\"m2\"},\"predicate\":\"concept.label\",\"object\":{\"kind\":\"literal\",\"value\":\"Ochre Cutreserve\"},\"perspective\":{\"holder\":null,\"speaker\":null,\"addressee\":null,\"mode\":\"asserted\",\"interpretation\":\"explicit\",\"anchors\":[]},\"context\":[],\"polarity\":\"positive\",\"body\":\"The concept is also named Ochre Cutreserve.\",\"valid_from\":null,\"valid_to\":null,\"temporal_basis\":\"unknown\",\"confidence\":1,\"sensitivity\":\"public\",\"anchors\":[{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Ochre Cutreserve is another name for that same concept.\",\"select\":\"Ochre Cutreserve\"},{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Ochre Cutreserve is another name for that same concept.\"}]},{\"id\":\"c6\",\"subject\":{\"kind\":\"mention\",\"id\":\"m3\"},\"predicate\":\"world.kind\",\"object\":{\"kind\":\"vocabulary\",\"ref\":{\"kind\":\"vocabulary\",\"id\":\"world/concept\"}},\"perspective\":{\"holder\":null,\"speaker\":null,\"addressee\":null,\"mode\":\"asserted\",\"interpretation\":\"explicit\",\"anchors\":[]},\"context\":[],\"polarity\":\"positive\",\"body\":\"Quartz Sidecast is a concept.\",\"valid_from\":null,\"valid_to\":null,\"temporal_basis\":\"unknown\",\"confidence\":1,\"sensitivity\":\"public\",\"anchors\":[{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.\",\"select\":\"Quartz Sidecast\"},{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.\"}]},{\"id\":\"c7\",\"subject\":{\"kind\":\"mention\",\"id\":\"m3\"},\"predicate\":\"concept.label\",\"object\":{\"kind\":\"literal\",\"value\":\"Quartz Sidecast\"},\"perspective\":{\"holder\":null,\"speaker\":null,\"addressee\":null,\"mode\":\"asserted\",\"interpretation\":\"explicit\",\"anchors\":[]},\"context\":[],\"polarity\":\"positive\",\"body\":\"The concept is named Quartz Sidecast.\",\"valid_from\":null,\"valid_to\":null,\"temporal_basis\":\"unknown\",\"confidence\":1,\"sensitivity\":\"public\",\"anchors\":[{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.\",\"select\":\"Quartz Sidecast\"}]},{\"id\":\"c8\",\"subject\":{\"kind\":\"mention\",\"id\":\"m3\"},\"predicate\":\"concept.definition\",\"object\":{\"kind\":\"literal\",\"value\":\"a deliberate sideways shift of a cutting guide\"},\"perspective\":{\"holder\":null,\"speaker\":null,\"addressee\":null,\"mode\":\"asserted\",\"interpretation\":\"explicit\",\"anchors\":[]},\"context\":[],\"polarity\":\"positive\",\"body\":\"Quartz Sidecast means a deliberate sideways shift of a cutting guide.\",\"valid_from\":null,\"valid_to\":null,\"temporal_basis\":\"unknown\",\"confidence\":1,\"sensitivity\":\"public\",\"anchors\":[{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.\",\"select\":\"Quartz Sidecast\"},{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.\"}]},{\"id\":\"c9\",\"subject\":{\"kind\":\"mention\",\"id\":\"m1\"},\"predicate\":\"concept.same_as\",\"object\":{\"kind\":\"subject\",\"ref\":{\"kind\":\"mention\",\"id\":\"m2\"}},\"perspective\":{\"holder\":null,\"speaker\":null,\"addressee\":null,\"mode\":\"asserted\",\"interpretation\":\"explicit\",\"anchors\":[]},\"context\":[],\"polarity\":\"positive\",\"body\":\"Thistle Spareband is the same concept as Ochre Cutreserve.\",\"valid_from\":null,\"valid_to\":null,\"temporal_basis\":\"unknown\",\"confidence\":1,\"sensitivity\":\"public\",\"anchors\":[{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.\",\"select\":\"Thistle Spareband\"},{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Ochre Cutreserve is another name for that same concept.\",\"select\":\"Ochre Cutreserve\"},{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Thistle Spareband is the same concept as Ochre Cutreserve.\"}]},{\"id\":\"c10\",\"subject\":{\"kind\":\"mention\",\"id\":\"m1\"},\"predicate\":\"concept.distinguished_from\",\"object\":{\"kind\":\"subject\",\"ref\":{\"kind\":\"mention\",\"id\":\"m3\"}},\"perspective\":{\"holder\":null,\"speaker\":null,\"addressee\":null,\"mode\":\"asserted\",\"interpretation\":\"explicit\",\"anchors\":[]},\"context\":[],\"polarity\":\"positive\",\"body\":\"Thistle Spareband is distinguished from Quartz Sidecast.\",\"valid_from\":null,\"valid_to\":null,\"temporal_basis\":\"unknown\",\"confidence\":1,\"sensitivity\":\"public\",\"anchors\":[{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.\",\"select\":\"Thistle Spareband\"},{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.\",\"select\":\"Quartz Sidecast\"},{\"event_id\":\"00000000000000000000000001\",\"quote\":\"Thistle Spareband is distinguished from Quartz Sidecast.\"}]}]}",
+  "model_response_sha256": "8d3e90a87ab7c8e03c3ceb17f2d7ece4eecf6ac0d073b9fc9ab77f958e2ad127"
+}
