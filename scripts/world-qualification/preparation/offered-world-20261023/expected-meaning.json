@@ -1,0 +1,1243 @@
+{
+  "schema": "kizuki.offered-world-preparation-meaning/v1",
+  "status": "prospective_authored_expected_meaning_not_a_scoring_engine",
+  "method_to_preserve": "complete-authored-branches/v1; closed-SPO domain atoms; all raw claims and bodies independently reviewed; exact source, roles, time, anchors, usage and custody",
+  "cases": [
+    {
+      "case_id": "offered-concept-filter-pattern",
+      "entities": [
+        {
+          "label": "Dapple Weave",
+          "record": "r1",
+          "allowed_occurrence_spans": [
+            {
+              "start_utf16": 0,
+              "end_utf16": 12
+            },
+            {
+              "start_utf16": 176,
+              "end_utf16": 188
+            },
+            {
+              "start_utf16": 302,
+              "end_utf16": 314
+            },
+            {
+              "start_utf16": 373,
+              "end_utf16": 385
+            }
+          ],
+          "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+        },
+        {
+          "label": "Fine Lattice",
+          "record": "r1",
+          "allowed_occurrence_spans": [
+            {
+              "start_utf16": 96,
+              "end_utf16": 108
+            },
+            {
+              "start_utf16": 198,
+              "end_utf16": 210
+            }
+          ],
+          "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+        }
+      ],
+      "required_propositions": [
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Dapple Weave"
+          },
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/concept"
+          },
+          "witness": "Dapple Weave is a concept meaning an alternating arrangement of coarse and fine filter threads.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Dapple Weave"
+          },
+          "predicate": "concept.label",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The source uses Dapple Weave as the name of this concept."
+            ]
+          },
+          "witness": "Dapple Weave is a concept meaning an alternating arrangement of coarse and fine filter threads.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Dapple Weave"
+          },
+          "predicate": "concept.definition",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The concept is an alternating arrangement of coarse and fine filter threads."
+            ]
+          },
+          "witness": "Dapple Weave is a concept meaning an alternating arrangement of coarse and fine filter threads.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Fine Lattice"
+          },
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/concept"
+          },
+          "witness": "Fine Lattice is a concept meaning a supporting grid beneath the filter threads.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Fine Lattice"
+          },
+          "predicate": "concept.label",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The source uses Fine Lattice as the name of this concept."
+            ]
+          },
+          "witness": "Fine Lattice is a concept meaning a supporting grid beneath the filter threads.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Fine Lattice"
+          },
+          "predicate": "concept.definition",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The concept is a supporting grid beneath the filter threads."
+            ]
+          },
+          "witness": "Fine Lattice is a concept meaning a supporting grid beneath the filter threads.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Dapple Weave"
+          },
+          "predicate": "concept.requires",
+          "object": {
+            "kind": "subject",
+            "entity": {
+              "mode": "source_occurrence",
+              "record": "r1",
+              "label": "Fine Lattice"
+            }
+          },
+          "witness": "Dapple Weave requires Fine Lattice.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": [],
+          "required_relation_atoms": [
+            "Fine Lattice is required by Dapple Weave."
+          ]
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Dapple Weave"
+          },
+          "predicate": "concept.example",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "A filter with alternating coarse and fine threads over a supporting grid exemplifies Dapple Weave."
+            ]
+          },
+          "witness": "A filter with alternating coarse and fine threads over a supporting grid is an example of Dapple Weave.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Dapple Weave"
+          },
+          "predicate": "concept.counterexample",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "A filter with only coarse threads is a counterexample of Dapple Weave."
+            ]
+          },
+          "witness": "A filter with only coarse threads is a counterexample of Dapple Weave.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        }
+      ],
+      "forbidden_assertions": [
+        "Fine Lattice requires Dapple Weave.",
+        "The coarse-only filter is a positive example of Dapple Weave.",
+        "Dapple Weave is equivalent to Fine Lattice.",
+        "Any person has adopted or mastered either concept."
+      ]
+    },
+    {
+      "case_id": "offered-concept-cutting-relations",
+      "entities": [
+        {
+          "label": "Thistle Spareband",
+          "record": "r1",
+          "allowed_occurrence_spans": [
+            {
+              "start_utf16": 0,
+              "end_utf16": 17
+            },
+            {
+              "start_utf16": 235,
+              "end_utf16": 252
+            },
+            {
+              "start_utf16": 294,
+              "end_utf16": 311
+            }
+          ],
+          "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+        },
+        {
+          "label": "Ochre Cutreserve",
+          "record": "r1",
+          "allowed_occurrence_spans": [
+            {
+              "start_utf16": 84,
+              "end_utf16": 100
+            },
+            {
+              "start_utf16": 276,
+              "end_utf16": 292
+            }
+          ],
+          "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+        },
+        {
+          "label": "Quartz Sidecast",
+          "record": "r1",
+          "allowed_occurrence_spans": [
+            {
+              "start_utf16": 140,
+              "end_utf16": 155
+            },
+            {
+              "start_utf16": 334,
+              "end_utf16": 349
+            }
+          ],
+          "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+        }
+      ],
+      "required_propositions": [
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Thistle Spareband"
+          },
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/concept"
+          },
+          "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Thistle Spareband"
+          },
+          "predicate": "concept.label",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The source uses Thistle Spareband as the name of this concept."
+            ]
+          },
+          "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Thistle Spareband"
+          },
+          "predicate": "concept.definition",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The concept is a spare strip reserved beyond a planned cut."
+            ]
+          },
+          "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Ochre Cutreserve"
+          },
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/concept"
+          },
+          "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut. Ochre Cutreserve is another name for that same concept.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Ochre Cutreserve"
+          },
+          "predicate": "concept.label",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The source uses Ochre Cutreserve as the name of this concept."
+            ]
+          },
+          "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut. Ochre Cutreserve is another name for that same concept.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Ochre Cutreserve"
+          },
+          "predicate": "concept.definition",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The concept is the same spare-strip concept introduced as Thistle Spareband."
+            ]
+          },
+          "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut. Ochre Cutreserve is another name for that same concept.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Quartz Sidecast"
+          },
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/concept"
+          },
+          "witness": "Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Quartz Sidecast"
+          },
+          "predicate": "concept.label",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The source uses Quartz Sidecast as the name of this concept."
+            ]
+          },
+          "witness": "Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Quartz Sidecast"
+          },
+          "predicate": "concept.definition",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The concept is a deliberate sideways shift of a cutting guide."
+            ]
+          },
+          "witness": "Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Thistle Spareband"
+          },
+          "predicate": "concept.same_as",
+          "object": {
+            "kind": "subject",
+            "entity": {
+              "mode": "source_occurrence",
+              "record": "r1",
+              "label": "Ochre Cutreserve"
+            }
+          },
+          "witness": "Thistle Spareband is the same concept as Ochre Cutreserve.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": [],
+          "required_relation_atoms": [
+            "Thistle Spareband and Ochre Cutreserve denote the same concept."
+          ]
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Thistle Spareband"
+          },
+          "predicate": "concept.distinguished_from",
+          "object": {
+            "kind": "subject",
+            "entity": {
+              "mode": "source_occurrence",
+              "record": "r1",
+              "label": "Quartz Sidecast"
+            }
+          },
+          "witness": "Thistle Spareband is distinguished from Quartz Sidecast.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": [],
+          "required_relation_atoms": [
+            "Thistle Spareband and Quartz Sidecast are distinct concepts."
+          ]
+        }
+      ],
+      "forbidden_assertions": [
+        "Thistle Spareband is equivalent to Quartz Sidecast.",
+        "The source establishes identity of any existing external catalog endpoints.",
+        "Any participant owns a project or has adopted either concept."
+      ],
+      "identity_scope": "Ordinary source-local occurrences, no candidate nominations or host g handles. These relations do not qualify cross-source convergence or the conditional host-grounding prompt.",
+      "symmetric_relations": [
+        {
+          "predicate": "concept.same_as",
+          "endpoint_labels": [
+            "Thistle Spareband",
+            "Ochre Cutreserve"
+          ],
+          "allowed_orientations": "either direction on exactly this pair; exactly one complete factual assertion"
+        },
+        {
+          "predicate": "concept.distinguished_from",
+          "endpoint_labels": [
+            "Thistle Spareband",
+            "Quartz Sidecast"
+          ],
+          "allowed_orientations": "either direction on exactly this pair; exactly one complete factual assertion"
+        }
+      ]
+    },
+    {
+      "case_id": "offered-situation-dye-bay",
+      "entities": [
+        {
+          "label": "Hollow Prism Bay",
+          "record": "r1",
+          "allowed_occurrence_spans": [
+            {
+              "start_utf16": 0,
+              "end_utf16": 16
+            }
+          ],
+          "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+        }
+      ],
+      "required_propositions": [
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Hollow Prism Bay"
+          },
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/situation"
+          },
+          "witness": "Hollow Prism Bay is an actual operational condition at a dye station.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Hollow Prism Bay"
+          },
+          "predicate": "situation.label",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The source uses Hollow Prism Bay as the name of this situation."
+            ]
+          },
+          "witness": "Hollow Prism Bay is an actual operational condition at a dye station.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Hollow Prism Bay"
+          },
+          "predicate": "situation.objective",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The objective is to keep the outlet inside the test band."
+            ]
+          },
+          "witness": "Its objective is to keep the outlet inside the test band.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Hollow Prism Bay"
+          },
+          "predicate": "situation.commitment",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The crew is committed to return the sealed dye trays before the next bell."
+            ]
+          },
+          "witness": "The crew is committed to return the sealed dye trays before the next bell.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Hollow Prism Bay"
+          },
+          "predicate": "situation.change",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The outlet pressure fell from fourteen units to nine units."
+            ]
+          },
+          "witness": "The outlet pressure fell from fourteen units to nine units.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Hollow Prism Bay"
+          },
+          "predicate": "situation.participant",
+          "object": {
+            "kind": "subject",
+            "entity": {
+              "mode": "structured_source_subject",
+              "record": "r1",
+              "subject_id": "person:ilan-moru"
+            }
+          },
+          "witness": "Ilan Moru participates in this condition.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": [],
+          "required_relation_atoms": [
+            "Ilan Moru participates in Hollow Prism Bay."
+          ]
+        }
+      ],
+      "forbidden_assertions": [
+        "The crew has already returned the trays.",
+        "The pressure increased from nine units to fourteen units.",
+        "Ilan Moru owns the station or made the tray-return commitment personally."
+      ]
+    },
+    {
+      "case_id": "offered-learning-assisted-trial",
+      "entities": [
+        {
+          "label": "Harbor Stitch",
+          "record": "r1",
+          "allowed_occurrence_spans": [
+            {
+              "start_utf16": 0,
+              "end_utf16": 13
+            }
+          ],
+          "consistency": "one complete reference representation per entity across all required claims; no partial-branch union"
+        }
+      ],
+      "required_propositions": [
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Harbor Stitch"
+          },
+          "predicate": "world.kind",
+          "object": {
+            "kind": "vocabulary",
+            "value": "world/concept"
+          },
+          "witness": "Harbor Stitch is a concept meaning arranging trial seals in alternating wide and narrow rows.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Harbor Stitch"
+          },
+          "predicate": "concept.label",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The source uses Harbor Stitch as the name of this concept."
+            ]
+          },
+          "witness": "Harbor Stitch is a concept meaning arranging trial seals in alternating wide and narrow rows.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "source_occurrence",
+            "record": "r1",
+            "label": "Harbor Stitch"
+          },
+          "predicate": "concept.definition",
+          "object": {
+            "kind": "literal",
+            "required_atoms": [
+              "The concept is arranging trial seals in alternating wide and narrow rows."
+            ]
+          },
+          "witness": "Harbor Stitch is a concept meaning arranging trial seals in alternating wide and narrow rows.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": []
+        },
+        {
+          "subject": {
+            "mode": "structured_source_subject",
+            "record": "r1",
+            "subject_id": "person:neri-solven"
+          },
+          "predicate": "learning.exposure",
+          "object": {
+            "kind": "subject",
+            "entity": {
+              "mode": "source_occurrence",
+              "record": "r1",
+              "label": "Harbor Stitch"
+            }
+          },
+          "witness": "During task Opaline Seal Trial, technician Neri Solven read an introduction to that concept, explained that concept, applied that concept, and demonstrated that concept.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": [
+            {
+              "mode": "structured_source_subject",
+              "record": "r1",
+              "subject_id": "task:opaline-seal-trial"
+            }
+          ],
+          "required_relation_atoms": [
+            "Neri Solven was exposed to Harbor Stitch during Opaline Seal Trial."
+          ]
+        },
+        {
+          "subject": {
+            "mode": "structured_source_subject",
+            "record": "r1",
+            "subject_id": "person:neri-solven"
+          },
+          "predicate": "learning.explanation",
+          "object": {
+            "kind": "subject",
+            "entity": {
+              "mode": "source_occurrence",
+              "record": "r1",
+              "label": "Harbor Stitch"
+            }
+          },
+          "witness": "During task Opaline Seal Trial, technician Neri Solven read an introduction to that concept, explained that concept, applied that concept, and demonstrated that concept.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": [
+            {
+              "mode": "structured_source_subject",
+              "record": "r1",
+              "subject_id": "task:opaline-seal-trial"
+            }
+          ],
+          "required_relation_atoms": [
+            "Neri Solven explained Harbor Stitch during Opaline Seal Trial."
+          ]
+        },
+        {
+          "subject": {
+            "mode": "structured_source_subject",
+            "record": "r1",
+            "subject_id": "person:neri-solven"
+          },
+          "predicate": "learning.application",
+          "object": {
+            "kind": "subject",
+            "entity": {
+              "mode": "source_occurrence",
+              "record": "r1",
+              "label": "Harbor Stitch"
+            }
+          },
+          "witness": "During task Opaline Seal Trial, technician Neri Solven read an introduction to that concept, explained that concept, applied that concept, and demonstrated that concept.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": [
+            {
+              "mode": "structured_source_subject",
+              "record": "r1",
+              "subject_id": "task:opaline-seal-trial"
+            }
+          ],
+          "required_relation_atoms": [
+            "Neri Solven applied Harbor Stitch during Opaline Seal Trial."
+          ]
+        },
+        {
+          "subject": {
+            "mode": "structured_source_subject",
+            "record": "r1",
+            "subject_id": "person:neri-solven"
+          },
+          "predicate": "learning.demonstration",
+          "object": {
+            "kind": "subject",
+            "entity": {
+              "mode": "source_occurrence",
+              "record": "r1",
+              "label": "Harbor Stitch"
+            }
+          },
+          "witness": "During task Opaline Seal Trial, technician Neri Solven read an introduction to that concept, explained that concept, applied that concept, and demonstrated that concept.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": [
+            {
+              "mode": "structured_source_subject",
+              "record": "r1",
+              "subject_id": "task:opaline-seal-trial"
+            }
+          ],
+          "required_relation_atoms": [
+            "Neri Solven demonstrated Harbor Stitch during Opaline Seal Trial."
+          ]
+        },
+        {
+          "subject": {
+            "mode": "structured_source_subject",
+            "record": "r1",
+            "subject_id": "task:opaline-seal-trial"
+          },
+          "predicate": "learning.assistance",
+          "object": {
+            "kind": "vocabulary",
+            "value": "learning/assisted"
+          },
+          "witness": "A printed step card assisted the task throughout this trial.",
+          "perspective": {
+            "holder": null,
+            "speaker": null,
+            "addressee": null,
+            "mode": "asserted",
+            "interpretation": "explicit"
+          },
+          "polarity": "positive",
+          "time": {
+            "valid_from": null,
+            "valid_to": null,
+            "temporal_basis": "unknown"
+          },
+          "context": [],
+          "required_relation_atoms": [
+            "Opaline Seal Trial was assisted."
+          ]
+        }
+      ],
+      "forbidden_assertions": [
+        "Opaline Seal Trial was unassisted.",
+        "Neri Solven has independently mastered Harbor Stitch.",
+        "Neri Solven owns the concept or has acquired a stable skill merely from these observations."
+      ]
+    }
+  ],
+  "global_controls": {
+    "literal_meaning": "Required atoms are domain facts, not literal string whitelists. Any contiguous source literal preserving the full closed proposition remains eligible for independent semantic review.",
+    "subject_and_vocabulary_objects": "Bind exact relation direction, both endpoint identities, modality/polarity, source, context and time; no invented literal substitution for relation objects.",
+    "source_facts_and_metadata": "Structured subjects are frozen synthetic source metadata. Request-local handles must be generated by worldSuppliedReferences and bound to the same namespaces/anchors; no free-form name promotion.",
+    "all_claims": "No unsupported extras, dropped drafts, invented execution/ownership/mastery, or unoffered kind/predicate. Retain existing raw-body, closed-SPO, custody, role/time and genuine prepared-admission checks.",
+    "negative_cases": "All six original abstention cases remain unchanged. Supplement cases additionally freeze source-specific forbidden additions; this does not add separate negative calls.",
+    "predicate_relation_meanings": {
+      "concept.requires": "The object Concept is a prerequisite for the subject Concept; preserve direction.",
+      "concept.example": "The literal or referenced object is an example of the subject Concept.",
+      "concept.counterexample": "The literal or referenced object is a counterexample of the subject Concept.",
+      "concept.same_as": "The two source-local Concept endpoints denote the same concept; symmetric endpoint orientation preserves the same fact.",
+      "concept.distinguished_from": "The two source-local Concept endpoints are explicitly distinct; symmetric endpoint orientation preserves the same fact.",
+      "situation.commitment": "The literal states a commitment associated with the subject Situation, preserving actor, action, object and supported deadline without inferring completion.",
+      "situation.change": "The literal states the supported change in the subject Situation, preserving what changed, direction, original and resulting values.",
+      "situation.participant": "The referenced source subject participates in the subject Situation; it does not establish ownership or a personal commitment.",
+      "learning.exposure": "The supplied person was exposed to the object Concept in the supported task context; this alone does not imply explanation, use, demonstration or mastery.",
+      "learning.explanation": "The supplied person explained the object Concept in the supported task context; this alone does not imply independent application or mastery.",
+      "learning.application": "The supplied person applied the object Concept in the supported task context; preserve the reported assistance rather than inferring independent mastery.",
+      "learning.demonstration": "The supplied person demonstrated the object Concept in the supported task context; preserve the assistance boundary.",
+      "learning.assistance": "The supplied task context has exactly the supported assisted/unassisted vocabulary value; do not transfer that value to another task."
+    }
+  }
+}
