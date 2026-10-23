@@ -1,6 +1,6 @@
 import { createWorldRegistry, type WorldRegistry, type WorldVocabularyModule } from "./world-kinds";
 
-/** Prospective union contract, not qualification evidence or activation. */
+/** Canonical active union composition; its construction is not qualification evidence. */
 export const WORLD_UNION_CANDIDATE_KINDS = Object.freeze([
   "concept", "situation", "question", "person", "skill", "framework", "procedure", "commitment", "decision",
 ] as const);

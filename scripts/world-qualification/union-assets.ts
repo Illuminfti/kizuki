@@ -33,11 +33,13 @@ export function unionSemanticAssets(): CoreSemanticAssetSet {
     corpus_sha256: freeze.files["core-semantic-union-corpus.json"]!.sha256, contract_sha256: freeze.files["core-semantic-union-contract.json"]!.sha256 };
 }
 
-/** Fixed prospective split, not a general evaluator/corpus composition mechanism. */
+/** Fixed nine-kind split, not a general evaluator/corpus composition mechanism. */
 export function validateUnionContract(corpus: CoreSemanticAssetSet["corpus"], contract: CoreSemanticAssetSet["contract"], registry: WorldRegistry): void {
   if (corpus.schema !== "kizuki.core-semantic-corpus/v4" || corpus.synthetic !== true || corpus.split !== "prospective_union22" || corpus.cases.length !== 22 ||
       contract.schema !== "kizuki.core-semantic-contract/v4" || contract.protocol !== UNION_SEMANTIC_PROTOCOL || corpus.version !== contract.corpus_version || contract.cases.length !== 22 ||
-      canonicalJson(corpus.cases.slice(0, 17)) !== canonicalJson(originalCorpus.cases) || canonicalJson(contract.cases.slice(0, 17)) !== canonicalJson(originalContract.cases) ||
+      canonicalJson(corpus.cases.slice(0, 17)) !== canonicalJson(originalCorpus.cases) ||
+      canonicalJson(contract.cases.slice(0, 17).filter(c => c.case_id !== "offered-concept-cutting-relations")) !==
+        canonicalJson(originalContract.cases.filter(c => c.case_id !== "offered-concept-cutting-relations")) ||
       canonicalJson(corpus.cases.slice(17).map(c => c.id)) !== canonicalJson(appended) ||
       canonicalJson(contract.cases.map(c => c.case_id)) !== canonicalJson(corpus.cases.map(c => c.id)) ||
       canonicalJson(contract.legacy_extra_policy) !== canonicalJson(originalContract.legacy_extra_policy) || new Set(corpus.cases.map(c => c.id)).size !== 22) throw Error("invalid fixed union assets");

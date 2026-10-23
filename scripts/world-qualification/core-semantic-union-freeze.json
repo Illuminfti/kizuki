@@ -1,7 +1,7 @@
 {
   "schema": "kizuki.core-semantic-union-freeze/v1",
   "synthetic": true,
-  "status": "prospective_requires_fresh_full22_qualification",
+  "status": "active_requires_fresh_full22_qualification",
   "protocol": "core-semantic-v4",
   "split": "union22",
   "limits": {
@@ -21,7 +21,7 @@
   },
   "content_review": {
     "sha256": "00133bac545d4d40bac9fdbcf172e929ba85571d0e22cefc860d91b4908b2a45",
-    "scope": "Prospective source/oracle content only; not method/model/native qualification."
+    "scope": "Synthetic source/oracle content only; not method/model/native qualification."
   },
   "files": {
     "core-semantic-union-corpus.json": {
@@ -29,12 +29,12 @@
       "bytes": 19571
     },
     "core-semantic-union-contract.json": {
-      "sha256": "8f50c36a8cf6d5aa2a68aaf0ac5e97c0639c0d730fea1f53e841030da301824b",
-      "bytes": 215335
+      "sha256": "9061c9284f682e2839eb611b17ba2c602fd512fea2e2e7bedfd71aa8f9d01fff",
+      "bytes": 214575
     },
     "core-semantic-union.md": {
-      "sha256": "8dd0ab6b3e58d7c53be062496434ecbdd1045be75cfecb54abbd3cd4800ef008",
-      "bytes": 9097
+      "sha256": "07e9281e7a48adeb46ba5d32168c22e1949c1b9d2a9a03ac95f5bbc1dde17b51",
+      "bytes": 9070
     }
   }
 }

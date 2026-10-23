@@ -7,6 +7,7 @@ import { parseExtractResponseV2, type DraftRef, type ExtractResponseV2, type Ric
 import type { Observation } from "./score";
 import { validateScopedBranch, type ScopedExtractBranch } from "./union-propositions";
 import { createWorldUnionCandidateRegistry } from "../../packages/core/src/contracts/world-union-profile";
+import { WORLD_REGISTRY } from "../../packages/core/src/contracts/world-vocabulary";
 import unionCorpus from "./core-semantic-union-corpus.json";
 import unionContract from "./core-semantic-union-contract.json";
 import { validateUnionContract } from "./union-assets";
@@ -30,6 +31,10 @@ const registry = createWorldUnionCandidateRegistry(WORLD_VOCABULARY_MODULES);
 const policy = { ...DEFAULT_QUALIFICATION_INPUT_POLICY, max_input_tokens: 32_000, input_token_overhead: 24_000 };
 const direct = { holder: null, speaker: null, addressee: null, mode: "asserted", interpretation: "explicit" } as const;
 const unknown = { valid_from: null, valid_to: null, temporal_basis: "unknown" } as const;
+test("the active registry uses the canonical nine-kind union composition without attesting qualification", () => {
+  expect(registryDigest(WORLD_REGISTRY)).toBe(registryDigest(registry));
+  expect(WORLD_REGISTRY.kinds.filter(kind => kind.offeredToProducer).map(kind => kind.id).sort()).toEqual([...WORLD_UNION_CANDIDATE_KINDS].sort());
+});
 type Selector = { mode: "structured_source_subject"; record: string; subject_id: string } | { mode: "source_occurrence"; record: string; label: string };
 type Mutable<T> = { -readonly [K in keyof T]: T[K] extends object ? Mutable<T[K]> : T[K] };
 type Perspective = { holder: Selector | null; speaker: Selector | null; addressee: Selector | null; mode: RichClaimDraft["perspective"]["mode"]; interpretation: "explicit" | "inferred" };

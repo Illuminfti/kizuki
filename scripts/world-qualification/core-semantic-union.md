@@ -15,10 +15,10 @@ and Situation episode27. This covers the70 offered world predicate rows under
 one canonical nine-kind profile and its six Situation extension rows. Predicate
 coverage is not coverage of every enum, alternative object form or lifecycle.
 
-The profile comes only from `createWorldUnionCandidateRegistry` and its frozen
-kind/extension constants in Core. Importing it does not change the active
-registry. Candidate and later production composition must remain byte-equivalent;
-a separately constructed evaluation profile is not an activation substitute.
+The active product and qualification runner both compose from
+`createWorldUnionCandidateRegistry` and its frozen kind/extension constants in
+Core. Constructing the profile does not attest qualification; release gating
+still requires a separate accepted receipt and independent review.
 
 The accepted Question/Person draft content and the final union source/oracle
 received independent prospective review. Those content reviews are neither

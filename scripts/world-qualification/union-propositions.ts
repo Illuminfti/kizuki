@@ -21,6 +21,8 @@ export interface ScopedPropositionRule extends Omit<GeneralPropositionRule, "per
 }
 export interface ScopedExtractBranch extends Omit<GeneralExtractBranch, "propositions"> {
   scope: "world-union/v1"; propositions: ScopedPropositionRule[];
+  /** A same-record alias may nominate its earlier response-local peer, never a durable endpoint. */
+  local_alias_nomination?: { alias: EntitySelector; canonical: EntitySelector };
 }
 type ScopedRule = Omit<ScopedExtractBranch, "id">;
 const refKey = (ref: DraftRef) => `${ref.kind}:${ref.id}`;
@@ -50,9 +52,9 @@ function suppliedContext(item: CoreSemanticCase) {
   return worldSuppliedReferences(events, id => String(events.findIndex(event => event.event_id === id) + 100).padStart(26, "0"));
 }
 
-/** Strict prospective validation; neither the v3 schema nor its matcher calls this. */
+/** Strict v4 validation; neither the v3 schema nor its matcher calls this. */
 export function validateScopedBranch(item: CoreSemanticCase, branch: ScopedExtractBranch, registry: WorldRegistry): void {
-  if (!exact(branch, ["id", "scope", "entities", "propositions", "forbidden_assertions"]) || branch.scope !== "world-union/v1" ||
+  if (!exact(branch, ["id", "scope", "entities", "propositions", "forbidden_assertions"], ["local_alias_nomination"]) || branch.scope !== "world-union/v1" ||
       !/^[a-z][a-z0-9-]{0,63}$/.test(branch.id) || !Array.isArray(branch.entities) || branch.entities.length > 8 ||
       !Array.isArray(branch.propositions) || branch.propositions.length < 1 || branch.propositions.length > 32 ||
       new Set(branch.propositions.map(p => p.rule_id)).size !== branch.propositions.length || !atoms(branch.forbidden_assertions)) throw Error("invalid union branch");
@@ -106,13 +108,25 @@ export function validateScopedBranch(item: CoreSemanticCase, branch: ScopedExtra
     if (p.attribution_witness && (!record.text.includes(p.attribution_witness) || record.text.indexOf(p.attribution_witness, record.text.indexOf(p.attribution_witness) + 1) >= 0)) throw Error("invalid union attribution");
   }
   const subjects = new Map(branch.propositions.map(p => [selectorKey(p.subject), p.subject]));
+  const nomination = branch.local_alias_nomination;
+  if (nomination !== undefined) {
+    if (!exact(nomination, ["alias", "canonical"])) throw Error("invalid local alias nomination");
+    selector(nomination.alias); selector(nomination.canonical);
+    const sameAs = branch.propositions.some(p => p.predicate === "concept.same_as" && p.object.kind === "subject" &&
+      ((selectorKey(p.subject) === selectorKey(nomination.alias) && selectorKey(p.object.entity) === selectorKey(nomination.canonical)) ||
+       (selectorKey(p.subject) === selectorKey(nomination.canonical) && selectorKey(p.object.entity) === selectorKey(nomination.alias))));
+    if (nomination.alias.mode !== "source_occurrence" || nomination.canonical.mode !== "source_occurrence" ||
+        nomination.alias.record !== nomination.canonical.record || selectorKey(nomination.alias) === selectorKey(nomination.canonical) ||
+        !sameAs) throw Error("invalid local alias nomination");
+  }
   for (const subject of subjects.values()) {
     const props = branch.propositions.filter(p => selectorKey(p.subject) === selectorKey(subject));
     const kinds = props.filter(p => p.predicate === "world.kind"), kind = kinds[0]?.object;
     const module = kind?.kind === "vocabulary" ? registry.kindByVocabularyId(kind.value) : undefined;
     if (kinds.length !== 1 || !module || props.filter(p => p.predicate === module.labelPredicate).length !== 1 ||
         (module.id === "person" && subject.mode !== "structured_source_subject") ||
-        (module.id === "concept" && props.filter(p => p.predicate === "concept.definition").length !== 1)) throw Error("incomplete union subject");
+        (module.id === "concept" && props.filter(p => p.predicate === "concept.definition").length !== 1 &&
+          (nomination === undefined || selectorKey(subject) !== selectorKey(nomination.alias)))) throw Error("incomplete union subject");
     for (const p of props.filter(p => p.witness_mode !== undefined)) {
       const name = subject.mode === "source_occurrence" ? subject.label : item.records.find(r => r.id === subject.record)!.structured_subjects!.find(s => s.subject_id === subject.subject_id)!.display_name;
       if (p.witness_mode !== "selected_entity_label/v1" || p.predicate !== module.labelPredicate || p.object.kind !== "literal" || !name || !p.witness.includes(name)) throw Error("invalid union label witness");
@@ -130,7 +144,7 @@ export function matchScopedPropositions(item: CoreSemanticCase, branch: ScopedRu
   const bindings = new Map<string, { key: string; anchor: TextAnchor; label: string }>();
   for (const entity of branch.entities) {
     const index = item.records.findIndex(r => r.id === entity.record);
-    const candidates = response.mentions.filter(m => m.label === entity.label && m.candidate_refs.length === 0 && entity.allowed_occurrence_spans.some(a => canonicalJson(m.anchor) === canonicalJson({ event_id: input.events[index]!.event_id, ...a })));
+    const candidates = response.mentions.filter(m => m.label === entity.label && entity.allowed_occurrence_spans.some(a => canonicalJson(m.anchor) === canonicalJson({ event_id: input.events[index]!.event_id, ...a })));
     if (candidates.length !== 1) errors.push(`entity:${entity.record}:${entity.label}`);
     else bindings.set(selectorKey({ mode: "source_occurrence", record: entity.record, label: entity.label }), { key: `mention:${candidates[0]!.id}`, anchor: candidates[0]!.anchor, label: entity.label });
   }
@@ -141,6 +155,19 @@ export function matchScopedPropositions(item: CoreSemanticCase, branch: ScopedRu
     const handle = handles.length === 1 ? source.input.find(h => h.id === handles[0]![0]) : undefined;
     if (!handle || handle.anchors.length !== 1 || !subject.display_name) errors.push(`structured:${record.id}:${subject.subject_id}`);
     else bindings.set(selectorKey({ mode: "structured_source_subject", record: record.id, subject_id: subject.subject_id }), { key: `supplied:${handle.id}`, anchor: handle.anchors[0]!, label: subject.display_name });
+  }
+  const nomination = branch.local_alias_nomination;
+  for (const entity of branch.entities) {
+    const mention = response.mentions.find(m => m.id === bindings.get(selectorKey({ mode: "source_occurrence", record: entity.record, label: entity.label }))?.key.slice("mention:".length));
+    if (!mention) continue;
+    const isAlias = nomination !== undefined && selectorKey({ mode: "source_occurrence", record: entity.record, label: entity.label }) === selectorKey(nomination.alias);
+    if (!isAlias && mention.candidate_refs.length !== 0) errors.push(`entity:${entity.record}:${entity.label}:candidate`);
+  }
+  if (nomination !== undefined) {
+    const alias = bindings.get(selectorKey(nomination.alias))?.key.slice("mention:".length), canonical = bindings.get(selectorKey(nomination.canonical))?.key.slice("mention:".length);
+    const aliasIndex = response.mentions.findIndex(m => m.id === alias), canonicalIndex = response.mentions.findIndex(m => m.id === canonical), mention = response.mentions[aliasIndex];
+    if (!mention || canonicalIndex < 0 || canonicalIndex >= aliasIndex || !(mention.candidate_refs.length === 0 ||
+        (mention.candidate_refs.length === 1 && mention.candidate_refs[0]!.kind === "mention" && mention.candidate_refs[0]!.id === canonical))) errors.push("local_alias_nomination");
   }
   const key = (s: EntitySelector) => bindings.get(selectorKey(s))?.key;
   const role = (r: DraftRef | null) => r === null ? null : refKey(r);

@@ -20,7 +20,7 @@ import { createWorldUnionCandidateRegistry, WORLD_UNION_CANDIDATE_KINDS, WORLD_U
 import { WORLD_VOCABULARY_MODULES } from "./candidate-modules";
 import { validateUnionInputPolicy } from "./union-assets";
 export { REVIEWED_QUALIFICATIONS, type QualificationApproval } from "./approvals";
-export type CoreSemanticApproval = QualificationApproval | (Omit<QualificationApproval, "protocol"> & { protocol: typeof UNION_SEMANTIC_PROTOCOL });
+export type CoreSemanticApproval = QualificationApproval;
 
 export const registryDigest = (registry: WorldRegistry) => sha256(canonicalJson({
   kinds: registry.kinds.filter(row => row.offeredToProducer), offered: registry.offered,

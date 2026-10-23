@@ -1086,6 +1086,18 @@
       "branches": [
         {
           "id": "complete-source-meaning",
+          "local_alias_nomination": {
+            "alias": {
+              "mode": "source_occurrence",
+              "record": "r1",
+              "label": "Ochre Cutreserve"
+            },
+            "canonical": {
+              "mode": "source_occurrence",
+              "record": "r1",
+              "label": "Thistle Spareband"
+            }
+          },
           "entities": [
             {
               "label": "Thistle Spareband",
@@ -1285,36 +1297,6 @@
               "context": [],
               "rule_id": "p5",
               "witness_mode": "selected_entity_label/v1"
-            },
-            {
-              "subject": {
-                "mode": "source_occurrence",
-                "record": "r1",
-                "label": "Ochre Cutreserve"
-              },
-              "predicate": "concept.definition",
-              "object": {
-                "kind": "literal",
-                "required_atoms": [
-                  "The concept is the same spare-strip concept introduced as Thistle Spareband."
-                ]
-              },
-              "witness": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut. Ochre Cutreserve is another name for that same concept.",
-              "perspective": {
-                "holder": null,
-                "speaker": null,
-                "addressee": null,
-                "mode": "asserted",
-                "interpretation": "explicit"
-              },
-              "polarity": "positive",
-              "time": {
-                "valid_from": null,
-                "valid_to": null,
-                "temporal_basis": "unknown"
-              },
-              "context": [],
-              "rule_id": "p6"
             },
             {
               "subject": {
