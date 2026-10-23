@@ -6,7 +6,7 @@ import { prepare } from "./fixture";
 
 export const OPERATIONS = ["capture", "extraction", "canon", "correction", "undo", "purge", "typed-canon", "typed-correction", "typed-undo", "typed-purge", "export", "backup", "restore", "restore-snapshot", "rebuild", "retrieval-rebuild"] as const;
 export type Operation = typeof OPERATIONS[number];
-export type Cut = "random" | "projection-started" | "acknowledged" | "extraction-journaled" | "purge-admitted";
+export type Cut = "random" | "projection-started" | "acknowledged" | "extraction-journaled" | "purge-admitted" | "snapshot-ledger";
 export interface CampaignOptions {
   seed: number;
   trials: number;
@@ -55,8 +55,8 @@ async function killOperation(root: string, delay: number, cut: Cut): Promise<{ k
     },
   });
   const deadline = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, CHILD_TIMEOUT_MS);
-  // A synchronous purge hook cannot yield to IPC while it retains the writer.
-  const checkpoint = cut === "purge-admitted" ? setInterval(() => {
+  // Synchronous purge and snapshot cuts cannot yield to IPC while holding the writer.
+  const checkpoint = cut === "purge-admitted" || cut === "snapshot-ledger" ? setInterval(() => {
     if (existsSync(join(root, "checkpoint"))) child.kill("SIGKILL");
   }, 5) : undefined;
   // Drain both pipes concurrently: an error must never block waiting for its own stderr reader.
@@ -95,10 +95,11 @@ export async function runCampaign(options: CampaignOptions): Promise<{ schema: "
   if (!Number.isSafeInteger(maxDelay) || maxDelay < 0 || maxDelay > 1000) throw new Error("delay_must_be_0_to_1000");
   const operations = options.operations ?? OPERATIONS;
   if (operations.length === 0 || operations.some(value => !OPERATIONS.includes(value))) throw new Error("unknown_operation");
-  if (options.cut !== undefined && !["random", "projection-started", "acknowledged", "extraction-journaled", "purge-admitted"].includes(options.cut)) throw new Error("unknown_cut");
+  if (options.cut !== undefined && !["random", "projection-started", "acknowledged", "extraction-journaled", "purge-admitted", "snapshot-ledger"].includes(options.cut)) throw new Error("unknown_cut");
   if (options.cut === "projection-started" && (operations.length !== 1 || operations[0] !== "canon")) throw new Error("projection_cut_requires_canon");
   if (options.cut === "extraction-journaled" && (operations.length !== 1 || operations[0] !== "extraction")) throw new Error("journal_cut_requires_extraction");
   if (options.cut === "purge-admitted" && operations.some(value => value !== "purge" && value !== "typed-purge")) throw new Error("purge_cut_requires_purge");
+  if (options.cut === "snapshot-ledger" && (operations.length !== 1 || operations[0] !== "backup")) throw new Error("snapshot_cut_requires_backup");
   const acknowledgedOperations: readonly Operation[] = ["capture", "canon", "correction", "undo", "typed-canon", "typed-correction", "typed-undo", "export", "backup", "restore", "restore-snapshot"];
   if (options.cut === "acknowledged" && operations.some(value => !acknowledgedOperations.includes(value))) throw new Error("acknowledged_cut_requires_repeated_writes");
   const next = random(options.seed);
@@ -113,6 +114,12 @@ export async function runCampaign(options: CampaignOptions): Promise<{ schema: "
         await prepare(root, operation);
         const killed = await killOperation(root, delay, options.cut ?? "random");
         result = { ...result, killed: killed.killed, completed_before_kill: killed.completed, failure: killed.failure };
+        if (options.cut === "snapshot-ledger" && result.failure === null) {
+          const stages = readdirSync(root).filter(name => name.startsWith("output.kizuki-snapshot-") && name.endsWith(".partial"));
+          if (!existsSync(join(root, "checkpoint")) || readFileSync(join(root, "checkpoint"), "utf8") !== "snapshot-ledger\n" ||
+              stages.length !== 1 || !existsSync(join(root, stages[0]!, "ledger.db")) || existsSync(join(root, "output")))
+            result.failure = "snapshot_checkpoint_missing";
+        }
         if (result.failure === null) result.failure = await restart(root, options.cut ?? "random");
         const output = join(root, "output");
         if (result.failure === null && existsSync(output)) {
