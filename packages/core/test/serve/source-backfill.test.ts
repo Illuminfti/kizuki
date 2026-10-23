@@ -1,6 +1,8 @@
 import { afterAll, afterEach, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { revokeSourceGrant } from "../../src/ledger/source-grants";
 import { backfillSourceWindow, parseSourceBackfillPlan, sourceBackfillSnapshot } from "../../src/serve/source-backfill";
@@ -11,7 +13,7 @@ import { runRail } from "../../src/serve/rails";
 import { inspectCanonRecovery } from "../../src/canon/write-intent";
 
 // Own synthetic Git ancestor; never rely on or modify a shared /tmp/.git.
-const parent = mkdtempSync("/home/ubuntu/kizuki-backfill-tests-");
+const parent = mkdtempSync(join(homedir(), "kizuki-backfill-tests-"));
 chmodSync(parent, 0o700);
 execFileSync("git", ["init", "--quiet", parent]);
 const priorTmp = process.env.TMPDIR;
