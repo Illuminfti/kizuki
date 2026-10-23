@@ -97,7 +97,7 @@ function data(f: Fixture, input: Record<string, unknown>) {
   return result.result.data;
 }
 
-test("the union profile matches evaluation composition without changing defaults or acquiring approval", () => {
+test("the active union profile matches evaluation composition without acquiring approval", () => {
   const before = canonicalJson(WORLD_REGISTRY), reference = activeWorldRegistry();
   const evaluated = candidateRegistry(WORLD_VOCABULARY_MODULES, WORLD_UNION_CANDIDATE_KINDS, WORLD_UNION_CANDIDATE_EXTENSIONS);
   expect(canonicalJson(WORLD_UNION_CANDIDATE_REGISTRY)).toBe(canonicalJson(evaluated));
@@ -106,56 +106,10 @@ test("the union profile matches evaluation composition without changing defaults
   expect(() => checkOfferedQualification(WORLD_UNION_CANDIDATE_REGISTRY, [{ registry_sha256: registryDigest(WORLD_UNION_CANDIDATE_REGISTRY), report_sha256: "0".repeat(64), kinds: WORLD_UNION_CANDIDATE_KINDS, predicates: WORLD_UNION_CANDIDATE_REGISTRY.offered.vocabulary.map(row => row.predicate) }])).toThrow("unqualified offered vocabulary");
   expect(activeWorldRegistry()).toBe(reference);
   expect(canonicalJson(WORLD_REGISTRY)).toBe(before);
-  expect(WORLD_REGISTRY.kinds.filter(row => row.offeredToProducer).map(row => row.id)).toEqual(["situation", "concept"]);
+  expect(WORLD_REGISTRY.kinds.filter(row => row.offeredToProducer).map(row => row.id).sort()).toEqual([...WORLD_UNION_CANDIDATE_KINDS].sort());
   expect(() => createWorldUnionCandidateRegistry(WORLD_VOCABULARY_MODULES.filter(module => module.kind?.id !== "person"))).toThrow("requires the registered kinds and extensions");
   expect(() => createWorldUnionCandidateRegistry(WORLD_VOCABULARY_MODULES.filter(module => module.kind !== null || module.predicates[0]?.predicate !== "situation.has_commitment"))).toThrow("requires the registered kinds and extensions");
 });
-
-test("the prospective production initializer has the same actual prompt and factory fingerprint without a runtime registry swap", async () => {
-  const root = resolve(import.meta.dir, "../../../.."), temp = mkdtempSync(join(tmpdir(), "kizuki-union-activation-"));
-  const context = temporaryProducerContext(MODEL_PRODUCER_V2_DESCRIPTOR);
-  const llm = scriptedLlm(() => { throw new Error("a source-only identity check must not call a model"); });
-  const port = createModelProducerV2Port(context.ctx, { llm });
-  const snapshot = () => {
-    const input = worldProduceInput([{ event_id: "00000000000000000000000001", text: "Neutral source." }] as never);
-    return { registry: registryDigest(activeWorldRegistry()), prompt: extractionV2SystemContent(input), fingerprint: modelProducerFingerprint(port) };
-  };
-  const before = snapshot(), expected = withWorldRegistry(WORLD_UNION_CANDIDATE_REGISTRY, snapshot);
-  try {
-    const entry = join(temp, "entry.ts"), output = join(temp, "bundle.js");
-    // This compiles the exact future source delta in a disposable bundle. The
-    // checked-out initializer and every live/default registry remain unchanged.
-    writeFileSync(entry, `
-      import { activeWorldRegistry } from ${JSON.stringify(join(root, "packages/core/src/contracts/world-vocabulary.ts"))};
-      import { worldProduceInput } from ${JSON.stringify(join(root, "packages/core/src/serve/extract-v2.ts"))};
-      import { extractionV2SystemContent } from ${JSON.stringify(join(root, "packages/core/src/producer/prompt-v2.ts"))};
-      import { createModelProducerV2Port } from ${JSON.stringify(join(root, "packages/core/src/producer/model-v2.ts"))};
-      import { modelProducerFingerprint } from ${JSON.stringify(join(root, "packages/core/src/producer/fingerprint.ts"))};
-      import { canonicalJson, sha256Hex } from ${JSON.stringify(join(root, "packages/core/src/util/hash.ts"))};
-      const registry=activeWorldRegistry();
-      const port=createModelProducerV2Port({config:{}}, {llm:{descriptor:{contract_minor:1},input_token_overhead:24000,model_ref:"source-only",complete(){throw Error("no model call");}}});
-      const input=worldProduceInput([{event_id:"00000000000000000000000001",text:"Neutral source."}]);
-      console.log(JSON.stringify({registry:sha256Hex(canonicalJson({kinds:registry.kinds.filter(row=>row.offeredToProducer),offered:registry.offered})),prompt:extractionV2SystemContent(input),fingerprint:modelProducerFingerprint(port)}));
-    `);
-    const built = await Bun.build({ entrypoints: [entry], target: "bun", outdir: temp, naming: "bundle.js", plugins: [{
-      name: "prospective-source-initializer",
-      setup(build) {
-        build.onLoad({ filter: /[/\\]contracts[/\\]world-vocabulary\.ts$/ }, args => {
-          const source = readFileSync(args.path, "utf8"), initializer = "export const WORLD_REGISTRY: WorldRegistry = createWorldRegistry(WORLD_VOCABULARY_MODULES);";
-          expect(source.split(initializer)).toHaveLength(2);
-          return { loader: "ts", contents: `import { createWorldUnionCandidateRegistry } from "./world-union-profile";\n` + source.replace(initializer, "export const WORLD_REGISTRY: WorldRegistry = createWorldUnionCandidateRegistry(WORLD_VOCABULARY_MODULES);") };
-        });
-      },
-    }] });
-    expect(built.success).toBe(true);
-    const result = Bun.spawnSync([process.execPath, output], { env: { PATH: "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe" });
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout.toString())).toEqual(expected);
-    expect(snapshot()).toEqual(before);
-    expect(expected.fingerprint).not.toBe(before.fingerprint);
-    expect(llm.requests).toEqual([]);
-  } finally { await port.close(); context.cleanup(); rmSync(temp, { recursive: true, force: true }); }
-}, 120_000);
 
 test("the actual union prompt retains Person safeguards and planner reservations fail before a call", () => {
   const result = withWorldRegistry(WORLD_UNION_CANDIDATE_REGISTRY, () => {

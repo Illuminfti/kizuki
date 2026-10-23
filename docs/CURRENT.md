@@ -68,11 +68,12 @@ reader and the same authorization rules. Registered operations and their precise
 coverage are documented in [the CLI reference](cli.md) and the [world verification
 matrix](world/verification.md).
 
-Implementation and extraction activation are separate. Concept and Situation
-extraction is offered by default; Question, Person, Skill, Framework, Procedure,
-Commitment and Decision extraction remains disabled pending real model
-qualification. Their isolated synthetic integration tests do not enable them in
-an owner's vault. Artifact versions come from supported connector metadata;
+The canonical source registry offers Concept, Situation, Question, Person, Skill,
+Framework, Procedure, Commitment and Decision extraction by default. This source
+activation is not qualification: a fresh complete union22 model run and
+independent review remain pending, and the prior case15 failure is retained.
+Synthetic integration tests do not supply model or native evidence for an
+owner's vault. Artifact versions come from supported connector metadata;
 Outcome reports use the existing proposal seam. These inputs retain their own
 provenance and authority requirements.
 

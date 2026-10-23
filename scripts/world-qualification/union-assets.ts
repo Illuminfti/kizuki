@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { WorldRegistry } from "../../packages/core/src/contracts/world-kinds";
 import { canonicalJson, sha256 } from "../evaluate-extraction";
 import type { CoreSemanticAssetSet } from "./core-semantic";
-import { validateScopedBranch, UNION_SEMANTIC_PROTOCOL } from "./union-propositions";
+import { validateScopedBranch, UNION_SEMANTIC_PROTOCOL, type ScopedExtractBranch } from "./union-propositions";
 import originalCorpus from "./core-semantic-offered-corpus.json";
 import originalContract from "./core-semantic-offered-contract.json";
 import corpusJson from "./core-semantic-union-corpus.json";
@@ -59,7 +59,9 @@ export function validateUnionContract(corpus: CoreSemanticAssetSet["corpus"], co
     }
     if (!("branches" in rule) || rule.branches.length < 1 || rule.branches.length > 3 || new Set(rule.branches.map(b => b.id)).size !== rule.branches.length) throw Error("invalid union branches");
     if (inheritedAlias) {
-      const [complete, partial] = rule.branches;
+      const [completeRaw, partialRaw] = rule.branches;
+      if (completeRaw === undefined || partialRaw === undefined || !("scope" in completeRaw) || !("scope" in partialRaw)) throw Error("invalid local alias alternatives");
+      const complete = completeRaw as ScopedExtractBranch, partial = partialRaw as ScopedExtractBranch;
       const requiredNomination = canonicalJson({
         alias: { mode: "source_occurrence", record: "r1", label: "Ochre Cutreserve" },
         canonical: { mode: "source_occurrence", record: "r1", label: "Thistle Spareband" },

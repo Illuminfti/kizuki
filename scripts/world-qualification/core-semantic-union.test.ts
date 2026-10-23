@@ -256,19 +256,19 @@ test("every added union positive admits through the real parser, guards and wire
 test("v4 local alias alternatives use the real dispatcher and admit only the declared same-record peer", () => {
   const index = unionCorpus.cases.findIndex(item => item.id === "offered-concept-cutting-relations");
   const item = unionCorpus.cases[index]! as CoreSemanticCase, rule = unionContract.cases[index]! as never as { expectation: "extract"; branches: ScopedExtractBranch[] };
-  const score = (response: ExtractResponseV2, input: ReturnType<typeof coreSemanticCaseInput>) => scoreCoreSemanticRepresentations(item, rule, {
+  const score = (response: ExtractResponseV2, input: ReturnType<typeof coreSemanticCaseInput>) => scoreCoreSemanticRepresentations(item, rule as never, {
     case_id: item.id, input, status: "ok", response, dropped: 0, usage: { calls: 1, input_tokens: 100, output_tokens: 100 },
   }, registry, policy);
   const complete = control(item.records, rule.branches[0]!.propositions, rule.branches[0]!.entities, true, item.id);
   expect(score(complete.response, complete.observed.input).selected_branch_id).toBe("complete-local-alias");
-  const alias = complete.response.mentions.find(mention => mention.label === "Ochre Cutreserve")!, canonical = complete.response.mentions.find(mention => mention.label === "Thistle Spareband")!;
+  const mutableComplete = complete.response as any, alias = mutableComplete.mentions.find((mention: { label: string }) => mention.label === "Ochre Cutreserve")!, canonical = mutableComplete.mentions.find((mention: { label: string }) => mention.label === "Thistle Spareband")!;
   alias.candidate_refs = [{ kind: "mention", id: canonical.id }];
   expect(score(alias === undefined ? complete.response : complete.response, complete.observed.input).selected_branch_id).toBe("complete-local-alias");
   for (const mutate of [
-    (response: ExtractResponseV2) => { response.mentions.find(mention => mention.label === "Ochre Cutreserve")!.candidate_refs = [{ kind: "mention", id: response.mentions.find(mention => mention.label === "Quartz Sidecast")!.id }]; },
-    (response: ExtractResponseV2) => { const mentions = response.mentions; [mentions[0], mentions[1]] = [mentions[1]!, mentions[0]!]; },
-    (response: ExtractResponseV2) => { response.mentions.find(mention => mention.label === "Ochre Cutreserve")!.candidate_refs = [{ kind: "mention", id: canonical.id }, { kind: "mention", id: canonical.id }]; },
-  ]) { const response = structuredClone(complete.response); mutate(response); expect(score(response, complete.observed.input).automated_passed).toBe(false); }
+    (response: any) => { response.mentions.find((mention: { label: string }) => mention.label === "Ochre Cutreserve")!.candidate_refs = [{ kind: "mention", id: response.mentions.find((mention: { label: string }) => mention.label === "Quartz Sidecast")!.id }]; },
+    (response: any) => { const mentions = response.mentions; [mentions[0], mentions[1]] = [mentions[1], mentions[0]]; },
+    (response: any) => { response.mentions.find((mention: { label: string }) => mention.label === "Ochre Cutreserve")!.candidate_refs = [{ kind: "mention", id: canonical.id }, { kind: "mention", id: canonical.id }]; },
+  ]) { const response = structuredClone(complete.response) as any; mutate(response); expect(score(response, complete.observed.input).automated_passed).toBe(false); }
   const partial = control(item.records, rule.branches[1]!.propositions, rule.branches[1]!.entities, true, item.id);
   expect(score(partial.response, partial.observed.input).selected_branch_id).toBe("partial-local-alias");
   for (const mutate of [
