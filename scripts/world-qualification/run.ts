@@ -19,6 +19,9 @@ import { responsePacer, RESPONSE_GAP_MS } from "./pacing";
 import { validateResume, type ResumeEvidence, type Trace } from "./resume";
 import { CORE_SEMANTIC_PROTOCOL, coreSemanticAssets, coreSemanticCaseInput, coreSemanticRulePredicates, scoreCoreSemanticRun, validateCoreSemanticAssets, type CoreSemanticCase } from "./core-semantic";
 import { modelWireAdapterIdentity, type CoreSemanticWireEvidence } from "./wire-custody";
+import { UNION_SEMANTIC_PROTOCOL } from "./union-propositions";
+import { validateUnionInputPolicy } from "./union-assets";
+import { createWorldUnionCandidateRegistry, WORLD_UNION_CANDIDATE_KINDS, WORLD_UNION_CANDIDATE_EXTENSIONS } from "../../packages/core/src/contracts/world-union-profile";
 
 export interface RunOptions {
   kinds: readonly string[]; base_url?: string; model?: string; token_file?: string;
@@ -27,11 +30,11 @@ export interface RunOptions {
   raw_responses?: string;
   extensions?: readonly string[];
   resume_from?: string; resume_sha256?: string; stopped?: () => boolean;
-  protocol?: typeof CORE_SEMANTIC_PROTOCOL;
+  protocol?: typeof CORE_SEMANTIC_PROTOCOL | typeof UNION_SEMANTIC_PROTOCOL;
   input_policy?: QualificationInputPolicy;
-  core_split?: "regression13" | "offered17";
+  core_split?: "regression13" | "offered17" | "union22";
 }
-export type CoreSemanticRunOptions = RunOptions & { protocol: typeof CORE_SEMANTIC_PROTOCOL };
+export type CoreSemanticRunOptions = RunOptions & { protocol: typeof CORE_SEMANTIC_PROTOCOL | typeof UNION_SEMANTIC_PROTOCOL };
 export type BaselineRunOptions = RunOptions & { protocol?: undefined };
 
 
@@ -59,27 +62,30 @@ function readResume(path: string, sha256: string): ResumeEvidence {
 
 /** No transport injection or response-file mode: this entry point observes its own real port calls. */
 async function runQualificationImpl(options: RunOptions) {
-  if (options.protocol !== undefined && options.protocol !== CORE_SEMANTIC_PROTOCOL) throw new Error("unknown qualification protocol");
-  const coreSemantic = options.protocol === CORE_SEMANTIC_PROTOCOL;
-  const coreSplit = options.core_split ?? "regression13";
-  if (!["regression13", "offered17"].includes(coreSplit)) throw new Error("invalid core split");
+  if (options.protocol !== undefined && options.protocol !== CORE_SEMANTIC_PROTOCOL && options.protocol !== UNION_SEMANTIC_PROTOCOL) throw new Error("unknown qualification protocol");
+  const union = options.protocol === UNION_SEMANTIC_PROTOCOL;
+  const coreSemantic = options.protocol === CORE_SEMANTIC_PROTOCOL || union;
+  const coreSplit = options.core_split ?? (union ? "union22" : "regression13");
+  if (union ? coreSplit !== "union22" : !["regression13", "offered17"].includes(coreSplit)) throw new Error("invalid core split");
   if (!coreSemantic && options.input_policy !== undefined) throw new Error("input policy requires core semantic protocol");
   if (!coreSemantic && options.core_split !== undefined) throw new Error("core split requires core semantic protocol");
-  const inputPolicy = validateQualificationInputPolicy(options.input_policy ?? DEFAULT_QUALIFICATION_INPUT_POLICY);
+  const inputPolicy = union ? validateUnionInputPolicy(options.input_policy) : validateQualificationInputPolicy(options.input_policy ?? DEFAULT_QUALIFICATION_INPUT_POLICY);
   const assets = coreSemantic ? coreSemanticAssets(coreSplit) : null;
-  if (coreSemantic) validateCoreSemanticAssets(coreSplit); else validateFreshCore();
   if (options.kinds.length < 1 || options.kinds.length > 16 || new Set(options.kinds).size !== options.kinds.length) throw new Error("invalid kind selection");
-  if (coreSemantic && (canonicalJson([...options.kinds].sort()) !== canonicalJson(["concept", "situation"]) || (options.extensions?.length ?? 0) !== 0 || options.case_ids !== undefined || options.resume_from !== undefined || options.resume_sha256 !== undefined)) throw new Error("core semantic protocol requires the fixed core split");
+  if (coreSemantic && (canonicalJson([...options.kinds].sort()) !== canonicalJson(union ? [...WORLD_UNION_CANDIDATE_KINDS].sort() : ["concept", "situation"]) ||
+      canonicalJson(options.extensions ?? []) !== canonicalJson(union ? WORLD_UNION_CANDIDATE_EXTENSIONS : []) ||
+      options.case_ids !== undefined || options.resume_from !== undefined || options.resume_sha256 !== undefined)) throw new Error("core semantic protocol requires the fixed core split");
   const existing = options.kinds.filter(kind => WORLD_VOCABULARY_MODULES.some(module => module.kind?.id === kind));
-  const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, existing, options.extensions);
+  const registry = union ? createWorldUnionCandidateRegistry(WORLD_VOCABULARY_MODULES) : candidateRegistry(WORLD_VOCABULARY_MODULES, existing, options.extensions);
+  if (coreSemantic) validateCoreSemanticAssets(coreSplit, registry); else validateFreshCore();
   const corpus = coreSemantic ? assets!.corpus : qualificationCorpus;
-  const selected = corpus.cases.filter(item => existing.includes(item.kind) && (options.case_ids === undefined || options.case_ids.includes(item.id)));
+  const selected = corpus.cases.filter(item => union || (existing.includes(item.kind) && (options.case_ids === undefined || options.case_ids.includes(item.id))));
   const inputFor = (item: (typeof selected)[number]) => coreSemantic ? coreSemanticCaseInput(item as CoreSemanticCase, registry, inputPolicy) : caseInput(item as (typeof qualificationCorpus.cases)[number], registry);
   if (options.case_ids !== undefined && (new Set(options.case_ids).size !== options.case_ids.length || options.case_ids.some(id => !selected.some(item => item.id === id)))) throw new Error("unknown or unavailable case selection");
   // Missing model/corpus/module is an inspectable not_run result, never an empty successful measurement.
   // A diagnostic subset keeps the offered registry fixed. Omitted cases still
   // score not_run; they are not missing from the authored corpus.
-  const missing = options.kinds.flatMap(kind => !existing.includes(kind) ? [`${kind}:module_missing`] : !corpus.cases.some(item => item.kind === kind) ? [`${kind}:corpus_missing`] : []);
+  const missing = options.kinds.flatMap(kind => !existing.includes(kind) ? [`${kind}:module_missing`] : !union && !corpus.cases.some(item => item.kind === kind) ? [`${kind}:corpus_missing`] : []);
   if (coreSemantic) for (const item of selected) {
     const rule = assets!.contract.cases.find(row => row.case_id === item.id)!;
     const predicates = coreSemanticRulePredicates(rule);
@@ -105,7 +111,7 @@ async function runQualificationImpl(options: RunOptions) {
   if (resumed !== null) { observations.push(...resumed.observations); traces.push(...resumed.traces); }
   let haltReason: "requested_stop" | "transport_refused" | "automated_failure" | null = null;
   const report = () => {
-    const common = { schema: coreSemantic ? "kizuki.world-qualification-run/v3" as const : "kizuki.world-qualification-run/v2" as const,
+    const common = { schema: coreSemantic ? union ? "kizuki.world-qualification-run/v4" as const : "kizuki.world-qualification-run/v3" as const : "kizuki.world-qualification-run/v2" as const,
       evidence: "runner_observed_transport" as const, synthetic: true, selected_kinds: [...options.kinds], selected_extensions: [...(options.extensions ?? [])],
       model: options.model ?? null, endpoint_host: options.base_url === undefined ? null : new URL(options.base_url).host,
       ...sourceProvenance(),
@@ -120,8 +126,13 @@ async function runQualificationImpl(options: RunOptions) {
         "This fixed authored split must not be used to tune prompts or select responses; changes require a fresh unseen split.",
         coreSemantic ? "Open-text meaning and body fidelity remain pending until a separately pinned independent semantic review passes." : "Supplemental deterministic checks do not review free-text bodies. Independent forbidden-interpretation/body review remains pending."] };
     const successful = observations.filter(row => traces.some(trace => trace.case_id === row.case_id && trace.transport === "ok"));
-    if (coreSemantic) return { ...common, protocol: CORE_SEMANTIC_PROTOCOL, ...(coreSplit === "offered17" ? { core_split: coreSplit } : {}), input_policy: inputPolicy, wire_adapter: wireAdapter, wire_receipts: wireReceipts,
-      core_semantic: scoreCoreSemanticRun(successful, registry, { source_commit: common.source_commit, input_policy: inputPolicy, traces, wire_adapter: wireAdapter, wire_receipts: wireReceipts }, assets!) };
+    if (coreSemantic) {
+      const semantic = { input_policy: inputPolicy, wire_adapter: wireAdapter, wire_receipts: wireReceipts,
+        core_semantic: scoreCoreSemanticRun(successful, registry, { source_commit: common.source_commit, input_policy: inputPolicy, traces, wire_adapter: wireAdapter, wire_receipts: wireReceipts }, assets!) };
+      return union
+        ? { ...common, ...semantic, schema: "kizuki.world-qualification-run/v4" as const, protocol: UNION_SEMANTIC_PROTOCOL, core_split: "union22" as const }
+        : { ...common, ...semantic, schema: "kizuki.world-qualification-run/v3" as const, protocol: CORE_SEMANTIC_PROTOCOL, ...(coreSplit === "offered17" ? { core_split: "offered17" as const } : {}) };
+    }
     return { ...common, supplemental: scoreSupplementalRun(successful), score: scoreRun(qualificationCorpus, successful) };
   };
   let fd: number | undefined, rawFd: number | undefined, rawBytes = 0;
@@ -228,7 +239,7 @@ async function runQualificationImpl(options: RunOptions) {
 }
 
 export type QualificationRunResult = Awaited<ReturnType<typeof runQualificationImpl>>;
-export type CoreSemanticRunResult = Extract<QualificationRunResult, { protocol: typeof CORE_SEMANTIC_PROTOCOL }>;
+export type CoreSemanticRunResult = Extract<QualificationRunResult, { protocol: typeof CORE_SEMANTIC_PROTOCOL | typeof UNION_SEMANTIC_PROTOCOL }>;
 export type BaselineRunResult = Exclude<QualificationRunResult, CoreSemanticRunResult>;
 export function runQualification(options: CoreSemanticRunOptions): Promise<CoreSemanticRunResult>;
 export function runQualification(options: BaselineRunOptions): Promise<BaselineRunResult>;
@@ -245,11 +256,11 @@ if (import.meta.main) {
     const allowed = ["--kinds", "--out", "--raw-responses", "--base-url", "--model", "--token-file", "--allow-remote", "--cases", "--extensions", "--resume-from", "--resume-sha256", "--protocol", "--core-split", "--max-input-tokens", "--max-output-tokens", "--input-token-overhead"];
     for (let index = 0; index < args.length; index++) { const flag = args[index]!; if (!allowed.includes(flag) || args.indexOf(flag) !== index) throw new Error("invalid arguments"); if (flag !== "--allow-remote" && (args[++index] === undefined || args[index]!.startsWith("--"))) throw new Error("missing argument"); }
     if (kinds === undefined || output === undefined) throw new Error("required arguments missing");
-    if (protocol !== undefined && protocol !== CORE_SEMANTIC_PROTOCOL) throw new Error("unknown qualification protocol");
-    if (coreSplit !== undefined && (protocol !== CORE_SEMANTIC_PROTOCOL || !["regression13", "offered17"].includes(coreSplit))) throw new Error("invalid core split");
+    if (protocol !== undefined && protocol !== CORE_SEMANTIC_PROTOCOL && protocol !== UNION_SEMANTIC_PROTOCOL) throw new Error("unknown qualification protocol");
+    if (coreSplit !== undefined && (protocol === UNION_SEMANTIC_PROTOCOL ? coreSplit !== "union22" : protocol !== CORE_SEMANTIC_PROTOCOL || !["regression13", "offered17"].includes(coreSplit))) throw new Error("invalid core split");
     const result = await runQualification({ kinds: kinds.split(","), output, stopped: () => stopped,
-      ...(protocol === undefined ? {} : { protocol: CORE_SEMANTIC_PROTOCOL }),
-      ...(coreSplit === undefined ? {} : { core_split: coreSplit as "regression13" | "offered17" }),
+      ...(protocol === undefined ? {} : { protocol }),
+      ...(coreSplit === undefined ? {} : { core_split: coreSplit as "regression13" | "offered17" | "union22" }),
       ...(["--max-input-tokens", "--max-output-tokens", "--input-token-overhead"].some(flag => value(flag) !== undefined) ? {
         input_policy: validateQualificationInputPolicy({ ...DEFAULT_QUALIFICATION_INPUT_POLICY,
           max_input_tokens: value("--max-input-tokens") === undefined ? DEFAULT_QUALIFICATION_INPUT_POLICY.max_input_tokens : Number(value("--max-input-tokens")),

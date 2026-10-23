@@ -21,6 +21,8 @@ import { worldSuppliedReferences } from "../../packages/core/src/serve/world-sup
 import type { SubjectRef as EventSubject } from "../../packages/core/src/contracts/event";
 import type { Observation } from "./score";
 import { inspectCoreSemanticWireEvidence, type CoreSemanticWireEvidence, type ModelWireAdapterIdentity } from "./wire-custody";
+import { matchScopedPropositions, UNION_SEMANTIC_PROTOCOL, type ScopedExtractBranch } from "./union-propositions";
+import { unionSemanticAssets, validateUnionContract } from "./union-assets";
 
 import { DEFAULT_QUALIFICATION_INPUT_POLICY, validateQualificationInputPolicy, type QualificationInputPolicy } from "./input-planning";
 
@@ -29,8 +31,8 @@ export const LEGACY_CORE_SEMANTIC_PROTOCOL = "core-semantic-v2" as const;
 type Category = "positive" | "reported" | "historical" | "maintenance_outline" | "name_negative" | "template_negative" | "hypothetical_negative";
 type SourceType = "direct_record" | "person_statement" | "document_report";
 export interface CoreSemanticRecord { id: string; text: string; subjects: { id: string; quote: string }[]; structured_subjects?: EventSubject[] }
-export interface CoreSemanticCase { id: string; kind: "concept" | "situation"; category: Category; source_type: SourceType; records: CoreSemanticRecord[] }
-export interface CoreSemanticCorpus { schema: string; synthetic: true; split: "held_out" | "regression" | "prospective_offered17"; version: string; cases: CoreSemanticCase[] }
+export interface CoreSemanticCase { id: string; kind: "concept" | "situation" | "mixed"; category: Category; source_type: SourceType; records: CoreSemanticRecord[] }
+export interface CoreSemanticCorpus { schema: string; synthetic: true; split: "held_out" | "regression" | "prospective_offered17" | "prospective_union22"; version: string; cases: CoreSemanticCase[] }
 type TimeRule = "unknown" | { valid_from: string; valid_to: string; temporal_basis: "explicit"; witness: string };
 type PerspectiveRule = "direct" | "person_statement" | "document_report" | "document_suggestion";
 interface MentionRule { mode: "mention"; record: string; quote: string; label: string; attribution_witness: string }
@@ -68,15 +70,17 @@ export interface GeneralExtractBranch {
   propositions: GeneralPropositionRule[]; forbidden_assertions: string[];
 }
 interface GeneralExtractRule { case_id: string; expectation: "extract"; branches: GeneralExtractBranch[] }
-export type AnyExtractBranch = CoreSemanticExtractBranch | GeneralExtractBranch;
-type AnyExtractRule = ExtractRule | GeneralExtractRule;
-type GeneralCaseRule = Omit<GeneralExtractBranch, "id"> & { case_id: string; expectation: "extract" };
+interface ScopedExtractRule { case_id: string; expectation: "extract"; branches: ScopedExtractBranch[] }
+export type AnyExtractBranch = CoreSemanticExtractBranch | GeneralExtractBranch | ScopedExtractBranch;
+type AnyExtractRule = ExtractRule | GeneralExtractRule | ScopedExtractRule;
+type GeneralCaseRule = (Omit<GeneralExtractBranch, "id"> | Omit<ScopedExtractBranch, "id">) & { case_id: string; expectation: "extract" };
 export interface CoreSemanticAssetSet {
-  split: "regression13" | "offered17"; corpus: CoreSemanticCorpus;
+  split: "regression13" | "offered17" | "union22"; corpus: CoreSemanticCorpus;
   contract: Omit<CoreSemanticContract, "cases"> & { cases: (AnyExtractRule | AbstainRule)[] };
   corpus_sha256: string; contract_sha256: string;
 }
 export function coreSemanticAssets(split: CoreSemanticAssetSet["split"] = "regression13"): CoreSemanticAssetSet {
+  if (split === "union22") return unionSemanticAssets();
   if (split !== "regression13" && split !== "offered17") throw new Error("unsupported core semantic split");
   return split === "regression13" ? { split, corpus: coreSemanticCorpus, contract: coreSemanticContract,
     corpus_sha256: coreSemanticCorpusSha256, contract_sha256: coreSemanticContractSha256 }
@@ -161,7 +165,14 @@ function validateAuthoredBranch(item: CoreSemanticCase, branch: CoreSemanticExtr
 }
 
 /** Frozen before calls; no observed answer can add an atom, alternative, or case. */
-export function validateCoreSemanticAssets(split: CoreSemanticAssetSet["split"] = "regression13"): void {
+export function validateCoreSemanticAssets(split: CoreSemanticAssetSet["split"] = "regression13", registry?: WorldRegistry): void {
+  if (split === "union22") {
+    if (!registry) throw Error("union profile required");
+    validateCoreSemanticAssets("offered17");
+    const assets = coreSemanticAssets(split);
+    validateUnionContract(assets.corpus, assets.contract, registry);
+    return;
+  }
   for (const name of ["core-semantic-corpus.json", "core-semantic-contract.json", "core-semantic.md"] as const) {
     const bytes = readFileSync(new URL(name, import.meta.url)), pin = freeze.files[name];
     if (bytes.length !== pin.bytes || sha256(bytes) !== pin.sha256) throw new Error("core semantic asset changed");
@@ -197,6 +208,7 @@ export function validateCoreSemanticContract(corpus: CoreSemanticCorpus, contrac
           new Set(rule.branches.map(branch => branch.id)).size !== rule.branches.length) throw new Error("invalid offered case");
       for (const branch of rule.branches) {
         if (!("propositions" in branch)) throw new Error("missing complete proposition branch");
+        if ("scope" in branch) throw new Error("scoped propositions require union protocol");
         validateGeneralBranch(item, branch);
       }
     }
@@ -602,7 +614,8 @@ export function scoreCoreSemanticCase(item: CoreSemanticCase, rule: LegacyExtrac
       if (rule.expectation === "abstain") {
         if (observed.response.claims.length !== 0) gates.abstention.push("claims_present");
       } else if (parsed.ok && parsed.dropped.length === 0 && "propositions" in rule) {
-        const scored = matchGeneralPropositions(item, rule, observed.response, observed.input);
+        const scored = "scope" in rule ? matchScopedPropositions(item, rule, observed.response, observed.input, registry, prepared)
+          : matchGeneralPropositions(item, rule, observed.response, observed.input);
         gates.structure.push(...scored.errors); gates.attribution.push(...scored.attribution); gates.time.push(...scored.time); matchedPropositions = scored.matches; legacyExtras = scored.legacyExtras;
       } else if (parsed.ok && parsed.dropped.length === 0 && !("propositions" in rule)) {
         const claims = observed.response.claims, labelPredicate = `${item.kind}.label`, expectedPredicates = ["world.kind", labelPredicate, ...rule.details.map(row => row.predicate)];
@@ -687,10 +700,15 @@ export function scoreCoreSemanticRun(observations: readonly Observation[], regis
       response: observed?.response ?? null, transport_response_sha256: transportSha, model_response_sha256: modelResponseSha,
       adapter: evidence.wire_adapter, evidence: evidence.wire_receipts });
     const pipelineErrors = [...(pipeline?.errors ?? ["not_prepared"])];
+    if (assets.split === "union22" && observed?.response) {
+      const world = new Set(registry.offered.vocabulary.map(row => row.predicate));
+      const allowed = new Set(diagnosticBranch === null ? [] : coreSemanticBranchPredicates(diagnosticBranch));
+      if (observed.response.claims.some(claim => world.has(claim.predicate) && !allowed.has(claim.predicate))) pipelineErrors.push("uncontracted_world_predicate");
+    }
     if (!/^[a-f0-9]{40}$/.test(evidence.source_commit) || !/^[a-f0-9]{64}$/.test(transportSha ?? "")) pipelineErrors.push("unbound_pipeline_evidence");
     pipelineErrors.push(...custody.errors.map(error => `custody:${error}`));
     return { ...prepared, stage: "prepared_admission" as const,
-      automated_passed: prepared.automated_passed && pipelineErrors.length === 0,
+      automated_passed: prepared.automated_passed && pipelineErrors.length === 0 && (assets.split !== "union22" || raw.automated_passed),
       gates: { ...prepared.gates, pipeline: pipelineErrors },
       raw_model: { stage: "raw_model" as const, selected_branch_id: prepared.selected_branch_id, diagnostic_branch_id: diagnosticBranch?.id ?? null, automated_passed: raw.automated_passed, gates: raw.gates },
       raw_citation_precision: { passed: raw.gates.observation.length === 0 && raw.gates.schema.length === 0 && raw.gates.attribution.length === 0, failures: raw.gates.attribution },
@@ -701,9 +719,10 @@ export function scoreCoreSemanticRun(observations: readonly Observation[], regis
         input_manifest_sha256: pipeline?.input_manifest_sha256 ?? null, sent_window_manifest_sha256: pipeline?.sent_window_manifest_sha256 ?? null,
         prepared_admissions_sha256: pipeline?.prepared_admissions_sha256 ?? null, ...custody.binding } };
   });
-  return { schema: "kizuki.core-semantic-result/v3" as const, protocol: CORE_SEMANTIC_PROTOCOL, stage: "prepared_admission" as const,
+  return { schema: assets.split === "union22" ? "kizuki.core-semantic-result/v4" as const : "kizuki.core-semantic-result/v3" as const,
+    protocol: assets.split === "union22" ? UNION_SEMANTIC_PROTOCOL : CORE_SEMANTIC_PROTOCOL, stage: "prepared_admission" as const,
     representation_method: CORE_SEMANTIC_REPRESENTATION_METHOD, source_commit: evidence.source_commit, input_policy: policy, corpus_sha256: assets.corpus_sha256, contract_sha256: assets.contract_sha256,
-    ...(assets.split === "offered17" ? { core_split: assets.split } : {}),
+    ...(assets.split !== "regression13" ? { core_split: assets.split } : {}),
     raw_model_automated_passed: cases.every(row => row.raw_model.automated_passed),
     automated_passed: cases.every(row => row.automated_passed), status: "pending_manual_review" as const, cases };
 }
@@ -711,7 +730,8 @@ export function scoreCoreSemanticRun(observations: readonly Observation[], regis
 export function expectedCoreSemanticReview(reportSha256: string, result: ReturnType<typeof scoreCoreSemanticRun>) {
   if (!result.automated_passed || result.cases.some(row => !row.automated_passed || (row.expectation === "extract" && row.selected_branch === null)))
     throw new Error("core semantic review requires complete passing branches");
-  return { schema: "kizuki.core-semantic-review/v3" as const, stage: "prepared_admission" as const, source_commit: result.source_commit, independent: true, status: "passed" as const, report_sha256: reportSha256,
+  return { schema: result.protocol === UNION_SEMANTIC_PROTOCOL ? "kizuki.core-semantic-review/v4" as const : "kizuki.core-semantic-review/v3" as const,
+    stage: "prepared_admission" as const, source_commit: result.source_commit, independent: true, status: "passed" as const, report_sha256: reportSha256,
     representation_method: result.representation_method, ...("core_split" in result ? { core_split: result.core_split } : {}), input_policy: result.input_policy, corpus_sha256: result.corpus_sha256, contract_sha256: result.contract_sha256,
     cases: result.cases.map(row => {
       const rule = row.expectation === "abstain" ? { expectation: "abstain" as const } : coreSemanticBranchRule(row.case_id, row.selected_branch!);

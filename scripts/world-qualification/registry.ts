@@ -15,7 +15,12 @@ import { REVIEWED_QUALIFICATIONS, type QualificationApproval } from "./approvals
 import { CORE_SEMANTIC_PROTOCOL, LEGACY_CORE_SEMANTIC_PROTOCOL, coreSemanticAssets, coreSemanticBranchPredicates, coreSemanticCaseInput, scoreCoreSemanticRun, validateCoreSemanticAssets, verifyCoreSemanticReview } from "./core-semantic";
 import { validateQualificationInputPolicy } from "./input-planning";
 import { modelWireAdapterIdentity } from "./wire-custody";
+import { UNION_SEMANTIC_PROTOCOL } from "./union-propositions";
+import { createWorldUnionCandidateRegistry, WORLD_UNION_CANDIDATE_KINDS, WORLD_UNION_CANDIDATE_EXTENSIONS } from "../../packages/core/src/contracts/world-union-profile";
+import { WORLD_VOCABULARY_MODULES } from "./candidate-modules";
+import { validateUnionInputPolicy } from "./union-assets";
 export { REVIEWED_QUALIFICATIONS, type QualificationApproval } from "./approvals";
+export type CoreSemanticApproval = QualificationApproval | (Omit<QualificationApproval, "protocol"> & { protocol: typeof UNION_SEMANTIC_PROTOCOL });
 
 export const registryDigest = (registry: WorldRegistry) => sha256(canonicalJson({
   kinds: registry.kinds.filter(row => row.offeredToProducer), offered: registry.offered,
@@ -35,21 +40,23 @@ const CHECKED = new WeakSet<object>();
 export interface CheckedQualification { registry_sha256: string; report_sha256: string; kinds: readonly string[]; predicates: readonly string[] }
 
 type QualificationReport = Awaited<ReturnType<typeof runQualification>>;
-type CoreSemanticReport = Extract<QualificationReport, { protocol: typeof CORE_SEMANTIC_PROTOCOL }>;
+type CoreSemanticReport = Extract<QualificationReport, { protocol: typeof CORE_SEMANTIC_PROTOCOL | typeof UNION_SEMANTIC_PROTOCOL }>;
 type BaselineReport = Exclude<QualificationReport, CoreSemanticReport>;
 
-function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: QualificationApproval, registry: WorldRegistry, root?: string): CheckedQualification {
-  const split = "core_split" in report && report.core_split === "offered17" ? "offered17" : "regression13";
-  if ("core_split" in report && report.core_split !== "offered17") throw new Error("invalid core semantic split");
+function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: CoreSemanticApproval, registry: WorldRegistry, root?: string): CheckedQualification {
+  const union = report.protocol === UNION_SEMANTIC_PROTOCOL;
+  const split = union ? "union22" : "core_split" in report && report.core_split === "offered17" ? "offered17" : "regression13";
+  if (union ? !("core_split" in report) || report.core_split !== "union22" : "core_split" in report && report.core_split !== "offered17") throw new Error("invalid core semantic split");
+  if (union && registryDigest(registry) !== registryDigest(createWorldUnionCandidateRegistry(WORLD_VOCABULARY_MODULES))) throw new Error("union profile mismatch");
   const assets = coreSemanticAssets(split);
-  validateCoreSemanticAssets(split);
-  const policy = validateQualificationInputPolicy(report.input_policy);
+  validateCoreSemanticAssets(split, registry);
+  const policy = union ? validateUnionInputPolicy(report.input_policy) : validateQualificationInputPolicy(report.input_policy);
   const projectRoot = root ?? resolve(import.meta.dir, "../..");
-  if (approval.protocol !== CORE_SEMANTIC_PROTOCOL || report.schema !== "kizuki.world-qualification-run/v3" || report.evidence !== "runner_observed_transport" || report.synthetic !== true ||
+  if (approval.protocol !== report.protocol || report.schema !== (union ? "kizuki.world-qualification-run/v4" : "kizuki.world-qualification-run/v3") || report.evidence !== "runner_observed_transport" || report.synthetic !== true ||
       report.source_clean !== true || !/^[a-f0-9]{40}$/.test(report.source_commit) || report.runner_sha256 !== runnerDigest(projectRoot) ||
       report.registry_sha256 !== registryDigest(registry) || report.missing.length !== 0 || !report.model || !report.endpoint_host ||
-      canonicalJson(report.corpus) !== canonicalJson(assets.corpus) || canonicalJson([...report.selected_kinds].sort()) !== canonicalJson(["concept", "situation"]) ||
-      report.selected_extensions.length !== 0 || canonicalJson(report.selected_cases) !== canonicalJson(assets.corpus.cases.map(row => row.id)) ||
+      canonicalJson(report.corpus) !== canonicalJson(assets.corpus) || canonicalJson([...report.selected_kinds].sort()) !== canonicalJson(union ? [...WORLD_UNION_CANDIDATE_KINDS].sort() : ["concept", "situation"]) ||
+      canonicalJson(report.selected_extensions) !== canonicalJson(union ? WORLD_UNION_CANDIDATE_EXTENSIONS : []) || canonicalJson(report.selected_cases) !== canonicalJson(assets.corpus.cases.map(row => row.id)) ||
       report.resumed_from !== null || report.halt_reason !== null || report.response_gap_ms !== RESPONSE_GAP_MS || report.attempts !== assets.corpus.cases.length ||
       report.observations.length !== assets.corpus.cases.length || report.traces.length !== assets.corpus.cases.length ||
       canonicalJson(report.observations.map(row => row.case_id)) !== canonicalJson(report.selected_cases) || canonicalJson(report.traces.map(row => row.case_id)) !== canonicalJson(report.selected_cases) ||
@@ -88,12 +95,12 @@ function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: Qualifi
   return checked;
 }
 
-export function verifyQualificationReceipt(bytes: string, approval: QualificationApproval, registry: WorldRegistry, root?: string): CheckedQualification {
+export function verifyQualificationReceipt(bytes: string, approval: CoreSemanticApproval, registry: WorldRegistry, root?: string): CheckedQualification {
   if (!/^[a-f0-9]{64}$/.test(approval.sha256) || sha256(bytes) !== approval.sha256 || !/^[a-f0-9]{64}$/.test(approval.endpoint_evidence)) throw new Error("qualification review pin mismatch");
   const parsed = JSON.parse(bytes) as QualificationReport | { readonly protocol: string };
   if ("protocol" in parsed) {
     if (parsed.protocol === LEGACY_CORE_SEMANTIC_PROTOCOL) throw new Error("obsolete core semantic protocol");
-    if (parsed.protocol !== CORE_SEMANTIC_PROTOCOL) throw new Error("unknown qualification protocol");
+    if (parsed.protocol !== CORE_SEMANTIC_PROTOCOL && parsed.protocol !== UNION_SEMANTIC_PROTOCOL) throw new Error("unknown qualification protocol");
     return verifyCoreSemanticReceipt(parsed as CoreSemanticReport, approval, registry, root);
   }
   if (approval.protocol !== undefined) throw new Error("qualification approval protocol mismatch");
