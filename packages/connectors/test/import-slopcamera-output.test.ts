@@ -59,6 +59,42 @@ test("two reused filenames stay distinct and a note stays on its digest", () => 
     .toBe("note_unbound");
 });
 
+test("owner-stated acceptance stays on its digest and is not a grant", () => {
+  const accepted = {
+    author: "owner" as const,
+    rationale: "SYNTHETIC_ACCEPT_A",
+    outputSha256: outputA,
+    acceptance: "accepted" as const,
+  };
+  const parsed = parseSlopcameraRenderOutput(reference(outputA, revisionA, planA), { ...consent, note: accepted });
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.event.text).toContain("owner-stated accepted");
+  expect(parsed.event.text).toContain("not approval or a grant");
+  expect(parsed.event.text).not.toContain("SYNTHETIC_ACCEPT_A");
+  expect(parsed.event.metadata["slopcamera"]).toMatchObject({
+    note: {
+      author: "owner",
+      role: "owner-note",
+      bound_output_sha256: outputA,
+      acceptance: "owner-stated",
+      verdict: "accepted",
+      grant: "not_conferred",
+    },
+    coverage: { acceptance: "owner-stated", acceptance_grant: "not_conferred", path_opened: false },
+  });
+  expect(parseSlopcameraRenderOutput(reference(outputB, revisionB, planB), { ...consent, note: accepted }).code)
+    .toBe("note_unbound");
+  expect(parseSlopcameraRenderOutput(reference(outputA, revisionA, planA), {
+    ...consent,
+    note: { ...accepted, author: "agent", acceptance: "accepted" },
+  }).code).toBe("acceptance_not_conferred");
+  expect(parseSlopcameraRenderOutput(reference(outputA, revisionA, planA), {
+    ...consent,
+    note: { ...note, acceptance: "published" } as never,
+  }).code).toBe("invalid_record");
+});
+
 test("supplied output bytes clear only that digest", () => {
   const media = "synthetic-bytes";
   expect(sha256Hex(media)).not.toBe(outputA);
