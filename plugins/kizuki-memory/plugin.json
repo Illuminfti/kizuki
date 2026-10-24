@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "kizuki-memory",
+  "version": "0.1.0",
+  "description": "Resume work from scoped, source-linked Kizuki memory through an already connected MCP server.",
+  "license": "MIT"
+}
