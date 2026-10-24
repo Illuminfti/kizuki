@@ -807,6 +807,87 @@ test("effect output stays in the receipt and does not confer execution", () => {
   });
 });
 
+test("effect configurationDigest is a content address and does not apply configuration", () => {
+  const requestDigest = `sha256:${"cd".repeat(32)}`;
+  const configurationDigest = `sha256:${"c0".repeat(32)}`;
+  const reported = "SYNTHETIC_CONFIGURATION_DO_NOT_APPLY";
+  const effect = {
+    requestDigest,
+    executor: "synthetic",
+    output: "ok",
+    configurationDigest,
+  };
+  const parsed = parseAlgalRunReceipt(receipt({ effects: [effect] }), consent);
+  expect(parsed.status).toBe("partial");
+  if (parsed.status === "refused") return;
+  expect(parsed.missingDigests).toEqual([manifestDigest, requestDigest, configurationDigest]);
+  expect(parsed.event.text).toContain("executor-reported configuration digest present");
+  expect(parsed.event.text).toContain("configuration not applied");
+  expect(parsed.event.text).not.toContain(configurationDigest);
+  expect(parsed.event.text).not.toContain(reported);
+  expect(parsed.event.text).toContain("executor-reported outcome complete");
+  expect(parsed.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_configuration_digest: "present",
+      configuration_digest: "format_checked_not_applied",
+      configuration: "not_applied",
+      executor_reported_outcome: "complete",
+      executed: false,
+      retrieved: false,
+      grant: "not_conferred",
+      independent_observation: "absent",
+    },
+    receipt: { effects: [effect] },
+  });
+  const configBytes = "{\"applied\":false}";
+  const suppliedDigest = `sha256:${sha256Hex(configBytes)}`;
+  const supplied = parseAlgalRunReceipt(
+    receipt({
+      effects: [{
+        requestDigest,
+        executor: "synthetic",
+        output: reported,
+        configurationDigest: suppliedDigest,
+      }],
+    }),
+    { ...consent, referencedBytes: { [suppliedDigest]: configBytes } },
+  );
+  expect(supplied.status).toBe("partial");
+  if (supplied.status === "refused") return;
+  expect(supplied.missingDigests).toEqual([manifestDigest, requestDigest]);
+  expect(supplied.missingDigests).not.toContain(suppliedDigest);
+  expect(supplied.event.text).toContain("executor-reported configuration digest present");
+  expect(supplied.event.text).toContain("configuration not applied");
+  expect(supplied.event.text).not.toContain(configBytes);
+  expect(supplied.event.text).not.toContain(reported);
+  expect(supplied.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      configuration: "not_applied",
+      configuration_digest: "format_checked_not_applied",
+      retrieved: false,
+      executed: false,
+    },
+  });
+  for (const bad of ["https://example.invalid/config", "../outside", "SHA256:" + "ab".repeat(32), ""]) {
+    expect(parseAlgalRunReceipt(
+      receipt({ effects: [{ requestDigest, executor: "synthetic", output: "ok", configurationDigest: bad }] }),
+      consent,
+    ).code).toBe("invalid_digest");
+  }
+  const absent = parseAlgalRunReceipt(receipt(), consent);
+  expect(absent.status).toBe("partial");
+  if (absent.status === "refused") return;
+  expect(absent.event.text).toContain("executor-reported configuration digest absent");
+  expect(absent.event.metadata["algal"]).toMatchObject({
+    coverage: {
+      executor_reported_configuration_digest: "absent",
+      configuration_digest: "absent",
+      configuration: "not_applied",
+      grant: "not_conferred",
+    },
+  });
+});
+
 test("missing manifest bytes stay partial and are not retrieved", () => {
   const parsed = parseAlgalRunReceipt(receipt(), consent);
   expect(parsed.status).toBe("partial");
