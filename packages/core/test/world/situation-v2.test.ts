@@ -28,7 +28,7 @@ test("Situation v2 is opt-in and a v1-only situation keeps its attributed litera
   } finally { f.dispose(); }
 }, 120_000);
 
-import { situationV2Fixture } from "../helpers/situation-v2-fixture";
+import { situationV2Fixture, SITUATION_REVIEW_DUE } from "../helpers/situation-v2-fixture";
 import { serveCorrect } from "../../src/serving/correct";
 import { undoReceipt } from "../../src/canon/undo";
 
@@ -44,7 +44,7 @@ test("commitments keep their own identity, dates, and holder perspectives; compl
     expect(new Set(notes.due.map(r => r.perspective.holder?.token)).size).toBe(2);
     expect(notes.overdue).toBe("unknown");
     const review = card.commitments.find(c => c.label?.object.kind === "literal" && c.label.object.value === "Review draft")!;
-    expect(review.due.map(r => r.object)).toEqual([literal("2026-10-24")]);
+    expect(review.due.map(r => r.object)).toEqual([literal(SITUATION_REVIEW_DUE)]);
     expect(review.overdue).toBe(false);
     expect(notes.commitment).not.toEqual(review.commitment);
     expect(notes.statusBasis).toHaveLength(1);

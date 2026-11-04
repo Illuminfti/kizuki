@@ -9,6 +9,15 @@ import { serveWorldView } from "../../src/serving/world-view";
 import { cardFixture } from "../world/card-fixture";
 export const SITUATION_V2_WHEN = { valid: { kind: "all" }, knownAt: { kind: "current" } } as const;
 export const literal = (value: string) => ({ kind: "literal" as const, value });
+const DAY_MS = 86_400_000;
+const utcDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const shiftUtcDate = (day: string, days: number) => utcDate(Date.parse(`${day}T00:00:00.000Z`) + days * DAY_MS);
+// Import time, not the call. Forecast jobs skip a due instant already past
+// ctx.now(); tests that later move Date to 2030 still need this date overdue.
+const fixtureClockMs = Date.now();
+export const SITUATION_REVIEW_DUE = utcDate(fixtureClockMs + 30 * DAY_MS);
+export const SITUATION_REVIEW_DAY_BEFORE = shiftUtcDate(SITUATION_REVIEW_DUE, -1);
+export const SITUATION_REVIEW_DAY_AFTER = shiftUtcDate(SITUATION_REVIEW_DUE, 1);
 export const vocabulary = (id: string) => ({ kind: "vocabulary" as const, ref: { kind: "vocabulary" as const, id } });
 export async function situationV2Fixture(database?: Database, options: Parameters<typeof cardFixture>[1] = {}) {
   const f = await cardFixture(database, options);
@@ -26,7 +35,7 @@ export async function situationV2Fixture(database?: Database, options: Parameter
     await f.write("situation.has_decision",{kind:"subject",ref:f.ref("decision:format")},{subject:"project:launch"});
     await f.write("commitment.due",literal("2026-10-23"),{subject:"commitment:notes",holder:"person:ada"});
     await f.write("commitment.due",literal("2026-10-22"),{subject:"commitment:notes",holder:"person:ben"});
-    const c2 = await f.write("commitment.due",literal("2026-10-24"),{subject:"commitment:review"});
+    const c2 = await f.write("commitment.due",literal(SITUATION_REVIEW_DUE),{subject:"commitment:review"});
     await f.write("commitment.status",vocabulary("commitment/open"),{subject:"commitment:review"});
     await f.write("decision.status",vocabulary("decision/decided"),{subject:"decision:format"});
     const find = (ctx = f.ctx) => {
