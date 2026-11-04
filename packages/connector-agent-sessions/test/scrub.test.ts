@@ -91,16 +91,26 @@ test("truncation cuts at a character boundary inside the byte bound", () => {
   });
 });
 
+/** CPU time of `work`. Wall time also counts time a busy runner gave other tests. */
+function cpuMilliseconds<T>(work: () => T): { ms: number; value: T } {
+  const started = process.cpuUsage();
+  const value = work();
+  const used = process.cpuUsage(started);
+  return { ms: (used.user + used.system) / 1000, value };
+}
+
 test("redaction cost does not grow with adversarial line size", () => {
   const dotted = "a.".repeat(100_000) + " token";
   const repeated = "token".repeat(40_000) + " ";
   const dashed = "a-".repeat(100_000) + " secret=x";
+  let accounted = 0;
   for (const input of [dotted, repeated, dashed]) {
-    const started = performance.now();
-    const { text } = redact(input);
-    expect(performance.now() - started).toBeLessThan(250);
-    expect(text.length).toBeLessThan(input.length);
+    const { ms, value } = cpuMilliseconds(() => redact(input));
+    accounted += ms;
+    expect(ms, input.slice(0, 16)).toBeLessThan(250);
+    expect(value.text.length).toBeLessThan(input.length);
   }
+  expect(accounted).toBeGreaterThan(1);
 });
 
 test("no token pattern is quadratic on a 200K adversarial line", () => {
@@ -119,11 +129,13 @@ test("no token pattern is quadratic on a 200K adversarial line", () => {
     "://a:".repeat(40_000),
     ["-----BEGIN", "PRIVATE KEY-----"].join(" ").repeat(7_400),
   ];
+  let accounted = 0;
   for (const input of inputs) {
-    const started = performance.now();
-    redact(input);
-    expect(performance.now() - started).toBeLessThan(250);
+    const { ms } = cpuMilliseconds(() => redact(input));
+    accounted += ms;
+    expect(ms, input.slice(0, 16)).toBeLessThan(250);
   }
+  expect(accounted).toBeGreaterThan(1);
 });
 
 test("a secret split by the scan bound is not left as a prefix", () => {
