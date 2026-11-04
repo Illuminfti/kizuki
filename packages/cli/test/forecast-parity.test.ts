@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { serveWorldView } from "@kizuki/core/world";
 import { forecastJob } from "../../core/src/world/forecast/job";
-import { situationV2Fixture } from "../../core/test/helpers/situation-v2-fixture";
+import { situationV2Fixture, SITUATION_REVIEW_DUE } from "../../core/test/helpers/situation-v2-fixture";
 import { startLoopback } from "../../core/test/helpers/world-kit/loopback";
 import { twoClients } from "../../mcp/test/helpers/two-clients";
 import { envelopeOf } from "../../mcp/test/client";
@@ -17,7 +17,7 @@ test("frozen forecasts and score abstention agree across Core, MCP, HTTP, CLI an
   try{
     expect(h.runCli(env,"init",clients.vaultPath,"--no-service","--no-default").exitCode).toBe(0);
     await forecastJob.run({db:f.db,vaultPath:clients.vaultPath,now:()=>new Date().toISOString(),stopRequested:()=>false,modelConfigured:false});
-    const commitment=f.readSituation(ctx).commitments.find(c=>c.due.some(d=>d.object.kind==="literal"&&d.object.value==="2026-10-24"))!.commitment;
+    const commitment=f.readSituation(ctx).commitments.find(c=>c.due.some(d=>d.object.kind==="literal"&&d.object.value===SITUATION_REVIEW_DUE))!.commitment;
     http=await startLoopback(clients.db,clients.vaultPath);
     for(const operation of ["forecast","forecast_scores"] as const){
       const input={operation,...(operation==="forecast"?{commitment}:{}),valid:{kind:"all"},knownAt:{kind:"current"}};
