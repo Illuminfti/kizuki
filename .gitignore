@@ -3,3 +3,8 @@ dist/
 .kizuki/
 *.tsbuildinfo
 .env*
+
+# Checkout-local Claude settings and the harness secret cache.
+# Shared notes under .agents/memory/ stay committed.
+.claude/settings.local.json
+.agents/memory/.secret-cache/
