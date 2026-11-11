@@ -300,17 +300,24 @@ function derivedWorldAdmission(
 }
 
 /**
- * Rendering and the Core-clamped model confidence are presentation retained
- * from the first admission of a support, not part of its identity: a model
- * that phrases one anchored fact twice, or a replay that re-reads it, is a
- * duplicate sighting and keeps the first immutable row untouched. Meaning,
- * grounding and the authority/epistemic assessment remain identity, so a
- * change there is still a conflict. Stored rows are compared by parsed value,
- * so a row serialized with another key order is the same admission.
+ * Two admissions under one support key are the same admission when every
+ * field except these two is equal. The support key already fixes the meaning
+ * key, the source, its grant revision, the cited events and the anchors; this
+ * comparison adds the codec schema, the complete semantic (so an anchor moved
+ * between assertion and perspective is a difference), the grounding and the
+ * Core-derived authority and epistemic kind. Rendering and the clamped model
+ * confidence are retained from the first admission and never compared: a
+ * second wording or score of one anchored fact is a duplicate sighting, not
+ * another admission. A field this build does not know is identity, so a row
+ * from a newer codec fails closed.
  */
 const ADMISSION_PRESENTATION_FIELDS: ReadonlySet<string> = new Set(["rendering", "confidence"]);
 
-/** Names the identity fields where a stored admission differs from a recomputed one; empty when equal. */
+/**
+ * Names the identity fields where a stored admission differs from a recomputed
+ * one; empty when they are the same admission. The stored row is compared by
+ * parsed value, never by its bytes, and is not rewritten.
+ */
 export function admissionIdentityConflict(stored: string, recomputed: ExactJson): string[] {
   let prior: unknown;
   try { prior = JSON.parse(stored); } catch { return ["admission"]; }
@@ -463,17 +470,14 @@ export function commitClaimV2(
   // is read rather than inferred from a swallowed write: `OR IGNORE` would
   // report any other constraint failure as an already-recorded sighting and
   // leave a durable claim behind with no evidence chain at all.
-  const duplicateSupport =
-    db
-      .query<{ support_key: string }, [string]>(
-        "SELECT support_key FROM claim_v2_support WHERE support_key = ?",
-      )
-      .get(supportKeyValue) !== null;
-  if (duplicateSupport && suppliedWorld !== null) {
-    const prior = db.query<{ admission: string }, [string]>(
-      "SELECT admission FROM claim_v2_support WHERE support_key=?",
-    ).get(supportKeyValue);
-    const differing = prior === null ? ["admission"] : admissionIdentityConflict(prior.admission, admission);
+  const prior = db
+    .query<{ admission: string }, [string]>(
+      "SELECT admission FROM claim_v2_support WHERE support_key = ?",
+    )
+    .get(supportKeyValue);
+  const duplicateSupport = prior !== null;
+  if (prior !== null && suppliedWorld !== null) {
+    const differing = admissionIdentityConflict(prior.admission, admission);
     if (differing.length > 0) throw new AdmissionConflictError(supportKeyValue, differing);
   }
   if (!duplicateSupport) {

@@ -31,6 +31,8 @@ import {
   readExtractCursor,
 } from "../../src/serve/extract";
 import { runWritePass } from "../../src/serve/write-pass";
+import { runRail } from "../../src/serve/rails";
+import { getRunReceipt, redactReceiptText } from "../../src/serve/receipts";
 import { parseDurableWorldDrafts } from "../../src/serve/extract-v2";
 import { insertClaim } from "../../src/claims/store";
 import { ulid } from "../../src/util/ulid";
@@ -46,7 +48,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(supplied = false, role = false, text?: string, rephrased = false) {
+function fixture(supplied = false, role = false, text?: string, twin = false) {
   const root = mkdtempSync(join(tmpdir(), "extract-v2-runtime-"));
   roots.push(root);
   const vault = join(root, "vault");
@@ -122,13 +124,16 @@ function fixture(supplied = false, role = false, text?: string, rephrased = fals
         status: "ok" as const,
         response: {
           schema: EXTRACT_RESPONSE_V2_SCHEMA,
-          mentions: supplied ? [] : [{ id: "m0", label: role ? "Ada" : "Flux", anchor, candidate_refs: [] }],
+          // A twin is a second mention over the same span: both resolve to one occurrence subject.
+          mentions: supplied ? [] : [{ id: "m0", label: role ? "Ada" : "Flux", anchor, candidate_refs: [] },
+            ...(twin ? [{ id: "m1", label: "Flux transform", anchor, candidate_refs: [] }] : [])],
           claims: role ? [claim("role", "employment.role", { kind: "literal", value: "orchard library collaborator" }, "Ada is an orchard library collaborator.")] : [
             claim("c0", "world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } }, "Flux is a concept."),
             claim("c1", "concept.label", { kind: "literal", value: "Flux" }, "The concept is called Flux."),
             claim("c2", "concept.definition", { kind: "literal", value: "A synthetic transformation." }, "Flux is a synthetic transformation."),
-            // The same anchored fact phrased a second time in one answer.
-            ...(rephrased ? [{ ...claim("c3", "concept.definition", { kind: "literal", value: "A synthetic transformation." }, "Flux names a synthetic transformation."), confidence: 0.6 }] : []),
+            // The twin's classification is the first claim again, with other wording and another score.
+            ...(twin ? [{ ...claim("c3", "world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } }, "Flux transform is a concept."),
+              subject: { kind: "mention" as const, id: "m1" }, confidence: 0.6 }] : []),
           ],
         },
         usage: { calls: 1, input_tokens: 20, output_tokens: 30 },
@@ -374,70 +379,136 @@ test("host prefix planner reserves overhead for the selected event prefix", asyn
   } finally { bound.cleanup(); f.close(); }
 });
 
-test("one answer that phrases the same anchored fact twice files once and keeps the first admission", async () => {
+test("one answer that classifies the same anchored subject twice files once and keeps the first admission", async () => {
   const f = fixture(false, false, undefined, true);
   try {
     const result = await runWritePass(f.db, f.vault, f.options());
     expect(result.errors).toEqual([]);
+    expect(result.claims_rejected).toEqual({});
     expect(result.claims_extracted).toBe(4);
     expect(result.claims_deduped).toBe(1);
     expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE is_world_typed=1").get()).toEqual({ n: 3 });
     expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claim_v2_support").get()).toEqual({ n: 3 });
-    const bodies = f.db.query<{ admission: string }, []>("SELECT admission FROM claim_v2_support").all()
-      .map(row => JSON.parse(row.admission).rendering.body);
-    expect(bodies).toContain("Flux is a synthetic transformation.");
-    expect(bodies).not.toContain("Flux names a synthetic transformation.");
+    const admissions = f.db.query<{ admission: string }, []>("SELECT admission FROM claim_v2_support").all()
+      .map(row => JSON.parse(row.admission) as { rendering: { body: string }; confidence: number });
+    expect(admissions.map(admission => admission.rendering.body).sort()).toEqual(
+      ["Flux is a concept.", "Flux is a synthetic transformation.", "The concept is called Flux."]);
+    expect(new Set(admissions.map(admission => admission.confidence)).size).toBe(1);
     expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
     expect(readExtractCursor(f.db)).toContain(f.eventId);
   } finally { f.close(); }
 });
 
-test("a durable decision journaled with a rephrased duplicate replays to completion without another call", async () => {
+test("a durable decision journaled with a twin classification replays to completion without another call", async () => {
   const f = fixture(false, false, undefined, true);
   try {
     const mined = await mineLiveDrafts(f.db, f.producer);
     expect(mined.mined).toEqual({ status: "ok", count: 4 });
     journalExtractBatch(f.db, mined, f.producer.model_ref, f.producer);
+    const drafts = parseDurableWorldDrafts(
+      f.db.query<{ drafts: string }, []>("SELECT drafts FROM extract_batches").get()!.drafts, f.producer.model_ref);
+    // The journaled pair has one meaning and differs only in wording and score.
+    expect(drafts).toHaveLength(4);
+    expect(drafts[3]!.semantic).toEqual(drafts[0]!.semantic);
+    expect(drafts[3]!.world_admission.rendering).not.toEqual(drafts[0]!.world_admission.rendering);
     f.reopen();
     const replay = await runWritePass(f.db, f.vault, f.options());
     expect(replay.errors).toEqual([]);
     expect(replay.model.calls).toBe(0);
+    expect(replay.claims_deduped).toBe(1);
     expect(f.calls.count).toBe(1);
     expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE is_world_typed=1").get()).toEqual({ n: 3 });
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claim_v2_support").get()).toEqual({ n: 3 });
+    expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
+    expect(readExtractCursor(f.db)).toContain(f.eventId);
+    // Nothing is left to replay: the next pass makes no change to the admissions.
+    const settled = f.db.query("SELECT support_key, admission, admitted_at FROM claim_v2_support ORDER BY support_key").all();
+    expect((await runWritePass(f.db, f.vault, f.options())).errors).toEqual([]);
+    expect(f.db.query("SELECT support_key, admission, admitted_at FROM claim_v2_support ORDER BY support_key").all()).toEqual(settled);
+  } finally { f.close(); }
+});
+
+/** Journals the fixture decision, then admits one of its drafts first under another assessment. */
+async function conflictingDecision(f: ReturnType<typeof fixture>, index: number) {
+  const mined = await mineLiveDrafts(f.db, f.producer);
+  journalExtractBatch(f.db, mined, f.producer.model_ref, f.producer);
+  const drafts = parseDurableWorldDrafts(
+    f.db.query<{ drafts: string }, []>("SELECT drafts FROM extract_batches").get()!.drafts, f.producer.model_ref);
+  f.db.exec("CREATE TEMP TABLE held_batch AS SELECT * FROM extract_batches; DELETE FROM extract_batches;");
+  expect((await insertClaim({ db: f.db }, drafts[index]!)).outcome).toBe("stored");
+  f.db.exec("INSERT INTO extract_batches SELECT * FROM held_batch; DROP TABLE held_batch;");
+  const row = f.db.query<{ support_key: string; admission: string }, []>("SELECT support_key, admission FROM claim_v2_support").get()!;
+  const admission = JSON.stringify({ ...JSON.parse(row.admission), epistemicKind: "observed" });
+  f.db.query("UPDATE claim_v2_support SET admission=? WHERE support_key=?").run(admission, row.support_key);
+  return { support_key: row.support_key, admission,
+    line: `claim refused: support ${row.support_key.slice(0, 16)} conflicts with immutable admission (epistemicKind)` };
+}
+
+test("a genuine admission conflict refuses that draft with a receipt and files the rest", async () => {
+  const f = fixture();
+  try {
+    const conflict = await conflictingDecision(f, 2);
+    const hooks = { model_ref: f.producer.model_ref, claims: { db: f.db }, producer: f.producer };
+    const receipt = getRunReceipt(f.db, (await runRail(f.db, f.vault, "sync", { hooks })).run_id)!;
+    // The persisted receipt names the stored row by a key prefix redaction keeps, and only field names.
+    expect(receipt.status).toBe("degraded");
+    expect(receipt.stopped).toBeNull();
+    expect(receipt.errors).toEqual([conflict.line]);
+    expect(redactReceiptText(conflict.line)).toBe(conflict.line);
+    expect(receipt.claims_rejected).toEqual({ support_admission_conflict: 1 });
+    expect(receipt.model.calls).toBe(0);
+    expect(f.calls.count).toBe(1);
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE is_world_typed=1").get()).toEqual({ n: 3 });
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claim_v2_support").get()).toEqual({ n: 3 });
+    // The immutable row is untouched, and the decision no longer holds the rail.
+    expect(f.db.query<{ admission: string }, [string]>("SELECT admission FROM claim_v2_support WHERE support_key=?").get(conflict.support_key)!.admission).toBe(conflict.admission);
+    expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
+    expect(readExtractCursor(f.db)).toContain(f.eventId);
+    const next = getRunReceipt(f.db, (await runRail(f.db, f.vault, "sync", { hooks })).run_id)!;
+    expect(next.errors).toEqual([]);
+    expect(next.claims_rejected).toEqual({});
+  } finally { f.close(); }
+});
+
+test("a refused draft commits with the rest of its decision or not at all", async () => {
+  const f = fixture();
+  try {
+    const conflict = await conflictingDecision(f, 0);
+    // The first draft is refused, the second files, and the third is interrupted.
+    f.db.exec(`CREATE TRIGGER fail_second_support BEFORE INSERT ON claim_v2_support
+      WHEN (SELECT count(*) FROM claim_v2_support) >= 2 BEGIN SELECT RAISE(ABORT,'atomic interruption'); END`);
+    await expect(runWritePass(f.db, f.vault, f.options())).rejects.toThrow("atomic interruption");
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE is_world_typed=1").get()).toEqual({ n: 1 });
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claim_v2_support").get()).toEqual({ n: 1 });
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM extract_batches").get()).toEqual({ n: 1 });
+    expect(readExtractCursor(f.db)).toBeNull();
+    f.db.exec("DROP TRIGGER fail_second_support");
+    f.reopen();
+    const replay = await runWritePass(f.db, f.vault, f.options());
+    expect(replay.errors).toEqual([conflict.line]);
+    expect(replay.claims_rejected).toEqual({ support_admission_conflict: 1 });
+    expect(f.calls.count).toBe(1);
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE is_world_typed=1").get()).toEqual({ n: 3 });
+    expect(f.db.query<{ admission: string }, [string]>("SELECT admission FROM claim_v2_support WHERE support_key=?").get(conflict.support_key)!.admission).toBe(conflict.admission);
     expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
     expect(readExtractCursor(f.db)).toContain(f.eventId);
   } finally { f.close(); }
 });
 
-test("a genuine admission conflict quarantines that draft with a receipt and files the rest", async () => {
+test("a refused draft leaves no claim behind even when it wrote before the conflict", async () => {
   const f = fixture();
   try {
-    const mined = await mineLiveDrafts(f.db, f.producer);
-    journalExtractBatch(f.db, mined, f.producer.model_ref, f.producer);
-    const drafts = parseDurableWorldDrafts(
-      f.db.query<{ drafts: string }, []>("SELECT drafts FROM extract_batches").get()!.drafts, f.producer.model_ref);
-    // Another writer admitted the third fact first, under a different assessment.
-    f.db.exec("CREATE TEMP TABLE held_batch AS SELECT * FROM extract_batches; DELETE FROM extract_batches;");
-    const earlier = await insertClaim({ db: f.db }, drafts[2]!);
-    expect(earlier.outcome).toBe("stored");
-    f.db.exec("INSERT INTO extract_batches SELECT * FROM held_batch; DROP TABLE held_batch;");
-    const before = f.db.query<{ support_key: string; admission: string }, []>("SELECT support_key, admission FROM claim_v2_support").get()!;
-    const altered = JSON.stringify({ ...JSON.parse(before.admission), epistemicKind: "observed" });
-    f.db.query("UPDATE claim_v2_support SET admission=? WHERE support_key=?").run(altered, before.support_key);
-
+    const conflict = await conflictingDecision(f, 2);
+    // A ledger that lost the meaning row makes the draft store a new claim before it meets the support.
+    f.db.exec("DELETE FROM claim_v2_semantics");
     const result = await runWritePass(f.db, f.vault, f.options());
-    expect(result.errors).toEqual([
-      `claim quarantined: support ${before.support_key.slice(0, 16)} conflicts with immutable admission (epistemicKind)`,
-    ]);
+    // The damaged claim also fails its own canon write; only the refusal matters here.
+    expect(result.errors).toContain(conflict.line);
     expect(result.claims_rejected).toEqual({ support_admission_conflict: 1 });
-    expect(f.calls.count).toBe(1);
     expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE is_world_typed=1").get()).toEqual({ n: 3 });
-    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claim_v2_support").get()).toEqual({ n: 3 });
-    // The immutable row is untouched, and the decision no longer holds the rail.
-    expect(f.db.query<{ admission: string }, [string]>("SELECT admission FROM claim_v2_support WHERE support_key=?").get(before.support_key)!.admission).toBe(altered);
+    expect(f.db.query<{ n: number }, []>(`SELECT count(*) AS n FROM claims c WHERE is_world_typed=1
+      AND NOT EXISTS (SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id)`).get()).toEqual({ n: 0 });
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claim_v2_semantics").get()).toEqual({ n: 2 });
     expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
-    expect(readExtractCursor(f.db)).toContain(f.eventId);
-    const next = await runWritePass(f.db, f.vault, f.options());
-    expect(next.errors).toEqual([]);
   } finally { f.close(); }
 });

@@ -856,24 +856,24 @@ export function completeDurableExtractBatch(db: Database, batch: DurableExtractB
   }).immediate();
 }
 
-/** A durable draft set aside because its support conflicts with an immutable admission. */
-export interface QuarantinedExtractDraft {
-  readonly index: number;
+/** A durable draft refused because its support conflicts with an immutable admission. */
+export interface RefusedExtractDraft {
   readonly support_key: string;
   readonly fields: readonly string[];
 }
 
 export interface FiledExtractBatch {
   readonly results: InsertClaimResult[];
-  readonly quarantined: readonly QuarantinedExtractDraft[];
+  readonly refused: readonly RefusedExtractDraft[];
 }
 
 /**
  * All claim effects, outbox rows and decision completion share one durable
- * commit. Each draft files under its own savepoint: a draft whose support
- * conflicts with an immutable admission rolls back alone and is reported, so
- * one replayed decision cannot hold the rail and every later record forever.
- * Any other failure still rolls the whole decision back.
+ * commit. Each draft files under its own savepoint. A draft whose support
+ * conflicts with an immutable admission cannot file on this pass or on any
+ * replay of the decision, so it rolls back alone and is reported; the rest of
+ * the decision files and completes instead of holding the rail and every later
+ * record. Any other failure still rolls the whole decision back.
  */
 export function fileAndCompleteDurableExtractBatch(
   db: Database,
@@ -892,19 +892,19 @@ export function fileAndCompleteDurableExtractBatch(
       throw new Error("prepared extraction drafts do not match the durable decision");
     }
     const results: InsertClaimResult[] = [];
-    const quarantined: QuarantinedExtractDraft[] = [];
-    prepared.forEach((operation, index) => {
+    const refused: RefusedExtractDraft[] = [];
+    for (const operation of prepared) {
       try {
         results.push(db.transaction(() => operation.apply())());
       } catch (error) {
         if (!(error instanceof AdmissionConflictError)) throw error;
-        quarantined.push({ index, support_key: error.support_key, fields: error.fields });
+        refused.push({ support_key: error.support_key, fields: error.fields });
       }
-    });
+    }
     // A changed final fence must throw so every prior effect rolls back too.
     if (matchingDurableBatch(db, current, producer, false) === null) throw new Error("extract decision changed during filing");
     finishDurableBatch(db, current, producer, runId);
-    return { results, quarantined };
+    return { results, refused };
   }).immediate();
 }
 

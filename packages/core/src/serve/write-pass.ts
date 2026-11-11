@@ -680,8 +680,8 @@ interface ExtractionPass {
   readonly stopRequested: () => boolean;
   /** Counts claims an answered request carried that journaling declined, in the run's totals. */
   readonly decline: (dropped: readonly DroppedDraftV2[]) => void;
-  /** Counts durable drafts filing set aside for an immutable admission conflict. */
-  readonly quarantine: (notices: readonly string[]) => void;
+  /** Counts durable drafts that filing refused for an immutable admission conflict, in the run's totals. */
+  readonly refuse: (refused: readonly string[]) => void;
 }
 
 async function runExtraction(
@@ -741,9 +741,9 @@ async function runExtraction(
       produced -= dropped.length;
       recordUsage(metricResult(metrics));
     },
-    quarantine(notices) {
-      if (notices.length === 0) return;
-      for (const _ of notices) count(metrics, ADMISSION_CONFLICT);
+    refuse(refused) {
+      if (refused.length === 0) return;
+      refused.forEach(() => count(metrics, ADMISSION_CONFLICT));
       recordUsage(metricResult(metrics));
     },
   };
@@ -828,7 +828,7 @@ interface StepOutcome {
   readonly errors: readonly string[];
 }
 
-/** The claims_rejected reason for a durable draft set aside on an immutable admission conflict. */
+/** The claims_rejected reason for a durable draft that filing refused on an immutable admission conflict. */
 const ADMISSION_CONFLICT = "support_admission_conflict";
 
 const settled = (next: StepOutcome["next"], fields: Partial<Omit<StepOutcome, "next">> = {}): StepOutcome =>
@@ -859,10 +859,10 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
     const replayEnd = approvedReplay !== null && journaledSegment(db, pending.model_inputs.map(input => input.event_id))?.end === approvedReplay.end_utf16;
     const filed = await fileProducedDrafts(claims, pending, producer, pass.run_id);
     if (filed === null) return settled("stop", { errors: ["extract cursor changed before durable batch commit"] });
-    pass.quarantine(filed.quarantined);
+    pass.refuse(filed.refused);
     const prefiltered = replayedPrefilterCounts(db, pending, producer);
     return settled(replayEnd ? "stop" : "continue", { ...(replayEnd ? { stopped: "extract:replay_complete" } : {}), deduped: filed.deduped, superseded: filed.superseded,
-      errors: filed.quarantined, ...(prefiltered === undefined ? {} : { prefiltered }) });
+      errors: filed.refused, ...(prefiltered === undefined ? {} : { prefiltered }) });
   });
   if (!replay.held) return settled("stop", { stopped: replay.stopped });
   if (replay.value !== null) return replay.value;
@@ -961,10 +961,10 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
         const durable = readDurableExtractBatch(db, producer);
         if (durable === null) throw new Error("durable extraction decision is missing");
         const filed = await fileProducedDrafts(claims, durable, producer, pass.run_id);
-        if (filed !== null) pass.quarantine(filed.quarantined);
+        if (filed !== null) pass.refuse(filed.refused);
         return filed === null
           ? settled("stop", { errors: ["extract cursor changed before commit"] })
-          : settled("continue", { extracted, deduped: filed.deduped, superseded: filed.superseded, errors: filed.quarantined,
+          : settled("continue", { extracted, deduped: filed.deduped, superseded: filed.superseded, errors: filed.refused,
             segments: mined.segment === undefined ? 0 : 1,
             ...(mined.prefiltered === undefined ? {} : { prefiltered: mined.prefiltered }) });
       });
@@ -1024,7 +1024,7 @@ async function fileProducedDrafts(
   batch: DurableExtractBatch,
   producer: ExtractionProducerPort,
   runId: string,
-): Promise<{ deduped: number; superseded: number; quarantined: readonly string[] } | null> {
+): Promise<{ deduped: number; superseded: number; refused: readonly string[] } | null> {
   const prepared = [];
   if (batch.filing_version === 2) {
     for (const draft of batch.filing_drafts as readonly WorldDraftInsert[]) {
@@ -1044,8 +1044,9 @@ async function fileProducedDrafts(
     else if (result.outcome === "duplicate") deduped += 1;
   }
   await retryRetrievalOps(io);
-  // Hash prefix and field names only: the admission itself carries captured text.
-  const quarantined = filed.quarantined.map(draft =>
-    `claim quarantined: support ${draft.support_key.slice(0, 16)} conflicts with immutable admission (${draft.fields.join(",")})`);
-  return { deduped, superseded, quarantined };
+  // A key prefix that survives receipt redaction and field names only: the
+  // admission itself carries captured text.
+  const refused = filed.refused.map(draft =>
+    `claim refused: support ${draft.support_key.slice(0, 16)} conflicts with immutable admission (${draft.fields.join(",")})`);
+  return { deduped, superseded, refused };
 }

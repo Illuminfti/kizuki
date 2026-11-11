@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { CLAIM_V2_SCHEMA, type ClaimV2Assertion } from "../../src/contracts/claim-v2";
-import { readClaimRecord } from "../../src/claims/claim-v2-commit";
+import { admissionIdentityConflict, readClaimRecord } from "../../src/claims/claim-v2-commit";
 import { AdmissionConflictError, ClaimError } from "../../src/claims/errors";
 import { semanticKey } from "../../src/claims/claim-v2-keys";
 import { mintOccurrenceId } from "../../src/claims/occurrences";
@@ -138,13 +138,37 @@ function supportCount(db: ReturnType<typeof fixture>["db"]): number {
   return db.query<{ n: number }, []>("SELECT count(*) AS n FROM claim_v2_support").get()!.n;
 }
 
-test("replaying identical world support is a no-op duplicate", async () => {
+test("admission identity ignores only the retained rendering and confidence", () => {
+  const anchor = { event_id: "01J00000000000000000000000", start_utf16: 0, end_utf16: 4 };
+  const meaning = { predicate: "concept.label", anchors: [anchor], perspective: { mode: "asserted", anchors: [] } };
+  const first = { schema: "kizuki.world-admission/v1", semantic: meaning, rendering: { body: "Flux is a concept.", frontmatter: {} },
+    authority: "model_inference", confidence: 0.8, epistemicKind: "model_inference" };
+  const stored = JSON.stringify(first);
+  expect(admissionIdentityConflict(stored, first)).toEqual([]);
+  expect(admissionIdentityConflict(stored, { ...first, rendering: { body: "Flux names a concept.", frontmatter: { tone: "plain" } }, confidence: 0.2 })).toEqual([]);
+  // The stored bytes are not the comparison: another key order is the same admission.
+  expect(admissionIdentityConflict(JSON.stringify(Object.fromEntries(Object.entries(first).reverse())), first)).toEqual([]);
+  // Every other field is identity, including where inside the semantic an anchor sits.
+  expect(admissionIdentityConflict(stored, { ...first, schema: "kizuki.world-admission/v2" })).toEqual(["schema"]);
+  expect(admissionIdentityConflict(stored, { ...first, semantic: { ...meaning, anchors: [], perspective: { mode: "asserted", anchors: [anchor] } } })).toEqual(["semantic"]);
+  expect(admissionIdentityConflict(stored, { ...first, semantic: { ...meaning, perspective: { mode: "quoted", anchors: [] } } })).toEqual(["semantic"]);
+  expect(admissionIdentityConflict(stored, { ...first, authority: "owner_authored", epistemicKind: "owner_assertion" })).toEqual(["authority", "epistemicKind"]);
+  expect(admissionIdentityConflict(stored, { ...first, grounding: [] })).toEqual(["grounding"]);
+  // A field this build does not know, or a row that is not an admission object, fails closed.
+  expect(admissionIdentityConflict(JSON.stringify({ ...first, taint: "quoted" }), first)).toEqual(["taint"]);
+  expect(admissionIdentityConflict("not json", first)).toEqual(["admission"]);
+  expect(admissionIdentityConflict("[]", first)).toEqual(["admission"]);
+});
+
+test("replaying identical world support changes no row", async () => {
   const { db, eventId, sourceKey } = fixture(true);
   try {
     const first = await insertClaim({ db, now: () => "2026-01-02T00:00:00.000Z" }, input(db, sourceKey, eventId));
     const stored = db.query<{ admission: string; admitted_at: string }, []>("SELECT admission, admitted_at FROM claim_v2_support").get();
+    const changes = db.query<{ n: number }, []>("SELECT total_changes() AS n").get()!.n;
     const again = await insertClaim({ db, now: () => "2026-01-03T00:00:00.000Z" }, input(db, sourceKey, eventId));
     expect(again).toMatchObject({ outcome: "duplicate", claim: { claim_id: first.outcome === "stored" ? first.claim.claim_id : "" } });
+    expect(db.query<{ n: number }, []>("SELECT total_changes() AS n").get()!.n).toBe(changes);
     expect(supportCount(db)).toBe(1);
     expect(db.query("SELECT admission, admitted_at FROM claim_v2_support").get()).toEqual(stored);
   } finally { db.close(); }
@@ -161,6 +185,8 @@ test("rephrased rendering or another model confidence over the same support keep
     expect(rephrased.outcome).toBe("duplicate");
     expect(supportCount(db)).toBe(1);
     expect(db.query<{ admission: string }, []>("SELECT admission FROM claim_v2_support").get()!.admission).toBe(stored);
+    expect(stored).toContain("Grace leads partnerships.");
+    expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims").get()).toEqual({ n: 1 });
   } finally { db.close(); }
 });
 

@@ -78,6 +78,19 @@ A value outside its range, a fraction or a string keeps that key's default.
   still count toward the limit, so the default pass is the same single step as
   before. The exception is a step that only passes over records with nothing
   to extract; see [records with nothing to extract](#records-with-nothing-to-extract).
+- **Repeated support.** A typed claim's support is identified by its meaning,
+  source, grant revision, cited records and anchors, and is admitted once. A
+  later draft with the same support, in the same answer or in a replayed
+  decision, is a duplicate when its codec schema, complete semantic, grounding,
+  authority and epistemic kind equal the stored admission: the first rendering
+  and confidence are kept, nothing is written, and the draft counts in
+  `claims_deduped`. If one of those fields differs, the stored admission wins
+  and that draft alone is refused. The receipt's `errors` carry `claim refused:
+  support <key prefix> conflicts with immutable admission (<fields>)`, the
+  count is in `claims_rejected.support_admission_conflict`, and the other
+  drafts of the decision file in the same commit. The decision then completes,
+  so a refused claim cannot hold later records. A refused draft is not kept;
+  its record stays in the ledger.
 - **Time per pass.** Once `max_pass_seconds` have passed, the pass starts no
   further step; the request in flight finishes and is filed, and the next pass
   resumes from the cursor. Rails run one at a time, so this bounds how long a

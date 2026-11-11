@@ -16,6 +16,16 @@
 
 ### Fixed
 
+- A typed extraction answer that states one anchored fact twice, in other words
+  or with another score, files it once. The first admission keeps its rendering
+  and confidence, and the repeat counts as a duplicate. Before, the repeat was
+  compared byte for byte with the immutable admission, refused, and rolled the
+  whole durable decision back on every pass, which stopped all later extraction.
+  A repeat whose meaning, grounding, authority or epistemic kind differs is
+  still refused, now for that claim alone: the receipt names the support by key
+  prefix with the differing fields, counts it under
+  `claims_rejected.support_admission_conflict`, and the rest of the decision
+  files. No stored admission is rewritten.
 - Agent proposals and corrections compare and retire only readable claims, and
   unreadable canon pages remain untouched and unnamed. Search and entity labels
   match served redacted text; graph limits count authorized edges.
