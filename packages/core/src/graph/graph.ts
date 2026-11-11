@@ -3,7 +3,7 @@ import { SENSITIVITY_ORDER } from "../agents/types";
 import type { Sensitivity } from "../agents/types";
 import { MAX_RETRIEVAL_LIMIT } from "../contracts/retrieval";
 import type { RetrievalAuthority } from "../contracts/retrieval";
-import { readDerivedMeta, stampDerived } from "../derived-meta";
+import { derivedStampChanges, readDerivedMeta, stampDerived } from "../derived-meta";
 import type { DerivedStamp } from "../derived-meta";
 import { assertDerivedDiscoveryReady, markDerivedHeld, readDerivedHolds } from "../derived-holds";
 import { latestLedgerCursor } from "../ledger/ledger";
@@ -20,7 +20,7 @@ import {
   stringArray,
 } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
-import { isDeterministicBrief, projectablePageEvidence } from "../vault/provenance";
+import { isDeterministicBrief, projectablePageEvidence, type WalkEvidence } from "../vault/provenance";
 import { linkIndexFromTargets, linkKeys, resolveWikilink } from "./resolve";
 import type { LinkIndex } from "./resolve";
 import { initGraph } from "./schema";
@@ -472,6 +472,25 @@ export function graphEvidenceChanges(db: Database): string[] {
   return [...ids];
 }
 
+/**
+ * True when the registry already holds every row and link this walk would file
+ * under this evidence, from as many skipped files, and no evidence change has
+ * reached a registered page since. Projecting the walk again would then write
+ * the same rows.
+ */
+export function graphRegistryHolds(db: Database, pages: readonly CanonPage[], skipped: number, assessed: WalkEvidence): boolean {
+  if (!graphRegistryReady(db) || registrySkipped(db) !== skipped || graphEvidenceChanges(db).length > 0) return false;
+  const filed = (row: PageRow, links: PageLinks = NO_LINKS): string => JSON.stringify([
+    row.id, row.relPath, row.title, row.active, row.admitted, row.sensitivity, row.taint, row.authority, row.provenance,
+    [...links.wikilinks].sort(), [...links.subjects].sort(),
+  ]);
+  const links = readLinks(db);
+  const held = readRegistry(db).map(row => filed(row, links.get(row.id))).sort();
+  const evidence = projectablePageEvidence(db, pages, assessed);
+  const walked = pages.map(page => assessPage(page, evidence.get(page.relPath))).map(page => filed(page.row, page.links)).sort();
+  return held.length === walked.length && held.every((entry, index) => entry === walked[index]);
+}
+
 export function checkpointGraphEvidence(db: Database): void {
   db.query("UPDATE graph_registry SET event_rowid=?,source_epoch=?").run(eventRowid(db), sourcePolicyEpoch(db));
 }
@@ -482,8 +501,9 @@ function syncRegistry(
   pages: readonly CanonPage[],
   skipped: number,
   signatures: ReadonlyMap<string, string> = new Map(),
+  assessed?: WalkEvidence,
 ): GraphState {
-  const evidence = projectablePageEvidence(db, pages);
+  const evidence = projectablePageEvidence(db, pages, assessed);
   clearGraphRegistry(db);
   for (const [relPath, signature] of signatures) {
     db.query("INSERT INTO graph_files (rel_path, signature) VALUES (?, ?)").run(relPath, signature);
@@ -621,9 +641,9 @@ export function removeHeldPageEdges(db: Database, pages: readonly CanonPage[]): 
   clearGraphRegistry(db);
 }
 
-function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount: number): void {
+function incompleteGraphStamp(db: Database, skippedCount: number, withheldCount: number): DerivedStamp {
   const existing = readDerivedMeta(db, "graph");
-  stampDerived(db, {
+  return {
     layer: "graph",
     generation: existing?.generation ?? ulid(),
     rebuilt_at: new Date().toISOString(),
@@ -636,33 +656,47 @@ function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount:
     port_id: existing?.port_id ?? null,
     contract: existing?.contract ?? null,
     space: existing?.space ?? null,
-  });
+  };
 }
 
-function restoreGraphStamp(db: Database, state: GraphState): void {
+function stampGraphIncomplete(db: Database, skippedCount: number, withheldCount: number): void {
+  stampDerived(db, incompleteGraphStamp(db, skippedCount, withheldCount));
+}
+
+function restoredGraphStamp(db: Database, state: GraphState): DerivedStamp {
   const live = [...state.projected.values()];
   const edges = db.query<{ n: number }, []>("SELECT count(*) AS n FROM graph_edges").get()!.n;
   const previous = readDerivedMeta(db, "graph");
-  const stamp = stampGraph(db, {
+  return stampGraph(db, {
     generation: previous?.status === "ok" ? previous.generation : ulid(),
     pages: [], skipped: [], rebuilt_at: new Date().toISOString(), canon_hash: canonPagesHash(live),
   }, live.length, edges, state.withheldCount);
+}
+
+function restoreGraphStamp(db: Database, state: GraphState): void {
+  const stamp = restoredGraphStamp(db, state);
   // A completed idle observation preserves its generation and timestamp.
-  if (previous !== null && previous.status === stamp.status
-    && previous.doc_count === stamp.doc_count && previous.source_count === stamp.source_count
-    && previous.skipped_count === stamp.skipped_count && previous.ledger_watermark === stamp.ledger_watermark
-    && previous.canon_hash === stamp.canon_hash && previous.port_id === stamp.port_id
-    && previous.contract === stamp.contract && previous.space === stamp.space) return;
-  stampDerived(db, stamp);
+  if (derivedStampChanges(db, stamp)) stampDerived(db, stamp);
+}
+
+/**
+ * The graph health a validated walk earns, or null when the stored stamp
+ * already says it. It only reads, so a caller can decide before writing.
+ */
+export function graphHealthStamp(db: Database, pages: readonly CanonPage[], skipped = 0, assessed?: WalkEvidence): DerivedStamp | null {
+  assertDerivedDiscoveryReady(db);
+  const evidence = projectablePageEvidence(db, pages, assessed);
+  const state = graphState(db, pages.map(page => assessPage(page, evidence.get(page.relPath)).row));
+  const stamp = skipped > 0 || !state.complete
+    ? incompleteGraphStamp(db, skipped, state.withheldCount)
+    : restoredGraphStamp(db, state);
+  return derivedStampChanges(db, stamp) ? stamp : null;
 }
 
 /** Health from a validated walk; no page is admitted by its health stamp. */
-export function refreshGraphHealth(db: Database, pages: readonly CanonPage[], skipped = 0): void {
-  assertDerivedDiscoveryReady(db);
-  const evidence = projectablePageEvidence(db, pages);
-  const state = graphState(db, pages.map(page => assessPage(page, evidence.get(page.relPath)).row));
-  if (skipped > 0 || !state.complete) { stampGraphIncomplete(db, skipped, state.withheldCount); return; }
-  restoreGraphStamp(db, state);
+export function refreshGraphHealth(db: Database, pages: readonly CanonPage[], skipped = 0, assessed?: WalkEvidence): void {
+  const stamp = graphHealthStamp(db, pages, skipped, assessed);
+  if (stamp !== null) stampDerived(db, stamp);
 }
 
 /**
@@ -697,9 +731,10 @@ export function replacePageEdges(
   db: Database,
   pages: readonly CanonPage[],
   signatures?: ReadonlyMap<string, string>,
+  assessed?: WalkEvidence,
 ): void {
   assertDerivedDiscoveryReady(db);
-  projectAll(db, syncRegistry(db, pages, 0, signatures));
+  projectAll(db, syncRegistry(db, pages, 0, signatures, assessed));
 }
 
 /**
@@ -719,12 +754,12 @@ export function refreshPageEdges(
 /** One registry snapshot for every known repaired page in an incomplete walk. */
 export function refreshPageEdgesBatch(
   db: Database, changed: readonly CanonPage[], pages: readonly CanonPage[], skipped: number,
-  signatures?: ReadonlyMap<string, string>,
+  signatures?: ReadonlyMap<string, string>, assessed?: WalkEvidence,
 ): void {
   assertDerivedDiscoveryReady(db);
   const replacements = new Map(changed.map(page => [page.relPath, page]));
   const snapshot = [...pages.filter(page => !replacements.has(page.relPath)), ...changed];
-  const state = syncRegistry(db, snapshot, skipped, signatures);
+  const state = syncRegistry(db, snapshot, skipped, signatures, assessed);
   if (skipped === 0) { settleGraph(db, state, 0, null); return; }
   if (!state.complete) {
     db.exec("DELETE FROM graph_edges");

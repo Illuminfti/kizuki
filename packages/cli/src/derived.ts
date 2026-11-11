@@ -13,7 +13,7 @@ import {
   pendingRetrievalOps,
   readSince,
 } from "@kizuki/core";
-import { indexEvents, indexPage, publishLedgerEvent, reconcileDerivedPages, removeCanonPath } from "@kizuki/core/internal";
+import { indexEvents, indexPage, publishLedgerEvent, reconcileDerivedPagesWhenChanged, removeCanonPath } from "@kizuki/core/internal";
 import { writeAtomicFile } from "./atomic-file";
 
 export const INDEX_CURSOR_SCHEMA = "kizuki.cli.index-cursor/v1" as const;
@@ -204,6 +204,10 @@ export function indexReceiptsFromCursor(
   let batched = 0;
   let done = true;
   const limit = options.limit ?? Number.POSITIVE_INFINITY;
+  // A current cursor has nothing to walk: every receipt would be passed over.
+  if (countCanonReceipts(db, cursor.receipt_id) === 0) {
+    return { indexed, done, cursor: { ...cursor, receipts_seen: countCanonReceipts(db) } };
+  }
   for (const receipt of walkCanonReceipts(db)) {
     if (!receiptAfter(cursor.receipt_id, receipt.receipt_id)) continue;
     if (processed >= limit) {
@@ -271,7 +275,7 @@ export function refreshDerived(
     // Only a walk that reached the end may claim the ledger is fully indexed.
     events_seen: events.done ? count(db) : start.events_seen,
   };
-  reconcileDerivedPages(db, vaultPath);
+  reconcileDerivedPagesWhenChanged(db, vaultPath);
   writeIndexCursor(vaultPath, cursor);
   return {
     events: events.indexed,

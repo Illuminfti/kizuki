@@ -15,7 +15,7 @@ import {
   stringArray,
 } from "../vault/pages";
 import type { CanonPage, SkippedPage } from "../vault/pages";
-import { isDeterministicBrief, projectablePageEvidence } from "../vault/provenance";
+import { isDeterministicBrief, projectablePageEvidence, type WalkEvidence } from "../vault/provenance";
 import { initSearch } from "./schema";
 
 export type DocScope = "canon" | "ledger";
@@ -241,13 +241,13 @@ export function removeCanonPath(db: Database, path: string, pageId?: string): vo
   db.query("DELETE FROM search_documents WHERE scope='canon' AND path=?").run(path);
 }
 
-export function replacePage(db: Database, page: CanonPage): void {
+export function replacePage(db: Database, page: CanonPage, assessed?: WalkEvidence): void {
   assertDerivedDiscoveryReady(db);
   deleteDoc(db, "canon", page.id);
   // A changed frontmatter identity must also withdraw the previous path row.
   removeCanonPath(db, page.relPath);
   const held = readDerivedHolds(db).paths;
-  const evidence = projectablePageEvidence(db, [page]).get(page.relPath);
+  const evidence = projectablePageEvidence(db, [page], assessed).get(page.relPath);
   if (evidence === undefined || held.has(page.relPath)) {
     markDerivedHeld(db, "search", held.size + (isLiveCanonPage(page) && !isDeterministicBrief(page) && evidence === undefined ? 1 : 0));
     return;
@@ -414,10 +414,10 @@ function stampSearch(
 }
 
 /** Canon companion rows need a current page snapshot before FTS restoration. */
-export function projectSearchDocs(db: Database, pages: readonly CanonPage[] = []): number {
+export function projectSearchDocs(db: Database, pages: readonly CanonPage[] = [], assessed?: WalkEvidence): number {
   assertDerivedDiscoveryReady(db);
   const held = readDerivedHolds(db).paths;
-  const evidence = projectablePageEvidence(db, pages);
+  const evidence = projectablePageEvidence(db, pages, assessed);
   const prior = db.query<{ count: number }, []>("SELECT count(*) AS count FROM search_documents WHERE scope='canon'").get()!.count;
   db.exec("DELETE FROM search_documents WHERE scope='canon'");
   let withheld = held.size;
