@@ -31,9 +31,8 @@ function settle(db: Database, vault: string): void {
 
 test("a refresh with nothing changed runs no pass and takes no write lock", async () => {
   const f = await reconcileFixture(cleanup);
+  // The first pass compares every page and has only health stamps to write.
   expect(refresh(f.db, f.vault)).toBe(true);
-  // The confirming pass compares every page and finds nothing to write.
-  expect(underForeignWriteLock(f.db, f.other(), () => refresh(f.db, f.vault))).toBe(true);
   let compared = 0;
   const ran = underForeignWriteLock(f.db, f.other(), () =>
     watchingQueries(f.db, sql => { if (sql.includes(STORED_ROWS_SQL)) compared += 1; }, () => refresh(f.db, f.vault)));
@@ -77,6 +76,11 @@ test("an edited, retimed, removed, renamed and added page each end the skip and 
   // Touched and nothing else: compared again, and nothing to write.
   utimesSync(tea, new Date(), new Date());
   expect(underForeignWriteLock(f.db, f.other(), () => refresh(f.db, f.vault))).toBe(true);
+  expect(refresh(f.db, f.vault)).toBe(false);
+
+  // A modification time set far ahead is a change like any other, and vouches for nothing after it.
+  utimesSync(tea, new Date(), new Date(Date.now() + 86_400_000));
+  expect(refresh(f.db, f.vault)).toBe(true);
   expect(refresh(f.db, f.vault)).toBe(false);
 
   // Removed.
@@ -131,7 +135,7 @@ test("a clock set back and an elapsed recheck interval each run a pass", async (
   expect(refresh(f.db, f.vault, Date.now() - 60_000)).toBe(true);
 });
 
-test("a hold, a new event, a dropped index and a changed stamp each end the skip", async () => {
+test("a hold, a new event, a dropped index, a canon write and a changed stamp each end the skip", async () => {
   const f = await reconcileFixture(cleanup);
   settle(f.db, f.vault);
   f.db.query("INSERT INTO canon_holds VALUES (?, ?, ?, ?)").run("facts/tea.md", "synthetic-hold", "synthetic recovery", "2026-09-29T12:00:00.000Z");
@@ -156,6 +160,11 @@ test("a hold, a new event, a dropped index and a changed stamp each end the skip
   expect(refresh(f.db, f.vault)).toBe(true);
   expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM search_docs WHERE scope='canon'").get()).toEqual({ n: 2 });
   settle(f.db, f.vault);
+
+  // Every canon write advances the read generation, in place.
+  f.db.query("UPDATE canon_read_generation SET generation=generation+1").run();
+  expect(refresh(f.db, f.vault)).toBe(true);
+  expect(refresh(f.db, f.vault)).toBe(false);
 
   const docs = f.db.query("SELECT doc_count FROM derived_meta WHERE layer='search'").get();
   f.db.query("UPDATE derived_meta SET doc_count=doc_count+1 WHERE layer='search'").run();

@@ -129,7 +129,7 @@ interface WalkState {
   /** Files remembered by this walk; replaces the cache when the walk ends. */
   remembered: Map<string, ParsedFile>;
   signatures: Map<string, string>;
-  /** Latest modification or status change among the files stat'ed. */
+  /** Latest status-change time among the files stat'ed. A caller can set a modification time, not this one. */
   newestChangeMs: number;
   /** Stat every file but read none: only `signatures` is meaningful. */
   statOnly: boolean;
@@ -205,7 +205,7 @@ function considerFile(state: WalkState, path: string, relPath: string): void {
     }
     size = Number(stat.size);
     changedMs = Number((stat.mtimeNs > stat.ctimeNs ? stat.mtimeNs : stat.ctimeNs) / 1_000_000n);
-    if (changedMs > state.newestChangeMs) state.newestChangeMs = changedMs;
+    state.newestChangeMs = Math.max(state.newestChangeMs, Number(stat.ctimeNs / 1_000_000n));
     signature = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
   } catch (error) {
     if (!state.includeArchived && !reserveFile(state)) return;
@@ -417,10 +417,10 @@ export function scanCanonSignatures(vaultPath: string): ReadonlyMap<string, stri
 /**
  * Everything a walk would look at as one value, without reading any file: the
  * scan limits and every markdown file's stat signature. It is null while a
- * file changed within RACY_WINDOW_MS of `now`: such a file may change again in
- * the same timestamp tick and keep its size, so its signature cannot yet vouch
- * that a later equal signature means equal bytes. Equal stamps mean no page
- * was edited, added, removed, renamed or replaced in between.
+ * file's status changed within RACY_WINDOW_MS of `now`: such a file may change
+ * again in the same timestamp tick and keep its size, so its signature cannot
+ * yet vouch that a later equal signature means equal bytes. Equal stamps mean
+ * no page was edited, added, removed, renamed or replaced in between.
  */
 export function canonFilesStamp(vaultPath: string, now: number = Date.now()): string | null {
   const state = newWalkState(vaultPath, null, true);

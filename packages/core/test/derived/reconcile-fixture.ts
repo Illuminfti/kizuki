@@ -44,6 +44,12 @@ export function watchingQueries<T>(db: Database, seen: (sql: string) => void, wo
   try { return work(); } finally { db.query = query; }
 }
 
+/** Another process files `facts/<name>.md` through the receipted writer: page file, receipt and index row. */
+export function foreignPage(vault: string, name: string, body: string): void {
+  const child = Bun.spawnSync([process.execPath, join(import.meta.dir, "reconcile-foreign-page.ts"), vault, name, body], { stderr: "pipe" });
+  if (child.exitCode !== 0) throw new Error(`foreign page writer failed: ${child.stderr.toString().slice(0, 400)}`);
+}
+
 /** A child process that holds the ledger's write lock for `holdMs`, resolved once it holds it. */
 export async function foreignWriter(dbPath: string, holdMs: number): Promise<{ exited: Promise<number> }> {
   const holder = Bun.spawn([process.execPath, "-e", `

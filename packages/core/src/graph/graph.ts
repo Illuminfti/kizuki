@@ -473,12 +473,16 @@ export function graphEvidenceChanges(db: Database): string[] {
 }
 
 /**
- * True when the registry already holds every row and link this walk would file
- * under this evidence, from as many skipped files, and no evidence change has
- * reached a registered page since. Projecting the walk again would then write
- * the same rows.
+ * True when projecting this walk again would leave the graph as it is stored.
+ * The registry holds every row and link the walk would file under this
+ * evidence, from as many skipped files, no evidence change has reached a
+ * registered page since, and the stored edges are the ones the walk projects.
+ * The edges are compared, not inferred from the registry: after a walk that
+ * skipped files a page write projects only its own page, so the pages linking
+ * to it keep edges the registry no longer describes until a pass projects
+ * them again.
  */
-export function graphRegistryHolds(db: Database, pages: readonly CanonPage[], skipped: number, assessed: WalkEvidence): boolean {
+export function graphProjectionHolds(db: Database, pages: readonly CanonPage[], skipped: number, assessed: WalkEvidence): boolean {
   if (!graphRegistryReady(db) || registrySkipped(db) !== skipped || graphEvidenceChanges(db).length > 0) return false;
   const filed = (row: PageRow, links: PageLinks = NO_LINKS): string => JSON.stringify([
     row.id, row.relPath, row.title, row.active, row.admitted, row.sensitivity, row.taint, row.authority, row.provenance,
@@ -487,8 +491,35 @@ export function graphRegistryHolds(db: Database, pages: readonly CanonPage[], sk
   const links = readLinks(db);
   const held = readRegistry(db).map(row => filed(row, links.get(row.id))).sort();
   const evidence = projectablePageEvidence(db, pages, assessed);
-  const walked = pages.map(page => assessPage(page, evidence.get(page.relPath))).map(page => filed(page.row, page.links)).sort();
-  return held.length === walked.length && held.every((entry, index) => entry === walked[index]);
+  const walked = pages.map(page => assessPage(page, evidence.get(page.relPath)));
+  const expected = walked.map(page => filed(page.row, page.links)).sort();
+  if (held.length !== expected.length || held.some((entry, index) => entry !== expected[index])) return false;
+
+  const state = graphState(db, walked.map(page => page.row));
+  // A held page missing from the walk withdraws every edge and the registry.
+  if (!state.complete) return false;
+  const hints = eventSensitivityHints(db, [...new Set(walked.flatMap(page => sourcesOf(page.row)).map(bareRetrievalId))]);
+  const stored = (edge: StoredEdge): string => JSON.stringify([
+    edge.src, edge.dst, edge.kind, edge.sensitivity, edge.dest_sensitivity, edge.taint, edge.authority, edge.provenance,
+  ]);
+  const projected = new Set<string>();
+  const silent = new Set<string>();
+  for (const { row, links: own } of walked) {
+    if (!state.projected.has(row.id)) { silent.add(row.id); continue; }
+    for (const edge of pageEdges(row, own, state, hints)) if (!isHeldEdge(edge, state)) projected.add(stored(edge));
+  }
+  let found = 0;
+  for (const edge of db.query<StoredEdge, []>(
+    "SELECT src, dst, kind, sensitivity, dest_sensitivity, taint, authority, provenance FROM graph_edges",
+  ).all()) {
+    if (projected.has(stored(edge))) { found += 1; continue; }
+    // A complete walk leaves only its own projection. A partial walk also
+    // keeps the edges of pages it could not read, unless they are held or
+    // lead into a page that no longer projects.
+    if (skipped === 0 || state.projected.has(edge.src) || silent.has(edge.src) || silent.has(edge.dst)
+      || state.held.pageIds.has(edge.src) || isHeldEdge(edge, state)) return false;
+  }
+  return found === projected.size;
 }
 
 export function checkpointGraphEvidence(db: Database): void {
