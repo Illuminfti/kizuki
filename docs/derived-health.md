@@ -8,7 +8,8 @@ ledger prefix, using durable companion and FTS coverage. Closing an old gap or
 retrying after an upgrade reconciles the watermark; indexing a later event alone
 does not certify an earlier gap. Tombstoned evidence is outside the live corpus.
 Doctor includes the watermark alongside the layer's current counts and status.
-An idle pass preserves the graph stamp when its input and health are unchanged.
+An idle pass preserves the search and graph stamps when their inputs and health
+are unchanged.
 
 The daemon's sourceless deterministic daily briefs in `dashboards/` are
 administrative summaries of rail and canon state, not event-backed evidence.
@@ -27,6 +28,16 @@ unresolved search health or scanning unrelated files; its canon hash remains
 unknown until a complete snapshot validates it. An idle pass retries repaired
 pages even without a new receipt. No model or network request is needed for
 these projections.
+
+A reconciliation pass reads every page and compares it with its projection on
+a read snapshot. It takes the ledger write lock only when it has a difference
+to write, and writes only if no other connection committed since that
+snapshot; otherwise it reads again. The serve loop skips the pass while no
+page file's stat signature, no ledger table's row count or highest rowid and
+no hold or health stamp has changed since a pass that found nothing to write.
+It runs a pass at least every 30 minutes regardless, which bounds changes
+those signals cannot show, such as a ledger row edited in place. A process
+that has just started always runs a pass.
 
 Public search and graph query flags describe omissions in the calling
 principal's permitted corpus. A vault-wide degraded stamp is an owner
