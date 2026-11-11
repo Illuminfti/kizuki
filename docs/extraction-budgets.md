@@ -80,16 +80,33 @@ A value outside its range, a fraction or a string keeps that key's default.
   to extract; see [records with nothing to extract](#records-with-nothing-to-extract).
 - **Repeated support.** A typed claim's support is identified by its meaning,
   source, grant revision, cited records and anchors, and is admitted once. A
-  later draft with the same support, in the same answer or in a replayed
-  decision, is a duplicate when its codec schema, complete semantic, grounding,
-  authority and epistemic kind equal the stored admission: the first rendering
-  and confidence are kept, nothing is written, and the draft counts in
-  `claims_deduped`. If one of those fields differs, the stored admission wins
-  and that draft alone is refused. The receipt's `errors` carry `claim refused:
-  support <key prefix> conflicts with immutable admission (<fields>)`, the
-  count is in `claims_rejected.support_admission_conflict`, and the other
-  drafts of the decision file in the same commit. The decision then completes,
-  so a refused claim cannot hold later records. A refused draft is not kept;
+  later draft with the same support is a duplicate when its codec schema,
+  complete semantic, grounding, authority and epistemic kind equal the stored
+  admission; anchor lists compare as sets. The first rendering and confidence
+  are kept, nothing is written, and the draft counts in `claims_deduped`. If
+  one of those fields differs, the stored admission wins and that draft alone
+  is refused. The receipt's `errors` carry `claim refused: support <key
+  prefix> conflicts with immutable admission (<fields>)`, the count is in
+  `claims_rejected.support_admission_conflict`, and the other drafts of the
+  decision file in the same commit. The decision then completes, so a refused
+  claim cannot hold later records. A refused draft is not kept; its record
+  stays in the ledger.
+- **Two mentions over one span.** A subject the model introduces is identified
+  by its record and span, so two mentions anchored on the same span are one
+  subject. The first mention a kept claim resolves through introduces it for
+  that answer. Claims that resolve through a later mention with another label
+  are dropped and counted in `claims_rejected.invalid_claim`: they describe
+  something else and would otherwise be filed under the first mention's name.
+  Labels compare after Unicode, case, punctuation and spacing are normalized.
+  A mention repeated under the same label is the same mention; a claim that
+  repeats its classification adds no draft and counts in `claims_deduped`.
+  An earlier build journaled both mentions' claims onto the one subject and
+  then stopped on the second classification. Such a decision does not record
+  which claim came through which mention, so it files the drafts before the
+  second classification and refuses that classification and every later
+  draft naming the subject. The receipt's `errors` carry `claims refused:
+  subject <id prefix> is classified twice in one decision` and the count is
+  in `claims_rejected.subject_classified_twice`. A refused draft is not kept;
   its record stays in the ledger.
 - **Time per pass.** Once `max_pass_seconds` have passed, the pass starts no
   further step; the request in flight finishes and is filed, and the next pass

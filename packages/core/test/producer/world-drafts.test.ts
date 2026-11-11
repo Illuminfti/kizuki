@@ -75,3 +75,78 @@ test("drops a parsed claim that does not resolve to a canonical typed assertion 
   expect(prepared.dropped).toEqual([{ reason: "invalid_claim", id: "c1" }]);
   expect(prepareWorldDrafts({ ...wire, claims: [bad] }, input, context)).toEqual({ drafts: [], dropped: [{ reason: "invalid_claim", id: "c1" }] });
 });
+
+/** Two named ideas, each with its own definition, that an answer may anchor on the one passage. */
+function passage() {
+  const text = "Flux and Grace: Flux is a synthetic transformation, Grace is a calm cadence.";
+  const span = { event_id: eventId, start_utf16: 0, end_utf16: text.length } as const;
+  const plain = { holder: null, speaker: null, addressee: null, mode: "asserted" as const, interpretation: "explicit" as const, anchors: [] };
+  const claim = (id: string, mention: string, predicate: string, object: ExtractResponseV2["claims"][number]["object"], body: string) => ({
+    ...response.claims[0]!, id, subject: { kind: "mention" as const, id: mention }, predicate, object, perspective: plain, body, anchors: [span] });
+  const concept = { kind: "vocabulary" as const, ref: { kind: "vocabulary" as const, id: "world/concept" } };
+  const about = (mention: string, name: string, definition: string, start: number) => [
+    claim(`c${start}`, mention, "world.kind", concept, `${name} is a concept.`),
+    claim(`c${start + 1}`, mention, "concept.label", { kind: "literal", value: name }, `The concept is called ${name}.`),
+    claim(`c${start + 2}`, mention, "concept.definition", { kind: "literal", value: definition }, `${name} is ${definition}.`),
+  ];
+  const mention = (id: string, label: string) => ({ id, label, anchor: span, candidate_refs: [] });
+  return {
+    input: { ...input, events: [{ event_id: eventId, text }], supplied_refs: [] } satisfies ProduceInputV2,
+    context: { ...context, events: [{ ...context.events[0]!, text, subjects: [] }], supplied_refs: new Map() } satisfies WorldDraftContext,
+    subject: { kind: "occurrence", id: mintOccurrenceId(event, sourceKey, span) },
+    mention, claim, about, concept, span,
+  };
+}
+
+test("a second mention over one span under another label cannot add its claims to the first mention's subject", () => {
+  const p = passage();
+  const flux = p.about("m0", "Flux", "a synthetic transformation", 0), grace = p.about("m1", "Grace", "a calm cadence", 3);
+  const mentions = [p.mention("m0", "Flux"), p.mention("m1", "Grace")];
+  const prepared = prepareWorldDrafts({ ...response, mentions, claims: [...flux, ...grace] }, p.input, p.context);
+  expect(prepared.drafts.map(draft => draft.body)).toEqual(["Flux is a concept.", "The concept is called Flux.", "Flux is a synthetic transformation."]);
+  expect(prepared.drafts.every(draft => JSON.stringify(draft.semantic.subject) === JSON.stringify(p.subject))).toBe(true);
+  expect(prepared).toEqual({ drafts: prepared.drafts, dropped: ["c3", "c4", "c5"].map(id => ({ reason: "invalid_claim", id })) });
+  // The answer's order of claims does not let the second mention in: its claims fall wherever they stand.
+  const mixed = prepareWorldDrafts({ ...response, mentions, claims: [flux[0]!, grace[1]!, grace[0]!, flux[1]!, grace[2]!, flux[2]!] }, p.input, p.context);
+  expect(mixed.drafts.map(draft => draft.body)).toEqual(prepared.drafts.map(draft => draft.body));
+  expect(mixed.dropped.map(drop => drop.id)).toEqual(["c4", "c3", "c5"]);
+  // Naming the second mention as an object, or both mentions in one claim, is the same refusal.
+  const related = { ...flux[2]!, id: "c9", predicate: "concept.related_to", object: { kind: "subject" as const, ref: { kind: "mention" as const, id: "m1" } } };
+  expect(prepareWorldDrafts({ ...response, mentions, claims: [flux[0]!, related] }, p.input, p.context).dropped).toEqual([{ reason: "invalid_claim", id: "c9" }]);
+  expect(prepareWorldDrafts({ ...response, mentions, claims: [related] }, p.input, p.context)).toEqual({ drafts: [], dropped: [{ reason: "invalid_claim", id: "c9" }] });
+  // A mention no kept claim resolves through introduces nothing: the span belongs to the first one that files.
+  const alone = prepareWorldDrafts({ ...response, mentions, claims: grace }, p.input, p.context);
+  expect(alone.drafts.map(draft => draft.body)).toEqual(["Grace is a concept.", "The concept is called Grace.", "Grace is a calm cadence."]);
+  expect(alone.dropped).toEqual([]);
+  // Nor does a mention whose claim was declined: the next mention that files takes the span, and the first is then the later one.
+  const declined = prepareWorldDrafts({ ...response, mentions, claims: [flux[1]!, ...grace, flux[2]!] }, p.input,
+    { ...p.context, admits: semantic => semantic.object.kind !== "literal" || semantic.object.value !== "Flux" });
+  expect(declined.drafts.map(draft => draft.body)).toEqual(alone.drafts.map(draft => draft.body));
+  expect(declined.dropped.map(drop => drop.id)).toEqual(["c1", "c2"]);
+});
+
+test("a mention repeated under the same label is one mention, and its repeated classification is one draft", () => {
+  const p = passage();
+  const flux = p.about("m0", "Flux", "a synthetic transformation", 0);
+  const again = { ...p.claim("c3", "m1", "world.kind", p.concept, "Flux, again, is a concept."), confidence: 0.2, sensitivity: "private" as const };
+  const more = p.claim("c4", "m1", "concept.definition", { kind: "literal", value: "a calm cadence" }, "Flux is a calm cadence.");
+  // Case, punctuation and spacing do not make another name.
+  const mentions = [p.mention("m0", "Flux"), p.mention("m1", " FLUX. ")];
+  const prepared = prepareWorldDrafts({ ...response, mentions, claims: [...flux, again, more] }, p.input, p.context);
+  expect(prepared.dropped).toEqual([]);
+  expect(prepared.repeated).toBe(1);
+  expect(prepared.drafts.map(draft => draft.body)).toEqual(
+    ["Flux is a concept.", "The concept is called Flux.", "Flux is a synthetic transformation.", "Flux is a calm cadence."]);
+  // The first classification keeps its wording and score and takes the stricter label of the two.
+  expect(prepared.drafts[0]).toMatchObject({ confidence: 0.8, sensitivity: "private", world_admission: { confidence: 0.8, rendering: { body: "Flux is a concept." } } });
+  expect(prepared.drafts.slice(1).every(draft => draft.sensitivity === "personal")).toBe(true);
+  // The same classification through the one mention is the same repeat.
+  const once = prepareWorldDrafts({ ...response, mentions: [mentions[0]!], claims: [flux[0]!, { ...again, subject: flux[0]!.subject }, flux[1]!] }, p.input, p.context);
+  expect(once.repeated).toBe(1);
+  expect(once.drafts.map(draft => draft.body)).toEqual(["Flux is a concept.", "The concept is called Flux."]);
+  // Another classification of the subject is not a repeat: it is a claim of its own.
+  const dated = { ...again, valid_from: "2026-01-01T00:00:00Z", temporal_basis: "explicit" as const };
+  const other = prepareWorldDrafts({ ...response, mentions: [mentions[0]!], claims: [flux[0]!, { ...dated, subject: flux[0]!.subject }] }, p.input, p.context);
+  expect(other.repeated).toBeUndefined();
+  expect(other.drafts).toHaveLength(2);
+});

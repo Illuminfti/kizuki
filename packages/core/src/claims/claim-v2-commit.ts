@@ -313,6 +313,31 @@ function derivedWorldAdmission(
  */
 const ADMISSION_PRESENTATION_FIELDS: ReadonlySet<string> = new Set(["rendering", "confidence"]);
 
+/** An anchor list is a set of spans, as it is in the support key: its order is not identity. */
+function unorderedAnchors(value: unknown): unknown {
+  return Array.isArray(value) ? value.map(anchor => canonicalJson(anchor)).sort() : value;
+}
+
+function admissionIdentityFields(admission: object): Map<string, string> {
+  const fields = new Map<string, string>();
+  for (const [field, value] of Object.entries(admission) as [string, unknown][]) {
+    if (ADMISSION_PRESENTATION_FIELDS.has(field)) continue;
+    const semantic = field === "semantic" && isPlainObject(value) ? value : null;
+    fields.set(field, canonicalJson(semantic === null ? value : {
+      ...semantic,
+      ...(Object.hasOwn(semantic, "anchors") ? { anchors: unorderedAnchors(semantic.anchors) } : {}),
+      ...(isPlainObject(semantic.perspective) && Object.hasOwn(semantic.perspective, "anchors")
+        ? { perspective: { ...semantic.perspective, anchors: unorderedAnchors(semantic.perspective.anchors) } } : {}),
+    }));
+  }
+  return fields;
+}
+
+/** The identity of a world admission as one canonical string: equal exactly when two admissions are the same one. */
+export function admissionIdentity(admission: WorldAdmission): string {
+  return canonicalJson(Object.fromEntries(admissionIdentityFields(admission)));
+}
+
 /**
  * Names the identity fields where a stored admission differs from a recomputed
  * one; empty when they are the same admission. The stored row is compared by
@@ -322,10 +347,8 @@ export function admissionIdentityConflict(stored: string, recomputed: ExactJson)
   let prior: unknown;
   try { prior = JSON.parse(stored); } catch { return ["admission"]; }
   if (!isPlainObject(prior) || !isPlainObject(recomputed)) return ["admission"];
-  const fields = new Set([...Object.keys(prior), ...Object.keys(recomputed)]);
-  return [...fields].filter(field => !ADMISSION_PRESENTATION_FIELDS.has(field) &&
-    (Object.hasOwn(prior, field) !== Object.hasOwn(recomputed, field) ||
-      canonicalJson(prior[field]) !== canonicalJson(recomputed[field]))).sort();
+  const before = admissionIdentityFields(prior), after = admissionIdentityFields(recomputed);
+  return [...new Set([...before.keys(), ...after.keys()])].filter(field => before.get(field) !== after.get(field)).sort();
 }
 
 /** Read-only admission checks shared by ordinary commit and additive carry-forward. */

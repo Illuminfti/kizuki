@@ -57,6 +57,7 @@ import {
   requireAtomicExtractReplay,
   type DurableExtractBatch,
   type MineResult,
+  type RefusedExtractDraft,
 } from "./extract";
 import { isProducerV2, type ExtractionProducerPort } from "./extract-v2";
 import { backoffRemaining, readRejections, recordRejection, writeRejections } from "./extract-rejections";
@@ -680,8 +681,8 @@ interface ExtractionPass {
   readonly stopRequested: () => boolean;
   /** Counts claims an answered request carried that journaling declined, in the run's totals. */
   readonly decline: (dropped: readonly DroppedDraftV2[]) => void;
-  /** Counts durable drafts that filing refused for an immutable admission conflict, in the run's totals. */
-  readonly refuse: (refused: readonly string[]) => void;
+  /** Counts durable drafts that filing refused, by reason, in the run's totals; called inside the filing commit. */
+  readonly refuse: (refused: readonly RefusedExtractDraft[]) => void;
 }
 
 async function runExtraction(
@@ -743,7 +744,7 @@ async function runExtraction(
     },
     refuse(refused) {
       if (refused.length === 0) return;
-      refused.forEach(() => count(metrics, ADMISSION_CONFLICT));
+      for (const draft of refused) count(metrics, draft.reason);
       recordUsage(metricResult(metrics));
     },
   };
@@ -828,8 +829,15 @@ interface StepOutcome {
   readonly errors: readonly string[];
 }
 
-/** The claims_rejected reason for a durable draft that filing refused on an immutable admission conflict. */
-const ADMISSION_CONFLICT = "support_admission_conflict";
+/**
+ * One receipt line per refusal cause. An identifier prefix that survives
+ * receipt redaction and field names only: the drafts carry captured text.
+ */
+function refusalLines(refused: readonly RefusedExtractDraft[]): string[] {
+  return [...new Set(refused.map(draft => draft.reason === "support_admission_conflict"
+    ? `claim refused: support ${draft.support_key.slice(0, 16)} conflicts with immutable admission (${draft.fields.join(",")})`
+    : `claims refused: subject ${draft.subject_id.slice(0, 16)} is classified twice in one decision`))];
+}
 
 const settled = (next: StepOutcome["next"], fields: Partial<Omit<StepOutcome, "next">> = {}): StepOutcome =>
   ({ next, extracted: 0, deduped: 0, superseded: 0, skipped: 0, requeued: 0, segments: 0, oversized_skipped: 0, stopped: null, errors: [], ...fields });
@@ -857,12 +865,11 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
     // Replay files an existing decision; it is not another extraction.
     const approvedReplay = pending.model_inputs.length === 1 ? activeExtractReplay(db, pending.model_inputs[0]!.event_id, producer) : null;
     const replayEnd = approvedReplay !== null && journaledSegment(db, pending.model_inputs.map(input => input.event_id))?.end === approvedReplay.end_utf16;
-    const filed = await fileProducedDrafts(claims, pending, producer, pass.run_id);
+    const filed = await fileProducedDrafts(claims, pending, producer, pass);
     if (filed === null) return settled("stop", { errors: ["extract cursor changed before durable batch commit"] });
-    pass.refuse(filed.refused);
     const prefiltered = replayedPrefilterCounts(db, pending, producer);
     return settled(replayEnd ? "stop" : "continue", { ...(replayEnd ? { stopped: "extract:replay_complete" } : {}), deduped: filed.deduped, superseded: filed.superseded,
-      errors: filed.refused, ...(prefiltered === undefined ? {} : { prefiltered }) });
+      errors: refusalLines(filed.refused), ...(prefiltered === undefined ? {} : { prefiltered }) });
   });
   if (!replay.held) return settled("stop", { stopped: replay.stopped });
   if (replay.value !== null) return replay.value;
@@ -960,11 +967,10 @@ async function extractionStep(pass: ExtractionPass): Promise<StepOutcome> {
         if (!journal.journaled) return advanceHeld(pass, { ...mined, mined: { status: "empty" } });
         const durable = readDurableExtractBatch(db, producer);
         if (durable === null) throw new Error("durable extraction decision is missing");
-        const filed = await fileProducedDrafts(claims, durable, producer, pass.run_id);
-        if (filed !== null) pass.refuse(filed.refused);
+        const filed = await fileProducedDrafts(claims, durable, producer, pass);
         return filed === null
           ? settled("stop", { errors: ["extract cursor changed before commit"] })
-          : settled("continue", { extracted, deduped: filed.deduped, superseded: filed.superseded, errors: filed.refused,
+          : settled("continue", { extracted, deduped: filed.deduped + journal.repeated, superseded: filed.superseded, errors: refusalLines(filed.refused),
             segments: mined.segment === undefined ? 0 : 1,
             ...(mined.prefiltered === undefined ? {} : { prefiltered: mined.prefiltered }) });
       });
@@ -1023,8 +1029,8 @@ async function fileProducedDrafts(
   io: ClaimsIo,
   batch: DurableExtractBatch,
   producer: ExtractionProducerPort,
-  runId: string,
-): Promise<{ deduped: number; superseded: number; refused: readonly string[] } | null> {
+  pass: Pick<ExtractionPass, "run_id" | "refuse">,
+): Promise<{ deduped: number; superseded: number; refused: readonly RefusedExtractDraft[] } | null> {
   const prepared = [];
   if (batch.filing_version === 2) {
     for (const draft of batch.filing_drafts as readonly WorldDraftInsert[]) {
@@ -1035,7 +1041,7 @@ async function fileProducedDrafts(
       prepared.push(await prepareClaimInsert(io, producedClaimInput(io.db, draft, "model", batch.model_ref)));
     }
   }
-  const filed = fileAndCompleteDurableExtractBatch(io.db, batch, producer, prepared, runId);
+  const filed = fileAndCompleteDurableExtractBatch(io.db, batch, producer, prepared, pass.run_id, pass.refuse);
   if (filed === null) return null;
   let deduped = 0;
   let superseded = 0;
@@ -1044,9 +1050,5 @@ async function fileProducedDrafts(
     else if (result.outcome === "duplicate") deduped += 1;
   }
   await retryRetrievalOps(io);
-  // A key prefix that survives receipt redaction and field names only: the
-  // admission itself carries captured text.
-  const refused = filed.refused.map(draft =>
-    `claim refused: support ${draft.support_key.slice(0, 16)} conflicts with immutable admission (${draft.fields.join(",")})`);
-  return { deduped, superseded, refused };
+  return { deduped, superseded, refused: filed.refused };
 }

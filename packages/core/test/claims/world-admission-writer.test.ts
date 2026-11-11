@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { CLAIM_V2_SCHEMA, type ClaimV2Assertion } from "../../src/contracts/claim-v2";
-import { admissionIdentityConflict, readClaimRecord } from "../../src/claims/claim-v2-commit";
+import { admissionIdentity, admissionIdentityConflict, readClaimRecord } from "../../src/claims/claim-v2-commit";
+import type { WorldAdmission } from "../../src/contracts/world-admission";
 import { AdmissionConflictError, ClaimError } from "../../src/claims/errors";
 import { semanticKey } from "../../src/claims/claim-v2-keys";
 import { mintOccurrenceId } from "../../src/claims/occurrences";
@@ -154,6 +155,15 @@ test("admission identity ignores only the retained rendering and confidence", ()
   expect(admissionIdentityConflict(stored, { ...first, semantic: { ...meaning, perspective: { mode: "quoted", anchors: [] } } })).toEqual(["semantic"]);
   expect(admissionIdentityConflict(stored, { ...first, authority: "owner_authored", epistemicKind: "owner_assertion" })).toEqual(["authority", "epistemicKind"]);
   expect(admissionIdentityConflict(stored, { ...first, grounding: [] })).toEqual(["grounding"]);
+  // An anchor list is a set, as it is in the support key: its order is not identity. Its members, and which list holds them, are.
+  const other = { ...anchor, start_utf16: 5, end_utf16: 9 };
+  const two = { ...first, semantic: { ...meaning, anchors: [anchor, other], perspective: { mode: "asserted", anchors: [other, anchor] } } };
+  const swapped = { ...two, semantic: { ...meaning, anchors: [other, anchor], perspective: { mode: "asserted", anchors: [anchor, other] } } };
+  expect(admissionIdentityConflict(JSON.stringify(two), swapped)).toEqual([]);
+  expect(admissionIdentity(two as unknown as WorldAdmission)).toBe(admissionIdentity({ ...swapped, rendering: { body: "Other words.", frontmatter: {} }, confidence: 0.1 } as unknown as WorldAdmission));
+  expect(admissionIdentityConflict(JSON.stringify(two), { ...two, semantic: { ...two.semantic, anchors: [anchor] } })).toEqual(["semantic"]);
+  expect(admissionIdentityConflict(JSON.stringify(two), { ...two, semantic: { ...two.semantic, anchors: [anchor, { ...other, end_utf16: 8 }] } })).toEqual(["semantic"]);
+  expect(admissionIdentity(two as unknown as WorldAdmission)).not.toBe(admissionIdentity(first as unknown as WorldAdmission));
   // A field this build does not know, or a row that is not an admission object, fails closed.
   expect(admissionIdentityConflict(JSON.stringify({ ...first, taint: "quoted" }), first)).toEqual(["taint"]);
   expect(admissionIdentityConflict("not json", first)).toEqual(["admission"]);
@@ -201,6 +211,23 @@ test("a support row serialized by an older writer in another key order still rep
     db.query("UPDATE claim_v2_support SET admission=? WHERE support_key=?").run(reordered, row.support_key);
     expect((await insertClaim({ db }, input(db, sourceKey, eventId))).outcome).toBe("duplicate");
     expect(db.query<{ admission: string }, []>("SELECT admission FROM claim_v2_support").get()!.admission).toBe(reordered);
+  } finally { db.close(); }
+});
+
+test("the same support with its anchors listed in another order is the same admission", async () => {
+  const { db, eventId, sourceKey } = fixture(true);
+  try {
+    const base = input(db, sourceKey, eventId);
+    const evidence = { event_id: eventId, start_utf16: 6, end_utf16: 11 };
+    const cited = (anchors: ClaimV2Assertion["anchors"]) => {
+      const typed = { ...base.semantic, anchors };
+      return { ...base, semantic: typed, world_admission: { ...base.world_admission, semantic: typed } };
+    };
+    expect((await insertClaim({ db }, cited([base.semantic.anchors[0]!, evidence]))).outcome).toBe("stored");
+    const stored = db.query("SELECT support_key, admission FROM claim_v2_support").all();
+    expect((await insertClaim({ db }, cited([evidence, base.semantic.anchors[0]!]))).outcome).toBe("duplicate");
+    expect(db.query("SELECT support_key, admission FROM claim_v2_support").all()).toEqual(stored);
+    expect(supportCount(db)).toBe(1);
   } finally { db.close(); }
 });
 
