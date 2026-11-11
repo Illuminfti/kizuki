@@ -31,6 +31,8 @@ import {
   readExtractCursor,
 } from "../../src/serve/extract";
 import { runWritePass } from "../../src/serve/write-pass";
+import { parseDurableWorldDrafts } from "../../src/serve/extract-v2";
+import { insertClaim } from "../../src/claims/store";
 import { ulid } from "../../src/util/ulid";
 import { initVault } from "../../src/vault/init";
 import { validEvent } from "../fixtures";
@@ -44,7 +46,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(supplied = false, role = false, text?: string) {
+function fixture(supplied = false, role = false, text?: string, rephrased = false) {
   const root = mkdtempSync(join(tmpdir(), "extract-v2-runtime-"));
   roots.push(root);
   const vault = join(root, "vault");
@@ -125,6 +127,8 @@ function fixture(supplied = false, role = false, text?: string) {
             claim("c0", "world.kind", { kind: "vocabulary", ref: { kind: "vocabulary", id: "world/concept" } }, "Flux is a concept."),
             claim("c1", "concept.label", { kind: "literal", value: "Flux" }, "The concept is called Flux."),
             claim("c2", "concept.definition", { kind: "literal", value: "A synthetic transformation." }, "Flux is a synthetic transformation."),
+            // The same anchored fact phrased a second time in one answer.
+            ...(rephrased ? [{ ...claim("c3", "concept.definition", { kind: "literal", value: "A synthetic transformation." }, "Flux names a synthetic transformation."), confidence: 0.6 }] : []),
           ],
         },
         usage: { calls: 1, input_tokens: 20, output_tokens: 30 },
@@ -368,4 +372,72 @@ test("host prefix planner reserves overhead for the selected event prefix", asyn
     expect(JSON.stringify(request)).not.toContain(second);
     expect(readExtractCursor(f.db)).toBeNull();
   } finally { bound.cleanup(); f.close(); }
+});
+
+test("one answer that phrases the same anchored fact twice files once and keeps the first admission", async () => {
+  const f = fixture(false, false, undefined, true);
+  try {
+    const result = await runWritePass(f.db, f.vault, f.options());
+    expect(result.errors).toEqual([]);
+    expect(result.claims_extracted).toBe(4);
+    expect(result.claims_deduped).toBe(1);
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE is_world_typed=1").get()).toEqual({ n: 3 });
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claim_v2_support").get()).toEqual({ n: 3 });
+    const bodies = f.db.query<{ admission: string }, []>("SELECT admission FROM claim_v2_support").all()
+      .map(row => JSON.parse(row.admission).rendering.body);
+    expect(bodies).toContain("Flux is a synthetic transformation.");
+    expect(bodies).not.toContain("Flux names a synthetic transformation.");
+    expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
+    expect(readExtractCursor(f.db)).toContain(f.eventId);
+  } finally { f.close(); }
+});
+
+test("a durable decision journaled with a rephrased duplicate replays to completion without another call", async () => {
+  const f = fixture(false, false, undefined, true);
+  try {
+    const mined = await mineLiveDrafts(f.db, f.producer);
+    expect(mined.mined).toEqual({ status: "ok", count: 4 });
+    journalExtractBatch(f.db, mined, f.producer.model_ref, f.producer);
+    f.reopen();
+    const replay = await runWritePass(f.db, f.vault, f.options());
+    expect(replay.errors).toEqual([]);
+    expect(replay.model.calls).toBe(0);
+    expect(f.calls.count).toBe(1);
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE is_world_typed=1").get()).toEqual({ n: 3 });
+    expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
+    expect(readExtractCursor(f.db)).toContain(f.eventId);
+  } finally { f.close(); }
+});
+
+test("a genuine admission conflict quarantines that draft with a receipt and files the rest", async () => {
+  const f = fixture();
+  try {
+    const mined = await mineLiveDrafts(f.db, f.producer);
+    journalExtractBatch(f.db, mined, f.producer.model_ref, f.producer);
+    const drafts = parseDurableWorldDrafts(
+      f.db.query<{ drafts: string }, []>("SELECT drafts FROM extract_batches").get()!.drafts, f.producer.model_ref);
+    // Another writer admitted the third fact first, under a different assessment.
+    f.db.exec("CREATE TEMP TABLE held_batch AS SELECT * FROM extract_batches; DELETE FROM extract_batches;");
+    const earlier = await insertClaim({ db: f.db }, drafts[2]!);
+    expect(earlier.outcome).toBe("stored");
+    f.db.exec("INSERT INTO extract_batches SELECT * FROM held_batch; DROP TABLE held_batch;");
+    const before = f.db.query<{ support_key: string; admission: string }, []>("SELECT support_key, admission FROM claim_v2_support").get()!;
+    const altered = JSON.stringify({ ...JSON.parse(before.admission), epistemicKind: "observed" });
+    f.db.query("UPDATE claim_v2_support SET admission=? WHERE support_key=?").run(altered, before.support_key);
+
+    const result = await runWritePass(f.db, f.vault, f.options());
+    expect(result.errors).toEqual([
+      `claim quarantined: support ${before.support_key.slice(0, 16)} conflicts with immutable admission (epistemicKind)`,
+    ]);
+    expect(result.claims_rejected).toEqual({ support_admission_conflict: 1 });
+    expect(f.calls.count).toBe(1);
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE is_world_typed=1").get()).toEqual({ n: 3 });
+    expect(f.db.query<{ n: number }, []>("SELECT count(*) AS n FROM claim_v2_support").get()).toEqual({ n: 3 });
+    // The immutable row is untouched, and the decision no longer holds the rail.
+    expect(f.db.query<{ admission: string }, [string]>("SELECT admission FROM claim_v2_support WHERE support_key=?").get(before.support_key)!.admission).toBe(altered);
+    expect(f.db.query("SELECT * FROM extract_batches").all()).toEqual([]);
+    expect(readExtractCursor(f.db)).toContain(f.eventId);
+    const next = await runWritePass(f.db, f.vault, f.options());
+    expect(next.errors).toEqual([]);
+  } finally { f.close(); }
 });

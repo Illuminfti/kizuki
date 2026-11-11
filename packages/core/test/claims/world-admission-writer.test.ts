@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { CLAIM_V2_SCHEMA, type ClaimV2Assertion } from "../../src/contracts/claim-v2";
 import { readClaimRecord } from "../../src/claims/claim-v2-commit";
+import { AdmissionConflictError, ClaimError } from "../../src/claims/errors";
 import { semanticKey } from "../../src/claims/claim-v2-keys";
 import { mintOccurrenceId } from "../../src/claims/occurrences";
 import { prepareClaimInsert,insertClaim } from "../../src/claims/store";
@@ -130,5 +131,65 @@ test("typed world admission never sends its normalized empty v1 body to semantic
     const repeat = await insertClaim({ db, retrieval }, input(db, sourceKey, eventId));
     expect(repeat.outcome).toBe("duplicate");
     expect(semanticCalls).toBe(0);
+  } finally { db.close(); }
+});
+
+function supportCount(db: ReturnType<typeof fixture>["db"]): number {
+  return db.query<{ n: number }, []>("SELECT count(*) AS n FROM claim_v2_support").get()!.n;
+}
+
+test("replaying identical world support is a no-op duplicate", async () => {
+  const { db, eventId, sourceKey } = fixture(true);
+  try {
+    const first = await insertClaim({ db, now: () => "2026-01-02T00:00:00.000Z" }, input(db, sourceKey, eventId));
+    const stored = db.query<{ admission: string; admitted_at: string }, []>("SELECT admission, admitted_at FROM claim_v2_support").get();
+    const again = await insertClaim({ db, now: () => "2026-01-03T00:00:00.000Z" }, input(db, sourceKey, eventId));
+    expect(again).toMatchObject({ outcome: "duplicate", claim: { claim_id: first.outcome === "stored" ? first.claim.claim_id : "" } });
+    expect(supportCount(db)).toBe(1);
+    expect(db.query("SELECT admission, admitted_at FROM claim_v2_support").get()).toEqual(stored);
+  } finally { db.close(); }
+});
+
+test("rephrased rendering or another model confidence over the same support keeps the first immutable admission", async () => {
+  const { db, eventId, sourceKey } = fixture(true);
+  try {
+    await insertClaim({ db }, input(db, sourceKey, eventId));
+    const stored = db.query<{ admission: string }, []>("SELECT admission FROM claim_v2_support").get()!.admission;
+    const base = input(db, sourceKey, eventId);
+    const rephrased = await insertClaim({ db }, { ...base, confidence: 0.3,
+      world_admission: { ...base.world_admission, rendering: { body: "Grace runs partnerships.", frontmatter: {} } } });
+    expect(rephrased.outcome).toBe("duplicate");
+    expect(supportCount(db)).toBe(1);
+    expect(db.query<{ admission: string }, []>("SELECT admission FROM claim_v2_support").get()!.admission).toBe(stored);
+  } finally { db.close(); }
+});
+
+test("a support row serialized by an older writer in another key order still replays as the same admission", async () => {
+  const { db, eventId, sourceKey } = fixture(true);
+  try {
+    await insertClaim({ db }, input(db, sourceKey, eventId));
+    const row = db.query<{ support_key: string; admission: string }, []>("SELECT support_key, admission FROM claim_v2_support").get()!;
+    const parsed = JSON.parse(row.admission) as Record<string, unknown>;
+    const reordered = JSON.stringify(Object.fromEntries(Object.entries(parsed).reverse()));
+    expect(reordered).not.toBe(row.admission);
+    db.query("UPDATE claim_v2_support SET admission=? WHERE support_key=?").run(reordered, row.support_key);
+    expect((await insertClaim({ db }, input(db, sourceKey, eventId))).outcome).toBe("duplicate");
+    expect(db.query<{ admission: string }, []>("SELECT admission FROM claim_v2_support").get()!.admission).toBe(reordered);
+  } finally { db.close(); }
+});
+
+test("a different assessment over the same support is still refused as an immutable admission conflict", async () => {
+  const { db, eventId, sourceKey } = fixture(true);
+  try {
+    await insertClaim({ db }, input(db, sourceKey, eventId));
+    const row = db.query<{ support_key: string; admission: string }, []>("SELECT support_key, admission FROM claim_v2_support").get()!;
+    db.query("UPDATE claim_v2_support SET admission=? WHERE support_key=?")
+      .run(JSON.stringify({ ...JSON.parse(row.admission), authority: "owner_authored", epistemicKind: "owner_assertion" }), row.support_key);
+    const refused = await insertClaim({ db }, input(db, sourceKey, eventId)).then(() => null, (error: unknown) => error);
+    expect(refused).toBeInstanceOf(AdmissionConflictError);
+    expect(refused).toBeInstanceOf(ClaimError);
+    expect((refused as AdmissionConflictError).fields).toEqual(["authority", "epistemicKind"]);
+    expect((refused as AdmissionConflictError).support_key).toBe(row.support_key);
+    expect(String((refused as Error).message)).not.toContain("Grace");
   } finally { db.close(); }
 });

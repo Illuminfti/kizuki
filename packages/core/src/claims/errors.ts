@@ -25,3 +25,14 @@ export class ClaimError extends Error {
     super(`ClaimError: ${code}: ${message}`, options);
   }
 }
+
+/**
+ * One support's recomputed admission identity differs from the immutable one
+ * already recorded under the same support key. It names only the differing
+ * identity fields, never their values: the admission carries captured text.
+ */
+export class AdmissionConflictError extends ClaimError {
+  constructor(readonly support_key: string, readonly fields: readonly string[]) {
+    super("schema_invalid", "claim/v2 support conflicts with immutable admission");
+  }
+}

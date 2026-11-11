@@ -31,7 +31,7 @@ import {
   fromClaimV2SemanticRow,
   toClaimV2SemanticRow,
 } from "./claim-v2-rows";
-import { ClaimError } from "./errors";
+import { AdmissionConflictError, ClaimError } from "./errors";
 import { ensureClaimOccurrences, validateWorldEndpointProofs } from "./occurrences";
 import { getClaim } from "./store";
 import { parseWorldAdmission, completeWorldAnchors, type WorldAdmission } from "../contracts/world-admission";
@@ -299,6 +299,28 @@ function derivedWorldAdmission(
   };
 }
 
+/**
+ * Rendering and the Core-clamped model confidence are presentation retained
+ * from the first admission of a support, not part of its identity: a model
+ * that phrases one anchored fact twice, or a replay that re-reads it, is a
+ * duplicate sighting and keeps the first immutable row untouched. Meaning,
+ * grounding and the authority/epistemic assessment remain identity, so a
+ * change there is still a conflict. Stored rows are compared by parsed value,
+ * so a row serialized with another key order is the same admission.
+ */
+const ADMISSION_PRESENTATION_FIELDS: ReadonlySet<string> = new Set(["rendering", "confidence"]);
+
+/** Names the identity fields where a stored admission differs from a recomputed one; empty when equal. */
+export function admissionIdentityConflict(stored: string, recomputed: ExactJson): string[] {
+  let prior: unknown;
+  try { prior = JSON.parse(stored); } catch { return ["admission"]; }
+  if (!isPlainObject(prior) || !isPlainObject(recomputed)) return ["admission"];
+  const fields = new Set([...Object.keys(prior), ...Object.keys(recomputed)]);
+  return [...fields].filter(field => !ADMISSION_PRESENTATION_FIELDS.has(field) &&
+    (Object.hasOwn(prior, field) !== Object.hasOwn(recomputed, field) ||
+      canonicalJson(prior[field]) !== canonicalJson(recomputed[field]))).sort();
+}
+
 /** Read-only admission checks shared by ordinary commit and additive carry-forward. */
 export function validateClaimV2Commit(
   db: Database,
@@ -451,9 +473,8 @@ export function commitClaimV2(
     const prior = db.query<{ admission: string }, [string]>(
       "SELECT admission FROM claim_v2_support WHERE support_key=?",
     ).get(supportKeyValue);
-    if (prior === null || prior.admission !== canonicalJson(admission)) {
-      throw new ClaimError("schema_invalid", "claim/v2 support conflicts with immutable admission");
-    }
+    const differing = prior === null ? ["admission"] : admissionIdentityConflict(prior.admission, admission);
+    if (differing.length > 0) throw new AdmissionConflictError(supportKeyValue, differing);
   }
   if (!duplicateSupport) {
     const columns = suppliedWorld === null

@@ -18,6 +18,7 @@ import type { ClaimDraft, ProduceInput, ProducerPort, QuotedEvent } from "../con
 import { MAX_V2_QUOTED_UTF16, type DroppedDraftV2, type ExtractResponseV2, type ProduceInputV2, type ProducerV2Port } from "../contracts/producer-v2";
 import { predicateIds } from "../claims/predicates";
 import { historicalClaimReplaySignature, listClaims } from "../claims/store";
+import { AdmissionConflictError } from "../claims/errors";
 import type { InsertClaimInput, InsertClaimResult, PreparedClaimInsert } from "../claims/store";
 import { compareRfc3339 } from "../agents/time";
 import { readRailCursor } from "../ledger/checkpoints";
@@ -855,14 +856,32 @@ export function completeDurableExtractBatch(db: Database, batch: DurableExtractB
   }).immediate();
 }
 
-/** All claim effects, outbox rows and decision completion share one durable commit. */
+/** A durable draft set aside because its support conflicts with an immutable admission. */
+export interface QuarantinedExtractDraft {
+  readonly index: number;
+  readonly support_key: string;
+  readonly fields: readonly string[];
+}
+
+export interface FiledExtractBatch {
+  readonly results: InsertClaimResult[];
+  readonly quarantined: readonly QuarantinedExtractDraft[];
+}
+
+/**
+ * All claim effects, outbox rows and decision completion share one durable
+ * commit. Each draft files under its own savepoint: a draft whose support
+ * conflicts with an immutable admission rolls back alone and is reported, so
+ * one replayed decision cannot hold the rail and every later record forever.
+ * Any other failure still rolls the whole decision back.
+ */
 export function fileAndCompleteDurableExtractBatch(
   db: Database,
   batch: DurableExtractBatch,
   producer: ExtractionProducerPort,
   prepared: readonly PreparedClaimInsert[],
   runId?: string,
-): InsertClaimResult[] | null {
+): FiledExtractBatch | null {
   if (db.inTransaction) throw new Error("extraction filing requires a top-level transaction");
   return db.transaction(() => {
     const current = matchingDurableBatch(db, batch, producer);
@@ -872,11 +891,20 @@ export function fileAndCompleteDurableExtractBatch(
       operation.db !== db || operation.signature !== signatures[index])) {
       throw new Error("prepared extraction drafts do not match the durable decision");
     }
-    const results = prepared.map(operation => operation.apply());
+    const results: InsertClaimResult[] = [];
+    const quarantined: QuarantinedExtractDraft[] = [];
+    prepared.forEach((operation, index) => {
+      try {
+        results.push(db.transaction(() => operation.apply())());
+      } catch (error) {
+        if (!(error instanceof AdmissionConflictError)) throw error;
+        quarantined.push({ index, support_key: error.support_key, fields: error.fields });
+      }
+    });
     // A changed final fence must throw so every prior effect rolls back too.
     if (matchingDurableBatch(db, current, producer, false) === null) throw new Error("extract decision changed during filing");
     finishDurableBatch(db, current, producer, runId);
-    return results;
+    return { results, quarantined };
   }).immediate();
 }
 
