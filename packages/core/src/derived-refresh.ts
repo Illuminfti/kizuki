@@ -70,16 +70,11 @@ function planReconcile(db: Database, report: CanonPageReport, hadFts: boolean, h
 }
 
 /**
- * Whether the locked state is still the one a plan was read from: every page
- * file has the stat signature its walk saw, and no ledger input has moved
- * since the plan's snapshot. A served call's audit row moves neither.
+ * Every page file's stat signature, as one value. Equal before a walk and
+ * under the write lock means the walk read the files as they still are.
  */
-function planHolds(db: Database, vaultPath: string, report: CanonPageReport, plan: ReconcilePlan): boolean {
-  if (reconcileLedgerStamp(db) !== plan.inputs) return false;
-  const files = scanCanonSignatures(vaultPath);
-  if (files.size !== report.signatures.size) return false;
-  for (const [relPath, signature] of report.signatures) if (files.get(relPath) !== signature) return false;
-  return true;
+function pageFilesStamp(vaultPath: string): string {
+  return JSON.stringify([...scanCanonSignatures(vaultPath)]);
 }
 
 /** Writes only. The caller holds the write lock on the state the plan was read from. */
@@ -115,11 +110,12 @@ interface PassResult { readonly wrote: boolean; readonly inputs: string | null }
 
 /**
  * One pass. Each plan is read from its own walk of the vault and its own read
- * snapshot, and is written only if `planHolds` under the write lock. When it
- * does not, another writer changed a page or the ledger while the plan was
- * being read, so nothing is written and the pass reads both again. After
- * RECONCILE_UNLOCKED_PLANS such plans it either gives way, or with `finish`
- * walks and plans under the lock, which no writer can race.
+ * snapshot, and is written only if, under the write lock, the pages and the
+ * ledger inputs are still the ones it read. When they are not, another writer
+ * changed a page or the ledger while the plan was being read, so nothing is
+ * written and the pass reads both again. After RECONCILE_UNLOCKED_PLANS such
+ * plans it either gives way, or with `finish` walks and plans under the lock,
+ * which no writer can race.
  */
 function reconcilePass(db: Database, vaultPath: string, finish: boolean): PassResult {
   const hadFts = tableExists(db, "search_docs");
@@ -127,11 +123,14 @@ function reconcilePass(db: Database, vaultPath: string, finish: boolean): PassRe
   initSearch(db);
   initGraph(db);
   for (let unlocked = 1; ; unlocked += 1) {
+    const files = pageFilesStamp(vaultPath);
     const report = listCanonPagesReport(vaultPath);
     const plan = db.transaction(() => planReconcile(db, report, hadFts, hadGraph)).deferred();
     if (!plan.restoreFts && !plan.graph && plan.stamps.length === 0) return { wrote: false, inputs: plan.inputs };
     const result = db.transaction((): PassResult | null => {
-      if (planHolds(db, vaultPath, report, plan)) {
+      // The locked state is the one the plan was read from when no ledger
+      // input and no page file has moved. A served call's audit row moves neither.
+      if (reconcileLedgerStamp(db) === plan.inputs && pageFilesStamp(vaultPath) === files) {
         applyReconcile(db, report, plan);
         // Stamps change no row the plan compared, so what it verified still
         // stands. One that marks the graph unhealthy is the exception: the

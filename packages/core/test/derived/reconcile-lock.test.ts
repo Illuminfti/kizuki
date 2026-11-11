@@ -111,6 +111,19 @@ test("a page changed on disk after the walk is read again before anything is wri
   expect(f.indexed()).toEqual(["facts/kettle.md"]);
 });
 
+test("a walk cut short by the scan budget is still written from one comparison", async () => {
+  const f = await reconcileFixture(cleanup);
+  reconcileDerivedPages(f.db, f.vault);
+  // The smallest budget the vault accepts, a page that does not fit in it, and one the walk never reaches.
+  writeFileSync(join(f.vault, ".kizuki/serve.toml"), "[canon]\nmax_scan_bytes = 65536\n");
+  writeFileSync(join(f.vault, "facts/large.md"), `---\nid: fact:large\n---\n${"filler ".repeat(10_000)}`);
+  writeFileSync(join(f.vault, "facts/later.md"), "---\nid: fact:later\n---\nNever read.");
+  const pass = atEachPlan(f.db, () => {}, () => reconcileDerivedPages(f.db, f.vault));
+  // Its stamps are written off the lock like any other plan's, not by planning under it.
+  expect(pass).toEqual({ result: true, plans: 1 });
+  expect(f.db.query("SELECT status FROM derived_meta WHERE layer='search'").get()).toEqual({ status: "degraded" });
+});
+
 test("a pass raced on every plan plans once under the lock and writes what that plan read", async () => {
   const f = await reconcileFixture(cleanup);
   reconcileDerivedPages(f.db, f.vault);
