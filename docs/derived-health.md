@@ -31,13 +31,29 @@ these projections.
 
 A reconciliation pass reads every page and compares it with its projection on
 a read snapshot. It takes the ledger write lock only when it has a difference
-to write, and writes only if no other connection committed since that
-snapshot; otherwise it reads again. The serve loop skips the pass while no
-page file's stat signature, no ledger table's row count or highest rowid and
-no hold or health stamp has changed since a pass that found nothing to write.
-It runs a pass at least every 30 minutes regardless, which bounds changes
-those signals cannot show, such as a ledger row edited in place. A process
-that has just started always runs a pass.
+to write. Under the lock it first checks that no page file and no ledger input
+has moved since it read them, then writes; if one has, it writes nothing and
+reads the pages and the ledger again. Page files are compared by stat
+signature. Ledger inputs are every table's row count and highest rowid, and
+the holds, write intents, canon read generation and health stamps whole. The
+audit and run logs are not inputs, so a served call's audit row never sends a
+pass back to compare again.
+
+The serve loop skips the pass while none of those inputs has changed since a
+pass that left nothing to write. A pass that wrote only health stamps leaves
+nothing to write; a pass that wrote rows is followed by one that compares
+again. It runs a pass at least every 30 minutes regardless, which bounds
+changes those signals cannot show, such as a ledger row edited in place. A
+process that has just started always runs a pass. When other writers move the
+inputs during both comparisons of one sweep, the sweep writes nothing and the
+next sweep tries again. A process's first pass, and the sweep after two in a
+row gave way, instead compare under the write lock, so a repair is never
+postponed indefinitely.
+
+A degraded graph is projected again only when its stored registry or edges
+differ from what the walk projects. The edges are compared directly: after a
+walk that skipped a file, a page write projects only its own page, and the
+pages linking to it get their edges from the next pass.
 
 Public search and graph query flags describe omissions in the calling
 principal's permitted corpus. A vault-wide degraded stamp is an owner
