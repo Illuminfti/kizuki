@@ -24,6 +24,15 @@
   retry times. Their full provenance remains intact; the 100-source page limit
   is unchanged, and quarantine does not count as a successful write.
 
+- The serve loop's `retrieval-sweep` no longer holds the ledger write lock while
+  it compares canon pages with the search index. It compares on a read
+  snapshot, takes the lock only to write a difference, and skips the comparison
+  while no page file, ledger table or hold has changed, with a full pass at
+  least every 30 minutes. Before, a vault of about ten thousand pages held the
+  lock for most of every five-minute cycle, and audited reads from other
+  processes were refused with `busy`. An audit reservation now waits through a
+  short write within the existing bounded retry instead of refusing after one
+  busy wait.
 - World discovery and cards exclude held claims before their candidate bounds,
   so a held prefix cannot hide an eligible label or definition. Visible
   overflow still reports incomplete coverage.
