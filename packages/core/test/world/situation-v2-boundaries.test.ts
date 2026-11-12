@@ -10,7 +10,10 @@ import { revokeSourceGrant } from "../../src/ledger/source-grants";
 import { inspectSourceGrant, setSourceGrant } from "../../src/ledger/source-grants";
 import { rebuildWorldLayer } from "../../src/derived";
 import { collectReadFrames } from "../../src/world/pipeline/frame";
-import { situationV2Fixture, literal, vocabulary } from "../helpers/situation-v2-fixture";
+import {
+  situationV2Fixture, literal, vocabulary,
+  SITUATION_REVIEW_DUE, SITUATION_REVIEW_DAY_BEFORE, SITUATION_REVIEW_DAY_AFTER,
+} from "../helpers/situation-v2-fixture";
 import { cardFixture } from "./card-fixture";
 
 const node = (f: Awaited<ReturnType<typeof cardFixture>>, id: string) => ({kind:"subject" as const,ref:f.ref(id)});
@@ -29,12 +32,12 @@ test("exact deadlines use complete source evidence without requiring optional su
  const f=await situationV2Fixture();try{
   const read=(at:string)=>f.readSituation(f.ctx,{valid:{kind:"at",at}}).commitments.find(c=>c.label?.object.kind==="literal"&&c.label.object.value==="Review draft")!;
   expect(f.readSituation().coverage.gaps).toContain("pending_consolidation");
-  expect(read("2026-10-23T00:00:00Z").overdue).toBe(false);
-  expect(read("2026-10-24T23:59:59Z").overdue).toBe(false);
-  expect(read("2026-10-25T00:00:00Z").overdue).toBe(true);
+  expect(read(`${SITUATION_REVIEW_DAY_BEFORE}T00:00:00Z`).overdue).toBe(false);
+  expect(read(`${SITUATION_REVIEW_DUE}T23:59:59Z`).overdue).toBe(false);
+  expect(read(`${SITUATION_REVIEW_DAY_AFTER}T00:00:00Z`).overdue).toBe(true);
   const grant=inspectSourceGrant(f.db,f.sourceKey)!;
   setSourceGrant(f.db,{source_key:f.sourceKey,expected_revision:grant.revision,operation_id:"incomplete-extraction",policy:{...grant.policy,purposes:[...grant.policy.purposes,"extract"]}});
-  expect(read("2026-10-25T00:00:00Z").overdue).toBe("unknown");
+  expect(read(`${SITUATION_REVIEW_DAY_AFTER}T00:00:00Z`).overdue).toBe("unknown");
  }finally{f.dispose();}
 },120_000);
 
