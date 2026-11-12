@@ -8,7 +8,8 @@ ledger prefix, using durable companion and FTS coverage. Closing an old gap or
 retrying after an upgrade reconciles the watermark; indexing a later event alone
 does not certify an earlier gap. Tombstoned evidence is outside the live corpus.
 Doctor includes the watermark alongside the layer's current counts and status.
-An idle pass preserves the graph stamp when its input and health are unchanged.
+An idle pass preserves the search and graph stamps when their inputs and health
+are unchanged.
 
 The daemon's sourceless deterministic daily briefs in `dashboards/` are
 administrative summaries of rail and canon state, not event-backed evidence.
@@ -27,6 +28,35 @@ unresolved search health or scanning unrelated files; its canon hash remains
 unknown until a complete snapshot validates it. An idle pass retries repaired
 pages even without a new receipt. No model or network request is needed for
 these projections.
+
+A reconciliation pass reads every page and compares it with its projection on
+a read snapshot. It takes the ledger write lock only when it has a difference
+to write. Under the lock it first checks that no page file and no ledger input
+has moved since it read them, then writes; if one has, it writes nothing and
+reads the pages and the ledger again. Page files are compared by stat
+signature. Ledger inputs are every table's row count and highest rowid, and
+the holds, write intents, canon read generation and health stamps whole. The
+audit and run logs are not inputs, so a served call's audit row never sends a
+pass back to compare again.
+
+The serve loop skips the pass while none of those inputs has changed since a
+pass that left nothing to write. A pass that wrote only health stamps leaves
+nothing to write; a pass that wrote rows is followed by one that compares
+again. It runs a pass at least every 30 minutes regardless, which bounds
+changes those signals cannot show, such as a ledger row edited in place. A
+process that has just started always runs a pass. When other writers move the
+inputs during both comparisons of one sweep, the sweep writes nothing and the
+next sweep tries again. A process's first pass, the sweep after two in a row
+gave way, and a pass that found the full-text or graph table missing instead
+plan under the write lock, so a repair is never postponed indefinitely.
+
+Every pass compares the stored graph registry and edges with what the walk
+projects, whatever the graph's health stamp says, and projects the graph again
+when they differ. The edges are compared directly: after a walk that skipped a
+file, a page write projects only its own page, and the pages linking to it get
+their edges from the next pass. A graph table that was dropped and created
+again empty is restored the same way, also when the pass that found it missing
+failed before it could write.
 
 Public search and graph query flags describe omissions in the calling
 principal's permitted corpus. A vault-wide degraded stamp is an owner
