@@ -1,3 +1,4 @@
+import { ensureReadProofEpoch } from "../serving/read-proof-epoch";
 import type { Database } from "bun:sqlite";
 import { tableExists } from "../ledger/schema";
 
@@ -143,8 +144,11 @@ function canonSurfaceReady(db: Database): boolean {
   });
 }
 
-/** Cheap no-op once v4 exists. `applyCanonV4` stays the migration path. */
+/**
+ * Cheap no-op once v4 exists. `applyCanonV4` stays the migration path. Every
+ * writable open also keeps the read-proof epoch and its triggers in place.
+ */
 export function initCanon(db: Database): void {
-  if (canonSurfaceReady(db)) return;
-  applyCanonV4(db);
+  if (!canonSurfaceReady(db)) applyCanonV4(db);
+  ensureReadProofEpoch(db);
 }
