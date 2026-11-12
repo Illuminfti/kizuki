@@ -24,14 +24,14 @@ const producer: ProducerPort = {
   produce: async () => ({ status: "ok", claims: [], usage: { calls: 0, input_tokens: 0, output_tokens: 0 }, dropped: [] }),
 };
 
-test("oversized legacy entity provenance stays intact while later writable claims make progress", async () => {
+test("unwritable legacy entity claims keep their provenance while later writable claims make progress", async () => {
   const f = canonFixture(); fixtures.push(f);
-  const events = Array.from({ length: 101 }, () => putEvent(f.db));
+  const events = Array.from({ length: 3 }, () => putEvent(f.db));
   const stuck = [];
   for (let i = 0; i < 33; i++) {
     stuck.push(await storeClaim(f.db, events[0]!, {
       kind: "entity", target: `topics/stuck-${i}`, subject: `topic:stuck-${i}`, subjects: [`topic:stuck-${i}`],
-      predicate: null, object: null, body: `Referenced topic ${i}.`, frontmatter: { type: "topic", title: `Topic ${i}` },
+      predicate: null, object: null, body: `Referenced topic ${i}.`, frontmatter: { type: "not-a-page-type", title: `Topic ${i}` },
       provenance: events, events: events.map(id => eventFacts(id)),
     }));
   }
@@ -44,7 +44,7 @@ test("oversized legacy entity provenance stays intact while later writable claim
   for (let i = 0; i < 3; i++) {
     const report = await pass();
     expect(report.canon_writes).toBe(0);
-    expect(report.errors.filter(e => e.includes("sources: exceeds 100 items"))).toHaveLength(32);
+    expect(report.errors.filter(e => e.includes("frontmatter.type: must be one of"))).toHaveLength(32);
     clock += 60_000;
   }
   expect(listQuarantinedClaims(f.db, new Date(clock).toISOString()).claims).toHaveLength(32);

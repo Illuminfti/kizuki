@@ -19,6 +19,7 @@ import { commitMachineByteIntent, requireExternalEvents } from "../ledger/event-
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding, SourceTombstoneError } from "./source-tombstone";
 import { subjectPageType } from "../vault/subject-type";
 import { CanonAuthorityResolver } from "./authority";
+import { citedSources } from "./citations";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { Sensitivity } from "../agents/types";
@@ -337,7 +338,7 @@ function prepareRevision(
 
   let body: string;
   let taint: ClaimTaint = incomingTaint;
-  const sources: string[] = union([prior, provenance]);
+  let sources: string[] = union([prior, provenance]);
   let action: PageAction = "edit";
 
   switch (primary.kind) {
@@ -363,6 +364,8 @@ function prepareRevision(
       ]);
       const retained = liveClaimsOnPage(io, existing.relPath, exclude);
       body = composeBody([...retained, ...claims]);
+      // The body is recomposed from these claims, so they decide what it cites.
+      sources = citedSources(io.db, claims, prior, retained);
       taint = [...retained, ...claims].some((claim) => claim.taint === "quoted") ? "quoted" : "clean";
       break;
     }
@@ -465,7 +468,7 @@ export function applyCanonWriteOwned(
   initCanon(io.db);
   const ownedClaims=typed?claims.filter(item=>item.receipt_id===null):persisted;
   const outputProvenance = union(claims.map((item) => item.provenance));
-  const provenance = typed ? union([outputProvenance, ...(existing === null ? [] : [existingSources(existing.page)])]) : outputProvenance;
+  const provenance = typed ? union([outputProvenance, ...(existing === null ? [] : [existingSources(existing.page)])]) : citedSources(io.db, claims);
   let worldBasis: WorldCanonBasis | null = null;
   let worldPriorId: string | null = null;
   if (typed && materialization !== null) {
