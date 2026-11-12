@@ -7,11 +7,12 @@ import { reserveAudit } from "../../src/agents/audit";
 import { reconcileDerivedPages, reconcileDerivedPagesWhenChanged } from "../../src/derived-refresh";
 import { isLedgerBusy } from "../../src/ledger/busy";
 import { openLedger } from "../../src/ledger/db";
-import { accept } from "../../src/ledger/ledger";
-import { removeCanonPath } from "../../src/search/indexer";
+import { accept, readSince } from "../../src/ledger/ledger";
+import { indexEvents, removeCanonPath } from "../../src/search/indexer";
+import { serveGraph } from "../../src/serving/graph";
 import { serveSearch } from "../../src/serving/search";
 import { validEvent } from "../fixtures";
-import { STORED_ROWS_SQL, foreignPage, foreignWriter, reconcileFixture, underForeignWriteLock, watchingQueries } from "./reconcile-fixture";
+import { GRAPH_REGISTRY_SQL, STORED_ROWS_SQL, foreignPage, foreignWriter, reconcileFixture, underForeignWriteLock, watchingQueries } from "./reconcile-fixture";
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const dispose of cleanup.splice(0).reverse()) dispose(); });
@@ -21,10 +22,17 @@ const body = (db: Database, path: string) => db.query<{ body: string }, [string]
 const linksTo = (db: Database, dst: string) => db.query<{ src: string }, [string]>("SELECT src FROM graph_edges WHERE kind='wikilink' AND dst=? ORDER BY src").all(dst).map(row => row.src);
 
 /** Runs `pass`, calling `during` with the number of each comparison as the pass issues it. */
-function atEachPlan<T>(db: Database, during: (plan: number) => void, pass: () => T): { result: T; plans: number } {
+function atEachPlan<T>(db: Database, during: (plan: number) => void, pass: () => T, read = STORED_ROWS_SQL): { result: T; plans: number } {
   let plans = 0;
-  const result = watchingQueries(db, sql => { if (sql.includes(STORED_ROWS_SQL)) during(plans += 1); }, pass);
+  const result = watchingQueries(db, sql => { if (sql.includes(read)) during(plans += 1); }, pass);
   return { result, plans };
+}
+
+/** Refreshes as the serve loop does until one is skipped. A refresh that never skips fails here. */
+function settle(refresh: () => boolean): void {
+  let passes = 0;
+  while (passes < 4 && refresh()) passes += 1;
+  expect(passes).toBeLessThanOrEqual(3);
 }
 
 /** A capture by another process: a new event, which every plan reads. */
@@ -152,7 +160,7 @@ test("a timed refresh raced on every plan gives way without the lock, and finish
   // Past the racy window, so the fixture's files count as settled.
   let now = Date.now() + 5_000;
   const refresh = () => reconcileDerivedPagesWhenChanged(f.db, f.vault, now += 300_000);
-  while (refresh()) { /* until the handle has a verified pass behind it */ }
+  settle(refresh);
   removeCanonPath(f.db, "facts/kettle.md");
   const other = f.other();
   let record = 0;
@@ -186,11 +194,41 @@ test("a handle's first timed refresh finishes even when every plan is raced", as
   expect(f.indexed()).toEqual(["facts/kettle.md", "facts/tea.md"]);
 });
 
+for (const table of ["search_docs", "graph_edges"] as const) {
+  test(`a timed refresh that finds ${table} missing restores it under the lock when every plan is raced`, async () => {
+    const f = await reconcileFixture(cleanup);
+    capture(f.db, "indexed-before");
+    indexEvents(f.db, readSince(f.db, null, 10).events);
+    let now = Date.now() + 5_000;
+    const refresh = () => reconcileDerivedPagesWhenChanged(f.db, f.vault, now += 300_000);
+    settle(refresh);
+    const stored = () => JSON.stringify([
+      f.db.query("SELECT scope, count(*) AS n FROM search_docs GROUP BY scope ORDER BY scope").all(),
+      f.db.query("SELECT src, dst, kind FROM graph_edges ORDER BY src, dst, kind").all(),
+    ]);
+    const owner = { db: f.db, vaultPath: f.vault, principal: OWNER };
+    const served = async () => [
+      (await serveSearch(owner, { query: "kettle", scope: "ledger" })).quoted.length,
+      (await serveGraph(owner, { id: "fact:tea" })).data?.edges.map(edge => edge.dst).sort(),
+    ];
+    const before = { stored: stored(), served: await served() };
+    // The capture and the kettle page's source event; tea's link and its source.
+    expect(before.served).toEqual([2, [expect.any(String), "Cup"]]);
+    const other = f.other();
+    other.exec(`DROP TABLE ${table}`);
+    const racers: string[] = [];
+    atEachPlan(f.db, plan => racers.push(tryCapture(other, `dropped-${plan}`)), refresh, GRAPH_REGISTRY_SQL);
+    // The pass created the table empty, which leaves no sign in the ledger that it was missing: it may not give way.
+    expect(racers).toEqual(["committed", "committed", "refused"]);
+    expect({ stored: stored(), served: await served() }).toEqual(before);
+  });
+}
+
 test("a capture is stamped by one comparison while served calls are audited, and the stamps settle the refresh", async () => {
   const f = await reconcileFixture(cleanup);
   let now = Date.now() + 5_000;
   const refresh = () => reconcileDerivedPagesWhenChanged(f.db, f.vault, now += 300_000);
-  while (refresh()) { /* settled */ }
+  settle(refresh);
   const stamps = () => JSON.stringify(f.db.query("SELECT layer, status, doc_count, source_count, skipped_count, ledger_watermark FROM derived_meta ORDER BY layer").all());
   const rows = () => JSON.stringify([f.db.query("SELECT * FROM search_documents WHERE scope='canon' ORDER BY doc_id").all(), f.db.query("SELECT * FROM graph_edges ORDER BY src, dst, kind").all()]);
   const before = { stamps: stamps(), rows: rows() };

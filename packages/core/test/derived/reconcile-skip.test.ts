@@ -19,10 +19,7 @@ afterEach(() => { for (const dispose of cleanup.splice(0).reverse()) dispose(); 
 const later = () => Date.now() + 5_000;
 const refresh = (db: Database, vault: string, now = later()) => reconcileDerivedPagesWhenChanged(db, vault, now);
 
-/**
- * A pass that wrote moved its own inputs, so the next one compares again. A
- * health stamp that turns the graph unhealthy takes one projection more.
- */
+/** A pass that wrote rows moved its own inputs, so the next one compares again. */
 function settle(db: Database, vault: string): void {
   let passes = 0;
   while (passes < 4 && refresh(db, vault)) passes += 1;

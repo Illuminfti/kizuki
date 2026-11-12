@@ -46,14 +46,17 @@ again. It runs a pass at least every 30 minutes regardless, which bounds
 changes those signals cannot show, such as a ledger row edited in place. A
 process that has just started always runs a pass. When other writers move the
 inputs during both comparisons of one sweep, the sweep writes nothing and the
-next sweep tries again. A process's first pass, and the sweep after two in a
-row gave way, instead compare under the write lock, so a repair is never
-postponed indefinitely.
+next sweep tries again. A process's first pass, the sweep after two in a row
+gave way, and a pass that found the full-text or graph table missing instead
+plan under the write lock, so a repair is never postponed indefinitely.
 
-A degraded graph is projected again only when its stored registry or edges
-differ from what the walk projects. The edges are compared directly: after a
-walk that skipped a file, a page write projects only its own page, and the
-pages linking to it get their edges from the next pass.
+Every pass compares the stored graph registry and edges with what the walk
+projects, whatever the graph's health stamp says, and projects the graph again
+when they differ. The edges are compared directly: after a walk that skipped a
+file, a page write projects only its own page, and the pages linking to it get
+their edges from the next pass. A graph table that was dropped and created
+again empty is restored the same way, also when the pass that found it missing
+failed before it could write.
 
 Public search and graph query flags describe omissions in the calling
 principal's permitted corpus. A vault-wide degraded stamp is an owner

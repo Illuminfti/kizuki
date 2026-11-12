@@ -9,6 +9,9 @@ import { recordedPage } from "../helpers/recorded-page";
 /** The comparison's read of every stored canon row, which a pass issues once per plan. */
 export const STORED_ROWS_SQL = "SELECT path, doc_id, title, body, page_type";
 
+/** The graph comparison's first read, which every plan issues once, including one that compares no row. */
+export const GRAPH_REGISTRY_SQL = "SELECT 1 FROM graph_registry";
+
 const page = (id: string) => ({ id: `fact:${id}`, title: id, type: "fact", status: "active", sensitivity: "public", taint: "clean" });
 
 /** A file-backed vault with two recorded pages, and further connections to the same ledger. */

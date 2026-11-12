@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { assertDerivedDiscoveryReady, readDerivedHolds } from "./derived-holds";
-import { readDerivedMeta, stampDerived, type DerivedStamp } from "./derived-meta";
+import { stampDerived, type DerivedStamp } from "./derived-meta";
 import { refreshSearchHealth, searchHealthStamp } from "./derived-health";
 import { graphHealthStamp, graphProjectionHolds, replacePageEdges, refreshPageEdgesBatch, refreshGraphHealth } from "./graph/graph";
 import { initGraph } from "./graph/schema";
@@ -29,14 +29,14 @@ interface ReconcilePlan {
 }
 
 /** Reads only. The caller's transaction fixes the state every answer comes from. */
-function planReconcile(db: Database, report: CanonPageReport, hadFts: boolean, hadGraph: boolean): ReconcilePlan {
+function planReconcile(db: Database, report: CanonPageReport, hadFts: boolean): ReconcilePlan {
   const inputs = reconcileLedgerStamp(db);
   assertDerivedDiscoveryReady(db);
   const evidence = assessWalkEvidence(db, report.pages);
-  // An unhealthy graph is projected again, unless what is stored is already
-  // what this walk and evidence project: that would rewrite the same rows.
-  const unhealthy = !hadGraph || (readDerivedMeta(db, "graph")?.status !== "ok"
-    && !graphProjectionHolds(db, report.pages, report.skipped.length, evidence));
+  // The graph is projected again unless what is stored is already what this
+  // walk and evidence project. The stored rows answer that, not the health
+  // stamp over them: a table created empty a moment ago still reads `ok`.
+  const unhealthy = !graphProjectionHolds(db, report.pages, report.skipped.length, evidence);
   if (!hadFts) return { inputs, evidence, withdraw: [], replace: [], restoreFts: true, graph: unhealthy, stamps: [] };
   const admitted = projectablePageEvidence(db, report.pages, evidence);
   for (const path of readDerivedHolds(db).paths) admitted.delete(path);
@@ -114,8 +114,8 @@ interface PassResult { readonly wrote: boolean; readonly inputs: string | null }
  * ledger inputs are still the ones it read. When they are not, another writer
  * changed a page or the ledger while the plan was being read, so nothing is
  * written and the pass reads both again. After RECONCILE_UNLOCKED_PLANS such
- * plans it either gives way, or with `finish` walks and plans under the lock,
- * which no writer can race.
+ * plans it gives way, unless `finish` is set or it found a derived table
+ * missing: then it walks and plans under the lock, which no writer can race.
  */
 function reconcilePass(db: Database, vaultPath: string, finish: boolean): PassResult {
   const hadFts = tableExists(db, "search_docs");
@@ -125,23 +125,22 @@ function reconcilePass(db: Database, vaultPath: string, finish: boolean): PassRe
   for (let unlocked = 1; ; unlocked += 1) {
     const files = pageFilesStamp(vaultPath);
     const report = listCanonPagesReport(vaultPath);
-    const plan = db.transaction(() => planReconcile(db, report, hadFts, hadGraph)).deferred();
+    const plan = db.transaction(() => planReconcile(db, report, hadFts)).deferred();
     if (!plan.restoreFts && !plan.graph && plan.stamps.length === 0) return { wrote: false, inputs: plan.inputs };
     const result = db.transaction((): PassResult | null => {
       // The locked state is the one the plan was read from when no ledger
       // input and no page file has moved. A served call's audit row moves neither.
       if (reconcileLedgerStamp(db) === plan.inputs && pageFilesStamp(vaultPath) === files) {
         applyReconcile(db, report, plan);
-        // Stamps change no row the plan compared, so what it verified still
-        // stands. One that marks the graph unhealthy is the exception: the
-        // next plan answers that by checking the projection.
-        const verified = !plan.restoreFts && !plan.graph && plan.stamps.every(stamp => stamp.layer !== "graph" || stamp.status === "ok");
-        return { wrote: true, inputs: verified ? reconcileLedgerStamp(db) : null };
+        // Stamps change no row the plan compared, so what it verified still stands.
+        return { wrote: true, inputs: plan.restoreFts || plan.graph ? null : reconcileLedgerStamp(db) };
       }
       if (unlocked < RECONCILE_UNLOCKED_PLANS) return null;
-      if (!finish) return { wrote: false, inputs: null };
+      // Creating a missing table left no row that says it was missing, so the
+      // pass that found it missing restores it and never gives way.
+      if (!finish && hadFts && hadGraph) return { wrote: false, inputs: null };
       const walked = listCanonPagesReport(vaultPath);
-      applyReconcile(db, walked, planReconcile(db, walked, hadFts, hadGraph));
+      applyReconcile(db, walked, planReconcile(db, walked, hadFts));
       return { wrote: true, inputs: null };
     }).immediate();
     if (result !== null) return result;
@@ -246,10 +245,11 @@ const refreshed = new WeakMap<Database, Refreshed>();
  * after a crash or restart starts with a pass.
  *
  * A timer comes round again, so a pass whose plans were each raced by another
- * writer gives way without writing instead of planning under the lock. Two
+ * writer gives way without writing instead of planning under the lock. Three
  * cases finish regardless, so no repair waits forever: a handle's first pass,
- * since a command that refreshes once has no later pass, and the pass after
- * RECONCILE_RACED_PASSES in a row gave way. Returns whether a pass ran.
+ * since a command that refreshes once has no later pass; the pass after
+ * RECONCILE_RACED_PASSES in a row gave way; and a pass that found a derived
+ * table missing. Returns whether a pass ran.
  */
 export function reconcileDerivedPagesWhenChanged(db: Database, vaultPath: string, now: number = Date.now()): boolean {
   const files = canonFilesStamp(vaultPath, now);

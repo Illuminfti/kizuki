@@ -3,12 +3,13 @@ import type { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { OWNER } from "../../src/agents";
-import { reconcileDerivedPages, reconcileDerivedPagesWhenChanged } from "../../src/derived-refresh";
+import { RECONCILE_RECHECK_MS, reconcileDerivedPages, reconcileDerivedPagesWhenChanged } from "../../src/derived-refresh";
 import { refreshPageEdgesBatch, replacePageEdges } from "../../src/graph/graph";
+import { isLedgerBusy } from "../../src/ledger/busy";
 import { serveGraph } from "../../src/serving/graph";
 import { listCanonPagesReport } from "../../src/vault/pages";
 import { recordedPage } from "../helpers/recorded-page";
-import { reconcileFixture } from "./reconcile-fixture";
+import { STORED_ROWS_SQL, reconcileFixture, watchingQueries } from "./reconcile-fixture";
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const dispose of cleanup.splice(0).reverse()) dispose(); });
@@ -41,6 +42,7 @@ test("a page filed while another page is unreadable gets its backlinks from the 
   expect(reconcileDerivedPagesWhenChanged(f.db, f.vault, Date.now() + 5_000)).toBe(false);
 });
 
+const graphStatus = (db: Database) => db.query<{ status: string }, []>("SELECT status FROM derived_meta WHERE layer='graph'").get()?.status;
 const edges = (db: Database) => JSON.stringify(db.query("SELECT src, dst, kind, sensitivity, dest_sensitivity, taint, authority, provenance FROM graph_edges ORDER BY src, dst, kind").all());
 
 /** The edges left by projecting every known page, which is what a pass writes for a graph it does not trust. */
@@ -84,6 +86,31 @@ for (const [label, degrade] of Object.entries(DEGRADED)) {
   }, 120_000);
 }
 
+test("a receipted write leaves a complete graph with nothing for the next pass to project", async () => {
+  const f = await reconcileFixture(cleanup);
+  for (let pass = 0; pass < 2; pass += 1) reconcileDerivedPages(f.db, f.vault);
+  let seed = 11;
+  const next = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+  const pick = () => NAMES[Math.floor(next() * NAMES.length)]!;
+  for (let step = 0; step < 10; step += 1) {
+    const name = pick();
+    const page = { ...fact(name, next() < 0.4 ? `${name} ${Math.floor(next() * 3)}` : name), sensitivity: next() < 0.3 ? "private" : "public" };
+    await recordedPage(f.db, f.vault, `facts/${name}.md`, page, `${name} at step ${step} [[${pick()}]] [[${pick()}]].`);
+    // The writer projected its page and the pages linking to it: the comparison finds the whole graph as a walk projects it.
+    expect(edges(f.db)).toBe(projectedEdges(f.db, f.vault));
+    let projections = 0;
+    watchingQueries(f.db, sql => { if (sql.includes("INSERT INTO graph_registry")) projections += 1; }, () => reconcileDerivedPages(f.db, f.vault));
+    expect(projections).toBe(0);
+    expect(graphStatus(f.db)).toBe("ok");
+  }
+  // The counter does see a projection when there is one to make.
+  f.db.query("DELETE FROM graph_edges WHERE kind='wikilink'").run();
+  let projections = 0;
+  watchingQueries(f.db, sql => { if (sql.includes("INSERT INTO graph_registry")) projections += 1; }, () => reconcileDerivedPages(f.db, f.vault));
+  expect(projections).toBe(1);
+  expect(edges(f.db)).toBe(projectedEdges(f.db, f.vault));
+}, 120_000);
+
 test("an edge lost from or left in a degraded graph is repaired by the next pass", async () => {
   const f = await reconcileFixture(cleanup);
   DEGRADED["a live page with no receipt"](f.vault);
@@ -112,4 +139,46 @@ test("an edge lost from or left in a degraded graph is repaired by the next pass
   expect(reconcileDerivedPages(f.db, f.vault)).toBe(true);
   expect(edges(f.db)).toBe(projectedEdges(f.db, f.vault));
   expect(edges(f.db)).toContain("fact:gone");
+});
+
+test("an edge changed under a graph stamped ok is repaired by the next pass that runs", async () => {
+  const f = await reconcileFixture(cleanup);
+  settle(f.db, f.vault);
+  let now = Date.now() + 5_000;
+  const refresh = () => reconcileDerivedPagesWhenChanged(f.db, f.vault, now);
+  expect(graphStatus(f.db)).toBe("ok");
+  const projected = edges(f.db);
+  // Changed in place: no row count, rowid or stamp moves, so the refresh has nothing to go on and skips.
+  f.db.query("UPDATE graph_edges SET dst='Saucer' WHERE src='fact:tea' AND kind='wikilink'").run();
+  expect(refresh()).toBe(false);
+  // The pass the recheck interval forces compares the edges themselves, not the stamp over them.
+  now += RECONCILE_RECHECK_MS;
+  expect(refresh()).toBe(true);
+  expect(edges(f.db)).toBe(projected);
+  expect(graphStatus(f.db)).toBe("ok");
+});
+
+test("a graph table found missing by a pass that then failed is restored by the next pass", async () => {
+  const f = await reconcileFixture(cleanup);
+  settle(f.db, f.vault);
+  const projected = edges(f.db);
+  const writer = f.other();
+  writer.exec("DROP TABLE graph_edges");
+  // The pass creates the table empty, and another writer holds the lock when it comes to fill it.
+  f.db.exec("PRAGMA busy_timeout = 0");
+  let failed: unknown;
+  try {
+    watchingQueries(f.db, sql => { if (sql.includes(STORED_ROWS_SQL) && !writer.inTransaction) writer.exec("BEGIN IMMEDIATE"); },
+      () => reconcileDerivedPagesWhenChanged(f.db, f.vault, Date.now() + 5_000));
+  } catch (error) { failed = error; }
+  writer.exec("ROLLBACK");
+  f.db.exec("PRAGMA busy_timeout = 5000");
+  expect(isLedgerBusy(failed)).toBe(true);
+  // Only the stored rows say the graph is empty now: the table exists and its stamp still reads ok.
+  expect(edges(f.db)).toBe("[]");
+  expect(graphStatus(f.db)).toBe("ok");
+  settle(f.db, f.vault);
+  expect(edges(f.db)).toBe(projected);
+  const served = await serveGraph({ db: f.db, vaultPath: f.vault, principal: OWNER }, { id: "fact:tea" });
+  expect(served.data?.edges.map(edge => edge.dst)).toContain("Cup");
 });
