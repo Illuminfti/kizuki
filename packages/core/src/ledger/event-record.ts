@@ -5,6 +5,7 @@ import { isRfc3339 } from "../util/time";
 import { computeContentHash, computeLegacyContentHash, sha256Hex } from "../util/hash";
 import { isUlid } from "../util/ulid";
 import { snapshotDataRecord, utf8ByteLength } from "../util/validate";
+import { purgeReadEpoch } from "../derived-holds";
 
 export class EventRecordError extends Error {
   readonly code = "event_record_invalid";
@@ -117,21 +118,26 @@ export function eventFromRow(row: EventRow, db: Database, format: "legacy" | "cu
   if (format === "legacy") return parseEventRecord(raw, "legacy");
   try {
     const digest = nativeRequestDigest(db, row.event_id);
-    const known = validatedRows.get(row.event_id);
+    const memo = validatedRowsOf(db);
+    const known = memo.rows.get(row.event_id);
     if (known !== undefined && known.digest === digest && EVENT_ROW_FIELDS.every(field => known.row[field] === row[field])) return { ...known.event };
     const event = validateEventRecord(raw, { accepted_at: row.accepted_at, native_request_digest: digest });
-    rememberValidated(row, digest, event);
+    rememberValidated(memo, row, digest, event);
     return event;
   } catch { throw new EventRecordError(); }
 }
 
 /**
  * Validating a stored row is a pure function of every one of its columns and
- * its native request digest: equal inputs give an equal event. A process
+ * its native request digest: equal inputs give an equal event. A connection
  * remembers the event for each row it validated and hands back a copy only
  * when every column and the digest compare equal, so any change to the row
  * is validated again. The nested values of an event are frozen; the copy
  * keeps the outer object as fresh as a new validation would.
+ *
+ * Purged rows are gone from the ledger and so never match again, but their
+ * text must not outlive the purge in memory either: once anything was written
+ * since the last look, a new purge batch drops everything remembered.
  */
 const EVENT_ROW_FIELDS = [
   "event_id", "connector_id", "source_record_id", "kind", "occurred_at", "observed_at", "text", "subjects",
@@ -140,20 +146,41 @@ const EVENT_ROW_FIELDS = [
 ] as const satisfies readonly (keyof EventRow)[];
 /** Holds one served call's source events on a large vault; the row's text is shared with the event, not copied. */
 const MAX_VALIDATED_CHARS = 64 * 1024 * 1024;
-const validatedRows = new Map<string, { row: EventRow; digest: string | null; event: CaptureEvent; chars: number }>();
-let validatedChars = 0;
+interface ValidatedRows {
+  stamp: string;
+  purges: number;
+  rows: Map<string, { row: EventRow; digest: string | null; event: CaptureEvent; chars: number }>;
+  chars: number;
+}
+const validated = new WeakMap<Database, ValidatedRows>();
 
-function rememberValidated(row: EventRow, digest: string | null, event: CaptureEvent): void {
+function validatedRowsOf(db: Database): ValidatedRows {
+  const state = db.query<{ changes: number; version: number }, []>(
+    "SELECT total_changes() AS changes, (SELECT data_version FROM pragma_data_version) AS version",
+  ).get()!;
+  const stamp = `${state.changes}:${state.version}`;
+  let memo = validated.get(db);
+  if (memo?.stamp === stamp) return memo;
+  const purges = purgeReadEpoch(db);
+  if (memo === undefined || memo.purges !== purges) {
+    memo = { stamp, purges, rows: new Map(), chars: 0 };
+    validated.set(db, memo);
+  }
+  memo.stamp = stamp;
+  return memo;
+}
+
+function rememberValidated(memo: ValidatedRows, row: EventRow, digest: string | null, event: CaptureEvent): void {
   const chars = row.text.length + row.subjects.length + row.attachments.length + row.metadata.length;
   if (chars > MAX_VALIDATED_CHARS) return;
-  const replaced = validatedRows.get(row.event_id);
-  if (replaced !== undefined) { validatedRows.delete(row.event_id); validatedChars -= replaced.chars; }
-  for (const [id, oldest] of validatedRows) {
-    if (validatedChars + chars <= MAX_VALIDATED_CHARS) break;
-    validatedRows.delete(id); validatedChars -= oldest.chars;
+  const replaced = memo.rows.get(row.event_id);
+  if (replaced !== undefined) { memo.rows.delete(row.event_id); memo.chars -= replaced.chars; }
+  for (const [id, oldest] of memo.rows) {
+    if (memo.chars + chars <= MAX_VALIDATED_CHARS) break;
+    memo.rows.delete(id); memo.chars -= oldest.chars;
   }
   const kept: Record<string, unknown> = {};
   for (const field of EVENT_ROW_FIELDS) kept[field] = row[field];
-  validatedRows.set(row.event_id, { row: kept as unknown as EventRow, digest, event: { ...event }, chars });
-  validatedChars += chars;
+  memo.rows.set(row.event_id, { row: kept as unknown as EventRow, digest, event: { ...event }, chars });
+  memo.chars += chars;
 }
