@@ -174,11 +174,14 @@ export async function runSyncRail(context: RailRunContext): Promise<Partial<RunR
     ...(hooks?.claims === undefined ? {} : { claims: hooks.claims }),
   });
   // Pages a returned record left citing the version its deletion ended. Canon
-  // writing needs a bound model, as in the write pass; the pass's own stop or
-  // budget stop ends the run first.
+  // writing needs a bound model, as in the write pass. Like the pass's own
+  // canon writes, this still runs after a model stop, but not after a stop
+  // request, a held recovery, a busy writer or a spent budget.
   const modelBound = typeof hooks?.model_ref === "string" && hooks.model_ref.length > 0 &&
     hooks.producer !== undefined && hooks.claims !== undefined;
-  const recited = modelBound && written.stopped === null && stopRequested?.() !== true
+  const canonStopped = written.stopped !== null && (written.stopped === STOP_REQUESTED ||
+    written.stopped === "recovery:held" || written.stopped === "lock:busy" || written.stopped.startsWith("budget:canon_writes"));
+  const recited = modelBound && !canonStopped && stopRequested?.() !== true
     ? await reciteEndedSources({ db, vault_path: vaultPath, now }, budget,
       Math.max(RECITE_PASS_LIMIT, budget.usage().canon_writes_per_run.limit) - written.canon_writes, stopRequested)
     : { canon_writes: 0, errors: [] as string[], stopped: null };
