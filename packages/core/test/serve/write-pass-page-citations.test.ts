@@ -2,7 +2,9 @@ import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pagesCitingEndedVersions, recitedSources } from "../../src/canon/citations";
+import { citedSources, pagesCitingEndedVersions, recitedSources } from "../../src/canon/citations";
+import { createBudgetTracker } from "../../src/canon/budget";
+import { reciteEndedSources } from "../../src/serve/recite-pass";
 import { rebuildPageIndex } from "../../src/canon/store";
 import { undoReceipt } from "../../src/canon/undo";
 import { getClaim } from "../../src/claims/store";
@@ -226,6 +228,41 @@ test("an owner undo of a citation rewrite is not rewritten again", async () => {
     const after = await pass();
     expect(after.errors).toEqual([]);
     expect(after.canon_writes).toBe(0);
+    expect(page("auto/fixture/person/ada.md")["sources"]).toContain(ended);
+  } finally { db.close(); }
+});
+
+test("a version a deletion ended stays cited until its record comes back", () => {
+  const { db, ingest } = fixture();
+  try {
+    ingest([{ ...message(), source_record_id: "kept" }]);
+    ingest([message()]);
+    ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
+    const ids = (record: string) => db.query<{ event_id: string }, [string]>(
+      "SELECT event_id FROM events WHERE source_record_id=? AND deleted=0 ORDER BY accepted_at, event_id").all(record).map(row => row.event_id);
+    const [ended] = ids("rec-1"), [kept] = ids("kept");
+    const claim = { provenance: [ended!, kept!] } as unknown as Claim;
+    // Deleted and not back: a revision keeps citing it, so the pending deletion still binds.
+    expect(citedSources(db, [], [ended!, kept!], [claim])).toEqual([ended!, kept!]);
+    ingest([message(2)]);
+    // Back again: the ended version may go.
+    expect(citedSources(db, [], [ended!, kept!], [claim])).toEqual([kept!]);
+  } finally { db.close(); }
+});
+
+test("the citation repair leaves a page alone while its deletion is pending", async () => {
+  const { db, path, ingest, pass, page } = fixture();
+  try {
+    ingest([message()]);
+    await pass();
+    const ended = (page("auto/fixture/person/ada.md")["sources"] as string[])[0]!;
+    // The deletion is filed but not yet written, and the record has come back.
+    ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
+    ingest([message(2)]);
+    expect(db.query("SELECT 1 FROM claims WHERE kind='deletion' AND status='live' AND receipt_id IS NULL").get()).not.toBeNull();
+    expect(pagesCitingEndedVersions(db)).toEqual(["auto/fixture/person/ada.md"]);
+    const recited = await reciteEndedSources({ db, vault_path: path }, createBudgetTracker({ canon_writes_per_run: 16 }), 16);
+    expect(recited).toEqual({ canon_writes: 0, errors: [], stopped: null });
     expect(page("auto/fixture/person/ada.md")["sources"]).toContain(ended);
   } finally { db.close(); }
 });

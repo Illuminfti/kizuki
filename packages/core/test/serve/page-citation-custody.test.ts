@@ -56,7 +56,7 @@ function fixture() {
   const page = () => parseFrontmatter(readFileSync(join(path, PAGE), "utf8")).data;
   const served = () => serveGetPage({ db, vaultPath: path, principal: OWNER }, { path: PAGE }).canon.length;
   const eventOf = (record: string) =>
-    db.query<{ event_id: string }, [string]>("SELECT event_id FROM events WHERE source_record_id=? AND deleted=0").get(record)!.event_id;
+    db.query<{ event_id: string }, [string]>("SELECT event_id FROM events WHERE source_record_id=? AND deleted=0 ORDER BY accepted_at DESC, event_id DESC").get(record)!.event_id;
   return { db, path, a, b, ingest, pass, page, served, eventOf };
 }
 
@@ -107,6 +107,31 @@ for (const count of [50, 120]) {
       expect(f.page()["status"]).toBe("archived");
       expect(f.served()).toBe(0);
       expect(f.db.query("SELECT 1 FROM claims WHERE kind='deletion' AND receipt_id IS NULL").get()).toBeNull();
+    } finally { f.db.close(); }
+  });
+}
+
+for (const count of [20, 120]) {
+  test(`a record deleted, returned and deleted again archives the page again (${count} events)`, async () => {
+    const f = fixture();
+    try {
+      f.ingest(Array.from({ length: count }, (_, index) => message(index, "a")), f.a);
+      expect((await f.pass()).errors).toEqual([]);
+      const gone = { ...message(5, "a"), deleted: true, text: "Synthetic deletion." };
+      f.ingest([gone], f.a);
+      expect((await f.pass()).errors).toEqual([]);
+      expect(f.page()["status"]).toBe("archived");
+
+      f.ingest([{ ...message(5, "a"), metadata: { thread: "t-9", revision_epoch: 2 } }], f.a);
+      expect((await f.pass()).errors).toEqual([]);
+      expect(f.page()["status"]).toBe("active");
+      expect(f.page()["sources"]).toContain(f.eventOf("a-5"));
+      expect(f.served()).toBe(1);
+
+      f.ingest([{ ...gone, occurred_at: "2026-03-05T00:00:00Z" }], f.a);
+      expect((await f.pass()).errors).toEqual([]);
+      expect(f.page()["status"]).toBe("archived");
+      expect(f.served()).toBe(0);
     } finally { f.db.close(); }
   });
 }
