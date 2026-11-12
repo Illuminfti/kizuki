@@ -27,6 +27,7 @@ import { dueRails, runRail, type RailHooks, type RailHooksV2, type RailRuntime, 
 import type { RetrievalPort } from "../contracts/retrieval";
 import { isRailId, listRails } from "./rail-registry";
 import { applyRailPeriod, initServe, listSchedules } from "./schema";
+import { INDEX_CATCH_UP_RAIL, catchUpSchedule, needsIndexCatchUp, pickDueRail } from "./schedule-policy";
 import {
   LEDGER_HELD_BACKOFF_MAX_MS,
   LEDGER_HELD_BACKOFF_MIN_MS,
@@ -153,7 +154,7 @@ export async function runServeDaemon(
   const stopRequested = (): boolean => stopping || serveStopRequested(vaultPath, ownMarker);
   const log = options.log ?? ((line: string) => { nodeProcess.stderr.write(`${line}\n`); });
   // A queued `serve stop` is a file, so a rail in flight has to be told.
-  const runRailUntilStopped = async (rail: RailId, execution: RunExecution, ledgerHeld = false): Promise<RunReceipt> => {
+  const runRailUntilStopped = async (rail: RailId, execution: RunExecution, ledgerHeld = false, holdSchedule = false): Promise<RunReceipt> => {
     const watch = setInterval(() => { if (stopRequested()) requestStop(); }, STOP_WATCH_MS);
     try {
       return await runRail(db, vaultPath, rail, {
@@ -163,6 +164,7 @@ export async function runServeDaemon(
         signal: stopSignal.signal,
         ledgerHeld,
         execution,
+        ...(holdSchedule ? { holdSchedule: true } : {}),
       });
     } finally { clearInterval(watch); }
   };
@@ -251,7 +253,8 @@ export async function runServeDaemon(
         catch (error) { if (asLeaseHeld(vaultPath, error, db) === null) throw error; free = false; }
         if (free && unpublished) { recoverRunJournal(db, vaultPath); unpublished = false; }
         const at = process.now();
-        const rail = dueRails(db, at).find(one => (retryAfter.get(one) ?? -Infinity) <= Date.parse(at));
+        // Least recently run first, so a rail that stays due cannot starve the others.
+        const rail = pickDueRail(db, dueRails(db, at).filter(one => (retryAfter.get(one) ?? -Infinity) <= Date.parse(at)));
         if (rail !== undefined) {
           // A rail due while the ledger is held records its skipped pass, so doctor sees it.
           const receipt = await runRailUntilStopped(rail, { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "scheduled",
@@ -262,7 +265,15 @@ export async function runServeDaemon(
             retryAfter.set(rail, Date.parse(process.now()) + 60_000);
           } else retryAfter.delete(rail);
           if (receipt.stopped === LEDGER_LEASE_HELD_STOP) await skipped();
-          else writable();
+          else {
+            writable();
+            catchUpSchedule(db, vaultPath, rail, receipt.finished_at);
+            if (!stopRequested() && needsIndexCatchUp(db, receipt, process.now())) {
+              const sweep = await runRailUntilStopped(INDEX_CATCH_UP_RAIL, { instance_id: instanceId, pid: process.pid, boot_id: process.boot_id, trigger: "once", due_at: null }, false, true);
+              if (getRunReceipt(db, sweep.run_id) !== null) receipts += 1;
+              if (sweep.stopped === LEDGER_LEASE_HELD_STOP) await skipped();
+            }
+          }
           continue;
         }
         if (!free) { await skipped(); continue; }

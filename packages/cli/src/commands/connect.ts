@@ -245,7 +245,7 @@ export const connectCommand: Command = {
       const state: HostConnectionState = { schema: "kizuki.cli.connection-state/v1", connector_id: connectorId,
         config: { base_url: endpoint, token_secret_ref: ref } };
       return withVault(io, async (ctx) => {
-        const hosts = listHostConnections(ctx.db, ctx.store, connectorId);
+        const hosts = listHostConnections(ctx.db, ctx.store, connectorId, { includePaused: true });
         if (hosts.some((item) => item.state === null)) {
           throw new ConnectionError("An existing Beeper connection has missing or unreadable state. Run kizuki doctor and restore its connection state before enrolling another source.");
         }
@@ -290,7 +290,7 @@ export const connectCommand: Command = {
     const requested = parseSensitivityFlag(parsed.options.get("--sensitivity"));
 
     return withVault(io, async (ctx) => {
-      const hosts = listHostConnections(ctx.db, ctx.store, connectorId);
+      const hosts = listHostConnections(ctx.db, ctx.store, connectorId, { includePaused: true });
       if (hosts.some((item) => item.state === null)) {
         throw new ConnectionError("An existing connection has missing or unreadable state. Run kizuki doctor and restore its connection state before enrolling another source.");
       }

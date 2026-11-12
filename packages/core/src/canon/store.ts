@@ -289,6 +289,8 @@ export function inspectPageIndex(db: Database): string[] {
  * matches these exact bytes, bounded by the write being undone when present.
  * Owner-edited and historical pages without that binding keep their declared key.
  */
+const MAX_CLAIMLESS_STEPS = 16;
+
 export function pageSubjectKey(
   db: Database,
   relPath: string,
@@ -297,15 +299,30 @@ export function pageSubjectKey(
   before?: Pick<CanonReceipt, "at" | "receipt_id">,
 ): string | null {
   if (tableExists(db, "claims") && tableExists(db, "canon_receipts")) {
-    const at = before?.at ?? "";
-    const bound = db.query<{ subject: string }, [string, string, string, string, string, string]>(
-      `SELECT c.subject AS subject FROM canon_receipts r
-         JOIN claims c ON c.claim_id = json_extract(r.claim_ids, '$[0]')
-        WHERE r.page_path = ? AND r.after_hash = ? AND c.subject IS NOT NULL
-          AND (? = '' OR r.at < ? OR (r.at = ? AND r.receipt_id < ?))
-        ORDER BY r.at DESC, r.receipt_id DESC LIMIT 1`,
-    ).get(relPath, contentHash, at, at, at, before?.receipt_id ?? "");
-    if (bound !== null) return bound.subject;
+    // A write that names no claim (a citation-only rewrite) keeps the subject
+    // of the bytes it rewrote, so follow it back to them.
+    for (let step = 0; step < MAX_CLAIMLESS_STEPS; step += 1) {
+      const at = before?.at ?? "";
+      const window = [at, at, at, before?.receipt_id ?? ""] as const;
+      const bound = db.query<{ subject: string }, [string, string, string, string, string, string]>(
+        `SELECT c.subject AS subject FROM canon_receipts r
+           JOIN claims c ON c.claim_id = json_extract(r.claim_ids, '$[0]')
+          WHERE r.page_path = ? AND r.after_hash = ? AND c.subject IS NOT NULL
+            AND (? = '' OR r.at < ? OR (r.at = ? AND r.receipt_id < ?))
+          ORDER BY r.at DESC, r.receipt_id DESC LIMIT 1`,
+      ).get(relPath, contentHash, ...window);
+      if (bound !== null) return bound.subject;
+      const claimless = db.query<{ receipt_id: string; at: string; before_hash: string }, [string, string, string, string, string, string]>(
+        `SELECT receipt_id, at, before_hash FROM canon_receipts r
+          WHERE r.page_path = ? AND r.after_hash = ? AND r.receipt_kind = 'write'
+            AND json_array_length(r.claim_ids) = 0 AND r.before_hash IS NOT NULL
+            AND (? = '' OR r.at < ? OR (r.at = ? AND r.receipt_id < ?))
+          ORDER BY r.at DESC, r.receipt_id DESC LIMIT 1`,
+      ).get(relPath, contentHash, ...window);
+      if (claimless === null) break;
+      contentHash = claimless.before_hash;
+      before = claimless;
+    }
   }
   const raw = data["x-subject-id"];
   return typeof raw === "string" && raw.length > 0 ? raw : null;
