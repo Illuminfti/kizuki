@@ -215,6 +215,17 @@ export function beginCapacityInventory(vault: string): CapacityInventory | null 
   catch { return null; }
 }
 
+/**
+ * Closes every cached inventory and its notification descriptor. The descriptors
+ * belong to the process, not to this module instance: a host that evaluates the
+ * module again in the same process (bun test --isolate) must call this first or
+ * the previous instance's descriptors stay open with no way to reach them.
+ */
+export function closeCapacityInventories(): void {
+  for (const inventory of inventories.values()) inventory.close();
+  inventories.clear();
+}
+
 export function currentCapacityBound(vault: string): CapacityBound | null {
   const key = resolve(vault), inventory = inventories.get(key);
   if (inventory === undefined) return null;

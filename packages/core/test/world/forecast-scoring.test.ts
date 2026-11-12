@@ -8,7 +8,7 @@ import { validateForecastJournal } from "../../src/world/forecast/validate";
 import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
 import { enrollSource } from "../helpers/world-seed";
-import { literal,vocabulary } from "../helpers/situation-v2-fixture";
+import { literal,vocabulary,SITUATION_REVIEW_DUE } from "../helpers/situation-v2-fixture";
 import { cardFixture } from "./card-fixture";
 import type { SituationCardV2 } from "../../src/contracts/situation-card-v2";
 import type { ForecastScores } from "../../src/contracts/forecast";
@@ -22,7 +22,7 @@ test("twenty actually observed frozen predictions open the reporting gate; Brier
    const subject=`commitment:score-${i}`;
    await f.write("world.kind",vocabulary("world/commitment"),{subject});
    await f.write("commitment.label",literal(`Item ${i}`),{subject});
-   await f.write("commitment.due",literal("2026-10-24"),{subject});
+   await f.write("commitment.due",literal(SITUATION_REVIEW_DUE),{subject});
    await f.write("commitment.deliverable",literal("reviewed"),{subject});
    await f.write("situation.has_commitment",{kind:"subject",ref:f.ref(subject)},{subject:"project:forecasts"});
   }

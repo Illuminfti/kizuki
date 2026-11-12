@@ -1,9 +1,9 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { dlopen, FFIType, toArrayBuffer } from "bun:ffi";
-import { closeSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { closeSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { requireCanonWriteCapacity } from "../../src/canon/capacity";
-import { currentCapacityBound } from "../../src/vault/capacity-inventory";
+import { closeCapacityInventories, currentCapacityBound } from "../../src/vault/capacity-inventory";
 import { parseFrontmatter, serializePage } from "../../src/vault/frontmatter";
 import * as pages from "../../src/vault/pages";
 import { tempVault } from "../helpers/vault";
@@ -133,4 +133,24 @@ test("the process cache evicts old vaults without changing exact fallback behavi
   expect(currentCapacityBound(first)).toBeNull();
   expect(() => requireCanonWriteCapacity(first, true, 1, 100)).not.toThrow();
   expect(currentCapacityBound(first)).not.toBeNull();
+});
+
+function notificationDescriptors(): number {
+  return readdirSync("/proc/self/fd").filter(fd => {
+    try { return readlinkSync(`/proc/self/fd/${fd}`) === "anon_inode:inotify"; } catch { return false; }
+  }).length;
+}
+
+test("closing the process cache releases every notification descriptor it opened", () => {
+  closeCapacityInventories();
+  const before = notificationDescriptors();
+  const vaults = [fixture(), fixture(), fixture()];
+  for (const vault of vaults) seed(vault);
+  expect(notificationDescriptors()).toBe(before + vaults.length);
+  closeCapacityInventories();
+  expect(notificationDescriptors()).toBe(before);
+  for (const vault of vaults) expect(currentCapacityBound(vault)).toBeNull();
+  // A later full walk establishes a fresh bound.
+  expect(seed(vaults[0]!).files).toBe(1);
+  expect(notificationDescriptors()).toBe(before + 1);
 });

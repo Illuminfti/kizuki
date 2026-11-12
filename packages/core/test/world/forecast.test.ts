@@ -14,7 +14,7 @@ import { inspectSourceGrant,setSourceGrant,revokeSourceGrant } from "../../src/l
 import { purgeEvents } from "../../src/ledger/purge";
 import { validEvent } from "../fixtures";
 import { enrollSource } from "../helpers/world-seed";
-import { situationV2Fixture,literal,vocabulary } from "../helpers/situation-v2-fixture";
+import { situationV2Fixture,literal,vocabulary,SITUATION_REVIEW_DUE,SITUATION_REVIEW_DAY_AFTER,SITUATION_REVIEW_CONFLICT } from "../helpers/situation-v2-fixture";
 import type { Forecast } from "../../src/contracts/forecast";
 import { serveCorrect } from "../../src/serving/correct";
 import { undoReceipt } from "../../src/canon/undo";
@@ -37,7 +37,7 @@ function assertJournalRestore(f:{db:ReturnType<typeof openLedger>;ctx:{vaultPath
 async function fixture(){
  const purposes=["capture","derive","recall","correction","export","session"] as const;
  const f=await situationV2Fixture(undefined,{purposes});
- const commitment=(ctx=f.ctx)=>f.readSituation(ctx).commitments.find(c=>c.due.some(r=>r.object.kind==="literal"&&r.object.value==="2026-10-24"))!.commitment;
+ const commitment=(ctx=f.ctx)=>f.readSituation(ctx).commitments.find(c=>c.due.some(r=>r.object.kind==="literal"&&r.object.value===SITUATION_REVIEW_DUE))!.commitment;
  await f.write("commitment.deliverable",literal("required fields reviewed"),{subject:"commitment:review"});
  const actors=["reporter","observer","reviewer"].map(name=>{
    const agent=addAgent(f.db,`forecast-${name}`,OWNER_AGENT_GRANT),connector=`forecast.${name}`;
@@ -130,20 +130,20 @@ for(const loss of ["revoke","purge"] as const)test(`hidden resolution ${loss} ch
 test("a supported later prerequisite selects 0.25; attributed deadlines and conflicts abstain",async()=>{
  const f=await fixture();try{
   await f.declare("commitment:dependency","commitment","Dependency");
-  await f.write("commitment.due",literal("2026-10-25"),{subject:"commitment:dependency"});
+  await f.write("commitment.due",literal(SITUATION_REVIEW_DAY_AFTER),{subject:"commitment:dependency"});
   await f.write("situation.requires",{kind:"subject",ref:f.ref("commitment:dependency")},{subject:"project:launch"});
   await f.run();expect(f.read().records[0]!.probability).toBe(0.25);validateForecastJournal(f.db);
   // Notes has two attributed deadlines; neither becomes an objective forecast.
   expect(f.db.query("SELECT 1 FROM world_forecasts f JOIN semantic_bindings h ON h.handle_id=f.handle_id WHERE h.raw_id='commitment:notes'").get()).toBeNull();
   const count=f.db.query<{n:number},[]>("SELECT count(*) n FROM world_forecasts").get()!.n;
-  await f.write("commitment.due",literal("2026-10-26"),{subject:"commitment:review"});await f.run();
+  await f.write("commitment.due",literal(SITUATION_REVIEW_CONFLICT),{subject:"commitment:review"});await f.run();
   expect(f.db.query<{n:number},[]>("SELECT count(*) n FROM world_forecasts").get()!.n).toBe(count);
  }finally{f.dispose();}
 },120_000);
 
 test("hypothetical deadlines remain analysis and never enter score counts or ordinary current facts",async()=>{
  const f=await fixture();try{
-  await f.write("commitment.due",literal("2026-10-27"),{subject:"commitment:review",mode:"hypothetical"});await f.run();
+  await f.write("commitment.due",literal(SITUATION_REVIEW_DAY_AFTER),{subject:"commitment:review",mode:"hypothetical"});await f.run();
   expect(f.read().records.filter(r=>r.class==="analysis")).toHaveLength(1);
   expect(f.read().records.filter(r=>r.class==="prediction")).toHaveLength(1);
   const card=f.readSituation();expect(JSON.stringify(card)).not.toContain("deterministic_dependency");
@@ -170,11 +170,12 @@ test("source completion cannot resolve a forecast; native receipted completion c
 
 for(const result of ["met","not_met"] as const)test(`late independent ${result} resolves inspection but cannot prove completion by the frozen deadline`,async()=>{
  const f=await fixture();try{
+  const observed=`${SITUATION_REVIEW_DAY_AFTER}T01:00:00.000Z`,at=`${SITUATION_REVIEW_DAY_AFTER}T02:00:00.000Z`;
   await f.file(0,"outcome.self_report","met");await f.run();
-  await f.file(1,"outcome.observation",result,{},"public","2026-10-25T01:00:00.000Z");await f.run("2026-10-25T02:00:00.000Z");
+  await f.file(1,"outcome.observation",result,{},"public",observed);await f.run(at);
   expect(f.read().records.find(r=>r.question==="commitment_met_by_due")!.status).toBe("unresolved");
   expect(f.read().records.find(r=>r.question==="next_independent_inspection_meets_criterion")!.status).toBe(result==="met"?"resolved_met":"resolved_not_met");
-  expect(Date.parse(f.db.query<{resolved_at:string},[]>("SELECT resolved_at FROM world_forecast_resolutions").get()!.resolved_at)).toBe(Date.parse("2026-10-25T01:00:00.000Z"));
+  expect(Date.parse(f.db.query<{resolved_at:string},[]>("SELECT resolved_at FROM world_forecast_resolutions").get()!.resolved_at)).toBe(Date.parse(observed));
   validateForecastJournal(f.db);
  }finally{f.dispose();}
 },120_000);
