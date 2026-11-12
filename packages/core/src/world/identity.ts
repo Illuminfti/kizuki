@@ -83,9 +83,11 @@ export function identityCluster(frame: ReadFrame, anchor: string, joining?: stri
   const support = knownSupportSql(frame.ctx, cutoff), claim = authorizedClaimSql(frame.ctx),
     time = knownValidSql(frame.valid, cutoff), held = knownHeldSql(frame.ctx, "base", cutoff),
     left = classificationSql(frame, "l"), right = classificationSql(frame, "r");
+  // CROSS JOIN keeps the semantics table outermost, where its predicate index
+  // finds the few identity assertions; led by claims, every live claim is read.
   const query = frame.ctx.db.query<Edge, (string | number)[]>(`
     SELECT c.claim_id,l.handle_id AS left,r.handle_id AS right
-    FROM claim_v2_semantics c JOIN claims base USING(claim_id)
+    FROM claim_v2_semantics c CROSS JOIN claims base USING(claim_id)
     JOIN semantic_bindings l ON l.raw_kind=c.subject_kind AND l.raw_id=c.subject_id
       AND l.raw_namespace=coalesce(json_extract(c.payload,'$.subject.namespace'),'')
     JOIN semantic_bindings r ON r.raw_kind=json_extract(c.payload,'$.object.ref.kind')
