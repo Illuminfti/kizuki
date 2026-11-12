@@ -221,6 +221,7 @@ function searchPlan(
   offset?: number,
   canonIds?: readonly string[],
   canonPaths?: readonly string[],
+  windows = 1,
 ): SearchPlan {
   const ftsQuery = toFtsQuery(validQueryText(query));
   const degraded: string[] = [];
@@ -386,7 +387,7 @@ function searchPlan(
     relaxed === null ? ftsQuery : relaxed.fts,
     ...bindings,
     ...orderBindings,
-    limit,
+    limit * windows,
     ...(skip === 0 ? [] : [skip]),
   ];
   return {
@@ -441,6 +442,9 @@ export function searchResult(
 /** An identity, plus the share of the query's terms it holds when the query was relaxed. */
 export type AuditCandidate = Pick<SearchHit, "doc_id" | "scope"> & { coverage?: number };
 
+/** Bounds one audit statement to the owner's withheld scan: five windows of the retrieval limit. */
+const MAX_AUDIT_WINDOWS = 5;
+
 /** Internal audit identities only. Deliberately excluded from public exports. */
 export function searchAuditCandidates(
   db: Database,
@@ -455,9 +459,17 @@ export function searchAuditCandidates(
     offset?: number;
     /** Serving admits live provenance before matching, limiting and ranking. */
     canonIds?: readonly string[];
+    /**
+     * Consecutive ranked windows of `limit` read in one statement, as the
+     * windows `offset` would page through, so one snapshot ranks them all.
+     */
+    windows?: number;
   },
 ): { candidates: AuditCandidate[]; degraded: string[] } {
-  const { source, offset, canonIds, canonPaths, ceiling, ...rest } = opts;
+  const { source, offset, canonIds, canonPaths, ceiling, windows, ...rest } = opts;
+  if (windows !== undefined && (!Number.isInteger(windows) || windows < 1 || windows > MAX_AUDIT_WINDOWS)) {
+    throw new RangeError(`search windows must be an integer between 1 and ${MAX_AUDIT_WINDOWS}`);
+  }
   const plan = searchPlan(
     db,
     query,
@@ -467,6 +479,7 @@ export function searchAuditCandidates(
     offset,
     canonIds,
     canonPaths,
+    windows,
   );
   const candidates = plan.tail === null ? [] : db
     .query<AuditCandidate, (string | number)[]>(

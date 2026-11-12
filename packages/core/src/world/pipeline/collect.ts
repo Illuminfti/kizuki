@@ -87,12 +87,14 @@ const claimsAboutMembers: Collector = (frame, cluster) => {
     claim = authorizedClaimSql(frame.ctx),
     time = knownValidSql(frame.valid, frame.cutoff.kind === "current" ? undefined : frame.cutoff);
   const held = knownHeldSql(frame.ctx, "base", frame.cutoff.kind === "current" ? undefined : frame.cutoff);
+  // CROSS JOIN keeps the semantics table outermost, so the subject and object
+  // indexes find a member's assertions instead of every live claim being read.
   const candidates = frame.ctx.db.query<
     Binding & { claim_id: string; predicate: string },
     (string | number)[]
   >(`SELECT c.claim_id,c.predicate,c.subject_kind AS raw_kind,c.subject_id AS raw_id,
     coalesce(json_extract(payload,'$.subject.namespace'),'') AS raw_namespace
-    FROM claim_v2_semantics c JOIN claims base USING(claim_id)
+    FROM claim_v2_semantics c CROSS JOIN claims base USING(claim_id)
     WHERE discriminator='assertion' AND ${claimVisibleSql(frame, "base")} AND ${claim.sql} AND ${time.sql} AND
     ((subject_kind=? AND subject_id=? AND coalesce(json_extract(payload,'$.subject.namespace'),'')=?) OR (json_extract(payload,'$.object.ref.kind')=? AND json_extract(payload,'$.object.ref.id')=? AND coalesce(json_extract(payload,'$.object.ref.namespace'),'')=?))
     AND EXISTS(SELECT 1 FROM claim_v2_support s WHERE s.claim_id=c.claim_id AND ${permitted.sql}) AND NOT ${held.sql}
@@ -250,9 +252,11 @@ export function scanMatches(
     bindings: [filter.predicate, filter.object.kind, filter.object.id, rawSubjectNamespace(filter.object),
       ...claim.bindings, ...time.bindings, ...permitted.bindings, ...held.bindings],
   };
-  const joins = `FROM semantic_bindings b JOIN claim_v2_semantics c
+  // Fixed join order: handles in id order, then their assertions by index,
+  // then the claim row. Led by claims, the planner reads every live claim.
+  const joins = `FROM semantic_bindings b CROSS JOIN claim_v2_semantics c
     ON c.subject_kind=b.raw_kind AND c.subject_id=b.raw_id AND coalesce(json_extract(c.payload,'$.subject.namespace'),'')=b.raw_namespace
-    JOIN claims base ON base.claim_id=c.claim_id`;
+    CROSS JOIN claims base ON base.claim_id=c.claim_id`;
   const classification = `c.discriminator='assertion' AND c.predicate='world.kind'
     AND c.polarity='positive' AND json_extract(c.payload,'$.perspective.mode')='asserted'
     AND json_extract(c.payload,'$.object.kind')='vocabulary' AND json_extract(c.payload,'$.object.ref.id')=?
