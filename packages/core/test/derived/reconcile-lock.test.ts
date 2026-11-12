@@ -10,6 +10,7 @@ import { openLedger } from "../../src/ledger/db";
 import { accept, readSince } from "../../src/ledger/ledger";
 import { indexEvents, removeCanonPath } from "../../src/search/indexer";
 import { serveGraph } from "../../src/serving/graph";
+import { serveContextPacket } from "../../src/serving/packet";
 import { serveSearch } from "../../src/serving/search";
 import { validEvent } from "../fixtures";
 import { GRAPH_REGISTRY_SQL, STORED_ROWS_SQL, foreignPage, foreignWriter, reconcileFixture, underForeignWriteLock, watchingQueries } from "./reconcile-fixture";
@@ -244,6 +245,51 @@ test("a capture is stamped by one comparison while served calls are audited, and
   // The stamps are what the plan verified, so the next refresh skips, and a pass forced to compare agrees.
   expect(atEachPlan(f.db, () => {}, refresh)).toEqual({ result: false, plans: 0 });
   expect(underForeignWriteLock(f.db, f.other(), () => reconcileDerivedPages(f.db, f.vault))).toBe(false);
+});
+
+test("a pass that wrote rows is compared again by the next refresh, which repairs what its write guard could not see", async () => {
+  const f = await reconcileFixture(cleanup);
+  let now = Date.now() + 5_000;
+  const refresh = () => reconcileDerivedPagesWhenChanged(f.db, f.vault, now += 300_000);
+  settle(refresh);
+  const projected = body(f.db, "facts/tea.md");
+  // Something to write that touches no page row: an edge has left the graph.
+  f.db.query("DELETE FROM graph_edges WHERE kind='wikilink' AND src='fact:kettle'").run();
+  expect(linksTo(f.db, "Cup")).toEqual(["fact:tea"]);
+  const writer = f.other();
+  // Another connection changes a stored row in place after the plan read it. No row count, rowid or state table
+  // moves, so the guard lets the plan through and the row stays as changed.
+  const wrote = atEachPlan(f.db, () => { writer.query("UPDATE search_documents SET body='changed in place' WHERE path='facts/tea.md'").run(); }, refresh);
+  expect(wrote).toEqual({ result: true, plans: 1 });
+  expect(linksTo(f.db, "Cup")).toEqual(["fact:kettle", "fact:tea"]);
+  expect(body(f.db, "facts/tea.md")).toBe("changed in place");
+  // The pass wrote rows, so it left nothing verified: the next refresh compares again and restores the row.
+  expect(atEachPlan(f.db, () => {}, refresh)).toEqual({ result: true, plans: 1 });
+  expect(body(f.db, "facts/tea.md")).toBe(projected);
+  settle(refresh);
+});
+
+test("a served search, graph read and context packet run no pass and write only their audit rows", async () => {
+  const f = await reconcileFixture(cleanup);
+  for (let pass = 0; pass < 2; pass += 1) reconcileDerivedPages(f.db, f.vault);
+  const serving = f.other(5_000);
+  const owner = { db: serving, vaultPath: f.vault, principal: OWNER };
+  const derived = () => JSON.stringify(["search_documents", "graph_edges", "derived_meta"].map(table => f.db.query(`SELECT * FROM ${table} ORDER BY 1, 2, 3`).all()));
+  const before = { derived: derived(), audits: audits(f.db) };
+  let compared = 0;
+  const query = serving.query.bind(serving);
+  serving.query = ((sql: string) => { if (sql.includes(STORED_ROWS_SQL)) compared += 1; return query(sql); }) as typeof serving.query;
+  try {
+    expect((await serveSearch(owner, { query: "tea" })).canon.map(chunk => chunk.path)).toEqual(["facts/tea.md"]);
+    expect((await serveGraph(owner, { id: "fact:tea" })).data?.edges.map(edge => edge.dst)).toContain("Cup");
+    await serveContextPacket(owner, { purpose: "session", budget_tokens: 2000 });
+    expect(compared).toBe(0);
+    // The counter does see the comparison when a pass runs on this connection.
+    reconcileDerivedPages(serving, f.vault);
+    expect(compared).toBe(1);
+  } finally { serving.query = query; }
+  expect(derived()).toBe(before.derived);
+  expect(audits(f.db)).toBe(before.audits + 3);
 });
 
 test("an audit reservation waits out a writer that holds the ledger longer than one busy wait", async () => {
