@@ -122,8 +122,8 @@ test("the ordinary sync default still extracts; no-model default still leaves ca
 test("ordinary typed and legacy failure bookkeeping quarantines without replacing evidence or retrying a model", async () => {
   const f = fixture();
   const events = Array.from({ length: 101 }, () => putEvent(f.db));
-  const legacy = await storeClaim(f.db, events[0]!, { kind: "entity", target: "topics/oversized", subject: "topic:oversized", subjects: ["topic:oversized"], predicate: null, object: null,
-    frontmatter: { type: "topic", title: "Oversized evidence" }, provenance: events, events: events.map(id => eventFacts(id)) });
+  const legacy = await storeClaim(f.db, events[0]!, { kind: "entity", target: "topics/unwritable", subject: "topic:unwritable", subjects: ["topic:unwritable"], predicate: null, object: null,
+    frontmatter: { type: "not-a-page-type", title: "Unwritable evidence" }, provenance: events, events: events.map(id => eventFacts(id)) });
   const world = await worldFixture(f.db);
   const handle = worldClaimHandle(f.db, world.claims[0]!)!, path = worldCanonPath(handle);
   mkdirSync(dirname(join(f.vault, path)), { recursive: true });

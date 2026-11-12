@@ -2,7 +2,7 @@ import { BudgetExhausted, type BudgetTracker } from "../canon/budget";
 import { reciteCanonPageOwned } from "../canon/apply";
 import { pagesCitingEndedVersions } from "../canon/citations";
 import { snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
-import type { CanonIo } from "../canon/store";
+import type { CanonIo } from "../canon";
 import { inspectCanonRecovery } from "../canon/write-intent";
 import { VaultMutationError } from "../vault/mutation-scope";
 import { redactReceiptError } from "../util/receipt-redaction";

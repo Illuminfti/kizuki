@@ -37,11 +37,12 @@ export function citedSources(
   }
   const priorIds = prior.map(eventIdFromReference);
   const livePrior = liveEventIds(db, priorIds);
-  // Purged evidence is the purge pipeline's to rewrite. Only a version that a
-  // tombstone ended, still in the ledger, can leave a page here.
+  // Purged evidence is the purge pipeline's to rewrite, and a tombstone is the
+  // deletion's own evidence. Only a version that a tombstone ended, still in
+  // the ledger, can leave a page here.
   const stored = new Set(
     db.query<{ event_id: string }, [string]>(
-      "SELECT event_id FROM events WHERE event_id IN (SELECT value FROM json_each(?))",
+      "SELECT event_id FROM events WHERE deleted = 0 AND event_id IN (SELECT value FROM json_each(?))",
     ).all(JSON.stringify(priorIds)).map((row) => row.event_id),
   );
   for (const id of prior) if (!stored.has(eventIdFromReference(id))) chosen.add(id);
