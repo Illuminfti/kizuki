@@ -19,6 +19,7 @@ import { commitMachineByteIntent, requireExternalEvents } from "../ledger/event-
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding, SourceTombstoneError } from "./source-tombstone";
 import { subjectPageType } from "../vault/subject-type";
 import { CanonAuthorityResolver } from "./authority";
+import { citedSources, recitedSources } from "./citations";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { Sensitivity } from "../agents/types";
@@ -36,7 +37,7 @@ import { eventIdFromReference } from "../retrieval/ids";
 import { refreshDerivedPage, removeDerivedPage } from "../derived";
 import type { VaultPage } from "../vault/frontmatter";
 import type { CanonPage } from "../vault/pages";
-import { PAGE_TYPES, validatePage } from "../vault/schema";
+import { MAX_FRONTMATTER_ARRAY_ITEMS, PAGE_TYPES, validatePage } from "../vault/schema";
 import { grantCanonWrite, isWriter, writePage } from "../vault/write";
 import type { Writer } from "../vault/write";
 import { assertPageRelPath, assertReceiptPaths, assertStoredPageRelPath } from "./paths";
@@ -54,6 +55,7 @@ import {
   insertReceiptRow,
   mintId,
   nowOf,
+  pageIndexByPath,
   readPage,
   upsertPageIndex,
 } from "./store";
@@ -337,7 +339,7 @@ function prepareRevision(
 
   let body: string;
   let taint: ClaimTaint = incomingTaint;
-  const sources: string[] = union([prior, provenance]);
+  let sources: string[] = union([prior, provenance]);
   let action: PageAction = "edit";
 
   switch (primary.kind) {
@@ -353,6 +355,11 @@ function prepareRevision(
       taint = priorTaint;
       data["status"] = "archived";
       action = "archive";
+      // A full page must still take the deletion's tombstone: drop only
+      // corroborating citations, never the last one from any source.
+      if (sources.length > MAX_FRONTMATTER_ARRAY_ITEMS) {
+        sources = citedSources(io.db, claims, prior, liveClaimsOnPage(io, existing.relPath, new Set()));
+      }
       break;
     case "purge_review":
       throw new CanonWriteError("claim_kind_retired", "purge_review cannot authorize an ordinary canon write");
@@ -363,6 +370,8 @@ function prepareRevision(
       ]);
       const retained = liveClaimsOnPage(io, existing.relPath, exclude);
       body = composeBody([...retained, ...claims]);
+      // The body is recomposed from these claims, so they decide what it cites.
+      sources = citedSources(io.db, claims, prior, retained);
       taint = [...retained, ...claims].some((claim) => claim.taint === "quoted") ? "quoted" : "clean";
       break;
     }
@@ -465,7 +474,7 @@ export function applyCanonWriteOwned(
   initCanon(io.db);
   const ownedClaims=typed?claims.filter(item=>item.receipt_id===null):persisted;
   const outputProvenance = union(claims.map((item) => item.provenance));
-  const provenance = typed ? union([outputProvenance, ...(existing === null ? [] : [existingSources(existing.page)])]) : outputProvenance;
+  const provenance = typed ? union([outputProvenance, ...(existing === null ? [] : [existingSources(existing.page)])]) : citedSources(io.db, claims);
   let worldBasis: WorldCanonBasis | null = null;
   let worldPriorId: string | null = null;
   if (typed && materialization !== null) {
@@ -579,6 +588,77 @@ export function applyCanonWriteOwned(
       subject_key: primary.subject ?? (typeof priorSubject === "string" ? priorSubject : null), original_receipt_id: null },
   }, admit, () => chargeCanonWrite(io, opts.budget, {
     receipt_id: receiptId, page_path: target.rel_path, before_hash: existing?.hash ?? null, at: receipt.at,
+  }));
+}
+
+/**
+ * Rewrites only the `sources` of an active page that still cites an event
+ * version a source tombstone ended, once every live claim on it has live
+ * evidence (see `recitedSources`). Body and other fields stay, no claim
+ * changes, and the write is an ordinary receipted loop write. Null when the
+ * page needs nothing.
+ */
+export function reciteCanonPageOwned(
+  scope: VaultMutationScope,
+  io: CanonIo,
+  relPath: string,
+  budget: BudgetTracker,
+): CanonReceipt | null {
+  if (io.db.inTransaction) recoveryFailure("nested_transaction");
+  io = snapshotCanonIo(io);
+  requireCanonFiles(scope, io);
+  if (readCanonWriteIntent(io.db) !== null) recoveryFailure("recovery_pending");
+  assertPageRelPath(relPath);
+  if (canonPageRecoveryPending(io.db, relPath)) return null;
+  // A pending deletion or retraction of this page wins, and an owner who
+  // undid a citation rewrite here has the last word.
+  if (io.db.query(`SELECT 1 FROM claims WHERE kind = 'deletion' AND status = 'live' AND receipt_id IS NULL AND target = ?
+      UNION ALL SELECT 1 FROM canon_receipts WHERE page_path = ? AND writer = 'loop' AND receipt_kind = 'write'
+        AND json_array_length(claim_ids) = 0 AND reverted_by IS NOT NULL LIMIT 1`).get(relPath.replace(/\.md$/, ""), relPath) !== null) return null;
+  const existing = readPage(io, relPath);
+  const indexed = pageIndexByPath(io.db, relPath);
+  if (existing === null || indexed === null || existing.hash !== indexed.last_hash ||
+      existing.page.data["status"] !== "active" || existing.page.data["id"] !== indexed.page_id) return null;
+  const resolver = new CanonAuthorityResolver(io.db, [relPath]);
+  if (resolver.basis(relPath, existing.hash) === null) return null;
+  const priorSensitivity = existing.page.data["sensitivity"];
+  if (!isSensitivity(priorSensitivity)) return null;
+  const retained = liveClaimsOnPage(io, relPath, new Set());
+  const sources = recitedSources(io.db, existingSources(existing.page), retained);
+  if (sources === null) return null;
+  const provenance = union([sources.map(eventIdFromReference)]);
+  const sensitivity = sourceSensitivity(io.db, provenance, priorSensitivity);
+  const page: VaultPage = { data: { ...existing.page.data, sources, sensitivity }, body: existing.page.body };
+  const invalid = validatePage(page.data);
+  if (invalid.length > 0) throw new CanonWriteError("frontmatter_invalid", invalid[0] ?? "invalid page");
+  const after = Buffer.from(serializePage(page));
+  const receiptId = mintId(io);
+  const admit = (): void => {
+    assertPositiveAuthorityMutationAllowed(io.db);
+    persistedClaims(io, retained, true);
+    assertProvenance(io, provenance);
+    requireSourceEvents(io.db, provenance, { owner: true, purpose: "derive" });
+    requireExternalEvents(io.db, provenance);
+    if (sourceSensitivity(io.db, provenance, priorSensitivity) !== sensitivity) {
+      throw new CanonWriteError("decision_stale", "source sensitivity changed before byte admission");
+    }
+    if (new CanonAuthorityResolver(io.db, [relPath]).basis(relPath, existing.hash) === null) recoveryFailure("historical_orphan");
+  };
+  const receipt: CanonReceipt = {
+    receipt_id: receiptId, kind: "write", claim_ids: [], page_path: relPath, page_action: "edit",
+    before_hash: existing.hash, after_hash: hashBytes(after), archive_path: archiveRelPath(relPath, receiptId),
+    writer: "loop", producer: "deterministic", model_ref: null,
+    authority: resolver.resolve(relPath, existing.hash), confidence: meanConfidence(retained),
+    sensitivity, taint: existing.page.data["taint"] === "quoted" ? "quoted" : "clean", provenance,
+    superseded: [], candidates: [],
+    retrieval_ops: io.retrieval_store === undefined ? [] : [{ store: io.retrieval_store, op: "upsert", doc: `page:${indexed.page_id}` }],
+    reverts: null, reverted_by: null, at: nowOf(io),
+  };
+  return commitCanonWrite(scope, io, {
+    receipt, before: Buffer.from(existing.content), after,
+    completion: { mode: "write", claim_kind: "edit", page_id: indexed.page_id, subject_key: indexed.subject_key, original_receipt_id: null },
+  }, admit, () => chargeCanonWrite(io, budget, {
+    receipt_id: receiptId, page_path: relPath, before_hash: existing.hash, at: receipt.at,
   }));
 }
 

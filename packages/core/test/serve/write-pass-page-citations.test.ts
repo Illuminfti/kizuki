@@ -1,0 +1,268 @@
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { citedSources, pagesCitingEndedVersions, recitedSources } from "../../src/canon/citations";
+import { createBudgetTracker } from "../../src/canon/budget";
+import { reciteEndedSources } from "../../src/serve/recite-pass";
+import { rebuildPageIndex } from "../../src/canon/store";
+import { undoReceipt } from "../../src/canon/undo";
+import { getClaim } from "../../src/claims/store";
+import type { Claim } from "../../src/contracts/proposal";
+import type { CaptureEventInput } from "../../src/contracts/event";
+import type { ProducerPort } from "../../src/contracts/producer";
+import { derivedPageSkips } from "../../src/derived-health";
+import { runBatch } from "../../src/ingest/run";
+import { openLedger } from "../../src/ledger/db";
+import { runRail } from "../../src/serve/rails";
+import { parseFrontmatter } from "../../src/vault/frontmatter";
+import { initVault } from "../../src/vault/init";
+import { listCanonPagesReport } from "../../src/vault/pages";
+import { MAX_FRONTMATTER_ARRAY_ITEMS } from "../../src/vault/schema";
+import { validEvent } from "../fixtures";
+
+/**
+ * What a legacy page cites once its claims carry more evidence than a page can
+ * name, or name evidence a source tombstone has ended. Every page here must
+ * be written and must stay admissible to the derived index.
+ */
+
+setDefaultTimeout(120_000);
+
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+const producer: ProducerPort = {
+  descriptor: {
+    id: "kizuki.producer.citations-test", kind: "producer", contract: "kizuki.producer/v1",
+    contract_minor: 1, supports: ["model"], requires_lease: false, optional_package: null,
+  },
+  health: async () => ({ status: "ready", detail: {} }),
+  close: async () => undefined,
+  produce: async () => ({ status: "ok", claims: [], usage: { calls: 1, input_tokens: 1, output_tokens: 1 } }),
+};
+
+function fixture() {
+  const root = mkdtempSync(join(tmpdir(), "kizuki-page-citations-"));
+  roots.push(root);
+  const path = join(root, "vault");
+  initVault(path);
+  const db = openLedger(join(path, ".kizuki", "kizuki.db"));
+  const ingest = (events: CaptureEventInput[]) => {
+    const result = runBatch(db, { events, cursor: null, has_more: false }, { page_candidates: false }, undefined, { vault_path: path });
+    expect(result.errors).toEqual([]);
+  };
+  // The sync rail, as the daemon runs it: the write pass, then the citation repair.
+  const pass = () => runRail(db, path, "sync", {
+    hooks: { producer, claims: { db }, model_ref: "kizuki.llm.synthetic:citations-test" },
+  });
+  const page = (relPath: string) => parseFrontmatter(readFileSync(join(path, relPath), "utf8")).data;
+  const skips = () => derivedPageSkips(db, listCanonPagesReport(path));
+  return { db, path, ingest, pass, page, skips };
+}
+
+const file = (revision: number): CaptureEventInput => ({
+  ...validEvent(), kind: "file", source_record_id: "notes.md",
+  text: `Synthetic note, revision ${revision}.`, metadata: { revision_epoch: revision },
+});
+
+test("a subject seen in more events than a page can cite still gets its page, citing a page's worth", async () => {
+  const { db, ingest, pass, page, skips } = fixture();
+  try {
+    const count = MAX_FRONTMATTER_ARRAY_ITEMS + 21;
+    ingest(Array.from({ length: count }, (_, index) => ({
+      ...validEvent(), source_record_id: `message-${index}`, text: `Synthetic message ${index}.`,
+    })));
+    const entity = db.query<{ claim_id: string }, []>("SELECT claim_id FROM claims WHERE kind='entity' AND status='live'").get()!;
+    expect(getClaim(db, entity.claim_id)!.provenance).toHaveLength(count);
+
+    const report = await pass();
+    expect(report.errors).toEqual([]);
+    const written = getClaim(db, entity.claim_id)!;
+    expect(written.receipt_id).not.toBeNull();
+    expect(written.provenance).toHaveLength(count);
+    const sources = page("auto/fixture/person/ada.md")["sources"] as string[];
+    expect(sources).toEqual(written.provenance.slice(0, MAX_FRONTMATTER_ARRAY_ITEMS));
+    expect(skips()).toEqual([]);
+  } finally { db.close(); }
+});
+
+test("a record revised more times than a page can cite keeps its page current", async () => {
+  const { db, ingest, pass, page, skips } = fixture();
+  try {
+    // The page starts one short of full: the subject's other evidence plus the first revision.
+    ingest([
+      ...Array.from({ length: MAX_FRONTMATTER_ARRAY_ITEMS - 2 }, (_, index) => ({
+        ...validEvent(), source_record_id: `message-${index}`, text: `Synthetic message ${index}.`,
+      })),
+      file(1),
+    ]);
+    expect((await pass()).errors).toEqual([]);
+    expect(page("auto/fixture/person/ada.md")["sources"]).toHaveLength(MAX_FRONTMATTER_ARRAY_ITEMS - 1);
+    for (let revision = 2; revision <= 5; revision += 1) {
+      ingest([file(revision)]);
+      expect((await pass()).errors).toEqual([]);
+    }
+    const data = page("auto/fixture/person/ada.md");
+    const sources = data["sources"] as string[];
+    expect(sources.length).toBeLessThanOrEqual(MAX_FRONTMATTER_ARRAY_ITEMS);
+    const latest = db.query<{ event_id: string }, []>(
+      "SELECT event_id FROM events WHERE source_record_id='notes.md' ORDER BY accepted_at DESC, event_id DESC LIMIT 1",
+    ).get()!;
+    expect(sources).toContain(latest.event_id);
+    expect(data["x-source-revision"]).toBe(5);
+    expect(db.query("SELECT 1 FROM claims WHERE status='live' AND receipt_id IS NULL").get()).toBeNull();
+    expect(skips()).toEqual([]);
+  } finally { db.close(); }
+});
+
+test("a page restored for a returned record stops citing the version its deletion ended", async () => {
+  const { db, ingest, pass, page, skips } = fixture();
+  try {
+    ingest([file(1)]);
+    expect((await pass()).errors).toEqual([]);
+    const ended = (page("auto/fixture/person/ada.md")["sources"] as string[])[0]!;
+
+    ingest([{ ...file(1), deleted: true, text: "Synthetic deletion." }]);
+    expect((await pass()).errors).toEqual([]);
+    expect(page("auto/fixture/person/ada.md")["status"]).toBe("archived");
+
+    ingest([file(2)]);
+    expect((await pass()).errors).toEqual([]);
+    const data = page("auto/fixture/person/ada.md");
+    expect(data["status"]).toBe("active");
+    expect(data["sources"]).not.toContain(ended);
+    expect(data["x-source-revision"]).toBe(2);
+    expect(skips()).toEqual([]);
+  } finally { db.close(); }
+});
+
+const message = (revision = 0): CaptureEventInput => ({
+  ...validEvent(), metadata: revision === 0 ? { thread: "t-9" } : { thread: "t-9", revision_epoch: revision },
+});
+
+test("a restored page that no write would touch is recited once its claims have live evidence again", async () => {
+  const { db, ingest, pass, page, skips } = fixture();
+  try {
+    ingest([message()]);
+    expect((await pass()).errors).toEqual([]);
+    const ended = (page("auto/fixture/person/ada.md")["sources"] as string[])[0]!;
+    ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
+    expect((await pass()).errors).toEqual([]);
+
+    // The returned message only corroborates the written entity claim: no claim write follows the restore.
+    ingest([message(2)]);
+    const restored = await pass();
+    expect(restored.errors).toEqual([]);
+    expect(restored.canon_writes).toBe(2);
+    const data = page("auto/fixture/person/ada.md");
+    expect(data["status"]).toBe("active");
+    expect(data["sources"]).not.toContain(ended);
+    expect((data["sources"] as string[]).length).toBe(1);
+    expect(skips()).toEqual([]);
+    const receipt = db.query<{ writer: string; claims: number }, []>(
+      "SELECT writer, json_array_length(claim_ids) AS claims FROM canon_receipts ORDER BY at DESC, receipt_id DESC LIMIT 1",
+    ).get()!;
+    expect(receipt).toEqual({ writer: "loop", claims: 0 });
+    // Only the deletion the restore undid is reverted; the recite reverts nothing.
+    expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE status='reverted' AND kind!='deletion'").get()!.n).toBe(0);
+
+    const again = await pass();
+    expect(again.errors).toEqual([]);
+    expect(again.canon_writes).toBe(0);
+    expect(pagesCitingEndedVersions(db)).toEqual(["auto/fixture/person/ada.md"]);
+  } finally { db.close(); }
+});
+
+test("a page whose claim rests only on an ended version is not recited", () => {
+  const { db, ingest } = fixture();
+  try {
+    ingest([message()]);
+    ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
+    const [ended] = db.query<{ event_id: string }, []>("SELECT event_id FROM events WHERE deleted=0").all().map(row => row.event_id);
+    const claim = { provenance: [ended!] } as unknown as Claim;
+    expect(recitedSources(db, [ended!], [claim])).toBeNull();
+    expect(recitedSources(db, [ended!], [])).toBeNull();
+    ingest([message(2)]);
+    const live = db.query<{ event_id: string }, [string]>("SELECT event_id FROM events WHERE deleted=0 AND event_id != ?").all(ended!)
+      .map(row => row.event_id);
+    expect(recitedSources(db, [ended!], [{ provenance: [ended!, ...live] } as unknown as Claim])).toEqual(live);
+  } finally { db.close(); }
+});
+
+test("a recited page keeps its connector-scoped subject through a page index rebuild", async () => {
+  const { db, path, ingest, pass } = fixture();
+  try {
+    const keys = () => db.query<{ rel_path: string; subject_key: string }, []>("SELECT rel_path, subject_key FROM page_index ORDER BY rel_path").all();
+    ingest([message()]);
+    await pass();
+    const before = keys();
+    // The connector-scoped subject, not the raw `person:ada` the page names.
+    const scoped = ["fixture", "person", "ada"].join("/");
+    expect(before.map((row) => row.subject_key)).toEqual([scoped]);
+    ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
+    await pass();
+    ingest([message(2)]);
+    expect((await pass()).canon_writes).toBe(2);
+    expect(db.query<{ n: number }, []>("SELECT json_array_length(claim_ids) AS n FROM canon_receipts ORDER BY at DESC, receipt_id DESC LIMIT 1").get()!.n).toBe(0);
+    rebuildPageIndex({ db, vault_path: path });
+    expect(keys()).toEqual(before);
+  } finally { db.close(); }
+});
+
+test("an owner undo of a citation rewrite is not rewritten again", async () => {
+  const { db, path, ingest, pass, page } = fixture();
+  try {
+    ingest([message()]);
+    await pass();
+    const ended = (page("auto/fixture/person/ada.md")["sources"] as string[])[0]!;
+    ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
+    await pass();
+    ingest([message(2)]);
+    expect((await pass()).canon_writes).toBe(2);
+    const recite = db.query<{ receipt_id: string }, []>("SELECT receipt_id FROM canon_receipts ORDER BY at DESC, receipt_id DESC LIMIT 1").get()!;
+    await undoReceipt({ db, vault_path: path }, recite.receipt_id);
+    expect(page("auto/fixture/person/ada.md")["sources"]).toContain(ended);
+    const after = await pass();
+    expect(after.errors).toEqual([]);
+    expect(after.canon_writes).toBe(0);
+    expect(page("auto/fixture/person/ada.md")["sources"]).toContain(ended);
+  } finally { db.close(); }
+});
+
+test("a version a deletion ended stays cited until its record comes back", () => {
+  const { db, ingest } = fixture();
+  try {
+    ingest([{ ...message(), source_record_id: "kept" }]);
+    ingest([message()]);
+    ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
+    const ids = (record: string) => db.query<{ event_id: string }, [string]>(
+      "SELECT event_id FROM events WHERE source_record_id=? AND deleted=0 ORDER BY accepted_at, event_id").all(record).map(row => row.event_id);
+    const [ended] = ids("rec-1"), [kept] = ids("kept");
+    const claim = { provenance: [ended!, kept!] } as unknown as Claim;
+    // Deleted and not back: a revision keeps citing it, so the pending deletion still binds.
+    expect(citedSources(db, [], [ended!, kept!], [claim])).toEqual([ended!, kept!]);
+    ingest([message(2)]);
+    // Back again: the ended version may go.
+    expect(citedSources(db, [], [ended!, kept!], [claim])).toEqual([kept!]);
+  } finally { db.close(); }
+});
+
+test("the citation repair leaves a page alone while its deletion is pending", async () => {
+  const { db, path, ingest, pass, page } = fixture();
+  try {
+    ingest([message()]);
+    await pass();
+    const ended = (page("auto/fixture/person/ada.md")["sources"] as string[])[0]!;
+    // The deletion is filed but not yet written, and the record has come back.
+    ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
+    ingest([message(2)]);
+    expect(db.query("SELECT 1 FROM claims WHERE kind='deletion' AND status='live' AND receipt_id IS NULL").get()).not.toBeNull();
+    expect(pagesCitingEndedVersions(db)).toEqual(["auto/fixture/person/ada.md"]);
+    const recited = await reciteEndedSources({ db, vault_path: path }, createBudgetTracker({ canon_writes_per_run: 16 }), 16);
+    expect(recited).toEqual({ canon_writes: 0, errors: [], stopped: null });
+    expect(page("auto/fixture/person/ada.md")["sources"]).toContain(ended);
+  } finally { db.close(); }
+});
