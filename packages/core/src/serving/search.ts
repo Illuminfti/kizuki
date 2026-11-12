@@ -335,13 +335,15 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
       }
       // Permission denials remain owner audit data, outside the visible rank window.
       if (ctx.principal.kind === "owner") {
+        // One statement ranks every window of the bounded scan.
+        const scanned = searchAuditCandidates(ctx.db, query, { ...base, limit: MAX_RETRIEVAL_LIMIT, source: rankedOpts.source, windows: WITHHELD_SCAN_BOUND / MAX_RETRIEVAL_LIMIT }).candidates;
         for (let skipped = 0; skipped < WITHHELD_SCAN_BOUND; skipped += MAX_RETRIEVAL_LIMIT) {
-          const sample = searchAuditCandidates(ctx.db, query, { ...base, limit: MAX_RETRIEVAL_LIMIT, source: rankedOpts.source, offset: skipped });
-          const denied = classify(ctx.db, index, narrowed, sample.candidates, seen, fullText, matcher?.matches).withheld;
+          const sample = scanned.slice(skipped, skipped + MAX_RETRIEVAL_LIMIT);
+          const denied = classify(ctx.db, index, narrowed, sample, seen, fullText, matcher?.matches).withheld;
           const room = SEARCH_WITHHELD_CAP - classified.withheld.length;
           if (room > 0) classified.withheld.push(...denied.slice(0, room));
-          if (sample.candidates.length < MAX_RETRIEVAL_LIMIT) break;
-          if (skipped + sample.candidates.length >= WITHHELD_SCAN_BOUND && classified.withheld.length > 0) degraded.add("scan-bound");
+          if (sample.length < MAX_RETRIEVAL_LIMIT) break;
+          if (skipped + sample.length >= WITHHELD_SCAN_BOUND && classified.withheld.length > 0) degraded.add("scan-bound");
         }
       }
       const canon = classified.canon.slice(0, rows).map(candidate => {

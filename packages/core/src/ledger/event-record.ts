@@ -116,8 +116,44 @@ export function eventFromRow(row: EventRow, db: Database, format: "legacy" | "cu
   };
   if (format === "legacy") return parseEventRecord(raw, "legacy");
   try {
-    return validateEventRecord(raw, {
-      accepted_at: row.accepted_at, native_request_digest: nativeRequestDigest(db, row.event_id),
-    });
+    const digest = nativeRequestDigest(db, row.event_id);
+    const known = validatedRows.get(row.event_id);
+    if (known !== undefined && known.digest === digest && EVENT_ROW_FIELDS.every(field => known.row[field] === row[field])) return { ...known.event };
+    const event = validateEventRecord(raw, { accepted_at: row.accepted_at, native_request_digest: digest });
+    rememberValidated(row, digest, event);
+    return event;
   } catch { throw new EventRecordError(); }
+}
+
+/**
+ * Validating a stored row is a pure function of every one of its columns and
+ * its native request digest: equal inputs give an equal event. A process
+ * remembers the event for each row it validated and hands back a copy only
+ * when every column and the digest compare equal, so any change to the row
+ * is validated again. The nested values of an event are frozen; the copy
+ * keeps the outer object as fresh as a new validation would.
+ */
+const EVENT_ROW_FIELDS = [
+  "event_id", "connector_id", "source_record_id", "kind", "occurred_at", "observed_at", "text", "subjects",
+  "sensitivity_hint", "deleted", "attachments", "metadata", "content_hash", "accepted_at", "content_hash_version",
+  "text_hash", "origin", "origin_binding_version", "origin_binding_kind", "origin_binding",
+] as const satisfies readonly (keyof EventRow)[];
+/** Holds one served call's source events on a large vault; the row's text is shared with the event, not copied. */
+const MAX_VALIDATED_CHARS = 64 * 1024 * 1024;
+const validatedRows = new Map<string, { row: EventRow; digest: string | null; event: CaptureEvent; chars: number }>();
+let validatedChars = 0;
+
+function rememberValidated(row: EventRow, digest: string | null, event: CaptureEvent): void {
+  const chars = row.text.length + row.subjects.length + row.attachments.length + row.metadata.length;
+  if (chars > MAX_VALIDATED_CHARS) return;
+  const replaced = validatedRows.get(row.event_id);
+  if (replaced !== undefined) { validatedRows.delete(row.event_id); validatedChars -= replaced.chars; }
+  for (const [id, oldest] of validatedRows) {
+    if (validatedChars + chars <= MAX_VALIDATED_CHARS) break;
+    validatedRows.delete(id); validatedChars -= oldest.chars;
+  }
+  const kept: Record<string, unknown> = {};
+  for (const field of EVENT_ROW_FIELDS) kept[field] = row[field];
+  validatedRows.set(row.event_id, { row: kept as unknown as EventRow, digest, event: { ...event }, chars });
+  validatedChars += chars;
 }
