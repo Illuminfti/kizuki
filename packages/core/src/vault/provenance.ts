@@ -71,15 +71,43 @@ export function assessLivePageEvidence(
   }
 }
 
-/** Local positive projections additionally require current derivation permission. */
-export function projectablePageEvidence(db: Database, pages: readonly CanonPage[]): Map<string, Extract<LivePageEvidence, { admitted: true }>> {
+/** One page's evidence, and whether its sources may currently be derived from. */
+export interface PageAssessment {
+  readonly evidence: LivePageEvidence;
+  readonly derivable: boolean;
+}
+
+/**
+ * Every page of one walk, assessed against one ledger state and keyed by its
+ * vault-relative path. The search, graph and health projections of a walk all
+ * ask these two questions of each page; a caller that assessed the walk once
+ * hands the answers to each of them instead of having each rebuild them. They
+ * hold only for those page bytes and that ledger state.
+ */
+export type WalkEvidence = ReadonlyMap<string, PageAssessment>;
+
+export function assessWalkEvidence(db: Database, pages: readonly CanonPage[]): Map<string, PageAssessment> {
   const resolver = new CanonAuthorityResolver(db, pages.map(page => page.relPath));
-  const admitted = new Map<string, Extract<LivePageEvidence, { admitted: true }>>();
+  const assessed = new Map<string, PageAssessment>();
   for (const page of pages) {
     const evidence = assessLivePageEvidence(db, page, resolver);
-    if (evidence.admitted && sourceEventsAllowed(db, evidence.sourceIds, { owner: true, purpose: "derive" })) {
-      admitted.set(page.relPath, evidence);
-    }
+    const derivable = evidence.admitted && sourceEventsAllowed(db, evidence.sourceIds, { owner: true, purpose: "derive" });
+    assessed.set(page.relPath, { evidence, derivable });
+  }
+  return assessed;
+}
+
+/** Local positive projections additionally require current derivation permission. */
+export function projectablePageEvidence(
+  db: Database,
+  pages: readonly CanonPage[],
+  assessed: WalkEvidence = assessWalkEvidence(db, pages),
+): Map<string, Extract<LivePageEvidence, { admitted: true }>> {
+  const admitted = new Map<string, Extract<LivePageEvidence, { admitted: true }>>();
+  for (const page of pages) {
+    // A page the walk did not assess has no evidence, so it does not project.
+    const assessment = assessed.get(page.relPath);
+    if (assessment?.evidence.admitted && assessment.derivable) admitted.set(page.relPath, assessment.evidence);
   }
   return admitted;
 }
