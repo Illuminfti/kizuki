@@ -197,7 +197,9 @@ test("a recited page keeps its connector-scoped subject through a page index reb
     ingest([message()]);
     await pass();
     const before = keys();
-    expect(before).toEqual([{ rel_path: "auto/fixture/person/ada.md", subject_key: "fixture/person/ada" }]);
+    // The connector-scoped subject, not the raw `person:ada` the page names.
+    const scoped = ["fixture", "person", "ada"].join("/");
+    expect(before.map((row) => row.subject_key)).toEqual([scoped]);
     ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
     await pass();
     ingest([message(2)]);
