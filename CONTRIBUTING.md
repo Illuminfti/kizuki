@@ -104,6 +104,12 @@ default is 5 seconds. A test that sets its own timeout keeps it. When you run
 `bun test` by hand on a busy machine, pass `--timeout 120000` too. The CLI test
 helper kills a child that has not exited after 90 seconds.
 
+Isolation gives each file fresh module instances inside the same worker
+process. Descriptors opened through FFI belong to the process and would outlive
+their file, so `bunfig.toml` preloads
+`packages/core/test/helpers/isolated-file-resources.ts`, which closes the
+capacity inventory's inotify descriptors when each file ends.
+
 CLI tests drive `packages/cli/src/main.ts` as a process against a temporary
 vault. Core tests cover rollback, replay, purge, and provenance. Do not weaken
 a test to hide a defect.
