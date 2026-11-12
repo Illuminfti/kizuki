@@ -22,6 +22,25 @@
 
 ### Fixed
 
+- A typed claim whose support is already admitted, in other words or with
+  another score, is a duplicate: the first admission keeps its rendering and
+  confidence and nothing is written. Before, the repeat was compared byte for
+  byte with the immutable admission, refused, and rolled the whole durable
+  decision back on every pass, which stopped all later extraction. Admissions
+  now compare by schema, complete semantic with anchor lists as sets,
+  grounding, authority and epistemic kind. A repeat that differs in one of
+  those is still refused, now for that claim alone: the receipt names the
+  support by key prefix with the differing fields, counts it under
+  `claims_rejected.support_admission_conflict`, and the rest of the decision
+  files. No stored admission is rewritten.
+- Two mentions an answer anchors on the same span no longer file onto one
+  subject under two names. The first mention a kept claim uses introduces the
+  subject; every claim through a later mention with another label is dropped
+  as `invalid_claim`. A mention repeated under the same label is the same
+  mention, and its repeated classification is one draft that counts in
+  `claims_deduped`. A decision journaled by an earlier build with both
+  mentions on one subject files what precedes the second classification and
+  refuses the rest under `claims_rejected.subject_classified_twice`.
 - Agent proposals and corrections compare and retire only readable claims, and
   unreadable canon pages remain untouched and unnamed. Search and entity labels
   match served redacted text; graph limits count authorized edges.
@@ -30,6 +49,16 @@
   retry times. Their full provenance remains intact; the 100-source page limit
   is unchanged, and quarantine does not count as a successful write.
 
+- The serve loop's `retrieval-sweep` no longer holds the ledger write lock while
+  it compares canon pages with the search index. It compares on a read
+  snapshot and takes the lock only to write a difference, after checking that
+  no page file or ledger input moved in between. It skips the comparison while
+  no page file, ledger table, hold or health stamp has changed, with a full
+  pass at least every 30 minutes. Before, a vault of about ten thousand pages
+  held the lock for most of every five-minute cycle, and audited reads from
+  other processes were refused with `busy`. An audit reservation now waits
+  through a short write within the existing bounded retry instead of refusing
+  after one busy wait.
 - World discovery and cards exclude held claims before their candidate bounds,
   so a held prefix cannot hide an eligible label or definition. Visible
   overflow still reports incomplete coverage.

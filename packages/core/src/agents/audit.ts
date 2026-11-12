@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { isPlainObject, utf8ByteLength } from "../util/validate";
 import { ulid } from "../util/ulid";
+import { runImmediate } from "../ledger/busy";
 import { sha256 } from "./hash";
 import { rfc3339Millis } from "./time";
 import {
@@ -537,7 +538,10 @@ export function reserveAudit(
   assertTool(tool);
   const stamped = new Date(rfc3339Millis(at, "at")).toISOString();
   const agentId = principal.kind === "owner" ? "owner" : principal.agent.agent_id;
-  return db.transaction(():
+  // The row is written before anything is served, so a short write by another
+  // connection is waited out, within the ledger's bounded busy retries,
+  // rather than refusing the call.
+  return runImmediate(db, ():
     | { allow: true; audit_id: string }
     | {
         allow: false;
@@ -581,7 +585,7 @@ export function reserveAudit(
         grantEpochOf(principal),
       ),
     };
-  }).immediate();
+  });
 }
 
 /**
