@@ -15,6 +15,10 @@ import { validEvent } from "./fixtures";
 import { recordedPage } from "./helpers/recorded-page";
 import { tempVault } from "./helpers/vault";
 import { worldSeed } from "./helpers/world-seed";
+import { setGrant } from "../src/agents";
+import { serveSearch } from "../src/serving/search";
+import type { ServeContext } from "../src/serving/types";
+import { page, serveFixture } from "./serving/helpers";
 
 describe("tableExists remembers the catalog per schema version", () => {
   test("agrees with the catalog for every kind of schema object", () => {
@@ -148,4 +152,51 @@ test("world reads never let the claims table lead their statements", async () =>
       expect([sql.slice(0, 120), base.map(step => step.detail)]).toEqual([sql.slice(0, 120), base.map(() => "SEARCH base USING INDEX sqlite_autoindex_claims_1 (claim_id=?)")]);
     }
   } finally { db.close(); vault.dispose(); }
+});
+
+describe("nothing proved for one read is served by the next once it changed", () => {
+  async function served(ctx: ServeContext): Promise<Map<string, string>> {
+    const envelope = await serveSearch(ctx, { query: "kettle" });
+    return new Map(envelope.canon.map(chunk => [chunk.page_id, chunk.excerpt]));
+  }
+
+  test("a page edited on disk between two reads", async () => {
+    const fixture = await serveFixture();
+    try {
+      const before = await served(fixture.owner());
+      expect(before.get("person:ada")).toContain("Ada keeps the kettle warm.");
+      page(fixture.vaultPath, "entities/person-ada.md", {
+        sources: [Object.values(fixture.events)[0]!], id: "person:ada", title: "Ada", type: "person",
+        status: "active", sensitivity: "public", taint: "clean", subjects: ["person:ada"],
+      }, "Ada keeps the kettle warm and an unrecorded kettle edit.");
+      const after = await served(fixture.owner());
+      expect(after.has("person:ada")).toBe(false);
+      expect(before.get("person:grace")).toContain("Grace reviews the kettle log.");
+      expect(after.get("person:grace")).toBe(before.get("person:grace")!);
+    } finally { fixture.dispose(); }
+  }, 60_000);
+
+  test("a page whose receipt was replaced between two reads", async () => {
+    const fixture = await serveFixture();
+    try {
+      expect((await served(fixture.owner())).get("person:grace")).toContain("Grace reviews the kettle log.");
+      // The recorded revision now names other bytes; the page on disk is unchanged.
+      fixture.db.query("UPDATE canon_receipts SET after_hash=? WHERE page_path=?").run("0".repeat(64), "entities/person-grace.md");
+      const after = await served(fixture.owner());
+      expect(after.has("person:grace")).toBe(false);
+      expect(after.get("person:ada")).toContain("Ada keeps the kettle warm.");
+    } finally { fixture.dispose(); }
+  }, 60_000);
+
+  test("a reader whose scope narrowed between two reads", async () => {
+    const fixture = await serveFixture();
+    try {
+      expect((await served(fixture.agent("reader-private"))).has("fact:kettle")).toBe(true);
+      setGrant(fixture.db, "reader-private", { ceiling: "public" });
+      const after = await served(fixture.agent("reader-private"));
+      expect(after.has("fact:kettle")).toBe(false);
+      expect(after.has("person:grace")).toBe(false);
+      expect(after.has("person:ada")).toBe(true);
+    } finally { fixture.dispose(); }
+  }, 60_000);
 });
