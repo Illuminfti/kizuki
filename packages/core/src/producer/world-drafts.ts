@@ -11,8 +11,10 @@ import {
   type RichClaimDraft,
   type TextAnchor,
 } from "../contracts/producer-v2";
+import { admissionIdentity } from "../claims/claim-v2-commit";
 import { mintOccurrenceId, type OccurrenceEventIdentity } from "../claims/occurrences";
 import type { InsertClaimInput } from "../claims/store";
+import { stricter } from "../sensitivity/resolve";
 import { scrubText } from "./scrub";
 import { guardClaim, literalGrounded, normalizedInstructionSpans } from "./world-guards";
 
@@ -30,6 +32,25 @@ export interface WorldDraftInsert extends InsertClaimInput {
   readonly world_admission: WorldAdmission;
 }
 
+/**
+ * The name a mention goes by when two mentions share a span. Canonical
+ * Unicode form (NFC), case and spacing aside, every character counts: a
+ * symbol, a mark or a punctuation sign makes another name, and so does a
+ * compatibility form, because folding those turns a superscript into a digit
+ * and a double-struck letter into a plain one. Grounding a literal in a span
+ * may ignore all of that, because a miss there only drops a claim; here a
+ * false match would file one thing's claims under another's name.
+ */
+function mentionName(label: string): string {
+  return label.normalize("NFC").toLowerCase().replace(/\s+/gu, " ").trim();
+}
+
+/** The admission identity of a draft that classifies a span-minted subject; null for every other draft. */
+export function occurrenceClassification(draft: Pick<WorldDraftInsert, "semantic" | "world_admission">): string | null {
+  return draft.semantic.predicate === "world.kind" && draft.semantic.subject.kind === "occurrence"
+    ? admissionIdentity(draft.world_admission) : null;
+}
+
 export interface WorldDraftEvent extends OccurrenceEventIdentity {
   readonly source_key: string | null;
   readonly text: string;
@@ -41,6 +62,8 @@ export interface WorldDraftEvent extends OccurrenceEventIdentity {
 export interface WorldDrafts {
   readonly drafts: readonly WorldDraftInsert[];
   readonly dropped: readonly DroppedDraftV2[];
+  /** How many claims repeated a classification this answer had already made; absent when none did. */
+  readonly repeated?: number;
 }
 
 export interface WorldDraftContext {
@@ -143,6 +166,21 @@ function addSentAttributionContext(
  * occurrence proofs inside its transaction. A claim that parsed but does not
  * resolve to a canonical typed assertion is dropped as `invalid_claim`, like
  * any other invalid claim, so it cannot fail its siblings' decision.
+ *
+ * One mention denotes one occurrence, and an occurrence is its span. Two
+ * mentions over one span therefore resolve to one subject. The first mention
+ * a kept claim resolves through introduces that subject for the response.
+ * A later mention over the same span under another label names something
+ * else, and every claim resolving through it is dropped as `invalid_claim`
+ * rather than filed onto the first mention's subject. Labels compare after
+ * Unicode form, case and spacing are normalized and by every character
+ * otherwise; a mention repeated under the same label is the same mention.
+ *
+ * A response classifies a span-minted subject once. A claim that repeats a
+ * kept classification, with the same assertion, anchors and grounding, adds
+ * no draft: the first keeps its rendering and confidence, takes the stricter
+ * of the two sensitivity labels, and the repeat is counted in `repeated`.
+ * Decisions prepared here therefore never hold one such classification twice.
  */
 export function prepareWorldDrafts(
   response: ExtractResponseV2,
@@ -180,6 +218,10 @@ export function prepareWorldDrafts(
   if (mentions.size !== response.mentions.length) fail("duplicate mention id");
   let identity = false;
   let usedGrounding = new Map<string, WorldGrounding>();
+  /** Per span-minted subject, the name of the mention that introduced it. */
+  const introducedAs = new Map<string, string>();
+  let minted = new Map<string, string>();
+  let secondMention = false;
   const resolve = (ref: { readonly kind: "mention" | "supplied"; readonly id: string }, claimAnchors: ReadonlySet<string>): RawSubjectRef => {
     if (ref.kind === "supplied") {
       const raw = context.supplied_refs.get(ref.id);
@@ -207,7 +249,11 @@ export function prepareWorldDrafts(
       usedGrounding.set(rawSubjectRefKey(candidate.endpoint), candidate);
       return candidate.endpoint;
     }
-    return { kind: "occurrence", id: mintOccurrenceId(event, event.source_key, mention.anchor) };
+    const id = mintOccurrenceId(event, event.source_key, mention.anchor);
+    const label = mentionName(mention.label);
+    if ((introducedAs.get(id) ?? minted.get(id) ?? label) !== label) secondMention = true;
+    minted.set(id, label);
+    return { kind: "occurrence", id };
   };
 
   const instructionSpanCache = new Map<string, string[]>();
@@ -217,10 +263,14 @@ export function prepareWorldDrafts(
     return spans;
   };
   const dropped: DroppedDraftV2[] = [];
+  const classified = new Map<string, { sensitivity: RichClaimDraft["sensitivity"] }>();
+  let repeated = 0;
   let preparedAnchors = 0;
   const drafts = response.claims.flatMap(claim => {
     identity = ["concept.same_as", "concept.distinguished_from"].includes(claim.predicate);
     usedGrounding = new Map();
+    minted = new Map();
+    secondMention = false;
     const anchors = completeAnchors(claim);
     if (context.witness_event_ids && anchors.some(a => !context.witness_event_ids!.has(a.event_id))) {
       dropped.push({ reason: "invalid_claim", id: claim.id }); return [];
@@ -254,7 +304,7 @@ export function prepareWorldDrafts(
       temporal_basis: claim.temporal_basis,
       anchors: claim.anchors,
     };
-    if (!validateClaimV2Semantic(resolved).ok) {
+    if (secondMention || !validateClaimV2Semantic(resolved).ok) {
       dropped.push({ reason: "invalid_claim", id: claim.id });
       return [];
     }
@@ -272,6 +322,22 @@ export function prepareWorldDrafts(
     if ((usedGrounding.size > 0 || (identity && (context.grounding?.size ?? 0) > 0)) && (usedGrounding.size !== 2 || !isGroundedIdentity(semantic))) {
       dropped.push({ reason: "invalid_claim", id: claim.id }); return [];
     }
+    const admission: WorldAdmission = {
+      ...(usedGrounding.size === 0 ? { schema: "kizuki.world-admission/v1" as const }
+        : { schema: "kizuki.world-admission/v2" as const, grounding: [...usedGrounding.values()].sort((a, b) => rawSubjectRefKey(a.endpoint) < rawSubjectRefKey(b.endpoint) ? -1 : 1) }),
+      semantic,
+      rendering: { body: claim.body, frontmatter: {} },
+      authority: "model_inference" as AuthorityTier,
+      confidence: claim.confidence,
+      epistemicKind: "model_inference" as const,
+    };
+    const classification = occurrenceClassification({ semantic, world_admission: admission });
+    const first = classification === null ? undefined : classified.get(classification);
+    if (first !== undefined) {
+      first.sensitivity = stricter(first.sensitivity, claim.sensitivity);
+      repeated += 1;
+      return [];
+    }
     const semanticAnchors = semantic.anchors.length + semantic.perspective.anchors.length;
     if (preparedAnchors + semanticAnchors > MAX_V2_ANCHORS) {
       dropped.push({ reason: "invalid_claim", id: claim.id });
@@ -282,20 +348,14 @@ export function prepareWorldDrafts(
       return [];
     }
     preparedAnchors += semanticAnchors;
+    for (const [id, label] of minted) if (!introducedAs.has(id)) introducedAs.set(id, label);
     const provenance = [...new Set(anchors.map(anchor => anchor.event_id))].sort();
-    const admission: WorldAdmission = {
-      ...(usedGrounding.size === 0 ? { schema: "kizuki.world-admission/v1" as const }
-        : { schema: "kizuki.world-admission/v2" as const, grounding: [...usedGrounding.values()].sort((a, b) => rawSubjectRefKey(a.endpoint) < rawSubjectRefKey(b.endpoint) ? -1 : 1) }),
-      semantic,
-      rendering: { body: claim.body, frontmatter: {} },
-      authority: "model_inference" as AuthorityTier,
-      confidence: claim.confidence,
-      epistemicKind: "model_inference" as const,
-    };
-    return [{ kind: "claim" as const, body: claim.body, frontmatter: {}, provenance, producer: "model" as const, model_ref: context.model_ref,
-      confidence: claim.confidence, sensitivity: claim.sensitivity, semantic, world_admission: admission }];
+    const draft = { kind: "claim" as const, body: claim.body, frontmatter: {}, provenance, producer: "model" as const, model_ref: context.model_ref,
+      confidence: claim.confidence, sensitivity: claim.sensitivity, semantic, world_admission: admission };
+    if (classification !== null) classified.set(classification, draft);
+    return [draft];
   });
-  return { drafts, dropped };
+  return { drafts, dropped, ...(repeated === 0 ? {} : { repeated }) };
 }
 
 function toObject(

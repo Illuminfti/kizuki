@@ -16,6 +16,25 @@
 
 ### Fixed
 
+- A typed claim whose support is already admitted, in other words or with
+  another score, is a duplicate: the first admission keeps its rendering and
+  confidence and nothing is written. Before, the repeat was compared byte for
+  byte with the immutable admission, refused, and rolled the whole durable
+  decision back on every pass, which stopped all later extraction. Admissions
+  now compare by schema, complete semantic with anchor lists as sets,
+  grounding, authority and epistemic kind. A repeat that differs in one of
+  those is still refused, now for that claim alone: the receipt names the
+  support by key prefix with the differing fields, counts it under
+  `claims_rejected.support_admission_conflict`, and the rest of the decision
+  files. No stored admission is rewritten.
+- Two mentions an answer anchors on the same span no longer file onto one
+  subject under two names. The first mention a kept claim uses introduces the
+  subject; every claim through a later mention with another label is dropped
+  as `invalid_claim`. A mention repeated under the same label is the same
+  mention, and its repeated classification is one draft that counts in
+  `claims_deduped`. A decision journaled by an earlier build with both
+  mentions on one subject files what precedes the second classification and
+  refuses the rest under `claims_rejected.subject_classified_twice`.
 - Agent proposals and corrections compare and retire only readable claims, and
   unreadable canon pages remain untouched and unnamed. Search and entity labels
   match served redacted text; graph limits count authorized edges.

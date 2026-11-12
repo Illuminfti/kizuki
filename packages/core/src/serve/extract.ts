@@ -18,6 +18,8 @@ import type { ClaimDraft, ProduceInput, ProducerPort, QuotedEvent } from "../con
 import { MAX_V2_QUOTED_UTF16, type DroppedDraftV2, type ExtractResponseV2, type ProduceInputV2, type ProducerV2Port } from "../contracts/producer-v2";
 import { predicateIds } from "../claims/predicates";
 import { historicalClaimReplaySignature, listClaims } from "../claims/store";
+import { AdmissionConflictError } from "../claims/errors";
+import { assertionEndpoints } from "../world/allocation";
 import type { InsertClaimInput, InsertClaimResult, PreparedClaimInsert } from "../claims/store";
 import { compareRfc3339 } from "../agents/time";
 import { readRailCursor } from "../ledger/checkpoints";
@@ -27,7 +29,7 @@ import type { LedgerCursor } from "../ledger/ledger";
 import { validateEventOrigin, requireExternalEvents, SelfOriginError } from "../ledger/event-origin";
 import { CHARS_PER_TOKEN, EXTRACT_BATCH, MODEL_PRODUCER_ID, planModelExtraction, planModelExtractionV2 } from "../producer";
 import { escapeFenceText } from "../producer/fence";
-import { prepareWorldDrafts, type WorldDraftInsert, type WorldDrafts } from "../producer/world-drafts";
+import { occurrenceClassification, prepareWorldDrafts, type WorldDraftInsert, type WorldDrafts } from "../producer/world-drafts";
 import { notePendingClassification, worldAssertionViolation, type PendingClassifications } from "../world/registry-check";
 import { canonicalJson } from "../util/hash";
 import { worldSuppliedReferences } from "./world-supplied";
@@ -574,11 +576,13 @@ export function journalWorldDrafts(
 export interface JournaledExtractBatch {
   readonly journaled: boolean;
   readonly dropped: readonly DroppedDraftV2[];
+  /** Claims of a typed answer that repeated a classification it had already made; they share that claim's draft. */
+  readonly repeated: number;
 }
 
 /** Persist the entire decision before filing; no model is called again on replay. */
 export function journalExtractBatch(db: Database, mined: MineResult, modelRef: string | null, producer?: ExtractionProducerPort): JournaledExtractBatch {
-  if (mined.mined.status !== "ok" || mined.cursor === null) return { journaled: false, dropped: [] };
+  if (mined.mined.status !== "ok" || mined.cursor === null) return { journaled: false, dropped: [], repeated: 0 };
   return db.transaction((): JournaledExtractBatch => {
     requireAtomicExtractReplay(db);
     if (mined.source_epoch !== undefined && mined.source_epoch !== sourcePolicyEpoch(db)) throw new Error("source authorization changed during extraction");
@@ -607,8 +611,9 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
     const world = filingVersion === 2 ? journalWorldDrafts(db, mined, events.filter(event => sent.has(event.event_id)), modelRef, producer) : null;
     const drafts = world === null ? mined.drafts : world.drafts;
     const dropped = world?.dropped ?? [];
+    const repeated = world?.repeated ?? 0;
     // Resolution declined or omitted every typed claim: there is nothing to journal or file.
-    if (world !== null && drafts.length === 0) return { journaled: false, dropped };
+    if (world !== null && drafts.length === 0) return { journaled: false, dropped, repeated };
     if (drafts.length === 0) throw new Error("durable extraction batch is corrupt");
     if (segment !== undefined) journalSegment(db, segment);
     saveBatch(db, { filing_version: filingVersion, previous_cursor: mined.previous_cursor, cursor: mined.cursor!, drafts,
@@ -616,7 +621,7 @@ export function journalExtractBatch(db: Database, mined: MineResult, modelRef: s
       model_ref: modelRef, input_ids: events.map(event => event.event_id), mode, model_inputs: modelInputs,
       deferred_inputs: [...(mined.deferred_inputs ?? [])], outcome: "ok", authorization_epoch: null });
     readDurableExtractBatch(db, producer);
-    return { journaled: true, dropped };
+    return { journaled: true, dropped, repeated };
   }).immediate();
 }
 
@@ -855,14 +860,61 @@ export function completeDurableExtractBatch(db: Database, batch: DurableExtractB
   }).immediate();
 }
 
-/** All claim effects, outbox rows and decision completion share one durable commit. */
+/** A durable draft that filing refused, and why. Identifiers and field names only, never captured text. */
+export type RefusedExtractDraft = {
+  readonly reason: "support_admission_conflict";
+  readonly support_key: string;
+  readonly fields: readonly string[];
+} | {
+  readonly reason: "subject_classified_twice";
+  readonly subject_id: string;
+};
+
+export interface FiledExtractBatch {
+  readonly results: InsertClaimResult[];
+  readonly refused: readonly RefusedExtractDraft[];
+}
+
+/**
+ * Preparation never journals one classification of a span-minted subject
+ * twice, so a decision that holds one was journaled by a build that did not
+ * yet tell two mentions over one span apart: it resolved both to one subject
+ * and then stopped on the second classification. The journal does not record
+ * which claim came through which mention, so the second classification and
+ * every later draft naming that subject are refused, and what was journaled
+ * before it files. Returns the subject a draft is refused for.
+ */
+function classifiedTwice(): (draft: WorldDraftInsert) => string | null {
+  const classified = new Set<string>(), twice = new Set<string>();
+  return draft => {
+    const classification = occurrenceClassification(draft);
+    if (classification !== null) {
+      if (classified.has(classification)) twice.add(draft.semantic.subject.id);
+      classified.add(classification);
+    }
+    return assertionEndpoints(draft.semantic).find(ref => ref.kind === "occurrence" && twice.has(ref.id))?.id ?? null;
+  };
+}
+
+/**
+ * All claim effects, outbox rows and decision completion share one durable
+ * commit. Each draft files under its own savepoint. A draft that can never
+ * file, on this pass or on any replay of the decision, is refused alone and
+ * reported: one whose support conflicts with an immutable admission, and one
+ * that names a subject the decision classifies twice. The rest of the decision
+ * files and completes instead of holding the rail and every later record. Any
+ * other failure still rolls the whole decision back. `refusing` runs inside
+ * the commit, so a run's record of what it refused is durable exactly when
+ * the decision is complete.
+ */
 export function fileAndCompleteDurableExtractBatch(
   db: Database,
   batch: DurableExtractBatch,
   producer: ExtractionProducerPort,
   prepared: readonly PreparedClaimInsert[],
   runId?: string,
-): InsertClaimResult[] | null {
+  refusing?: (refused: readonly RefusedExtractDraft[]) => void,
+): FiledExtractBatch | null {
   if (db.inTransaction) throw new Error("extraction filing requires a top-level transaction");
   return db.transaction(() => {
     const current = matchingDurableBatch(db, batch, producer);
@@ -872,11 +924,28 @@ export function fileAndCompleteDurableExtractBatch(
       operation.db !== db || operation.signature !== signatures[index])) {
       throw new Error("prepared extraction drafts do not match the durable decision");
     }
-    const results = prepared.map(operation => operation.apply());
+    const results: InsertClaimResult[] = [];
+    const refused: RefusedExtractDraft[] = [];
+    const secondMention = classifiedTwice();
+    for (const [index, operation] of prepared.entries()) {
+      const draft = current.filing_drafts[index]!;
+      const subject = isWorldDraft(draft) ? secondMention(draft) : null;
+      if (subject !== null) {
+        refused.push({ reason: "subject_classified_twice", subject_id: subject });
+        continue;
+      }
+      try {
+        results.push(db.transaction(() => operation.apply())());
+      } catch (error) {
+        if (!(error instanceof AdmissionConflictError)) throw error;
+        refused.push({ reason: "support_admission_conflict", support_key: error.support_key, fields: error.fields });
+      }
+    }
     // A changed final fence must throw so every prior effect rolls back too.
     if (matchingDurableBatch(db, current, producer, false) === null) throw new Error("extract decision changed during filing");
     finishDurableBatch(db, current, producer, runId);
-    return results;
+    refusing?.(refused);
+    return { results, refused };
   }).immediate();
 }
 

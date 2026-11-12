@@ -26,6 +26,13 @@ export const HISTORICAL_QUALIFICATIONS: readonly QualificationApproval[] = [{
   endpoint_evidence: "c09f582552fdd003e7ad3fc2cbff501943a0c4b925704be11e7e49ccd720d436",
   protocol: "core-semantic-v3",
   body_review: { file: "core-semantic-core18-review-20261022.json", sha256: "f7da58b63cd493fe35d515922fb6edb80d473147f55c830168aafb057e0206a8" },
+}, {
+  // Superseded for the active producer by the thirteen-case Core20 receipt.
+  file: "core-semantic-core19-20261023.json",
+  sha256: "15facd756f0dc48a8e5a350fac7ca01c5821648f7187d1522331587281f84098",
+  endpoint_evidence: "c09f582552fdd003e7ad3fc2cbff501943a0c4b925704be11e7e49ccd720d436",
+  protocol: "core-semantic-v3",
+  body_review: { file: "core-semantic-core19-review-20261023.json", sha256: "7227462abc470b35a1742ebd47e4c3df7ecbe6db457da6e1388dfab2c05d9369" },
 }];
 
 /** INVALID historical evidence, never an active qualification. All 12 measured
@@ -41,13 +48,13 @@ export const INVALID_HISTORICAL_QUALIFICATIONS = [{
   status: "INVALID", reason: "all_measured_inputs_exceeded_declared_budget",
 }] as const;
 
-/** Fresh thirteen-case split, measured within the declared budget and independently reviewed. */
+/** Thirteen-case Core19 split rerun on the current producer, measured within the declared budget and independently reviewed. */
 export const REVIEWED_QUALIFICATIONS: readonly QualificationApproval[] = [{
-  file: "core-semantic-core19-20261023.json",
-  sha256: "15facd756f0dc48a8e5a350fac7ca01c5821648f7187d1522331587281f84098",
-  endpoint_evidence: "c09f582552fdd003e7ad3fc2cbff501943a0c4b925704be11e7e49ccd720d436",
+  file: "core-semantic-core20-20261112.json",
+  sha256: "31a6aa0ad96b08dc569cb92fd21015df2de95e9695c0ca7aa087a08d5de31df8",
+  endpoint_evidence: "90058ce3bb02c1339eed3a2196dfd0129c8d0fef89630cf724390428e8953d30",
   protocol: "core-semantic-v3",
-  body_review: { file: "core-semantic-core19-review-20261023.json", sha256: "7227462abc470b35a1742ebd47e4c3df7ecbe6db457da6e1388dfab2c05d9369" },
+  body_review: { file: "core-semantic-core20-review-20261112.json", sha256: "37ab626787796fce4ab4aed6f207644f6e348b2ec46bb411388a7b93aba4a136" },
 }];
 
 /** Continuation permission only. This does not qualify any kind or endorse semantic results. */
