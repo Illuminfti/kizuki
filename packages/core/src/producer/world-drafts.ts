@@ -33,14 +33,16 @@ export interface WorldDraftInsert extends InsertClaimInput {
 }
 
 /**
- * The name a mention goes by when two mentions share a span. Unicode form,
- * case and spacing aside, every character counts: a symbol, a mark or a
- * punctuation sign makes another name. Grounding a literal in a span may
- * ignore those, because a miss there only drops a claim; here a false match
- * would file one thing's claims under another's name.
+ * The name a mention goes by when two mentions share a span. Canonical
+ * Unicode form (NFC), case and spacing aside, every character counts: a
+ * symbol, a mark or a punctuation sign makes another name, and so does a
+ * compatibility form, because folding those turns a superscript into a digit
+ * and a double-struck letter into a plain one. Grounding a literal in a span
+ * may ignore all of that, because a miss there only drops a claim; here a
+ * false match would file one thing's claims under another's name.
  */
 function mentionName(label: string): string {
-  return label.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+  return label.normalize("NFC").toLowerCase().replace(/\s+/gu, " ").trim();
 }
 
 /** The admission identity of a draft that classifies a span-minted subject; null for every other draft. */

@@ -130,8 +130,8 @@ test("a mention repeated under the same label is one mention, and its repeated c
   const flux = p.about("m0", "Flux", "a synthetic transformation", 0);
   const again = { ...p.claim("c3", "m1", "world.kind", p.concept, "Flux, again, is a concept."), confidence: 0.2, sensitivity: "private" as const };
   const more = p.claim("c4", "m1", "concept.definition", { kind: "literal", value: "a calm cadence" }, "Flux is a calm cadence.");
-  // Unicode form, case and spacing do not make another name.
-  const mentions = [p.mention("m0", "Flux"), p.mention("m1", " \uFF26LUX ")];
+  // Case and spacing do not make another name.
+  const mentions = [p.mention("m0", "Flux"), p.mention("m1", " fLUX ")];
   const prepared = prepareWorldDrafts({ ...response, mentions, claims: [...flux, again, more] }, p.input, p.context);
   expect(prepared.dropped).toEqual([]);
   expect(prepared.repeated).toBe(1);
@@ -151,23 +151,25 @@ test("a mention repeated under the same label is one mention, and its repeated c
   expect(other.drafts).toHaveLength(2);
 });
 
-test("two mentions over one span are one mention exactly when their labels are equal in Unicode form, case and spacing", () => {
+test("two mentions over one span are one mention exactly when their labels are equal in canonical Unicode form, case and spacing", () => {
   const prepare = (first: string, second: string) => {
     const p = passage(first, second);
     const one = p.about("m0", first, "a synthetic transformation", 0), other = p.about("m1", second, "a calm cadence", 3);
     return { one, prepared: prepareWorldDrafts({ ...response, mentions: [p.mention("m0", first), p.mention("m1", second)], claims: [...one, ...other] }, p.input, p.context) };
   };
-  // One name: a compatibility form, a composed or decomposed mark, case, and any run of spacing.
-  for (const [first, second] of [["Flux", " \uFF26LUX "], ["Caf\u00E9 Noir", "cafe\u0301\u00A0\tNOIR"]] as const) {
+  // One name: a composed or decomposed mark, case, and any run of spacing.
+  for (const [first, second] of [["Flux", " fLUX "], ["Caf\u00E9 Noir", "cafe\u0301\u00A0\tNOIR"]] as const) {
     const { prepared } = prepare(first, second);
     expect(prepared.dropped).toEqual([]);
     expect(prepared.repeated).toBe(1);
     expect(prepared.drafts).toHaveLength(5);
   }
   // Two names: every other character counts. Each pair is equal once symbols and marks are stripped, which is how a
-  // literal is grounded in a span; the last three differ by a full stop, a zero-width space and a soft hyphen.
+  // literal is grounded in a span; three differ by a full stop, a zero-width space and a soft hyphen. The last four
+  // differ only by a compatibility form: a fullwidth letter, a double-struck letter, a superscript and a Roman numeral.
   for (const [first, second] of [["C++", "C#"], ["Plan A+", "Plan A-"], ["\u0E01\u0E31\u0E19", "\u0E01\u0E34\u0E19"], ["Flux", "Flux?"],
-    ["Flux", "Flux."], ["Flux", "Fl\u200Bux"], ["Flux", "Fl\u00ADux"]] as const) {
+    ["Flux", "Flux."], ["Flux", "Fl\u200Bux"], ["Flux", "Fl\u00ADux"],
+    ["Flux", "\uFF26lux"], ["\u2102", "C"], ["x\u00B2", "x2"], ["\u2160", "I"]] as const) {
     const { one, prepared } = prepare(first, second);
     expect(prepared.drafts.map(draft => draft.body)).toEqual(one.map(claim => claim.body));
     expect(prepared).toEqual({ drafts: prepared.drafts, dropped: ["c3", "c4", "c5"].map(id => ({ reason: "invalid_claim", id })) });
