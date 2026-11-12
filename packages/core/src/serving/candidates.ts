@@ -35,7 +35,7 @@ import type { Redactor } from "./redact";
 import { eventsCitedByPages } from "./dedupe";
 import { matchingEvents } from "./query-events";
 import { retrievalCandidates, retrievalGraphCandidates } from "./retrieval";
-import { graphServingScope, requiresClassScopedGraph } from "./graph-scope";
+import { CallDecisions, requiresClassScopedGraph } from "./graph-scope";
 import type { PacketSection, SessionSection } from "./sections";
 import type { CanonChunk, QuotedChunk, ServeContext } from "./types";
 
@@ -264,15 +264,11 @@ export async function collectPieces(
   const packed = new Set<string>();
   let queryMatched = request.query === undefined;
 
+  // One decision per page of `index`; a later graph pass over a reloaded
+  // index reuses them only where the page and database are provably unchanged.
+  const decisions = new CallDecisions(index, grant);
   if (request.include.includes("canon")) {
-    const decisions = new Map<string, ReturnType<typeof pageDecision>>();
-    const decisionFor = (page: CanonPage): ReturnType<typeof pageDecision> => {
-      const cached = decisions.get(page.id);
-      if (cached !== undefined) return cached;
-      const decision = pageDecision(index, grant, page);
-      decisions.set(page.id, decision);
-      return decision;
-    };
+    const decisionFor = (page: CanonPage): ReturnType<typeof pageDecision> => decisions.decide(page);
     const fromPort: CanonPage[] = nominated.ids.flatMap((id) => {
       const page = id.startsWith("page:") ? index.byId.get(bareRetrievalId(id)) : undefined;
       if (page === undefined) return [];
@@ -379,7 +375,7 @@ export async function collectPieces(
       plans.push({ rootId, ids: fromPort.ok ? fromPort.ids : [], fallback: !fromPort.ok });
     }
     const liveIndex = loadCanon(ctx);
-    let localScope: ReturnType<typeof graphServingScope> | undefined;
+    let localScope: ReturnType<typeof decisions.graphScope> | undefined;
     let added = 0;
     const consider = (targetId: string): void => {
       if (added === GRAPH_CHUNKS) return;
@@ -411,7 +407,7 @@ export async function collectPieces(
       if (plan.fallback) {
         const options = { depth: 1 as const, kinds: ["wikilink" as const], ceiling: grant.ceiling };
         const found = requiresClassScopedGraph(ctx)
-          ? neighborsForServing(ctx.db, plan.rootId, options, localScope ??= graphServingScope(liveIndex, grant))
+          ? neighborsForServing(ctx.db, plan.rootId, options, localScope ??= decisions.graphScope(liveIndex, grant))
           : neighbors(ctx.db, plan.rootId, options);
         ids = found.edges.map(edge => edge.dst);
       }

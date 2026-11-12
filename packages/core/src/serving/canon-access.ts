@@ -9,6 +9,8 @@ import { eligible, pageDecision, pageScope, type CanonIndex } from "./canon";
 type Decision = ReturnType<typeof pageDecision>;
 interface PageRead {
   input: string;
+  /** Strings are immutable, so equal bodies are equal inputs without serializing them. */
+  body: string | null;
   decision?: Decision;
   evidence?: LivePageEvidence;
   derivable?: boolean;
@@ -106,17 +108,19 @@ export class CanonAccessPhase {
 
   private entry(page: CanonPage): PageRead | undefined {
     if (["id", "relPath", "contentHash", "data", "body"].some(key => !("value" in (Object.getOwnPropertyDescriptor(page, key) ?? {})))) return undefined;
+    // Only the class fallback inspects body bytes. Owner scope skips it.
+    const body = denyClassesOf(this.grant).length === 0 ? null : page.body;
+    if (body !== null && typeof body !== "string") return undefined;
     const input = inputKey([page.id, page.relPath, page.contentHash, page.data,
-      // Only the class fallback inspects body bytes. Owner scope skips it.
-      denyClassesOf(this.grant).length === 0 ? null : page.body,
       this.index.generation, this.index.holds.has(page.relPath), this.index.deniedPaths.has(page.relPath)]);
     if (input === null || this.inputs === "") return undefined;
     const known = this.pages.get(page);
-    if (known?.input === input) return known;
-    if (known !== undefined) { this.chars -= known.input.length; this.pages.delete(page); }
-    if (this.pages.size >= MAX_PAGES || this.chars + input.length > MAX_INPUT_CHARS) return undefined;
-    const created = { input };
-    this.pages.set(page, created); this.chars += input.length;
+    if (known?.input === input && known.body === body) return known;
+    if (known !== undefined) { this.chars -= known.input.length + (known.body?.length ?? 0); this.pages.delete(page); }
+    const chars = input.length + (body?.length ?? 0);
+    if (this.pages.size >= MAX_PAGES || this.chars + chars > MAX_INPUT_CHARS) return undefined;
+    const created = { input, body };
+    this.pages.set(page, created); this.chars += chars;
     return created;
   }
 

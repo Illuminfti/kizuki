@@ -2,12 +2,27 @@ import type { CanonChunkV2, QuotedChunkV2 } from "../../contracts/scoped-tools";
 import { eventIdFromReference } from "../../retrieval/ids";
 import { issueEventVersionRef } from "../../world/ref-kinds/evidence";
 import { issuePageRef } from "../../world/ref-kinds/page";
-import { eventRawSubjectRefs } from "../../world/ref-kinds/raw-subject";
+import { eventRawSubjectRefs, prepareEventRawSubjects } from "../../world/ref-kinds/raw-subject";
 import { issueSourceRef } from "../../world/ref-kinds/source";
 import { missingReference, type RefScope } from "../../world/ref-kinds/common";
 import { loadCanon, type CanonIndex } from "../canon";
 import type { CanonChunk, QuotedChunk } from "../types";
 
+/**
+ * Issue, ahead of projecting these chunks in this transaction, the event and
+ * source references they will name and then every subject, in one membership
+ * pass per source. The projection issues each again and finds it issued, so it
+ * writes nothing in between and its subject answers stay valid. A reference
+ * that cannot be issued here fails the projection exactly as before.
+ */
+export function prepareChunkReferences(scope: RefScope, canon: readonly CanonChunk[], quoted: readonly QuotedChunk[]): void {
+  for (const chunk of canon) for (const id of chunk.sources.map(eventIdFromReference)) issueEventVersionRef(scope, id);
+  for (const chunk of quoted) { issueEventVersionRef(scope, chunk.event_id); issueSourceRef(scope, chunk.event_id); }
+  prepareEventRawSubjects(scope, [
+    ...canon.flatMap(chunk => chunk.sources.map(eventIdFromReference).map(eventId => ({ eventId, ids: chunk.subjects }))),
+    ...quoted.map(chunk => ({ eventId: chunk.event_id, ids: chunk.subjects })),
+  ]);
+}
 /** Construct each nested DTO from named fields. No legacy identity or label
  * attachment can be inherited by adding a field to a v1 chunk. */
 export function projectCanonChunk(scope: RefScope, chunk: CanonChunk, index: CanonIndex = loadCanon(scope.ctx)): CanonChunkV2 {
