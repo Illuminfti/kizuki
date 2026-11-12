@@ -306,10 +306,11 @@ function derivedWorldAdmission(
  * comparison adds the codec schema, the complete semantic (so an anchor moved
  * between assertion and perspective is a difference), the grounding and the
  * Core-derived authority and epistemic kind. Rendering and the clamped model
- * confidence are retained from the first admission and never compared: a
- * second wording or score of one anchored fact is a duplicate sighting, not
- * another admission. A field this build does not know is identity, so a row
- * from a newer codec fails closed.
+ * confidence are retained from the first admission and their values are never
+ * compared: a second wording or score of one anchored fact is a duplicate
+ * sighting, not another admission. Both must still be there, so a stored row
+ * that lost one is not the same admission. A field this build does not know
+ * is identity, so a row from a newer codec fails closed.
  */
 const ADMISSION_PRESENTATION_FIELDS: ReadonlySet<string> = new Set(["rendering", "confidence"]);
 
@@ -321,7 +322,7 @@ function unorderedAnchors(value: unknown): unknown {
 function admissionIdentityFields(admission: object): Map<string, string> {
   const fields = new Map<string, string>();
   for (const [field, value] of Object.entries(admission) as [string, unknown][]) {
-    if (ADMISSION_PRESENTATION_FIELDS.has(field)) continue;
+    if (ADMISSION_PRESENTATION_FIELDS.has(field)) { fields.set(field, ""); continue; }
     const semantic = field === "semantic" && isPlainObject(value) ? value : null;
     fields.set(field, canonicalJson(semantic === null ? value : {
       ...semantic,

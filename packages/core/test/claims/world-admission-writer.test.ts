@@ -164,8 +164,9 @@ test("admission identity ignores only the retained rendering and confidence", ()
   expect(admissionIdentityConflict(JSON.stringify(two), { ...two, semantic: { ...two.semantic, anchors: [anchor] } })).toEqual(["semantic"]);
   expect(admissionIdentityConflict(JSON.stringify(two), { ...two, semantic: { ...two.semantic, anchors: [anchor, { ...other, end_utf16: 8 }] } })).toEqual(["semantic"]);
   expect(admissionIdentity(two as unknown as WorldAdmission)).not.toBe(admissionIdentity(first as unknown as WorldAdmission));
-  // A field this build does not know, or a row that is not an admission object, fails closed.
+  // A field this build does not know, a row that lost a retained field, or a row that is not an admission object, fails closed.
   expect(admissionIdentityConflict(JSON.stringify({ ...first, taint: "quoted" }), first)).toEqual(["taint"]);
+  expect(admissionIdentityConflict(JSON.stringify({ ...first, rendering: undefined, confidence: undefined }), first)).toEqual(["confidence", "rendering"]);
   expect(admissionIdentityConflict("not json", first)).toEqual(["admission"]);
   expect(admissionIdentityConflict("[]", first)).toEqual(["admission"]);
 });

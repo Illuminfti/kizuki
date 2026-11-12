@@ -151,12 +151,24 @@ test("a mention repeated under the same label is one mention, and its repeated c
   expect(other.drafts).toHaveLength(2);
 });
 
-test("two names that differ only in a symbol, a mark or punctuation are two mentions, never one", () => {
-  // Each pair is equal once symbols and marks are stripped, which is how a literal is grounded in a span.
-  for (const [first, second] of [["C++", "C#"], ["Plan A+", "Plan A-"], ["\u0E01\u0E31\u0E19", "\u0E01\u0E34\u0E19"], ["Flux", "Flux?"]] as const) {
+test("two mentions over one span are one mention exactly when their labels are equal in Unicode form, case and spacing", () => {
+  const prepare = (first: string, second: string) => {
     const p = passage(first, second);
     const one = p.about("m0", first, "a synthetic transformation", 0), other = p.about("m1", second, "a calm cadence", 3);
-    const prepared = prepareWorldDrafts({ ...response, mentions: [p.mention("m0", first), p.mention("m1", second)], claims: [...one, ...other] }, p.input, p.context);
+    return { one, prepared: prepareWorldDrafts({ ...response, mentions: [p.mention("m0", first), p.mention("m1", second)], claims: [...one, ...other] }, p.input, p.context) };
+  };
+  // One name: a compatibility form, a composed or decomposed mark, case, and any run of spacing.
+  for (const [first, second] of [["Flux", " \uFF26LUX "], ["Caf\u00E9 Noir", "cafe\u0301\u00A0\tNOIR"]] as const) {
+    const { prepared } = prepare(first, second);
+    expect(prepared.dropped).toEqual([]);
+    expect(prepared.repeated).toBe(1);
+    expect(prepared.drafts).toHaveLength(5);
+  }
+  // Two names: every other character counts. Each pair is equal once symbols and marks are stripped, which is how a
+  // literal is grounded in a span; the last three differ by a full stop, a zero-width space and a soft hyphen.
+  for (const [first, second] of [["C++", "C#"], ["Plan A+", "Plan A-"], ["\u0E01\u0E31\u0E19", "\u0E01\u0E34\u0E19"], ["Flux", "Flux?"],
+    ["Flux", "Flux."], ["Flux", "Fl\u200Bux"], ["Flux", "Fl\u00ADux"]] as const) {
+    const { one, prepared } = prepare(first, second);
     expect(prepared.drafts.map(draft => draft.body)).toEqual(one.map(claim => claim.body));
     expect(prepared).toEqual({ drafts: prepared.drafts, dropped: ["c3", "c4", "c5"].map(id => ({ reason: "invalid_claim", id })) });
   }

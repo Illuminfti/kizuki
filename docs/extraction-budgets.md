@@ -84,9 +84,10 @@ A value outside its range, a fraction or a string keeps that key's default.
   complete semantic, grounding, authority and epistemic kind equal the stored
   admission; anchor lists compare as sets. The first rendering and confidence
   are kept, nothing is written, and the draft counts in `claims_deduped`. If
-  one of those fields differs, the stored admission wins and that draft alone
-  is refused. The receipt's `errors` carry `claim refused: support <key
-  prefix> conflicts with immutable admission (<fields>)`, the count is in
+  one of those fields differs, or the stored admission has lost its rendering
+  or confidence, the stored admission wins and that draft alone is refused.
+  The receipt's `errors` carry `claim refused: support <key prefix>
+  conflicts with immutable admission (<fields>)`, the count is in
   `claims_rejected.support_admission_conflict`, and the other drafts of the
   decision file in the same commit. The decision then completes, so a refused
   claim cannot hold later records. A refused draft is not kept; its record
