@@ -1,0 +1,2 @@
+[test]
+preload = ["./packages/core/test/helpers/isolated-file-resources.ts"]

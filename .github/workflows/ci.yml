@@ -22,8 +22,13 @@ jobs:
         with: { bun-version: 1.3.14 }
       - name: refuse a shallow history
         run: test "$(git rev-parse --is-shallow-repository)" = "false"
+      - name: restore the inotify limits the runner image intends
+        run: bash scripts/ci-inotify-limits.sh apply
       - name: verify
         run: bun run verify
+      - name: report peak inotify use
+        if: ${{ always() }}
+        run: bash scripts/ci-inotify-limits.sh report
       - name: surface inventory receipt
         run: |
           mkdir -p "$RUNNER_TEMP/kizuki-surface"

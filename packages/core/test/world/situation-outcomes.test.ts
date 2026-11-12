@@ -10,7 +10,7 @@ import { rebuildWorldLayer } from "../../src/derived";
 import { ulid } from "../../src/util/ulid";
 import { validEvent } from "../fixtures";
 import { enrollSource } from "../helpers/world-seed";
-import { situationV2Fixture, literal, vocabulary } from "../helpers/situation-v2-fixture";
+import { situationV2Fixture, literal, vocabulary, SITUATION_REVIEW_DAY_AFTER } from "../helpers/situation-v2-fixture";
 
 async function fixture(model = false) {
   const purposes = ["capture","derive","recall","correction","export","session"] as const;
@@ -192,7 +192,7 @@ import { completeEmptyWorldSummaries, EMPTY_SUMMARY_MODEL } from "../helpers/wor
 import type { Attention } from "../../src/contracts/attention";
 
 test("attention rechecks completion evidence for a commitment omitted before publication", async () => {
-  setSystemTime(new Date("2030-01-01T12:00:00.000Z"));
+  setSystemTime(new Date(`${SITUATION_REVIEW_DAY_AFTER}T12:00:00.000Z`));
   const f = await fixture(true);
   try {
     await f.write("situation.objective", literal("Complete the review"), { subject: "project:launch" });
