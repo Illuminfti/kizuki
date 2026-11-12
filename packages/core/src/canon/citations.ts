@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Claim } from "../contracts/proposal";
 import { liveEventIds } from "../ledger/ledger";
+import { tableExists } from "../ledger/schema";
 import { eventIdFromReference } from "../retrieval/ids";
 import { MAX_FRONTMATTER_ARRAY_ITEMS } from "../vault/schema";
 
@@ -91,3 +92,37 @@ function claimCitations(
 }
 
 const LIVE_BATCH = 500;
+
+/**
+ * The sources a page should cite instead, when it still names an event version
+ * a source tombstone ended and every live claim on it has live evidence. Null
+ * when a claim would be left without live evidence, or when nothing changes.
+ */
+export function recitedSources(
+  db: Database,
+  prior: readonly string[],
+  retained: readonly Claim[],
+): string[] | null {
+  if (retained.length === 0 || retained.some((claim) => !claimCitations(db, claim, prior).live)) return null;
+  const next = citedSources(db, [], prior, retained);
+  return next.length === prior.length && next.every((id, index) => id === prior[index]) ? null : next;
+}
+
+/**
+ * Pages with a receipt that cited an event version which a later tombstone of
+ * the same record ended. A superset: each page's current bytes decide.
+ */
+export function pagesCitingEndedVersions(db: Database): string[] {
+  if (!tableExists(db, "canon_receipts") || !tableExists(db, "page_index")) return [];
+  return db.query<{ page_path: string }, []>(
+    `WITH ended AS (
+       SELECT DISTINCT e.event_id FROM events t JOIN events e
+         ON e.connector_id = t.connector_id AND e.source_record_id = t.source_record_id AND e.deleted = 0
+        AND (e.accepted_at < t.accepted_at OR (e.accepted_at = t.accepted_at AND e.event_id < t.event_id))
+        WHERE t.deleted = 1)
+     SELECT DISTINCT r.page_path AS page_path
+       FROM canon_receipts r JOIN page_index p ON p.rel_path = r.page_path, json_each(r.provenance) j
+      WHERE j.value IN (SELECT event_id FROM ended)
+      ORDER BY r.page_path`,
+  ).all().map((row) => row.page_path);
+}

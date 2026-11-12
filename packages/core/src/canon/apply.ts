@@ -19,7 +19,7 @@ import { commitMachineByteIntent, requireExternalEvents } from "../ledger/event-
 import { requireSourceTombstoneProposal, requiresSourceTombstoneBinding, SourceTombstoneError } from "./source-tombstone";
 import { subjectPageType } from "../vault/subject-type";
 import { CanonAuthorityResolver } from "./authority";
-import { citedSources } from "./citations";
+import { citedSources, recitedSources } from "./citations";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { Sensitivity } from "../agents/types";
@@ -55,6 +55,7 @@ import {
   insertReceiptRow,
   mintId,
   nowOf,
+  pageIndexByPath,
   readPage,
   upsertPageIndex,
 } from "./store";
@@ -582,6 +583,72 @@ export function applyCanonWriteOwned(
       subject_key: primary.subject ?? (typeof priorSubject === "string" ? priorSubject : null), original_receipt_id: null },
   }, admit, () => chargeCanonWrite(io, opts.budget, {
     receipt_id: receiptId, page_path: target.rel_path, before_hash: existing?.hash ?? null, at: receipt.at,
+  }));
+}
+
+/**
+ * Rewrites only the `sources` of an active page that still cites an event
+ * version a source tombstone ended, once every live claim on it has live
+ * evidence (see `recitedSources`). Body and other fields stay, no claim
+ * changes, and the write is an ordinary receipted loop write. Null when the
+ * page needs nothing.
+ */
+export function reciteCanonPageOwned(
+  scope: VaultMutationScope,
+  io: CanonIo,
+  relPath: string,
+  budget: BudgetTracker,
+): CanonReceipt | null {
+  if (io.db.inTransaction) recoveryFailure("nested_transaction");
+  io = snapshotCanonIo(io);
+  requireCanonFiles(scope, io);
+  if (readCanonWriteIntent(io.db) !== null) recoveryFailure("recovery_pending");
+  assertPageRelPath(relPath);
+  if (canonPageRecoveryPending(io.db, relPath)) return null;
+  const existing = readPage(io, relPath);
+  const indexed = pageIndexByPath(io.db, relPath);
+  if (existing === null || indexed === null || existing.hash !== indexed.last_hash ||
+      existing.page.data["status"] !== "active" || existing.page.data["id"] !== indexed.page_id) return null;
+  const resolver = new CanonAuthorityResolver(io.db, [relPath]);
+  if (resolver.basis(relPath, existing.hash) === null) return null;
+  const priorSensitivity = existing.page.data["sensitivity"];
+  if (!isSensitivity(priorSensitivity)) return null;
+  const retained = liveClaimsOnPage(io, relPath, new Set());
+  const sources = recitedSources(io.db, existingSources(existing.page), retained);
+  if (sources === null) return null;
+  const provenance = union([sources.map(eventIdFromReference)]);
+  const sensitivity = sourceSensitivity(io.db, provenance, priorSensitivity);
+  const page: VaultPage = { data: { ...existing.page.data, sources, sensitivity }, body: existing.page.body };
+  const invalid = validatePage(page.data);
+  if (invalid.length > 0) throw new CanonWriteError("frontmatter_invalid", invalid[0] ?? "invalid page");
+  const after = Buffer.from(serializePage(page));
+  const receiptId = mintId(io);
+  const admit = (): void => {
+    assertPositiveAuthorityMutationAllowed(io.db);
+    persistedClaims(io, retained, true);
+    assertProvenance(io, provenance);
+    requireSourceEvents(io.db, provenance, { owner: true, purpose: "derive" });
+    requireExternalEvents(io.db, provenance);
+    if (sourceSensitivity(io.db, provenance, priorSensitivity) !== sensitivity) {
+      throw new CanonWriteError("decision_stale", "source sensitivity changed before byte admission");
+    }
+    if (new CanonAuthorityResolver(io.db, [relPath]).basis(relPath, existing.hash) === null) recoveryFailure("historical_orphan");
+  };
+  const receipt: CanonReceipt = {
+    receipt_id: receiptId, kind: "write", claim_ids: [], page_path: relPath, page_action: "edit",
+    before_hash: existing.hash, after_hash: hashBytes(after), archive_path: archiveRelPath(relPath, receiptId),
+    writer: "loop", producer: "deterministic", model_ref: null,
+    authority: resolver.resolve(relPath, existing.hash), confidence: meanConfidence(retained),
+    sensitivity, taint: existing.page.data["taint"] === "quoted" ? "quoted" : "clean", provenance,
+    superseded: [], candidates: [],
+    retrieval_ops: io.retrieval_store === undefined ? [] : [{ store: io.retrieval_store, op: "upsert", doc: `page:${indexed.page_id}` }],
+    reverts: null, reverted_by: null, at: nowOf(io),
+  };
+  return commitCanonWrite(scope, io, {
+    receipt, before: Buffer.from(existing.content), after,
+    completion: { mode: "write", claim_kind: "edit", page_id: indexed.page_id, subject_key: indexed.subject_key, original_receipt_id: null },
+  }, admit, () => chargeCanonWrite(io, budget, {
+    receipt_id: receiptId, page_path: relPath, before_hash: existing.hash, at: receipt.at,
   }));
 }
 

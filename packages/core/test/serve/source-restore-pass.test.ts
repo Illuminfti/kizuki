@@ -140,7 +140,8 @@ test("the sync pass brings an archived page back when its source record returns,
     ingest([live(2)]);
     const restored = await pass();
     expect(restored.errors).toEqual([]);
-    expect(restored.canon_writes).toBe(1);
+    // The restore, then the citation rewrite that drops the version the deletion ended.
+    expect(restored.canon_writes).toBe(2);
     expect(pages().map((page) => page.status)).toEqual(["active"]);
     expect((await pass()).canon_writes).toBe(0);
 
@@ -248,7 +249,8 @@ test("returned pages release the writer and stop between restorations, then resu
     expect(writerFree.every(Boolean)).toBe(true);
     const resumed = await pass();
     expect(resumed.errors).toEqual([]);
-    expect(resumed.canon_writes).toBe(2);
+    // Two restores, then a citation rewrite for each of the three returned pages.
+    expect(resumed.canon_writes).toBe(5);
     expect(pages().every(page => page.status === "active")).toBe(true);
   } finally { db.close(); }
 });
@@ -286,13 +288,13 @@ test("a returned source without derive consent stays archived without blocking a
       operation_id: "remove-derive", policy: { ...policy, purposes: ["capture", "recall"] } });
     const restored = await pass();
     expect(restored.errors).toEqual([]);
-    expect(restored.canon_writes).toBe(1);
+    expect(restored.canon_writes).toBe(2);
     expect(pages().map(page => page.status)).toEqual(["archived", "active"]);
     setSourceGrant(db, { source_key: sources[0]!, expected_revision: 2,
       operation_id: "restore-derive", policy });
     const recovered = await pass();
     expect(recovered.errors).toEqual([]);
-    expect(recovered.canon_writes).toBe(1);
+    expect(recovered.canon_writes).toBe(2);
     expect(pages().every(page => page.status === "active")).toBe(true);
   } finally { db.close(); }
 });

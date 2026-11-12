@@ -22,7 +22,8 @@ import {
   type TargetDecision,
 } from "../canon";
 import type { CanonIo } from "../canon";
-import { applyCanonWriteOwned } from "../canon/apply";
+import { applyCanonWriteOwned, reciteCanonPageOwned } from "../canon/apply";
+import { pagesCitingEndedVersions } from "../canon/citations";
 import { CanonWriteError } from "../canon/errors";
 import { requireCanonFiles, snapshotCanonIo, withCanonMutationAsync } from "../canon/io";
 import { VaultMutationError, type VaultMutationScope } from "../vault/mutation-scope";
@@ -444,6 +445,8 @@ async function runWritePassPhase(
   const stoppedBeforeRestore = tally.stopped;
   await restoreSourcePages(io, options, tally);
   if (tally.stopped !== stoppedBeforeRestore || tally.errors.length > errorsBeforeRestore) return result();
+  await reciteEndedSources(io, options, tally);
+  if (tally.stopped !== stoppedBeforeRestore || tally.errors.length > errorsBeforeRestore) return result();
   await writeCanon(io, options, tally);
   return result();
 }
@@ -476,6 +479,35 @@ async function restoreSourcePages(io: CanonIo, options: WritePassOptions, tally:
     if (tally.stopped !== stoppedBeforeRestore || tally.errors.length > errorsBeforeRestore || step.value === 0) return;
     if (inspectCanonRecovery(io.db).pending) { tally.stopped = "recovery:held"; return; }
     await new Promise(resolve => setTimeout(resolve, PAGE_GAP_MS));
+  }
+}
+
+/**
+ * A page restored for a returned record can still cite the version the
+ * deletion ended, which keeps it out of every index. Once its claims have
+ * live evidence again, its citations are rewritten, one page per writer hold.
+ */
+async function reciteEndedSources(io: CanonIo, options: WritePassOptions, tally: PassTally): Promise<void> {
+  const limit = Math.max(WRITE_PASS_LIMIT, options.budget.usage().canon_writes_per_run.limit);
+  for (const path of pagesCitingEndedVersions(io.db)) {
+    if (tally.canon_writes >= limit) return;
+    if (options.stopRequested?.() === true) { tally.stopped = STOP_REQUESTED; return; }
+    const step = await holdWriter(io, (scope, owned) => {
+      try {
+        settleWriteReservations(owned.db, owned.vault_path);
+        if (reciteCanonPageOwned(scope, owned, path, options.budget) !== null) tally.canon_writes += 1;
+        return true;
+      } catch (error) {
+        if (error instanceof BudgetExhausted) tally.stopped = error.stopped;
+        else tally.errors.push(redactReceiptError(error));
+        return false;
+      } finally {
+        settleWriteReservations(owned.db, owned.vault_path);
+      }
+    }, SETTLE_WAIT_MS);
+    if (!step.held) { tally.stopped = step.stopped; return; }
+    if (!step.value) return;
+    if (inspectCanonRecovery(io.db).pending) { tally.stopped = "recovery:held"; return; }
   }
 }
 

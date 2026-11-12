@@ -3,7 +3,9 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBudgetTracker } from "../../src/canon/budget";
+import { pagesCitingEndedVersions, recitedSources } from "../../src/canon/citations";
 import { getClaim } from "../../src/claims/store";
+import type { Claim } from "../../src/contracts/proposal";
 import type { CaptureEventInput } from "../../src/contracts/event";
 import type { ProducerPort } from "../../src/contracts/producer";
 import { derivedPageSkips } from "../../src/derived-health";
@@ -131,5 +133,58 @@ test("a page restored for a returned record stops citing the version its deletio
     expect(data["sources"]).not.toContain(ended);
     expect(data["x-source-revision"]).toBe(2);
     expect(skips()).toEqual([]);
+  } finally { db.close(); }
+});
+
+const message = (revision = 0): CaptureEventInput => ({
+  ...validEvent(), metadata: revision === 0 ? { thread: "t-9" } : { thread: "t-9", revision_epoch: revision },
+});
+
+test("a restored page that no write would touch is recited once its claims have live evidence again", async () => {
+  const { db, ingest, pass, page, skips } = fixture();
+  try {
+    ingest([message()]);
+    expect((await pass()).errors).toEqual([]);
+    const ended = (page("auto/fixture/person/ada.md")["sources"] as string[])[0]!;
+    ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
+    expect((await pass()).errors).toEqual([]);
+
+    // The returned message only corroborates the written entity claim: no claim write follows the restore.
+    ingest([message(2)]);
+    const restored = await pass();
+    expect(restored.errors).toEqual([]);
+    expect(restored.canon_writes).toBe(2);
+    const data = page("auto/fixture/person/ada.md");
+    expect(data["status"]).toBe("active");
+    expect(data["sources"]).not.toContain(ended);
+    expect((data["sources"] as string[]).length).toBe(1);
+    expect(skips()).toEqual([]);
+    const receipt = db.query<{ writer: string; claims: number }, []>(
+      "SELECT writer, json_array_length(claim_ids) AS claims FROM canon_receipts ORDER BY at DESC, receipt_id DESC LIMIT 1",
+    ).get()!;
+    expect(receipt).toEqual({ writer: "loop", claims: 0 });
+    // Only the deletion the restore undid is reverted; the recite reverts nothing.
+    expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM claims WHERE status='reverted' AND kind!='deletion'").get()!.n).toBe(0);
+
+    const again = await pass();
+    expect(again.errors).toEqual([]);
+    expect(again.canon_writes).toBe(0);
+    expect(pagesCitingEndedVersions(db)).toEqual(["auto/fixture/person/ada.md"]);
+  } finally { db.close(); }
+});
+
+test("a page whose claim rests only on an ended version is not recited", () => {
+  const { db, ingest } = fixture();
+  try {
+    ingest([message()]);
+    ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
+    const [ended] = db.query<{ event_id: string }, []>("SELECT event_id FROM events WHERE deleted=0").all().map(row => row.event_id);
+    const claim = { provenance: [ended!] } as unknown as Claim;
+    expect(recitedSources(db, [ended!], [claim])).toBeNull();
+    expect(recitedSources(db, [ended!], [])).toBeNull();
+    ingest([message(2)]);
+    const live = db.query<{ event_id: string }, [string]>("SELECT event_id FROM events WHERE deleted=0 AND event_id != ?").all(ended!)
+      .map(row => row.event_id);
+    expect(recitedSources(db, [ended!], [{ provenance: [ended!, ...live] } as unknown as Claim])).toEqual(live);
   } finally { db.close(); }
 });
