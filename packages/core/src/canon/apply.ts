@@ -37,7 +37,7 @@ import { eventIdFromReference } from "../retrieval/ids";
 import { refreshDerivedPage, removeDerivedPage } from "../derived";
 import type { VaultPage } from "../vault/frontmatter";
 import type { CanonPage } from "../vault/pages";
-import { PAGE_TYPES, validatePage } from "../vault/schema";
+import { MAX_FRONTMATTER_ARRAY_ITEMS, PAGE_TYPES, validatePage } from "../vault/schema";
 import { grantCanonWrite, isWriter, writePage } from "../vault/write";
 import type { Writer } from "../vault/write";
 import { assertPageRelPath, assertReceiptPaths, assertStoredPageRelPath } from "./paths";
@@ -355,6 +355,11 @@ function prepareRevision(
       taint = priorTaint;
       data["status"] = "archived";
       action = "archive";
+      // A full page must still take the deletion's tombstone: drop only
+      // corroborating citations, never the last one from any source.
+      if (sources.length > MAX_FRONTMATTER_ARRAY_ITEMS) {
+        sources = citedSources(io.db, claims, prior, liveClaimsOnPage(io, existing.relPath, new Set()));
+      }
       break;
     case "purge_review":
       throw new CanonWriteError("claim_kind_retired", "purge_review cannot authorize an ordinary canon write");
@@ -605,6 +610,11 @@ export function reciteCanonPageOwned(
   if (readCanonWriteIntent(io.db) !== null) recoveryFailure("recovery_pending");
   assertPageRelPath(relPath);
   if (canonPageRecoveryPending(io.db, relPath)) return null;
+  // A pending deletion or retraction of this page wins, and an owner who
+  // undid a citation rewrite here has the last word.
+  if (io.db.query(`SELECT 1 FROM claims WHERE kind = 'deletion' AND status = 'live' AND receipt_id IS NULL AND target = ?
+      UNION ALL SELECT 1 FROM canon_receipts WHERE page_path = ? AND writer = 'loop' AND receipt_kind = 'write'
+        AND json_array_length(claim_ids) = 0 AND reverted_by IS NOT NULL LIMIT 1`).get(relPath.replace(/\.md$/, ""), relPath) !== null) return null;
   const existing = readPage(io, relPath);
   const indexed = pageIndexByPath(io.db, relPath);
   if (existing === null || indexed === null || existing.hash !== indexed.last_hash ||

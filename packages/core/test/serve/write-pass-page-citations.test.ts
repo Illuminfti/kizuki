@@ -3,6 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pagesCitingEndedVersions, recitedSources } from "../../src/canon/citations";
+import { rebuildPageIndex } from "../../src/canon/store";
+import { undoReceipt } from "../../src/canon/undo";
 import { getClaim } from "../../src/claims/store";
 import type { Claim } from "../../src/contracts/proposal";
 import type { CaptureEventInput } from "../../src/contracts/event";
@@ -185,5 +187,43 @@ test("a page whose claim rests only on an ended version is not recited", () => {
     const live = db.query<{ event_id: string }, [string]>("SELECT event_id FROM events WHERE deleted=0 AND event_id != ?").all(ended!)
       .map(row => row.event_id);
     expect(recitedSources(db, [ended!], [{ provenance: [ended!, ...live] } as unknown as Claim])).toEqual(live);
+  } finally { db.close(); }
+});
+
+test("a recited page keeps its connector-scoped subject through a page index rebuild", async () => {
+  const { db, path, ingest, pass } = fixture();
+  try {
+    const keys = () => db.query<{ rel_path: string; subject_key: string }, []>("SELECT rel_path, subject_key FROM page_index ORDER BY rel_path").all();
+    ingest([message()]);
+    await pass();
+    const before = keys();
+    expect(before).toEqual([{ rel_path: "auto/fixture/person/ada.md", subject_key: "fixture/person/ada" }]);
+    ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
+    await pass();
+    ingest([message(2)]);
+    expect((await pass()).canon_writes).toBe(2);
+    expect(db.query<{ n: number }, []>("SELECT json_array_length(claim_ids) AS n FROM canon_receipts ORDER BY at DESC, receipt_id DESC LIMIT 1").get()!.n).toBe(0);
+    rebuildPageIndex({ db, vault_path: path });
+    expect(keys()).toEqual(before);
+  } finally { db.close(); }
+});
+
+test("an owner undo of a citation rewrite is not rewritten again", async () => {
+  const { db, path, ingest, pass, page } = fixture();
+  try {
+    ingest([message()]);
+    await pass();
+    const ended = (page("auto/fixture/person/ada.md")["sources"] as string[])[0]!;
+    ingest([{ ...message(), deleted: true, text: "Synthetic deletion." }]);
+    await pass();
+    ingest([message(2)]);
+    expect((await pass()).canon_writes).toBe(2);
+    const recite = db.query<{ receipt_id: string }, []>("SELECT receipt_id FROM canon_receipts ORDER BY at DESC, receipt_id DESC LIMIT 1").get()!;
+    await undoReceipt({ db, vault_path: path }, recite.receipt_id);
+    expect(page("auto/fixture/person/ada.md")["sources"]).toContain(ended);
+    const after = await pass();
+    expect(after.errors).toEqual([]);
+    expect(after.canon_writes).toBe(0);
+    expect(page("auto/fixture/person/ada.md")["sources"]).toContain(ended);
   } finally { db.close(); }
 });
