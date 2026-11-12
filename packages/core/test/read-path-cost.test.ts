@@ -20,7 +20,7 @@ import { serveSearch } from "../src/serving/search";
 import type { ServeContext } from "../src/serving/types";
 import { page, serveFixture } from "./serving/helpers";
 
-describe("tableExists remembers the catalog per schema version", () => {
+describe("tableExists answers exactly as the catalog does", () => {
   test("agrees with the catalog for every kind of schema object", () => {
     const db = new Database(":memory:");
     db.exec(`CREATE TABLE plain(a); CREATE VIEW seen AS SELECT 1; CREATE VIRTUAL TABLE words USING fts5(x);

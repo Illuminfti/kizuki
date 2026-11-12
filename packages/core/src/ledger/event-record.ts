@@ -5,7 +5,6 @@ import { isRfc3339 } from "../util/time";
 import { computeContentHash, computeLegacyContentHash, sha256Hex } from "../util/hash";
 import { isUlid } from "../util/ulid";
 import { snapshotDataRecord, utf8ByteLength } from "../util/validate";
-import { purgeReadEpoch } from "../derived-holds";
 
 export class EventRecordError extends Error {
   readonly code = "event_record_invalid";
@@ -135,9 +134,10 @@ export function eventFromRow(row: EventRow, db: Database, format: "legacy" | "cu
  * is validated again. The nested values of an event are frozen; the copy
  * keeps the outer object as fresh as a new validation would.
  *
- * Purged rows are gone from the ledger and so never match again, but their
- * text must not outlive the purge in memory either: once anything was written
- * since the last look, a new purge batch drops everything remembered.
+ * The rows are kept only while the connection sees no write: any commit, a
+ * purge included, or a served call's own audit row starts an empty set. So
+ * reuse stays within one read, memory stays bounded by one read, and nothing
+ * a purge erased outlives it in memory.
  */
 const EVENT_ROW_FIELDS = [
   "event_id", "connector_id", "source_record_id", "kind", "occurred_at", "observed_at", "text", "subjects",
@@ -148,7 +148,6 @@ const EVENT_ROW_FIELDS = [
 const MAX_VALIDATED_CHARS = 64 * 1024 * 1024;
 interface ValidatedRows {
   stamp: string;
-  purges: number;
   rows: Map<string, { row: EventRow; digest: string | null; event: CaptureEvent; chars: number }>;
   chars: number;
 }
@@ -159,15 +158,11 @@ function validatedRowsOf(db: Database): ValidatedRows {
     "SELECT total_changes() AS changes, (SELECT data_version FROM pragma_data_version) AS version",
   ).get()!;
   const stamp = `${state.changes}:${state.version}`;
-  let memo = validated.get(db);
-  if (memo?.stamp === stamp) return memo;
-  const purges = purgeReadEpoch(db);
-  if (memo === undefined || memo.purges !== purges) {
-    memo = { stamp, purges, rows: new Map(), chars: 0 };
-    validated.set(db, memo);
-  }
-  memo.stamp = stamp;
-  return memo;
+  const known = validated.get(db);
+  if (known?.stamp === stamp) return known;
+  const fresh: ValidatedRows = { stamp, rows: new Map(), chars: 0 };
+  validated.set(db, fresh);
+  return fresh;
 }
 
 function rememberValidated(memo: ValidatedRows, row: EventRow, digest: string | null, event: CaptureEvent): void {
