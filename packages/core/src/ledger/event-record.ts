@@ -116,8 +116,66 @@ export function eventFromRow(row: EventRow, db: Database, format: "legacy" | "cu
   };
   if (format === "legacy") return parseEventRecord(raw, "legacy");
   try {
-    return validateEventRecord(raw, {
-      accepted_at: row.accepted_at, native_request_digest: nativeRequestDigest(db, row.event_id),
-    });
+    const digest = nativeRequestDigest(db, row.event_id);
+    const memo = validatedRowsOf(db);
+    const known = memo.rows.get(row.event_id);
+    if (known !== undefined && known.digest === digest && EVENT_ROW_FIELDS.every(field => known.row[field] === row[field])) return { ...known.event };
+    const event = validateEventRecord(raw, { accepted_at: row.accepted_at, native_request_digest: digest });
+    rememberValidated(memo, row, digest, event);
+    return event;
   } catch { throw new EventRecordError(); }
+}
+
+/**
+ * Validating a stored row is a pure function of every one of its columns and
+ * its native request digest: equal inputs give an equal event. A connection
+ * remembers the event for each row it validated and hands back a copy only
+ * when every column and the digest compare equal, so any change to the row
+ * is validated again. The nested values of an event are frozen; the copy
+ * keeps the outer object as fresh as a new validation would.
+ *
+ * The rows are kept only while the connection sees no write: any commit, a
+ * purge included, or a served call's own audit row starts an empty set. So
+ * reuse stays within one read, memory stays bounded by one read, and nothing
+ * a purge erased outlives it in memory.
+ */
+const EVENT_ROW_FIELDS = [
+  "event_id", "connector_id", "source_record_id", "kind", "occurred_at", "observed_at", "text", "subjects",
+  "sensitivity_hint", "deleted", "attachments", "metadata", "content_hash", "accepted_at", "content_hash_version",
+  "text_hash", "origin", "origin_binding_version", "origin_binding_kind", "origin_binding",
+] as const satisfies readonly (keyof EventRow)[];
+/** Holds one served call's source events on a large vault; the row's text is shared with the event, not copied. */
+const MAX_VALIDATED_CHARS = 64 * 1024 * 1024;
+interface ValidatedRows {
+  stamp: string;
+  rows: Map<string, { row: EventRow; digest: string | null; event: CaptureEvent; chars: number }>;
+  chars: number;
+}
+const validated = new WeakMap<Database, ValidatedRows>();
+
+function validatedRowsOf(db: Database): ValidatedRows {
+  const state = db.query<{ changes: number; version: number }, []>(
+    "SELECT total_changes() AS changes, (SELECT data_version FROM pragma_data_version) AS version",
+  ).get()!;
+  const stamp = `${state.changes}:${state.version}`;
+  const known = validated.get(db);
+  if (known?.stamp === stamp) return known;
+  const fresh: ValidatedRows = { stamp, rows: new Map(), chars: 0 };
+  validated.set(db, fresh);
+  return fresh;
+}
+
+function rememberValidated(memo: ValidatedRows, row: EventRow, digest: string | null, event: CaptureEvent): void {
+  const chars = row.text.length + row.subjects.length + row.attachments.length + row.metadata.length;
+  if (chars > MAX_VALIDATED_CHARS) return;
+  const replaced = memo.rows.get(row.event_id);
+  if (replaced !== undefined) { memo.rows.delete(row.event_id); memo.chars -= replaced.chars; }
+  for (const [id, oldest] of memo.rows) {
+    if (memo.chars + chars <= MAX_VALIDATED_CHARS) break;
+    memo.rows.delete(id); memo.chars -= oldest.chars;
+  }
+  const kept: Record<string, unknown> = {};
+  for (const field of EVENT_ROW_FIELDS) kept[field] = row[field];
+  memo.rows.set(row.event_id, { row: kept as unknown as EventRow, digest, event: { ...event }, chars });
+  memo.chars += chars;
 }

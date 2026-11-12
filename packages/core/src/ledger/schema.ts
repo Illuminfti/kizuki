@@ -2,11 +2,16 @@ import type { Database } from "bun:sqlite";
 
 type SqlValue = string | number | boolean | bigint | null;
 
-/** Cached: one SQL string, used on the hot path. */
+/**
+ * Cached: one SQL string, used on the hot path. The table-valued pragma looks
+ * the name up directly where a filter on sqlite_master reads every schema row;
+ * the filters keep the answer that query gave: main schema only, exact name,
+ * virtual and shadow tables included, views and the schema table excluded.
+ */
 export function tableExists(db: Database, name: string): boolean {
   return db
     .query<{ name: string }, [string]>(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      "SELECT name FROM pragma_table_list(?1) WHERE schema = 'main' AND name = ?1 AND type <> 'view' AND name <> 'sqlite_schema'",
     )
     .get(name) !== null;
 }
