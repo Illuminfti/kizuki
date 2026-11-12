@@ -76,7 +76,7 @@ function stillAtSource(
   const found = new Set<string>();
   for (const record of listPurgeSuppressions(ctx.db)) {
     if (!receipts.has(record.receipt_id)) continue;
-    for (const { state } of listHostConnections(ctx.db, ctx.store, record.connector_id)) {
+    for (const { state } of listHostConnections(ctx.db, ctx.store, record.connector_id, { includePaused: true })) {
       const root = state?.config.path;
       if (root === undefined) continue;
       const path = join(root, record.source_record_id);

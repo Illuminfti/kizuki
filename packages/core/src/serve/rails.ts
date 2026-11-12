@@ -70,6 +70,8 @@ export interface RunRailOptions {
   readonly hooks?: RailHooks;
   readonly acquireRuntime?: (context: RailRuntimeContext) => Promise<RailRuntime>;
   readonly crashAfter?: CrashPoint;
+  /** An extra pass outside the rail's schedule: its receipt leaves the slot where it is. */
+  readonly holdSchedule?: boolean;
 }
 
 export interface RunRailOptionsV2 {
@@ -86,6 +88,8 @@ export interface RunRailOptionsV2 {
   readonly hooks?: RailHooksV2;
   readonly acquireRuntime?: (context: RailRuntimeContext) => Promise<RailRuntimeV2>;
   readonly crashAfter?: CrashPoint;
+  /** An extra pass outside the rail's schedule: its receipt leaves the slot where it is. */
+  readonly holdSchedule?: boolean;
 }
 
 type AnyRunRailOptions = RunRailOptions | RunRailOptionsV2;
@@ -635,7 +639,7 @@ async function runRailImpl(
     // A scheduled run that did nothing advances its schedule without a receipt.
     if (options.crashAfter === undefined && coalesceNoopReceipt(db, vaultPath, receipt)) return receipt;
     const publish = (): void => persistRunReceipt(db, vaultPath, receipt, {
-      advanceSchedule: lease !== undefined && syncMode === undefined,
+      advanceSchedule: lease !== undefined && syncMode === undefined && options.holdSchedule !== true,
       ...(options.crashAfter === undefined ? {} : { crashAfter: options.crashAfter }),
       ...(lease === undefined || definition.artifact === undefined ? {} : { artifactPath: definition.artifact(vaultPath, dayOf(started)) }),
     });

@@ -63,8 +63,23 @@ export function readSourcePolicy(path: string): unknown {
   finally { if (fd !== undefined) closeSync(fd); }
 }
 
+/**
+ * The owner revoked this source's consent and its purge finished: capture is
+ * paused by decision, not failing. A source that never had consent has no
+ * grant row (it is told to grant); a revoked source whose purge has not
+ * finished is `denied` (it is told to inspect the purge). Only the exact
+ * `purged` status qualifies, so a damaged grant row still surfaces through
+ * the source's own admission check.
+ */
+export function sourceConsentPurged(db: Database, source: string): boolean {
+  const table = db.query<{ found: number }, []>("SELECT 1 AS found FROM sqlite_master WHERE type='table' AND name='source_grants'").get();
+  if (table === null) return false;
+  return db.query<{ status: string }, [string]>("SELECT status FROM source_grants WHERE source_key=?").get(source)?.status === "purged";
+}
+
 export function consentHint(db: Database, source: string): string {
   const grant = inspectSourceGrant(db, source);
   if (grant?.status === "denied") return `source consent denied; inspect purge: ${INVOCATION} connect status --source ${source}`;
+  if (grant?.status === "purged") return `source consent purged; capture paused. To resume: ${INVOCATION} connect grant --source ${source} --policy POLICY.json --expected-revision ${grant.revision} --operation-id UNIQUE_ID`;
   return `consent-required: ${INVOCATION} connect grant --source ${source} --policy POLICY.json --expected-revision ${grant?.revision ?? 0} --operation-id UNIQUE_ID`;
 }

@@ -98,7 +98,7 @@ export const importCommand: Command = {
     const connectorId = resolveConnectorId(rawId);
 
     return withVault(io, async (ctx) => {
-      const hosts = listHostConnections(ctx.db, ctx.store, connectorId);
+      const hosts = listHostConnections(ctx.db, ctx.store, connectorId, { includePaused: true });
       if (hosts.some((item) => item.state === null)) {
         throw new ConnectionError("An existing connection has missing or unreadable state. Run kizuki doctor and restore its connection state before importing another source.");
       }

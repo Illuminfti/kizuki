@@ -29,7 +29,7 @@ import {
 import { TelegramConnector, type TelegramConnectorConfig, type TelegramDeps } from "@kizuki/connector-telegram";
 import { errorText } from "./output";
 import { tokenResolver, validTokenRef } from "./secrets";
-import { consentHint } from "./source-consent";
+import { consentHint, sourceConsentPurged } from "./source-consent";
 import { movedAway, movedAwayMarks, recordHistory } from "./mirror-history";
 
 export const HOST_STATE_SCHEMA = "kizuki.cli.connection-state/v1" as const;
@@ -578,16 +578,24 @@ function inspectConnection(
   }
 }
 
+/**
+ * The connections a capture pass reads. A source whose consent the owner
+ * revoked and purged is paused, not failing, so it is left out unless the
+ * caller asks for it: enrollment and lookup by source must still find it, and
+ * `includeDisconnected` lists everything.
+ */
 export function listHostConnections(
   db: Database,
   store: ConnectionStateReader,
   connectorId?: string,
-  opts: { includeDisconnected?: boolean } = {},
+  opts: { includeDisconnected?: boolean; includePaused?: boolean } = {},
 ): HostConnection[] {
-  return listConnections(db, opts)
+  const includePaused = opts.includePaused === true || opts.includeDisconnected === true;
+  return listConnections(db, opts.includeDisconnected === undefined ? {} : { includeDisconnected: opts.includeDisconnected })
     .filter(
       (connection) =>
-        connectorId === undefined || connection.connector_id === connectorId,
+        (connectorId === undefined || connection.connector_id === connectorId) &&
+        (includePaused || !sourceConsentPurged(db, connection.source_key)),
     )
     .map((connection) => inspectConnection(store, connection));
 }
@@ -598,7 +606,7 @@ export function selectConnection(
   connectorId: string,
   selector: string | undefined,
 ): HostConnection {
-  const matches = listHostConnections(db, store, connectorId);
+  const matches = listHostConnections(db, store, connectorId, { includePaused: true });
   let selected: HostConnection | undefined;
 
   if (selector === undefined) {
