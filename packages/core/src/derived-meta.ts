@@ -164,6 +164,25 @@ export function stampDerived(db: Database, stamp: DerivedStamp): void {
   );
 }
 
+/**
+ * Whether writing `stamp` would change what is stored for its layer. When it
+ * was taken and which generation it names are bookkeeping, not health: an
+ * idle observation that only refreshes them is not a write.
+ */
+export function derivedStampChanges(db: Database, stamp: DerivedStamp): boolean {
+  const existing = readDerivedMeta(db, stamp.layer);
+  return existing === null
+    || existing.doc_count !== stamp.doc_count
+    || existing.source_count !== stamp.source_count
+    || existing.skipped_count !== stamp.skipped_count
+    || existing.status !== stamp.status
+    || existing.ledger_watermark !== (stamp.ledger_watermark ?? null)
+    || existing.canon_hash !== (stamp.canon_hash ?? null)
+    || existing.port_id !== (stamp.port_id ?? null)
+    || existing.contract !== (stamp.contract ?? null)
+    || existing.space !== (stamp.space ?? null);
+}
+
 export function readDerivedMeta(
   db: Database,
   layer: DerivedLayer,
