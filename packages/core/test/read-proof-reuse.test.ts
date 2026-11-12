@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import * as fs from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { OWNER } from "../src/agents";
 import { openLedger } from "../src/ledger/db";
@@ -311,4 +312,129 @@ describe("two served owner searches with a write between them", () => {
       expect(after).toBe(await fresh(fixture));
     } finally { fixture.dispose(); }
   }, 60_000);
+});
+
+/**
+ * One test per component of the reuse key. Each sets up two reads whose only
+ * difference is that component, so the second read is wrong if it is dropped.
+ */
+describe("every component of the reuse key is load-bearing", () => {
+  const owner = () => structuredClone(OWNER.grant);
+  function rewriteSource(f: ReturnType<typeof fixture>, text: string) {
+    const source = f.seeded[0]!.sourceId;
+    const original = f.db.query<{ text: string }, [string]>("SELECT text FROM events WHERE event_id=?").get(source)!.text;
+    f.db.query("UPDATE events SET text=? WHERE event_id=?").run(text, source);
+    return original;
+  }
+
+  test("epoch: a write moves it and the next read proves again", () => {
+    const f = fixture(2), page = f.index.pages[0]!, grant = owner();
+    try {
+      expect(new CanonAccessPhase(f.index, grant).decision(page).allow).toBe(true);
+      rewriteSource(f, "rewritten source text");
+      expect(new CanonAccessPhase(f.index, grant).decision(page).allow).toBe(false);
+    } finally { f.dispose(); }
+  });
+
+  test("token: a counter row replaced with an equal epoch but another token is not trusted", () => {
+    const f = fixture(2), page = f.index.pages[0]!, grant = owner();
+    try {
+      const before = readProofEpoch(f.db)!;
+      expect(new CanonAccessPhase(f.index, grant).decision(page).allow).toBe(true);
+      rewriteSource(f, "rewritten source text");
+      // A counter row carried over from another ledger state: same number, other token.
+      f.db.query("UPDATE read_proof_epoch SET epoch=?, token=? WHERE id=1").run(before.epoch, "f".repeat(32));
+      expect(readProofEpoch(f.db)!.epoch).toBe(before.epoch);
+      expect(new CanonAccessPhase(f.index, grant).decision(page).allow).toBe(false);
+    } finally { f.dispose(); }
+  });
+
+  test("schema version: an equal counter and token under a changed schema are not trusted", () => {
+    const f = fixture(2), page = f.index.pages[0]!, grant = owner();
+    try {
+      const before = readProofEpoch(f.db)!;
+      expect(new CanonAccessPhase(f.index, grant).decision(page).allow).toBe(true);
+      rewriteSource(f, "rewritten source text");
+      f.db.exec("CREATE TABLE fixture_schema_change(value TEXT)");
+      f.db.query("UPDATE read_proof_epoch SET epoch=? WHERE id=1").run(before.epoch);
+      const after = readProofEpoch(f.db)!;
+      expect([after.token, after.epoch]).toEqual([before.token, before.epoch]);
+      expect(after.schema).not.toBe(before.schema);
+      expect(new CanonAccessPhase(f.index, grant).decision(page).allow).toBe(false);
+    } finally { f.dispose(); }
+  });
+
+  test("reader grant: a narrower ceiling is never served the wider reader's proof", () => {
+    const f = fixture(2), page = f.index.pages[0]!;
+    try {
+      expect(new CanonAccessPhase(f.index, owner()).decision(page).allow).toBe(true);
+      const narrow = { ...owner(), ceiling: "public" as const };
+      expect(new CanonAccessPhase(f.index, narrow).decision(page)).toEqual(pageDecision(f.index, narrow, page));
+      expect(new CanonAccessPhase(f.index, narrow).decision(page).allow).toBe(false);
+    } finally { f.dispose(); }
+  });
+
+  test("page bytes: a page edited by hand on disk is never served from a kept proof", () => {
+    const f = fixture(2), grant = owner();
+    try {
+      const page = f.index.pages[0]!;
+      expect(new CanonAccessPhase(f.index, grant).decision(page).allow).toBe(true);
+      const path = join(f.ctx.vaultPath, page.relPath);
+      writeFileSync(path, readFileSync(path, "utf8") + "\nAn unrecorded edit made by hand.\n");
+      const edited = loadCanon(f.ctx), changed = edited.byPath.get(page.relPath)!;
+      expect(changed.contentHash).not.toBe(page.contentHash);
+      expect(changed.data).toEqual(page.data);
+      expect(new CanonAccessPhase(edited, grant).decision(changed)).toEqual(pageDecision(edited, grant, changed));
+      expect(new CanonAccessPhase(edited, grant).decision(changed).allow).toBe(false);
+    } finally { f.dispose(); }
+  });
+
+  test("canon read generation: an index loaded before a canon write is not served the newer index's proof", () => {
+    const f = fixture(2), grant = owner();
+    try {
+      const stale = f.index;
+      f.db.query("UPDATE canon_read_generation SET generation=generation+1 WHERE singleton=1").run();
+      const current = loadCanon(f.ctx);
+      const page = current.byPath.get(stale.pages[0]!.relPath)!;
+      expect(new CanonAccessPhase(current, grant).decision(page).allow).toBe(true);
+      const old = stale.byPath.get(page.relPath)!;
+      expect(new CanonAccessPhase(stale, grant).decision(old)).toEqual(pageDecision(stale, grant, old));
+      expect(new CanonAccessPhase(stale, grant).decision(old).allow).toBe(false);
+    } finally { f.dispose(); }
+  });
+
+  test("hold flag: an index that holds a page is not served the proof of one that does not", () => {
+    const f = fixture(2), grant = owner();
+    try {
+      const path = f.index.pages[0]!.relPath;
+      f.db.query("INSERT INTO canon_holds(page_path, proposal_id, reason, held_at) VALUES (?,?,?,?)").run(path, "fixture", "fixture", "2026-01-01T00:00:00Z");
+      const held = loadCanon(f.ctx);
+      expect(held.holds.has(path)).toBe(true);
+      f.db.query("DELETE FROM canon_holds WHERE page_path=?").run(path);
+      const free = loadCanon(f.ctx);
+      expect(new CanonAccessPhase(free, grant).decision(free.byPath.get(path)!).allow).toBe(true);
+      const page = held.byPath.get(path)!;
+      expect(new CanonAccessPhase(held, grant).decision(page)).toEqual(pageDecision(held, grant, page));
+      expect(new CanonAccessPhase(held, grant).decision(page).allow).toBe(false);
+    } finally { f.dispose(); }
+  });
+
+  test("stamp: a proof that another connection's commit overlapped is not kept", () => {
+    const f = fixture(2), page = f.index.pages[0]!, grant = owner();
+    const peer = new Database(f.path);
+    const real = ledger.readLiveEvent;
+    let wrote = false;
+    const read = spyOn(ledger, "readLiveEvent").mockImplementation((db, id) => {
+      const event = real(db, id);
+      // The proof has read the valid row; the source changes before it finishes.
+      if (!wrote) { wrote = true; peer.query("UPDATE events SET text=? WHERE event_id=?").run("changed mid-proof", f.seeded[0]!.sourceId); }
+      return event;
+    });
+    try {
+      new CanonAccessPhase(f.index, grant).decision(page);
+      read.mockRestore();
+      expect(new CanonAccessPhase(f.index, grant).decision(page)).toEqual(pageDecision(f.index, grant, page));
+      expect(new CanonAccessPhase(f.index, grant).decision(page).allow).toBe(false);
+    } finally { read.mockRestore(); peer.close(); f.dispose(); }
+  });
 });
