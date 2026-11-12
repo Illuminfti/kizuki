@@ -2,7 +2,6 @@ import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createBudgetTracker } from "../../src/canon/budget";
 import { pagesCitingEndedVersions, recitedSources } from "../../src/canon/citations";
 import { getClaim } from "../../src/claims/store";
 import type { Claim } from "../../src/contracts/proposal";
@@ -11,7 +10,7 @@ import type { ProducerPort } from "../../src/contracts/producer";
 import { derivedPageSkips } from "../../src/derived-health";
 import { runBatch } from "../../src/ingest/run";
 import { openLedger } from "../../src/ledger/db";
-import { runWritePass } from "../../src/serve/write-pass";
+import { runRail } from "../../src/serve/rails";
 import { parseFrontmatter } from "../../src/vault/frontmatter";
 import { initVault } from "../../src/vault/init";
 import { listCanonPagesReport } from "../../src/vault/pages";
@@ -51,9 +50,9 @@ function fixture() {
     const result = runBatch(db, { events, cursor: null, has_more: false }, { page_candidates: false }, undefined, { vault_path: path });
     expect(result.errors).toEqual([]);
   };
-  const pass = () => runWritePass(db, path, {
-    budget: createBudgetTracker({ canon_writes_per_run: 16 }),
-    model_ref: "kizuki.llm.synthetic:citations-test", producer, claims: { db },
+  // The sync rail, as the daemon runs it: the write pass, then the citation repair.
+  const pass = () => runRail(db, path, "sync", {
+    hooks: { producer, claims: { db }, model_ref: "kizuki.llm.synthetic:citations-test" },
   });
   const page = (relPath: string) => parseFrontmatter(readFileSync(join(path, relPath), "utf8")).data;
   const skips = () => derivedPageSkips(db, listCanonPagesReport(path));

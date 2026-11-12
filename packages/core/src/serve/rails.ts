@@ -18,6 +18,7 @@ import { inspectPurgeHealth, listPurgeRecoveryReceipts, resumePurge } from "../l
 import { tableExists } from "../ledger/schema";
 import { ulid } from "../util/ulid";
 import { createDurableWriteBudget } from "./budget-ledger";
+import { reciteEndedSources } from "./recite-pass";
 import { embedBackfillPeriod, loadEmbeddingSelection, loadServeConfig } from "./config";
 import { composeBrief, repairBriefPages, type BriefRepair } from "./brief";
 import { parseFrontmatter } from "../vault/frontmatter";
@@ -124,6 +125,9 @@ export function dueRails(db: Database, now: string): RailId[] {
   return due;
 }
 
+/** The write pass's floor on canon writes per run. */
+const RECITE_PASS_LIMIT = 32;
+
 export async function runSyncRail(context: RailRunContext): Promise<Partial<RunReceipt>> {
   const { db, vault_path: vaultPath, budget, config, hooks, run_id: runId, now, stop_requested: stopRequested } = context;
   const { extraction } = config;
@@ -169,6 +173,15 @@ export async function runSyncRail(context: RailRunContext): Promise<Partial<RunR
     ...(hooks?.producer === undefined ? {} : { producer: hooks.producer }),
     ...(hooks?.claims === undefined ? {} : { claims: hooks.claims }),
   });
+  // Pages a returned record left citing the version its deletion ended. Canon
+  // writing needs a bound model, as in the write pass; the pass's own stop or
+  // budget stop ends the run first.
+  const modelBound = typeof hooks?.model_ref === "string" && hooks.model_ref.length > 0 &&
+    hooks.producer !== undefined && hooks.claims !== undefined;
+  const recited = modelBound && written.stopped === null && stopRequested?.() !== true
+    ? await reciteEndedSources({ db, vault_path: vaultPath, now }, budget,
+      Math.max(RECITE_PASS_LIMIT, budget.usage().canon_writes_per_run.limit) - written.canon_writes, stopRequested)
+    : { canon_writes: 0, errors: [] as string[], stopped: null };
   // Derived stores are rebuildable and run after the canon receipt.  Preserve
   // the completed write-pass report when their refresh fails; replacing it
   // with a zeroed failed rail would hide a real write and understate budget.
@@ -179,9 +192,9 @@ export async function runSyncRail(context: RailRunContext): Promise<Partial<RunR
   } catch (error) {
     refreshed = stopRequested?.() ? [] : [redactReceiptError(error)];
   }
-  const errors = [...synced.errors, ...written.errors, ...refreshed];
+  const errors = [...synced.errors, ...written.errors, ...recited.errors, ...refreshed];
   // A drain the stop request cut short is a stopped pass even when no extraction step saw the request.
-  const stopped = stopRequested?.() === true ? STOP_REQUESTED : written.stopped;
+  const stopped = stopRequested?.() === true ? STOP_REQUESTED : written.stopped ?? recited.stopped;
   let status: RunReceipt["status"] = "ok";
   if (stopped !== null) status = "stopped";
   else if (errors.length > 0) status = "degraded";
@@ -201,7 +214,7 @@ export async function runSyncRail(context: RailRunContext): Promise<Partial<RunR
     ...(Object.keys(written.claims_skipped).length === 0 ? {} : { claims_skipped: written.claims_skipped }),
     records_skipped: written.records_skipped,
     ...(Object.keys(written.records_prefiltered).length === 0 ? {} : { records_prefiltered: written.records_prefiltered }),
-    canon_writes: written.canon_writes,
+    canon_writes: written.canon_writes + recited.canon_writes,
     ...(written.canon_quarantined.length === 0 ? {} : { canon_quarantined: written.canon_quarantined }),
     model: { ...written.model, model_ref: hooks?.model_ref ?? null },
     ...(written.consolidation === undefined ? {} : { consolidation: written.consolidation }),
