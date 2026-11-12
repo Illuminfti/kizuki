@@ -196,23 +196,25 @@ describe("no-op runs do not append a receipt per tick", () => {
     const { path, db } = vault();
     // Exercise 25 due idle slots, independent of today's date or other rails.
     // In particular, overdue briefs always persist and must not consume this
-    // fixture's finite turn budget before a coalescible rail runs.
+    // fixture's finite turn budget before a coalescible rail runs. The clock
+    // reaches each slot in turn: a rail far behind catches up in one run.
     db.query("UPDATE schedules SET enabled = (rail = 'purge-sweep')").run();
     const period = schedule(db, "purge-sweep").period_s;
-    const now = at(24 * period);
+    let now = at(0);
     let turns = 0;
     const result = await runServeDaemon(db, path, {
       http: false, now: () => now,
-      shouldContinue: () => (turns += 1) <= 25,
+      shouldContinue: () => { now = schedule(db, "purge-sweep").next_run_at!; return (turns += 1) <= 25; },
       sleep: async () => { throw new Error("fixture expected 25 due idle slots"); },
     });
     const persisted = listRunReceipts(db);
     expect(result.receipts).toBe(persisted.length);
-    expect(persisted).toHaveLength(1);
-    expect(persisted[0]!.rail).toBe("purge-sweep");
+    // The first idle run, then one heartbeat receipt per hour of idle slots.
+    expect(persisted.map(item => item.finished_at)).toEqual([0, 3600, 7200, 10800, 14400].map(at));
+    expect(persisted.every(item => item.rail === "purge-sweep")).toBe(true);
     expect(turns).toBe(26);
-    expect(schedule(db, "purge-sweep")).toMatchObject({ last_run_at: now, next_run_at: at(25 * period) });
-    expect(journalLines(path)).toHaveLength(1);
+    expect(schedule(db, "purge-sweep")).toMatchObject({ last_run_at: at(24 * period), next_run_at: at(25 * period) });
+    expect(journalLines(path)).toHaveLength(5);
     db.close();
   }, 30_000);
 

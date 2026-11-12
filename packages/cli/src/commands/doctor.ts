@@ -33,6 +33,8 @@ import { readSqliteRuntime } from "@kizuki/core/internal";
 import type { SqliteRuntime } from "@kizuki/core/internal";
 import { UsageError, parseArguments } from "../args";
 import { listHostConnections, loadConnector } from "../connections";
+import { sourceConsentPurged } from "../source-consent";
+import { INVOCATION } from "../runtime";
 import { withReadVault } from "../context";
 import type { ReadVaultContext } from "../context";
 import { countCanonReceiptRows, indexFreshness, walkCanonReceipts } from "../derived";
@@ -58,7 +60,8 @@ interface DoctorConnection {
   connector_id: string;
   source_key: string;
   path: string;
-  state: "present" | "missing" | "disconnected";
+  /** `paused`: the owner revoked and purged this source's consent; capture is off by decision. */
+  state: "present" | "missing" | "disconnected" | "paused";
   health: string;
   checkpoint: string;
   stored: number;
@@ -338,6 +341,10 @@ async function collect(
       connections.push({ ...base, path: "-", state: "disconnected", health: "disabled", problem: null });
       continue;
     }
+    if (sourceConsentPurged(ctx.db, host.connection.source_key)) {
+      connections.push({ ...base, path: "-", state: "paused", health: "disabled", problem: `consent purged; capture paused. To resume see: ${INVOCATION} connect status --source ${host.connection.source_key}` });
+      continue;
+    }
     if (host.state === null) {
       connections.push({
         ...base,
@@ -437,7 +444,7 @@ async function collect(
     problems.push({ page: "-", error: errorText(error) });
   }
 
-  const unhealthy = connections.some((item) => item.state !== "disconnected" && (item.health !== "ok" || item.hold !== null));
+  const unhealthy = connections.some((item) => item.state !== "disconnected" && item.state !== "paused" && (item.health !== "ok" || item.hold !== null));
   const host = serveSupervisorHost(env, vaultPath);
   let boundModel: ModelBindingSummary | null = null;
   let modelConfigError: string | null = null;
