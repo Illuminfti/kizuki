@@ -38,6 +38,21 @@ interface Ownership {
   sweepAt: number;
 }
 const ownership = new WeakMap<Database, Ownership>();
+const observers = new WeakMap<Database, (sql: string) => void>();
+
+/**
+ * Runs `run` with the SQL of every statement this connection prepares or
+ * takes from its query cache passed to `observe` first. Returns null without
+ * running anything when the connection is not managed here, since then a
+ * statement could escape the observer.
+ */
+export function observeStatements<T>(db: Database, observe: (sql: string) => void, run: () => T): { value: T } | null {
+  if (!ownership.has(db)) return null;
+  const outer = observers.get(db);
+  observers.set(db, outer === undefined ? observe : sql => { outer(sql); observe(sql); });
+  try { return { value: run() }; }
+  finally { if (outer === undefined) observers.delete(db); else observers.set(db, outer); }
+}
 
 /** Distinct SQL strings one connection keeps prepared for query(). Eviction is
  * insertion-ordered: a hit stays allocation-free on the hot path. */
@@ -130,12 +145,14 @@ export function manageDatabaseLifetime(db: Database): Database {
   ownership.set(db, state);
   Object.defineProperties(db, {
     prepare: { configurable: true, writable: true, value: function prepare(this: Database, ...args: Parameters<Database["prepare"]>) {
+      observers.get(this)?.(args[0]);
       const owner = ownership.get(this);
       const statement = Reflect.apply(owner?.prepare ?? state.prepare, this, args) as LiveStatement;
       if (owner !== undefined) track(owner, statement);
       return statement;
     } },
     query: { configurable: true, writable: true, value: function query(this: Database, sql: string) {
+      observers.get(this)?.(sql);
       const owner = ownership.get(this);
       if (owner === undefined) return Reflect.apply(state.query, this, [sql]);
       const pool = owner.queries.get(sql);

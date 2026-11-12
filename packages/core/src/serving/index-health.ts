@@ -17,13 +17,14 @@ export function visibleIndexDegraded(index: CanonIndex, grant: Grant, layer: "se
   const ctx = index.sourceContext;
   // Scope and source policy precede all receipt/provenance reconstruction.
   const permitted = pages.filter(page => {
+    if (access !== undefined) return access.visible(page);
     if (index.deniedPaths.has(page.relPath) || !eligible(page) || isDeterministicBrief(page) || !authorize(grant, pageScope(ctx, page, grant)).allow) return false;
     const sources = stringArray(page.data["sources"]).map(eventIdFromReference);
     if (ctx.principal.kind !== "owner" && sources.length === 0) return false;
     const original = sensitivity(page.data["sensitivity"]);
     return original !== null
-      && sourceEventsAllowed(ctx.db, sources, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall", deny_classes: denyClassesOf(grant), ...(access === undefined ? {} : { grantOf: access.grantOf }) })
-      && authorize(grant, { ...pageScope(ctx, page, grant), sensitivity: sourceSensitivity(ctx.db, sources, original, access?.grantOf) }).allow;
+      && sourceEventsAllowed(ctx.db, sources, { owner: ctx.principal.kind === "owner", purpose: ctx.sourcePurpose ?? "recall", deny_classes: denyClassesOf(grant) })
+      && authorize(grant, { ...pageScope(ctx, page, grant), sensitivity: sourceSensitivity(ctx.db, sources, original) }).allow;
   });
   const projectable = access === undefined ? projectablePageEvidence(ctx.db, permitted)
     : new Set(permitted.filter(page => access.projectable(page)).map(page => page.relPath));

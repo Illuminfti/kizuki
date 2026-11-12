@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A long-lived owner connection, such as the MCP server, reuses the page
+  proofs of an earlier search or context packet while none of their inputs has
+  been written. Triggers on every table a page proof reads advance a counter
+  in the writing transaction; a proof is reused only under the same counter,
+  schema version, reader scope and page bytes, and only when every statement
+  it ran read those tables alone. Anything else is proved again.
 - Make session hooks require a scoped credential or explicit `--owner`, scrub
   every principal's output, bypass proxies on loopback, isolate fallback startup
   and environment, remove terminal controls, cap output at 64 KiB, and keep

@@ -35,6 +35,7 @@ import type { Redactor } from "./redact";
 import { eventsCitedByPages } from "./dedupe";
 import { matchingEvents } from "./query-events";
 import { retrievalCandidates, retrievalGraphCandidates } from "./retrieval";
+import { CanonAccessPhase } from "./canon-access";
 import { graphServingScope, requiresClassScopedGraph } from "./graph-scope";
 import type { PacketSection, SessionSection } from "./sections";
 import type { CanonChunk, QuotedChunk, ServeContext } from "./types";
@@ -297,9 +298,12 @@ export async function collectPieces(
           : { subjects: request.subjects }),
         ...(request.types === undefined ? {} : { types: request.types }),
       } satisfies Parameters<typeof searchAuditCandidates>[2];
+      // The filter shares proof work with other reads of this connection
+      // (canon-access.ts); every page the packet serves is decided again below.
+      const access = new CanonAccessPhase(index, grant);
       const found = searchAuditCandidates(ctx.db, request.query, {
         ...opts,
-        canonIds: index.pages.filter(page => eligible(page) && decisionFor(page).allow).map(page => `page:${page.id}`),
+        canonIds: access.batch(() => index.pages.filter(page => eligible(page) && access.decision(page).allow)).map(page => `page:${page.id}`),
         ceiling: grant.ceiling,
       });
       for (const hit of found.candidates) {

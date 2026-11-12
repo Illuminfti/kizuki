@@ -165,6 +165,7 @@ export async function main(argv: string[]): Promise<void> {
       db,
       vaultPath: options.vault,
       principal,
+      keepProofs: true,
       ...(retrieval === null ? {} : { retrieval }),
       ...(retrievalUnavailable === undefined ? {} : { retrievalUnavailable }),
     });

@@ -39,6 +39,12 @@ export interface ServeContext {
   redactor?: Redactor;
   /** Daemon-owned credentials, never serialized or persisted. */
   servingSecrets?: readonly string[];
+  /**
+   * The host answers many calls on this one connection, so owner page
+   * proofs may be kept between them (canon-access.ts). A one-shot process
+   * gains nothing from keeping and leaves it unset.
+   */
+  keepProofs?: true;
 }
 
 export interface CanonChunk {

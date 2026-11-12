@@ -268,7 +268,7 @@ export async function serveSearch<C extends ResponseContract = typeof ENVELOPE_S
       const access = new CanonAccessPhase(index, narrowed);
       const classified: Classification = { canon: [], quoted: [], withheld: [] };
       const rankedOpts = {
-        canonIds: index.pages.filter(page => eligible(page) && access.decision(page).allow).map(page => `page:${page.id}`),
+        canonIds: access.batch(() => index.pages.filter(page => eligible(page) && access.decision(page).allow)).map(page => `page:${page.id}`),
         canonPaths: index.pages.filter(page => authorize(narrowed, pageScope(ctx, page, narrowed)).allow).map(page => page.relPath),
         ...base,
         limit: MAX_RETRIEVAL_LIMIT,

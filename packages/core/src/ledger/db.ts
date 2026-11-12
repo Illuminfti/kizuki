@@ -1,4 +1,5 @@
 import { applyExtractReplay, EXTRACT_REPLAY_SCHEMA_VERSION } from "../serve/extract-replay-schema";
+import { ensureReadProofEpoch } from "../serving/read-proof-epoch";
 import { applySourceBackfill, SOURCE_BACKFILL_SCHEMA_VERSION } from "../serve/source-backfill-schema";
 import { applyTypedRefs } from "../world/tables/refs";
 import { applyObservationHistoryErasure } from "../world/tables/observations";
@@ -383,6 +384,7 @@ export function ensureLedgerSchema(
     migrate(db, options);
     initServe(db);
     initCanon(db);
+    ensureReadProofEpoch(db);
   });
 }
 
