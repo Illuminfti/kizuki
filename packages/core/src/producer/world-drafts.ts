@@ -16,7 +16,7 @@ import { mintOccurrenceId, type OccurrenceEventIdentity } from "../claims/occurr
 import type { InsertClaimInput } from "../claims/store";
 import { stricter } from "../sensitivity/resolve";
 import { scrubText } from "./scrub";
-import { guardClaim, literalGrounded, normalizeForGrounding, normalizedInstructionSpans } from "./world-guards";
+import { guardClaim, literalGrounded, normalizedInstructionSpans } from "./world-guards";
 
 /** The portion of the shared writer input produced by the model adapter. */
 export interface WorldDraftInsert extends InsertClaimInput {
@@ -30,6 +30,17 @@ export interface WorldDraftInsert extends InsertClaimInput {
   readonly sensitivity: RichClaimDraft["sensitivity"];
   readonly semantic: ClaimV2Assertion;
   readonly world_admission: WorldAdmission;
+}
+
+/**
+ * The name a mention goes by when two mentions share a span. Unicode form,
+ * case and spacing aside, every character counts: a symbol, a mark or a
+ * punctuation sign makes another name. Grounding a literal in a span may
+ * ignore those, because a miss there only drops a claim; here a false match
+ * would file one thing's claims under another's name.
+ */
+function mentionName(label: string): string {
+  return label.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
 }
 
 /** The admission identity of a draft that classifies a span-minted subject; null for every other draft. */
@@ -160,8 +171,8 @@ function addSentAttributionContext(
  * A later mention over the same span under another label names something
  * else, and every claim resolving through it is dropped as `invalid_claim`
  * rather than filed onto the first mention's subject. Labels compare after
- * Unicode, case, punctuation and spacing are normalized; a mention repeated
- * under the same label is the same mention.
+ * Unicode form, case and spacing are normalized and by every character
+ * otherwise; a mention repeated under the same label is the same mention.
  *
  * A response classifies a span-minted subject once. A claim that repeats a
  * kept classification, with the same assertion, anchors and grounding, adds
@@ -205,7 +216,7 @@ export function prepareWorldDrafts(
   if (mentions.size !== response.mentions.length) fail("duplicate mention id");
   let identity = false;
   let usedGrounding = new Map<string, WorldGrounding>();
-  /** Per span-minted subject, the normalized label of the mention that introduced it. */
+  /** Per span-minted subject, the name of the mention that introduced it. */
   const introducedAs = new Map<string, string>();
   let minted = new Map<string, string>();
   let secondMention = false;
@@ -237,7 +248,7 @@ export function prepareWorldDrafts(
       return candidate.endpoint;
     }
     const id = mintOccurrenceId(event, event.source_key, mention.anchor);
-    const label = normalizeForGrounding(mention.label);
+    const label = mentionName(mention.label);
     if ((introducedAs.get(id) ?? minted.get(id) ?? label) !== label) secondMention = true;
     minted.set(id, label);
     return { kind: "occurrence", id };

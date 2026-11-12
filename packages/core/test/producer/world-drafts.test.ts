@@ -77,8 +77,8 @@ test("drops a parsed claim that does not resolve to a canonical typed assertion 
 });
 
 /** Two named ideas, each with its own definition, that an answer may anchor on the one passage. */
-function passage() {
-  const text = "Flux and Grace: Flux is a synthetic transformation, Grace is a calm cadence.";
+function passage(first = "Flux", second = "Grace") {
+  const text = `${first} and ${second}: ${first} is a synthetic transformation, ${second} is a calm cadence.`;
   const span = { event_id: eventId, start_utf16: 0, end_utf16: text.length } as const;
   const plain = { holder: null, speaker: null, addressee: null, mode: "asserted" as const, interpretation: "explicit" as const, anchors: [] };
   const claim = (id: string, mention: string, predicate: string, object: ExtractResponseV2["claims"][number]["object"], body: string) => ({
@@ -130,8 +130,8 @@ test("a mention repeated under the same label is one mention, and its repeated c
   const flux = p.about("m0", "Flux", "a synthetic transformation", 0);
   const again = { ...p.claim("c3", "m1", "world.kind", p.concept, "Flux, again, is a concept."), confidence: 0.2, sensitivity: "private" as const };
   const more = p.claim("c4", "m1", "concept.definition", { kind: "literal", value: "a calm cadence" }, "Flux is a calm cadence.");
-  // Case, punctuation and spacing do not make another name.
-  const mentions = [p.mention("m0", "Flux"), p.mention("m1", " FLUX. ")];
+  // Unicode form, case and spacing do not make another name.
+  const mentions = [p.mention("m0", "Flux"), p.mention("m1", " \uFF26LUX ")];
   const prepared = prepareWorldDrafts({ ...response, mentions, claims: [...flux, again, more] }, p.input, p.context);
   expect(prepared.dropped).toEqual([]);
   expect(prepared.repeated).toBe(1);
@@ -149,4 +149,15 @@ test("a mention repeated under the same label is one mention, and its repeated c
   const other = prepareWorldDrafts({ ...response, mentions: [mentions[0]!], claims: [flux[0]!, { ...dated, subject: flux[0]!.subject }] }, p.input, p.context);
   expect(other.repeated).toBeUndefined();
   expect(other.drafts).toHaveLength(2);
+});
+
+test("two names that differ only in a symbol, a mark or punctuation are two mentions, never one", () => {
+  // Each pair is equal once symbols and marks are stripped, which is how a literal is grounded in a span.
+  for (const [first, second] of [["C++", "C#"], ["Plan A+", "Plan A-"], ["\u0E01\u0E31\u0E19", "\u0E01\u0E34\u0E19"], ["Flux", "Flux?"]] as const) {
+    const p = passage(first, second);
+    const one = p.about("m0", first, "a synthetic transformation", 0), other = p.about("m1", second, "a calm cadence", 3);
+    const prepared = prepareWorldDrafts({ ...response, mentions: [p.mention("m0", first), p.mention("m1", second)], claims: [...one, ...other] }, p.input, p.context);
+    expect(prepared.drafts.map(draft => draft.body)).toEqual(one.map(claim => claim.body));
+    expect(prepared).toEqual({ drafts: prepared.drafts, dropped: ["c3", "c4", "c5"].map(id => ({ reason: "invalid_claim", id })) });
+  }
 });

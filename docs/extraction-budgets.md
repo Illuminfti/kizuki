@@ -97,7 +97,9 @@ A value outside its range, a fraction or a string keeps that key's default.
   that answer. Claims that resolve through a later mention with another label
   are dropped and counted in `claims_rejected.invalid_claim`: they describe
   something else and would otherwise be filed under the first mention's name.
-  Labels compare after Unicode, case, punctuation and spacing are normalized.
+  Labels compare after Unicode form, case and spacing are normalized. Every
+  other character counts, so names that differ only in a symbol, a mark or
+  punctuation are two names.
   A mention repeated under the same label is the same mention; a claim that
   repeats its classification adds no draft and counts in `claims_deduped`.
   An earlier build journaled both mentions' claims onto the one subject and
