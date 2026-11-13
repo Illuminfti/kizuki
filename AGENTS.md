@@ -32,6 +32,17 @@ single authority for live packet dependencies, ownership and progress, and
 #497 and the open pull requests, not a closed packet. Do not copy an old issue body,
 branch head, or test count into a new claim without checking it again.
 
+<!-- BEGIN shared-cross-harness-memory -->
+
+## Shared cross-harness memory
+
+Before starting work, read `.agents/memory/MEMORY.md`. When you learn a durable
+rule or fix a recurring problem, record it under `.agents/memory/topics/` and
+update the index. Commit memory changes with the code. Never commit tokens,
+keys, passwords, private keys, or emails into `.agents/memory/`.
+
+<!-- END shared-cross-harness-memory -->
+
 ## What Kizuki is
 
 Kizuki is a local-first personal intelligence substrate. It is not an agent
