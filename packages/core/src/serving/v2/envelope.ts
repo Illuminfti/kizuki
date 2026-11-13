@@ -1,5 +1,5 @@
 import type { WorldEvidenceSource } from "../../world/ops/evidence-types";
-import { projectCanonChunk, projectQuotedChunk } from "./chunks";
+import { prepareChunkReferences, projectCanonChunk, projectQuotedChunk } from "./chunks";
 import { projectToolData } from "./tool-data";
 import { loadCanon } from "../canon";
 import { resolvePrincipal } from "../../agents";
@@ -28,6 +28,7 @@ export function sealEnvelope<
         if (principal === null) throw new ServeError("unknown_agent", "unknown agent");
         const ns = worldNamespace(ctx.db, principal);
         const index = canon.length === 0 ? undefined : loadCanon({ ...ctx, principal });
+        prepareChunkReferences({ ctx: { ...ctx, principal }, ns }, canon, tool === "world_view" ? [] : quoted);
         return {
           schema: ENVELOPE_V2_SCHEMA,
           tool,

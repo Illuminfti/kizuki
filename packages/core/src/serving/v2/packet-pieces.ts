@@ -6,7 +6,7 @@ import { loadCanon } from "../canon";
 import type { Piece } from "../candidates";
 import { redactorOf } from "../redact";
 import type { ServeContext } from "../types";
-import { projectCanonChunk, projectQuotedChunk } from "./chunks";
+import { prepareChunkReferences, projectCanonChunk, projectQuotedChunk } from "./chunks";
 import { canonBlockV2, quotedBlockV2, claimBlockV2 } from "./packet-render";
 
 export function packetPrincipal(ctx: ServeContext): string {
@@ -21,6 +21,9 @@ export function scopePacketPieces(ctx: ServeContext, pieces: readonly Piece[]): 
   return ctx.db.transaction(() => {
     const scope = referenceScope(ctx), redactor = redactorOf(ctx);
     const index = pieces.some(piece => piece.canon !== undefined) ? loadCanon(ctx) : undefined;
+    const unscoped = pieces.filter(piece => piece.scopedBlock !== true);
+    prepareChunkReferences(scope, unscoped.flatMap(piece => piece.canon === undefined ? [] : [piece.canon]),
+      unscoped.flatMap(piece => piece.canon !== undefined || piece.quoted === undefined ? [] : [piece.quoted]));
     return pieces.flatMap(piece => {
       if (piece.scopedBlock === true) return [piece];
       if (piece.canon !== undefined) {

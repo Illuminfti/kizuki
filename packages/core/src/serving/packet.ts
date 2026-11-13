@@ -1,6 +1,7 @@
 import { normalizeReadArgs } from "./v2/read-input";
 import { packetPrincipal, scopePacketPieces } from "./v2/packet-pieces";
-import { projectCanonChunk, projectQuotedChunk } from "./v2/chunks";
+import { prepareChunkReferences, projectCanonChunk, projectQuotedChunk } from "./v2/chunks";
+import { loadCanon } from "./canon";
 import { referenceScope } from "../world/ref-kinds/common";
 import { compileRecallSlice } from "../world/slice/recall";
 import { compileSessionSlice } from "../world/slice/session";
@@ -660,7 +661,10 @@ async function servePacket(
         // metadata and chunks. Neither request time nor a global counter is a basis.
         const view = ctx.db.transaction(() => {
           const scope = referenceScope(ctx);
-          return packetView(content, canon.map(chunk => projectCanonChunk(scope, chunk)), quoted.map(chunk => projectQuotedChunk(scope, chunk)));
+          // One canon load for the transaction, as the envelope seal does.
+          const index = canon.length === 0 ? undefined : loadCanon(scope.ctx);
+          prepareChunkReferences(scope, canon, quoted);
+          return packetView(content, canon.map(chunk => projectCanonChunk(scope, chunk, index)), quoted.map(chunk => projectQuotedChunk(scope, chunk)));
         }).immediate();
         const same = content.coverage.status === "complete_for_query" && priorView === view.token;
         return {
