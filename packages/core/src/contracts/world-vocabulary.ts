@@ -1,6 +1,6 @@
 import { PERSON_VOCABULARY } from "./world-vocab/person";
 import { ARTIFACT_VOCABULARY } from "./world-vocab/artifact";
-import { createWorldRegistry, type WorldRegistry, type WorldVocabularyModule, type WorldVocabularySpec } from "./world-kinds";
+import { type WorldRegistry, type WorldVocabularyModule, type WorldVocabularySpec } from "./world-kinds";
 import { COMMITMENT_VOCABULARY } from "./world-vocab/commitment";
 import { DECISION_VOCABULARY } from "./world-vocab/decision";
 import { SITUATION_V2_VOCABULARY } from "./world-vocab/situation-v2";
@@ -11,6 +11,7 @@ import { SKILL_VOCABULARY } from "./world-vocab/skill";
 import { FRAMEWORK_VOCABULARY } from "./world-vocab/framework";
 import { PROCEDURE_VOCABULARY } from "./world-vocab/procedure";
 import { QUESTION_VOCABULARY } from "./world-vocab/question";
+import { createWorldUnionCandidateRegistry } from "./world-union-profile";
 
 export type { WorldEndpointKind, WorldObjectKind, WorldVocabularySpec } from "./world-kinds";
 
@@ -40,7 +41,12 @@ export const WORLD_VOCABULARY_MODULES: readonly WorldVocabularyModule[] = [
   // slot: ident
 ];
 
-export const WORLD_REGISTRY: WorldRegistry = createWorldRegistry(WORLD_VOCABULARY_MODULES);
+/**
+ * The active producer composition is the frozen nine-kind union profile.
+ * Qualification is enforced separately at the release gate; constructing this
+ * registry does not attest a qualification receipt.
+ */
+export const WORLD_REGISTRY: WorldRegistry = createWorldUnionCandidateRegistry(WORLD_VOCABULARY_MODULES);
 
 export const WORLD_VOCABULARY: readonly WorldVocabularySpec[] = WORLD_REGISTRY.vocabulary;
 

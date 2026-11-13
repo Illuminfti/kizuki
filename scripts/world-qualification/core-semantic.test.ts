@@ -26,7 +26,7 @@ import { startFakeEndpoint } from "../../packages/llm/test/fake-endpoint";
 // Scripted development controls only; no historical observed campaign is rescored.
 const registry = candidateRegistry(WORLD_VOCABULARY_MODULES, ["concept", "situation"]);
 type Rule = (typeof coreSemanticContract.cases)[number];
-type ExtractRule = ReturnType<typeof coreSemanticBranchRule>;
+type ExtractRule = import("./core-semantic").LegacyExtractRule;
 
 function selectedCase(kind: CoreSemanticCase["kind"], category: CoreSemanticCase["category"]): CoreSemanticCase {
   const item = coreSemanticCorpus.cases.find(row => row.kind === kind && row.category === category);

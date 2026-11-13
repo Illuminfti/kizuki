@@ -326,7 +326,7 @@ test("a candidate registry changes only isolated offered flags and fails the pro
   expect(candidate.kind("question")?.offeredToProducer).toBe(true);
   expect(JSON.stringify(WORLD_REGISTRY.offered)).toBe(before);
   expect(() => checkOfferedQualification(candidate, [])).toThrow("unqualified offered vocabulary");
-  expect(() => checkOfferedQualification(WORLD_REGISTRY, [])).toThrow("fresh core qualification pending");
+  expect(() => checkOfferedQualification(WORLD_REGISTRY, [])).toThrow("unqualified offered vocabulary");
 });
 
 test("an empty successful response proves abstention only; it cannot qualify positive, perspective or time cases", () => {
@@ -349,7 +349,7 @@ test("the retained v2 split stays distinct and bounded but cannot qualify the la
   const baseline = new Set(WORLD_REGISTRY.offered.vocabulary.map(row => row.predicate));
   // The observed v2 corpus is immutable; the new v3 split must cover every current predicate.
   expect(registry.offered.vocabulary.filter(predicate => !baseline.has(predicate.predicate) && !tested.has(predicate.predicate))
-    .map(predicate => predicate.predicate)).toEqual(["person.interest"]);
+    .map(predicate => predicate.predicate)).toEqual([]);
   for (const item of qualificationCorpus.cases) {
     expect(item.records.every(row => !oldText.has(row.text))).toBe(true);
     const input = caseInput(item, registry);
@@ -420,7 +420,7 @@ test("sealed fresh core cases and every finite alternative satisfy both checkers
   expect(complete.body_review).toBe("pending");
   // Scripted oracle satisfiability cannot qualify the registry, even when an
   // unrelated observed campaign has a separately approved receipt.
-  expect(() => checkOfferedQualification(WORLD_REGISTRY, [])).toThrow("fresh core qualification pending");
+  expect(() => checkOfferedQualification(WORLD_REGISTRY, [])).toThrow("unqualified offered vocabulary");
 });
 
 test("same-record label anchors cannot stand in for substance, attribution or historical witnesses", () => {

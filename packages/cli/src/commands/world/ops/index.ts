@@ -42,7 +42,9 @@ export const WORLD_CLI_OPS: readonly WorldCliEntry[] = [
   { name: "procedure", cli: procedureCli },
   { name: "find_procedures", cli: findProceduresCli },
   { name: "skill", cli: skillCli },
+  { name: "find_skills", cli: findPeopleCli },
   { name: "framework", cli: frameworkCli },
+  { name: "find_frameworks", cli: findPeopleCli },
   // slot: ART
   { name: "artifact_version", cli: artifactCli }, { name: "find_artifacts", cli: findArtifactsCli },
   // slot: OUTCOME

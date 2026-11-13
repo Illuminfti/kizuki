@@ -14,7 +14,7 @@ import type { ShareData } from "../../src/world/views/resume";
 
 export const WORLD_VERIFICATION_OPERATIONS = [
   "find_concepts", "find_situations", "concept", "situation", "describe",
-  "evidence", "observation", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people", "find_procedures", "procedure", "skill", "framework", "outcome", "artifact_version", "find_artifacts", "diff", "slice", "atlas", "attention", "forecast", "forecast_scores",
+  "evidence", "observation", "history", "share", "resume", "question", "find_questions", "frontier", "person", "find_people", "find_procedures", "procedure", "skill", "find_skills", "framework", "find_frameworks", "outcome", "artifact_version", "find_artifacts", "diff", "slice", "atlas", "attention", "forecast", "forecast_scores",
 ] as const;
 export type VerificationOperation = typeof WORLD_VERIFICATION_OPERATIONS[number];
 const PERSON = "person:verification-ada";
@@ -112,6 +112,7 @@ export function verificationInputs(scene: NoninterferenceScene): Record<Verifica
     slice: input("slice", { task: "Resume the launch", kinds: ["concept", "situation"], budgetTokens: 2000 }),
     person: input("person", { person }), find_people: input("find_people", { label: "Ada" }),
     find_procedures: input("find_procedures", { label: "verify" }), procedure: input("procedure", { procedure }),
+    find_skills: input("find_skills", { label: "skill:inspection" }), find_frameworks: input("find_frameworks", { label: "framework:quality" }),
     skill: input("skill", { skill: skillNode.ref }), framework: input("framework", { framework: frameworkNode.ref }),
     outcome: input("outcome", { subject: PROCEDURE }),
     artifact_version: input("artifact_version", { artifact }), find_artifacts: input("find_artifacts", { label: "Artifact" }),

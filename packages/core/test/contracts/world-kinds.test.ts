@@ -12,7 +12,7 @@ import {
 } from "../../src/contracts/world-vocabulary";
 
 describe("the shipped kinds", () => {
-  test("Concept, Situation and Question register their own labels and card contracts", () => {
+  test("the active nine-kind registry registers its labels and card contracts", () => {
     expect(WORLD_REGISTRY.kinds.map(kind => kind.id)).toEqual(["situation", "concept", "question", "person", "skill", "framework", "procedure", "commitment", "decision", "artifact_version"]);
     expect(WORLD_REGISTRY.kind("concept")).toMatchObject({
       vocabularyId: "world/concept", labelPredicate: "concept.label", pageType: "topic", endpointKind: "concept",
@@ -23,25 +23,25 @@ describe("the shipped kinds", () => {
       cardSchema: "kizuki.situation-card/v1", offeredToProducer: true,
     });
     expect(WORLD_REGISTRY.kindByVocabularyId("world/person")).toMatchObject({
-      id: "person", cardSchema: "kizuki.person-card/v1", offeredToProducer: false,
+      id: "person", cardSchema: "kizuki.person-card/v1", offeredToProducer: true,
     });
     expect(WORLD_REGISTRY.kind("question")).toMatchObject({
       vocabularyId: "world/question", labelPredicate: "question.text", pageType: "topic", endpointKind: "question",
-      cardSchema: "kizuki.question-card/v1", offeredToProducer: false, population: ["extraction"],
+      cardSchema: "kizuki.question-card/v1", offeredToProducer: true, population: ["extraction"],
     });
     for (const kind of ["commitment", "decision"]) {
-      expect(WORLD_REGISTRY.kind(kind)).toMatchObject({ cardSchema: "kizuki.situation-card/v2", offeredToProducer: false });
-      expect(WORLD_REGISTRY.offered.refs).not.toContain(`world/${kind}`);
+      expect(WORLD_REGISTRY.kind(kind)).toMatchObject({ cardSchema: "kizuki.situation-card/v2", offeredToProducer: true });
+      expect(WORLD_REGISTRY.offered.refs).toContain(`world/${kind}`);
     }
-    expect(WORLD_REGISTRY.offered.refs).not.toContain("world/question");
-    expect(WORLD_REGISTRY.offered.vocabulary.some(row => row.predicate.startsWith("question.") || row.predicate.startsWith("gap."))).toBe(false);
+    expect(WORLD_REGISTRY.offered.refs).toContain("world/question");
+    expect(WORLD_REGISTRY.offered.vocabulary.some(row => row.predicate.startsWith("question.") || row.predicate.startsWith("gap."))).toBe(true);
   });
 
   test("every kind names a page type from the closed set, and every offered row is a registered row", () => {
     for (const kind of WORLD_REGISTRY.kinds) expect(PAGE_TYPES as readonly string[]).toContain(kind.pageType);
     for (const row of WORLD_REGISTRY.offered.vocabulary) {
       if (row.predicate === "world.kind") {
-        expect(row.vocabulary_values).toEqual(["world/concept", "world/situation"]);
+        expect(row.vocabulary_values).toEqual(["world/commitment", "world/concept", "world/decision", "world/framework", "world/person", "world/procedure", "world/question", "world/situation", "world/skill"]);
         for (const value of row.vocabulary_values ?? []) expect(WORLD_REGISTRY.spec(row.predicate)?.vocabulary_values).toContain(value);
       } else expect(WORLD_REGISTRY.spec(row.predicate)).toEqual(row);
     }

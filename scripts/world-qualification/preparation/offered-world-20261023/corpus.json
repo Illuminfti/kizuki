@@ -1,0 +1,73 @@
+{
+  "schema": "kizuki.offered-world-preparation-corpus/v1",
+  "synthetic": true,
+  "status": "prospective_unregistered_not_runnable_with_active_core_semantic_v3",
+  "source_base": "5bc902b6cafa2547aac948bfb37bd9e80e4b324d",
+  "cases": [
+    {
+      "id": "offered-concept-filter-pattern",
+      "kind": "concept",
+      "source_type": "direct_record",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Dapple Weave is a concept meaning an alternating arrangement of coarse and fine filter threads. Fine Lattice is a concept meaning a supporting grid beneath the filter threads. Dapple Weave requires Fine Lattice. A filter with alternating coarse and fine threads over a supporting grid is an example of Dapple Weave. A filter with only coarse threads is a counterexample of Dapple Weave.",
+          "structured_subjects": []
+        }
+      ]
+    },
+    {
+      "id": "offered-concept-cutting-relations",
+      "kind": "concept",
+      "source_type": "direct_record",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Thistle Spareband is a concept meaning a spare strip reserved beyond a planned cut. Ochre Cutreserve is another name for that same concept. Quartz Sidecast is a different concept meaning a deliberate sideways shift of a cutting guide. Thistle Spareband is the same concept as Ochre Cutreserve. Thistle Spareband is distinguished from Quartz Sidecast.",
+          "structured_subjects": []
+        }
+      ]
+    },
+    {
+      "id": "offered-situation-dye-bay",
+      "kind": "situation",
+      "source_type": "direct_record",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Hollow Prism Bay is an actual operational condition at a dye station. Its objective is to keep the outlet inside the test band. The crew is committed to return the sealed dye trays before the next bell. The outlet pressure fell from fourteen units to nine units. Ilan Moru participates in this condition.",
+          "structured_subjects": [
+            {
+              "subject_id": "person:ilan-moru",
+              "role": "about",
+              "display_name": "Ilan Moru"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "offered-learning-assisted-trial",
+      "kind": "concept",
+      "source_type": "direct_record",
+      "records": [
+        {
+          "id": "r1",
+          "text": "Harbor Stitch is a concept meaning arranging trial seals in alternating wide and narrow rows. During task Opaline Seal Trial, technician Neri Solven read an introduction to that concept, explained that concept, applied that concept, and demonstrated that concept. A printed step card assisted the task throughout this trial.",
+          "structured_subjects": [
+            {
+              "subject_id": "person:neri-solven",
+              "role": "about",
+              "display_name": "Neri Solven"
+            },
+            {
+              "subject_id": "task:opaline-seal-trial",
+              "role": "about",
+              "display_name": "Opaline Seal Trial"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

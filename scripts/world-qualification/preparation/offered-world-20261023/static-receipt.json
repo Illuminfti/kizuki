@@ -1,0 +1,133 @@
+{
+  "schema": "kizuki.offered-world-preparation-static/v1",
+  "status": "authored_not_qualification_ready",
+  "base": "5bc902b6cafa2547aac948bfb37bd9e80e4b324d",
+  "new_cases": 4,
+  "new_records": 4,
+  "covered_missing_predicates": [
+    "concept.counterexample",
+    "concept.distinguished_from",
+    "concept.example",
+    "concept.requires",
+    "concept.same_as",
+    "learning.application",
+    "learning.assistance",
+    "learning.demonstration",
+    "learning.explanation",
+    "learning.exposure",
+    "situation.change",
+    "situation.commitment",
+    "situation.participant"
+  ],
+  "active_13_and_approval_unchanged": [
+    {
+      "file": "scripts/world-qualification/core-semantic-corpus.json",
+      "sha256": "8621cc5b10bc204084c7a18c62c9983048c473d5c35914bd0dff62f5a0602d30"
+    },
+    {
+      "file": "scripts/world-qualification/core-semantic-contract.json",
+      "sha256": "87e9b22e746e6cadff4527beb1dd85ac7397901ee840746a481b058f0a646d4c"
+    },
+    {
+      "file": "scripts/world-qualification/core-semantic.md",
+      "sha256": "84238c8b90e88088679db22ea2d1f8db1453f52ab6a31c8da7cd97810e7120e9"
+    },
+    {
+      "file": "scripts/world-qualification/core-semantic-freeze.json",
+      "sha256": "394fa9f9d86fab91439755df6e61d3aa50fd808a45742c21672f24c592e6e49d"
+    },
+    {
+      "file": "scripts/world-qualification/approvals.ts",
+      "sha256": "2ef8ced61e0567402313ff541c603f54356e2c5a791ef255c85e63236fa7ad55"
+    }
+  ],
+  "checks": [
+    {
+      "case_id": "offered-concept-filter-pattern",
+      "source_utf16": 386,
+      "required_propositions": 9,
+      "supplied": [],
+      "input_sha256": "9c728b91969dc4527209f830d979f6ff7231b87208c09fbbeaca5881451b2858",
+      "estimated_input_tokens": 4574,
+      "input_token_overhead": 24000,
+      "reserved_input_tokens": 28574
+    },
+    {
+      "case_id": "offered-concept-cutting-relations",
+      "source_utf16": 350,
+      "required_propositions": 11,
+      "supplied": [],
+      "input_sha256": "93afa4ec4f43cae24b7066647d6232b69a40837b357bfaa5b624856313496cec",
+      "estimated_input_tokens": 4565,
+      "input_token_overhead": 24000,
+      "reserved_input_tokens": 28565
+    },
+    {
+      "case_id": "offered-situation-dye-bay",
+      "source_utf16": 304,
+      "required_propositions": 6,
+      "supplied": [
+        {
+          "handle": "s0",
+          "source_subject_id": "person:ilan-moru",
+          "anchors": [
+            {
+              "event_id": "00000000000000000000000001",
+              "start_utf16": 263,
+              "end_utf16": 272
+            }
+          ]
+        }
+      ],
+      "input_sha256": "9150f78c21f209a09b544170cebe027a1e77e3c5031d69a40c5695e58f7d3d3c",
+      "estimated_input_tokens": 4575,
+      "input_token_overhead": 24000,
+      "reserved_input_tokens": 28575
+    },
+    {
+      "case_id": "offered-learning-assisted-trial",
+      "source_utf16": 324,
+      "required_propositions": 8,
+      "supplied": [
+        {
+          "handle": "s0",
+          "source_subject_id": "person:neri-solven",
+          "anchors": [
+            {
+              "event_id": "00000000000000000000000001",
+              "start_utf16": 137,
+              "end_utf16": 148
+            }
+          ]
+        },
+        {
+          "handle": "s1",
+          "source_subject_id": "task:opaline-seal-trial",
+          "anchors": [
+            {
+              "event_id": "00000000000000000000000001",
+              "start_utf16": 106,
+              "end_utf16": 124
+            }
+          ]
+        }
+      ],
+      "input_sha256": "8c8b237f7a3ceef11c51cc52215d69ccbf87d83aa89714db689c380e71fb7e6c",
+      "estimated_input_tokens": 4604,
+      "input_token_overhead": 24000,
+      "reserved_input_tokens": 28604
+    }
+  ],
+  "current_v3_method_blockers": [
+    "fixed12or13casecount/single_record",
+    "literal_only_details_on_one_mention_target",
+    "no_subject_or_vocabulary_detail_rules",
+    "no_multiple_target_claims_or_contexts",
+    "fixtureContext_has_no_host_identity_grounding_map"
+  ],
+  "provider_calls": 0,
+  "private_inputs": false,
+  "producer_changes": false,
+  "flags_changed": false,
+  "meaning_review": "pending_independent_prospective_review"
+}

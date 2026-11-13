@@ -12,10 +12,15 @@ import { RESPONSE_GAP_MS } from "./pacing";
 import { extractionV2SystemContent } from "../../packages/core/src/producer/prompt-v2";
 import type { runQualification } from "./run";
 import { REVIEWED_QUALIFICATIONS, type QualificationApproval } from "./approvals";
-import { CORE_SEMANTIC_PROTOCOL, LEGACY_CORE_SEMANTIC_PROTOCOL, coreSemanticCaseInput, coreSemanticContract, coreSemanticCorpus, scoreCoreSemanticRun, validateCoreSemanticAssets, verifyCoreSemanticReview } from "./core-semantic";
+import { CORE_SEMANTIC_PROTOCOL, LEGACY_CORE_SEMANTIC_PROTOCOL, coreSemanticAssets, coreSemanticBranchPredicates, coreSemanticCaseInput, scoreCoreSemanticRun, validateCoreSemanticAssets, verifyCoreSemanticReview } from "./core-semantic";
 import { validateQualificationInputPolicy } from "./input-planning";
 import { modelWireAdapterIdentity } from "./wire-custody";
+import { UNION_SEMANTIC_PROTOCOL } from "./union-propositions";
+import { createWorldUnionCandidateRegistry, WORLD_UNION_CANDIDATE_KINDS, WORLD_UNION_CANDIDATE_EXTENSIONS } from "../../packages/core/src/contracts/world-union-profile";
+import { WORLD_VOCABULARY_MODULES } from "./candidate-modules";
+import { validateUnionInputPolicy } from "./union-assets";
 export { REVIEWED_QUALIFICATIONS, type QualificationApproval } from "./approvals";
+export type CoreSemanticApproval = QualificationApproval;
 
 export const registryDigest = (registry: WorldRegistry) => sha256(canonicalJson({
   kinds: registry.kinds.filter(row => row.offeredToProducer), offered: registry.offered,
@@ -35,30 +40,35 @@ const CHECKED = new WeakSet<object>();
 export interface CheckedQualification { registry_sha256: string; report_sha256: string; kinds: readonly string[]; predicates: readonly string[] }
 
 type QualificationReport = Awaited<ReturnType<typeof runQualification>>;
-type CoreSemanticReport = Extract<QualificationReport, { protocol: typeof CORE_SEMANTIC_PROTOCOL }>;
+type CoreSemanticReport = Extract<QualificationReport, { protocol: typeof CORE_SEMANTIC_PROTOCOL | typeof UNION_SEMANTIC_PROTOCOL }>;
 type BaselineReport = Exclude<QualificationReport, CoreSemanticReport>;
 
-function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: QualificationApproval, registry: WorldRegistry, root?: string): CheckedQualification {
-  validateCoreSemanticAssets();
-  const policy = validateQualificationInputPolicy(report.input_policy);
+function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: CoreSemanticApproval, registry: WorldRegistry, root?: string): CheckedQualification {
+  const union = report.protocol === UNION_SEMANTIC_PROTOCOL;
+  const split = union ? "union22" : "core_split" in report && report.core_split === "offered17" ? "offered17" : "regression13";
+  if (union ? !("core_split" in report) || report.core_split !== "union22" : "core_split" in report && report.core_split !== "offered17") throw new Error("invalid core semantic split");
+  if (union && registryDigest(registry) !== registryDigest(createWorldUnionCandidateRegistry(WORLD_VOCABULARY_MODULES))) throw new Error("union profile mismatch");
+  const assets = coreSemanticAssets(split);
+  validateCoreSemanticAssets(split, registry);
+  const policy = union ? validateUnionInputPolicy(report.input_policy) : validateQualificationInputPolicy(report.input_policy);
   const projectRoot = root ?? resolve(import.meta.dir, "../..");
-  if (approval.protocol !== CORE_SEMANTIC_PROTOCOL || report.schema !== "kizuki.world-qualification-run/v3" || report.evidence !== "runner_observed_transport" || report.synthetic !== true ||
+  if (approval.protocol !== report.protocol || report.schema !== (union ? "kizuki.world-qualification-run/v4" : "kizuki.world-qualification-run/v3") || report.evidence !== "runner_observed_transport" || report.synthetic !== true ||
       report.source_clean !== true || !/^[a-f0-9]{40}$/.test(report.source_commit) || report.runner_sha256 !== runnerDigest(projectRoot) ||
       report.registry_sha256 !== registryDigest(registry) || report.missing.length !== 0 || !report.model || !report.endpoint_host ||
-      canonicalJson(report.corpus) !== canonicalJson(coreSemanticCorpus) || canonicalJson([...report.selected_kinds].sort()) !== canonicalJson(["concept", "situation"]) ||
-      report.selected_extensions.length !== 0 || canonicalJson(report.selected_cases) !== canonicalJson(coreSemanticCorpus.cases.map(row => row.id)) ||
-      report.resumed_from !== null || report.halt_reason !== null || report.response_gap_ms !== RESPONSE_GAP_MS || report.attempts !== coreSemanticCorpus.cases.length ||
-      report.observations.length !== coreSemanticCorpus.cases.length || report.traces.length !== coreSemanticCorpus.cases.length ||
+      canonicalJson(report.corpus) !== canonicalJson(assets.corpus) || canonicalJson([...report.selected_kinds].sort()) !== canonicalJson(union ? [...WORLD_UNION_CANDIDATE_KINDS].sort() : ["concept", "situation"]) ||
+      canonicalJson(report.selected_extensions) !== canonicalJson(union ? WORLD_UNION_CANDIDATE_EXTENSIONS : []) || canonicalJson(report.selected_cases) !== canonicalJson(assets.corpus.cases.map(row => row.id)) ||
+      report.resumed_from !== null || report.halt_reason !== null || report.response_gap_ms !== RESPONSE_GAP_MS || report.attempts !== assets.corpus.cases.length ||
+      report.observations.length !== assets.corpus.cases.length || report.traces.length !== assets.corpus.cases.length ||
       canonicalJson(report.observations.map(row => row.case_id)) !== canonicalJson(report.selected_cases) || canonicalJson(report.traces.map(row => row.case_id)) !== canonicalJson(report.selected_cases) ||
       report.case_states.some(row => row.status !== "observed") || canonicalJson(report.case_states.map(row => row.case_id)) !== canonicalJson(report.selected_cases))
     throw new Error("core semantic report mismatch");
   const expectedAdapter = modelWireAdapterIdentity(projectRoot);
   const result = scoreCoreSemanticRun(report.observations, registry, { source_commit: report.source_commit, input_policy: policy, traces: report.traces,
-    wire_adapter: report.wire_adapter, wire_receipts: report.wire_receipts });
+    wire_adapter: report.wire_adapter, wire_receipts: report.wire_receipts }, assets);
   if (!result.automated_passed || canonicalJson(result) !== canonicalJson(report.core_semantic)) throw new Error("core semantic automated checks failed");
   if (canonicalJson(report.wire_adapter) !== canonicalJson(expectedAdapter)) throw new Error("core semantic wire adapter mismatch");
   let previousCompletion: number | null = null;
-  for (const item of coreSemanticCorpus.cases) {
+  for (const item of assets.corpus.cases) {
     const observed = report.observations.find(row => row.case_id === item.id), matches = report.traces.filter(row => row.case_id === item.id), trace = matches[0];
     const expectedInput = coreSemanticCaseInput(item, registry, policy), prompt = sha256(extractionV2SystemContent(expectedInput));
     if (!observed || canonicalJson(observed.input) !== canonicalJson(expectedInput) || matches.length !== 1 || !trace || trace.origin !== "observed_v3" || trace.transport !== "ok" ||
@@ -68,7 +78,7 @@ function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: Qualifi
         (previousCompletion !== null && Date.parse(trace.started_at) - previousCompletion < RESPONSE_GAP_MS)) throw new Error("core semantic transport evidence missing");
     previousCompletion = Date.parse(trace.completed_at);
   }
-  if (report.prompt_sha256 !== report.prompt_sha256_by_case[coreSemanticCorpus.cases[0]!.id]) throw new Error("core semantic prompt mismatch");
+  if (report.prompt_sha256 !== report.prompt_sha256_by_case[assets.corpus.cases[0]!.id]) throw new Error("core semantic prompt mismatch");
   const reviewPin = approval.body_review;
   if (!reviewPin || !/^[a-z0-9-]+\.json$/.test(reviewPin.file) || !/^[a-f0-9]{64}$/.test(reviewPin.sha256)) throw new Error("core semantic independent review missing");
   const reviewFd = openSync(join(projectRoot, "scripts/fixtures/world-qualification", reviewPin.file), constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -79,18 +89,18 @@ function verifyCoreSemanticReceipt(report: CoreSemanticReport, approval: Qualifi
     if (sha256(reviewBytes) !== reviewPin.sha256) throw new Error("core semantic review pin mismatch");
     verifyCoreSemanticReview(approval.sha256, result, JSON.parse(reviewBytes));
   } finally { closeSync(reviewFd); }
-  const predicates = [...new Set(result.cases.flatMap(row => row.selected_branch === null ? [] : ["world.kind", `${row.selected_branch.classification.kind.slice(6)}.label`, ...row.selected_branch.details.map(detail => detail.predicate)]))];
+  const predicates = [...new Set(result.cases.flatMap(row => row.selected_branch === null ? [] : coreSemanticBranchPredicates(row.selected_branch)))];
   const checked = { registry_sha256: report.registry_sha256, report_sha256: approval.sha256, kinds: report.selected_kinds, predicates };
   CHECKED.add(checked);
   return checked;
 }
 
-export function verifyQualificationReceipt(bytes: string, approval: QualificationApproval, registry: WorldRegistry, root?: string): CheckedQualification {
+export function verifyQualificationReceipt(bytes: string, approval: CoreSemanticApproval, registry: WorldRegistry, root?: string): CheckedQualification {
   if (!/^[a-f0-9]{64}$/.test(approval.sha256) || sha256(bytes) !== approval.sha256 || !/^[a-f0-9]{64}$/.test(approval.endpoint_evidence)) throw new Error("qualification review pin mismatch");
   const parsed = JSON.parse(bytes) as QualificationReport | { readonly protocol: string };
   if ("protocol" in parsed) {
     if (parsed.protocol === LEGACY_CORE_SEMANTIC_PROTOCOL) throw new Error("obsolete core semantic protocol");
-    if (parsed.protocol !== CORE_SEMANTIC_PROTOCOL) throw new Error("unknown qualification protocol");
+    if (parsed.protocol !== CORE_SEMANTIC_PROTOCOL && parsed.protocol !== UNION_SEMANTIC_PROTOCOL) throw new Error("unknown qualification protocol");
     return verifyCoreSemanticReceipt(parsed as CoreSemanticReport, approval, registry, root);
   }
   if (approval.protocol !== undefined) throw new Error("qualification approval protocol mismatch");

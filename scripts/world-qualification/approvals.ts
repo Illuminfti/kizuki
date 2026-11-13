@@ -3,7 +3,7 @@ export interface QualificationApproval {
   sha256: string;
   endpoint_evidence: string;
   /** Required for the active core semantic method; absent only on baseline or historical evidence. */
-  protocol?: "core-semantic-v3";
+  protocol?: "core-semantic-v3" | "core-semantic-v4";
   body_review?: { file: string; sha256: string };
 }
 

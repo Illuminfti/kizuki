@@ -1,18 +1,34 @@
 # Skills, frameworks and procedures
 
-Implementation evidence date: 2026-10-21. These are read-only knowledge cards on
+Implementation evidence date: 2026-10-23. These are read-only knowledge cards on
 the existing world registry and claim pipeline. The three kinds remain
 `offeredToProducer: false` pending the separate held-out model acceptance run.
 
 ## Read contract
 
-`world_view` exposes `find_procedures`, `procedure`, `skill` and `framework`.
-Discovery accepts an optional `label`, object `about`, and opaque `cursor`.
-`about` requires a positive asserted `procedure.applies_to` relation before
-paging. Discovery is a list of candidates; read a procedure's applicability and
+`world_view` exposes `find_procedures`, `find_skills`, `find_frameworks`,
+`procedure`, `skill` and `framework`. Skill and Framework discovery accept an
+optional `label` and opaque `cursor`; they return currently authorized,
+classification-qualified object refs using the existing bounded discovery
+pipeline. Equal labels do not merge distinct source identities. Procedure
+discovery additionally accepts object `about`, which requires a positive
+asserted `procedure.applies_to` relation before paging. Discovery is a list of
+candidates; read a procedure's applicability and
 counterexamples before using its steps. Object reads take the corresponding
 opaque object reference and the standard `valid` and `knownAt` selectors.
 CLI, MCP, HTTP and the App route use the same Core operations and contracts.
+For example, `kizuki world --operation find_frameworks --label "Contour"`
+returns refs for `kizuki world --operation framework --ref TOKEN`; `find_skills`
+works the same way. Discovery does not enable extraction or certify mastery,
+adoption or execution authority. Empty discovery with extraction disabled has
+explicit coverage limits.
+
+The public task slice retains its 50–2000 token budget. When the whole mandatory
+qualified context exceeds that budget, it returns empty items with
+`required_context_overflow`; this is not proof that the stored card is absent.
+Use typed discovery and the corresponding card read for access to a particular
+stored Skill or Framework; no guessed identifiers or larger slice budget are
+required.
 
 `kizuki.procedure-card/v1` keeps four dimensions separate:
 
@@ -57,7 +73,8 @@ valid-time history. No current outcome is substituted into a historical card.
 ## Verification
 
 The executable acceptance cases are in `packages/core/test/world/skills.test.ts`,
-`skills-security.test.ts` and `skills-recovery.test.ts`. They exercise independent
+`skills-security.test.ts`, `skills-recovery.test.ts` and `card-discovery.test.ts`.
+They exercise independent
 observed usefulness, failures, copies, exact replay, confounding, hostile steps,
 cycles, correction, known-time, hidden evidence, denial audit, purge, rebuild and
 export/restore. CLI/App and MCP/HTTP parity are exercised in the corresponding
